@@ -76,11 +76,16 @@ export type SharedDataHitCategory =
   | 'audit_regex'
   | 'overflow';
 
-/** The order a write is rejected in when one leaf trips several checks — the title/body order. */
+/**
+ * The order a rejection is ATTRIBUTED in when several checks fire — which decides the Report row
+ * and the alert. minor/POI come first, ahead even of an overflow: an overflow still rejects the
+ * write, but if the same write also carried a legal signal, that signal must reach the legal-block
+ * channel and the moderation queue rather than be filed as "too large to review".
+ */
 const CATEGORY_PRIORITY: SharedDataHitCategory[] = [
-  'overflow',
   'minor',
   'poi',
+  'overflow',
   'link',
   'pattern',
   'audit_regex',
@@ -408,7 +413,11 @@ export function scheduleSharedDataShadow(
   ctx: Omit<SharedDataScanContext, 'mode' | 'blocked'>
 ): void {
   setImmediate(() => {
-    run()
+    // `Promise.resolve().then(run)`, not `run()`: a SYNCHRONOUS throw inside `run` (before its
+    // first await) would otherwise escape this callback as an uncaught exception instead of
+    // reaching the catch below.
+    Promise.resolve()
+      .then(run)
       .then((scan) => recordSharedDataScan(scan, { ...ctx, mode: 'shadow', blocked: false }))
       .catch((error) =>
         logToAxiom(
@@ -417,7 +426,8 @@ export function scheduleSharedDataShadow(
             type: 'error',
             appBlockId: ctx.appBlockId,
             surface: ctx.surface,
-            error: error instanceof Error ? error.message : String(error),
+            // Name only: the scan parses and reads user text, and a message can quote it.
+            error: error instanceof Error ? error.name : typeof error,
           },
           'block-audit'
         ).catch(() => undefined)

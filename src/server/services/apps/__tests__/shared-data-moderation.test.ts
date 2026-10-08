@@ -302,18 +302,54 @@ describe('scanSharedData / scanCounterKey', () => {
     expect(scan.hits[0]).toMatchObject({ category: 'minor', leaf: { kind: 'key', path: '' } });
   });
 
-  it('blockingHit picks the title/body priority: overflow, minor, poi, link, pattern, audit', () => {
+  it('blockingHit attributes minor/POI first, ahead even of an overflow, then overflow, link, pattern, audit', () => {
     const scan: SharedTextScan = {
       leafCount: 2,
-      overflow: null,
+      overflow: 'leaf_length',
       hits: [
         { category: 'audit_regex', matched: 'a', leaf: leaf('a') },
+        { category: 'overflow', matched: 'leaf_length', leaf: leaf('o') },
         { category: 'link', matched: 'l', leaf: leaf('l') },
         { category: 'poi', matched: 'p', leaf: leaf('p') },
       ],
     };
     expect(blockingHit(scan)?.category).toBe('poi');
+    expect(
+      blockingHit({ ...scan, hits: scan.hits.filter((h) => h.category !== 'poi') })?.category
+    ).toBe('overflow');
     expect(blockingHit({ leafCount: 0, overflow: null, hits: [] })).toBeNull();
+  });
+
+  it('blockingHit skips a pattern hit unless patterns are enforced — and only that category', () => {
+    const scan: SharedTextScan = {
+      leafCount: 2,
+      overflow: null,
+      hits: [
+        { category: 'pattern', matched: 'p', leaf: leaf('p') },
+        { category: 'audit_regex', matched: 'a', leaf: leaf('a') },
+      ],
+    };
+    expect(blockingHit(scan, { enforcePatterns: true })?.category).toBe('pattern');
+    expect(blockingHit(scan, { enforcePatterns: false })?.category).toBe('audit_regex');
+    expect(blockingHit({ ...scan, hits: [scan.hits[0]] }, { enforcePatterns: false })).toBeNull();
+  });
+
+  it('scheduleSharedDataShadow catches a SYNCHRONOUS throw from the scan thunk', async () => {
+    scheduleSharedDataShadow(
+      () => {
+        throw new SyntaxError('bad json');
+      },
+      { appBlockId: 'apb_one', rowKey: 'K', surface: 'append' }
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks-shared-data-moderation-shadow-failed',
+        error: 'SyntaxError',
+      }),
+      'block-audit'
+    );
   });
 });
 

@@ -1445,32 +1445,28 @@ export async function incrementSharedCounter(
   // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`). Enforce rejects
   // here, before anything is written; shadow scans after the commit below.
   //
-  // 🔴 ONLY A KEY THIS CALL CREATES IS SCANNED. A key's text is fixed at creation — every later
-  // increment carries the identical string — so re-reading it on every increment of a hot counter
-  // repeats the same verdict at the cost of two blocklist reads and a record each time. Enforce
-  // therefore checks for the anchor row first and scans only an absent key; shadow scans only when
-  // the anchor INSERT below actually inserted. A key that already existed before either flag was
-  // turned on is not re-scanned by its increments; removing one is the moderator purge's job.
+  // 🔴 ENFORCE SCANS EVERY INCREMENT; SHADOW ONLY THE ONE THAT CREATES THE KEY. Enforce must
+  // re-read an existing key: one written before the flag was on (or during shadow) would otherwise
+  // keep climbing into `getTop`'s public top-N, and an "it already exists" check outside the write
+  // transaction races a moderator purge that deletes the key. Shadow only measures, and a key's text
+  // never changes after creation, so it scans when the anchor INSERT below actually inserted —
+  // which keeps two blocklist reads and an event off every increment of a hot counter. The cost of
+  // that choice: a key that already existed when shadow was turned on is never scanned in shadow.
   const moderationMode = await resolveSharedDataModerationMode(appBlockId);
   const pool = requireAppsDb();
   if (moderationMode === 'enforce') {
-    const anchored =
-      ((await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key])).rowCount ??
-        0) > 0;
-    if (!anchored) {
-      const scan = await enforceScan(
-        () => scanCounterKey(key, { isModerator: subjectUser?.isModerator }),
-        { appBlockId, surface: 'counter' }
-      );
-      await rejectSharedTextHit(scan, {
-        schema,
-        slug,
-        appBlockId,
-        uid,
-        rowKey: key,
-        surface: 'counter',
-      });
-    }
+    const scan = await enforceScan(
+      () => scanCounterKey(key, { isModerator: subjectUser?.isModerator }),
+      { appBlockId, surface: 'counter' }
+    );
+    await rejectSharedTextHit(scan, {
+      schema,
+      slug,
+      appBlockId,
+      uid,
+      rowKey: key,
+      surface: 'counter',
+    });
   }
 
   const client = await pool.connect();

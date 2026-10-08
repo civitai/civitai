@@ -197,6 +197,7 @@ import {
 } from '../apps-shared.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
+import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
 const READ = 'apps:storage:shared:read';
 const WRITE = 'apps:storage:shared:write';
@@ -838,11 +839,15 @@ describe('FIX 1 abuse observability (alert emits)', () => {
     const contentEmits = auditEmits('app-blocks-shared-storage-content-block');
     expect(contentEmits).toHaveLength(1);
     // slug is the SANITIZED schema slug (matches the legal-block emit shape).
-    expect(contentEmits[0]).toMatchObject({
+    // EXACT payload: the consequence helper is shared with `data` moderation, and its `field` key
+    // must never leak onto a title/body alert.
+    expect(contentEmits[0]).toEqual({
+      name: 'app-blocks-shared-storage-content-block',
       type: 'warning',
       category: 'audit',
       userId: 42,
       slug: 'app_voting',
+      appBlockId: 'apb_test',
     });
     // metadata only — no content text leaked
     expect(JSON.stringify(contentEmits[0])).not.toContain('harassment');
@@ -2648,9 +2653,20 @@ describe('shared `data` local moderation', () => {
         code: 'BAD_REQUEST',
         message: 'Content could not be reviewed right now. Please try again.',
       });
+      // A 4xx to the caller, but logged as the outage it is.
+      expect(isEscalatedServerFault(error)).toBe(true);
       expect(mockPool.connect).not.toHaveBeenCalled();
       expect(eventNames()).toContain('app-blocks-shared-data-moderation-scan-failed');
       expect(JSON.stringify(mockLogToAxiom.mock.calls)).not.toContain('redis down');
+    });
+
+    it('🔴 a minor hit is still REPORTED when the same write also overflows (legal signal wins attribution)', async () => {
+      await expect(appendData({ x: MINOR, big: 'a '.repeat(10_001) })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content flagged for review',
+      });
+      expect(reportReasons()).toEqual(['auto:data:minor']);
+      expect(eventNames()).toContain('app-blocks-shared-storage-legal-block');
     });
 
     it('a single leaf too long to audit is rejected as unreviewable — WITHOUT a Report row', async () => {

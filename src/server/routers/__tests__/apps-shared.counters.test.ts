@@ -115,6 +115,7 @@ import {
 } from '../apps-shared.router';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
 import { OnboardingSteps } from '~/server/common/enums';
+import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
 const WRITE = 'apps:storage:shared:write';
 const READ = 'apps:storage:shared:read';
@@ -347,25 +348,45 @@ describe('incrementSharedCounter — counter-key moderation', () => {
   it('enforce: a blocklist outage is a clean 4xx with no counter write', async () => {
     setFlags({ enforce: true });
     mockFindBlocked.mockRejectedValue(new Error('redis down'));
-    await expect(incrementSharedCounter('tok', 'playcount:7')).rejects.toMatchObject({
+    const error = await incrementSharedCounter('tok', 'playcount:7').catch((e: unknown) => e);
+    // Escalated: a 4xx to the caller, logged at server-fault severity.
+    expect(isEscalatedServerFault(error)).toBe(true);
+    await expect(Promise.reject(error)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'Content could not be reviewed right now. Please try again.',
     });
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
-  it('enforce: a key that ALREADY exists is not re-scanned — its text was fixed at creation', async () => {
+  it('🔴 enforce: an EXISTING flagged key is still scanned — its increments are refused, so it cannot climb into getTop', async () => {
     setFlags({ enforce: true });
-    mockPool.query.mockImplementation(async (sql: string) =>
-      String(sql).includes('SELECT 1 FROM')
-        ? { rows: [{}], rowCount: 1 }
-        : { rows: [], rowCount: 0 }
+    // The key exists to EVERY reader: a lookup finds its anchor row, and the anchor INSERT
+    // conflicts. (Without the lookup half, a "skip keys that already exist" pre-check would pass
+    // this test vacuously.)
+    mockPool.query.mockImplementation(async () => ({ rows: [{ '?column?': 1 }], rowCount: 1 }));
+    mockClient.query.mockImplementation(async (sql: string) =>
+      String(sql).includes('INTO "app_app_voting".shared_kv')
+        ? { rows: [], rowCount: 0 }
+        : { rows: [{ count: '3' }], rowCount: 1 }
     );
-    await expect(incrementSharedCounter('tok', BAD_KEY)).resolves.toEqual({
-      key: BAD_KEY,
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('both flags on: a new key is scanned ONCE (inline), never again after the commit', async () => {
+    setFlags({ shadow: true, enforce: true });
+    await expect(incrementSharedCounter('tok', 'playcount:7')).resolves.toEqual({
+      key: 'playcount:7',
       count: 3,
     });
-    expect(mockFindBlocked).not.toHaveBeenCalled();
+    await flushImmediates();
+    expect(mockFindBlocked).toHaveBeenCalledTimes(1);
+    const scans = mockLog.mock.calls.filter(
+      (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-data-moderation-scan'
+    );
+    expect(scans).toHaveLength(1);
   });
 
   it('SEAM: the subject’s moderator bit reaches the blocklist for a counter key', async () => {
