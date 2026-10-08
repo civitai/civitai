@@ -78,6 +78,20 @@ describe('cooc retention heartbeat', () => {
     expect(rows.get(COOC_RETENTION_HEARTBEAT_KEY)).toBe(later.getTime());
   });
 
+  it('a sweep deletes an expired study and heartbeats; one that leaves it (a predicate bug) does not', async () => {
+    const { db, sql } = await freshDb();
+    const { kv, rows } = durableKv();
+    await seed(db, {
+      kind: 'study',
+      trainEnd: new Date(NOW.getTime() - 30 * DAY),
+      builtAt: new Date(NOW.getTime() - 20 * DAY),
+      pinnedUntil: new Date(NOW.getTime() - 1),
+    });
+    // A selection predicate that left this row would make the sweep throw here, before the write.
+    expect(await runCoocRetentionSweep(sql, kv, NOW)).toEqual({ deleted: 1, tableMissing: false });
+    expect(rows.get(COOC_RETENTION_HEARTBEAT_KEY)).toBe(NOW.getTime());
+  });
+
   it('an unreadable or non-numeric heartbeat scrapes as absent', async () => {
     const { kv, rows } = durableKv();
     rows.set(COOC_RETENTION_HEARTBEAT_KEY, ['1']);
