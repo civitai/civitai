@@ -46,11 +46,14 @@ const log = createLogger('signals', 'cyan');
  *     ran in any of them): counts ONLY if the window holds backend evidence.
  *   So a healthy burst far past the queue bound (e.g. a synchronized client
  *   reconnect after recovery, even one following a fast-failing outage) and a
- *   healthy-but-overloaded backend (latency < half the deadline) are shed and
- *   never open the circuit: every call they start completes. A hang — from an
- *   idle or an already-saturated pool — trips it: the calls it starts time
- *   out. Evidence is pruned with the same window as failures and cleared when
- *   the circuit CLOSES.
+ *   healthy-but-overloaded backend are shed and never open the circuit, AS
+ *   LONG AS every call's latency — tail included — stays under half the
+ *   deadline: every call they start then completes. Under overload a call may
+ *   start with only half the deadline left, so a single call slower than that
+ *   is a backend timeout (evidence) by design, and the shed traffic then
+ *   counts. A hang — from an idle or an already-saturated pool — trips it:
+ *   the calls it starts time out. Evidence is pruned with the same window as
+ *   failures and cleared when the circuit CLOSES.
  *   - A HALF_OPEN trial that suffers a queue-side failure probed nothing, so it
  *     is NOT a failed trial: it releases `trialInFlight` and the circuit stays
  *     HALF_OPEN; the next caller becomes the trial. A trial whose fn() rejects
@@ -444,9 +447,10 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
     return await Promise.race([
       limiter(async () => {
         // Deadline already fired while queued: the caller has its rejection and
-        // the timeout was counted. (Not reachable today — FIFO + one deadline
-        // length means every slot frees by our deadline, holder first on a tie
-        // — but it keeps the check below from counting the timeout twice.)
+        // the timeout was counted. (Not reachable on a real event loop — FIFO
+        // + one deadline length means every slot frees by our deadline, holder
+        // first on a tie — but it keeps the check below from counting the
+        // timeout twice if timers ever fire back to back.)
         if (timedOut) return deadline;
         // Minimum start budget (header comment): less than half the deadline
         // left → never call fn() (no outbound fetch for a caller that has

@@ -199,6 +199,38 @@ describe('withSignals', () => {
     await expect(withSignals(async () => 'next')).resolves.toBe('next');
   });
 
+  it('a call that reaches its slot with 60% of its budget left IS started (the floor is half the deadline, not more)', async () => {
+    const { withSignals } = await load();
+
+    // A succeeds at t=400; B (entered 0) then has 600ms of 1000 left ≥ 500.
+    track(withSignals(() => new Promise<string>((r) => setTimeout(() => r('a'), 400))));
+    const bFn = vi.fn(() => new Promise<string>((r) => setTimeout(() => r('b'), 100)));
+    const b = track(withSignals(bFn));
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(bFn).toHaveBeenCalledTimes(1);
+    expect(b.value).toBe('b');
+    expect(count('signals_call_timeouts_total')).toBe(0);
+  });
+
+  it('a timeout is counted once even if the deadline fires before the queued call is dequeued (fake-timer only ordering)', async () => {
+    // Real Node runs microtasks between timer callbacks, so a slot always
+    // frees before a later-entered call's own deadline fires. A SYNCHRONOUS
+    // fake-timer advance fires both timers back to back, reaching the
+    // `if (timedOut)` guard in the limiter task — this pins that it prevents
+    // double-counting the timeout.
+    const { withSignals } = await load();
+    track(withSignals(hang));
+    const bFn = vi.fn(hang);
+    track(withSignals(bFn));
+    await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(bFn).not.toHaveBeenCalled();
+    expect(count('signals_call_timeouts_total')).toBe(2);
+  });
+
   it('rejects at 0ms with reason "concurrency" once the queue is full, without running fn', async () => {
     const { withSignals, SignalsCallTimeoutError } = await load({ SIGNALS_CALL_MAX_QUEUE: 2 });
 
@@ -492,7 +524,7 @@ describe('withSignals', () => {
   });
 
   it.each([
-    ['300ms', 300], // queue wait (Q/C)·L = 600 — calls start with budget to spare
+    ['300ms', 300], // L·(Q/C + 1) = 900 < T — some queued calls are still not started
     ['450ms', 450], // L·(Q/C + 1) = 1350 > T: the geometry where late starts used to starve every call
   ])('steady overload on a HEALTHY backend (%s latency) never trips', async (_label, latency) => {
     const { withSignals } = await load(SATURATED_ENV);
