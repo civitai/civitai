@@ -1,5 +1,5 @@
 import { Button } from '@mantine/core';
-import { IconGavel } from '@tabler/icons-react';
+import { IconArrowRight, IconGavel } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -12,7 +12,18 @@ import { showErrorNotification, showInfoNotification } from '~/utils/notificatio
 import { trpc } from '~/utils/trpc';
 
 /** Drops the judge into the newest open crucible that still has pairs for them. */
-export function CrucibleJudgeNextButton() {
+type Props = {
+  /** Leaves this crucible out, so "next" from a judge page never lands back on it. */
+  excludeCrucibleId?: number;
+  variant?: 'button' | 'link';
+  label?: string;
+};
+
+export function CrucibleJudgeNextButton({
+  excludeCrucibleId,
+  variant = 'button',
+  label = 'Start Judging',
+}: Props = {}) {
   const router = useRouter();
   const utils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -26,7 +37,7 @@ export function CrucibleJudgeNextButton() {
     setLoading(true);
     try {
       const suggestions = await utils.crucible.getJudgingSuggestions.fetch(
-        { browsingLevel, limit: 12 },
+        { browsingLevel, limit: 12, excludeCrucibleId },
         { staleTime: 0 }
       );
       // Hidden users, tags and words are client-side only; the server can't apply them.
@@ -59,6 +70,21 @@ export function CrucibleJudgeNextButton() {
     }
   };
 
+  if (variant === 'link') {
+    return (
+      <Button
+        variant="subtle"
+        color="blue"
+        size="compact-sm"
+        rightSection={<IconArrowRight size={14} />}
+        loading={loading}
+        onClick={handleClick}
+      >
+        {label}
+      </Button>
+    );
+  }
+
   return (
     <Button
       variant="light"
@@ -67,7 +93,7 @@ export function CrucibleJudgeNextButton() {
       loading={loading}
       onClick={handleClick}
     >
-      Start Judging
+      {label}
     </Button>
   );
 }

@@ -1,5 +1,5 @@
 import { Badge, Button, Container, Text, Title } from '@mantine/core';
-import { IconArrowLeft, IconPhoto, IconUsers, IconVideo } from '@tabler/icons-react';
+import { IconArrowLeft, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
@@ -10,10 +10,11 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { Currency, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
+import { CrucibleContentBadges } from '~/components/Crucible/CrucibleContentBadges';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -233,23 +234,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
 
             {status === CrucibleStatus.Active && endAt && <CrucibleTimer endAt={endAt} />}
 
-            <div className="flex flex-wrap items-center gap-1">
-              <Badge
-                size="sm"
-                variant="light"
-                color="gray"
-                leftSection={
-                  contentType === MediaType.video ? (
-                    <IconVideo size={12} />
-                  ) : (
-                    <IconPhoto size={12} />
-                  )
-                }
-              >
-                {contentType === MediaType.video ? 'Videos' : 'Images'}
-              </Badge>
-              <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} />
-            </div>
+            <CrucibleContentBadges contentType={contentType} nsfwLevel={nsfwLevel} />
           </div>
         </div>
       </Container>
