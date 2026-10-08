@@ -4,9 +4,15 @@ A proposal to replace the model feed's default time window with a Reddit-style *
 models first, with newer ones favoured, and no hard cutoff that can empty a page. `period` stays as an
 optional narrowing the user applies on purpose.
 
-Status: **implemented** in `feat/model-feed-hot-ranking`, 2026-10-07, not yet merged. The migration
-(`20261010120000_model_hot_score`) is applied by hand before the code ships — see §11. Everything
-below is the record of why; the §6 dev experiment ran 2026-09-16 and §10/§12 on 2026-10-07.
+Status: **implemented** in `feat/model-feed-hot-ranking`, not yet merged. Two migrations are applied
+by hand, in order, **before** the code ships: `20261010120000_model_hot_score` (§11) and
+`20261011120000_model_hot_score_generator_cap` (§14), the second then needing the
+`/api/admin/temp/backfill-unique-generators` pass. Both were applied to production on 2026-10-08.
+
+**Later sections correct earlier ones.** §13 supersedes the divisors in §2; §10 supersedes the
+per-base-model conclusions in §6 and §7; §14 adds the generation cap, so the formula in §2 is no
+longer the whole story. Where an earlier section states a design as current fact and a later one
+reversed it, the later one wins.
 
 Follows from the tag-page soft-404 work in [seo-improvements.md](seo-improvements.md) (§1) and the
 stop-gap in `e60d745f97`.
@@ -150,7 +156,10 @@ handful of likes. The useful range is **1–3 months**:
 Both surface the current base-model wave, which the current default's top 12 doesn't show at all.
 A reasonable starting point is **1 month for `/models` and 3 months for tag pages**, where a small
 tag should still read close to "best of this tag". Each `T` is a separate column and index, so
-shipping two doubles the storage in the next section. Starting with one is fine.
+shipping two doubles the storage in the next section.
+
+**Superseded:** one `T` of 30 days shipped for every surface (decision 11), and §13 found that
+widening it is the wrong lever anyway — it made the base-model mix worse, not better.
 
 ### Signals
 
@@ -183,7 +192,7 @@ already be a `ModelMetric` column, or the score stops riding on the existing met
 | Background jobs | None new. |
 | Reads | **1.0 ms** for the default feed on dev, against 15.4 ms for today's default. Full results in [§6](#6-dev-experiment-2026-09-16). |
 | Paging | Stable. The order doesn't change with time, so pages don't skip or repeat rows between loads. |
-| Storage | **20 MB** for the two-column index, measured on dev. A covering version would be larger; not yet measured. |
+| Storage | **Superseded by §10:** covering indexes shipped — `feed_hot` 45 MB plus `mbmm_feed_hot` 55 MB, against 318 MB for `feed_highest_rated` alone. |
 
 ### Why the index was tested on dev, not prod
 
@@ -375,9 +384,10 @@ name:
 
 - `useNewestOldestMultiBmPath` becomes something like `useModelMetricDrivenPath`, true for
   Newest, Oldest **and Hot**.
-- It must apply for **one** base model too, not just many. Today one base model takes path 2 and
-  drives from `mbm`, where `mm."hotScore"` can't lead the index scan. Hot should never drive from
-  `mbm`.
+- ~~It must apply for **one** base model too, not just many. Hot should never drive from `mbm`.~~
+  **Reversed by §10:** one base model *does* drive from `mbm`, via a `hotScore` mirrored onto
+  `ModelBaseModelMetric` and the `mbmm_feed_hot` index — 81 ms down to 1.1 ms for a mid-sized base
+  model. Only the several-base-models case needed path 3's condition extended.
 - Keep path 3's `LATERAL` sum, or the cards show whole-model download counts where the feed promises
   per-base-model ones.
 
@@ -782,7 +792,8 @@ DROP INDEX CONCURRENTLY "ModelMetric_hot_covering";
 DROP INDEX CONCURRENTLY "mbmm_feed_hot";
 DROP TRIGGER trg_model_metric_hot_score ON "ModelMetric";
 DROP FUNCTION public.model_metric_hot_score();
-ALTER TABLE "ModelMetric" DROP COLUMN "hotScore", DROP COLUMN "publishedAt";
+ALTER TABLE "ModelMetric" DROP COLUMN "hotScore", DROP COLUMN "publishedAt",
+                           DROP COLUMN "uniqueGeneratorCount";
 ALTER TABLE "ModelBaseModelMetric" DROP COLUMN "hotScore";
 ```
 
@@ -995,6 +1006,11 @@ Illustrious published 12,141 models in 45 days against Qwen 2.1's 160, and the m
 
 ### The fix and what it moved
 
+**Applying it:** `20261010120000` had already run in production when the constants changed, and it
+was edited in place rather than superseded. A trigger redefinition does **not** rescore existing
+rows — each row recomputes only when its own counts next move — so the file has to be re-run, which
+is why its backfill grew a `force` parameter defaulting to true. Done on production 2026-10-08.
+
 Two constants. Nothing else changed — no schema, no index, no application code, because the score
 lives in a trigger.
 
@@ -1078,6 +1094,29 @@ number in a trigger with no deploy attached.
 Verified on dev after populating the top 3,000 candidates: 0 single-generator models in the top 100,
 56 of 2,459 populated rows capped, and 74 of the new top 100 holding their exact prior score — the
 cap is surgical rather than a reweighting.
+
+### Rollout and what "done" means
+
+Apply `20261011120000` behind `SET lock_timeout = '5s'` **before** the deploy — the opposite of
+`20261010120000`, which wanted both timeouts cleared for its concurrent index builds. The order is
+not advisory: the deploy adds `uniqueGeneratorCount` to `modelMetricKeys`, and `bulkInsertMetrics`
+builds its INSERT column list from every key in that array unconditionally, so the whole model
+metrics job throws against a database without the column.
+
+The migration changes no score on its own. Then drive
+`/api/admin/temp/backfill-unique-generators` with `maxModels`, feeding `nextStartId` back as
+`startId` until `done` comes back true.
+
+**Done when the top-100 single-generator check returns 0** — not when every model has a count. A
+published model with generations but no row in the ClickHouse generator view keeps
+`uniqueGeneratorCount = 0` for good and stays uncapped, so the migration's `not_computed` figure
+never reaches 0. On the 2026-10-08 production run that residue was 1,118 models, none of which rank
+anywhere near the feed — the best sat at rank 9,354 and none were in the top 1,000. Their breakdown
+(98% absent from the generator view, which the generation-count view does know about) is a
+ClickHouse coverage gap, not a backfill failure.
+
+**Done on production 2026-10-08:** 681,862 models scanned, 564,097 counts written, 7,149 capped,
+and the top-100 check reading 0 single-generator and 0 zero-like models.
 
 ### What it does not fix
 

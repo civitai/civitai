@@ -1,6 +1,8 @@
 # Unique posters as a Hot signal
 
-Status: **plan**, 2026-10-08. Nothing is built. Proposed as the follow-up to the Hot sort
+Status: **plan**, 2026-10-08. Nothing is built. Not to be confused with `uniqueGeneratorCount`
+([model-feed-hot-ranking.md](model-feed-hot-ranking.md) §14), which **is** built and shipped — same
+"count people, not events" idea, different signal. Proposed as the follow-up to the Hot sort
 ([model-feed-hot-ranking.md](model-feed-hot-ranking.md)), which shipped with three signals — likes,
 downloads, generations. This adds a fourth: how many **distinct people** have posted an image made
 with the model.

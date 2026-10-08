@@ -479,13 +479,10 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
 //   return tasks;
 // }
 
-// Distinct people who generated with a model, which caps the hot score's generation
-// term (migration 20261011120000). This cannot go through ModelVersionMetric like
-// generationCount does: getVersionAggregationTasks SUMs version rows into ModelMetric,
+// Distinct generators per model, merged across versions in ClickHouse (uniqMerge), which
+// caps the hot score's generation term (migration 20261011120000). NOT routed through
+// ModelVersionMetric like generationCount: getVersionAggregationTasks SUMs version rows,
 // and summing per-version distinct counts double-counts anyone who used two versions.
-// So it aggregates to the model in ClickHouse — transform() maps each version back to
-// its model, and uniqMerge then collapses the uniq states across them — and writes
-// straight to ModelMetric via ctx.updates.
 async function getUniqueGeneratorTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'Model')`
     SELECT DISTINCT mv."modelId" as id

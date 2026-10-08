@@ -19,16 +19,16 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
  * the same shape the going-forward metrics task uses.
  *
  * Writing the column fires `trg_model_metric_hot_score`, so each batch recomputes
- * its own scores. Nothing else has to run afterwards.
+ * its own scores.
  *
- * Idempotent: re-running writes the same values, and `WHERE ... IS DISTINCT FROM`
- * means a second pass touches nothing and recomputes nothing.
+ * RESUMABLE, because it has to be. There are far too many models for one request, and
+ * every ingress in front of this cuts the connection long before a pass finishes. A
+ * killed request keeps the batches it already committed but restarts from the first
+ * model, so without paging the run never converges. Drive it with `maxModels` and feed
+ * `nextStartId` back as `startId` until it comes back null.
  *
- * RESUMABLE, because it has to be. There are hundreds of thousands of models to
- * cover and every ingress in front of this will cut the connection long before a
- * single pass finishes. A killed request keeps the batches it already committed but
- * restarts from the first model, so without paging the run never converges. Drive it
- * with `maxModels` and feed `nextStartId` back as `startId` until it comes back null.
+ * Done is the migration footer's top-100 check reading 0, NOT every model having a
+ * count: models with generations but no row in the ClickHouse view never get one.
  *
  * GET/POST /api/admin/temp/backfill-unique-generators?token=$WEBHOOK_TOKEN
  *   batchSize  models per batch (1-20000, default 5000)
@@ -107,8 +107,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       );
     if (dryRun || !rows.length) continue;
 
-    // IS DISTINCT FROM keeps a re-run from firing the trigger on rows that already
-    // hold the right value, so a second pass costs seconds instead of minutes.
+    // IS DISTINCT FROM keeps a re-run from firing the trigger on rows that already hold
+    // the right value, which is what makes the pass idempotent.
     const result = await pgDbWrite.query(
       `UPDATE "ModelMetric" mm
           SET "uniqueGeneratorCount" = v.count

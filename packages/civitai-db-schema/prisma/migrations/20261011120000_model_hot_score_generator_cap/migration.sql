@@ -32,7 +32,7 @@
 -- Unlike 20261010120000, this file is ordinary DDL: three statements, no CALL and no
 -- CREATE INDEX CONCURRENTLY, so it is transaction-safe and wants the OPPOSITE lock
 -- handling. ADD COLUMN with a non-volatile DEFAULT is metadata-only on PG 11+ (no
--- rewrite of a 3.6 GB table), but it still takes a brief ACCESS EXCLUSIVE lock on a
+-- table rewrite), but it still takes a brief ACCESS EXCLUSIVE lock on a
 -- table the metrics job writes every minute. Run it behind a SHORT lock_timeout so it
 -- fails fast instead of queueing behind a long read and blocking every writer behind
 -- it in turn:
@@ -58,13 +58,12 @@ BEGIN
             log(
                 1
                 + NEW."thumbsUpCount"
-                -- 6.4 and 4.1 are the MEDIAN per-model ratios of each signal to likes,
-                -- not the site-wide SUM ratios. 20261010120000 has the reasoning.
+                -- Divisors and the clamp below: see 20261010120000.
                 + NEW."downloadCount" / 6.4
                 -- 0 is "not computed yet", so the cap stays inert rather than zeroing
                 -- the generation term for every model between this file and the
-                -- backfill. The footer's verification query is what closes that gap:
-                -- afterwards no model has generations without a generator count.
+                -- backfill. Models with no generator-view row keep 0 for good and stay
+                -- uncapped; the footer's top-100 check is what bounds that exposure.
                 + CASE
                       WHEN NEW."uniqueGeneratorCount" > 0
                           THEN least(
@@ -100,8 +99,12 @@ CREATE OR REPLACE TRIGGER trg_model_metric_hot_score
 -- Verification -----------------------------------------------------------------
 --
 -- Straight after this file: not_computed should equal with_generations and capped
--- should be 0 — nothing has changed yet. After the backfill: not_computed must be 0,
--- or the models it counts still carry an uncapped score.
+-- should be 0 — nothing has changed yet.
+--
+-- After the backfill, not_computed does NOT reach 0 and is not meant to. A model with
+-- generations but no row in the ClickHouse generator view keeps a count of 0 for good,
+-- and stays uncapped. Those models rank far below the feed; the achievable check is the
+-- second query, and it is the one that says the backfill is done.
 --
 --   SELECT count(*) FILTER (WHERE "generationCount" > 0) AS with_generations,
 --          count(*) FILTER (WHERE "generationCount" > 0

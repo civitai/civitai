@@ -11,11 +11,14 @@
 -- --single-transaction: it contains CALL with internal COMMITs and two
 -- CREATE INDEX CONCURRENTLY, neither of which can run inside a transaction block.
 --
--- Re-runnable over a copy that already has it: every object is CREATE OR REPLACE or
--- IF NOT EXISTS, and the backfill defaults to force := true so it recomputes rows that
--- already hold a score. Pass force := false only to resume an interrupted first run.
+-- 🔴 DO NOT RE-RUN THIS FILE ONCE 20261011120000 IS APPLIED. It redefines
+-- model_metric_hot_score() and its trigger WITHOUT the generation cap, and its backfill
+-- defaults to force := true, so it would rescore every row uncapped and drop
+-- "uniqueGeneratorCount" from the trigger's UPDATE OF list. If you must re-run it,
+-- apply 20261011120000 again afterwards.
 --
--- Safe to apply while the current build is running: nothing reads these columns yet.
+-- On its own it is re-runnable: every object is CREATE OR REPLACE or IF NOT EXISTS.
+-- Pass force := false only to resume an interrupted first run.
 -- Prisma selects explicit column lists, so a client that predates the columns ignores
 -- them, and getModelsRaw is raw SQL that never does SELECT *.
 --
@@ -23,7 +26,7 @@
 --
 --   1. hotScore is NEVER NULL. `ORDER BY "hotScore" DESC` puts NULLs FIRST, so one NULL
 --      would outrank every model on the site. `DESC NULLS LAST` is not an escape: it
---      cannot use a DESC index, and the planner falls back to sorting ~420k rows.
+--      cannot use a DESC index, and the planner falls back to a full sort.
 --   2. A future publishedAt is clamped to now(). Without it a scheduled publish outranks
 --      everything until its date arrives — the same failure the lastVersionAt guard in
 --      20260501135000_tighten_sync_model_to_metric exists for.
@@ -39,8 +42,8 @@ ALTER TABLE "ModelMetric"
 -- Mirrored, not recomputed: the same model-level score, so the base-model feed can be
 -- served by a (baseModel, hotScore) index the way mbmm_feed_highest_rated serves
 -- Highest Rated. Without this, a base-model-filtered Hot query drives from ModelMetric
--- and walks the index hunting for matches: measured at 81 ms for NoobAI (11.5k models)
--- against 1.1 ms with the index below.
+-- and walks the index hunting for matches, which costs most for a mid-sized base model
+-- (docs/model-feed-hot-ranking.md §10 has the measurements).
 ALTER TABLE "ModelBaseModelMetric"
   ADD COLUMN IF NOT EXISTS "hotScore" INTEGER;
 
@@ -53,11 +56,9 @@ AS $function$
 BEGIN
     NEW."hotScore" := round(
         (
-            -- 6.4 and 4.1 are the MEDIAN per-model ratios of each signal to likes, so all
-            -- three carry equal weight on a typical model. The site-wide SUM ratios (8.5 and
-            -- 117) look like the same thing and are not: generations are concentrated in a
-            -- handful of checkpoints with billions apiece, so the sum ratio under-counted
-            -- generations ~28x and left them at 2% of a median model's engagement.
+            -- 6.4 and 4.1 are the MEDIAN per-model ratios of downloads and generations to
+            -- likes, NOT the site-wide SUM ratios: generations concentrate in a few
+            -- checkpoints, which skews a sum badly. Derivation: docs/model-feed-hot-ranking.md §13.
             log(
                 1
                 + NEW."thumbsUpCount"
@@ -116,9 +117,8 @@ LANGUAGE plpgsql
 AS $function$
 BEGIN
     IF NEW."hotScore" IS NULL THEN
-        -- coalesce to 0, not NULL: ~10k rows on dev reference a modelId with no
-        -- ModelMetric row at all (22 of them Published), and a NULL would put those at
-        -- the TOP of that base model's feed.
+        -- coalesce to 0, not NULL: some rows reference a modelId with no ModelMetric row
+        -- at all, and a NULL would put those at the TOP of that base model's feed.
         SELECT coalesce(mm."hotScore", 0) INTO NEW."hotScore"
           FROM "ModelMetric" mm
          WHERE mm."modelId" = NEW."modelId";
@@ -235,12 +235,11 @@ $function$;
 
 -- 5. Backfill -----------------------------------------------------------------
 --
--- A procedure rather than one UPDATE: ~960k rows in a single statement holds row locks
--- and a snapshot for the whole minute it takes. Batched by modelId with a COMMIT per
--- batch, so the metrics job keeps writing throughout.
+-- A procedure rather than one UPDATE: a single statement over every row holds row locks
+-- and a snapshot throughout. Batched by modelId with a COMMIT per batch, so the metrics
+-- job keeps writing.
 --
 -- Only "publishedAt" is assigned — trg_model_metric_hot_score computes the score from it.
--- Dev timing: ~62 s for ModelMetric, ~35 s for ModelBaseModelMetric.
 
 CREATE OR REPLACE PROCEDURE public.backfill_model_hot_score(batch_size INT DEFAULT 250000,
                                                             force BOOLEAN DEFAULT true)
@@ -256,7 +255,7 @@ BEGIN
 
     WHILE lo <= hi LOOP
         -- A correlated subquery, NOT `FROM "Model" m WHERE m.id = mm."modelId"`: the join
-        -- form skips any ModelMetric row whose Model is gone (6 such rows on dev), so the
+        -- form skips any ModelMetric row whose Model is gone, so the
         -- UPDATE never fires and the BEFORE trigger never computes their score, leaving a
         -- NULL that sorts FIRST. Every row in range has to be touched.
         UPDATE "ModelMetric" mm
@@ -284,8 +283,7 @@ BEGIN
 
     lo := 0;
     WHILE lo <= hi LOOP
-        -- Same reason, plus the coalesce: ~10k rows on dev reference a modelId with no
-        -- ModelMetric row, and those must land at 0 rather than NULL.
+        -- Same reason, plus the coalesce: orphaned modelIds must land at 0, not NULL.
         UPDATE "ModelBaseModelMetric" mbm
            SET "hotScore" = coalesce(
                    (SELECT mm."hotScore" FROM "ModelMetric" mm WHERE mm."modelId" = mbm."modelId"),
@@ -314,13 +312,12 @@ DROP PROCEDURE public.backfill_model_hot_score(INT, BOOLEAN);
 -- Both DESC with no NULLS LAST: the score cannot be NULL (trap 1), and a NULLS LAST
 -- ordering could not use these.
 --
--- INCLUDE carries the feed's filter columns so the scan stays index-only. Measured on
--- dev against the bare two-column version: default feed 0.68 vs 0.93 ms, deep page 2.44
--- vs 9.31 ms, one base model 1.77 vs 3.34 ms. Sizes on dev: 45 MB and 54 MB.
+-- INCLUDE carries the feed's filter columns so the scan stays index-only, which is worth
+-- far more than the extra size (docs/model-feed-hot-ranking.md §10 compares both).
 --
 -- 🔴 CREATE INDEX CONCURRENTLY waits for in-flight transactions to finish, so a session
--- lock_timeout will kill it on a busy table. It killed this statement on dev, where the
--- default is 5s. A killed CONCURRENTLY build leaves behind an INVALID index — and
+-- lock_timeout will kill it on a busy table. A killed CONCURRENTLY build leaves behind
+-- an INVALID index — and
 -- `IF NOT EXISTS` then treats that corpse as "already there" and silently does nothing,
 -- so the feed would ship with no index and nobody would see an error. The DO block below
 -- clears an invalid leftover first; keep it if you have to re-run this section.
@@ -348,8 +345,8 @@ $drop_invalid$;
 
 -- Both timeouts, not just lock_timeout. CONCURRENTLY waits for every transaction that
 -- was open when it started, so on a busy database the statement outlives a
--- statement_timeout even when it holds no lock — that is how this failed on dev the
--- second time (a 13-minute analytics query was open; the build sat behind it).
+-- statement_timeout even when it holds no lock, with one long-running query enough to
+-- outlast it.
 --
 -- 🔴 Before running these two, check for long transactions:
 --   SELECT pid, state, now() - xact_start AS age, left(query, 80)
@@ -374,7 +371,7 @@ RESET statement_timeout;
 
 -- 7. Vacuum ---------------------------------------------------------------------
 --
--- The backfill rewrote ~960k rows, which leaves the visibility map stale — and until a
+-- The backfill rewrote most of the table, which leaves the visibility map stale — and until a
 -- vacuum clears it, an index-only scan still visits the heap, which is the entire reason
 -- the indexes above carry INCLUDE columns. Autovacuum gets there on its own (the scale
 -- factor is well below a rewrite this size), so this only makes it immediate.

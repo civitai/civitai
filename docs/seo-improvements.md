@@ -97,9 +97,9 @@ server-side — was dropped: a sort needs no per-surface default and cannot retu
 Design, measurements and the zero-downtime rollout:
 [model-feed-hot-ranking.md](model-feed-hot-ranking.md).
 
-**Closing condition:** the migration `20261010120000_model_hot_score` is applied in production, the
-code ships, and a soft-404 re-export shows the `/tag/*` count falling without the head tags losing
-impressions.
+**Closing condition:** the code ships — both migrations are already applied in production
+(hot-ranking §11, §14) — and a soft-404 re-export shows the `/tag/*` count falling without the head
+tags losing impressions.
 
 ### Considered and deferred: a minimum-model threshold for indexing
 
