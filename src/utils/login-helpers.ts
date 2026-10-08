@@ -30,6 +30,7 @@ export const loginRedirectReasons = {
   'purchase-buzz': 'You need to be logged in to purchase Buzz',
   'image-gen':
     'Before you can generate, you need to create an account. Choose your preferred sign-in method below.',
+  'image-upload': 'You need to be logged in to upload images',
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
   'civitai-vault': 'You need to be logged in to access your Civitai Vault',
   'favorite-model': 'You need to be logged in to favorite a model',
@@ -51,7 +52,7 @@ export type LoginLinkOptions = {
   reason?: LoginRedirectReason;
 };
 
-export const trackedReasons = ['image-gen', 'train-model', 'blur-toggle'] as const;
+export const trackedReasons = ['image-gen', 'image-upload', 'train-model', 'blur-toggle'] as const;
 
 export function getLoginLink({ returnUrl, reason }: LoginLinkOptions) {
   return `/login?${QS.stringify({ returnUrl, reason })}`;

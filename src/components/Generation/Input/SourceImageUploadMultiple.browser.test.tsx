@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
+import { chooseFiles, makeUnreadableFilesFail } from '../../../../test/unreadable-files';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
 import type * as CanvasUtils from '~/shared/utils/canvas-utils';
 import type * as ImageUtils from '~/utils/image-utils';
@@ -10,6 +11,7 @@ import type * as ApplicationError from '~/utils/application-error';
 import type * as AuthHelpers from '~/utils/auth-helpers';
 import type * as ConsumerBlobUpload from '~/utils/consumer-blob-upload';
 import type * as SessionProviderModule from '~/providers/SessionProvider';
+import type * as ClientEnv from '~/env/client';
 
 /**
  * A failed source-image upload must end on an error card with the spinner cleared, and must not
@@ -81,6 +83,13 @@ vi.mock('~/utils/application-error', async (orig) => ({
   ...(await orig<typeof ApplicationError>()),
   reportApplicationError: mocks.reportApplicationError,
 }));
+
+// The image CDN's location, so a report can tell a CDN url from any other.
+const { IMAGE_LOCATION } = vi.hoisted(() => ({ IMAGE_LOCATION: 'https://cdn.example.test/loc' }));
+vi.mock('~/env/client', async (orig) => {
+  const actual = await orig<typeof ClientEnv>();
+  return { ...actual, env: { ...actual.env, NEXT_PUBLIC_IMAGE_LOCATION: IMAGE_LOCATION } };
+});
 
 vi.mock('~/utils/metadata/extract-source-metadata', () => ({
   extractSourceMetadata: vi.fn(async () => undefined),
@@ -681,8 +690,8 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     expect(document.body.textContent).not.toContain('Image failed to load');
     expect(vi.mocked(resizeImage)).not.toHaveBeenCalled();
     expect(loadFailures()).toEqual([
-      ['source image prep failed: dims', 'url Error'],
-      ['source image prep failed: dims', 'url Error'],
+      ['source image prep failed: dims', 'url Error origin:card host:other'],
+      ['source image prep failed: dims', 'url Error origin:card host:other'],
     ]);
     expect(reads()).toBe(2);
   });
@@ -767,7 +776,9 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     await expect.poll(loaderCount).toBe(0);
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
-    expect(loadFailures()).toEqual([['source image prep failed: dims', 'url Error']]);
+    expect(loadFailures()).toEqual([
+      ['source image prep failed: dims', 'url Error origin:card host:other'],
+    ]);
     expect(reads()).toBe(1);
   });
 
@@ -1115,7 +1126,7 @@ describe('SourceImageUploadMultiple — signed out', () => {
     await pickFiles(1);
 
     await vi.waitFor(() => expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1));
-    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-gen');
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-upload');
     await expectNothingStarted();
     expect(page.getByText(SIGN_IN_MESSAGE).elements()).toHaveLength(0);
   });
@@ -1129,7 +1140,7 @@ describe('SourceImageUploadMultiple — signed out', () => {
     await userEvent.keyboard('{Enter}');
 
     await vi.waitFor(() => expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1));
-    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-gen');
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-upload');
     await expectNothingStarted();
   });
 
@@ -1146,7 +1157,7 @@ describe('SourceImageUploadMultiple — signed out', () => {
     await pickFiles(1);
 
     await vi.waitFor(() => expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1));
-    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-gen');
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-upload');
     await expectNothingStarted();
   });
 
@@ -1169,7 +1180,7 @@ describe('SourceImageUploadMultiple — signed out', () => {
     void onConfirm([{ src: images[0].url, cropped: new Blob(['c'], { type: 'image/jpeg' }) }]);
 
     await vi.waitFor(() => expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1));
-    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-gen');
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-upload');
     await expectNothingStarted();
     // The session ended: the modal does not reopen and the image stays.
     expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1);
@@ -1208,7 +1219,7 @@ describe('SourceImageUploadMultiple — signed out', () => {
     void drawing.onConfirm(new Blob(['drawing'], { type: 'image/png' }), []);
 
     await vi.waitFor(() => expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1));
-    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-gen');
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-upload');
     await expectNothingStarted();
   });
 
@@ -1229,7 +1240,7 @@ describe('SourceImageUploadMultiple — signed out', () => {
     // The message's own button is the gesture that opens sign-in.
     await userEvent.click(page.getByRole('button', { name: 'Sign in' }));
     expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1);
-    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-gen');
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-upload');
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
   });
 
@@ -1315,3 +1326,281 @@ describe('SourceImageUploadMultiple — signed out', () => {
     expect(page.getByText(SIGN_IN_MESSAGE).elements()).toHaveLength(0);
   });
 });
+
+/**
+ * Some Android photo pickers hand the page a File no API can read (every read rejects with
+ * NotReadableError), while the same photo chosen from the Files app reads fine. Such a pick must not
+ * start anything; the user is offered a Files chooser (a file input with no image-only `accept`)
+ * instead, and each such pick is reported once.
+ */
+describe('SourceImageUploadMultiple — a pick the photo picker made unreadable', () => {
+  const PICK_MESSAGE =
+    "Your phone's photo picker gave us a file we can't open. Choose it from Files instead.";
+  let restoreReads = () => undefined as void;
+
+  beforeEach(() => {
+    uploads = [];
+    events = [];
+    lastValue = [];
+    valueWrites = [];
+    mocks.orchestratorUrl = '';
+    useImagesUploadingStore.setState({ uploading: [], verifying: [] });
+    mocks.uploadConsumerBlob
+      .mockReset()
+      .mockImplementation(
+        () => new Promise((resolve, reject) => uploads.push({ resolve, reject, settled: false }))
+      );
+    mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+    mocks.dialogTrigger.mockReset();
+    vi.mocked(resizeImage).mockClear();
+    restoreReads = makeUnreadableFilesFail();
+  });
+  afterEach(() => restoreReads());
+
+  const reports = () =>
+    mocks.reportApplicationError.mock.calls.map(([error, ctx]) => [
+      (error as Error).message,
+      (ctx as { message?: string } | undefined)?.message,
+    ]);
+  const PICK_REPORT = [
+    'source image prep failed: pick-unreadable',
+    'picked-file image/jpeg <5MB NotReadableError',
+  ];
+
+  async function expectFilesFallbackOffered() {
+    await expect.element(page.getByText(PICK_MESSAGE, { exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: 'Choose from Files' })).toBeVisible();
+    const input = filesFallbackInput();
+    expect(input.type).toBe('file');
+    expect(input.hasAttribute('accept')).toBe(false);
+  }
+
+  async function expectNothingStarted() {
+    await sleep(300);
+    expect(mocks.getImageDimensions).not.toHaveBeenCalled();
+    expect(vi.mocked(resizeImage)).not.toHaveBeenCalled();
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(loaderCount()).toBe(0);
+    expect(pendingNow()).toBe(false);
+  }
+
+  test('is not uploaded, offers the Files chooser, and is reported once', async () => {
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+
+    await expectFilesFallbackOffered();
+    await expectNothingStarted();
+    expect(reports()).toEqual([PICK_REPORT]);
+  });
+
+  test('alongside a readable pick: only the readable one is uploaded', async () => {
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('photo-0.jpg'), imageFile('unreadable-1.jpg')]);
+
+    await expectFilesFallbackOffered();
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    await sleep(300);
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(1);
+    expect(reports()).toEqual([PICK_REPORT]);
+  });
+
+  test('a file chosen from Files is uploaded and the message goes', async () => {
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-0.jpg')]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].resolve({ url: await loadableImageUrl(), available: true });
+    await vi.waitFor(() => expect(lastValue).toHaveLength(1));
+    expect(page.getByText(PICK_MESSAGE).elements()).toHaveLength(0);
+  });
+
+  test('a file of another type chosen from Files is refused', async () => {
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    await chooseFiles(filesFallbackInput(), [new File(['x'], 'notes.txt', { type: 'text/plain' })]);
+    await expect
+      .element(page.getByText("That file type isn't supported here.", { exact: true }))
+      .toBeVisible();
+    await expectNothingStarted();
+  });
+
+  test('into a slot: nothing starts, and a file chosen from Files fills that slot', async () => {
+    function SlotHarness() {
+      const [value, setValue] = useState<ImageValue[]>([]);
+      const onChange = (next: ImageValue[]) =>
+        setValue((prev) => {
+          if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+          lastValue = next ?? [];
+          return next;
+        });
+      return (
+        <div data-testid="source-images">
+          <ImageUploadMultipleInput
+            value={value}
+            onChange={onChange}
+            slots={[{ label: 'First frame' }, { label: 'Last frame' }]}
+          />
+        </div>
+      );
+    }
+    renderWithProviders(<SlotHarness />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+
+    await expectFilesFallbackOffered();
+    await expectNothingStarted();
+    expect(reports()).toEqual([PICK_REPORT]);
+
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-0.jpg')]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    const uploaded = await loadableImageUrl();
+    uploads[0].resolve({ url: uploaded, available: true });
+    await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
+  });
+});
+
+/** The upload measures the image it uploads, so its url is not downloaded again to measure it. */
+describe('SourceImageUploadMultiple — an uploaded image', () => {
+  beforeEach(() => {
+    uploads = [];
+    events = [];
+    lastValue = [];
+    valueWrites = [];
+    mocks.orchestratorUrl = '';
+    useImagesUploadingStore.setState({ uploading: [], verifying: [] });
+    mocks.uploadConsumerBlob
+      .mockReset()
+      .mockImplementation(
+        () => new Promise((resolve, reject) => uploads.push({ resolve, reject, settled: false }))
+      );
+    mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
+    mocks.dialogTrigger.mockReset();
+  });
+
+  test('is not read again for its dimensions once it is in the value', async () => {
+    renderWithProviders(<PendingHarness max={3} />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    const uploaded = await loadableImageUrl();
+    uploads[0].resolve({ url: uploaded, available: true });
+    await vi.waitFor(() =>
+      expect(lastValue).toEqual([{ url: uploaded, width: 1024, height: 1024 }])
+    );
+    await sleep(500);
+
+    expect(mocks.getImageDimensions.mock.calls.filter(([src]) => src === uploaded)).toEqual([]);
+    expect(pendingNow()).toBe(false);
+  });
+});
+
+/**
+ * A url that fails to load is reported with where it came from (already in the value, or a new card)
+ * and the class of its host, never the url; a remote url that times out loading reads as a network
+ * problem, not as one the device had preparing it.
+ */
+describe('SourceImageUploadMultiple — a url that cannot be loaded', () => {
+  const cachedUrls: string[] = [];
+  beforeEach(() => {
+    uploads = [];
+    events = [];
+    lastValue = [];
+    valueWrites = [];
+    mocks.orchestratorUrl = '';
+    useImagesUploadingStore.setState({ uploading: [], verifying: [] });
+    mocks.uploadConsumerBlob.mockReset();
+    mocks.getImageDimensions.mockReset();
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+    mocks.dialogTrigger.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    for (const url of cachedUrls.splice(0)) sourceMetadataStore.removeMetadata(url);
+  });
+
+  const reports = () =>
+    mocks.reportApplicationError.mock.calls.map(([error, ctx]) => [
+      (error as Error).message,
+      (ctx as { message?: string } | undefined)?.message,
+    ]);
+
+  test('a pasted url that times out loading shows network wording', async () => {
+    mocks.getImageDimensions.mockImplementation(() => new Promise(() => undefined));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    renderWithProviders(<PendingHarness layout="url-input" />);
+    await userEvent.fill(
+      page.getByPlaceholder('Add a file or provide a URL'),
+      'https://example.com/slow.jpg'
+    );
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    await expect
+      .element(
+        page.getByText("Couldn't load this image. Check your connection and try again.", {
+          exact: true,
+        })
+      )
+      .toBeVisible();
+    expect(document.body.textContent).not.toContain('on your device');
+    expect(reports()).toEqual([
+      ['source image prep failed: dims:timeout', 'url origin:card host:other'],
+    ]);
+  });
+
+  test('a picked file that times out keeps the on-device wording', async () => {
+    mocks.getImageDimensions.mockImplementation(() => new Promise(() => undefined));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    await expect
+      .element(
+        page.getByText(
+          "Couldn't process this image on your device. Try a smaller photo or a screenshot.",
+          { exact: true }
+        )
+      )
+      .toBeVisible();
+  });
+
+  test.each([
+    ['https://orchestration.civitai.com/v2/consumer/blobs/abc.jpeg', 'orchestrator'],
+    [`${IMAGE_LOCATION}/abc/original=true/a.jpeg`, 'image-cdn'],
+    ['https://civitai.com/images/123', 'site-page'],
+    ['https://example.com/only-in-the-value.jpg', 'other'],
+  ])('an image already in the value: %s reports host:%s', async (url, hostClass) => {
+    cachedUrls.push(url);
+    mocks.getImageDimensions.mockRejectedValue(new Error('Image failed to load'));
+    renderWithProviders(<PendingHarness initialValue={[{ url, width: 1024, height: 1024 }]} />);
+
+    await vi.waitFor(() => expect(reports()).toHaveLength(1));
+    expect(reports()).toEqual([
+      ['source image prep failed: dims', `url Error origin:value host:${hostClass}`],
+    ]);
+  });
+});
+
+function dropzoneInput() {
+  return vi.waitFor(() => {
+    const input = document.querySelector<HTMLInputElement>(
+      '[data-testid="source-images"] input[type=file]:not([data-testid="unreadable-pick-files-input"])'
+    );
+    if (!input) throw new Error('dropzone input not found');
+    return input;
+  });
+}
+
+function filesFallbackInput() {
+  const input = document.querySelector<HTMLInputElement>(
+    '[data-testid="unreadable-pick-files-input"]'
+  );
+  if (!input) throw new Error('Files fallback input not found');
+  return input;
+}
