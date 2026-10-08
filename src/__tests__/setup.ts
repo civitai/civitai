@@ -56,7 +56,7 @@ vi.mock('@civitai/client', () => ({
   BuzzClientAccount: { System: 'System', User: 'User' },
   TransactionType: { Credit: 'Credit', Debit: 'Debit' },
   Priority: { Normal: 'Normal', High: 'High' },
-  NsfwLevel: { None: 'None', Soft: 'Soft', Mature: 'Mature', X: 'X' },
+  NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
   WorkflowStatus: { Pending: 'Pending', Running: 'Running', Completed: 'Completed' },
   KlingMode: {},
   KlingModel: {},

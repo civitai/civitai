@@ -1,11 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// The global setup mock's NsfwLevel has no R and the wrong casing.
-vi.mock('@civitai/client', () => ({
-  NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
-  WorkflowStatus: {},
-}));
-
+import { describe, expect, it } from 'vitest';
 import {
   greenBlockedReason,
   parseBlobHeaderVerdict,
