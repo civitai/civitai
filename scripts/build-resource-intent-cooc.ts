@@ -33,7 +33,7 @@ function parseDate(flag: string, v: string): Date {
   return d;
 }
 
-/** Flag rules only; the date/pin bounds are the pipeline's and the store's (one copy each). */
+/** Flag rules only; the date and pin bounds are enforced by the pipeline and the store. */
 export function parseCoocScriptArgs(argv: string[]): CoocScriptCommand {
   const { values } = parseArgs({
     args: argv,
@@ -64,7 +64,7 @@ export function parseCoocScriptArgs(argv: string[]): CoocScriptCommand {
     if (trainEnd) throw new Error('--kind production cannot take --train-end (no backdating)');
     if (pinnedUntil) throw new Error('--kind production cannot take --pin-until');
   } else if (!pinnedUntil) {
-    throw new Error('--kind study requires --pin-until (at most 58 days ahead)');
+    throw new Error('--kind study requires --pin-until');
   }
   let seed: number | undefined;
   if (values.seed !== undefined) {

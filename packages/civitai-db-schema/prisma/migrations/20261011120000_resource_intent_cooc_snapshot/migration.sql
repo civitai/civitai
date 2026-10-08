@@ -3,21 +3,26 @@
 -- Apply this MANUALLY, per environment, BEFORE turning on the
 -- `resource-intent-cooc-build` flag or running scripts/build-resource-intent-cooc.ts
 -- without --dry-run. We do not use `prisma migrate deploy` anywhere; this file exists
--- for review/history. Re-runnable: every statement is guarded with IF NOT EXISTS / DO blocks.
+-- for review/history. Re-runnable: every statement is guarded (IF NOT EXISTS, DO blocks,
+-- CREATE OR REPLACE, DROP ... IF EXISTS).
 --
 -- A row is inserted when a build starts ('building') with a random id, then set
--- 'ready' or 'failed' once; a ready row is never updated again, only deleted by
--- retention. `builtAt` is the database's clock, never the writer's.
+-- 'ready', 'failed' or 'duplicate' once; only a 'building' row can change, and rows are
+-- removed only by delete (retention or an explicit study release). `builtAt` is the
+-- database's clock: the trigger below overwrites any value a writer supplies and
+-- refuses to change it.
 --
 -- `contentHash` = sha256(kind || NUL || payload), where `payload` is msgpack + brotli
--- of integer counts. It is the snapshot's identity: unique among ready rows (partial
+-- of integer counts and the vocabulary of tokens that have a kept (token, model) pair.
+-- It is the snapshot's identity: unique among ready rows (partial
 -- index below), verified on every load, and what a study pins. A study and a production
 -- build of identical data therefore have distinct hashes.
 --
 -- `kind` and `status` are TEXT rather than enums. The CHECKs hold the rules the app also
--- enforces: a study row is always pinned, for at most 58 days from its build (with a daily
--- sweep and a ~26 h heartbeat staleness alert, a missed sweep alerts before any study row
--- reaches 60 days); a production row is never pinned;
+-- enforces: a study row is always pinned, for at most 58 days from its build (with the
+-- daily retention sweep and a ~26 h staleness alert on its heartbeat, which must be
+-- provisioned outside this repo, a missed sweep alerts before any study row reaches 60
+-- days); a production row is never pinned;
 -- a ready row carries its hash, payload and counts.
 
 SET lock_timeout = '3s';
@@ -77,3 +82,25 @@ BEGIN
             );
     END IF;
 END $$;
+
+CREATE OR REPLACE FUNCTION "ResourceIntentCoocSnapshot_guard"() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW."builtAt" := CURRENT_TIMESTAMP;
+        RETURN NEW;
+    END IF;
+    IF NEW."builtAt" IS DISTINCT FROM OLD."builtAt" THEN
+        RAISE EXCEPTION 'ResourceIntentCoocSnapshot.builtAt cannot change';
+    END IF;
+    IF OLD."status" <> 'building' THEN
+        RAISE EXCEPTION 'ResourceIntentCoocSnapshot row % is %; only a building row can change',
+            OLD."id", OLD."status";
+    END IF;
+    RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS "ResourceIntentCoocSnapshot_guard" ON "ResourceIntentCoocSnapshot";
+CREATE TRIGGER "ResourceIntentCoocSnapshot_guard"
+    BEFORE INSERT OR UPDATE ON "ResourceIntentCoocSnapshot"
+    FOR EACH ROW EXECUTE FUNCTION "ResourceIntentCoocSnapshot_guard"();

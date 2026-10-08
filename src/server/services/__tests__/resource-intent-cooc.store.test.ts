@@ -22,6 +22,7 @@ import {
   CoocSnapshotExpiredError,
   CoocSnapshotHashMismatchError,
   CoocSnapshotKindMismatchError,
+  CoocStudyDuplicateError,
   createCoocSnapshotHolder,
   failCoocBuild,
   latestReadySnapshotId,
@@ -31,7 +32,7 @@ import {
   type CoocBuildResult,
   type CoocSql,
 } from '~/server/services/resource-intent-cooc/store';
-import { freshDb, ids, MIGRATION_SQL, seed } from './resource-intent-cooc.harness';
+import { asFixtureWriter, freshDb, ids, MIGRATION_SQL, seed } from './resource-intent-cooc.harness';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
@@ -47,7 +48,11 @@ const goldenRows = golden.rows.map(([t, m]) => ({ tokens: t ? t.split(' ') : [],
 function countsOf(rows: typeof goldenRows): CoocCounts {
   const acc = new CoocCountAccumulator(RESOURCE_INTENT_COOC_SPEC.addonTypes);
   for (const r of rows) acc.add(r.tokens, r.models);
-  const { rawPairs: _raw, ...counts } = acc.finalize(RESOURCE_INTENT_COOC_SPEC);
+  const {
+    rawPairs: _raw,
+    rawVocab: _rawVocab,
+    ...counts
+  } = acc.finalize(RESOURCE_INTENT_COOC_SPEC);
   return counts;
 }
 const COUNTS = countsOf(goldenRows);
@@ -122,8 +127,7 @@ describe('cooc snapshot payload', () => {
         payload: Buffer.alloc(COOC_MAX_PAYLOAD_BYTES + 1),
       })
     ).rejects.toThrow(/exceeds/);
-    // The screen measured 116,533 tokens, 72,977 models and 1.57M kept pairs. Random counts
-    // compress worst; the payload must still fit.
+    // Screen-scale V/M/P; random counts compress worst, so the payload must still fit.
     let x = 7;
     const rnd = () => (x = (x * 1103515245 + 12345) >>> 0) / 2 ** 32;
     const V = 116_533;
@@ -181,9 +185,11 @@ describe('cooc store on the real migration', () => {
     const { db, sql } = await freshDb();
     const { id } = await begin(sql, 'production');
     const { contentHash } = await completeCoocBuild(sql, id, await result());
-    await db.query(
-      `UPDATE "ResourceIntentCoocSnapshot" SET "payload" = "payload" || '\\x00'::bytea WHERE "id" = $1`,
-      [id]
+    await asFixtureWriter(db, () =>
+      db.query(
+        `UPDATE "ResourceIntentCoocSnapshot" SET "payload" = "payload" || '\\x00'::bytea WHERE "id" = $1`,
+        [id]
+      )
     );
     await expect(
       loadCoocSnapshot(sql, contentHash, { kind: 'production', now: NOW })
@@ -212,6 +218,50 @@ describe('cooc store on the real migration', () => {
     const a = await completeCoocBuild(sql, (await begin(sql, 'production')).id, r);
     const b = await completeCoocBuild(sql, (await begin(sql, 'production')).id, r);
     expect([a.created, b.created]).toEqual([true, false]);
+    const st = await db.query<{ status: string }>(
+      `SELECT "status" FROM "ResourceIntentCoocSnapshot" ORDER BY "status"`
+    );
+    expect(st.rows.map((x) => x.status)).toEqual(['duplicate', 'ready']);
+  });
+
+  it('a second study build of the same content fails loudly instead of sharing the first pin', async () => {
+    const { db, sql } = await freshDb();
+    const r = await result();
+    const first = await completeCoocBuild(sql, (await begin(sql, 'study')).id, r);
+    const second = (await begin(sql, 'study', { pinnedUntil: new Date(Date.now() + 50 * DAY) })).id;
+    await expect(completeCoocBuild(sql, second, r)).rejects.toBeInstanceOf(CoocStudyDuplicateError);
+    const st = await db.query<{ id: string; status: string; contentHash: string | null }>(
+      `SELECT "id", "status", "contentHash" FROM "ResourceIntentCoocSnapshot"`
+    );
+    expect(st.rows.find((x) => x.id === second)?.status).toBe('duplicate');
+    expect(st.rows.filter((x) => x.status === 'ready').map((x) => x.contentHash)).toEqual([
+      first.contentHash,
+    ]);
+  });
+
+  it('a concurrent identical build that wins the unique index makes this one a duplicate', async () => {
+    const { db, sql } = await freshDb();
+    const r = await result();
+    await completeCoocBuild(sql, (await begin(sql, 'production')).id, r);
+    const { id } = await begin(sql, 'production');
+    // The pre-check misses the winner (it committed after the check), so the UPDATE hits the index.
+    let hidden = true;
+    const racing: CoocSql = {
+      query: async <T>(q: Parameters<CoocSql['query']>[0]) => {
+        if (
+          hidden &&
+          q.text.startsWith('\n    SELECT "id" FROM') &&
+          q.text.includes('"contentHash" =')
+        ) {
+          hidden = false;
+          return [] as T[];
+        }
+        return sql.query<T>(q);
+      },
+      execute: sql.execute,
+    };
+    expect(await completeCoocBuild(racing, id, r)).toMatchObject({ created: false });
+    expect(hidden).toBe(false);
     const st = await db.query<{ status: string }>(
       `SELECT "status" FROM "ResourceIntentCoocSnapshot" ORDER BY "status"`
     );
@@ -272,6 +322,39 @@ describe('cooc store on the real migration', () => {
         builtAt: NOW,
       } as never)
     ).rejects.toThrow(/builtAt is set by the database/);
+  });
+});
+
+describe('cooc row guard trigger', () => {
+  it('overwrites a writer-supplied builtAt with the database clock', async () => {
+    const { db } = await freshDb();
+    await db.query(
+      `INSERT INTO "ResourceIntentCoocSnapshot" ("kind","specHash","trainStart","trainEnd","seed","builtAt")
+       VALUES ('production','s', now() - interval '130 days', now() - interval '10 days', 1, '2001-01-01')`
+    );
+    const r = await db.query<{ off: number }>(
+      `SELECT abs(extract(epoch FROM (now()::timestamp(3) - "builtAt"))) AS "off" FROM "ResourceIntentCoocSnapshot"`
+    );
+    expect(Number(r.rows[0].off)).toBeLessThan(60);
+  });
+
+  it('refuses any change to a ready row, and any change of builtAt', async () => {
+    const { db, sql } = await freshDb();
+    const { id } = await begin(sql, 'production');
+    await expect(
+      db.query(`UPDATE "ResourceIntentCoocSnapshot" SET "builtAt" = '2001-01-01' WHERE "id" = $1`, [
+        id,
+      ])
+    ).rejects.toThrow(/builtAt cannot change/);
+    await completeCoocBuild(sql, id, await result());
+    await expect(
+      db.query(`UPDATE "ResourceIntentCoocSnapshot" SET "seed" = 2 WHERE "id" = $1`, [id])
+    ).rejects.toThrow(/only a building row can change/);
+    await expect(failCoocBuild(sql, id)).resolves.toBeUndefined(); // a no-op, not an error
+    const st = await db.query<{ status: string }>(
+      `SELECT "status" FROM "ResourceIntentCoocSnapshot"`
+    );
+    expect(st.rows[0].status).toBe('ready');
   });
 });
 
@@ -416,6 +499,21 @@ describe('cooc served snapshot', () => {
     expect(await latestReadySnapshotId(sql)).toBe('P');
   });
 
+  it('a full tie on trainEnd and builtAt is broken by the higher id, in SQL and in retention alike', async () => {
+    const { db, sql } = await freshDb();
+    const t = ago(9);
+    const b = ago(8);
+    await seed(db, { id: 'aaa', kind: 'production', trainEnd: t, builtAt: b, contentHash: 'A' });
+    await seed(db, { id: 'zzz', kind: 'production', trainEnd: t, builtAt: b, contentHash: 'Z' });
+    expect(await latestReadySnapshotId(sql)).toBe('Z');
+    const rows = (
+      await db.query<Parameters<typeof selectCoocSnapshotsToDelete>[0][number]>(
+        `SELECT "id","kind","status","trainEnd","builtAt","pinnedUntil" FROM "ResourceIntentCoocSnapshot"`
+      )
+    ).rows;
+    expect(selectCoocSnapshotsToDelete(rows, ahead(400))).toEqual(['aaa']);
+  });
+
   it('retention protects exactly the row latestReadySnapshotId serves (random tables)', async () => {
     let x = 3;
     const rnd = () => (x = (x * 1103515245 + 12345) >>> 0) / 2 ** 32;
@@ -470,6 +568,32 @@ describe('cooc retention', () => {
     const { deleted } = await applyCoocRetention(sql, NOW);
     expect(deleted).toEqual([old]);
     expect((await ids(db)).sort()).toEqual([served, recent].sort());
+  });
+
+  it('production and non-ready age limits are exact: 28 d and 7 d kept, a millisecond more deleted', async () => {
+    const { db, sql } = await freshDb();
+    await seed(db, { kind: 'production', trainEnd: ago(1), builtAt: ago(0.5) }); // served
+    const p28 = await seed(db, { kind: 'production', trainEnd: ago(29), builtAt: ago(28) });
+    const p28x = await seed(db, {
+      kind: 'production',
+      trainEnd: ago(30),
+      builtAt: new Date(ago(28).getTime() - 1),
+    });
+    const f7 = await seed(db, {
+      kind: 'production',
+      status: 'failed',
+      trainEnd: ago(8),
+      builtAt: ago(7),
+    });
+    const f7x = await seed(db, {
+      kind: 'production',
+      status: 'failed',
+      trainEnd: ago(8),
+      builtAt: new Date(ago(7).getTime() - 1),
+    });
+    const { deleted } = await applyCoocRetention(sql, NOW);
+    expect(deleted.sort()).toEqual([p28x, f7x].sort());
+    expect(await ids(db)).toEqual(expect.arrayContaining([p28, f7]));
   });
 
   it('keeps the served production snapshot however old it is', async () => {

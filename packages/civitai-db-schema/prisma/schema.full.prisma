@@ -1820,15 +1820,12 @@ model ResourceInsight {
   @@index([stale])
 }
 
-// One build of the resource-intent co-occurrence index (token -> model counts). A row is
-// inserted when a build starts (`status` 'building'), then set 'ready' or 'failed' once; a
-// ready row never changes again. `contentHash` = sha256(kind, NUL, payload), where `payload` is
-// msgpack + brotli of integer counts only; it is the snapshot's identity (unique among ready
-// rows, a partial index the migration creates) and loads verify it. `kind` 'production' rows are
-// what the weekly job writes and serving reads; 'study' rows are pinned builds for an offline
-// study, deleted at `pinnedUntil` or on explicit release (a DB CHECK holds the pin rules).
-// `trainImageIds` is read only by study controls, never by serving. Written by
-// src/server/services/resource-intent-cooc/pipeline.ts. The migration is applied manually per
+// One build of the resource-intent co-occurrence index (token -> model). Inserted when a build
+// starts ('building'), then set 'ready', 'failed' or 'duplicate' once; a DB trigger refuses any
+// change to a row that is no longer 'building' and sets `builtAt` itself. `contentHash` =
+// sha256(kind, NUL, payload) is the snapshot's identity (unique among ready rows) and is verified
+// on load. Pin rules are a DB CHECK. Written only through raw SQL in
+// src/server/services/resource-intent-cooc/store.ts. The migration is applied manually per
 // environment (no prisma migrate deploy).
 model ResourceIntentCoocSnapshot {
   id                String    @id @default(uuid())

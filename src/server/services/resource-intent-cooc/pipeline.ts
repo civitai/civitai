@@ -6,7 +6,6 @@ import {
   serializeCoocCounts,
   serializeTrainImageIds,
   type CoocRawQuery,
-  type CoocVersionText,
 } from './build';
 import { RESOURCE_INTENT_COOC_SPEC, RESOURCE_INTENT_COOC_SPEC_HASH } from './spec';
 import {
@@ -15,13 +14,15 @@ import {
   completeCoocBuild,
   coocContentHash,
   coocSqlOf,
+  DAY_MS,
   failCoocBuild,
   type CoocSnapshotKind,
   type CoocSql,
 } from './store';
-import { coocTrainingTokens } from './tokenize';
+import { coocTrainingTokens, type CoocModelText } from './tokenize';
 
-const DAY_MS = 86_400_000;
+/** Rows tokenised between yields to the event loop. */
+const ROWS_PER_YIELD = 1000;
 
 export type CoocBuildOptions = {
   kind: CoocSnapshotKind;
@@ -48,6 +49,7 @@ export type CoocBuildSummary = {
   batches: number;
   trainRows: number;
   vocab: number;
+  rawVocab: number;
   models: number;
   rawPairs: number;
   keptPairs: number;
@@ -100,7 +102,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
       ).id;
   try {
     const acc = new CoocCountAccumulator(spec.addonTypes);
-    const versionText = new Map<number, CoocVersionText>();
+    const versionText = new Map<number, CoocModelText>();
     const imageIds: number[] = [];
     let createdMin = Infinity;
     let createdMax = -Infinity;
@@ -117,7 +119,8 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
           (v) => !versionText.has(v)
         );
         for (const [id, text] of await fetchVersionText(query, missing)) versionText.set(id, text);
-        for (const r of rows) {
+        for (const [i, r] of rows.entries()) {
+          if (i > 0 && i % ROWS_PER_YIELD === 0) await new Promise((res) => setImmediate(res));
           const own = r.att.map(
             (a) => versionText.get(a.versionId) ?? { modelName: '', trainedWords: null }
           );
@@ -136,7 +139,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
     if (createdMin < trainStart.getTime() || createdMax >= trainEnd.getTime())
       throw new Error('a training row lies outside the training window');
 
-    const { rawPairs, ...counts } = acc.finalize(spec);
+    const { rawPairs, rawVocab, ...counts } = acc.finalize(spec);
     const payload = await serializeCoocCounts(counts);
     const summary: CoocBuildSummary = {
       rowId,
@@ -150,6 +153,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
       batches: draw.batches,
       trainRows: counts.N,
       vocab: counts.vocab.length,
+      rawVocab,
       models: counts.modelIds.length,
       rawPairs,
       keptPairs: counts.modelIdx.length,

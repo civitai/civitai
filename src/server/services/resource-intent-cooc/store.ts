@@ -4,11 +4,10 @@ import { Prisma } from '@prisma/client';
 import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocCounts, type CoocCounts } from './build';
 
 /**
- * `ResourceIntentCoocSnapshot` storage: the build lifecycle (begin → ready | failed), verified
- * load, the served snapshot, retention, release and a single-flight in-process holder.
+ * `ResourceIntentCoocSnapshot` storage: the build lifecycle (begin → ready | failed | duplicate),
+ * verified load, the served snapshot, retention, release and a single-flight in-process holder.
  *
- * Raw SQL against the migration's table, so the tests can run the real DDL — its CHECKs and
- * partial unique index included — rather than a hand-kept fake.
+ * Raw SQL so the tests run the migration's real CHECKs and partial unique index.
  *
  * Nothing on the request path reads this yet. When serving lands, its contract when no snapshot
  * can be served is the operator's: "Return BASE's top 50, still fully gated, with
@@ -34,10 +33,11 @@ export function coocSqlOf(db: {
 export type CoocSnapshotKind = 'production' | 'study';
 export const COOC_SNAPSHOT_KINDS: readonly CoocSnapshotKind[] = ['production', 'study'];
 
-const DAY_MS = 86_400_000;
+export const DAY_MS = 86_400_000;
 /**
- * A study pin may run at most this long after the build: with a daily sweep and a ~26 h heartbeat
- * staleness alert, a missed sweep alerts before any study row reaches 60 days.
+ * A study pin may run at most this long after the build. With the daily sweep and a ~26 h
+ * staleness alert on the retention heartbeat (an alert rule that must be provisioned outside this
+ * repo), a missed sweep alerts before any study row reaches 60 days.
  */
 export const COOC_MAX_PIN_DAYS = 58;
 /** A study row still present this long after its build fails the sweep. */
@@ -71,6 +71,7 @@ export type CoocSnapshotMeta = {
 export class CoocSnapshotHashMismatchError extends Error {}
 export class CoocSnapshotExpiredError extends Error {}
 export class CoocSnapshotKindMismatchError extends Error {}
+export class CoocStudyDuplicateError extends Error {}
 
 /**
  * A snapshot's identity: sha256 of its kind, a NUL and its payload. Binding the kind means a study
@@ -82,7 +83,7 @@ export function coocContentHash(kind: CoocSnapshotKind, payload: Uint8Array): st
 }
 
 /**
- * The pin rules, in one place for the script and the store (the migration's CHECK holds the same
+ * The pin rules, in one place for the pipeline and the store (the migration's CHECK holds the same
  * against the database's `builtAt`): a study snapshot is always pinned, ending after `builtAt` and
  * at most `COOC_MAX_PIN_DAYS` later; a production snapshot is never pinned.
  */
@@ -146,7 +147,9 @@ async function readyRowWithHash(sql: CoocSql, contentHash: string) {
 
 /**
  * Mark a building row ready with its payload. If a ready snapshot with the same content already
- * exists (a same-day re-run), this row becomes 'duplicate' instead and the existing one stands.
+ * exists (a same-day re-run), this row becomes 'duplicate' and the existing one stands. For a
+ * study that also throws: the existing row carries ANOTHER study's pin, so silently sharing it
+ * would let that study's pin or release delete this one's snapshot.
  */
 export async function completeCoocBuild(
   sql: CoocSql,
@@ -163,6 +166,13 @@ export async function completeCoocBuild(
   const markDuplicate = async () => {
     await sql.execute(Prisma.sql`
       UPDATE ${T} SET "status" = 'duplicate' WHERE "id" = ${id} AND "status" = 'building'`);
+    if (row.kind === 'study') {
+      const [existing] = await sql.query<{ pinnedUntil: Date | null }>(Prisma.sql`
+        SELECT "pinnedUntil" FROM ${T} WHERE "contentHash" = ${contentHash} AND "status" = 'ready'`);
+      throw new CoocStudyDuplicateError(
+        `study snapshot ${contentHash} already exists, pinned until ${existing?.pinnedUntil?.toISOString()}; use a different --seed or --train-end`
+      );
+    }
     return { contentHash, created: false };
   };
   if (await readyRowWithHash(sql, contentHash)) return markDuplicate();
@@ -196,8 +206,8 @@ const META_COLUMNS = Prisma.raw(
 
 /**
  * Load a ready snapshot by content hash, refusing bytes whose hash does not match, a row of another
- * kind than the caller serves (a study pinned to a production hash is degraded, not served), and a
- * study snapshot whose pin has passed (even if retention has not yet run).
+ * kind than the caller asked for, and a study snapshot whose pin has passed (even if retention has
+ * not yet run).
  */
 export async function loadCoocSnapshot(
   sql: CoocSql,
@@ -322,8 +332,8 @@ export async function applyCoocRetention(
 }
 
 /**
- * Delete a ready study snapshot now (its study's report is committed). Refuses a production
- * snapshot. `dryRun` reports the row and deletes nothing.
+ * Delete a ready study snapshot now. Refuses a production snapshot. `dryRun` reports the row and
+ * deletes nothing.
  */
 export async function releaseCoocSnapshot(
   sql: CoocSql,
@@ -360,8 +370,7 @@ export function assertSnapshotPrecedesWindow(
 
 /**
  * Holds the served snapshot in process. At most one refresh is in flight; a refresh runs when the
- * last one is older than `pollMs`. A failed refresh keeps the previous value. Not wired to any
- * request path yet.
+ * last one is older than `pollMs`. A failed refresh keeps the previous value.
  */
 export function createCoocSnapshotHolder<V>(opts: {
   latestId: () => Promise<string | null>;

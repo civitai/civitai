@@ -6,9 +6,8 @@ import { loadScores, rankCooc } from './score';
 import { coocQueryTokens, coocTrainingTokens } from './tokenize';
 
 /**
- * The co-occurrence index exactly as the offline screen chose it (on its validation slice, before
- * the test rows were scored): lift weight, minSup 2, df cut 5% of N, β = 10, top 300 candidates,
- * a 120-day training window ending one day before what it is evaluated on.
+ * The co-occurrence index as the offline screen chose it on its validation slice, before its test
+ * rows were scored. Change a value only with a new screen.
  */
 export const RESOURCE_INTENT_COOC_SPEC = {
   trainDays: 120,
@@ -26,9 +25,8 @@ export const RESOURCE_INTENT_COOC_SPEC = {
 } as const;
 
 /**
- * Hashes what the tokeniser, the counts and the ranking PRODUCE on a fixed fixture, plus the
- * constants, so any change to the definition moves the hash (and every snapshot built under the
- * old one stops matching) without anyone remembering to bump it.
+ * Hashes what the tokeniser, the counts and the ranking produce on a fixed fixture, plus the
+ * constants. A behaviour change the fixture does not exercise does not move it.
  */
 function coocFingerprint() {
   const spec = RESOURCE_INTENT_COOC_SPEC;

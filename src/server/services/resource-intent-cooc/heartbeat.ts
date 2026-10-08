@@ -1,12 +1,13 @@
 import type { PrismaClient } from '@prisma/client';
+import { jobDateFromKeyValue } from '~/server/jobs/job';
 
 import { applyCoocRetention, type CoocSql } from './store';
 
 /**
- * The retention sweep's heartbeat, persisted in `KeyValue` so it survives pod restarts and
- * rollouts; `~/server/prom/resource-intent-cooc.metrics` reads it back at scrape time. Written only
- * after a sweep succeeds, so a sweep that throws (including one that leaves an overdue study row)
- * or never runs shows up as a stale heartbeat to an alert outside this repo.
+ * The retention sweep's heartbeat, persisted in `KeyValue` (in `getJobDate`'s encoding) so it
+ * survives pod restarts; `~/server/prom/resource-intent-cooc.metrics` reads it back at scrape time.
+ * Written only after a sweep succeeds, so a sweep that throws (including one that leaves an
+ * overdue study row) or never runs leaves it stale for a staleness alert to catch.
  */
 export const COOC_RETENTION_HEARTBEAT_KEY = 'job:resource-intent-cooc-retention:last-success';
 
@@ -14,8 +15,7 @@ export type CoocHeartbeatStore = Pick<PrismaClient, 'keyValue'>;
 
 export async function readCoocRetentionHeartbeat(db: CoocHeartbeatStore): Promise<Date | null> {
   const row = await db.keyValue.findUnique({ where: { key: COOC_RETENTION_HEARTBEAT_KEY } });
-  const ms = row?.value;
-  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? new Date(ms) : null;
+  return row ? jobDateFromKeyValue(row.value) : null;
 }
 
 /** One sweep: retention, then (only if it succeeded) the heartbeat. */

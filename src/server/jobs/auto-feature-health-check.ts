@@ -64,7 +64,7 @@ import {
 import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { createJob } from '~/server/jobs/job';
+import { createJob, jobDateFromKeyValue } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { createLogger } from '~/utils/logging';
 
@@ -97,14 +97,7 @@ type AutoFeatureHealth = {
 
 async function readLastRun() {
   const row = await dbRead.keyValue.findUnique({ where: { key: AUTO_FEATURE_JOB_DATE_KEY } });
-  if (!row) return null;
-  // `KeyValue.value` is untyped Json and other keys in the table hold arrays and strings. The
-  // `typeof` test is load-bearing rather than defensive: `Number(['1'])` is `1`, so a coercion
-  // alone turns a one-element array into a plausible 1970 timestamp instead of rejecting it.
-  // `getJobDate` only ever writes `date.getTime()`, so anything that is not a number is not a
-  // heartbeat this job can reason about.
-  const ms = row.value;
-  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? new Date(ms) : null;
+  return row ? jobDateFromKeyValue(row.value) : null;
 }
 
 /**

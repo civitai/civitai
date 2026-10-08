@@ -41,10 +41,10 @@ describe('RESOURCE_INTENT_COOC_SPEC', () => {
   });
 
   it('the spec hash is pinned: a change to tokens, counts, scoring or constants must update this literal', () => {
-    // Deliberately a literal. Snapshots carry the hash they were built under, so a change here
-    // means every stored snapshot stops matching the code; update it only on purpose.
+    // Deliberately a literal: snapshots record the hash they were built under, so change it only
+    // on purpose.
     expect(RESOURCE_INTENT_COOC_SPEC_HASH).toBe(
-      '36f27f2c6b33bb73e5ccfdc8bb6ed0d0c37cdc5f234b0d6168d39425f7ba93dc'
+      '38156b848e84f16a806fed35c12dac55680a9eaf5b73a4ee28230fd7a91699f4'
     );
   });
 });

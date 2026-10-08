@@ -1,5 +1,21 @@
-import { describe, expect, it } from 'vitest';
-import { parseCoocScriptArgs } from '../build-resource-intent-cooc';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Pipeline from '~/server/services/resource-intent-cooc/pipeline';
+import type * as Store from '~/server/services/resource-intent-cooc/store';
+
+const { mockRelease, mockBuild } = vi.hoisted(() => ({
+  mockRelease: vi.fn(),
+  mockBuild: vi.fn(),
+}));
+vi.mock('~/server/services/resource-intent-cooc/store', async (importOriginal) => ({
+  ...(await importOriginal<typeof Store>()),
+  releaseCoocSnapshot: mockRelease,
+}));
+vi.mock('~/server/services/resource-intent-cooc/pipeline', async (importOriginal) => ({
+  ...(await importOriginal<typeof Pipeline>()),
+  buildCoocSnapshot: mockBuild,
+}));
+
+import { main, parseCoocScriptArgs } from '../build-resource-intent-cooc';
 
 const HASH = 'a'.repeat(64);
 
@@ -27,7 +43,8 @@ describe('build-resource-intent-cooc flags', () => {
       /no backdating/,
     ],
     ['a bad date', ['--kind', 'study', '--pin-until', 'soon'], /not a date/],
-    ['a bad seed', ['--kind', 'production', '--seed', '-3'], /--seed/],
+    ['a fractional seed', ['--kind', 'production', '--seed', '1.5'], /not a non-negative integer/],
+    ['a negative seed', ['--kind', 'production', '--seed=-3'], /not a non-negative integer/],
     [
       '--release with --kind',
       ['--release', HASH, '--kind', 'study'],
@@ -97,6 +114,40 @@ describe('build-resource-intent-cooc flags', () => {
       action: 'release',
       contentHash: HASH,
       dryRun: true,
+    });
+  });
+
+  describe('main passes the parsed mode through', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockRelease.mockResolvedValue({ id: 'row', deleted: false });
+      mockBuild.mockResolvedValue({ contentHash: 'h' });
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    });
+
+    it('--release --dry-run releases nothing and builds nothing', async () => {
+      await main(['--release', HASH, '--dry-run']);
+      expect(mockRelease).toHaveBeenCalledTimes(1);
+      expect(mockRelease.mock.calls[0][1]).toBe(HASH);
+      expect(mockRelease.mock.calls[0][2]).toEqual({ dryRun: true });
+      expect(mockBuild).not.toHaveBeenCalled();
+    });
+
+    it('--release without --dry-run deletes', async () => {
+      await main(['--release', HASH]);
+      expect(mockRelease.mock.calls[0][2]).toEqual({ dryRun: false });
+    });
+
+    it('a build --dry-run reaches the pipeline as a dry run, with the default seed', async () => {
+      await main(['--kind', 'production', '--dry-run']);
+      expect(mockBuild).toHaveBeenCalledWith({
+        kind: 'production',
+        trainEnd: undefined,
+        pinnedUntil: null,
+        seed: 20261008,
+        dryRun: true,
+      });
+      expect(mockRelease).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,5 +1,6 @@
 import client from 'prom-client';
 import { describe, expect, it, vi } from 'vitest';
+import { instrumentationRegistry } from '@civitai/telemetry/client';
 import {
   COOC_RETENTION_HEARTBEAT_METRIC,
   createCoocRetentionHeartbeatGauge,
@@ -25,21 +26,35 @@ function durableKv() {
     keyValue: {
       findUnique: async ({ where }: { where: { key: string } }) =>
         rows.has(where.key) ? { key: where.key, value: rows.get(where.key) } : null,
-      upsert: async ({ where, update }: { where: { key: string }; update: { value: unknown } }) => {
-        rows.set(where.key, update.value);
-        return { key: where.key, value: update.value };
+      upsert: async (a: {
+        where: { key: string };
+        create: { key: string; value: unknown };
+        update: { value: unknown };
+      }) => {
+        const value = rows.has(a.where.key) ? a.update.value : a.create.value;
+        if (!rows.has(a.where.key)) expect(a.create.key).toBe(a.where.key);
+        rows.set(a.where.key, value);
+        return { key: a.where.key, value };
       },
     },
   } as unknown as CoocHeartbeatStore;
   return { kv, rows };
 }
 
-/** A fresh registry + gauge stands for a restarted pod: no state survives but the store. */
+const values = async (g: client.Gauge<string>) => (await g.get()).values.map((v) => v.value);
+
+/**
+ * A fresh registry + gauge stands for a restarted pod: no state survives but the store. The first
+ * collect starts the background read; the scrape after it completes sees the value.
+ */
 async function scrape(kv: CoocHeartbeatStore) {
-  const registry = new client.Registry();
-  createCoocRetentionHeartbeatGauge(() => readCoocRetentionHeartbeat(kv), registry);
-  const m = registry.getSingleMetric(COOC_RETENTION_HEARTBEAT_METRIC) as client.Gauge<string>;
-  return (await m.get()).values.map((v) => v.value);
+  const { gauge, refresh } = createCoocRetentionHeartbeatGauge(
+    () => readCoocRetentionHeartbeat(kv),
+    new client.Registry()
+  );
+  await gauge.get();
+  await refresh();
+  return values(gauge);
 }
 
 describe('cooc retention heartbeat', () => {
@@ -104,5 +119,44 @@ describe('cooc retention heartbeat', () => {
       },
     } as unknown as CoocHeartbeatStore;
     expect(await scrape(broken)).toEqual([]);
+  });
+
+  it('the first heartbeat is written through create, later ones through update', async () => {
+    const { sql } = await freshDb();
+    const { kv, rows } = durableKv();
+    await runCoocRetentionSweep(sql, kv, NOW);
+    expect(rows.get(COOC_RETENTION_HEARTBEAT_KEY)).toBe(NOW.getTime());
+    const later = new Date(NOW.getTime() + DAY);
+    await runCoocRetentionSweep(sql, kv, later);
+    expect(rows.get(COOC_RETENTION_HEARTBEAT_KEY)).toBe(later.getTime());
+  });
+
+  it('collect never waits on the read, reads at most once a minute, and one read at a time', async () => {
+    let t = 0;
+    let release: (d: Date) => void = () => undefined;
+    const read = vi.fn(() => new Promise<Date | null>((r) => (release = r)));
+    const { gauge } = createCoocRetentionHeartbeatGauge(read, new client.Registry(), () => t);
+    // The read hangs; scrapes still return at once, with no value yet, and start no second read.
+    expect(await values(gauge)).toEqual([]);
+    expect(await values(gauge)).toEqual([]);
+    expect(read).toHaveBeenCalledTimes(1);
+    release(NOW);
+    await vi.waitFor(async () => expect(await values(gauge)).toEqual([NOW.getTime() / 1000]));
+    t = 59_000;
+    await values(gauge);
+    expect(read).toHaveBeenCalledTimes(1);
+    t = 60_000;
+    await values(gauge);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('the metrics route registers the gauge on the scraped registry', async () => {
+    await import('~/server/prom/resource-intent-cooc.metrics');
+    expect(instrumentationRegistry.getSingleMetric(COOC_RETENTION_HEARTBEAT_METRIC)).toBeDefined();
+    const route = (await import('fs')).readFileSync(
+      (await import('path')).join(process.cwd(), 'src/pages/api/metrics.ts'),
+      'utf8'
+    );
+    expect(route).toContain("import '~/server/prom/resource-intent-cooc.metrics';");
   });
 });

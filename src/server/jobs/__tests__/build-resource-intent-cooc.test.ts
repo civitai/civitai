@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as Job from '~/server/jobs/job';
 import type * as Heartbeat from '~/server/services/resource-intent-cooc/heartbeat';
 import type * as Pipeline from '~/server/services/resource-intent-cooc/pipeline';
 
@@ -23,7 +24,8 @@ vi.mock('~/server/services/resource-intent-cooc/heartbeat', async (importOrigina
   ...(await importOriginal<typeof Heartbeat>()),
   runCoocRetentionSweep: mockSweep,
 }));
-vi.mock('~/server/jobs/job', () => ({
+vi.mock('~/server/jobs/job', async (importOriginal) => ({
+  ...(await importOriginal<typeof Job>()),
   createJob: (
     name: string,
     cron: string,
@@ -64,17 +66,16 @@ describe('build-resource-intent-cooc job', () => {
     await run(buildResourceIntentCoocJob);
     expect(mockBuild).toHaveBeenCalledTimes(1);
     const opts = mockBuild.mock.calls[0][0];
-    expect(opts).toMatchObject({ kind: 'production', pinnedUntil: null, dryRun: false });
-    expect(opts.trainEnd).toBeUndefined();
+    expect(opts).toEqual({ kind: 'production', seed: 20261008, pinnedUntil: null, dryRun: false });
   });
 
-  it('runs weekly with a 30-minute lock held across a scheduler disconnect', () => {
+  it('runs weekly with a 90-minute lock held across a scheduler disconnect', () => {
     const job = buildResourceIntentCoocJob as unknown as {
       cron: string;
       options: Record<string, unknown>;
     };
     expect(job.cron).toBe('0 5 * * 2');
-    expect(job.options).toEqual({ lockExpiration: 30 * 60, keepLockOnDisconnect: true });
+    expect(job.options).toEqual({ lockExpiration: 90 * 60, keepLockOnDisconnect: true });
   });
 
   it('the build flag defaults to off: it is a Flipt flag, so an unknown key evaluates false', () => {
@@ -92,6 +93,10 @@ describe('resource-intent-cooc-retention job', () => {
     mockIsFlipt.mockResolvedValue(false);
     expect(await run(resourceIntentCoocRetentionJob)).toEqual({ deleted: 2, tableMissing: false });
     expect(mockSweep).toHaveBeenCalledTimes(1);
+    const [sql, kv, now] = mockSweep.mock.calls[0];
+    expect(typeof sql.query).toBe('function');
+    expect(kv).toHaveProperty('keyValue');
+    expect(Math.abs(Date.now() - (now as Date).getTime())).toBeLessThan(10_000);
     expect(mockIsFlipt).not.toHaveBeenCalled();
     expect((resourceIntentCoocRetentionJob as unknown as { cron: string }).cron).toBe('30 4 * * *');
   });

@@ -188,6 +188,16 @@ export function createDisconnectHandler(
   };
 }
 
+/**
+ * A KeyValue timestamp as `getJobDate`'s `set` writes it (`date.getTime()`), or null for anything
+ * else. `KeyValue.value` is untyped Json and other keys in the table hold arrays and strings. The
+ * `typeof` test is load-bearing rather than defensive: `Number(['1'])` is `1`, so a coercion alone
+ * turns a one-element array into a plausible 1970 timestamp instead of rejecting it.
+ */
+export function jobDateFromKeyValue(value: unknown): Date | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? new Date(value) : null;
+}
+
 export async function getJobDate(key: string, defaultValue?: Date) {
   defaultValue ??= new Date(0);
   const stored = await dbWrite.keyValue.findUnique({ where: { key } });

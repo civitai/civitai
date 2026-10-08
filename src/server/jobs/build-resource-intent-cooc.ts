@@ -8,7 +8,7 @@ import { createJob } from './job';
 
 export const buildResourceIntentCoocJob = createJob(
   'build-resource-intent-cooc',
-  // Weekly: production retention keeps four weeks of builds, which assumes this cadence.
+  // Weekly; COOC_PRODUCTION_RETENTION_DAYS (28) is sized for this cadence.
   '0 5 * * 2',
   async () => {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_COOC_BUILD)))
@@ -20,16 +20,13 @@ export const buildResourceIntentCoocJob = createJob(
       dryRun: false,
     });
   },
-  // A second concurrent build would draw and count the same window twice for nothing; the build
-  // does not poll `checkIfCanceled`, so it finishes even if the scheduler hangs up.
-  { lockExpiration: 30 * 60, keepLockOnDisconnect: true }
+  // A concurrent second build would draw the same window again and end as a 'duplicate' row, so
+  // the lock saves replica load, not correctness. 90 min covers a worst-case draw (200 batches with
+  // retries). The build does not poll `checkIfCanceled`, so it finishes if the scheduler hangs up.
+  { lockExpiration: 90 * 60, keepLockOnDisconnect: true }
 );
 
-/**
- * Deliberately NOT behind the build flag: study pins must expire, and old builds be deleted, even
- * while building is switched off. Daily, because the 58-day pin cap plus a ~26 h heartbeat
- * staleness alert is what keeps a study row from reaching 60 days unnoticed.
- */
+/** Not behind the build flag: study pins must expire even while building is off. */
 export const resourceIntentCoocRetentionJob = createJob(
   'resource-intent-cooc-retention',
   '30 4 * * *',

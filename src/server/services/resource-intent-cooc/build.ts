@@ -2,6 +2,7 @@ import { promisify } from 'util';
 import zlib from 'zlib';
 import { Prisma } from '@prisma/client';
 import { Packr } from 'msgpackr';
+import type { CoocModelText } from './tokenize';
 
 /**
  * Builder side of the resource-intent co-occurrence index: the training-row sampler, the
@@ -53,6 +54,7 @@ export function mulberry32(seed: number) {
 
 export type CoocRawQuery = (sql: Prisma.Sql) => Promise<unknown[]>;
 
+/** The screen's retry, ported with its 2 s / 4 s backoff. */
 async function retry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
@@ -157,16 +159,16 @@ export async function drawTrainingRows(p: CoocDrawParams): Promise<CoocDrawStats
   return { idLo, idHi, boundQueries, idsTried: tried.size, matched, batches };
 }
 
-export type CoocVersionText = { modelName: string; trainedWords: string[] | null };
+const VERSION_TEXT_CHUNK = 20_000;
 
-/** Names and trigger words of the given versions, in statements of 20,000 ids. */
+/** Names and trigger words of the given versions. */
 export async function fetchVersionText(
   query: CoocRawQuery,
   versionIds: readonly number[]
-): Promise<Map<number, CoocVersionText>> {
-  const out = new Map<number, CoocVersionText>();
-  for (let i = 0; i < versionIds.length; i += 20000) {
-    const chunk = versionIds.slice(i, i + 20000);
+): Promise<Map<number, CoocModelText>> {
+  const out = new Map<number, CoocModelText>();
+  for (let i = 0; i < versionIds.length; i += VERSION_TEXT_CHUNK) {
+    const chunk = versionIds.slice(i, i + VERSION_TEXT_CHUNK);
     const vs = (await retry(() =>
       query(Prisma.sql`
       SELECT mv.id, mv."trainedWords", m.name AS "modelName" FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
@@ -176,10 +178,6 @@ export async function fetchVersionText(
   }
   return out;
 }
-
-// ---------------------------------------------------------------------------------------------
-// Counts
-// ---------------------------------------------------------------------------------------------
 
 export type CoocCountParams = {
   /** Model types that are indexed; every other attachment is ignored. */
@@ -192,7 +190,8 @@ export type CoocCountParams = {
 /**
  * Integer counts and the kept (token, model) pairs, in canonical order: `vocab` sorted by UTF-16
  * code unit, `modelIds` ascending, pairs token-major with model index ascending. Nothing here
- * depends on the order rows were added.
+ * depends on the order rows were added. `vocab` holds only tokens with at least one kept pair: a
+ * token without one cannot change any ranking, so the snapshot does not keep it.
  */
 export type CoocCounts = {
   N: number;
@@ -225,9 +224,9 @@ class GrowableU32 {
 const compareCodeUnits = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
- * Accumulates training rows (tokens interned to provisional ids, so ~10^7 token occurrences do not
- * each hold a string) and turns them into `CoocCounts`. A row is one image: its tokens and its
- * attached models as `[modelId, modelType]`. Duplicates within a row count once.
+ * Accumulates training rows (tokens interned to provisional ids, so an occurrence does not hold a
+ * string) and turns them into `CoocCounts`, once. A row is one image: its tokens and its attached
+ * models as `[modelId, modelType]`. Duplicates within a row count once.
  */
 export class CoocCountAccumulator {
   private readonly addon: ReadonlySet<string>;
@@ -239,6 +238,7 @@ export class CoocCountAccumulator {
   private readonly rowTokEnd = new GrowableU32();
   private readonly rowMod = new GrowableU32();
   private readonly rowModEnd = new GrowableU32();
+  private finalized = false;
 
   constructor(addonTypes: readonly string[]) {
     this.addon = new Set(addonTypes);
@@ -249,6 +249,7 @@ export class CoocCountAccumulator {
   }
 
   add(tokens: readonly string[], models: readonly (readonly [number, string])[]) {
+    if (this.finalized) throw new Error('CoocCountAccumulator already finalized');
     const seenTok = new Set<number>();
     for (const t of tokens) {
       let id = this.tokenIds.get(t);
@@ -280,7 +281,9 @@ export class CoocCountAccumulator {
     this.rowModEnd.push(this.rowMod.length);
   }
 
-  finalize(params: CoocCountParams): CoocCounts & { rawPairs: number } {
+  finalize(params: CoocCountParams): CoocCounts & { rawPairs: number; rawVocab: number } {
+    if (this.finalized) throw new Error('CoocCountAccumulator already finalized');
+    this.finalized = true;
     const N = this.rows;
     const vocab = [...this.tokens].sort(compareCodeUnits);
     const tokRemap = new Uint32Array(this.tokens.length);
@@ -299,7 +302,6 @@ export class CoocCountAccumulator {
     const rowModEnd = this.rowModEnd.view();
     for (let k = 0; k < rowTok.length; k++) rowTok[k] = tokRemap[rowTok[k]];
     for (let k = 0; k < rowMod.length; k++) rowMod[k] = modRemap[rowMod[k]];
-    // Remapped in place: a second finalize() would remap again.
     this.tokenIds.clear();
     this.tokens.length = 0;
 
@@ -308,7 +310,6 @@ export class CoocCountAccumulator {
     for (let k = 0; k < rowTok.length; k++) nT[rowTok[k]]++;
     for (let k = 0; k < rowMod.length; k++) nM[rowMod[k]]++;
 
-    // Inverted index token -> rows (counting sort).
     const postStart = new Uint32Array(V + 1);
     for (let t = 0; t < V; t++) postStart[t + 1] = postStart[t] + nT[t];
     const fill = postStart.slice(0, V);
@@ -321,21 +322,22 @@ export class CoocCountAccumulator {
     const keptMod = new GrowableU32();
     const keptC = new GrowableU32();
     const cnt = new Uint32Array(M);
-    const touched: number[] = [];
+    const touched = new Uint32Array(M);
     const dfLimit = params.dfMax * N;
     let rawPairs = 0;
     for (let t = 0; t < V; t++) {
+      let nTouched = 0;
       for (let k = postStart[t]; k < postStart[t + 1]; k++) {
         const r = postRows[k];
         for (let j = r === 0 ? 0 : rowModEnd[r - 1]; j < rowModEnd[r]; j++) {
           const m = rowMod[j];
-          if (cnt[m]++ === 0) touched.push(m);
+          if (cnt[m]++ === 0) touched[nTouched++] = m;
         }
       }
-      touched.sort((a, b) => a - b);
-      rawPairs += touched.length;
+      const ms = touched.subarray(0, nTouched).sort();
+      rawPairs += nTouched;
       const nt = nT[t];
-      for (const m of touched) {
+      for (const m of ms) {
         const c = cnt[m];
         cnt[m] = 0;
         if (c < params.minSup || nt > dfLimit) continue;
@@ -344,30 +346,33 @@ export class CoocCountAccumulator {
           keptC.push(c);
         }
       }
-      touched.length = 0;
       ptr[t + 1] = keptMod.length;
     }
+    const keep: number[] = [];
+    for (let t = 0; t < V; t++) if (ptr[t + 1] > ptr[t]) keep.push(t);
+    const keptPtr = new Uint32Array(keep.length + 1);
+    keep.forEach((t, i) => (keptPtr[i + 1] = ptr[t + 1]));
     return {
       N,
-      vocab,
+      vocab: keep.map((t) => vocab[t]),
       modelIds,
       modelTypes,
-      nT,
+      nT: Uint32Array.from(keep, (t) => nT[t]),
       nM,
-      ptr,
+      ptr: keptPtr,
       modelIdx: keptMod.view().slice(),
       c: keptC.view().slice(),
       rawPairs,
+      rawVocab: V,
     };
   }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Payload: msgpack + brotli, integers only. Integer arrays are little-endian uint32 `bin` fields.
-// ---------------------------------------------------------------------------------------------
+// Payload: msgpack + brotli of the counts and the kept-token vocabulary; integer arrays are
+// little-endian uint32 `bin` fields.
 
 export const COOC_PAYLOAD_FORMAT = 'resource-intent-cooc/1';
-/** Refuse to write or read a payload above this; a real build measured far below it. */
+/** Refuse to write or read a payload above this. */
 export const COOC_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 const COOC_MAX_INFLATED_BYTES = 512 * 1024 * 1024;
 
@@ -389,6 +394,7 @@ function fromU32le(b: Uint8Array, what: string): Uint32Array {
   return out;
 }
 
+/** Fixed parameters: changing any of them changes the payload bytes, and so every content hash. */
 async function compress(raw: Buffer) {
   return brotliCompress(raw, {
     params: {

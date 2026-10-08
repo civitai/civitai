@@ -68,8 +68,13 @@ describe('cooc index seam: shipped == screen reference', () => {
 
   it('N, n_t, n_m, model types and raw pair count are identical', () => {
     expect(counts.N).toBe(golden.expected.N);
+    expect(counts.rawVocab).toBe(Object.keys(golden.expected.nT).length);
+    // The snapshot keeps exactly the tokens that have a kept pair, each with the reference n_t.
+    const keptTokens = [...new Set(golden.expected.keptPairs.map((x) => x[0]))].sort();
+    expect(counts.vocab).toEqual(keptTokens);
+    expect(counts.vocab.length).toBeLessThan(counts.rawVocab);
     expect(Object.fromEntries(counts.vocab.map((t, i) => [t, counts.nT[i]]))).toEqual(
-      golden.expected.nT
+      Object.fromEntries(keptTokens.map((t) => [t, golden.expected.nT[t]]))
     );
     expect(Object.fromEntries(counts.modelIds.map((m, i) => [String(m), counts.nM[i]]))).toEqual(
       golden.expected.nM
@@ -92,8 +97,9 @@ describe('cooc index seam: shipped == screen reference', () => {
     expect(got.map((x) => `${key(x)}|${x[2]}`)).toEqual(want.map((x) => `${key(x)}|${x[2]}`));
     got.forEach((x, i) => expect(closeTo(x[3], want[i][3]), key(x)).toBe(true));
     // Positive control: the fixture exercises every cut.
-    const dfCut = counts.vocab.filter((_, i) => counts.nT[i] > 0.05 * counts.N).length;
+    const dfCut = Object.values(golden.expected.nT).filter((n) => n > 0.05 * counts.N).length;
     expect(dfCut).toBeGreaterThan(0);
+    expect(counts.vocab.filter((_, i) => counts.nT[i] > 0.05 * counts.N)).toEqual([]);
     expect(got.length).toBeLessThan(golden.expected.rawPairs / 4);
   });
 
@@ -120,6 +126,21 @@ describe('cooc index seam: shipped == screen reference', () => {
       q.scores.some((s, i) => i > 0 && s === q.scores[i - 1])
     );
     expect(ties).toBe(true);
+  });
+
+  it('the df cut is inclusive: n_t exactly dfMax·N is kept, one more row is cut', () => {
+    // N = 100, dfMax 0.05: a token in 5 rows with model 1 in all 5 has s = ln(5·100/(15·5)) > 0.
+    const build100 = (rowsWithToken: number) => {
+      const acc = new CoocCountAccumulator(RESOURCE_INTENT_COOC_SPEC.addonTypes);
+      for (let i = 0; i < 100; i++)
+        acc.add(
+          i < rowsWithToken ? ['tok00001'] : ['tok00002'],
+          i < 5 ? [[1, 'LORA']] : [[2, 'LORA']]
+        );
+      return acc.finalize(RESOURCE_INTENT_COOC_SPEC);
+    };
+    expect(build100(5).vocab).toContain('tok00001');
+    expect(build100(6).vocab).not.toContain('tok00001');
   });
 
   it('a role with no types, or null types, gets no candidates', () => {

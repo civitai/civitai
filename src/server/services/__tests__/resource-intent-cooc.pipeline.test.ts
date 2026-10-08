@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { deserializeTrainImageIds } from '~/server/services/resource-intent-cooc/build';
 import {
   buildCoocSnapshot,
   defaultCoocTrainEnd,
@@ -10,130 +11,167 @@ import { fakeImageDb, freshDb } from './resource-intent-cooc.harness';
 vi.setConfig({ testTimeout: 60_000 });
 
 const DAY = 86_400_000;
-const NOW = new Date();
+// Fixed, and earlier than the wall clock the database stamps `builtAt` with, so a pin measured
+// from it also satisfies the CHECK measured from `builtAt`.
+const NOW = new Date('2026-10-01T12:34:56.789Z');
 const SEED = RESOURCE_INTENT_COOC_SPEC.defaultSeed;
+const PROD_TRAIN_END = new Date('2026-09-30T00:00:00.000Z');
 
-function imageDb() {
-  const trainEnd = defaultCoocTrainEnd(NOW);
+function imageDb(
+  extra: Partial<Parameters<typeof fakeImageDb>[0]> = {},
+  trainEnd = PROD_TRAIN_END
+) {
   return fakeImageDb({
     trainStart: new Date(trainEnd.getTime() - RESOURCE_INTENT_COOC_SPEC.trainDays * DAY),
     trainEnd,
     images: 900,
+    ...extra,
   });
 }
+const production = (over: Partial<Parameters<typeof buildCoocSnapshot>[0]> = {}) => ({
+  kind: 'production' as const,
+  seed: SEED,
+  pinnedUntil: null,
+  dryRun: false,
+  now: NOW,
+  ...over,
+});
 
 describe('cooc build pipeline', () => {
-  it('a production build trains up to UTC midnight minus one day and lands one ready row', async () => {
+  it('production trains up to UTC midnight minus one day', () => {
+    expect(defaultCoocTrainEnd(NOW).toISOString()).toBe('2026-09-30T00:00:00.000Z');
+    expect(defaultCoocTrainEnd(new Date('2026-10-01T00:00:00.000Z')).toISOString()).toBe(
+      '2026-09-30T00:00:00.000Z'
+    );
+    expect(defaultCoocTrainEnd(new Date('2026-10-01T23:59:59.999Z')).toISOString()).toBe(
+      '2026-09-30T00:00:00.000Z'
+    );
+  });
+
+  it('a production build lands one ready row with the drawn training metadata', async () => {
     const { db, sql } = await freshDb();
     const images = imageDb();
-    const s = await buildCoocSnapshot({
+    const s = await buildCoocSnapshot({ ...production(), query: images.query, sql });
+    expect(s.trainEnd).toBe('2026-09-30T00:00:00.000Z');
+    expect(s.trainStart).toBe('2026-06-02T00:00:00.000Z');
+    expect([s.trainRows, s.idsTried, s.created]).toEqual([900, 900, true]);
+    const [row] = (
+      await db.query<{
+        status: string;
+        kind: string;
+        contentHash: string;
+        trainRows: number;
+        idsTried: number;
+        vocab: number;
+        keptPairs: number;
+        trainCreatedAtMin: Date;
+        trainCreatedAtMax: Date;
+        trainImageIds: Uint8Array;
+      }>(`SELECT * FROM "ResourceIntentCoocSnapshot"`)
+    ).rows;
+    expect(row).toMatchObject({
+      status: 'ready',
       kind: 'production',
-      seed: SEED,
-      pinnedUntil: null,
-      dryRun: false,
-      now: NOW,
-      query: images.query,
-      sql,
+      contentHash: s.contentHash,
+      trainRows: 900,
+      idsTried: 900,
+      vocab: s.vocab,
+      keptPairs: s.keptPairs,
     });
-    expect(s.trainEnd).toBe(defaultCoocTrainEnd(NOW).toISOString());
-    expect(new Date(s.trainEnd).getTime()).toBeLessThanOrEqual(NOW.getTime() - DAY);
-    expect(s.trainRows).toBe(900);
-    expect(s.created).toBe(true);
-    const rows = await db.query<{
-      status: string;
-      kind: string;
-      contentHash: string;
-      trainRows: number;
-    }>(`SELECT "status","kind","contentHash","trainRows" FROM "ResourceIntentCoocSnapshot"`);
-    expect(rows.rows).toEqual([
-      { status: 'ready', kind: 'production', contentHash: s.contentHash, trainRows: 900 },
-    ]);
-    const loaded = await loadCoocSnapshot(sql, s.contentHash, { kind: 'production', now: NOW });
-    expect(loaded.counts.N).toBe(900);
-    // Own-model tokens are removed in training: every model is named "Model <n>", so "model" never
-    // indexes; "rare0" (version 2000's trigger) appears only on images attaching model 1000, so it is
-    // removed everywhere, while "rare4", on the same images, is kept and pairs with model 1000.
-    const c = loaded.counts;
+    expect(row.trainCreatedAtMin.getTime()).toBe(images.createdAt(1).getTime());
+    expect(row.trainCreatedAtMax.getTime()).toBe(images.createdAt(900).getTime());
+    expect(await deserializeTrainImageIds(row.trainImageIds)).toEqual(
+      Array.from({ length: 900 }, (_, i) => i + 1)
+    );
+
+    const c = (await loadCoocSnapshot(sql, s.contentHash, { kind: 'production', now: NOW })).counts;
+    expect(c.N).toBe(900);
+    // Own-model tokens are removed in training. Every model is named "Model <n>" and every prompt
+    // says "model", so it never indexes. "rare0" (version 2000's trigger) appears only on images
+    // attaching model 1000, so it is removed everywhere, while "rare4", on the same images, is kept
+    // and pairs with model 1000.
     expect(c.vocab).not.toContain('model');
     expect(c.vocab).not.toContain('rare0');
     const t = c.vocab.indexOf('rare4');
-    const m = c.modelIds.indexOf(1000);
     expect(t).toBeGreaterThanOrEqual(0);
-    expect([...c.modelIdx.subarray(c.ptr[t], c.ptr[t + 1])]).toContain(m);
+    expect([...c.modelIdx.subarray(c.ptr[t], c.ptr[t + 1])]).toContain(c.modelIds.indexOf(1000));
     // Aggregates only: no token reaches the summary.
-    expect(JSON.stringify(s)).not.toMatch(/tok0|shared|rare/);
+    expect(Object.values(s).join(' ')).not.toMatch(/tok0|shared|rare|\bmodel\b/);
+  });
+
+  it('two production builds on the same day draw the same window: the second is a duplicate', async () => {
+    const { sql } = await freshDb();
+    const a = await buildCoocSnapshot({
+      ...production({ now: new Date('2026-10-01T01:00:00Z') }),
+      query: imageDb().query,
+      sql,
+    });
+    const b = await buildCoocSnapshot({
+      ...production({ now: new Date('2026-10-01T23:00:00Z') }),
+      query: imageDb().query,
+      sql,
+    });
+    expect([a.created, b.created]).toEqual([true, false]);
+    expect(b.contentHash).toBe(a.contentHash);
   });
 
   it('a dry run builds the same content and writes nothing', async () => {
     const { db, sql } = await freshDb();
     const dry = await buildCoocSnapshot({
-      kind: 'production',
-      seed: SEED,
-      pinnedUntil: null,
-      dryRun: true,
-      now: NOW,
+      ...production({ dryRun: true }),
       query: imageDb().query,
       sql,
     });
     expect(dry.rowId).toBeNull();
     expect((await db.query(`SELECT 1 FROM "ResourceIntentCoocSnapshot"`)).rows).toEqual([]);
-    const real = await buildCoocSnapshot({
-      kind: 'production',
-      seed: SEED,
-      pinnedUntil: null,
-      dryRun: false,
-      now: NOW,
-      query: imageDb().query,
-      sql,
-    });
+    const real = await buildCoocSnapshot({ ...production(), query: imageDb().query, sql });
     expect(real.contentHash).toBe(dry.contentHash);
   });
 
-  it('a build that throws mid-draw leaves a failed row, not a ready one', async () => {
-    const { db, sql } = await freshDb();
-    const images = imageDb();
-    let n = 0;
-    const query = async (s: Parameters<typeof images.query>[0]) => {
-      if (s.sql.includes('WITH s AS') && ++n === 1)
-        throw Object.assign(new Error('boom'), { permanent: true });
-      return images.query(s);
-    };
-    await expect(
-      buildCoocSnapshot({
-        kind: 'production',
-        seed: SEED,
-        pinnedUntil: null,
-        dryRun: false,
-        now: NOW,
-        query,
-        sql,
-      })
-    ).resolves.toBeDefined(); // the screen's retry absorbs one failure
-    const failing = async (s: Parameters<typeof images.query>[0]) => {
-      if (s.sql.includes('WITH s AS')) throw new Error('boom');
-      return images.query(s);
-    };
-    vi.useFakeTimers({ shouldAdvanceTime: true, advanceTimeDelta: 1000 });
-    try {
-      await expect(
-        buildCoocSnapshot({
-          kind: 'production',
-          seed: SEED + 1,
-          pinnedUntil: null,
-          dryRun: false,
-          now: NOW,
-          query: failing,
-          sql,
-        })
-      ).rejects.toThrow('boom');
-    } finally {
-      vi.useRealTimers();
+  describe('a build that fails leaves a failed row, never a ready one', () => {
+    const inWindow = (imageId: number, createdAt: Date) => ({
+      imageId,
+      createdAt,
+      prompt: 'tok00001',
+      att: [{ modelId: 1000, modelType: 'LORA', versionId: 2000 }],
+    });
+    const cases: [string, Parameters<typeof imageDb>[0], RegExp][] = [
+      [
+        'a row at trainEnd',
+        { injectFirstBatch: [inWindow(999_999, PROD_TRAIN_END)] },
+        /outside the training window/,
+      ],
+      [
+        'a row before trainStart',
+        { injectFirstBatch: [inWindow(999_998, new Date(PROD_TRAIN_END.getTime() - 121 * DAY))] },
+        /outside the training window/,
+      ],
+      [
+        'a repeated image id',
+        {
+          injectFirstBatch: [
+            inWindow(999_997, new Date(PROD_TRAIN_END.getTime() - DAY)),
+            inWindow(999_997, new Date(PROD_TRAIN_END.getTime() - DAY)),
+          ],
+        },
+        /ids repeat/,
+      ],
+      ['a model seen with two types', { typeConflict: true }, /two types/],
+      ['no matched rows', { images: 0 }, /matched no training rows/],
+    ];
+    for (const [name, extra, err] of cases) {
+      it(name, async () => {
+        const { db, sql } = await freshDb();
+        await expect(
+          buildCoocSnapshot({ ...production(), query: imageDb(extra).query, sql })
+        ).rejects.toThrow(err);
+        const st = await db.query<{ status: string }>(
+          `SELECT "status" FROM "ResourceIntentCoocSnapshot"`
+        );
+        expect(st.rows).toEqual([{ status: 'failed' }]);
+      });
     }
-    const st = await db.query<{ status: string }>(
-      `SELECT "status" FROM "ResourceIntentCoocSnapshot" ORDER BY "status"`
-    );
-    expect(st.rows.map((r) => r.status)).toEqual(['failed', 'ready']);
-  }, 120_000);
+  });
 
   describe('refused before any query or row', () => {
     const never = vi.fn(async () => {
@@ -142,98 +180,60 @@ describe('cooc build pipeline', () => {
     const cases: [string, Parameters<typeof buildCoocSnapshot>[0], RegExp][] = [
       [
         'production backdated with a trainEnd',
-        {
-          kind: 'production',
-          trainEnd: new Date(NOW.getTime() - 30 * DAY),
-          seed: SEED,
-          pinnedUntil: null,
-          dryRun: false,
-        },
+        production({ trainEnd: new Date(NOW.getTime() - 30 * DAY) }),
         /cannot be backdated/,
       ],
       [
         'production with a pin',
-        {
-          kind: 'production',
-          seed: SEED,
-          pinnedUntil: new Date(NOW.getTime() + DAY),
-          dryRun: false,
-        },
+        production({ pinnedUntil: new Date(NOW.getTime() + DAY) }),
         /cannot be pinned/,
       ],
-      [
-        'study without a pin',
-        { kind: 'study', seed: SEED, pinnedUntil: null, dryRun: false },
-        /requires a pin/,
-      ],
+      ['study without a pin', { ...production(), kind: 'study' }, /requires a pin/],
       [
         'study pinned 60 days',
-        {
-          kind: 'study',
-          seed: SEED,
-          pinnedUntil: new Date(NOW.getTime() + 60 * DAY),
-          dryRun: false,
-        },
+        { ...production(), kind: 'study', pinnedUntil: new Date(NOW.getTime() + 60 * DAY) },
         /58 days/,
       ],
       [
         'study pinned 58 days + 1 ms',
-        {
-          kind: 'study',
-          seed: SEED,
-          pinnedUntil: new Date(NOW.getTime() + 58 * DAY + 1),
-          dryRun: false,
-        },
+        { ...production(), kind: 'study', pinnedUntil: new Date(NOW.getTime() + 58 * DAY + 1) },
         /58 days/,
       ],
       [
-        'trainEnd later than now minus one day',
+        'trainEnd 1 ms later than now minus one day',
         {
+          ...production(),
           kind: 'study',
-          trainEnd: new Date(NOW.getTime() - DAY + 1000),
-          seed: SEED,
+          trainEnd: new Date(NOW.getTime() - DAY + 1),
           pinnedUntil: new Date(NOW.getTime() + DAY),
-          dryRun: false,
         },
         /at least 1 day/,
       ],
-      [
-        'a seed beyond int32',
-        { kind: 'production', seed: 2 ** 31, pinnedUntil: null, dryRun: false },
-        /seed/,
-      ],
+      ['a seed beyond int32', production({ seed: 2 ** 31 }), /seed/],
     ];
     for (const [name, opts, err] of cases) {
       it(name, async () => {
         const { db, sql } = await freshDb();
-        await expect(buildCoocSnapshot({ ...opts, now: NOW, query: never, sql })).rejects.toThrow(
-          err
-        );
+        await expect(buildCoocSnapshot({ ...opts, query: never, sql })).rejects.toThrow(err);
         expect(never).not.toHaveBeenCalled();
         expect((await db.query(`SELECT 1 FROM "ResourceIntentCoocSnapshot"`)).rows).toEqual([]);
       });
     }
   });
 
-  it('a study build at exactly now minus one day, pinned 58 days, is accepted', async () => {
+  it('a study at exactly now minus one day, pinned exactly 58 days, is accepted', async () => {
     const { sql } = await freshDb();
-    const trainEnd = new Date(Math.floor((NOW.getTime() - DAY) / 1000) * 1000);
-    const images = fakeImageDb({
-      trainStart: new Date(trainEnd.getTime() - 120 * DAY),
-      trainEnd,
-      images: 300,
-    });
+    const trainEnd = new Date(NOW.getTime() - DAY);
     const s = await buildCoocSnapshot({
       kind: 'study',
       trainEnd,
       seed: SEED,
-      pinnedUntil: new Date(Date.now() + 58 * DAY - 60_000),
+      pinnedUntil: new Date(NOW.getTime() + 58 * DAY),
       dryRun: false,
       now: NOW,
-      query: images.query,
+      query: imageDb({}, trainEnd).query,
       sql,
     });
-    expect(s.kind).toBe('study');
-    expect(s.created).toBe(true);
+    expect([s.kind, s.created, s.trainEnd]).toEqual(['study', true, trainEnd.toISOString()]);
   });
 });
