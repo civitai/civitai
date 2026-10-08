@@ -358,28 +358,73 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
-  it('🔴 enforce: an EXISTING flagged key is still scanned — its increments are refused, so it cannot climb into getTop', async () => {
-    setFlags({ enforce: true });
-    // The key exists to EVERY reader: a lookup finds its anchor row, and the anchor INSERT
-    // conflicts. (Without the lookup half, a "skip keys that already exist" pre-check would pass
-    // this test vacuously.)
-    mockPool.query.mockImplementation(async () => ({ rows: [{ '?column?': 1 }], rowCount: 1 }));
+  // The key exists to EVERY reader: the anchor lookup finds its author (77, not the caller 42),
+  // and the anchor INSERT conflicts. `reportRowIsNew` is what the deduped Report INSERT reports.
+  function existingKey({ reportRowIsNew = true }: { reportRowIsNew?: boolean } = {}) {
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT author_user_id FROM'))
+        return { rows: [{ author_user_id: 77 }], rowCount: 1 };
+      if (sql.includes('shared_kv_reports')) return { rows: [], rowCount: reportRowIsNew ? 1 : 0 };
+      return { rows: [], rowCount: 0 };
+    });
     mockClient.query.mockImplementation(async (sql: string) =>
       String(sql).includes('INTO "app_app_voting".shared_kv')
         ? { rows: [], rowCount: 0 }
         : { rows: [{ count: '3' }], rowCount: 1 }
     );
+  }
+  const legalAlerts = () =>
+    mockLog.mock.calls
+      .map((c) => c[0] as { name?: string; userId?: number })
+      .filter((p) => p.name === 'app-blocks-shared-storage-legal-block');
+  const reportRows = () =>
+    mockPool.query.mock.calls
+      .filter((c) => String(c[0]).includes('shared_kv_reports'))
+      .map((c) => c[1] as unknown[]);
+
+  it('🔴 enforce: an EXISTING flagged key is still scanned — its increments are refused, so it cannot climb into getTop', async () => {
+    setFlags({ enforce: true });
+    existingKey();
     await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
     expect(mockClient.query).not.toHaveBeenCalled();
-    // ...SILENTLY: the caller did not write this key, so no Report row and no legal alert names them.
-    expect(reportReasons()).toEqual([]);
-    expect(
-      mockLog.mock.calls.some(
-        (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-storage-legal-block'
-      )
-    ).toBe(false);
+  });
+
+  it('enforce: an existing key’s Report and alert go to its AUTHOR, with the key, looked up in THIS app', async () => {
+    setFlags({ enforce: true });
+    existingKey();
+    await incrementSharedCounter('tok', BAD_KEY).catch(() => undefined);
+    const lookup = mockPool.query.mock.calls.find((c) =>
+      String(c[0]).includes('SELECT author_user_id FROM')
+    );
+    expect(String(lookup?.[0])).toContain(`${schemaFor('app-voting')}.shared_kv`);
+    expect(lookup?.[1]).toEqual([BAD_KEY]);
+    // [id, key, reporter, reason]
+    expect(reportRows()).toEqual([[expect.any(String), BAD_KEY, 77, 'auto:counterKey:minor']]);
+    expect(legalAlerts()).toEqual([expect.objectContaining({ userId: 77, field: 'counterKey' })]);
+  });
+
+  it('enforce: a REPEAT refusal of the same existing key files nothing new and does not alert again', async () => {
+    setFlags({ enforce: true });
+    existingKey({ reportRowIsNew: false });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(legalAlerts()).toEqual([]);
+  });
+
+  it('enforce: a failed author lookup falls back to the caller — over-reporting, never silence', async () => {
+    setFlags({ enforce: true });
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT author_user_id FROM')) throw new Error('pool exhausted');
+      return { rows: [], rowCount: 1 };
+    });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(reportRows()).toEqual([[expect.any(String), null, 42, 'auto:counterKey:minor']]);
+    expect(legalAlerts()).toEqual([expect.objectContaining({ userId: 42 })]);
   });
 
   it('enforce: a NEW flagged key files the Report and legal alert against its writer', async () => {

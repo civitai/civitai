@@ -1466,15 +1466,22 @@ export async function incrementSharedCounter(
       uid,
       rowKey: key,
       surface: 'counter',
-      // 🔴 A REFUSED increment of a key that ALREADY EXISTS is refused SILENTLY — no Report row, no
-      // alert. The caller did not write that text; they are counting someone else's key (written
-      // before enforce, or during shadow), so a Report or legal alert would name the wrong user, and
-      // one per attempted increment of a popular key would flood the legal channel. The refusal
-      // itself is unconditional. Only consulted when there is a blocking hit, so the clean path pays
-      // no lookup. (The hit is still recorded, with this key, for an offline review.)
-      fileConsequences: async () =>
-        ((await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key])).rowCount ??
-          0) === 0,
+      // 🔴 WHO A REFUSAL IS ATTRIBUTED TO. A key that ALREADY EXISTS was written by someone else
+      // (before enforce, or during shadow) and is still public via `getTop`, so its consequences
+      // go to the key's AUTHOR — the anchor row's `author_user_id` — with the KEY on the Report so a
+      // moderator can purge it, and DEDUPED per (author, key) so a popular key's increments cannot
+      // flood the legal channel: the alert fires only when that Report row is new. A key that does
+      // not exist yet is the caller's own write, attributed as any other hit. The refusal itself is
+      // unconditional. Looked up only when there is a blocking hit, so the clean path pays nothing.
+      consequenceTarget: async () => {
+        const anchor = (
+          await pool.query<{ author_user_id: number }>(
+            `SELECT author_user_id FROM ${schema}.shared_kv WHERE key = $1`,
+            [key]
+          )
+        ).rows[0];
+        return anchor ? { uid: anchor.author_user_id, key, dedupe: true } : null;
+      },
     });
   }
 
@@ -1774,16 +1781,33 @@ async function fileSharedBlockConsequences(
     category: string;
     reason: string;
     field?: 'data' | 'counterKey';
+    /** The row the Report is about, when there is one. */
+    key?: string | null;
+    /**
+     * File at most one Report per (user, key), and alert only when this call filed it. For a
+     * consequence that would otherwise repeat on every attempt at the same stored text.
+     */
+    dedupe?: boolean;
   }
 ): Promise<void> {
   const { policy } = block;
+  let alertable = true;
   if (policy === 'minor' || policy === 'poi' || policy === 'audit') {
-    await insertSharedReport(ctx.schema, {
-      key: null,
-      reporterUserId: ctx.uid,
-      reason: block.reason,
-    }).catch(() => undefined);
+    if (block.dedupe && block.key) {
+      alertable = await insertUserSharedReportDeduped(ctx.schema, {
+        key: block.key,
+        reporterUserId: ctx.uid,
+        reason: block.reason,
+      }).catch(() => true);
+    } else {
+      await insertSharedReport(ctx.schema, {
+        key: block.key ?? null,
+        reporterUserId: ctx.uid,
+        reason: block.reason,
+      }).catch(() => undefined);
+    }
   }
+  if (!alertable) return;
   const alert =
     policy === 'minor' || policy === 'poi'
       ? { name: 'app-blocks-shared-storage-legal-block', type: 'error' }
@@ -1862,8 +1886,12 @@ async function rejectSharedTextHit(
     uid: number;
     rowKey: string;
     surface: SharedDataSurface;
-    /** Whether a rejection files its Report row and alert. Default: always. */
-    fileConsequences?: () => Promise<boolean>;
+    /**
+     * Who a rejection's Report and alert are attributed to, when it is not the caller: `null` (or
+     * absent) means the caller. A failed lookup falls back to the caller — over-reporting, never
+     * silence.
+     */
+    consequenceTarget?: () => Promise<{ uid: number; key: string; dedupe: boolean } | null>;
   }
 ): Promise<void> {
   const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
@@ -1880,14 +1908,18 @@ async function rejectSharedTextHit(
   if (!hit) return;
 
   const field = ctx.surface === 'counter' ? 'counterKey' : 'data';
-  const file = ctx.fileConsequences ? await ctx.fileConsequences().catch(() => true) : true;
-  if (file)
-    await fileSharedBlockConsequences(ctx, {
+  const target = ctx.consequenceTarget ? await ctx.consequenceTarget().catch(() => null) : null;
+  await fileSharedBlockConsequences(
+    { ...ctx, uid: target?.uid ?? ctx.uid },
+    {
       policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
       category: hit.category,
       reason: `auto:${field}:${hit.category}`,
       field,
-    });
+      key: target?.key ?? null,
+      dedupe: target?.dedupe ?? false,
+    }
+  );
 
   const message =
     hit.category === 'link'
