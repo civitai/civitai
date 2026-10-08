@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
+import { isCivitaiSiteUrl, parseCivitaiUrlSafe } from '~/utils/civitai-url';
 
 describe('parseCivitaiUrlSafe', () => {
   it('reads a model id and ignores the slug', () => {
@@ -211,5 +211,18 @@ describe('parseCivitaiUrlSafe', () => {
     expect(parseCivitaiUrlSafe('123')).toBeNull();
     expect(parseCivitaiUrlSafe('')).toBeNull();
     expect(parseCivitaiUrlSafe('   ')).toBeNull();
+  });
+});
+
+describe('isCivitaiSiteUrl', () => {
+  it('is true for a page on a site host', () => {
+    expect(isCivitaiSiteUrl('https://civitai.com/images/123')).toBe(true);
+    expect(isCivitaiSiteUrl('https://www.civitai.red/models/1')).toBe(true);
+  });
+
+  it('is false for the image CDN, another host, or something that is not a url', () => {
+    expect(isCivitaiSiteUrl('https://image.civitai.com/abc/original=true/a.jpeg')).toBe(false);
+    expect(isCivitaiSiteUrl('https://example.com/a.jpg')).toBe(false);
+    expect(isCivitaiSiteUrl('civitai.com/images/123')).toBe(false);
   });
 });

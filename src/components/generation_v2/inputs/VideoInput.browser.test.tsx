@@ -245,7 +245,7 @@ describe('VideoInput — picking a video', () => {
 
     await vi.waitFor(() => expect(auth.openLoginPopup).toHaveBeenCalledTimes(1));
     const here = window.location.pathname + window.location.search + window.location.hash;
-    expect(auth.openLoginPopup).toHaveBeenCalledWith(here, 'image-gen');
+    expect(auth.openLoginPopup).toHaveBeenCalledWith(here, 'image-upload');
     await new Promise((r) => setTimeout(r, 200));
     expect(auth.uploadConsumerBlob).not.toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();

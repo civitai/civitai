@@ -11,6 +11,7 @@ import { renderSignInProblemHtml } from '~/server/auth/login-error-page';
 import { logToAxiom } from '~/server/logging/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { safeSameOriginPath } from '~/utils/url-helpers';
+import { loginRedirectReasons } from '~/utils/login-helpers';
 
 // Fire-and-forget structured log — see the note in authorize.ts. `['civitai-prod'] | where name == 'auth-flow'`;
 // the `no-session-*` outcomes here are the civ-token-lands-but-won't-verify loop that authorize.ts can't see.
@@ -85,6 +86,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // A callback:success with no matching post-login:success (a no-session-* instead) is the cookie-didn't-land
   // signature — logging both legs lets that gap be measured per color.
-  logAuth(req, 'success', { isNewUser });
+  // Known reasons only: the query value is whatever the URL carried.
+  const reason =
+    loginRedirectReason && Object.keys(loginRedirectReasons).includes(loginRedirectReason)
+      ? loginRedirectReason
+      : undefined;
+  logAuth(req, 'success', { isNewUser, reason });
   res.redirect(302, dest);
 }
