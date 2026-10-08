@@ -553,15 +553,21 @@ export const serverSchema = z
     // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
     // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
     NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
-    // Per-call signals timeout in ms. Calls wrapped via withSignals() fail
-    // fast with SignalsCallTimeoutError once exceeded, instead of hanging
-    // until Traefik's 30s router timeout fires. Default tuned for signals
-    // normal latency (higher than Meili due to Orleans grain init).
+    // Per-call signals deadline in ms, measured from withSignals() entry — it
+    // covers time spent queued for a concurrency slot as well as the call.
+    // Calls fail fast with SignalsCallTimeoutError once exceeded (a call still
+    // queued at the deadline never runs), instead of hanging until Traefik's
+    // 30s router timeout fires. Default tuned for signals normal latency
+    // (higher than Meili due to Orleans grain init).
     SIGNALS_CALL_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(5000),
     // Per-pod cap on in-flight signals HTTP calls wrapped via withSignals().
-    // When saturated, additional calls fail fast with SignalsCallTimeoutError
-    // rather than queueing forever and pressuring the event loop.
+    // Calls beyond it wait in a queue bounded by SIGNALS_CALL_MAX_QUEUE.
     SIGNALS_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+    // Per-pod cap on calls waiting for a SIGNALS_CALL_CONCURRENCY slot. When
+    // full, further calls fail at 0ms with SignalsCallTimeoutError('concurrency')
+    // and count toward the circuit breaker, so a reconnect storm trips it
+    // instead of piling up requests that can only time out.
+    SIGNALS_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
     // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
     // If `SIGNALS_CIRCUIT_TRIP_THRESHOLD` SignalsCallTimeoutErrors accumulate
     // within `SIGNALS_CIRCUIT_WINDOW_SECONDS`, the circuit OPENs and all calls

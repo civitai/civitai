@@ -26,11 +26,24 @@ const log = createLogger('signals', 'cyan');
  *
  * Defaults are HIGHER than Meili because signals normally takes longer (Orleans
  * grain init):
- *   SIGNALS_CALL_TIMEOUT_MS       5000  (Meili: 2500)
+ *   SIGNALS_CALL_TIMEOUT_MS       5000  (Meili: 2500) — total deadline from
+ *                                       withSignals() entry: queue wait + call
  *   SIGNALS_CALL_CONCURRENCY      30    (Meili: 50)
+ *   SIGNALS_CALL_MAX_QUEUE        200   (Meili: unbounded) — live queued calls
+ *                                       beyond this reject at 0ms
  *   SIGNALS_CIRCUIT_WINDOW_SECONDS 60   (Meili: 30)
  *   SIGNALS_CIRCUIT_TRIP_THRESHOLD 10
  *   SIGNALS_CIRCUIT_COOLDOWN_SECONDS 30
+ *
+ * Why the deadline covers the queue (2026-10-08): during a signals-service
+ * outage a client reconnect storm queued >1,000 calls per pod in front of the
+ * limiter. The old deadline only started once a call acquired a slot, so queued
+ * calls waited until the upstream proxy's 30s timeout (→ 504s on
+ * signals.getToken, which is designed to fail soft), and because queue wait was
+ * never counted as a failure the circuit almost never opened. Now a call that
+ * cannot FINISH within SIGNALS_CALL_TIMEOUT_MS of entry rejects with
+ * SignalsCallTimeoutError('timeout') — and if it was still queued, its fn()
+ * never runs. Queue-full rejections and timeouts both count toward the circuit.
  *
  * SCOPE: wrap ONLY the actual `fetch(SIGNALS_ENDPOINT/...)` call. Do NOT wrap
  * surrounding DB/Redis work — those are independent dependencies and should not
@@ -41,7 +54,9 @@ const log = createLogger('signals', 'cyan');
 
 /**
  * Typed error thrown by withSignals() when a wrapped signals call exceeds
- * SIGNALS_CALL_TIMEOUT_MS, or when the circuit breaker is OPEN.
+ * SIGNALS_CALL_TIMEOUT_MS (reason 'timeout'), or when it is shed at 0ms because
+ * the circuit breaker is OPEN or the per-pod queue is full (reason
+ * 'concurrency').
  *
  * Hot-path callers (signals.getToken tRPC handler, webhooks/resource-training
  * REST handlers) catch this and return a fast 408 / TRPCError(TIMEOUT) instead
@@ -65,13 +80,28 @@ export class SignalsCallTimeoutError extends Error {
 
 const limiter = pLimit(env.SIGNALS_CALL_CONCURRENCY);
 
+// Calls inside withSignals() that are queued or running and have not yet
+// settled. Bounds the queue instead of `limiter.pendingCount`, which (a) lags a
+// microtask behind enqueue even when a slot is free and (b) still counts calls
+// that already timed out while queued — those are drained without running fn()
+// but would otherwise make a dead backlog look like a full queue.
+let outstanding = 0;
+
 // ────────────────────────────────────────────────────────────────────────────
 // Observability — single-backend, no label
 // ────────────────────────────────────────────────────────────────────────────
 
 const signalsCallTimeoutsCounter = registerCounter({
   name: 'signals_call_timeouts_total',
-  help: 'Signals wrapped-call timeouts (per-call deadline exceeded)',
+  help: 'Signals wrapped-call timeouts (deadline from entry exceeded: queue wait + call)',
+});
+
+// Calls rejected at 0ms because SIGNALS_CALL_MAX_QUEUE live calls were already
+// waiting for a slot. Separate from the circuit-rejection counter so a storm
+// that fills the queue is distinguishable from an OPEN circuit.
+const signalsCallQueueRejectionsCounter = registerCounter({
+  name: 'signals_call_queue_rejections_total',
+  help: 'Signals calls rejected at 0ms because the per-pod queue was full',
 });
 
 // Active/queue gauges are sampled lazily on /metrics scrape so the hot path
@@ -249,11 +279,7 @@ function recordCallOutcome(isTrial: boolean, failed: boolean) {
     return;
   }
 
-  if (
-    c.state === 'CLOSED' &&
-    failed &&
-    c.failures.length >= env.SIGNALS_CIRCUIT_TRIP_THRESHOLD
-  ) {
+  if (c.state === 'CLOSED' && failed && c.failures.length >= env.SIGNALS_CIRCUIT_TRIP_THRESHOLD) {
     transition(c, 'OPEN', now);
   }
 }
@@ -275,62 +301,88 @@ function recordCallOutcome(isTrial: boolean, failed: boolean) {
  * orphan fetch promise no longer hogs an event-loop slot for the full
  * router-timeout duration.
  *
- * The queue is intentionally unbounded — same reasoning as withMeili. The
- * timeout is the safety net; a queue-depth cap adds a TOCTOU race without
- * strengthening the guarantee.
+ * Queue: bounded at SIGNALS_CALL_MAX_QUEUE live waiting calls. The deadline
+ * runs from entry, so a call that waits in the queue past it rejects with
+ * SignalsCallTimeoutError('timeout') and its fn() is never invoked (no
+ * outbound fetch fires after the caller gave up). A full queue rejects at 0ms
+ * with reason 'concurrency'. Both count as circuit failures, so a storm trips
+ * the breaker and later calls fail fast at the gate. A HALF_OPEN trial that is
+ * shed or times out in the queue records a failed trial (→ OPEN), so it can
+ * never leave `trialInFlight` stuck.
  */
 export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   // Circuit breaker gate — runs synchronously before the pLimit acquire.
   const decision = admitCall();
   if (!decision.admitted) {
     signalsCircuitRejectionsCounter.inc();
-    throw new SignalsCallTimeoutError(
-      'concurrency',
-      'Signals circuit open — failing fast'
-    );
+    throw new SignalsCallTimeoutError('concurrency', 'Signals circuit open — failing fast');
   }
   const isTrial = decision.isTrial;
 
+  // Queue bound. `outstanding` counts running + live-queued calls, so the
+  // queue is full once it reaches concurrency + max queue.
+  if (outstanding >= env.SIGNALS_CALL_CONCURRENCY + env.SIGNALS_CALL_MAX_QUEUE) {
+    signalsCallQueueRejectionsCounter.inc();
+    recordCallOutcome(isTrial, true);
+    throw new SignalsCallTimeoutError('concurrency', 'Signals call queue full — failing fast');
+  }
+
+  outstanding++;
   const endTimer = signalsCallDurationHistogram.startTimer();
-  return limiter(async () => {
-    let timer: NodeJS.Timeout | undefined;
-    let failedForCircuit = false;
-    // Capture the call so we can absorb a late rejection if the timeout wins
-    // the race. The underlying `fetch` may continue running (especially if the
-    // caller didn't provide an AbortSignal); the orphan settles silently.
-    // Without this catch, a late rejection bubbles to `unhandledRejection` —
-    // Node ≥15's default exit-on-unhandled would turn our brownout protection
-    // into pod-crash amplification.
-    const call = fn();
-    call.catch(() => undefined);
-    try {
-      return await Promise.race([
-        call,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            signalsCallTimeoutsCounter.inc();
-            failedForCircuit = true;
-            reject(new SignalsCallTimeoutError('timeout'));
-          }, env.SIGNALS_CALL_TIMEOUT_MS);
-          timer.unref?.();
-        }),
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
-      // EMERGENCY 2026-05-30: a metric-observation error MUST NOT propagate
-      // into the app request path. We observed prom-client Histogram.observe
-      // throwing `Cannot read properties of undefined (reading 'length')` at
-      // 22/s per pod on signals.getToken (PR #2366 deploy), turning every
-      // wrapped signals call into an INTERNAL_SERVER_ERROR — the exact
-      // cascade pattern the wrap was supposed to prevent. Root cause of the
-      // bad histogram state is still under investigation; this catch is the
-      // unconditional safety net so a broken observation can't kill traffic.
-      try {
-        endTimer();
-      } catch {
-        // intentionally swallowed
-      }
-      recordCallOutcome(isTrial, failedForCircuit);
-    }
+  const deadlineAt = Date.now() + env.SIGNALS_CALL_TIMEOUT_MS;
+  let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
+  // One deadline for the whole call, armed at entry: it covers queue wait AND
+  // execution. It rejects both the outer race (the caller's promise) and the
+  // inner race (which releases the limiter slot).
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      signalsCallTimeoutsCounter.inc();
+      reject(new SignalsCallTimeoutError('timeout'));
+    }, env.SIGNALS_CALL_TIMEOUT_MS);
+    timer.unref?.();
   });
+  deadline.catch(() => undefined);
+
+  try {
+    return await Promise.race([
+      limiter(async () => {
+        // Deadline reached while queued: return without calling fn() so no
+        // outbound fetch fires, and free the slot. The clock check matters —
+        // calls that entered in the same ms share an expiry, and the slot
+        // holder's timer can fire (freeing this slot) just before ours does.
+        // Returning `deadline` (rather than a value) keeps the outer race from
+        // resolving before our own timer rejects it.
+        if (timedOut || Date.now() >= deadlineAt) return deadline;
+        // Capture the call so we can absorb a late rejection if the deadline
+        // wins the race. The underlying `fetch` may continue running
+        // (especially if the caller didn't provide an AbortSignal); the orphan
+        // settles silently. Without this catch, a late rejection bubbles to
+        // `unhandledRejection` — Node ≥15's default exit-on-unhandled would turn
+        // our brownout protection into pod-crash amplification.
+        const call = fn();
+        call.catch(() => undefined);
+        return await Promise.race([call, deadline]);
+      }),
+      deadline,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    outstanding--;
+    // EMERGENCY 2026-05-30: a metric-observation error MUST NOT propagate
+    // into the app request path. We observed prom-client Histogram.observe
+    // throwing `Cannot read properties of undefined (reading 'length')` at
+    // 22/s per pod on signals.getToken (PR #2366 deploy), turning every
+    // wrapped signals call into an INTERNAL_SERVER_ERROR — the exact
+    // cascade pattern the wrap was supposed to prevent. Root cause of the
+    // bad histogram state is still under investigation; this catch is the
+    // unconditional safety net so a broken observation can't kill traffic.
+    try {
+      endTimer();
+    } catch {
+      // intentionally swallowed
+    }
+    recordCallOutcome(isTrial, timedOut);
+  }
 }
