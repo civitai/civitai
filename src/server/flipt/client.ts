@@ -179,6 +179,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
 
+  // Runs build-resource-intent-cooc (the weekly co-occurrence index build). DEFAULT-OFF. Turn it on
+  // only after the ResourceIntentCoocSnapshot migration is applied in that environment, or every
+  // run fails at the insert. Boolean only.
+  RESOURCE_INTENT_COOC_BUILD = 'resource-intent-cooc-build',
+
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
   // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).
   //

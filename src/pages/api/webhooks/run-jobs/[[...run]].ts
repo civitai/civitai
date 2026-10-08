@@ -82,6 +82,10 @@ import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { syncGeneratorLoadedResources } from '~/server/jobs/sync-generator-loaded-resources';
+import {
+  buildResourceIntentCoocJob,
+  resourceIntentCoocRetentionJob,
+} from '~/server/jobs/build-resource-intent-cooc';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
@@ -208,6 +212,8 @@ export const jobs: Job[] = [
   countReviewImages,
   processingEngingEarlyAccess,
   syncGeneratorLoadedResources,
+  buildResourceIntentCoocJob,
+  resourceIntentCoocRetentionJob,
   updateUserScore,
   grantCreatorMilestones,
   userScoreHealthCheckJob,
