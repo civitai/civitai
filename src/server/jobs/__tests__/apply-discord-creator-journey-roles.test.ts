@@ -276,6 +276,16 @@ describe('applyDiscordCreatorJourneyRoles — config and inputs', () => {
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
   });
 
+  // Read first, so the audience comes from an initialised client: evaluated cold, everyone but
+  // moderators is false, and a "readable" check after that would trust it and revoke them all.
+  it('checks the flag is readable before evaluating the audience', async () => {
+    holderRows = [supernova(1, '111')];
+    await applyDiscordCreatorJourneyRoles(ROLES);
+    expect(mockReadable.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAudience.mock.invocationCallOrder[0]
+    );
+  });
+
   it('reads holders under the showcase standing rule, with its bind values', async () => {
     mockExcluded.mockResolvedValue([42, 43]);
     const now = new Date('2026-10-08T12:00:00.000Z');
