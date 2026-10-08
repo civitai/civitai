@@ -13,7 +13,13 @@ import type {
   WorkerOutgoingMessage,
 } from './types';
 import { PORT_HEARTBEAT_INTERVAL_MS, SIGNALS_WORKER_VERSION } from './types';
-import { getBackoffDelay, TOKEN_FETCH_RETRY_BACKOFF, TOKEN_REFRESH_BACKOFF } from './backoff';
+import {
+  getBackoffDelay,
+  HUB_STABLE_CONNECTION_MS,
+  TOKEN_FETCH_RETRY_BACKOFF,
+  TOKEN_REFRESH_BACKOFF,
+  TOKEN_REVALIDATE_BACKOFF,
+} from './backoff';
 import { EventEmitter, teardownSignalWorker } from './utils';
 
 const WORKER_PING_TIMEOUT_MS = 3000;
@@ -195,27 +201,41 @@ export function useSignalsWorker(options?: {
     };
   }, [worker]);
 
-  // While the hub is unreachable, re-mint the token on a jittered backoff: ~5–30s after the
-  // connection closes, then doubling up to every ~5 min on average. This covers a token the hub no
-  // longer accepts, and the degraded `{}` response (no token, so no connection is ever opened and no
-  // further 'closed' arrives) — which otherwise never recovered until the tab reloaded. Re-minting on
+  // While the connection stays closed, re-fetch the token on a jittered backoff. Without a token —
+  // the degraded `{}` response, or a failed fetch — no connection is ever opened and no further
+  // 'closed' arrives, so this is the only way the tab recovers (it used to need a reload): ~5-30s
+  // after the close, doubling to a 10 min ceiling. A token the tab already holds is retried by the
+  // worker as is and re-minted only as a slow safety net (see TOKEN_REVALIDATE_BACKOFF). Re-minting on
   // every 'closed' instead, in every tab at once, multiplied `signals.getToken` ~50x in one outage.
-  // Each settled fetch re-arms the timer with the next step; connecting resets it. Deliberately keyed
-  // on the query's own state only — anything that re-rendered more often would keep pushing the timer
-  // back and the refresh would never fire.
+  // Each settled fetch re-arms the timer with the next step. Deliberately keyed on the query's own
+  // state only — anything that re-rendered more often would keep pushing the timer back and the
+  // refresh would never fire.
   const tokenIsFetching = tokenQuery.isFetching;
+  const hasToken = !!accessToken;
   useEffect(() => {
     if (connection === 'connected') {
-      tokenRefreshAttemptRef.current = 0;
-      return;
+      // Like the worker's own backoff, reset only once the connection has proved stable: a hub that
+      // accepts and then drops connections must not restart the schedule every cycle.
+      const timer = setTimeout(() => {
+        tokenRefreshAttemptRef.current = 0;
+      }, HUB_STABLE_CONNECTION_MS);
+      return () => clearTimeout(timer);
     }
     if (!userId || connection !== 'closed' || tokenIsFetching) return;
+    const config = hasToken ? TOKEN_REVALIDATE_BACKOFF : TOKEN_REFRESH_BACKOFF;
     const timer = setTimeout(() => {
       tokenRefreshAttemptRef.current += 1;
       queryUtils.signals.getToken.invalidate();
-    }, getBackoffDelay(tokenRefreshAttemptRef.current, TOKEN_REFRESH_BACKOFF));
+    }, getBackoffDelay(tokenRefreshAttemptRef.current, config));
     return () => clearTimeout(timer);
-  }, [userId, connection, tokenIsFetching, tokenQuery.dataUpdatedAt, tokenQuery.errorUpdatedAt]);
+  }, [
+    userId,
+    connection,
+    hasToken,
+    tokenIsFetching,
+    tokenQuery.dataUpdatedAt,
+    tokenQuery.errorUpdatedAt,
+  ]);
 
   // init
   useEffect(() => {

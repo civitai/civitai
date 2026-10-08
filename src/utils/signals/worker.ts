@@ -19,7 +19,12 @@ import type {
   WorkerOutgoingMessage,
 } from './types';
 import { PORT_STALE_AFTER_MS, SIGNALS_WORKER_VERSION } from './types';
-import { BackoffRetry, createHubReconnectPolicy, HUB_CONNECT_BACKOFF } from './backoff';
+import {
+  BackoffRetry,
+  createHubReconnectPolicy,
+  HUB_CONNECT_BACKOFF,
+  HUB_STABLE_CONNECTION_MS,
+} from './backoff';
 import { EventEmitter } from './utils';
 
 // --------------------------------
@@ -304,9 +309,44 @@ function getWorkerStatus(): SignalWorkerStatus {
 // on load and on every 'closed', so starting on each of those let page loads during an outage add
 // attempts on top of the retry loop; now they wait for the next scheduled attempt instead.
 const connectRetry = new BackoffRetry(() => void connect(), HUB_CONNECT_BACKOFF);
-// Retries SignalR's automatic reconnect has made in the current outage. Carried into `connectRetry`
-// when it gives up, so the hand-over keeps the cadence instead of restarting at the 3s step.
+// Retries SignalR's automatic reconnect has made in the current outage. Added to `connectRetry`
+// when it gives up, so the hand-over keeps the cadence instead of restarting at the 3s step. Zeroed
+// wherever the backoff is deliberately reset, or a `stop()` there would add it straight back.
 let reconnectRetryCount = 0;
+// Pending while the current connection is younger than HUB_STABLE_CONNECTION_MS.
+let stableConnectionTimer: ReturnType<typeof setTimeout> | null = null;
+
+function resetConnectBackoff() {
+  reconnectRetryCount = 0;
+  if (stableConnectionTimer) clearTimeout(stableConnectionTimer);
+  stableConnectionTimer = null;
+  connectRetry.reset();
+}
+
+/** The backoff resets only once the new connection has stayed up; see HUB_STABLE_CONNECTION_MS. */
+function onConnectionUp() {
+  reconnectRetryCount = 0;
+  if (stableConnectionTimer) clearTimeout(stableConnectionTimer);
+  stableConnectionTimer = setTimeout(() => {
+    stableConnectionTimer = null;
+    connectRetry.succeeded();
+  }, HUB_STABLE_CONNECTION_MS);
+}
+
+/** A connection that drops before it was stable counts as a failed attempt. */
+function onConnectionLost() {
+  if (!stableConnectionTimer) return;
+  clearTimeout(stableConnectionTimer);
+  stableConnectionTimer = null;
+  connectRetry.countFailures(1);
+  workerLog('connection:unstable', `dropped within ${HUB_STABLE_CONNECTION_MS / 1000}s`);
+}
+
+/** Ask for a `start()`; a no-op unless the connection is down, so a connected worker schedules nothing. */
+function requestConnect() {
+  if (connection && connection.state !== HubConnectionState.Disconnected) return;
+  connectRetry.request();
+}
 
 async function connect() {
   if (!connection) {
@@ -317,7 +357,7 @@ async function connect() {
   try {
     workerLog('connection:starting');
     await connection.start();
-    connectRetry.succeeded();
+    onConnectionUp();
     setConnectionState({ state: 'connected' });
     onConnected();
   } catch (err) {
@@ -353,7 +393,7 @@ const buildHubConnection = async ({
       await connection.stop();
       connection = null;
     }
-    connectRetry.reset();
+    resetConnectBackoff();
   }
 
   if (connection) return connection;
@@ -374,16 +414,21 @@ const buildHubConnection = async ({
     })
     .configureLogging(LogLevel.Trace)
     .withAutomaticReconnect(
-      createHubReconnectPolicy(({ previousRetryCount }) => {
-        reconnectRetryCount = previousRetryCount;
+      createHubReconnectPolicy({
+        onRetry: ({ previousRetryCount }) => {
+          // The first call of an episode is the moment the connection was lost (SignalR consults
+          // the policy before it fires `onreconnecting`).
+          if (previousRetryCount === 0) onConnectionLost();
+          reconnectRetryCount = previousRetryCount;
+        },
+        priorFailures: () => connectRetry.getStatus().failures,
       })
     )
     .build();
 
   connection.onreconnected(() => {
     workerLog('connection:reconnected');
-    reconnectRetryCount = 0;
-    connectRetry.succeeded();
+    onConnectionUp();
     setConnectionState({ state: 'connected' });
     onConnected();
   });
@@ -393,9 +438,12 @@ const buildHubConnection = async ({
   });
   connection.onclose((error) => {
     workerLog('connection:closed', error?.message);
-    // Only a close with an error follows a failed automatic reconnect; `stop()` closes without one.
-    // The policy's last call, the one that gave up, saw every failed attempt of this outage.
-    if (error) connectRetry.carryOver(reconnectRetryCount);
+    // A close straight from 'connected' (the server refused reconnection) is a lost connection too.
+    onConnectionLost();
+    // SignalR closes WITHOUT an error when its reconnect policy gives up (HubConnection
+    // `_reconnect` → `_completeClose()`), so this cannot key on `error`. The policy's last call, the
+    // one that gave up, saw every failed attempt of this outage; with no reconnect it is 0, a no-op.
+    connectRetry.countFailures(reconnectRetryCount);
     reconnectRetryCount = 0;
     setConnectionState({ state: 'closed', message: JSON.stringify(error) });
   });
@@ -510,7 +558,7 @@ const start = async (port: MessagePort) => {
         tokenFetchedAt: data.tokenFetchedAt,
       });
       // A newer token needs no attempt of its own: every attempt reads `latestToken`.
-      connectRetry.request();
+      requestConnect();
     } else if (data.type === 'event:register') {
       registerEvents([data.target]);
     } else if (data.type === 'beforeunload') {
@@ -544,7 +592,7 @@ const start = async (port: MessagePort) => {
     } else if (data.type === 'debug:reconnect') {
       workerLog('debug:reconnect');
       // A manual reconnect is the one attempt that skips the backoff.
-      connectRetry.reset();
+      resetConnectBackoff();
       await dropConnection('Forced reconnect (debug)');
     }
   };

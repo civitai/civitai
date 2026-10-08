@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import type * as TrpcModule from '~/utils/trpc';
 
-const act = (React as unknown as { act: typeof actType }).act;
+// React 18.3 has `act` at runtime; the installed @types/react predates it.
+const act = (React as unknown as { act: (callback: () => Promise<void>) => Promise<void> }).act;
 
 // How often a tab re-mints its signals token (`signals.getToken`) while the hub is unreachable.
 // Re-minting on every 'closed', in every tab at once, multiplied `signals.getToken` ~50x during one
@@ -32,12 +32,28 @@ const state = {
   invalidations: [] as number[],
   /** What the next re-mint returns. */
   nextToken: undefined as { accessToken?: string } | undefined,
+  /** Whether the next re-mint fails (the API saturated in an outage) instead of returning `nextToken`. */
+  nextFails: false,
+  /** Bumped on every change to `token`, so `advance` knows to re-render. */
+  version: 0,
 };
 
+function setToken(patch: Partial<TokenState>) {
+  state.token = { ...state.token, ...patch };
+  state.version += 1;
+}
+
+function settleFetch() {
+  if (state.nextFails) setToken({ isFetching: false, errorUpdatedAt: Date.now() });
+  else setToken({ isFetching: false, data: state.nextToken, dataUpdatedAt: Date.now() });
+}
+
+// Behaves like React Query's invalidate of an active query, with an instant fetch: it settles at
+// once, bumping `dataUpdatedAt` on success or only `errorUpdatedAt` on failure. A fetch still in
+// flight (`isFetching`) is modelled explicitly by the test that needs one.
 const invalidate = vi.fn(async () => {
   state.invalidations.push(Date.now());
-  // Settles like a refetch would: new data, new `dataUpdatedAt`.
-  state.token = { ...state.token, data: state.nextToken, dataUpdatedAt: Date.now() };
+  settleFetch();
 });
 const utils = { signals: { getToken: { invalidate } } };
 
@@ -103,14 +119,14 @@ async function fromWorker(data: unknown) {
 // and the re-render that re-arms the timer happens at the same instant — no rounding in the gaps.
 const STEP_MS = 500;
 
-/** Advance in steps, re-rendering after each re-mint so the hook sees the settled query. */
+/** Advance in steps, re-rendering whenever the query changed so the hook sees its new state. */
 async function advance(ms: number) {
   for (let elapsed = 0; elapsed < ms; elapsed += STEP_MS) {
-    const before = state.invalidations.length;
+    const before = state.version;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(STEP_MS);
     });
-    if (state.invalidations.length !== before) await render();
+    if (state.version !== before) await render();
   }
 }
 
@@ -128,6 +144,7 @@ async function mount(token: { accessToken?: string }) {
     errorUpdatedAt: 0,
   };
   state.nextToken = token;
+  state.version += 1;
   await render();
   await fromWorker({ type: 'worker:ready', version: '2.3' });
 }
@@ -137,6 +154,7 @@ beforeEach(() => {
   vi.useFakeTimers({ now: 1_000_000 });
   vi.spyOn(Math, 'random').mockReturnValue(1);
   state.invalidations = [];
+  state.nextFails = false;
   workers.length = 0;
   invalidate.mockClear();
   root = createRoot(document.createElement('div'));
@@ -162,9 +180,10 @@ describe('useSignalsWorker: signals token re-mint', () => {
     expect(inits.at(-1)).toMatchObject({ token: 't1' });
     expect(invalidate).not.toHaveBeenCalled();
 
-    // Only once the hub has kept refusing for a while: 30s at random() = 1.
-    await advance(60_000);
-    expect(state.invalidations[0] - t0).toBe(30_000);
+    // A held token never expires, so it is re-minted only as a slow safety net: after 10 min closed,
+    // then 20 min (random() = 1) — not every few seconds from every tab.
+    await advance(40 * 60_000);
+    expect(state.invalidations.map((t) => t - t0)).toEqual([600_000, 1_800_000]);
   });
 
   it('re-fetches a degraded `{}` token on a backoff capped at 10 minutes, rather than never', async () => {
@@ -223,5 +242,74 @@ describe('useSignalsWorker: signals token re-mint', () => {
     api.debug.forceReconnect();
     expect(invalidate).toHaveBeenCalledTimes(1);
     expect(workers[0].port.postMessage).toHaveBeenCalledWith({ type: 'debug:reconnect' });
+  });
+
+  it('debug forceReconnect restarts the re-mint backoff from its first step', async () => {
+    await mount({});
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(100_000); // re-mints at 30s and 90s; the next step would be 120s out
+    expect(state.invalidations).toHaveLength(2);
+
+    const t1 = Date.now();
+    await act(async () => api.debug.forceReconnect());
+    await render(); // the settled re-mint, as React Query would re-render it
+    await advance(40_000);
+    expect(state.invalidations.slice(2).map((t) => t - t1)).toEqual([0, 30_000]);
+  });
+
+  it('keeps re-minting on schedule when the re-mint itself fails', async () => {
+    await mount({});
+    state.nextFails = true;
+    const t0 = Date.now();
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(5 * 60_000);
+    expect([state.invalidations[0] - t0, ...gaps(state.invalidations)]).toEqual([
+      30_000, 60_000, 120_000,
+    ]);
+  });
+
+  it('does not stack a re-mint on a fetch that is still in flight', async () => {
+    // The page-load fetch is still running (slow API) when the worker reports 'closed'.
+    await mount({});
+    setToken({ data: undefined, isFetching: true, dataUpdatedAt: 0 });
+    await render();
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(60_000);
+    expect(state.invalidations).toEqual([]);
+
+    // It settles; the first re-mint follows the schedule from there.
+    const t1 = Date.now();
+    settleFetch();
+    await render();
+    await advance(40_000);
+    expect(state.invalidations.map((t) => t - t1)).toEqual([30_000]);
+  });
+
+  it("does not re-mint while SignalR is still reconnecting, or before the worker's first state", async () => {
+    await mount({});
+    await advance(10 * 60_000); // no state from the worker yet
+    await fromWorker({ type: 'connection:state', state: 'reconnecting' });
+    await advance(10 * 60_000);
+    expect(state.invalidations).toEqual([]);
+
+    const t1 = Date.now();
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(40_000);
+    expect(state.invalidations.map((t) => t - t1)).toEqual([30_000]);
+  });
+
+  it('a connection that drops within a minute does not restart the re-mint backoff', async () => {
+    await mount({});
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(100_000); // re-mints at 30s and 90s; the next step is 120s
+    expect(state.invalidations).toHaveLength(2);
+
+    // A hub that accepts the connection and drops it 10s later.
+    await fromWorker({ type: 'connection:state', state: 'connected' });
+    await advance(10_000);
+    const t1 = Date.now();
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(130_000);
+    expect(state.invalidations.slice(2).map((t) => t - t1)).toEqual([120_000]);
   });
 });

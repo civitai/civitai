@@ -45,36 +45,68 @@ export const HUB_CONNECT_BACKOFF: BackoffConfig = { baseMs: 3_000, capMs: 180_00
  */
 export const HUB_RECONNECT_GIVE_UP_MS = 5 * 60_000;
 
+/**
+ * A connection only resets the backoff once it has stayed up this long. A hub that accepts the
+ * handshake and then drops the connection (a failing `OnConnectedAsync`, a hung backend) would
+ * otherwise reset every client to the first, near-instant step on every cycle — a reconnect loop
+ * with no backoff at all. A connection lost sooner counts as one more failure instead.
+ */
+export const HUB_STABLE_CONNECTION_MS = 60_000;
+
+/**
+ * @param priorFailures failures already counted before this reconnect began — e.g. connections that
+ *   dropped before they were stable — so repeated short-lived connections keep climbing the schedule.
+ */
 export function getHubReconnectDelay(
   {
     previousRetryCount,
     elapsedMilliseconds,
   }: Pick<RetryContext, 'previousRetryCount' | 'elapsedMilliseconds'>,
+  priorFailures = 0,
   random: () => number = Math.random
 ): number | null {
   if (elapsedMilliseconds >= HUB_RECONNECT_GIVE_UP_MS) return null;
-  return getBackoffDelay(previousRetryCount, HUB_CONNECT_BACKOFF, random);
+  return getBackoffDelay(priorFailures + previousRetryCount, HUB_CONNECT_BACKOFF, random);
 }
 
-export function createHubReconnectPolicy(onRetry?: (context: RetryContext) => void): IRetryPolicy {
+export function createHubReconnectPolicy({
+  onRetry,
+  priorFailures,
+}: {
+  /** Called before each delay is computed, so it can update what `priorFailures` returns. */
+  onRetry?: (context: RetryContext) => void;
+  priorFailures?: () => number;
+} = {}): IRetryPolicy {
   return {
     nextRetryDelayInMilliseconds(context) {
       onRetry?.(context);
-      return getHubReconnectDelay(context);
+      return getHubReconnectDelay(context, priorFailures?.() ?? 0);
     },
   };
 }
 
 /**
- * Re-minting the signals access token while the hub is unreachable. The token carries no expiry, so
- * one that has connected stays good across an outage; re-minting exists for a token the hub no longer
- * accepts, and for the degraded `{}` response, which carries no token at all. Neither is urgent
- * enough to justify more than one `signals.getToken` per tab every ~5 min while an outage lasts.
+ * Re-fetching the signals access token while the connection stays closed and the tab holds NO token
+ * — the degraded `{}` response, or a failed fetch. Without a token no connection is ever attempted,
+ * so this is the only way such a tab recovers: ~5-30s after the close, doubling to a 10 min ceiling.
  */
 export const TOKEN_REFRESH_BACKOFF: BackoffConfig = {
   baseMs: 30_000,
   capMs: 600_000,
   minMs: 5_000,
+};
+
+/**
+ * Re-minting a token the tab already holds, while the connection stays closed. The token carries no
+ * expiry, so in an ordinary outage re-minting it buys nothing and only adds `signals.getToken` load
+ * from every tab; it exists as a slow safety net for a hub that no longer accepts the token (its key
+ * ring was lost), which the client cannot tell apart from an outage. First after 5-10 min closed,
+ * then doubling to a 1 hour ceiling: ~one call per tab per half hour while an outage lasts.
+ */
+export const TOKEN_REVALIDATE_BACKOFF: BackoffConfig = {
+  baseMs: 600_000,
+  capMs: 3_600_000,
+  minMs: 300_000,
 };
 
 /** React Query `retryDelay` for a failed `signals.getToken`. */
@@ -116,9 +148,9 @@ export class BackoffRetry {
     this.reset();
   }
 
-  /** Never moves the count backwards: a longer outage seen elsewhere keeps its place on the schedule. */
-  carryOver(failures: number) {
-    this.failures = Math.max(this.failures, failures);
+  /** Count failures seen elsewhere (e.g. by SignalR's own reconnect) without scheduling an attempt. */
+  countFailures(count = 1) {
+    this.failures += Math.max(count, 0);
   }
 
   /** Forget the outage: the next `request()` attempts immediately. */
