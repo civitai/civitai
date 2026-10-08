@@ -75,7 +75,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
+const currentUser = { id: 1 };
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: currentUser.id }) }));
 
 type FakePort = {
   postMessage: ReturnType<typeof vi.fn>;
@@ -155,6 +156,7 @@ beforeEach(() => {
   vi.spyOn(Math, 'random').mockReturnValue(1);
   state.invalidations = [];
   state.nextFails = false;
+  currentUser.id = 1;
   workers.length = 0;
   invalidate.mockClear();
   root = createRoot(document.createElement('div'));
@@ -322,5 +324,55 @@ describe('useSignalsWorker: signals token re-mint', () => {
     await advance(35 * 60_000);
     // The worker still holds t1, so a `{}` answer is no reason to re-mint every few minutes.
     expect(state.invalidations.map((t) => t - t0)).toEqual([600_000, 1_800_000]);
+  });
+
+  /** The token of the last connection:init the given worker received, if any. */
+  function lastInitToken(worker: { port: FakePort }) {
+    const inits = worker.port.postMessage.mock.calls
+      .map(([m]) => m)
+      .filter((m) => m.type === 'connection:init');
+    return inits.at(-1)?.token;
+  }
+
+  it("after a re-mint came back degraded, 'closed' still hands the worker the last real token", async () => {
+    await mount({ accessToken: 't1' });
+    await fromWorker({ type: 'connection:state', state: 'connected' });
+    state.nextToken = {};
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(11 * 60_000); // the revalidate at 10 min returned `{}`
+    expect(state.invalidations).toHaveLength(1);
+    workers[0].port.postMessage.mockClear();
+
+    // The worker dropped its connection object on this close; only an init rebuilds it.
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    expect(lastInitToken(workers[0])).toBe('t1');
+  });
+
+  it('a replacement worker is handed the last real token even after a degraded re-mint', async () => {
+    await mount({ accessToken: 't1' });
+    state.nextToken = {};
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(11 * 60_000);
+    expect(state.invalidations).toHaveLength(1);
+
+    // The tab gets a stale script back and retries with a fresh worker a minute later.
+    await fromWorker({ type: 'worker:ready', version: 'stale' });
+    await advance(61_000);
+    expect(workers).toHaveLength(2);
+    await fromWorker({ type: 'worker:ready', version: '2.3' });
+    expect(lastInitToken(workers[1])).toBe('t1');
+  });
+
+  it("never hands the worker another user's last token", async () => {
+    await mount({ accessToken: 't1' });
+    expect(lastInitToken(workers[0])).toBe('t1');
+    workers[0].port.postMessage.mockClear();
+
+    // A different user in the same mounted tab, whose first token came back degraded.
+    currentUser.id = 2;
+    setToken({ data: {}, dataUpdatedAt: Date.now() });
+    await render();
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    expect(lastInitToken(workers[0])).toBeUndefined();
   });
 });

@@ -88,10 +88,14 @@ export function useSignalsWorker(options?: {
   const accessToken = tokenQuery.data?.accessToken;
   // Re-mints since the hub last accepted a connection; picks the next step of the backoff below.
   const tokenRefreshAttemptRef = useRef(0);
-  // Whether this tab has ever held a real token. The worker keeps the last one it was given, so a tab
-  // whose re-mint came back degraded (`{}`) still has a token in play and stays on the slow schedule.
-  const hadTokenRef = useRef(false);
-  if (accessToken) hadTokenRef.current = true;
+  // The last real token this tab was given, for this user. A re-mint that comes back degraded (`{}`)
+  // must not take the tab's token away: the token never expires, so the tab keeps handing this one to
+  // the worker — on every 'closed', and to a replacement worker — and stays on the slow re-mint
+  // schedule rather than the no-token one.
+  const lastTokenRef = useRef<{ token: string; fetchedAt: number; userId: number }>();
+  if (accessToken && userId)
+    lastTokenRef.current = { token: accessToken, fetchedAt: tokenQuery.dataUpdatedAt, userId };
+  const workerToken = lastTokenRef.current?.userId === userId ? lastTokenRef.current : undefined;
 
   const emitterRef = useRef(new EventEmitter());
   const debugStateRef = useRef<SignalsWorkerDebugState>();
@@ -216,7 +220,7 @@ export function useSignalsWorker(options?: {
   // state only — anything that re-rendered more often would keep pushing the timer back and the
   // refresh would never fire.
   const tokenIsFetching = tokenQuery.isFetching;
-  const tokenInPlay = !!accessToken || hadTokenRef.current;
+  const tokenInPlay = !!workerToken;
   useEffect(() => {
     if (connection === 'connected') {
       // Like the worker's own backoff, reset only once the connection has proved stable: a hub that
@@ -243,15 +247,17 @@ export function useSignalsWorker(options?: {
   ]);
 
   // init
+  const workerTokenValue = workerToken?.token;
+  const workerTokenFetchedAt = workerToken?.fetchedAt;
   useEffect(() => {
-    if (worker && ready && accessToken && userId)
+    if (worker && ready && workerTokenValue && workerTokenFetchedAt !== undefined && userId)
       worker.port.postMessage({
         type: 'connection:init',
-        token: accessToken,
+        token: workerTokenValue,
         userId,
-        tokenFetchedAt: tokenQuery.dataUpdatedAt,
+        tokenFetchedAt: workerTokenFetchedAt,
       });
-  }, [worker, accessToken, tokenQuery.dataUpdatedAt, ready, userId, reconnectCount]);
+  }, [worker, workerTokenValue, workerTokenFetchedAt, ready, userId, reconnectCount]);
 
   const workerMethods = useMemo(() => {
     function send(target: string, args: Record<string, unknown>) {
