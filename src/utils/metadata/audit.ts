@@ -137,10 +137,15 @@ export const MAX_AUDIT_PROMPT_LENGTH = 20000;
 const OVER_LENGTH_MESSAGE = `Prompt exceeds the maximum allowed length (${MAX_AUDIT_PROMPT_LENGTH.toLocaleString(
   'en-US'
 )} characters)`;
-const capAuditLength = <T extends string | undefined>(s: T): T =>
-  typeof s === 'string' && s.length > MAX_AUDIT_PROMPT_LENGTH
-    ? (s.slice(0, MAX_AUDIT_PROMPT_LENGTH) as T)
-    : s;
+
+/**
+ * True when the block is the over-length size refusal and nothing else. That refusal is about the
+ * input's SIZE, not its content — it returns before any detector runs — so the recording path
+ * treats it as a size refusal rather than as evidence of a prohibited prompt.
+ */
+export function isOverLengthRefusal(triggers: PromptTrigger[]) {
+  return triggers.length > 0 && triggers.every((t) => t.category === 'over_length');
+}
 
 /**
  * Enriched version of auditPrompt that returns structured trigger data alongside blockedFor.
@@ -156,11 +161,13 @@ export const auditPromptEnriched = (
   // a banned word buried past MAX_AUDIT_PROMPT_LENGTH evade the regex layer; a
   // prompt this long is anomalous so we refuse it rather than scan a truncated copy.
   //
-  // 🔴 The refusal MUST carry a trigger. `auditPromptServer` raises a regex block only
-  // when `triggers.length > 0`; an empty trigger set there falls through to the
-  // external classifier ALONE — so a trigger-less refusal let over-length input
-  // skip the regex layer entirely. `over_length` is a hard
-  // category (not in SOFT_BLOCK_CATEGORIES), so it can never be clicked through.
+  // 🔴 The refusal carries a trigger. A trigger-less refusal once fell through to the
+  // external classifier alone, because the server audit raised a regex block only when
+  // `triggers.length > 0` — so over-length input skipped the regex layer entirely.
+  // `classifyPromptServer` now refuses any `success: false` (hard when trigger-less), but the
+  // trigger is still what names the refusal for the recording path (`isOverLengthRefusal`).
+  // `over_length` is a hard category (not in SOFT_BLOCK_CATEGORIES), so it can never be
+  // clicked through.
   if (
     prompt.length > MAX_AUDIT_PROMPT_LENGTH ||
     (negativePrompt != null && negativePrompt.length > MAX_AUDIT_PROMPT_LENGTH)
@@ -171,8 +178,6 @@ export const auditPromptEnriched = (
       success: false,
     };
   }
-  prompt = capAuditLength(prompt);
-  negativePrompt = capAuditLength(negativePrompt);
 
   // Per-sub-check timing instrumentation. Always-on but threshold-gated: below
   // AUDIT_SLOW_LOG_MS it costs only a handful of `performance.now()` deltas and
