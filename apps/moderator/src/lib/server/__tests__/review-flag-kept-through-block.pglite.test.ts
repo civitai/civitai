@@ -74,6 +74,8 @@ CREATE TABLE "Appeal" (
   "resolvedBy" INTEGER,
   "resolvedAt" TIMESTAMP(3),
   "resolvedMessage" TEXT,
+  "resolvedReason" TEXT,
+  "internalNotes" TEXT,
   "buzzTransactionId" TEXT
 );
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
@@ -215,7 +217,12 @@ describe('resolveImageAppeal', () => {
   it('approving does not restore an image under the review flag', async () => {
     await seedPendingAppeal(FLAGGED_REMOVED);
 
-    await resolveImageAppeal({ imageId: FLAGGED_REMOVED, status: 'Approved', userId: 2 });
+    await resolveImageAppeal({
+      imageId: FLAGGED_REMOVED,
+      status: 'Approved',
+      resolvedReason: 'misclassified',
+      userId: 2,
+    });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
   });
@@ -223,7 +230,12 @@ describe('resolveImageAppeal', () => {
   it('rejecting does not clear the review flag', async () => {
     await seedPendingAppeal(FLAGGED_REMOVED);
 
-    await resolveImageAppeal({ imageId: FLAGGED_REMOVED, status: 'Rejected', userId: 2 });
+    await resolveImageAppeal({
+      imageId: FLAGGED_REMOVED,
+      status: 'Rejected',
+      resolvedReason: 'violation-confirmed',
+      userId: 2,
+    });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
   });
