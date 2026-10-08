@@ -41,8 +41,9 @@ import {
  * 🔴 ENFORCE IMPLIES SCAN. With enforce on and shadow off, the scan still runs (inline) and still
  * records its hits and its denominator — otherwise turning shadow off after the enforce flip would
  * delete the telemetry at exactly the moment its rate is most worth watching. An enforce-mode hit
- * row carries NO leaf text, though (see `sharedDataHitRows`): only the hash, the matched term and
- * metadata. Leaf text is recorded only by shadow-mode scans. So the modes are
+ * row carries NO user text in ANY column, though (see `sharedDataHitRows` for the per-column
+ * rule): hashes, platform-authored labels and metadata only. User text is recorded only by
+ * shadow-mode scans. So the modes are
  * `off` (both off — no scan, no record, behaviour identical to before this existed), `shadow`
  * (shadow on, enforce off) and `enforce` (enforce on, shadow either way).
  *
@@ -97,13 +98,27 @@ export interface SharedTextInput {
   /** The leaf as stored. */
   raw: string;
   path: string;
+  /** `path` as parts — a number is an array index, a string a user-written key. */
+  segments: ReadonlyArray<string | number>;
   kind: SharedDataLeafKind;
 }
 
 export interface SharedTextHit {
   category: SharedDataHitCategory;
-  /** The matched term as the detector reported it. Never returned to the client. */
+  /**
+   * The matched term as the detector reported it. Never returned to the client. For `link` (the
+   * URL as written) and `audit_regex` (the word as the input carried it) this is a SUBSTRING OF THE
+   * LEAF — user text.
+   */
   matched: string;
+  /**
+   * What matched, in PLATFORM-AUTHORED terms only — never a substring of the leaf: the category
+   * name (`minor`), the list word (`poi`), the blocklist entry (`pattern`), the audit trigger's
+   * category (`audit_regex`, e.g. `profanity`), the cap (`overflow`), or `''` (`link`: the list
+   * does not report which entry matched, only the user's URL). An enforce-mode record stores this in
+   * place of `matched`.
+   */
+  label: string;
   /** The leaf that tripped it, or `null` for an overflow (which is about the blob, not a leaf). */
   leaf: SharedTextInput | null;
 }
@@ -133,13 +148,16 @@ export const SHARED_DATA_FULL_AUDIT_BUDGET = 32;
 const AUDIT_BUDGET_EXCEEDED = Symbol('audit-budget-exceeded');
 /** `auditLeaf`'s answer for a leaf longer than the audit will read at all. */
 const LEAF_TOO_LONG = Symbol('leaf-too-long');
-type AuditLeafResult = string | null | typeof AUDIT_BUDGET_EXCEEDED | typeof LEAF_TOO_LONG;
+/** A hit: the matched word as the input carried it, and the trigger's platform category. */
+type AuditLeafMatch = { matched: string; label: string };
+type AuditLeafResult = AuditLeafMatch | null | typeof AUDIT_BUDGET_EXCEEDED | typeof LEAF_TOO_LONG;
 
 /**
  * The green-domain regex audit over ONE leaf, the way `assertSharedTextSafe` audits title/body:
  * normalised, moderator-declared benign phrases blanked, profanity on (`isGreen: true`).
  *
- * Returns the matched term, `null` for a pass, `AUDIT_BUDGET_EXCEEDED`, or `LEAF_TOO_LONG`.
+ * Returns the match (term + trigger category), `null` for a pass, `AUDIT_BUDGET_EXCEEDED`, or
+ * `LEAF_TOO_LONG`.
  *
  * A leaf longer than `MAX_AUDIT_PROMPT_LENGTH` is not audited at all — the audit refuses such
  * input outright rather than read part of it — and is answered `LEAF_TOO_LONG`, which the caller
@@ -170,7 +188,11 @@ async function auditLeaf(text: string, budget: { remaining: number }): Promise<A
   const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit);
   if (success) return mayBeProfane && !fullAudit ? AUDIT_BUDGET_EXCEEDED : null;
   const first = triggers[0];
-  return first?.matchedWord ?? first?.category ?? blockedFor[0] ?? 'blocked';
+  return {
+    matched: first?.matchedWord ?? first?.category ?? blockedFor[0] ?? 'blocked',
+    // `blockedFor` is deliberately NOT a fallback here: for profanity it is the input's own words.
+    label: first?.category ?? 'blocked',
+  };
 }
 
 /**
@@ -203,24 +225,31 @@ export async function classifySharedTexts(
 
   texts.forEach((text, index) => {
     const leaf = inputs[index];
-    if (includesMinor(text)) hits.push({ category: 'minor', matched: 'minor', leaf });
+    if (includesMinor(text))
+      hits.push({ category: 'minor', matched: 'minor', label: 'minor', leaf });
     const poi = includesPoi(text);
-    if (poi) hits.push({ category: 'poi', matched: typeof poi === 'string' ? poi : 'poi', leaf });
+    if (poi) {
+      // `includesPoi` (no prompt-edit matching) returns the LIST word, never the input's spelling.
+      const word = typeof poi === 'string' ? poi : 'poi';
+      hits.push({ category: 'poi', matched: word, label: word, leaf });
+    }
     for (const hit of blocklistHits) {
       if (hit.index !== index) continue;
       hits.push(
         hit.kind === 'link'
-          ? { category: 'link', matched: hit.matched.join(','), leaf }
-          : { category: 'pattern', matched: hit.matched, leaf }
+          ? // `matched` here is the user's URLs as written: user text.
+            { category: 'link', matched: hit.matched.join(','), label: '', leaf }
+          : // The blocklist ENTRY that matched (a substring rule) — platform-authored.
+            { category: 'pattern', matched: hit.matched, label: hit.matched, leaf }
       );
     }
     const audit = audits[index];
     if (audit === AUDIT_BUDGET_EXCEEDED) {
-      hits.push({ category: 'overflow', matched: 'audit_budget', leaf });
+      hits.push({ category: 'overflow', matched: 'audit_budget', label: 'audit_budget', leaf });
     } else if (audit === LEAF_TOO_LONG) {
-      hits.push({ category: 'overflow', matched: 'leaf_length', leaf });
+      hits.push({ category: 'overflow', matched: 'leaf_length', label: 'leaf_length', leaf });
     } else if (audit != null) {
-      hits.push({ category: 'audit_regex', matched: audit, leaf });
+      hits.push({ category: 'audit_regex', matched: audit.matched, label: audit.label, leaf });
     }
   });
   return hits;
@@ -242,11 +271,18 @@ export async function scanSharedData(
     return {
       leafCount: 0,
       overflow: collected.overflow,
-      hits: [{ category: 'overflow', matched: collected.overflow, leaf: null }],
+      hits: [
+        {
+          category: 'overflow',
+          matched: collected.overflow,
+          label: collected.overflow,
+          leaf: null,
+        },
+      ],
     };
   }
   const hits = await classifySharedTexts(
-    collected.leaves.map(({ raw, path, kind }) => ({ raw, path, kind })),
+    collected.leaves.map(({ raw, path, segments, kind }) => ({ raw, path, segments, kind })),
     opts
   );
   return scanOf(collected.leaves.length, hits);
@@ -257,7 +293,7 @@ export async function scanCounterKey(
   key: string,
   opts: { isModerator?: boolean } = {}
 ): Promise<SharedTextScan> {
-  const hits = await classifySharedTexts([{ raw: key, path: '', kind: 'key' }], opts);
+  const hits = await classifySharedTexts([{ raw: key, path: '', segments: [], kind: 'key' }], opts);
   return scanOf(1, hits);
 }
 
@@ -285,13 +321,18 @@ export const SHARED_DATA_HITS_TABLE = 'appBlocksSharedDataHits';
 export const SHARED_DATA_HIT_TEXT_MAX_BYTES = 1024;
 /** The leaf path is cut too, because it is made of user-authored keys. */
 export const SHARED_DATA_HIT_PATH_MAX_BYTES = 512;
+/** Hex chars of sha256 standing in for one user-written key in an enforce-mode `leafPath`. */
+export const SHARED_DATA_HIT_PATH_KEY_HASH_CHARS = 16;
 const MATCHED_MAX_CHARS = 200;
 
 export type SharedDataSurface = 'append' | 'update' | 'counter';
 
 export interface SharedDataScanContext {
   appBlockId: string;
-  /** The row the text was written to; empty when a rejected create never got one. */
+  /**
+   * The row the text was written to (a counter's key for `counter`); empty when a rejected create
+   * never got one. User text when it is a counter key — stored verbatim in shadow mode only.
+   */
   rowKey: string;
   surface: SharedDataSurface;
   mode: Exclude<SharedDataModerationMode, 'off'>;
@@ -313,35 +354,74 @@ export function truncateUtf8(text: string, maxBytes: number): string {
   return out;
 }
 
+const sha256Hex = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+
+/**
+ * An enforce-mode `leafPath`: the same shape, with every user-written KEY replaced by `#` + the
+ * first `SHARED_DATA_HIT_PATH_KEY_HASH_CHARS` hex of its sha256. Array indices are kept — they are
+ * structure, not text. A key can never be confused with an index (`#` is not a digit), and a key
+ * leaf's own last segment is the prefix of its `leafSha256`, so the two correlate.
+ */
+export function structuralLeafPath(segments: ReadonlyArray<string | number>): string {
+  return segments
+    .map((part) =>
+      typeof part === 'number'
+        ? String(part)
+        : `#${sha256Hex(part).slice(0, SHARED_DATA_HIT_PATH_KEY_HASH_CHARS)}`
+    )
+    .join('/');
+}
+
+/**
+ * One ClickHouse row per hit.
+ *
+ * 🔴 WHAT EACH COLUMN HOLDS, BY MODE. Shadow (the soak) keeps user text so a reviewer can judge the
+ * hit rate before the enforce flip. ENFORCE STORES NO USER TEXT IN ANY COLUMN — so leaving enforce
+ * on does not keep accumulating user content:
+ *
+ * - `rowKey` — shadow: the row / counter key as written. Enforce: `''`, because a counter key is
+ *   user-chosen text, and so is an updated row's key when that row is a counter's anchor.
+ * - `rowKeySha256` — sha256 of the key (`''` when there is none), in both modes, so an enforce row
+ *   still joins to its row.
+ * - `leafPath` — shadow: the JSON-pointer path, built from user-written keys. Enforce:
+ *   `structuralLeafPath`, every key hashed, array indices kept.
+ * - `matched` — shadow: the detector's term, which for `link` and `audit_regex` is a substring of
+ *   the leaf. Enforce: `hit.label`, platform-authored only.
+ * - `leafText` — shadow: the leaf, cut to 1 KB. Enforce: `''`.
+ * - `leafSha256`, `leafLength`, `leafKind`, `category`, `appBlockId`, `surface`, `mode`,
+ *   `blocked`, `time` — the same in both: a hash, a number, or a platform value.
+ *
+ * Every row expires with the table's TTL — at most 30 days after it was written, plus the TTL merge
+ * lag (see the DDL) — so every stored text is gone at most that long after the soak ends.
+ */
 export function sharedDataHitRows(
   scan: SharedTextScan,
   ctx: SharedDataScanContext,
   now: Date = new Date()
 ) {
   const time = formatClickhouseDateTime64(now);
+  const shadow = ctx.mode === 'shadow';
+  const rowKeySha256 = ctx.rowKey ? sha256Hex(ctx.rowKey) : '';
   return scan.hits.map((hit) => ({
     time,
     appBlockId: ctx.appBlockId,
-    rowKey: ctx.rowKey,
+    rowKey: shadow ? ctx.rowKey : '',
+    rowKeySha256,
     surface: ctx.surface,
     mode: ctx.mode,
     blocked: ctx.blocked ? 1 : 0,
-    // Truncated too: a path is built from object KEYS, which are user text of any length.
-    leafPath: truncateUtf8(hit.leaf?.path ?? '', SHARED_DATA_HIT_PATH_MAX_BYTES),
+    // Truncated: even hashed, a path is one segment per nesting level, up to the depth cap.
+    leafPath: truncateUtf8(
+      hit.leaf ? (shadow ? hit.leaf.path : structuralLeafPath(hit.leaf.segments)) : '',
+      SHARED_DATA_HIT_PATH_MAX_BYTES
+    ),
     leafKind: hit.leaf?.kind ?? '',
     category: hit.category,
-    matched: hit.matched.slice(0, MATCHED_MAX_CHARS),
+    matched: (shadow ? hit.matched : hit.label).slice(0, MATCHED_MAX_CHARS),
     leafLength: hit.leaf?.raw.length ?? 0,
-    leafSha256: hit.leaf ? createHash('sha256').update(hit.leaf.raw, 'utf8').digest('hex') : '',
-    // 🔴 TEXT ONLY FROM SHADOW-MODE SCANS. Shadow (the soak) keeps the text so a reviewer can
-    // judge the hit rate before the enforce flip; it expires with the row, 30 days after write, so
-    // every stored text is gone at most 30 days after the soak ends. Enforce stores NO text —
-    // hash, matched term and metadata only — so leaving enforce on does not keep accumulating
-    // user content. The empty string is the column default, not a placeholder for later.
-    leafText:
-      ctx.mode === 'shadow' && hit.leaf
-        ? truncateUtf8(hit.leaf.raw, SHARED_DATA_HIT_TEXT_MAX_BYTES)
-        : '',
+    leafSha256: hit.leaf ? sha256Hex(hit.leaf.raw) : '',
+    // The empty string is the column default, not a placeholder for later.
+    leafText: shadow && hit.leaf ? truncateUtf8(hit.leaf.raw, SHARED_DATA_HIT_TEXT_MAX_BYTES) : '',
   }));
 }
 
@@ -362,10 +442,11 @@ function categoryCounts(scan: SharedTextScan): Record<SharedDataHitCategory, num
  * Record one scan: a count-only Axiom event (the denominator — one per scanned write, hits or not)
  * and, when there are hits, one ClickHouse row per hit.
  *
- * 🔴 THE LEAF TEXT GOES TO CLICKHOUSE ONLY, AND ONLY FROM A SHADOW-MODE SCAN (enforce rows carry
- * none — see `sharedDataHitRows`). It is user content, and the hit table is the one sink here with
- * a retention this repo enforces (a TTL in its DDL). The Axiom event carries counts and
- * nothing a user wrote — not the text, not the matched term — and so does every failure log below.
+ * 🔴 USER TEXT GOES TO CLICKHOUSE ONLY, AND ONLY FROM A SHADOW-MODE SCAN (enforce rows carry none
+ * in any column — see `sharedDataHitRows`). It is user content, and the hit table is the one sink
+ * here with a retention this repo enforces (a TTL in its DDL). The Axiom event carries ids, counts
+ * and platform values — not the text, not a key, not the matched term — and so does every failure
+ * log below.
  * With no ClickHouse client (dev, build) the rows are dropped, never re-routed to a log.
  *
  * Never throws: a recording failure must not change the outcome of a write.

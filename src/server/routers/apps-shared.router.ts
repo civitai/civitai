@@ -1745,7 +1745,9 @@ async function assertSharedValueSafeAndSerialize(params: {
   //
   // 🔴 The scan reads the SERIALIZED value parsed back, not `value.data`: that is the exact JSON
   // that will be stored and later rendered, so a superjson-revived `Date`, a `toJSON` override or a
-  // dropped `undefined` is seen in its stored form rather than guessed at.
+  // dropped `undefined` is seen in its stored form rather than guessed at. Pinned by the
+  // revived-`URL` / `Date` cases in `apps-shared.router.test.ts` (a scan of `value.data` reads a
+  // revived `URL` as an object with no keys, and passes it).
   const mode = await resolveSharedDataModerationMode(appBlockId);
   // A thunk, so shadow mode parses off the request path too (inside the deferred scan).
   const readStoredData = () =>
@@ -1879,7 +1881,8 @@ async function sharedTextBlockingHit(scan: SharedTextScan): Promise<SharedTextHi
  * past a cap. With `hit` null it only records.
  *
  * The recording is not awaited and never throws, so it cannot change the outcome either way. An
- * enforce-mode record carries no leaf text (see `sharedDataHitRows`).
+ * enforce-mode record carries no user text in any column — not the leaf, the key, the path's keys
+ * or the matched substring (see `sharedDataHitRows`).
  */
 async function refuseSharedTextHit(
   scan: SharedTextScan,

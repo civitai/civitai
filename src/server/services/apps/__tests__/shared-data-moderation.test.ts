@@ -49,10 +49,12 @@ import {
   scanSharedData,
   scheduleSharedDataShadow,
   SHARED_DATA_FULL_AUDIT_BUDGET,
+  SHARED_DATA_HIT_PATH_KEY_HASH_CHARS,
   SHARED_DATA_HIT_PATH_MAX_BYTES,
   SHARED_DATA_HIT_TEXT_MAX_BYTES,
   SHARED_DATA_HITS_TABLE,
   sharedDataHitRows,
+  structuralLeafPath,
   truncateUtf8,
   type SharedTextScan,
 } from '../shared-data-moderation';
@@ -67,7 +69,12 @@ const SHADOW = 'app-blocks-shared-data-moderation';
 const ENFORCE = 'app-blocks-shared-data-moderation-enforce';
 const MINOR = '13 year old girl';
 
-const leaf = (raw: string, path = 'x', kind: 'value' | 'key' = 'value') => ({ raw, path, kind });
+const leaf = (raw: string, path = 'x', kind: 'value' | 'key' = 'value') => ({
+  raw,
+  path,
+  segments: path ? path.split('/') : [],
+  kind,
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -103,20 +110,28 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
 
   it('flags a minor term, with the leaf it came from', async () => {
     const hits = await classifySharedTexts([leaf('fine'), leaf(MINOR, 'y/0')]);
-    expect(hits).toContainEqual({ category: 'minor', matched: 'minor', leaf: leaf(MINOR, 'y/0') });
+    expect(hits).toContainEqual({
+      category: 'minor',
+      matched: 'minor',
+      label: 'minor',
+      leaf: leaf(MINOR, 'y/0'),
+    });
     expect(hits.every((h) => h.leaf?.raw === MINOR)).toBe(true);
   });
 
   it('flags a POI name with the matched name', async () => {
     const hits = await classifySharedTexts([leaf('emma watson')]);
     expect(hits).toContainEqual(
-      expect.objectContaining({ category: 'poi', matched: 'emma watson' })
+      expect.objectContaining({ category: 'poi', matched: 'emma watson', label: 'emma watson' })
     );
   });
 
   it('flags green-domain profanity as audit_regex (isGreen semantics)', async () => {
     const hits = await classifySharedTexts([leaf('fuck')]);
-    expect(hits).toEqual([{ category: 'audit_regex', matched: 'fuck', leaf: leaf('fuck') }]);
+    // `matched` is the input's word; `label` is the audit trigger's category (platform-authored).
+    expect(hits).toEqual([
+      { category: 'audit_regex', matched: 'fuck', label: 'profanity', leaf: leaf('fuck') },
+    ]);
   });
 
   it('🔴 REGRESSION: a term split by a format character is still caught', async () => {
@@ -147,7 +162,12 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
   it('🔴 a single leaf over the audit length ceiling is an OVERFLOW hit — unreviewable, not a content signal', async () => {
     const hits = await classifySharedTexts([leaf('a'.repeat(20_001))]);
     expect(hits).toEqual([
-      { category: 'overflow', matched: 'leaf_length', leaf: leaf('a'.repeat(20_001)) },
+      {
+        category: 'overflow',
+        matched: 'leaf_length',
+        label: 'leaf_length',
+        leaf: leaf('a'.repeat(20_001)),
+      },
     ]);
     // ...and exactly AT the ceiling it is audited normally (a clean leaf passes).
     await expect(classifySharedTexts([leaf('a '.repeat(10_000))])).resolves.toEqual([]);
@@ -172,8 +192,15 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
     ]);
     const hits = await classifySharedTexts([leaf('zero'), leaf('one', 'k', 'key')]);
     expect(hits).toEqual([
-      { category: 'pattern', matched: 'scam phrase', leaf: leaf('zero') },
-      { category: 'link', matched: 'bad.example,worse.example', leaf: leaf('one', 'k', 'key') },
+      // A pattern's `matched` is the list ENTRY, so it is its own label; a link's is the user's
+      // URL, so its label is empty.
+      { category: 'pattern', matched: 'scam phrase', label: 'scam phrase', leaf: leaf('zero') },
+      {
+        category: 'link',
+        matched: 'bad.example,worse.example',
+        label: '',
+        leaf: leaf('one', 'k', 'key'),
+      },
     ]);
   });
 
@@ -267,7 +294,8 @@ describe('full-audit budget — only profane-looking leaves spend it', () => {
       {
         category: 'audit_regex',
         matched: 'fuck',
-        leaf: { raw: 'fuck', path: '500', kind: 'value' },
+        label: 'profanity',
+        leaf: { raw: 'fuck', path: '500', segments: [500], kind: 'value' },
       },
     ]);
   });
@@ -293,7 +321,7 @@ describe('scanSharedData / scanCounterKey', () => {
     expect(scan).toEqual({
       leafCount: 0,
       overflow: 'depth',
-      hits: [{ category: 'overflow', matched: 'depth', leaf: null }],
+      hits: [{ category: 'overflow', matched: 'depth', label: 'depth', leaf: null }],
     });
     expect(mockFindBlocked).not.toHaveBeenCalled();
   });
@@ -318,10 +346,10 @@ describe('scanSharedData / scanCounterKey', () => {
       leafCount: 2,
       overflow: 'leaf_length',
       hits: [
-        { category: 'audit_regex', matched: 'a', leaf: leaf('a') },
-        { category: 'overflow', matched: 'leaf_length', leaf: leaf('o') },
-        { category: 'link', matched: 'l', leaf: leaf('l') },
-        { category: 'poi', matched: 'p', leaf: leaf('p') },
+        { category: 'audit_regex', matched: 'a', label: 'a', leaf: leaf('a') },
+        { category: 'overflow', matched: 'leaf_length', label: 'leaf_length', leaf: leaf('o') },
+        { category: 'link', matched: 'l', label: 'l', leaf: leaf('l') },
+        { category: 'poi', matched: 'p', label: 'p', leaf: leaf('p') },
       ],
     };
     expect(blockingHit(scan)?.category).toBe('poi');
@@ -336,8 +364,8 @@ describe('scanSharedData / scanCounterKey', () => {
       leafCount: 2,
       overflow: null,
       hits: [
-        { category: 'pattern', matched: 'p', leaf: leaf('p') },
-        { category: 'audit_regex', matched: 'a', leaf: leaf('a') },
+        { category: 'pattern', matched: 'p', label: 'p', leaf: leaf('p') },
+        { category: 'audit_regex', matched: 'a', label: 'a', leaf: leaf('a') },
       ],
     };
     expect(blockingHit(scan, { enforcePatterns: true })?.category).toBe('pattern');
@@ -400,23 +428,124 @@ describe('recording', () => {
     expect(String(row.time)).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$/);
   });
 
-  it('🔴 an ENFORCE-mode row carries NO leaf text — hash, matched term and metadata only', async () => {
+  /** Every string column of every row, so an assertion cannot miss a column added later. */
+  const stringColumns = (rows: Array<Record<string, unknown>>) =>
+    rows.flatMap((r) =>
+      Object.entries(r).flatMap(([column, v]) => (typeof v === 'string' ? [[column, v]] : []))
+    );
+  /** Columns (by name) of `rows` holding any of `texts` as a substring. */
+  const columnsCarrying = (rows: Array<Record<string, unknown>>, texts: string[]) =>
+    stringColumns(rows)
+      .filter(([, v]) => texts.some((t) => v.includes(t)))
+      .map(([column]) => column);
+  const enforce = { ...ctx, mode: 'enforce' as const, blocked: true };
+  const sha = (t: string) => createHash('sha256').update(t, 'utf8').digest('hex');
+
+  it('🔴 an ENFORCE-mode row carries NO leaf text — hash, label and metadata only', async () => {
     const scan = await scanSharedData({ notes: MINOR });
-    const rows = sharedDataHitRows(scan, { ...ctx, mode: 'enforce', blocked: true });
+    const rows = sharedDataHitRows(scan, enforce);
     const row = rows.find((r) => r.category === 'minor')!;
     expect(row).toMatchObject({
       mode: 'enforce',
       blocked: 1,
       matched: 'minor',
-      leafPath: 'notes',
+      rowKey: '',
+      rowKeySha256: sha('ROW1'),
+      leafPath: `#${sha('notes').slice(0, SHARED_DATA_HIT_PATH_KEY_HASH_CHARS)}`,
       leafLength: MINOR.length,
-      leafSha256: createHash('sha256').update(MINOR, 'utf8').digest('hex'),
+      leafSha256: sha(MINOR),
       leafText: '',
     });
-    // Nothing a user wrote survives in any column (the matched term here is the category name).
-    for (const r of rows) expect(JSON.stringify(r)).not.toContain(MINOR);
-    // Control: the SAME scan recorded in shadow mode does carry the text.
-    expect(sharedDataHitRows(scan, ctx).find((r) => r.category === 'minor')?.leafText).toBe(MINOR);
+    expect(columnsCarrying(rows, [MINOR, 'notes'])).toEqual([]);
+    // Control: the SAME scan recorded in shadow mode does carry the text, the key and the path.
+    const shadowRow = sharedDataHitRows(scan, ctx).find((r) => r.category === 'minor')!;
+    expect(shadowRow).toMatchObject({ leafText: MINOR, leafPath: 'notes', rowKey: 'ROW1' });
+  });
+
+  it('🔴 enforce, COUNTER KEY: the flagged key is in no column — rowKey is empty, its hash joins', async () => {
+    const key = `playcount:${MINOR}`;
+    const scan = await scanCounterKey(key);
+    const counterCtx = { ...enforce, rowKey: key, surface: 'counter' as const };
+    const rows = sharedDataHitRows(scan, counterCtx);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(columnsCarrying(rows, [key, MINOR, 'playcount'])).toEqual([]);
+    for (const row of rows) {
+      expect(row).toMatchObject({ rowKey: '', rowKeySha256: sha(key), leafSha256: sha(key) });
+    }
+    // Positive control: shadow mode stores the key (rowKey) and the text.
+    expect(
+      columnsCarrying(sharedDataHitRows(scan, { ...counterCtx, mode: 'shadow' }), [key])
+    ).toEqual(expect.arrayContaining(['rowKey', 'leafText']));
+  });
+
+  it('🔴 enforce, flagged OBJECT KEY nested in data: no column carries any user-written key', async () => {
+    const outer = 'my private bucket';
+    const flaggedKey = `tag ${MINOR}`;
+    const data = { [outer]: [{ [flaggedKey]: 1 }] };
+    const scan = await scanSharedData(data);
+    const rows = sharedDataHitRows(scan, enforce);
+    const keyRow = rows.find((r) => r.leafKind === 'key' && r.category === 'minor')!;
+    expect(keyRow).toBeDefined();
+    expect(columnsCarrying(rows, [outer, flaggedKey, MINOR])).toEqual([]);
+    // The path keeps its STRUCTURE: hashed key / array index / hashed key.
+    const h = (t: string) => `#${sha(t).slice(0, SHARED_DATA_HIT_PATH_KEY_HASH_CHARS)}`;
+    expect(keyRow.leafPath).toBe(`${h(outer)}/0/${h(flaggedKey)}`);
+    expect(keyRow.leafSha256.startsWith(h(flaggedKey).slice(1))).toBe(true);
+    // Positive control: shadow mode carries the raw path and the key text.
+    expect(
+      sharedDataHitRows(scan, ctx).find((r) => r.leafKind === 'key' && r.category === 'minor')
+    ).toMatchObject({ leafPath: `${outer}/0/${flaggedKey}`, leafText: flaggedKey });
+  });
+
+  it('🔴 enforce, flagged VALUE under a user-key path: neither the value nor the keys survive', async () => {
+    const keyA = 'alpha notebook';
+    const keyB = 'zeta 0';
+    const value = `${MINOR} at the park`;
+    const scan = await scanSharedData({ [keyA]: { [keyB]: [{ note: value }] } });
+    const rows = sharedDataHitRows(scan, enforce);
+    const valueRow = rows.find((r) => r.leafKind === 'value' && r.category === 'minor')!;
+    expect(valueRow).toBeDefined();
+    expect(columnsCarrying(rows, [keyA, keyB, value, MINOR, 'note'])).toEqual([]);
+    const h = (t: string) => `#${sha(t).slice(0, SHARED_DATA_HIT_PATH_KEY_HASH_CHARS)}`;
+    expect(valueRow.leafPath).toBe(`${h(keyA)}/${h(keyB)}/0/${h('note')}`);
+    expect(sharedDataHitRows(scan, ctx).find((r) => r.leafKind === 'value')).toMatchObject({
+      leafText: value,
+      leafPath: `${keyA}/${keyB}/0/note`,
+    });
+  });
+
+  it('🔴 enforce: a matched term that is a SUBSTRING OF THE LEAF (link, audit) is replaced by its label', async () => {
+    const url = 'https://evil.example/path-only-the-user-wrote';
+    mockFindBlocked.mockResolvedValue([{ kind: 'link', index: 1, matched: [url] }]);
+    const scan = await scanSharedData({ a: 'what the fuck', b: `see ${url}` });
+    const rows = sharedDataHitRows(scan, enforce);
+    expect(rows.map((r) => [r.category, r.matched]).sort()).toEqual(
+      [
+        ['audit_regex', 'profanity'],
+        ['link', ''],
+      ].sort()
+    );
+    expect(columnsCarrying(rows, [url, 'evil.example', 'fuck'])).toEqual([]);
+    // Positive control: shadow stores the detector's own term, which IS user text.
+    const shadowRows = sharedDataHitRows(scan, ctx);
+    expect(shadowRows.find((r) => r.category === 'link')?.matched).toBe(url);
+    expect(shadowRows.find((r) => r.category === 'audit_regex')?.matched).toBe('fuck');
+  });
+
+  it('enforce keeps a PLATFORM-authored matched term: the POI list word and a blocklist entry', async () => {
+    mockFindBlocked.mockResolvedValue([{ kind: 'pattern', index: 0, matched: 'list entry' }]);
+    const scan = await scanSharedData({ a: 'a list entry here', b: 'emma watson' });
+    const rows = sharedDataHitRows(scan, enforce);
+    expect(rows.find((r) => r.category === 'pattern')?.matched).toBe('list entry');
+    expect(rows.find((r) => r.category === 'poi')?.matched).toBe('emma watson');
+  });
+
+  it('structuralLeafPath keeps indices, hashes keys, and never confuses key "0" with index 0', () => {
+    expect(structuralLeafPath([])).toBe('');
+    expect(structuralLeafPath([0, 12])).toBe('0/12');
+    expect(structuralLeafPath(['0'])).toBe(
+      `#${sha('0').slice(0, SHARED_DATA_HIT_PATH_KEY_HASH_CHARS)}`
+    );
   });
 
   it('emits ONE count-only denominator event — no leaf text and no matched term', async () => {
@@ -479,7 +608,7 @@ describe('recording', () => {
       {
         leafCount: 0,
         overflow: 'leaves',
-        hits: [{ category: 'overflow', matched: 'leaves', leaf: null }],
+        hits: [{ category: 'overflow', matched: 'leaves', label: 'leaves', leaf: null }],
       },
       ctx,
       new Date('2026-10-08T01:02:03.456Z')

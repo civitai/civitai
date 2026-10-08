@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClientModule from '~/server/flipt/client';
 import { TRPCError } from '@trpc/server';
@@ -2533,12 +2534,31 @@ describe('shared `data` local moderation', () => {
           blocked: 1,
           mode: 'enforce',
           rowKey: '',
-          leafPath: 'x',
-          // Enforce stores the hash, matched term and metadata only — never the text.
+          // Enforce hashes every user-written key in the path (here the one key, `x`).
+          leafPath: `#${createHash('sha256').update('x').digest('hex').slice(0, 16)}`,
+          // Enforce stores hashes, platform labels and metadata only — never the text.
           leafText: '',
         })
       );
       expect(JSON.stringify(rows)).not.toContain(MINOR);
+    });
+
+    it('🔴 REGRESSION: the scan reads the STORED form — a revived `URL` is scanned as the href it serialises to', async () => {
+      // A superjson-revived value is an object with no own keys, so a scan of `value.data` as
+      // received would read nothing in it. Stored, it is its `toJSON()` string.
+      const site = new URL('https://example.com/gallery/loli');
+      await expect(appendData({ site })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content flagged for review',
+      });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(mockFindBlocked.mock.calls[0][0]).toContain(site.href);
+    });
+
+    it('the stored form of a revived `Date` is its ISO string (read, and clean)', async () => {
+      const at = new Date('2026-10-08T01:02:03.456Z');
+      await expect(appendData({ at })).resolves.toMatchObject({ key: expect.any(String) });
+      expect(mockFindBlocked.mock.calls[0][0]).toEqual(['at', at.toISOString()]);
     });
 
     it('clean `data` is written, and the scan still emits its denominator', async () => {
@@ -2584,7 +2604,14 @@ describe('shared `data` local moderation', () => {
       expect(mockPool.connect).not.toHaveBeenCalled();
       await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
       expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
-        expect.objectContaining({ rowKey: 'ROW-KEY-1', surface: 'update', leafKind: 'key' })
+        expect.objectContaining({
+          // Enforce never stores the key verbatim (a counter-anchor row's key is user text); its
+          // hash still joins the hit to the row.
+          rowKey: '',
+          rowKeySha256: createHash('sha256').update('ROW-KEY-1').digest('hex'),
+          surface: 'update',
+          leafKind: 'key',
+        })
       );
     });
 
@@ -2710,6 +2737,16 @@ describe('shared `data` local moderation', () => {
           leafKind: 'value',
           leafText: MINOR,
         })
+      );
+    });
+
+    it('🔴 REGRESSION: shadow scans the STORED form too — a revived `URL`’s href is recorded', async () => {
+      const site = new URL('https://example.com/gallery/loli');
+      await appendData({ site });
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({ mode: 'shadow', leafPath: 'site', leafText: site.href })
       );
     });
 

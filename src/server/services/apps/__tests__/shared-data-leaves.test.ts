@@ -59,12 +59,14 @@ describe('collectSharedDataLeaves — what counts as a leaf', () => {
   it('dedupes exact strings — first path wins (values and keys together)', () => {
     const leaves = leavesOf({ a: 'same', b: ['same', 'same'], c: { same: 0 } });
     const same = leaves.find((l) => l.raw === 'same');
-    expect(same).toEqual({ raw: 'same', path: 'a', kind: 'value' });
+    expect(same).toEqual({ raw: 'same', path: 'a', segments: ['a'], kind: 'value' });
     expect(leaves.filter((l) => l.raw === 'same')).toHaveLength(1);
   });
 
   it('reads a bare string, and returns nothing for an absent blob or a scalar', () => {
-    expect(leavesOf('just text')).toEqual([{ raw: 'just text', path: '', kind: 'value' }]);
+    expect(leavesOf('just text')).toEqual([
+      { raw: 'just text', path: '', segments: [], kind: 'value' },
+    ]);
     expect(collectSharedDataLeaves(undefined)).toEqual({ leaves: [] });
     expect(leavesOf(42)).toEqual([]);
   });
@@ -75,6 +77,17 @@ describe('collectSharedDataLeaves — what counts as a leaf', () => {
       '__proto__',
       'inside proto',
     ]);
+  });
+
+  it('segments tell an array INDEX (number) from an object KEY (string) that `path` spells the same', () => {
+    // `{"0": …}` and `[…]` both give path `0`; a recorder hashing user keys must tell them apart.
+    const fromArray = leavesOf({ k: ['v1'] }).find((l) => l.raw === 'v1')!;
+    const fromObject = leavesOf({ k: { '0': 'v2' } }).find((l) => l.raw === 'v2')!;
+    expect([fromArray.path, fromObject.path]).toEqual(['k/0', 'k/0']);
+    expect(fromArray.segments).toEqual(['k', 0]);
+    expect(fromObject.segments).toEqual(['k', '0']);
+    // An escaped key keeps its RAW form as a segment (the escaping is only `path`'s).
+    expect(leavesOf({ 'a/b': 'v' })[0].segments).toEqual(['a/b']);
   });
 
   it('escapes `/` and `~` in a key so a key cannot forge another path', () => {
@@ -94,8 +107,8 @@ describe('collectSharedDataLeaves — format characters', () => {
     const value = 'lo\u200Bli \u200Dword\u2060s\uFEFF \u00ADsoft';
     const key = 'hid\u3164den';
     expect(leavesOf({ [key]: value })).toEqual([
-      { raw: key, path: key, kind: 'key' },
-      { raw: value, path: key, kind: 'value' },
+      { raw: key, path: key, segments: [key], kind: 'key' },
+      { raw: value, path: key, segments: [key], kind: 'value' },
     ]);
   });
 });
@@ -144,7 +157,7 @@ describe('collectSharedDataLeaves — caps report overflow instead of truncating
   it('duplicates do not count toward the leaf cap', () => {
     const value = Array.from({ length: SHARED_DATA_MAX_LEAVES * 3 }, () => 'repeated');
     expect(collectSharedDataLeaves(stored(value))).toEqual({
-      leaves: [{ raw: 'repeated', path: '0', kind: 'value' }],
+      leaves: [{ raw: 'repeated', path: '0', segments: [0], kind: 'value' }],
     });
   });
 
@@ -171,7 +184,7 @@ describe('collectSharedDataLeaves — caps report overflow instead of truncating
   it('a duplicated long string counts once toward the chars cap', () => {
     const long = 'x'.repeat(SHARED_DATA_MAX_CHARS - 10);
     expect(collectSharedDataLeaves(stored([long, long, long]))).toEqual({
-      leaves: [{ raw: long, path: '0', kind: 'value' }],
+      leaves: [{ raw: long, path: '0', segments: [0], kind: 'value' }],
     });
   });
 });

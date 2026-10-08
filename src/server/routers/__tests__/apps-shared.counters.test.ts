@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClientModule from '~/server/flipt/client';
 
@@ -435,6 +436,33 @@ describe('incrementSharedCounter — counter-key moderation', () => {
         (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-storage-legal-block'
       )
     ).toBe(true);
+  });
+
+  it('🔴 REGRESSION (enforce): the refused key is recorded WITHOUT its text — in no column at all', async () => {
+    setFlags({ enforce: true });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+    const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        rowKey: '',
+        rowKeySha256: createHash('sha256').update(BAD_KEY).digest('hex'),
+        surface: 'counter',
+        mode: 'enforce',
+        blocked: 1,
+        category: 'minor',
+        leafKind: 'key',
+        leafText: '',
+      })
+    );
+    const carrying = rows.flatMap((r) =>
+      Object.entries(r).flatMap(([column, v]) =>
+        typeof v === 'string' && (v.includes(BAD_KEY) || v.includes('playcount')) ? [column] : []
+      )
+    );
+    expect(carrying).toEqual([]);
   });
 
   it('both flags on behave as ENFORCE: a flagged key is refused, and scanned once', async () => {

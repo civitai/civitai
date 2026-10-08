@@ -17,14 +17,25 @@
 -- One row per flagged leaf: a string value or object key inside a shared row's `data` blob, or a
 -- counter key.
 --
--- 🔴 LEAF TEXT EXISTS ONLY ON SHADOW-MODE ROWS. A row written by a scan that ran because the shadow
--- flag is on and enforce is off (the soak) stores the leaf TEXT (truncated to 1 KB) so a reviewer
--- can judge the hit rate before the enforce flip; it is user content that was already visible to
--- the app's other users. A row written in enforce mode stores NO text — `leafText` is '' — only the
--- hash, the matched term and the metadata. That is why this table — and not a log stream — holds
--- the text: the TTL below is its retention, enforced here, in the DDL. Every stored text is
--- therefore gone at most 30 days (plus the merge lag below) after the soak ends, and leaving enforce
--- on does not accumulate any.
+-- 🔴 USER TEXT EXISTS ONLY ON SHADOW-MODE ROWS. A row written by a scan that ran because the shadow
+-- flag is on and enforce is off (the soak) stores user text so a reviewer can judge the hit rate
+-- before the enforce flip: the leaf (`leafText`, cut to 1 KB), the key (`rowKey` — a counter key is
+-- app/user-chosen), the path (`leafPath`, built from user-written object keys) and the detector's
+-- term (`matched` — for link and audit_regex a substring of the leaf). It is user content that was
+-- already visible to the app's other users.
+--
+-- A row written in ENFORCE mode stores NO user text in ANY column:
+--   rowKey      ''  (rowKeySha256 still joins it to the row)
+--   leafPath    the same shape with every object key replaced by '#' + 16 hex of its sha256;
+--               array indices kept
+--   matched     a platform-authored label only: the category, the POI list word, the blocklist
+--               entry, the audit trigger's category, the cap, or '' for a link
+--   leafText    ''
+-- The remaining columns are the same in both modes: a hash, a number, or a platform value.
+--
+-- That is why this table — and not a log stream — holds the text: the TTL below is its retention,
+-- enforced here, in the DDL. Every stored text is therefore gone at most 30 days (plus the merge
+-- lag below) after the soak ends, and leaving enforce on does not accumulate any.
 --
 -- Retention: rows expire 30 days after the start of the day they were written, and
 -- `ttl_only_drop_parts` drops each daily partition whole once all of it has expired. So a row lives
@@ -38,8 +49,12 @@ CREATE TABLE IF NOT EXISTS default.appBlocksSharedDataHits
 (
   time DateTime64(3),
   appBlockId String,
-  -- the shared row written to; empty for a create that enforce mode rejected (it never got a key)
+  -- the shared row written to, or the counter key — SHADOW-mode rows only (a counter key, and an
+  -- updated counter-anchor row's key, are user-chosen text); '' on every enforce-mode row, and for a
+  -- create that enforce mode rejected (it never got a key)
   rowKey String,
+  -- sha256 hex of the key, in BOTH modes; '' when there is no key
+  rowKeySha256 String,
   -- append | update | counter
   surface LowCardinality(String),
   -- shadow | enforce
@@ -47,14 +62,17 @@ CREATE TABLE IF NOT EXISTS default.appBlocksSharedDataHits
   -- 1 when the write this hit came from was rejected (enforce mode only). A pattern-list hit can
   -- be 0 in enforce mode: it rejects only while `user-content-pattern-enforce` is on.
   blocked UInt8,
-  -- JSON-pointer-style path inside `data` (cut to 512 bytes: it is built from user-authored keys);
-  -- empty for a counter key or a blob-level overflow
+  -- path inside `data`, cut to 512 bytes; empty for a counter key or a blob-level overflow.
+  -- shadow: JSON-pointer-style, built from user-authored keys. enforce: every key replaced by
+  -- '#' + 16 hex of its sha256, array indices kept
   leafPath String,
   -- value | key; empty for a blob-level overflow (depth | leaves | chars)
   leafKind LowCardinality(String),
   -- minor | poi | link | pattern | audit_regex | overflow
   category LowCardinality(String),
-  -- the matched term; for an overflow, which cap: depth | leaves | chars | audit_budget | leaf_length
+  -- shadow: the matched term as the detector reported it (for link and audit_regex, user text).
+  -- enforce: a platform-authored label only (see the header). For an overflow, in both modes, which
+  -- cap: depth | leaves | chars | audit_budget | leaf_length
   matched String,
   leafLength UInt32,
   leafSha256 String,
