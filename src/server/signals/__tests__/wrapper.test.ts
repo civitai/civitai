@@ -50,6 +50,24 @@ const count = (name: string) => counters.get(name)?.inc.mock.calls.length ?? 0;
 /** A call that never settles on its own — holds a limiter slot until the deadline. */
 const hang = () => new Promise<never>(() => undefined);
 
+/** A call whose fn() rejects after holding its slot for `ms`. */
+const failAfter = (ms: number) => () =>
+  new Promise<never>((_, reject) => setTimeout(() => reject(new Error('fetch failed')), ms));
+
+/**
+ * Record one piece of backend evidence: a fn() rejection after holding its slot
+ * for 60% of the deadline (the rule's bar is 50%; overshoot it, never sit on it).
+ */
+async function addSlowFailure(
+  withSignals: (fn: () => Promise<never>) => Promise<never>,
+  timeoutMs: number
+) {
+  const p = withSignals(failAfter(timeoutMs * 0.6));
+  p.catch(() => undefined);
+  await vi.advanceTimersByTimeAsync(timeoutMs * 0.6);
+  await expect(p).rejects.toThrow('fetch failed');
+}
+
 /** Observe a promise's outcome without awaiting it (so fake time can advance). */
 function track<T>(p: Promise<T>) {
   const state: { settled: boolean; value?: T; error?: unknown } = { settled: false };
@@ -229,22 +247,126 @@ describe('withSignals', () => {
     expect((gated.error as Error | undefined)?.message).toMatch(/circuit open/);
   });
 
-  it('a fn() rejection (e.g. fetch failed) is backend evidence: later queue-full rejections count', async () => {
+  it('a SLOW fn() rejection (held its slot >= half the deadline) is backend evidence: later queue-full rejections count', async () => {
     const { withSignals } = await load({
       SIGNALS_CALL_MAX_QUEUE: 0,
       SIGNALS_CIRCUIT_TRIP_THRESHOLD: 2,
     });
 
-    await expect(withSignals(() => Promise.reject(new Error('fetch failed')))).rejects.toThrow(
-      'fetch failed'
-    );
-    await vi.advanceTimersByTimeAsync(0);
+    await addSlowFailure(withSignals, DEFAULT_ENV.SIGNALS_CALL_TIMEOUT_MS);
     expect(count('signals_circuit_trips_total')).toBe(0); // not counted by itself
 
     track(withSignals(hang));
     [1, 2].map(() => track(withSignals(async () => 'x')));
     await Promise.resolve();
     expect(count('signals_call_queue_rejections_total')).toBe(2);
+    expect(count('signals_circuit_trips_total')).toBe(1);
+  });
+
+  it.each([
+    ['an instant rejection', 0],
+    ['a rejection after 40% of the deadline', 400],
+  ])(
+    'a FAST fn() failure (%s) is not evidence: a burst after a fast-failing outage stays CLOSED',
+    async (_label, failMs) => {
+      const { withSignals } = await load({
+        SIGNALS_CALL_MAX_QUEUE: 0,
+        SIGNALS_CIRCUIT_TRIP_THRESHOLD: 2,
+      });
+
+      // The outage: signals refuses connections, calls fail fast.
+      const p = withSignals(failAfter(failMs));
+      p.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(failMs);
+      await expect(p).rejects.toThrow('fetch failed');
+
+      // Recovery → reconnect burst far past the bound, healthy backend.
+      track(withSignals(hang));
+      [1, 2, 3, 4, 5].map(() => track(withSignals(async () => 'x')));
+      await Promise.resolve();
+      expect(count('signals_circuit_trips_total')).toBe(0);
+      expect(count('signals_call_queue_rejections_total')).toBe(5);
+    }
+  );
+
+  it('a saturated burst on a healthy-but-slowish backend stays CLOSED (late starts are queue time, not backend failures)', async () => {
+    const { withSignals } = await load({
+      SIGNALS_CALL_CONCURRENCY: 3,
+      SIGNALS_CALL_MAX_QUEUE: 20,
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+    });
+
+    // 300ms per call, 3 slots: waves start at 0/300/600/900ms. The 900ms wave
+    // starts with 100ms of budget left and times out — on a healthy backend.
+    const ok = () => new Promise<string>((r) => setTimeout(() => r('ok'), 300));
+    const calls = Array.from({ length: 23 }, () => track(withSignals(ok)));
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(calls.every((c) => c.settled)).toBe(true);
+    // Positive control: the scenario really produced late-start timeouts…
+    expect(count('signals_call_timeouts_total')).toBeGreaterThan(0);
+    // …and none of them opened the circuit.
+    expect(count('signals_circuit_trips_total')).toBe(0);
+    await expect(withSignals(async () => 'after')).resolves.toBe('after');
+  });
+
+  it('backend evidence older than the circuit window no longer lets queue-side failures count', async () => {
+    const { withSignals } = await load({
+      SIGNALS_CALL_MAX_QUEUE: 0,
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 2,
+      SIGNALS_CIRCUIT_WINDOW_SECONDS: 60,
+    });
+
+    await addSlowFailure(withSignals, DEFAULT_ENV.SIGNALS_CALL_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(61_000);
+    track(withSignals(hang));
+    [1, 2, 3].map(() => track(withSignals(async () => 'x')));
+    await Promise.resolve();
+    expect(count('signals_call_queue_rejections_total')).toBe(3);
+    expect(count('signals_circuit_trips_total')).toBe(0);
+  });
+
+  it('backend evidence is cleared when the circuit closes (a post-recovery burst does not re-open it)', async () => {
+    let releaseA!: (v: string) => void;
+    const { withSignals } = await load({
+      SIGNALS_CALL_TIMEOUT_MS: 60_000,
+      SIGNALS_CALL_MAX_QUEUE: 0,
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+      SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 1,
+    });
+
+    await addSlowFailure(withSignals, 60_000);
+    const a = track(withSignals(() => new Promise<string>((r) => (releaseA = r))));
+    track(withSignals(async () => 'c')); // shed with evidence → OPEN
+    await Promise.resolve();
+    expect(count('signals_circuit_trips_total')).toBe(1);
+    await vi.advanceTimersByTimeAsync(0);
+    releaseA('a');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(a.value).toBe('a');
+    await expect(withSignals(async () => 'trial')).resolves.toBe('trial'); // → CLOSED
+
+    // Healthy again: fill the slot and overflow. Old evidence must be gone.
+    track(withSignals(hang));
+    track(withSignals(async () => 'y'));
+    await Promise.resolve();
+    expect(count('signals_call_queue_rejections_total')).toBe(2);
+    expect(count('signals_circuit_trips_total')).toBe(1);
+  });
+
+  it('a HALF_OPEN trial whose fn() rejects closes the circuit (unchanged behaviour)', async () => {
+    const { withSignals } = await load({
+      SIGNALS_CALL_TIMEOUT_MS: 100,
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+      SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 1,
+    });
+
+    track(withSignals(hang));
+    await vi.advanceTimersByTimeAsync(100); // backend timeout → OPEN
+    expect(count('signals_circuit_trips_total')).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(withSignals(() => Promise.reject(new Error('fetch failed')))).rejects.toThrow();
+    await expect(withSignals(async () => 'ok')).resolves.toBe('ok');
     expect(count('signals_circuit_trips_total')).toBe(1);
   });
 
@@ -299,8 +421,7 @@ describe('withSignals', () => {
     });
 
     // Backend evidence, then fill both slots and overflow → counted → OPEN.
-    await expect(withSignals(() => Promise.reject(new Error('fetch failed')))).rejects.toThrow();
-    await vi.advanceTimersByTimeAsync(0);
+    await addSlowFailure(withSignals, 60_000);
     const a = track(withSignals(() => new Promise<string>((r) => (releaseA = r))));
     track(withSignals(hang));
     const c = track(withSignals(async () => 'c'));
@@ -342,8 +463,7 @@ describe('withSignals', () => {
     });
 
     // Backend evidence; then A holds the slot, B queues, C overflows → OPEN.
-    await expect(withSignals(() => Promise.reject(new Error('fetch failed')))).rejects.toThrow();
-    await vi.advanceTimersByTimeAsync(0);
+    await addSlowFailure(withSignals, DEFAULT_ENV.SIGNALS_CALL_TIMEOUT_MS);
     track(withSignals(() => new Promise<string>((r) => (releaseA = r))));
     track(withSignals(hang));
     track(withSignals(async () => 'c'));

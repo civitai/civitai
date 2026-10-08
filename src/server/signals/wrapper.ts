@@ -26,22 +26,30 @@ const log = createLogger('signals', 'cyan');
  *   HALF_OPEN → (trial shed by the queue) → HALF_OPEN, trial slot released
  *
  * What counts toward TRIP_THRESHOLD (the breaker exists to stop calling a SICK
- * backend; shedding excess DEMAND is the queue bound's job):
- *   - backend timeout — fn() ran and the deadline fired: ALWAYS counts, and is
- *     "backend evidence".
- *   - fn() rejected (e.g. fetch failed): never counts by itself (unchanged), but
- *     is "backend evidence".
- *   - queue-full rejection, or a deadline that expired while still QUEUED (fn()
- *     never ran): counts ONLY if the window already holds backend evidence.
- *     Rule, deterministic: a queued expiry means the calls ahead were slow
- *     OR demand outran a healthy backend; it is attributed to the backend only
- *     when a backend timeout or fn() rejection is also in the window. So a
- *     healthy burst (e.g. a synchronized client reconnect after recovery, far
- *     past the queue bound) is shed by the queue and never opens the circuit,
- *     while a real outage — whose slot holders time out — trips it.
- *   - A HALF_OPEN trial that is shed (queue full) or expires in the queue probed
- *     nothing, so it is NOT a failed trial: it releases `trialInFlight` and the
- *     circuit stays HALF_OPEN; the next caller becomes the trial.
+ * backend; shedding excess DEMAND is the queue bound's job). The one test of
+ * "the backend did this": fn() HELD ITS SLOT for at least half the deadline
+ * (BACKEND_EVIDENCE_MIN_RUN_FRACTION) and then failed. Only slow failures fill
+ * the queue, so only they say a queue-side failure is the backend's fault.
+ *   - backend timeout — deadline fired after fn() had >= half the deadline to
+ *     run: ALWAYS counts, and is backend evidence.
+ *   - slow fn() rejection — fn() rejected after running >= half the deadline:
+ *     never counts by itself (fn errors never did), but is backend evidence.
+ *   - queue-side failure — a queue-full rejection, a deadline that expired
+ *     while still queued, or a deadline that fired after fn() started with
+ *     less than half the deadline left (a late start: the time went to the
+ *     queue, not the backend): counts ONLY if the window holds backend evidence.
+ *   - fast fn() rejection (e.g. an instant `fetch failed`): neither counts nor
+ *     is evidence — it freed its slot at once, so it cannot be why the queue is
+ *     full.
+ *   So a healthy burst far past the queue bound (e.g. a synchronized client
+ *   reconnect after recovery, even one following a fast-failing outage) is
+ *   shed and never opens the circuit, while a real outage — whose slot holders
+ *   hang to the deadline — trips it. Evidence is pruned with the same window as
+ *   failures and cleared when the circuit CLOSES.
+ *   - A HALF_OPEN trial that suffers a queue-side failure probed nothing, so it
+ *     is NOT a failed trial: it releases `trialInFlight` and the circuit stays
+ *     HALF_OPEN; the next caller becomes the trial. A trial whose fn() rejects
+ *     closes the circuit (unchanged).
  *
  * Defaults are HIGHER than Meili because signals normally takes longer (Orleans
  * grain init):
@@ -290,15 +298,43 @@ function admitCall(): { admitted: boolean; isTrial: boolean } {
   return { admitted: true, isTrial: false };
 }
 
+// fn() must have held its slot for at least this fraction of
+// SIGNALS_CALL_TIMEOUT_MS before a failure is attributed to the backend
+// (header comment). Below it, the call's time went to the queue.
+const BACKEND_EVIDENCE_MIN_RUN_FRACTION = 0.5;
+
 /**
  * How a wrapped call ended, from the circuit's point of view:
- *   success       — fn() resolved before the deadline
- *   backendError  — fn() rejected before the deadline (e.g. fetch failed)
- *   backendTimeout— fn() ran and the deadline fired
- *   queueFull     — rejected at entry, queue bound reached; fn() never ran
- *   queueExpired  — deadline fired while still queued; fn() never ran
+ *   success        — fn() resolved before the deadline
+ *   fastError      — fn() rejected (or threw) after < half the deadline
+ *   backendError   — fn() rejected after running >= half the deadline
+ *   backendTimeout — deadline fired; fn() had >= half the deadline to run
+ *   queueFull      — rejected at entry, queue bound reached; fn() never ran
+ *   queueExpired   — deadline fired while queued, or fn() started with less
+ *                    than half the deadline left (late start)
  */
-type CallOutcome = 'success' | 'backendError' | 'backendTimeout' | 'queueFull' | 'queueExpired';
+type CallOutcome =
+  | 'success'
+  | 'fastError'
+  | 'backendError'
+  | 'backendTimeout'
+  | 'queueFull'
+  | 'queueExpired';
+
+function classifyOutcome(
+  timedOut: boolean,
+  rejected: boolean,
+  startedAt: number | undefined,
+  deadlineAt: number
+): CallOutcome {
+  // How long fn() held its slot: up to now, capped at the deadline (a timed
+  // out call stopped holding it there). 0 if fn() never ran.
+  const heldFor = startedAt === undefined ? 0 : Math.min(Date.now(), deadlineAt) - startedAt;
+  const backendHeld = heldFor >= env.SIGNALS_CALL_TIMEOUT_MS * BACKEND_EVIDENCE_MIN_RUN_FRACTION;
+  if (timedOut) return backendHeld ? 'backendTimeout' : 'queueExpired';
+  if (rejected) return backendHeld ? 'backendError' : 'fastError';
+  return 'success';
+}
 
 function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
   const c = circuit;
@@ -318,9 +354,10 @@ function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
 
   if (isTrial) {
     c.trialInFlight = false;
-    // A shed trial never reached the backend, so it is not a trial result:
-    // stay HALF_OPEN and let the next caller probe.
+    // A shed / late-started trial never really probed the backend, so it is
+    // not a trial result: stay HALF_OPEN and let the next caller probe.
     if (shed) return;
+    // Any fn() rejection (fast or slow) closes, as before this change.
     transition(c, outcome === 'backendTimeout' ? 'OPEN' : 'CLOSED', now);
     return;
   }
@@ -376,9 +413,9 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   const deadlineAt = Date.now() + env.SIGNALS_CALL_TIMEOUT_MS;
   let timer: NodeJS.Timeout | undefined;
   let timedOut = false;
-  // Whether fn() was invoked, and whether the call rejected for any reason —
-  // together with `timedOut` these classify the outcome for the circuit.
-  let ran = false;
+  // When fn() was invoked (undefined: never), and whether the call rejected
+  // for any reason — with `timedOut` these classify the outcome (classifyOutcome).
+  let startedAt: number | undefined;
   let rejected = false;
   // One deadline for the whole call, armed at entry: it covers queue wait AND
   // execution. It rejects both the outer race (the caller's promise) and the
@@ -412,7 +449,7 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
         // settles silently. Without this catch, a late rejection bubbles to
         // `unhandledRejection` — Node ≥15's default exit-on-unhandled would turn
         // our brownout protection into pod-crash amplification.
-        ran = true;
+        startedAt = Date.now();
         const call = fn();
         call.catch(() => undefined);
         return await Promise.race([call, deadline]);
@@ -438,9 +475,6 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
     } catch {
       // intentionally swallowed
     }
-    recordCallOutcome(
-      isTrial,
-      timedOut ? (ran ? 'backendTimeout' : 'queueExpired') : rejected ? 'backendError' : 'success'
-    );
+    recordCallOutcome(isTrial, classifyOutcome(timedOut, rejected, startedAt, deadlineAt));
   }
 }
