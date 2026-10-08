@@ -60,21 +60,25 @@ export function CrucibleJudgeStreak({ streak, resetAt, className }: Props) {
   return (
     <LazyMotion features={loadMotion} strict>
       <div className={clsx('relative inline-flex', className)}>
-        <AnimatePresence>
-          {toastStreak !== null && (
-            <MotionDiv
-              key={toastStreak}
-              role="status"
-              className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-full bg-gradient-to-r from-[#FC9C2D] to-[#FA5252] px-3 py-1 text-xs font-bold text-white shadow-lg"
-              initial={motionOn ? { opacity: 0, y: 8 } : false}
-              animate={{ opacity: 1, y: 0 }}
-              exit={motionOn ? { opacity: 0, y: -8 } : { opacity: 0 }}
-              transition={motionOn ? { duration: 0.25 } : { duration: 0 }}
-            >
-              On fire! {numberWithCommas(toastStreak)} in a row
-            </MotionDiv>
-          )}
-        </AnimatePresence>
+        {/* Beside the pill, not above it: the countdown sits above. Left of it from md, where the
+            pill is right-aligned; right of it below md, where it is left-aligned. */}
+        <div className="pointer-events-none absolute inset-y-0 left-full ml-2 flex items-center md:left-auto md:right-full md:ml-0 md:mr-2">
+          <AnimatePresence>
+            {toastStreak !== null && (
+              <MotionDiv
+                key={toastStreak}
+                role="status"
+                className="whitespace-nowrap rounded-full bg-gradient-to-r from-[#FC9C2D] to-[#FA5252] px-3 py-1 text-xs font-bold text-white shadow-lg"
+                initial={motionOn ? { opacity: 0, y: 8 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                exit={motionOn ? { opacity: 0, y: -8 } : { opacity: 0 }}
+                transition={motionOn ? { duration: 0.25 } : { duration: 0 }}
+              >
+                On fire! {numberWithCommas(toastStreak)} in a row
+              </MotionDiv>
+            )}
+          </AnimatePresence>
+        </div>
 
         {/* Outside the remounting badge: a live region that remounts is not announced. */}
         <span aria-live="polite" className="inline-flex">

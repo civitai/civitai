@@ -607,13 +607,13 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                   }
                   footerEnd={
                     <div className="flex flex-col items-start gap-1.5 md:items-end">
-                      <CrucibleJudgeStreak streak={currentStreak} resetAt={streakResetAt} />
                       {timeRemaining && (
                         <span className="inline-flex items-center gap-1 text-xs text-[#909296]">
                           <IconHourglass size={14} />
                           Ends in {timeRemaining}
                         </span>
                       )}
+                      <CrucibleJudgeStreak streak={currentStreak} resetAt={streakResetAt} />
                     </div>
                   }
                 />
