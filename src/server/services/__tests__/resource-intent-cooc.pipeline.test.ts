@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deserializeTrainImageIds } from '~/server/services/resource-intent-cooc/build';
+import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { COOC_STATEMENT_TIMEOUT_MS } from '~/server/services/resource-intent-cooc/build';
 import {
   buildCoocSnapshot,
+  coocReplicaQuery,
   defaultCoocTrainEnd,
 } from '~/server/services/resource-intent-cooc/pipeline';
 import { RESOURCE_INTENT_COOC_SPEC } from '~/server/services/resource-intent-cooc/spec';
@@ -217,7 +221,6 @@ describe('cooc build pipeline', () => {
         },
         /ids repeat/,
       ],
-      ['a model seen with two types', { typeConflict: true }, /two types/],
       ['no matched rows', { images: 0 }, /matched no training rows/],
     ];
     for (const [name, extra, err] of cases) {
@@ -296,5 +299,92 @@ describe('cooc build pipeline', () => {
       sql,
     });
     expect([s.kind, s.created, s.trainEnd]).toEqual(['study', true, trainEnd.toISOString()]);
+  });
+
+  it('a model seen with two types keeps the first one drawn, and the build reports the conflicts', async () => {
+    const { sql } = await freshDb();
+    const images = imageDb({ typeConflict: true });
+    const s = await buildCoocSnapshot({ ...production(), query: images.query, sql });
+    expect(s.created).toBe(true);
+    // Model 1000 is on every id % 4 === 0 image; only image 8 attaches it as a TextualInversion.
+    const order = images.returned.filter((id) => id % 4 === 0);
+    const typeOf = (id: number) => (id === 8 ? 'TextualInversion' : 'LORA');
+    const first = typeOf(order[0]);
+    expect(order.length).toBe(225);
+    expect(s.typeConflicts).toBe(order.filter((id) => typeOf(id) !== first).length);
+    expect(s.typeConflicts).toBeGreaterThan(0);
+    const c = (await loadCoocSnapshot(sql, s.contentHash, { kind: 'production', now: NOW })).counts;
+    const m = c.modelIds.indexOf(1000);
+    expect(c.modelTypes[m]).toBe(first);
+    // Both types are add-on types, so every one of its images still counts toward n_m.
+    expect(c.nM[m]).toBe(225);
+  });
+
+  it('the replica draw runs each statement in a transaction under a statement timeout', async () => {
+    const executed: string[] = [];
+    let txOptions: unknown;
+    dbMock.dbRead.$transaction.mockImplementationOnce((async (
+      fn: (tx: unknown) => Promise<unknown>,
+      options: unknown
+    ) => {
+      txOptions = options;
+      return fn({
+        $executeRawUnsafe: async (q: string) => {
+          executed.push(q);
+          return 0;
+        },
+        $queryRaw: async (q: Prisma.Sql) => {
+          executed.push(q.sql);
+          return [{ ok: 1 }];
+        },
+      });
+    }) as never);
+    expect(await coocReplicaQuery()(Prisma.sql`SELECT 1 AS ok`)).toEqual([{ ok: 1 }]);
+    expect(executed).toEqual([
+      `SET LOCAL statement_timeout = ${COOC_STATEMENT_TIMEOUT_MS}`,
+      'SELECT 1 AS ok',
+    ]);
+    expect(COOC_STATEMENT_TIMEOUT_MS).toBe(120_000);
+    // Prisma's own interactive-transaction timeout must not cut the statement first.
+    expect((txOptions as { timeout: number }).timeout).toBeGreaterThan(COOC_STATEMENT_TIMEOUT_MS);
+  });
+
+  it('a build with the default query sends every draw statement through the timed transaction', async () => {
+    const { sql } = await freshDb();
+    const images = imageDb();
+    const perTx: string[][] = [];
+    dbMock.dbRead.$queryRaw.mockImplementation((() => {
+      throw new Error('untimed replica read');
+    }) as never);
+    dbMock.dbRead.$transaction.mockImplementation((async (
+      fn: (tx: unknown) => Promise<unknown>
+    ) => {
+      const log: string[] = [];
+      perTx.push(log);
+      return fn({
+        $executeRawUnsafe: async (q: string) => {
+          log.push(q);
+          return 0;
+        },
+        $queryRaw: async (q: Prisma.Sql) => {
+          log.push('query');
+          return images.query(q);
+        },
+      });
+    }) as never);
+    try {
+      const s = await buildCoocSnapshot({ ...production({ dryRun: true }), sql });
+      expect(s.trainRows).toBe(900);
+      expect(perTx.length).toBe(images.queries.length);
+      expect(perTx.length).toBeGreaterThan(10);
+      for (const log of perTx)
+        expect(log).toEqual([
+          `SET LOCAL statement_timeout = ${COOC_STATEMENT_TIMEOUT_MS}`,
+          'query',
+        ]);
+    } finally {
+      dbMock.dbRead.$transaction.mockReset();
+      dbMock.dbRead.$queryRaw.mockReset();
+    }
   });
 });

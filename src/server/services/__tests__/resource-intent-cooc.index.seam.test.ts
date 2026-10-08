@@ -143,6 +143,18 @@ describe('cooc index seam: shipped == screen reference', () => {
     expect(build100(6).vocab).not.toContain('tok00001');
   });
 
+  it('a model seen with two add-on types keeps the first, counts every row and the conflict', () => {
+    const acc = new CoocCountAccumulator(RESOURCE_INTENT_COOC_SPEC.addonTypes);
+    acc.add(['tok00001'], [[7, 'LoCon']]);
+    acc.add(['tok00001'], [[7, 'LORA']]);
+    acc.add(['tok00001'], [[7, 'LoCon']]);
+    acc.add(['tok00001'], [[7, 'Checkpoint']]);
+    const c = acc.finalize(RESOURCE_INTENT_COOC_SPEC);
+    expect(c.modelTypes).toEqual(['LoCon']);
+    expect([...c.nM]).toEqual([3]);
+    expect(c.typeConflicts).toBe(1);
+  });
+
   it('an accumulator finalizes once and takes no rows after', () => {
     const acc = new CoocCountAccumulator(RESOURCE_INTENT_COOC_SPEC.addonTypes);
     acc.add(['tok00001'], [[1, 'LORA']]);

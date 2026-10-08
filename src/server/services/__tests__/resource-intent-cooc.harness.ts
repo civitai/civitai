@@ -122,6 +122,8 @@ export function fakeImageDb(opts: {
   const createdAt = (id: number) =>
     new Date(opts.trainStart.getTime() + Math.floor(((id - 0.5) / opts.images) * span));
   const queries: string[] = [];
+  /** Image ids in the order the draw received them. */
+  const returned: number[] = [];
   let batchNo = 0;
   const query: CoocRawQuery = async (s: Prisma.Sql) => {
     queries.push(s.sql);
@@ -155,7 +157,11 @@ export function fakeImageDb(opts: {
             ],
           })
         )
-        .concat(injected);
+        .concat(injected)
+        .map((r) => {
+          returned.push(r.imageId);
+          return r;
+        });
     }
     if (text.includes('FROM "ModelVersion" mv')) {
       return (s.values[0] as number[]).map((id) => ({
@@ -166,5 +172,5 @@ export function fakeImageDb(opts: {
     }
     throw new Error(`unexpected query: ${text.slice(0, 80)}`);
   };
-  return { query, queries, createdAt };
+  return { query, queries, createdAt, returned };
 }

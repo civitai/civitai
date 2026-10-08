@@ -56,6 +56,30 @@ export function mulberry32(seed: number) {
 
 export type CoocRawQuery = (sql: Prisma.Sql) => Promise<unknown[]>;
 
+/** Per-statement cap on the draw's replica reads; the screen's slowest batch took 5.7 s. */
+export const COOC_STATEMENT_TIMEOUT_MS = 120_000;
+
+type CoocTxClient = {
+  $executeRawUnsafe: (query: string) => Promise<number>;
+  $queryRaw: <T = unknown>(query: Prisma.Sql) => Promise<T>;
+};
+export type CoocTxRunner = <T>(fn: (tx: CoocTxClient) => Promise<T>) => Promise<T>;
+
+/**
+ * Each statement in its own transaction under `SET LOCAL statement_timeout`, so a stuck batch is
+ * cancelled by the database (and counts as a failed attempt for the retry) instead of holding a
+ * replica connection without bound.
+ */
+export function timedCoocQuery(run: CoocTxRunner, timeoutMs: number): CoocRawQuery {
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
+    throw new Error('statement timeout must be a positive integer of milliseconds');
+  return (sql) =>
+    run(async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = ${timeoutMs}`);
+      return tx.$queryRaw<unknown[]>(sql);
+    });
+}
+
 /** The screen's retry, ported: 3 tries, waiting `delayMs` then twice that. */
 async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
   let last: unknown;
@@ -196,7 +220,8 @@ export type CoocCountParams = {
 /**
  * Integer counts and the kept (token, model) pairs, in canonical order: `vocab` sorted by UTF-16
  * code unit, `modelIds` ascending, pairs token-major with model index ascending. Nothing here
- * depends on the order rows were added. `vocab` holds only tokens with at least one kept pair: a
+ * depends on the order rows were added, except the type a model seen with two types keeps: the
+ * first, as the screen's builder did. `vocab` holds only tokens with at least one kept pair: a
  * token without one cannot change any ranking, so the snapshot does not keep it.
  */
 export type CoocCounts = {
@@ -245,6 +270,7 @@ export class CoocCountAccumulator {
   private readonly rowMod = new GrowableU32();
   private readonly rowModEnd = new GrowableU32();
   private finalized = false;
+  private typeConflicts = 0;
 
   constructor(addonTypes: readonly string[]) {
     this.addon = new Set(addonTypes);
@@ -278,7 +304,7 @@ export class CoocCountAccumulator {
         this.models.set(modelId, m);
         this.modelList.push(modelId);
       } else if (m.type !== type) {
-        throw new Error(`model ${modelId} seen with two types (${m.type}, ${type})`);
+        this.typeConflicts++;
       }
       if (seenMod.has(m.idx)) continue;
       seenMod.add(m.idx);
@@ -287,7 +313,9 @@ export class CoocCountAccumulator {
     this.rowModEnd.push(this.rowMod.length);
   }
 
-  finalize(params: CoocCountParams): CoocCounts & { rawPairs: number; rawVocab: number } {
+  finalize(
+    params: CoocCountParams
+  ): CoocCounts & { rawPairs: number; rawVocab: number; typeConflicts: number } {
     if (this.finalized) throw new Error('CoocCountAccumulator already finalized');
     this.finalized = true;
     const N = this.rows;
@@ -370,6 +398,7 @@ export class CoocCountAccumulator {
       c: keptC.view().slice(),
       rawPairs,
       rawVocab: V,
+      typeConflicts: this.typeConflicts,
     };
   }
 }

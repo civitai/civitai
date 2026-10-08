@@ -50,6 +50,7 @@ function countsOf(rows: typeof goldenRows): CoocCounts {
   const {
     rawPairs: _raw,
     rawVocab: _rawVocab,
+    typeConflicts: _typeConflicts,
     ...counts
   } = acc.finalize(RESOURCE_INTENT_COOC_SPEC);
   return counts;

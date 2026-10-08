@@ -1,10 +1,12 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CoocCountAccumulator,
+  COOC_STATEMENT_TIMEOUT_MS,
   drawTrainingRows,
   fetchVersionText,
   serializeCoocCounts,
   serializeTrainImageIds,
+  timedCoocQuery,
   type CoocRawQuery,
 } from './build';
 import { RESOURCE_INTENT_COOC_SPEC, RESOURCE_INTENT_COOC_SPEC_HASH } from './spec';
@@ -53,10 +55,25 @@ export type CoocBuildSummary = {
   models: number;
   rawPairs: number;
   keptPairs: number;
+  /** Rows attaching a model under another type than its first one (it keeps the first). */
+  typeConflicts: number;
   payloadBytes: number;
   dryRun: boolean;
   created: boolean;
 };
+
+/**
+ * The draw's replica reads, each capped at `COOC_STATEMENT_TIMEOUT_MS`. The interactive transaction
+ * gets headroom over the statement cap, so the database's cancellation, not Prisma's, ends a slow
+ * statement.
+ */
+export function coocReplicaQuery(): CoocRawQuery {
+  return timedCoocQuery(
+    (fn) =>
+      dbRead.$transaction(fn, { maxWait: 30_000, timeout: COOC_STATEMENT_TIMEOUT_MS + 30_000 }),
+    COOC_STATEMENT_TIMEOUT_MS
+  );
+}
 
 /**
  * The latest allowed `trainEnd`: UTC midnight today minus the spec's gap. Day-aligned so a re-run
@@ -87,7 +104,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
   if (trainEnd.getTime() > now.getTime() - spec.gapDays * DAY_MS)
     throw new Error(`trainEnd must be at least ${spec.gapDays} day(s) before now`);
   const trainStart = new Date(trainEnd.getTime() - spec.trainDays * DAY_MS);
-  const query: CoocRawQuery = opts.query ?? ((s) => dbRead.$queryRaw<unknown[]>(s));
+  const query: CoocRawQuery = opts.query ?? coocReplicaQuery();
   const sql: CoocSql = opts.sql ?? coocSqlOf(dbWrite);
 
   const rowId = opts.dryRun
@@ -142,7 +159,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
     if (createdMin < trainStart.getTime() || createdMax >= trainEnd.getTime())
       throw new Error('a training row lies outside the training window');
 
-    const { rawPairs, rawVocab, ...counts } = acc.finalize(spec);
+    const { rawPairs, rawVocab, typeConflicts, ...counts } = acc.finalize(spec);
     const payload = await serializeCoocCounts(counts);
     const summary: CoocBuildSummary = {
       rowId,
@@ -160,6 +177,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
       models: counts.modelIds.length,
       rawPairs,
       keptPairs: counts.modelIdx.length,
+      typeConflicts,
       payloadBytes: payload.length,
       dryRun: opts.dryRun,
       created: false,

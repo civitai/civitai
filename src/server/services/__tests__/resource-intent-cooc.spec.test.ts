@@ -44,7 +44,7 @@ describe('RESOURCE_INTENT_COOC_SPEC', () => {
     // Deliberately a literal: snapshots record the hash they were built under, so change it only
     // on purpose.
     expect(RESOURCE_INTENT_COOC_SPEC_HASH).toBe(
-      '38156b848e84f16a806fed35c12dac55680a9eaf5b73a4ee28230fd7a91699f4'
+      '8a3f0edb99ea5ad81656dfa6b7a20c2d6b7afa89afb69621e1f9d808b2ed8d49'
     );
   });
 });

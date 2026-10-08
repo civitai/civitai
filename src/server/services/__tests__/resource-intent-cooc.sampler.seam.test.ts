@@ -5,7 +5,9 @@ import {
   drawTrainingRows,
   fetchVersionText,
   mulberry32,
+  timedCoocQuery,
   type CoocDrawRow,
+  type CoocTxRunner,
 } from '~/server/services/resource-intent-cooc/build';
 
 /**
@@ -199,5 +201,54 @@ describe('cooc sampler seam: shipped == screen', () => {
     };
     expect((await fetchVersionText(flaky(2), [1, 2], 0)).size).toBe(2);
     await expect(fetchVersionText(flaky(3), [1, 2], 0)).rejects.toThrow('replica blip');
+  });
+
+  it('a batch that overruns the statement timeout is cancelled, retried, then fails', async () => {
+    // A Postgres stand-in (PGlite does not enforce statement_timeout): a statement longer than the
+    // transaction's SET LOCAL statement_timeout is cancelled with 57014; with no timeout set it
+    // runs to completion, however long.
+    const t = fakeTable(500);
+    const BATCH_TAKES_MS = 10 * 60_000;
+    const attempts: string[][] = [];
+    const run: CoocTxRunner = async (fn) => {
+      let timeout: number | null = null;
+      const log: string[] = [];
+      attempts.push(log);
+      return fn({
+        $executeRawUnsafe: async (q: string) => {
+          log.push(q);
+          const m = /^SET LOCAL statement_timeout = (\d+)$/.exec(q);
+          if (m) timeout = Number(m[1]);
+          return 0;
+        },
+        $queryRaw: (async (q: Prisma.Sql) => {
+          log.push(q.sql.includes('WITH s AS') ? 'batch' : 'other');
+          if (q.sql.includes('WITH s AS') && timeout !== null && BATCH_TAKES_MS > timeout)
+            throw Object.assign(new Error('canceling statement due to statement timeout'), {
+              code: '57014',
+            });
+          return t.query(q);
+        }) as never,
+      });
+    };
+    const draw = drawTrainingRows({
+      query: timedCoocQuery(run, 120_000),
+      trainStart: new Date(T0 + 100 * HOUR),
+      trainEnd: new Date(T0 + 300 * HOUR),
+      seed: 1,
+      target: 10,
+      idBatch: 20,
+      maxBatches: 1,
+      onBatch: async () => undefined,
+      retryDelayMs: 0,
+    });
+    await expect(draw).rejects.toMatchObject({ code: '57014' });
+    const batchAttempts = attempts.filter((a) => a.includes('batch'));
+    expect(batchAttempts).toEqual(Array(3).fill(['SET LOCAL statement_timeout = 120000', 'batch']));
+  });
+
+  it('refuses a statement timeout that is not a positive whole number of milliseconds', () => {
+    const run: CoocTxRunner = async () => [] as never;
+    for (const bad of [0, -1, 1.5, Number.NaN]) expect(() => timedCoocQuery(run, bad)).toThrow();
   });
 });
