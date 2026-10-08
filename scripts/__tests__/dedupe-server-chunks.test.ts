@@ -347,16 +347,15 @@ describe('dedupe-server-chunks', () => {
     expect(read('chunks/_f._.js')).toBe(fnBody);
   });
 
-  it('exits 2 when no file is in the module.exports=[ chunk format', () => {
-    write('chunks/_a._.js', 'globalThis.x=1;\n');
-    write('chunks/_b._.js', 'globalThis.x=1;\n');
+  it.each([1, 2])('exits 2 when none of %i files is in the module.exports=[ chunk format', (n) => {
+    for (let i = 0; i < n; i++) write(`chunks/_${i}._.js`, 'globalThis.x=1;\n');
     write('chunks/[turbopack]_runtime.js', 'module.exports=()=>({});\n');
 
     const r = run(server);
 
     expect(r.code).toBe(2);
-    expect(r.err).toContain('none of the 2 chunk files');
-    expect(read('chunks/_b._.js')).toBe('globalThis.x=1;\n');
+    expect(r.err).toContain(`none of the ${n} chunk files`);
+    expect(read('chunks/_0._.js')).toBe('globalThis.x=1;\n');
   });
 
   it('reports runtime files separately from chunk files', () => {
