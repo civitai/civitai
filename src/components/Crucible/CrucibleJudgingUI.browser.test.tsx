@@ -882,6 +882,79 @@ describe('CrucibleJudgingUI — sequenced preview', () => {
   });
 });
 
+describe('CrucibleJudgingUI — paused under the briefing', () => {
+  function PausedHarness({
+    initiallyPaused,
+    minViewSeconds = 3,
+  }: {
+    initiallyPaused: boolean;
+    minViewSeconds?: number;
+  }) {
+    const [paused, setPaused] = useState(initiallyPaused);
+    return (
+      <>
+        <button type="button" data-testid="toggle-paused" onClick={() => setPaused((p) => !p)}>
+          toggle
+        </button>
+        <CrucibleJudgingUI
+          pair={pairOf(1, 2)}
+          minViewSeconds={minViewSeconds}
+          paused={paused}
+          onVote={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      </>
+    );
+  }
+  const togglePaused = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="toggle-paused"]')!.click();
+
+  test('plays nothing and counts no playback until unpaused, then starts on the left', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused />);
+    await expectBothCardsRendered();
+
+    // Enough playback to clear the rule, were it counted.
+    await advance(0, 4);
+    await afterPassiveEffects();
+    expect(label('left')).toMatch(/^Watch 3s more/);
+    expect(sidesCalledOn(play)).toEqual([]);
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toEqual(['left']));
+    await advance(0, 4);
+    await vi.waitFor(() => expect(label('left')).toMatch(/^Vote/));
+  });
+
+  test('pausing stops the autoplaying clip', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused={false} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toEqual(['left']));
+    pause.mockClear();
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toContain('left'));
+  });
+
+  test('pausing also stops a clip the judge started, outside any sequence', async () => {
+    // No rule, so no sequence: the only pause comes from `paused` itself.
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused={false} minViewSeconds={0} />);
+    await expectBothCardsRendered();
+    await afterPassiveEffects();
+    pause.mockClear();
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toEqual(['left', 'right']));
+  });
+});
+
 describe('CrucibleJudgingUI — hotkeys', () => {
   const press = (key: string, code: string, repeat: boolean) =>
     document.documentElement.dispatchEvent(

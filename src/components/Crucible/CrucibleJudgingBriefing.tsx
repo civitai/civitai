@@ -116,13 +116,10 @@ export function CrucibleJudgingBriefing({
             ))}
           </ul>
 
-          <div className="flex flex-col items-center gap-1.5 pt-1">
+          <div className="pt-1">
             <Button ref={startRef} fullWidth onClick={onDismiss}>
               Start judging
             </Button>
-            <Text size="xs" c="dimmed">
-              or press 1 or 2 to cast your first vote
-            </Text>
           </div>
         </MotionDiv>
       </LazyMotion>

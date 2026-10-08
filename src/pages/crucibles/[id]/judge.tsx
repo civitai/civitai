@@ -590,6 +590,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                     briefingOpen && 'pointer-events-none select-none opacity-25'
                   )}
                   pair={pair}
+                  paused={briefingOpen}
                   isLoading={isPairPending || isVoting}
                   disabled={isVoting || isPairPlaceholder || !!voteError}
                   minViewSeconds={crucible.minViewSeconds}

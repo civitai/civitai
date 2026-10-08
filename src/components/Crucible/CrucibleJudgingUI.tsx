@@ -93,6 +93,11 @@ export type CrucibleJudgingUIProps = {
   /** Bottom-row content either side of the vote controls. */
   footerStart?: React.ReactNode;
   footerEnd?: React.ReactNode;
+  /**
+   * Holds every clip still while the arena is covered (the first-visit briefing): no autoplay, any
+   * playing clip paused, and no playback counted. The sequence starts once this turns false.
+   */
+  paused?: boolean;
   className?: string;
 };
 
@@ -106,6 +111,7 @@ export function CrucibleJudgingUI({
   onVoteCast,
   footerStart,
   footerEnd,
+  paused = false,
   className,
 }: CrucibleJudgingUIProps) {
   // The tree's shape never depends on this, only the animation values: a structural switch would
@@ -181,7 +187,8 @@ export function CrucibleJudgingUI({
   const playbackDone = (side: Side) =>
     sideDone(side) && (reachedEnd[side] || !playsToEnd(durations[side], ruleSeconds(side)));
   const sequencing = isVideoPair && mediaReady && !(playbackDone('left') && playbackDone('right'));
-  const autoplaySide: Side | null = !sequencing ? null : !playbackDone('left') ? 'left' : 'right';
+  const autoplaySide: Side | null =
+    paused || !sequencing ? null : !playbackDone('left') ? 'left' : 'right';
   const voteLocked = isDisabled || !mediaReady || !watchGateOpen;
 
   const handleWatched = useCallback((side: Side, ms: number, durationSeconds: number) => {
@@ -305,6 +312,7 @@ export function CrucibleJudgingUI({
       requiredMs={requiredMs[side]}
       autoplay={autoplaySide === side}
       sequencing={sequencing}
+      paused={paused}
       onWatched={(ms, durationSeconds) => handleWatched(side, ms, durationSeconds)}
       onPlayedThrough={() => handlePlayedThrough(side)}
       onReachedEnd={() => handleReachedEnd(side)}
@@ -415,6 +423,7 @@ type ImageCardProps = {
   requiredMs: number;
   autoplay: boolean;
   sequencing: boolean;
+  paused: boolean;
   onWatched: (ms: number, durationSeconds: number) => void;
   onPlayedThrough: () => void;
   onReachedEnd: () => void;
@@ -446,6 +455,7 @@ function ImageCard({
   requiredMs,
   autoplay,
   sequencing,
+  paused,
   onWatched,
   onPlayedThrough,
   onReachedEnd,
@@ -483,6 +493,11 @@ function ImageCard({
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const { currentTime, duration } = e.currentTarget;
+    if (paused) {
+      // Tracked so playback counts from here once the arena is uncovered, not from the old mark.
+      lastTimeRef.current = currentTime;
+      return;
+    }
     const previousTime = lastTimeRef.current;
     // The player loops, so `ended` never fires: reaching the end shows up as the playhead wrapping.
     // The element's decoded duration, not the uploader-reported one, decides what counts as short.
@@ -580,6 +595,7 @@ function ImageCard({
               otherPlaying={otherPlaying}
               autoplay={autoplay}
               sequencing={sequencing}
+              paused={paused}
               onPlay={onPlay}
               soundOn={soundOn}
               onSoundChange={onSoundChange}
@@ -628,6 +644,7 @@ type JudgingMediaProps = {
   otherPlaying: boolean;
   autoplay: boolean;
   sequencing: boolean;
+  paused: boolean;
   onPlay: (side: Side) => void;
   soundOn: boolean;
   onSoundChange: (soundOn: boolean) => void;
@@ -644,6 +661,7 @@ function JudgingMedia({
   otherPlaying,
   autoplay,
   sequencing,
+  paused,
   onPlay,
   soundOn,
   onSoundChange,
@@ -694,8 +712,8 @@ function JudgingMedia({
   );
 
   useEffect(() => {
-    if (otherPlaying) ref.current?.querySelector('video')?.pause();
-  }, [otherPlaying]);
+    if (otherPlaying || paused) ref.current?.querySelector('video')?.pause();
+  }, [otherPlaying, paused]);
 
   const wasAutoplaying = useRef(false);
   useEffect(() => {
@@ -725,7 +743,7 @@ function JudgingMedia({
   };
 
   const handlePointerEnter = (e: React.PointerEvent) => {
-    if (e.pointerType !== 'mouse' || sequencing) return;
+    if (e.pointerType !== 'mouse' || sequencing || paused) return;
     const video = getVideo();
     if (!video) return;
     video.muted = !soundOn;
