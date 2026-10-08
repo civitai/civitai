@@ -84,14 +84,14 @@ interface PlannerPost {
 }
 
 interface PlannerPostDetail extends PlannerPost {
-  description: string | null;
+  description: string | null;     // plain text; the server strips the stored rich-text markup
   media: { id: number; url: string; type: 'image' | 'video' | 'audio'; nsfwLevel: number; width: number; height: number }[];
   model: { id: number; name: string; versionName: string } | null;
   resources: { id: number; name: string; type: string; modelId: number; versionId: number }[];
   tools: string[];
   techniques: string[];
   tags: string[];
-  stats: { views: number; reactions: number } | null;   // only once live
+  stats: { reactions: number; comments: number } | null; // only once live; posts store no view count
 }
 
 interface PlannerBackend {
@@ -109,13 +109,16 @@ interface PlannerBackend {
     : Promise<{ publishedAt: string; scope: 'post' | 'version' | 'model'; movedPostIds: number[] }>;
   publishNow(req: { id: number; expectedScope: 'post' | 'version' | 'model' })
     : Promise<{ publishedAt: string; scope: 'post' | 'version' | 'model'; movedPostIds: number[] }>;
-  unschedule(ids: number[]): Promise<{ unscheduledIds: number[] }>;
-  shift(req: { ids: number[]; deltaMinutes: number }): Promise<{ moved: { id: number; publishedAt: string }[] }>;
+  /** Release posts are never unscheduled or shifted here; they come back in `skippedReleaseIds`. */
+  unschedule(ids: number[]): Promise<{ unscheduledIds: number[]; skippedReleaseIds: number[] }>;
+  shift(req: { ids: number[]; deltaMinutes: number })
+    : Promise<{ moved: { id: number; publishedAt: string }[]; skippedReleaseIds: number[] }>;
 }
 
 interface PlannerHost {
   backend: PlannerBackend;
   config: {
+    userId?: number;              // scopes the remembered Show-mature choice on a shared device
     imageLocation: string;        // Cloudflare Images base for covers
     browsingLevel: number;        // covers above it render blurred
     /** Initial state of the "Show mature" toggle; the element remembers the viewer's choice per device
@@ -125,10 +128,11 @@ interface PlannerHost {
   };
   hrefFor(loc: PlannerLocation): string;
   navigate(loc: PlannerLocation): Promise<void>;
-  /** Relative = same-tab in-host navigation; absolute = new tab. */
-  editPostUrl(id: number): string;
-  viewPostUrl(id: number): string;
-  modelPageUrl(req: { modelId: number; modelVersionId: number }): string;
+  /** Relative = same-tab in-host navigation; http(s) = new tab; any other scheme is dropped.
+   *  `nsfwLevel` lets a host that splits domains by maturity (civitai.com / civitai.red) pick the right one. */
+  editPostUrl(post: { id: number; nsfwLevel: number }): string;
+  viewPostUrl(post: { id: number; nsfwLevel: number }): string;
+  modelPageUrl(req: { modelId: number; modelVersionId: number; nsfwLevel: number }): string;
   composerUrl?(req: { startAt?: string; modelVersionId?: number }): string;
 }
 ```
@@ -148,14 +152,13 @@ the element already updates its own view optimistically and reverts on a rejecte
   `host` and `location` as properties (`bind:this` + assignment after mount; Svelte sets unknown
   attributes as properties when the element defines them). Flag-gated with
   `modFallbackFlagEnabled(POST_PLANNER_FLAG, user)`.
-- `backend` is a small client object whose methods fetch this app's own `routes/api/planner/*`:
-  `scheduled` (Kysely read, the first pass's query with the cover subqueries collapsed into one lateral
-  join, `+1` overfetch for `truncated`, and `getPostScheduleScope` from `@civitai/shared`), `detail`
-  (one post with its media, resources, tools, techniques and tags), and
-  `reschedule` / `publish-now` / `unschedule` / `shift`, which forward the session cookie through
-  `callMainApp` to the main app's REST twins and map a `409` to a conflict the UI words as "may have
-  gone through; refreshed".
-- `data-theme="dark"` is already the app's posture (`<html class="dark">` gains the attribute).
+- `backend` is a small client object whose methods fetch this app's own
+  `routes/api/planner/[action]`, a proxy over the main app's REST twins (below): the main app owns the
+  read query as well as the writes, so Creator Studio carries no Kysely read of its own. The proxy
+  forwards only the hub's session cookies, whitelists the read parameters, and takes writes only as
+  same-origin `application/json`. A `409` reaches the element as the server's message; the element
+  toasts it and reloads the range.
+- `<html data-theme="dark" class="dark">` in `app.html` is the app's posture for every element.
 
 ### Main app (`/user/schedule`)
 - `src/pages/user/schedule.tsx` renders the React binding from `@civitai/post-planner/react` inside
@@ -169,15 +172,19 @@ the element already updates its own view optimistically and reverts on a rejecte
   a Creator Studio dashboard tile pointing at its own `/calendar`.
 
 ### Main-app server (shared by both hosts)
-- tRPC procedures above in `post.router.ts`, each `isFlagProtected('postPlanner')` and
-  `TokenScope.MediaWrite`. `post.reschedule` carries the first pass's release logic
-  (`publishModelHandler` / `publishModelVersionHandler` by scope, the sibling-scheduled-versions
-  refusal, the post-write re-read) moved into a service function, plus the `expectedScope` check.
-- REST twins for Creator Studio under `/api/v1/posts/{schedule,unschedule,shift}` built with
-  `createCallerFactory(appRouter)` over an authenticated context, so the ban / onboarding / muted /
-  email-verification guards are the procedures' own.
+- tRPC procedures above in `post.router.ts`, each `isFlagProtected('postPlanner')`, reads on
+  `TokenScope.MediaRead` and writes on `TokenScope.MediaWrite` with a shared rate limit.
+  `post.reschedule` keeps the first pass's release logic (the sibling-scheduled-versions refusal, the
+  post-write re-read) in a service function plus the `expectedScope` check; the release move itself
+  runs the real `model.publish` / `modelVersion.publish` procedures through scoped callers, so their
+  muted, email-verification, token-scope and ownership guards stay theirs.
+- REST twins for Creator Studio under `/api/v1/posts/planner/{scheduled,detail,schedule,unschedule,shift}`
+  built with `createCallerFactory(appRouter)` over an authenticated context, so the ban / onboarding /
+  muted / email-verification guards are the procedures' own. Cookie-authenticated POSTs must be
+  `application/json`.
 - Flag `postPlanner: { availability: ['mod'], fliptKey: 'post-planner' }`; Creator Studio reads the same
-  Flipt key. Index `Post(userId, publishedAt)` as a hand-applied migration after checking `pg_indexes`.
+  Flipt key. No index work: production already carries two `Post(userId, publishedAt)` covering
+  indexes and the list query uses one of them.
 
 ## 5. Package layout and tooling
 
@@ -186,15 +193,15 @@ packages/civitai-post-planner/
   package.json         @civitai/post-planner; deps lit, @civitai/components, @civitai/shared;
                        exports ".", "./define", "./react"
   src/
-    civitai-post-planner.ts        the element (CivitaiElement subclass)
-    civitai-post-planner.define.ts defineElement('civitai-post-planner', …)
-    host.ts                        PlannerHost / PlannerBackend / PlannerLocation
+    civitai-post-planner.ts        the element (CivitaiElement subclass); one file until PR G splits
+                                   it into views/ and parts/
+    define.ts                      defineElement('civitai-post-planner', …)
+    host.ts                        PlannerHost / PlannerBackend / PlannerLocation, hostLink
     react.ts                       @lit/react createComponent binding
-    views/{month,week,day,agenda}.ts   Lit templates + styles per view
-    parts/{chip,drawer,bulk-bar,shift-dialog,drag}.ts
-    model/{buckets,ranges,density}.ts  pure helpers (local-day bucketing, visible range per view,
-                                       density default)
-  src/__tests__/                   vitest: pure helpers in node; element behaviour in browser mode
+    styles.ts                      the element's stylesheet on @civitai/theme tokens
+    parts/media.ts                 blur rule, thumbnails, icons
+    model/calendar.ts (+ test)     pure helpers: local-day bucketing, visible range per view,
+                                   density default, snapping
   vitest.config.ts                 picked up by the root config's packages/*/vitest.config.ts glob
 ```
 
@@ -203,8 +210,9 @@ packages/civitai-post-planner/
 - `lit` and `@lit/react` become root dependencies (first use in the repo); `@civitai/components` and
   `@civitai/theme` come with them. Lock the components version; the elements manifest changing is a
   visible diff in the lockfile, not a CDN surprise.
-- Browser-mode tests reuse the main app's `test:component` project pattern for the element's
-  interactions (drag, keyboard nudge, select mode); pure view helpers run under `test:packages:run`.
+- Pure helpers run under `test:packages:run`. Browser-mode tests for the element's interactions
+  (drag, keyboard nudge, select mode, lightbox, undo, the narrow-screen list) reuse the main app's
+  `test:component` project pattern and land with PR G; until then those paths are checked by hand.
 
 ## 6. What carries over from the first pass
 
@@ -223,14 +231,18 @@ Phase 1 (composer) is unchanged. Phase 2, four PRs on `main`, each flag-dark:
 
 - **PR E — main-app server** (~500 LOC). Procedures, release-move service function, REST twins,
   `postPlanner` flag, index SQL. Carries the first pass's endpoint tests, re-pointed.
-- **PR F — the element package, month view, and the Creator Studio host** (~1,000 LOC). Package
-  scaffold on `@civitai/components`, host seam, month grid with the capped cells and badges, chip,
-  the full-detail drawer (media strip, description, resources, tools, techniques, tags, reschedule /
-  publish now / unschedule), the Show-mature toggle with per-thumbnail unblur, drag across days with
-  undo, Creator Studio route and `routes/api/planner/*`. Replaces the first pass's page.
-- **PR G — day, week, agenda, select mode** (~1,000 LOC). The switcher with the density default, hour
-  rows and drag-to-time, agenda for phones, bulk bar (shift ±, move to day, unschedule), model filter,
-  quick-add, legend, `truncated` notice.
+- **PR F — the element package and the Creator Studio host** (~2,000 LOC as built). Package scaffold
+  on `@civitai/components`, host seam, the view switcher with the density default (Agenda on phones),
+  month grid with capped cells and badges, Week / Day / Agenda as grouped-by-day lists, chip, the
+  full-detail drawer (media strip with a lightbox, description, resources, tools, techniques, tags,
+  engagement, reschedule / publish now / unschedule), the Show-mature toggle with per-thumbnail
+  unblur, drag across days with undo, `Shift+arrow` keyboard nudge announced via `aria-live`, select
+  mode with the bulk bar (±1 day, +1 week, unschedule), model and status filters, quick-add, the
+  loading state and the `truncated` notice, Creator Studio route and `routes/api/planner/*`. Replaces
+  the first pass's page.
+- **PR G — hour grids and polish** (~800 LOC). Week and Day as hour grids with drag-to-time, the
+  `Shift ±` dialog and `Move to day…`, a compact phone toolbar, the file split into views/ and parts/,
+  browser-mode tests for the interactions.
 - **PR H — main-app host** (~250 LOC). `/user/schedule` with the React binding, `data-theme` sync, the
   posts-tab "Open planner" entry, the composer success CTA, the Creator Studio dashboard tile. Measure
   the bundle on this route before widening the flag.

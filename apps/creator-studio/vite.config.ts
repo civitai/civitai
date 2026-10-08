@@ -35,6 +35,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/redis',
         '@civitai/shared',
         '@civitai/ui',
+        '@civitai/post-planner',
       ],
     },
   };

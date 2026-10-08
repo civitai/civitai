@@ -129,16 +129,16 @@ jitter, never :00.
 - PR E, main-app server: `post.getScheduled`, `post.getPlannerDetail` (everything the drawer shows),
   `post.reschedule` (with the first pass's release-move logic and an `expectedScope` check),
   `post.publishNow`, `post.unschedule`, `post.shiftSchedule`;
-  REST twins for Creator Studio via `createCallerFactory`; flag `postPlanner`; the
-  `Post(userId, publishedAt)` index SQL, applied by hand.
+  REST twins for Creator Studio via `createCallerFactory`; flag `postPlanner`. No index work:
+  production already has `Post(userId, publishedAt)` covering indexes.
 - PR F, `packages/civitai-post-planner` + Creator Studio host: the Lit element on
-  `@civitai/components`, the host seam, the month view with capped cells, badges, chip, the
-  full-detail drawer, blur/unblur controls and drag-with-undo (the first pass's behaviour with the
-  must-fix list applied), the `/calendar` route as a thin host, and the `routes/api/planner/*` server
-  routes.
-- PR G, the element: Day, Week and Agenda views behind the switcher (Week by default for creators
-  averaging 6+ posts a day), hour rows with drag-to-time, select mode with shift ± / move-to-day /
-  unschedule, model filter, quick-add, legend; release posts amber and excluded from bulk moves.
+  `@civitai/components`, the host seam, the view switcher (Week by default for creators averaging 6+
+  posts a day, Agenda on phones), the month grid with capped cells and badges, Week / Day / Agenda as
+  lists, the full-detail drawer with a lightbox, blur/unblur controls, drag-with-undo and keyboard
+  nudge, select mode with the bulk bar, filters, quick-add, the `/calendar` route as a thin host, and
+  the `routes/api/planner/*` proxy routes; release posts amber and excluded from bulk moves.
+- PR G, the element: Week and Day as hour grids with drag-to-time, the Shift ± dialog and
+  move-to-day, a compact phone toolbar, the file split, browser-mode tests.
 - PR H, main app: the `/user/schedule` host page with the React binding, the posts tab's "Open
   planner" entry, the composer success CTA, a Creator Studio dashboard tile.
 - Bulk publish-now and drafts on the calendar come later.

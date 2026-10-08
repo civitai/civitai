@@ -250,8 +250,9 @@ Single column, sections stacked; the rail becomes a sticky bottom bar `200 posts
   description (collapsed after four lines); the model/version chip with a link to the model page;
   resources (every credited resource with type, linked), tools and techniques as chips; tags; status
   and `Goes live` with a date picker + time field (five-minute steps) and `Reschedule`; the daily-cap
-  context for that day (`4 of 6 on Thu Oct 8`); the post's own stats where it is already live (views,
-  reactions). Actions: `Unschedule to draft` (confirm), `Publish now` (confirm), `Edit post`,
+  context for that day (`4 of 6 on Thu Oct 8`); the post's own stats where it is already live (reactions,
+  comments; posts store no view count). Any image or video in the strip opens in a lightbox that
+  arrow keys page through. Actions: `Unschedule to draft` (confirm), `Publish now` (confirm), `Edit post`,
   `View post`, `Open model`. Footer `‹ Previous post · Next post ›`. Release posts keep the first pass's
   notice and `Move release`. The list query stays light; the drawer loads the full post on open
   (`getPostDetail`), so opening is the only cost of the richer panel.
@@ -262,7 +263,9 @@ Single column, sections stacked; the rail becomes a sticky bottom bar `200 posts
   changes the account's browsing settings and is hidden when the viewer's level already shows
   everything.
 - **Filters**: model/version select (only models the user has scheduled posts on), status checkboxes. Persisted in the URL.
-- Over-fetch guard: `Showing 500 of 612 in this range — switch to Week or filter by model`.
+- Over-fetch guard: the server returns at most 1,500 posts per range (a six-week grid for a burst
+  scheduler fits). Past that the notice names the last complete day and points at Week or Day, and
+  mentions the model filter only when the viewer has one.
 
 **Phase 2 scope**: Day, Week and Month views with the switcher and density default, Agenda for
 phones, drag (day/hour) + keyboard nudge + Undo, select mode with Shift ± and Unschedule, filters,
