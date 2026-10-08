@@ -8,6 +8,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const mocks = vi.hoisted(() => ({
   isFlipt: vi.fn(async () => false),
   isFliptSync: vi.fn((): boolean | null => null),
+  getFliptClientSync: vi.fn((): unknown => null),
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
@@ -15,12 +16,14 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: mocks.isFlipt,
   isFliptSync: mocks.isFliptSync,
   ensureFliptInitialized: vi.fn(async () => undefined),
+  getFliptClientSync: mocks.getFliptClientSync,
 }));
 
 import type * as FliptClient from '~/server/flipt/client';
 import type { SessionUser } from '~/types/session';
 import {
   creatorJourneyAudience,
+  isCreatorJourneyFlagReadable,
   isCreatorJourneyOnFor,
   isCreatorJourneyPublic,
 } from '~/server/services/creator-journey-flag.service';
@@ -128,5 +131,14 @@ describe('creatorJourney in the session registry while Flipt cannot answer', () 
     mocks.isFliptSync.mockReturnValue(true);
     const tester = { id: 9303, isModerator: false, tier: 'free' } as SessionUser;
     expect((await getFeatureFlagsAsync({ user: tester })).creatorJourney).toBe(true);
+  });
+});
+
+describe('isCreatorJourneyFlagReadable', () => {
+  it('is false until the Flipt client has initialised, true once it has', async () => {
+    mocks.getFliptClientSync.mockReturnValue(null);
+    expect(await isCreatorJourneyFlagReadable()).toBe(false);
+    mocks.getFliptClientSync.mockReturnValue({});
+    expect(await isCreatorJourneyFlagReadable()).toBe(true);
   });
 });

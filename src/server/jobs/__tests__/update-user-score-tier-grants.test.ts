@@ -245,6 +245,11 @@ describe('persistScoreBatch alerts staff to a new Legend', () => {
     });
   });
 
+  it('renders nothing for an alert without a username', () => {
+    const prepare = creatorMilestoneNotifications['creator-legend-reached-staff'].prepareMessage;
+    expect(prepare({ details: { userId: 7, username: null } } as never)).toBeUndefined();
+  });
+
   it('skips a Legend with no username, whose profile cannot be linked', async () => {
     dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 7, username: null }]);
     const { ctx } = batchCtx({ grant: async () => [legendCrossing] });

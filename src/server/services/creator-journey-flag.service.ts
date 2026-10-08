@@ -1,6 +1,6 @@
 import { chunk } from 'lodash-es';
 import type { AugmentedPool } from '~/server/db/db-helpers';
-import { isFlipt } from '~/server/flipt/client';
+import { ensureFliptInitialized, getFliptClientSync, isFlipt } from '~/server/flipt/client';
 import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
 import {
   milestoneGrantableUserSql,
@@ -20,6 +20,16 @@ const fliptKey = () => getFeatureFliptKey('creatorJourney') as string;
 /** A missing flag or an unreachable Flipt evaluates false, so this fails closed for all but moderators. */
 export function isCreatorJourneyOnFor(user: { id: number; isModerator: boolean }) {
   return isFliptOnForTesters(fliptKey(), user);
+}
+
+/**
+ * Whether a "no" from the flag is a real answer. Until the Flipt client has initialised every
+ * evaluation fails closed to false; once it has, it keeps evaluating from its last config even if
+ * Flipt goes away, so an initialised client is the health signal.
+ */
+export async function isCreatorJourneyFlagReadable() {
+  await ensureFliptInitialized();
+  return getFliptClientSync() !== null;
 }
 
 /**

@@ -36,6 +36,32 @@ describe('getCreatorJourneyConfig', () => {
     expect(await getCreatorJourneyConfig()).toEqual({});
   });
 
+  it('accepts Discord ids of 17 to 20 digits only', async () => {
+    findUnique.mockResolvedValue({
+      value: {
+        supernovaRoleId: '1'.repeat(17),
+        legendRoleId: '1'.repeat(20),
+        legendsChannelId: '1'.repeat(16),
+      },
+    });
+    expect(await getCreatorJourneyConfig()).toEqual({
+      supernovaRoleId: '1'.repeat(17),
+      legendRoleId: '1'.repeat(20),
+    });
+    findUnique.mockResolvedValue({ value: { legendRoleId: '1'.repeat(21) } });
+    expect(await getCreatorJourneyConfig()).toEqual({});
+  });
+
+  it('accepts up to 20 alert recipients, as positive integer user ids', async () => {
+    const twenty = Array.from({ length: 20 }, (_, i) => i + 1);
+    findUnique.mockResolvedValue({ value: { legendAlertUserIds: twenty } });
+    expect(await getCreatorJourneyConfig()).toEqual({ legendAlertUserIds: twenty });
+    for (const bad of [[0], [-1], [1.5]]) {
+      findUnique.mockResolvedValue({ value: { legendAlertUserIds: bad } });
+      expect(await getCreatorJourneyConfig()).toEqual({});
+    }
+  });
+
   it('rejects an alert list longer than 20 recipients', async () => {
     findUnique.mockResolvedValue({
       value: { legendAlertUserIds: Array.from({ length: 21 }, (_, i) => i + 1) },

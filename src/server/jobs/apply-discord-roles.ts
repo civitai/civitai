@@ -6,7 +6,10 @@ import { pgDbRead } from '~/server/db/pgDb';
 import type { DiscordRole } from '~/server/integrations/discord';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
-import { creatorJourneyAudienceAmong } from '~/server/services/creator-journey-flag.service';
+import {
+  creatorJourneyAudienceAmong,
+  isCreatorJourneyFlagReadable,
+} from '~/server/services/creator-journey-flag.service';
 import {
   milestoneShowableUserSql,
   toUtcTimestamp,
@@ -115,11 +118,10 @@ async function getCreatorJourneyRoleHolders(milestoneKeys: string[], now: Date) 
   const query = await pgDbRead.cancellableQuery<{
     milestoneKey: string;
     userId: number;
-    isModerator: boolean;
     providerAccountId: string;
   }>(
     `
-    SELECT ucm."milestoneKey", u.id AS "userId", u."isModerator", a."providerAccountId"
+    SELECT ucm."milestoneKey", u.id AS "userId", a."providerAccountId"
     FROM "UserCreatorMilestone" ucm
     JOIN "User" u ON u.id = ucm."userId"
     JOIN "Account" a ON a."userId" = u.id AND a.provider = 'discord'
@@ -129,15 +131,11 @@ async function getCreatorJourneyRoleHolders(milestoneKeys: string[], now: Date) 
     [milestoneKeys, excludedUserIds, toUtcTimestamp(now)]
   );
   const rows = await query.result();
+  // Checked before evaluating, so the audience below is read from the same initialised client.
+  const flagReadable = await isCreatorJourneyFlagReadable();
   const audience = await creatorJourneyAudienceAmong(pgDbRead, [
     ...new Set(rows.map((row) => row.userId)),
   ]);
-
-  // The flag fails closed (false) when Flipt is unreachable, but moderators are on without asking it,
-  // so an outage leaves a non-empty audience. Only a flag that said yes to someone who had to ask it is
-  // trusted to take a role away.
-  const asked = rows.filter((row) => !row.isModerator);
-  const flagAnswered = !asked.length || asked.some((row) => audience.has(row.userId));
 
   const tiers = new Map(
     milestoneKeys.map((key) => [
@@ -150,7 +148,7 @@ async function getCreatorJourneyRoleHolders(milestoneKeys: string[], now: Date) 
     tier?.standing.add(row.providerAccountId);
     if (audience.has(row.userId)) tier?.qualifying.add(row.providerAccountId);
   }
-  return { tiers, flagAnswered };
+  return { tiers, flagReadable };
 }
 
 export const applyDiscordCreatorJourneyRoles = async (
@@ -185,16 +183,18 @@ export const applyDiscordCreatorJourneyRoles = async (
   });
   if (!tiers.length) return;
 
-  const { tiers: holders, flagAnswered } = await getCreatorJourneyRoleHolders(
+  const { tiers: holders, flagReadable } = await getCreatorJourneyRoleHolders(
     tiers.map((tier) => tier.milestoneKey),
     now
   );
-  if (!flagAnswered) {
+  // Unreadable, the flag answers no for everyone but moderators, which would read as every other
+  // holder leaving at once. Holder counts sit under REVOKE_FLOOR, so withinBlastRadius would not stop it.
+  if (!flagReadable) {
     logToAxiom({
       type: 'error',
       name: 'discord-role-sync-aborted',
       error: {
-        reason: 'creator-journey flag answered no for every holder; revoking on standing only',
+        reason: 'creator-journey flag unreadable; revoking on standing only',
       },
     });
   }
@@ -211,7 +211,7 @@ export const applyDiscordCreatorJourneyRoles = async (
       [...qualifying].filter((id) => !existing.includes(id))
     );
 
-    const keep = flagAnswered ? qualifying : standing;
+    const keep = flagReadable ? qualifying : standing;
     const removed = existing.filter((id) => !keep.has(id));
     if (withinBlastRadius(role, removed, existing)) await removeRoleFromAccounts(role, removed);
   }

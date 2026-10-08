@@ -4,13 +4,15 @@ import type * as FlagService from '~/server/services/creator-journey-flag.servic
 import type * as ConfigService from '~/server/services/creator-journey-config.service';
 import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
 
-const { mockDiscord, mockPgRead, mockAudience, mockConfig, mockExcluded } = vi.hoisted(() => ({
-  mockDiscord: { getAllRoles: vi.fn(), addRoleToUser: vi.fn(), removeRoleFromUser: vi.fn() },
-  mockPgRead: { cancellableQuery: vi.fn() },
-  mockAudience: vi.fn(),
-  mockConfig: vi.fn(),
-  mockExcluded: vi.fn(),
-}));
+const { mockDiscord, mockPgRead, mockAudience, mockReadable, mockConfig, mockExcluded } =
+  vi.hoisted(() => ({
+    mockDiscord: { getAllRoles: vi.fn(), addRoleToUser: vi.fn(), removeRoleFromUser: vi.fn() },
+    mockPgRead: { cancellableQuery: vi.fn() },
+    mockAudience: vi.fn(),
+    mockReadable: vi.fn(),
+    mockConfig: vi.fn(),
+    mockExcluded: vi.fn(),
+  }));
 
 vi.mock('~/server/integrations/discord', () => ({ discord: mockDiscord }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: mockPgRead, pgDbReadLong: {}, pgDbWrite: {} }));
@@ -24,6 +26,7 @@ vi.mock('~/server/jobs/job', () => ({
 vi.mock('~/server/services/creator-journey-flag.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagService>()),
   creatorJourneyAudienceAmong: mockAudience,
+  isCreatorJourneyFlagReadable: mockReadable,
 }));
 vi.mock('~/server/services/creator-journey-config.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ConfigService>()),
@@ -87,8 +90,13 @@ function idsWritten(kind: 'grant' | 'revoke', roleName: string) {
 }
 
 /** Flipt unreachable: moderators are on without asking it, everyone else evaluates false. */
-const flagDown = async (_pg: unknown, userIds: number[]) =>
-  new Set(userIds.filter((id) => holderRows.some((r) => r.userId === id && r.isModerator)));
+const flagDown = () => {
+  mockReadable.mockResolvedValue(false);
+  mockAudience.mockImplementation(
+    async (_pg: unknown, userIds: number[]) =>
+      new Set(userIds.filter((id) => holderRows.some((r) => r.userId === id && r.isModerator)))
+  );
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -104,6 +112,7 @@ beforeEach(() => {
     cancel: async () => undefined,
   }));
   mockAudience.mockImplementation(async (_pg: unknown, userIds: number[]) => new Set(userIds));
+  mockReadable.mockResolvedValue(true);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
   dbMock.dbWrite.model.findMany.mockResolvedValue([]);
   // getAccountsInRole binds the role as a JSON array; answer per role.
@@ -165,10 +174,10 @@ describe('applyDiscordCreatorJourneyRoles — revokes', () => {
 
   // Moderators are on without asking Flipt, so an outage leaves them qualifying. Reading "everyone
   // else is off" as real would strip every non-moderator holder for up to six hours.
-  it('revokes nobody for flag reasons when Flipt answers no to every holder that asks it', async () => {
+  it('revokes nobody for flag reasons while Flipt is unreadable', async () => {
     holderRows = [supernova(1, '111', true), supernova(2, '222'), supernova(3, '333')];
     accountsInRole = { Supernova: ['111', '222', '333'] };
-    mockAudience.mockImplementation(flagDown);
+    flagDown();
 
     await applyDiscordCreatorJourneyRoles(ROLES);
 
@@ -176,14 +185,27 @@ describe('applyDiscordCreatorJourneyRoles — revokes', () => {
     expect(idsWritten('revoke', 'Supernova')).toEqual([]);
   });
 
-  it('still revokes on lost standing while Flipt is down', async () => {
-    holderRows = [supernova(1, '111', true), supernova(2, '222')];
-    accountsInRole = { Supernova: ['111', '222', '999'] };
-    mockAudience.mockImplementation(flagDown);
+  it('still revokes on lost standing while Flipt is unreadable, and grants only the flagged', async () => {
+    holderRows = [supernova(1, '111', true), supernova(2, '222'), supernova(3, '333')];
+    accountsInRole = { Supernova: ['222', '999'] };
+    flagDown();
 
     await applyDiscordCreatorJourneyRoles(ROLES);
 
     expect(idsWritten('revoke', 'Supernova')).toEqual(['999']);
+    expect(idsWritten('grant', 'Supernova')).toEqual(['111']);
+  });
+
+  // Winding the tester phase down turns the flag off for every non-moderator holder. Flipt is up,
+  // so that is a real answer, and the roles (and the Legends channel) must go with it.
+  it('revokes every non-moderator holder when a readable flag is off for all of them', async () => {
+    holderRows = [...legend(1, '111', true), ...legend(2, '222'), ...legend(3, '333')];
+    accountsInRole = { Legend: ['111', '222', '333'] };
+    mockAudience.mockResolvedValue(new Set([1]));
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(idsWritten('revoke', 'Legend')).toEqual(['222', '333']);
   });
 
   // With two Legends, both being banned is a real state; the role must not outlive their standing.
@@ -262,6 +284,9 @@ describe('applyDiscordCreatorJourneyRoles — config and inputs', () => {
 
     const [sql, params] = mockPgRead.cancellableQuery.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain(`a.provider = 'discord'`);
+    expect(sql).toContain('ucm."milestoneKey" = ANY($1::text[])');
+    expect(sql).toContain('u.id <> ALL($2::int[])');
+    expect(sql).toContain('s."expiresAt" > $3::timestamp');
     expect(sql).toContain('NOT u.muted');
     expect(sql).toContain('"UserStrike"');
     expect(params).toEqual([
