@@ -65,7 +65,7 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  *
  * `none` is a first-class answer at stage 1: when the role argmax is `none`, the
  * response carries empty suggestions without being degraded — the model judged the
- * prompt needs no resource. Stage 3's `none` is reported (`stage3NoneProbability`)
+ * prompt needs no resource. Stage 3's `none` is reported (`noneProbability`)
  * and never empties the list: the arm screen measured that rule costing hit@10.
  *
  * Suggestions are `mergeHybrid`'s HYBRID_10 list (`resource-intent-stage3.ts`).
@@ -315,6 +315,7 @@ export async function getResourceIntent(
 
   let stage1Model = DEGRADED_MODEL;
   let shortlistCount = 0;
+  let stage3NoneProbability: number | null = null;
   // Tracked outside the try so the degraded response below carries it too: if the
   // label read failed and THEN stage 3 failed, the fact that the ordering never ran
   // still describes this computation. (A degrade already takes a short TTL, so this
@@ -358,7 +359,6 @@ export async function getResourceIntent(
 
       let suggestions: ResourceIntentSuggestion[] = [];
       const stage1NoneProbability = intent.role.distribution['none'] ?? null;
-      let stage3NoneProbability: number | null = null;
 
       if (criteria.role !== 'none') {
         const matched = await findResourceIntentCandidates(criteria, {
@@ -408,8 +408,6 @@ export async function getResourceIntent(
         criteria,
         suggestions,
         noneProbability: stage3NoneProbability ?? stage1NoneProbability,
-        stage1NoneProbability,
-        stage3NoneProbability,
         model: stage1.model,
         criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
       };
@@ -423,8 +421,6 @@ export async function getResourceIntent(
         criteria: null,
         suggestions: [],
         noneProbability: null,
-        stage1NoneProbability: null,
-        stage3NoneProbability: null,
         model: DEGRADED_MODEL,
         criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
       };
@@ -520,8 +516,10 @@ export async function getResourceIntent(
       shortlistCount,
       suggestionIds: (response?.suggestions ?? []).map((suggestion) => suggestion.versionId),
       noneProbability: response?.noneProbability ?? 0,
-      stage1NoneProbability: response?.stage1NoneProbability ?? null,
-      stage3NoneProbability: response?.stage3NoneProbability ?? null,
+      stage1NoneProbability: answer?.role.distribution['none'] ?? null,
+      // Not cached, so a cache hit records NULL here: this column describes stage 3 as
+      // run by THIS request.
+      stage3NoneProbability: response?.degraded ? null : stage3NoneProbability,
     });
   })();
 

@@ -346,8 +346,6 @@ describe('cache behavior', () => {
       },
       suggestions: [{ versionId: 11 }, { versionId: 22 }, { versionId: 33 }],
       noneProbability: 0.1,
-      stage1NoneProbability: 0.1,
-      stage3NoneProbability: null,
       model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 2 as const,
     };
@@ -397,8 +395,6 @@ describe('cache behavior', () => {
       },
       suggestions: [],
       noneProbability: 0.1,
-      stage1NoneProbability: 0.1,
-      stage3NoneProbability: null,
       model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 2,
     };
@@ -439,8 +435,6 @@ describe('cache behavior', () => {
       criteria: v1Criteria,
       suggestions: [{ versionId: 999 }],
       noneProbability: 0.1,
-      stage1NoneProbability: 0.1,
-      stage3NoneProbability: null,
       model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1,
     });
@@ -473,8 +467,6 @@ describe('cache behavior', () => {
       criteria: { ...v1Criteria, criteriaVersion: 2, styleFamily: 'anime_manga' },
       suggestions: [{ versionId: 999 }],
       noneProbability: 0.1,
-      stage1NoneProbability: 0.1,
-      stage3NoneProbability: null,
       model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 2,
     };
@@ -513,8 +505,6 @@ describe('cache behavior', () => {
       criteria: null,
       suggestions: [],
       noneProbability: null,
-      stage1NoneProbability: null,
-      stage3NoneProbability: null,
       model: 'jev-unavailable',
       criteriaVersion: 1,
     });
@@ -624,6 +614,10 @@ describe('degradation — fail closed, fail empty', () => {
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
     expect(result.suggestions).toEqual([]);
+    // Stage 3 DID run before hydration failed; a degraded row still carries no stage-3 none.
+    const row = (mockInsert.mock.calls[0][0] as { values: Record<string, unknown>[] }).values[0];
+    expect(row.stage3NoneProbability).toBeNull();
+    expect(row.stage1NoneProbability).toBeNull();
   });
 
   // 🔴 The two failures COMBINED, which is the only path on which `insightFallback`
@@ -750,10 +744,7 @@ describe('stage flow', () => {
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
     expect(result.suggestions.map((s) => s.versionId)).toEqual([11, 22]);
-    expect(result.stage3NoneProbability).toBe(0.5);
     expect(result.noneProbability).toBe(0.5);
-    // Stage 1's role.none (0.1 in STAGE1_ANSWERS) is reported separately, not blended.
-    expect(result.stage1NoneProbability).toBe(0.1);
   });
 
   it('an empty shortlist skips stage 3 entirely (no forced fits)', async () => {
@@ -775,7 +766,6 @@ describe('stage flow', () => {
     const result = await getResourceIntent({ ...INPUT, limit: 2 }, CTX);
     expect(mockAskJev).toHaveBeenCalledTimes(1);
     expect(result.suggestions.map((s) => s.versionId)).toEqual([31, 32]);
-    expect(result.stage3NoneProbability).toBeNull();
     expect(result.noneProbability).toBe(0.1);
   });
 
@@ -833,7 +823,6 @@ describe('stage flow', () => {
       expect(mockAskJev).toHaveBeenCalledTimes(3);
       expect(result.degraded).toBe(true);
       expect(result.suggestions).toEqual([]);
-      expect(result.stage3NoneProbability).toBeNull();
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'resource-intent-degraded',
@@ -960,8 +949,6 @@ describe('shadow event', () => {
       criteria: null,
       suggestions: [],
       noneProbability: null,
-      stage1NoneProbability: null,
-      stage3NoneProbability: null,
       model: 'jev-unavailable',
       criteriaVersion: 2,
     });
@@ -1094,7 +1081,7 @@ describe('shadow event', () => {
       insightFallback: false,
       intent: {
         needsResource: 0.9,
-        role: { value: 'style', distribution: { style: 1 } },
+        role: { value: 'style', distribution: { style: 0.75, none: 0.25 } },
         styleFamily: { value: 'anime_manga', distribution: { anime_manga: 1 } },
         contentType: { value: 'portrait_character', distribution: { portrait_character: 1 } },
         specificity: 3,
@@ -1124,8 +1111,6 @@ describe('shadow event', () => {
         },
       ],
       noneProbability: 0.1,
-      stage1NoneProbability: 0.1,
-      stage3NoneProbability: null,
       model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 2,
     };
@@ -1135,6 +1120,11 @@ describe('shadow event', () => {
     const row = (mockInsert.mock.calls[0][0] as { values: Record<string, unknown>[] }).values[0];
     expect(row.shortlistCount).toBe(1);
     expect(row.suggestionIds).toEqual([31]);
+    // Stage 1's none comes from the cached intent; stage 3's is not cached, so a hit
+    // records NULL rather than a value this request never computed.
+    expect(row.stage1NoneProbability).toBe(0.25);
+    expect(row.stage3NoneProbability).toBeNull();
+    expect(row.noneProbability).toBe(0.1);
   });
 });
 
@@ -1211,8 +1201,6 @@ describe('coverage resolution', () => {
       criteria: null,
       suggestions: [],
       noneProbability: null,
-      stage1NoneProbability: null,
-      stage3NoneProbability: null,
       model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 2,
     });

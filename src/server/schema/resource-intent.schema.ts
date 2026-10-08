@@ -291,20 +291,13 @@ export const resourceIntentResponseSchema = z.strictObject({
    * every old one, i.e. a 100% miss rate on both sides for the rollout window, at
    * up to three vendor calls per miss. Free for THIS field only because the
    * route is dark behind `resourceIntentJev`.
-   *
-   * A new response field avoids rejection in either direction only in a change that
-   * also moves the cache key (as `RESOURCE_INTENT_STAGE3_SPEC_HASH` did for the
-   * split `none` fields); the new build still starts with a cold cache.
    */
   insightFallback: z.boolean(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),
-  /** Stage 3's averaged `none` mass when stage 3 ran, else stage 1's `role.none`. Prefer the two fields below. */
+  /** Stage 3's averaged `none` mass when stage 3 ran, else stage 1's `role.none`. Never empties `suggestions`. */
   noneProbability: z.number().min(0).max(1).nullable(),
-  stage1NoneProbability: z.number().min(0).max(1).nullable(),
-  /** `null` when stage 3 did not run (role `none`, empty shortlist, or degraded). Never empties `suggestions`. */
-  stage3NoneProbability: z.number().min(0).max(1).nullable(),
   model: z.string(),
   criteriaVersion: z.literal(RESOURCE_INTENT_CRITERIA_VERSION),
 });

@@ -102,9 +102,6 @@ export function combineStage3Answers(
  * The first `headSize` DISTINCT models of `head` (a later version of a placed model is
  * skipped), then `fill` in order, skipping every model already placed, until `cap`. A
  * short head is taken whole; an empty head yields `fill`'s first `cap` models.
- *
- * `fill` is read at most `cap` entries deep, which is what lets the matcher stop its
- * popularity pool at `cap` models.
  */
 export function mergeHybrid<T extends Pick<ResourceIntentShortlistEntry, 'modelId'>>(
   head: readonly T[],

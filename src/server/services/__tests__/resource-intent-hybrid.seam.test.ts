@@ -399,7 +399,7 @@ const ROW_A: Row = {
   },
 };
 
-/** Row B — a full seed page with too few gate-passing models: the deep page decides BASE. */
+/** Row B — the seed page holds only 20 gate-passing models, so BASE's fill comes from deeper. */
 const ROW_B: Row = {
   docs: corpus(
     600,
@@ -443,6 +443,10 @@ async function shipped(row: Row) {
     { browsingLevel: 31, coverage: COVERAGE }
   );
   expect(result.degraded).toBe(false);
+  // One path for every row: the seed page, then BASE's own 500-document page.
+  expect(searchWithSignal.mock.calls.map((c) => (c[2] as { limit: number }).limit)).toEqual([
+    100, 500,
+  ]);
   return result;
 }
 
@@ -463,14 +467,10 @@ describe('🔴 seam: shipped HYBRID_10 = the screen, row by row', () => {
     expect(oracle).toHaveLength(50);
   });
 
-  it('row B: the deep page fills BASE when the seed page runs short', async () => {
+  it('row B: BASE reaches past the seed page when few models pass the gate', async () => {
     const result = await shipped(ROW_B);
-    const deepQueried = searchWithSignal.mock.calls.some(
-      (c) => (c[2] as { limit: number }).limit === 500
-    );
     const oracle = await screenHybrid10(ROW_B);
 
-    expect(deepQueried).toBe(true);
     expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
     expect(oracle.slice(0, 3).map((id) => id - 5000)).toEqual([40, 5, 0]);
     expect(oracle).toHaveLength(50);
@@ -483,7 +483,7 @@ describe('🔴 seam: shipped HYBRID_10 = the screen, row by row', () => {
     const oracle = await screenHybrid10(ROW_C);
 
     expect(fetched).toBe(1);
-    expect(result.stage3NoneProbability).toBeNull();
+    expect(result.noneProbability).toBe(0.1); // stage 1's role.none: stage 3 never ran
     expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
     expect(oracle.map((id) => id - 5000)).toEqual(Array.from({ length: 50 }, (_, i) => 120 + i));
   });

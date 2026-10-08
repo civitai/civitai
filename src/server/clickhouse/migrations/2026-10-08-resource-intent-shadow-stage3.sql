@@ -7,9 +7,10 @@
 --                          has its own hash; `specHash` covers stage 1 only. Both are in the
 --                          cache key, so a row's pair names the spec that produced it.
 --   stage1NoneProbability  stage 1's role.none. NULL on a degraded row.
---   stage3NoneProbability  stage 3's `none` mass averaged over its two option orders. NULL when
---                          stage 3 did not run (role none, empty shortlist, degraded). It never
---                          empties the suggestions.
+--   stage3NoneProbability  stage 3's `none` mass averaged over its two option orders, as run by
+--                          THIS request. NULL when stage 3 did not run (role none, empty
+--                          shortlist, degraded) and on a cache hit (the value is not cached). It
+--                          never empties the suggestions.
 --
 -- `noneProbability` stays, unchanged: stage 3's value when stage 3 ran, else stage 1's. Prefer
 -- the two split columns.

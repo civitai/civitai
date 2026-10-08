@@ -356,7 +356,6 @@ type ResourceIntentSeed = {
   poolCap: number;
   filter: string | null;
   baseModels: string[] | null;
-  hits: ModelSearchIndexRecord[];
   pool: ResourceIntentShortlistEntry[];
 };
 
@@ -376,28 +375,25 @@ async function seedResourceIntentPool(
   });
   const hits = await searchShortlistModels(filter, poolCap);
   const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
-  return { cap, poolCap, filter, baseModels, hits, pool };
+  return { cap, poolCap, filter, baseModels, pool };
 }
 
 /**
- * The hybrid's fill: popularity order, one version per model, `cap` models — the screen's
- * BASE pool (built from a `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT`-document page) cut to the
- * `cap` entries the merge can read.
- *
- * The deep page is fetched only when the seed page cannot supply `cap` models AND was
- * full. Both pages share filter and sort, so the seed page is a prefix of the deep one
- * and the result is identical either way; a seed page that came back short is already
- * every matching document.
+ * The hybrid's fill, built exactly as the screen built its BASE pool: one
+ * `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT`-document page under the seed's filter and sort,
+ * one version per model, the first `poolCap` models in popularity order. Always its own
+ * query, so it does not rely on the seed page being a prefix of it.
  */
 async function seedBasePool(
   seed: ResourceIntentSeed,
   coverage: ResourceIntentCoverage
 ): Promise<ResourceIntentShortlistEntry[]> {
-  const opts = { baseModels: seed.baseModels, coverage, cap: seed.cap };
-  const fromSeed = expandOneVersionPerModel(seed.hits, opts);
-  if (fromSeed.length >= seed.cap || seed.hits.length < seed.poolCap) return fromSeed;
   const deep = await searchShortlistModels(seed.filter, RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT);
-  return expandOneVersionPerModel(deep, opts);
+  return expandOneVersionPerModel(deep, {
+    baseModels: seed.baseModels,
+    coverage,
+    cap: seed.poolCap,
+  });
 }
 
 /**

@@ -914,24 +914,24 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
       [1, 12],
       [3, 31],
     ]);
-    // The seed page came back short of its limit, so it was every match: no deep page.
-    expect(limits()).toEqual([100]);
+    // Its own 500-document page, every time — even when the seed page already held every match.
+    expect(limits()).toEqual([100, 500]);
   });
 
-  it('stops at cap models without a second query when the seed page supplies them', async () => {
+  it('takes the first 2 × cap models of its own page, even when the seed page would do', async () => {
     serve(Array.from({ length: 300 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: true }])));
     const result = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 5,
     });
-    expect(result.basePool.map((e) => e.modelId)).toEqual([1, 2, 3, 4, 5]);
-    expect(limits()).toEqual([10]);
+    expect(result.basePool.map((e) => e.modelId)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(limits()).toEqual([10, 500]);
   });
 
-  it('🔴 fetches the 500-document page when a FULL seed page cannot supply cap models', async () => {
+  it('🔴 reaches past the seed page, under the seed page filter and sort', async () => {
     // Seed page = 10 docs (cap 5 × 2), of which only models 3 and 7 pass the gate; the
-    // next passing models are 12, 15 and 40. The deep page must reach them, in order.
+    // other passing models sit deeper. The 500-document page must reach them, in order.
     const passing = new Set([3, 7, 12, 15, 40, 41]);
     serve(
       Array.from({ length: 600 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: passing.has(i + 1) }]))
@@ -941,9 +941,8 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
       coverage: COVERAGE,
       cap: 5,
     });
-    expect(result.basePool.map((e) => e.modelId)).toEqual([3, 7, 12, 15, 40]);
+    expect(result.basePool.map((e) => e.modelId)).toEqual([3, 7, 12, 15, 40, 41]);
     expect(limits()).toEqual([10, 500]);
-    // Same filter and sort as the seed page — the deep page must be its extension.
     const [seedArgs, deepArgs] = searchWithSignal.mock.calls.map((c) => c[2] as object);
     expect({ ...deepArgs, limit: 10 }).toEqual(seedArgs);
     // The SHORTLIST still comes from the seed page alone.
