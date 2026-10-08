@@ -6,7 +6,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import { dbMock, redisMock } from '~/__tests__/mocks';
-import { judgeSkipListReducer } from '~/components/Crucible/judge-skip-list';
+import { JUDGE_SKIP_LIST_LIMIT, judgeSkipListReducer } from '~/components/Crucible/judge-skip-list';
 import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -324,7 +324,7 @@ describe('getJudgingPair — pairing', () => {
       strings.join('').includes('NOT IN') ? all.filter((e) => e.id === 3) : all
     );
 
-    const pair = await getJudgingPair({ crucibleId: 1, userId: 7, excludeEntryIds: [1, 2] });
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 7, skippedPairs: [[1, 2]] });
 
     expect(pair, 'three unjudged pairs were left, only behind the skip list').not.toBeNull();
     expect(queryRaw).toHaveBeenCalledTimes(2);
@@ -348,17 +348,17 @@ describe('getJudgingPair — pairing', () => {
       return all.filter((e) => !excluded.includes(e.id));
     });
     withVoteCounts({ 1: 0, 2: 0, 3: 5, 4: 5, 5: 8, 6: 8 });
-    const serve = async (skipped: number[]) => {
+    const serve = async (skipped: [number, number][]) => {
       const pair = await getJudgingPair({
         crucibleId: 1,
         userId: 7,
-        excludeEntryIds: skipped.length ? skipped : undefined,
+        skippedPairs: skipped.length ? skipped : undefined,
       });
       if (!pair) throw new Error('no pair served');
       return pair;
     };
 
-    let skipped: number[] = [];
+    let skipped: [number, number][] = [];
     const skippedPair = await serve(skipped);
     expect(pairIds(skippedPair)).toEqual([1, 2]);
     skipped = judgeSkipListReducer(skipped, { type: 'skip', pair: skippedPair });
@@ -374,6 +374,50 @@ describe('getJudgingPair — pairing', () => {
       next.filter((id) => [1, 2].includes(id)),
       'an entry the judge just skipped'
     ).toEqual([]);
+  });
+
+  // Reported on a crucible of 11 entries: after ~5 skips every entry was on the skip list, the
+  // fallback dropped all of it, and near-deterministic pairing served the pair just skipped forever.
+  it('keeps serving new pairs once the skip list covers every entry of a small crucible', async () => {
+    const all = Array.from({ length: 11 }, (_, i) => rawEntry(i + 1, 100 + i, 1500));
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const at = strings.findIndex((part) => part.trimEnd().endsWith('NOT IN ('));
+      if (at === -1) return all;
+      const excluded = (values[at] as { values: unknown[] }).values;
+      return all.filter((e) => !excluded.includes(e.id));
+    });
+
+    let skipped: [number, number][] = [];
+    const served: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const pair = await getJudgingPair({
+        crucibleId: 1,
+        userId: 7,
+        skippedPairs: skipped.length ? skipped : undefined,
+      });
+      if (!pair) throw new Error('no pair served');
+      const key = pairIds(pair)!.join(':');
+      expect(served.at(-1), `skip ${i} re-served the pair just skipped`).not.toBe(key);
+      served.push(key);
+      skipped = judgeSkipListReducer(skipped, { type: 'skip', pair });
+    }
+
+    expect(
+      served.slice(-JUDGE_SKIP_LIST_LIMIT).every((key, i, recent) => recent.indexOf(key) === i),
+      'a pair came back while fewer skips than the list holds had passed'
+    ).toBe(true);
+  });
+
+  it('reads the entry list older clients send', async () => {
+    const all = [rawEntry(1, 11), rawEntry(2, 12), rawEntry(3, 13)];
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('NOT IN') ? all.filter((e) => e.id === 3) : all
+    );
+
+    expect(
+      await getJudgingPair({ crucibleId: 1, userId: 7, excludeEntryIds: [1, 2] })
+    ).not.toBeNull();
+    expect(queryRaw).toHaveBeenCalledTimes(2);
   });
 
   it('does not query again when nothing was skipped', async () => {

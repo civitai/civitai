@@ -2623,6 +2623,7 @@ export const getJudgingPair = async ({
   crucibleId,
   userId,
   excludeEntryIds,
+  skippedPairs = [],
   browsingLevel,
   judgingSessionId,
   isGreen = false,
@@ -2693,7 +2694,10 @@ export const getJudgingPair = async ({
   );
   // Authors enter near-identical variants, so two entries by one author read to a judge as the
   // same clip twice. Such a pair is served only once no cross-author pair is left.
-  const search = async (exclusions?: number[]) => {
+  const search = async (exclusions?: number[], avoidPairKeys: string[] = []) => {
+    const unservable = avoidPairKeys.length
+      ? new Set([...votedPairs, ...avoidPairKeys])
+      : votedPairs;
     let sameAuthor: ReturnType<typeof pickUnjudgedPair> = null;
     for (let attempt = 0; attempt < MAX_SAMPLE_ATTEMPTS; attempt++) {
       const sample = await fetchEntrySample(
@@ -2705,11 +2709,11 @@ export const getJudgingPair = async ({
       );
       const candidates = sample.filter(underJudgeCap).map(rate);
       const anchors = sample.filter((entry) => !underJudgeCap(entry)).map(rate);
-      const crossAuthor = pickUnjudgedPair(candidates, anchors, votedPairs, {
+      const crossAuthor = pickUnjudgedPair(candidates, anchors, unservable, {
         allowSameAuthor: false,
       });
       if (crossAuthor) return crossAuthor;
-      sameAuthor ??= pickUnjudgedPair(candidates, anchors, votedPairs, { allowSameAuthor: true });
+      sameAuthor ??= pickUnjudgedPair(candidates, anchors, unservable, { allowSameAuthor: true });
       // A short sample already held every entry, so another draw returns the same set.
       if (sample.length < SAMPLE_SIZE) break;
     }
@@ -2718,9 +2722,21 @@ export const getJudgingPair = async ({
 
   // A skip means "not now": once only skipped entries are left, they come back instead of the
   // judge being told there is nothing left to judge. It outranks the author rule, so a same-author
-  // pair is served before a skipped entry returns: re-serving the pair just skipped makes Skip
-  // look broken.
-  const pair = (await search(excludeEntryIds)) ?? (excludeEntryIds?.length ? await search() : null);
+  // pair is served before a skipped entry returns.
+  // In a small crucible the skip list soon covers every entry. The skipped pairs themselves stay
+  // out for as long as another pair is left, the oldest returning first: dropping every skip at
+  // once re-served the pair just skipped, and pairing is near-deterministic, so Skip stuck on it.
+  const exclusions = excludeEntryIds ?? [...new Set(skippedPairs.flat())];
+  const searchSkippedEntries = async () => {
+    let avoid = skippedPairs.map(([a, b]) => createPairKey(a, b));
+    for (; avoid.length; avoid = avoid.slice(Math.ceil(avoid.length / 2))) {
+      const found = await search(undefined, avoid);
+      if (found) return found;
+    }
+    return search();
+  };
+  const pair =
+    (await search(exclusions)) ?? (exclusions.length ? await searchSkippedEntries() : null);
   if (!pair) return null;
   const { a: imageA, b: imageB, anchorEntryId } = pair;
 
