@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { CRUCIBLE_ENTRIES_CLOSED_MESSAGE } from '~/shared/constants/crucible.constants';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as NotificationsModule from '~/utils/notifications';
@@ -29,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   addImageOnSuccess: undefined as undefined | ((image: { id: number }) => void),
   showErrorNotification: vi.fn(),
   reasonsById: {} as Record<number, string[]>,
+  minVotes: 0,
 }));
 
 vi.mock('~/utils/notifications', async (importOriginal) => ({
@@ -69,7 +71,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useMutation: () => ({ ...mutation(), mutateAsync: mocks.createEntryPost }),
         },
         submitEntry: { useMutation: () => ({ ...mutation(), mutateAsync: mocks.submitEntry }) },
-        getMinVotesToPlace: { useQuery: () => ({ data: undefined }) },
+        getMinVotesToPlace: {
+          // Answers only when asked, as the real query does when `enabled` is false.
+          useQuery: (_: unknown, opts?: { enabled?: boolean }) => ({
+            data: opts?.enabled ? { minVotes: mocks.minVotes } : undefined,
+          }),
+        },
         getById: { useQuery: () => ({ data: { viewerEntries: [] } }) },
         checkEntryEligibility: {
           useQuery: () => ({
@@ -146,7 +153,17 @@ const image = (id: number) => ({
 const renderModal = ({
   currentEntryCount = 0,
   freeEntriesPerUser = 1,
-}: { currentEntryCount?: number; freeEntriesPerUser?: number } = {}) =>
+  window,
+}: {
+  currentEntryCount?: number;
+  freeEntriesPerUser?: number;
+  window?: {
+    startAt: Date;
+    endAt: Date;
+    entryCutoffPercent: number;
+    entryWarningPercent?: number;
+  };
+} = {}) =>
   renderWithProviders(
     <CrucibleSubmitEntryModal
       crucibleId={1}
@@ -157,6 +174,7 @@ const renderModal = ({
       nsfwLevel={1}
       contentType={MediaType.image}
       currentEntryCount={currentEntryCount}
+      {...window}
     />
   );
 
@@ -195,6 +213,7 @@ beforeEach(() => {
     );
   useGeneratorSelectionStore.setState({ selected: [] });
   mocks.reasonsById = {};
+  mocks.minVotes = 0;
 });
 
 describe('CrucibleSubmitEntryModal — free entries', () => {
@@ -233,6 +252,67 @@ describe('CrucibleSubmitEntryModal — free entries', () => {
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('First entry free, then 50 Buzz per entry')
     );
+  });
+});
+
+describe('CrucibleSubmitEntryModal — entries closed near the end', () => {
+  const HOUR = 60 * 60_000;
+  // A 10h run with 1h left.
+  const lastTenth = (entryCutoffPercent: number) => ({
+    startAt: new Date(Date.now() - 9 * HOUR),
+    endAt: new Date(Date.now() + HOUR),
+    entryCutoffPercent,
+  });
+
+  test('says entries are closed and will not submit', async () => {
+    renderModal({ window: lastTenth(20) });
+    await select(1);
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(CRUCIBLE_ENTRIES_CLOSED_MESSAGE)
+    );
+    expect(plainSubmit()?.disabled).toBe(true);
+  });
+
+  // 3h of a 10h run left: inside a 40% warning, outside a 20% one.
+  const threeHoursLeft = (entryWarningPercent: number) => ({
+    startAt: new Date(Date.now() - 7 * HOUR),
+    endAt: new Date(Date.now() + 3 * HOUR),
+    entryCutoffPercent: 0,
+    entryWarningPercent,
+  });
+
+  test("warns inside the crucible's own warning share", async () => {
+    mocks.minVotes = 40;
+    renderModal({ window: threeHoursLeft(40) });
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('needs about 40 votes'));
+  });
+
+  test("does not warn outside the crucible's own warning share", async () => {
+    mocks.minVotes = 40;
+    renderModal({ window: threeHoursLeft(20) });
+    await select(1);
+
+    expect(document.body.textContent).not.toContain('needs about 40 votes');
+  });
+
+  test('shows only the closed notice, not the late-entry warning, once entries close', async () => {
+    mocks.minVotes = 40;
+    renderModal({ window: { ...lastTenth(20), entryWarningPercent: 30 } });
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(CRUCIBLE_ENTRIES_CLOSED_MESSAGE)
+    );
+    expect(document.body.textContent).not.toContain('needs about 40 votes');
+  });
+
+  test('submits as usual in the same window when entries stay open to the end', async () => {
+    renderModal({ window: lastTenth(0) });
+    await select(1);
+
+    await vi.waitFor(() => expect(plainSubmit()?.disabled).toBe(false));
+    expect(document.body.textContent).not.toContain(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
   });
 });
 

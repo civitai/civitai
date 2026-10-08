@@ -28,6 +28,7 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 
 /**
@@ -1006,6 +1007,9 @@ export async function writeBlockPost(input: {
 
     return created;
   });
+
+  if (input.title || input.detail)
+    scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   return {
     postId: post.id,

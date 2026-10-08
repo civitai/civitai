@@ -40,7 +40,7 @@ export type WildcardPreviewModalProps = {
  * Modal that shows how the user's prompt(s) resolve once `#category` snippet
  * references are substituted by the server resolver. Mounted via the shared
  * dialog registry (see `openWildcardPreview` trigger) so it can live outside
- * the form's DataGraphProvider — props carry everything it needs.
+ * the form's provider — props carry everything it needs.
  *
  * Fires `wildcardSet.previewExpansion` once on mount with no seed (server
  * samples a fresh one and echoes it back), and again on every Regenerate

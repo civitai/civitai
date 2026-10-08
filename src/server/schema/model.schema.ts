@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
+import type { TextScanFlags } from '~/server/services/text-scan/flag-snapshot';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
@@ -321,8 +322,8 @@ export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boole
 
 export type MinorFlagSnapshot = {
   at: string;
-  source: 'auto' | 'manual';
-  confirmedFrom?: 'auto' | 'manual';
+  source: 'auto' | 'manual' | 'text-scan';
+  confirmedFrom?: 'auto' | 'manual' | 'text-scan';
   confirmedAt?: string;
   confirmedBy?: number;
   prevNsfw?: boolean;
@@ -337,6 +338,10 @@ export type ModelMeta = Partial<{
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
    *  to stamp the published model back onto the workflow. */
   trainingStudioWorkflowId: string;
+  /** Set once the run passed the training moderation check (at materialization, or backfilled when
+   *  a later check reads the run as approved). A stamped model skips the publish-time check.
+   *  Server-owned. */
+  trainingStudioModerationApproved: boolean;
   unpublishedReason: UnpublishReason;
   customMessage: string;
   needsReview: boolean;
@@ -377,6 +382,7 @@ export type ModelMeta = Partial<{
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
   minorHashAccepted: { at: string };
+  textScanFlags: TextScanFlags;
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean | null;

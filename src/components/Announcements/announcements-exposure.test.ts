@@ -18,7 +18,7 @@ const typed = [A, B];
 const visible = (out: Array<{ id: number; dismissed: boolean }>) =>
   out.filter((x) => !x.dismissed).map((x) => x.id);
 
-describe('resolveAnnouncementExposure — flag ON (SSR-exact, site placement)', () => {
+describe('resolveAnnouncementExposure — site placement (SSR-exact)', () => {
   // Dismisser: the active announcement #1 is in the cookie (seed AND store).
   const dismissedStore = [1];
   const dismissedSeed = [1];
@@ -140,8 +140,8 @@ describe('resolveAnnouncementExposure — flag ON (SSR-exact, site placement)', 
   });
 });
 
-describe('resolveAnnouncementExposure — flag OFF / non-site (byte-identical to pre-fix)', () => {
-  test('FLAG OFF: server + first client paint are EMPTY regardless of cookie (isClient gate preserved)', () => {
+describe('resolveAnnouncementExposure — non-site (isClient gate)', () => {
+  test('non-site: server + first client paint are EMPTY regardless of cookie (isClient gate preserved)', () => {
     const server = resolveAnnouncementExposure({
       typed,
       exposeSSR: false,
@@ -158,7 +158,7 @@ describe('resolveAnnouncementExposure — flag OFF / non-site (byte-identical to
       exposeSSR: false,
       isClient: true,
       dismissedStore: [1],
-      dismissedSeed: [999], // seed must be IGNORED when flag off
+      dismissedSeed: [999], // seed must be IGNORED for non-site
     });
     expect(visible(postHydration)).toEqual([2]); // #1 dismissed via STORE, not seed
   });

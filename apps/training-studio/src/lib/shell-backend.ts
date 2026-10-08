@@ -2,7 +2,12 @@
 // (the session-gated wrappers under src/routes/api/*). Flow code goes through $lib/host's backend()
 // seam and never fetches '/api/…' itself; the only other client modules that do are signals.ts
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
-import type { AutoLabelResult, StudioBackend, TrainingRunPayload } from '$lib/backend';
+import type {
+  AutoLabelResult,
+  StudioBackend,
+  SubmittedBatch,
+  TrainingRunPayload,
+} from '$lib/backend';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import { UploadError, uploadProblem } from '$lib/upload';
@@ -91,8 +96,8 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify({ runs }),
     });
     if (!res.ok) throw new Error(await messageOf(res, `Training could not start (${res.status})`));
-    const { workflowIds } = (await res.json()) as { workflowIds: string[] };
-    return workflowIds;
+    const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
+    return { workflowIds, failure };
   },
 
   rename: async (workflowId, name) => {

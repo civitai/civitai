@@ -4,11 +4,9 @@ import { SEED, aspectRatioDef, resourcesDef } from '../defs';
 import { familyScope, modelIdOf, perModelSlider, textBlock, type FamilyExt } from '../shared';
 
 /**
- * Ernie (base + turbo), ported from `ernie-graph.ts`. Turbo drops LoRA support
+ * Ernie (base + turbo). Turbo drops LoRA support
  * and runs low-guidance/low-step; negative prompt everywhere.
  */
-
-// ---- copied from ernie-graph.ts, which dies with the data-graph engine ------
 
 export const ernieVersionIds = {
   ernie: 2863858,
@@ -31,8 +29,6 @@ const ernieAspectRatios = [
   { label: '9:16', value: '9:16', width: 768, height: 1376 },
 ];
 
-// ---- end of ernie-graph.ts copies -------------------------------------------
-
 type ErnieModeExt = FamilyExt & { model?: unknown };
 
 const variantOf = (ext: ErnieModeExt): ErnieVariant =>
@@ -40,7 +36,7 @@ const variantOf = (ext: ErnieModeExt): ErnieVariant =>
 
 const base = defineGraph<ErnieModeExt>()
   .field('resources', ({ _ext }) =>
-    // v1's ernie uses raw resourcesNode: NO cross-ecosystem filter
+    // Ernie takes resources with NO cross-ecosystem filter.
     resourcesDef({
       ecosystem: _ext.ecosystem,
       limit: _ext.limits.maxResources,
@@ -54,7 +50,7 @@ const turbo = defineGraph<ErnieModeExt>()
   .field('cfgScale', perModelSlider({ min: 1, max: 20, default: 1, step: 0.5 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 8 }));
 
-/** Tagged: v1's `ernieVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `ernieVariant`. */
 const variants = branch('ernieVariant', variantOf, { base, turbo });
 
 export const ernie = defineGraph<FamilyExt>({ scope: familyScope })

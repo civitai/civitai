@@ -12,6 +12,8 @@ import { civitaiAppUrl } from './civitai-url';
 //      reviews, buzz, purge)
 //   5. remove/restore/flag images        — `handleBlockImages`/`handleUnblockImages` re-sync the search
 //                                          index, recompute nsfwLevel and write ClickHouse tracking
+//   6. `/api/v1/model-versions/bust-cache` — `bustMvCache` spans six caches, a CDN purge and the search
+//                                          queue; `resourceDataCache` holds `Model.nsfw` for an hour
 //
 // Adding to this list requires writing the capability next to it. An entry that cannot name one is a
 // port that was skipped.

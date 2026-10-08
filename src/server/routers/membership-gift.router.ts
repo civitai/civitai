@@ -3,9 +3,12 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
   createMembershipGiftCheckoutSchema,
   getRecipientGiftabilitySchema,
+  membershipGiftIdSchema,
 } from '~/server/schema/membership-gift.schema';
 import {
+  acceptMembershipGift,
   createMembershipGiftCheckout,
+  getGiftOffer,
   getMyMembershipGifts,
   getRecipientGiftability,
   keepGiftMembership,
@@ -35,5 +38,13 @@ export const membershipGiftRouter = router({
       });
     }),
   getMyGifts: giftProcedure.query(({ ctx }) => getMyMembershipGifts({ userId: ctx.user.id })),
+  getOffer: giftProcedure
+    .input(membershipGiftIdSchema)
+    .query(({ input, ctx }) => getGiftOffer({ giftId: input.giftId, userId: ctx.user.id })),
+  accept: giftProcedure
+    .input(membershipGiftIdSchema)
+    .mutation(({ input, ctx }) =>
+      acceptMembershipGift({ giftId: input.giftId, userId: ctx.user.id })
+    ),
   keepMembership: giftProcedure.mutation(({ ctx }) => keepGiftMembership({ userId: ctx.user.id })),
 });

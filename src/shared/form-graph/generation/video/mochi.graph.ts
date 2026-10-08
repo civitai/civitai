@@ -5,7 +5,7 @@ import { SEED } from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Mochi, ported from `mochi-graph.ts`. The smallest family: locked model,
+ * Mochi. The smallest family: locked model,
  * seed, a prompt-enhancer toggle, prompt. No negative prompt.
  */
 

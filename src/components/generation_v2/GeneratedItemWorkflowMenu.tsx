@@ -24,7 +24,7 @@ import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/g
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { filterWorkflowsByFeatureFlags } from '~/shared/data-graph/generation/config/workflows';
+import { filterWorkflowsByFeatureFlags } from '~/shared/generation/config/workflows';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationGraphStore } from '~/store/generation-graph.store';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';

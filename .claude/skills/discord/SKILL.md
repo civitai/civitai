@@ -109,7 +109,7 @@ node .claude/skills/discord/query.mjs announce deployments "v5.0.1381 released" 
 node .claude/skills/discord/query.mjs rich-embed dev-general "New release is live!" \
   --title "Release v5.0.1382" \
   --field "Version|5.0.1382|inline" \
-  --field "Author|@justin|inline" \
+  --field "Author|@jane|inline" \
   --field "Changes|3 files modified" \
   --footer "Civitai" \
   --color "#00C853"
@@ -183,16 +183,16 @@ node .claude/skills/discord/query.mjs thread dev-general --thread "New Topic"
 
 ```bash
 # Send DM to a user by name
-node .claude/skills/discord/query.mjs dm justin "Hey, can you review this PR?"
+node .claude/skills/discord/query.mjs dm jane "Hey, can you review this PR?"
 
 # Send DM to a user by ID
-node .claude/skills/discord/query.mjs dm 303445765865603073 "Quick question about the deployment"
+node .claude/skills/discord/query.mjs dm 123456789012345678 "Quick question about the deployment"
 
 # Read DM history with a user
-node .claude/skills/discord/query.mjs dm-messages justin
+node .claude/skills/discord/query.mjs dm-messages jane
 
 # Read last 50 DMs
-node .claude/skills/discord/query.mjs dm-messages justin --limit 50
+node .claude/skills/discord/query.mjs dm-messages jane --limit 50
 ```
 
 ### Users and Roles
@@ -202,8 +202,8 @@ node .claude/skills/discord/query.mjs dm-messages justin --limit 50
 node .claude/skills/discord/query.mjs users --limit 50
 
 # Find user to get mention format
-node .claude/skills/discord/query.mjs user justin
-# Output: Mention: <@303445765865603073>
+node .claude/skills/discord/query.mjs user jane
+# Output: Mention: <@123456789012345678>
 
 # List roles
 node .claude/skills/discord/query.mjs roles
@@ -217,7 +217,7 @@ node .claude/skills/discord/query.mjs role devs
 
 ```bash
 # Mention a user in a message
-node .claude/skills/discord/query.mjs send dev-general "<@303445765865603073> check this PR"
+node .claude/skills/discord/query.mjs send dev-general "<@123456789012345678> check this PR"
 
 # Mention a role
 node .claude/skills/discord/query.mjs announce dev-general "<@&955572624992382996> new release!" --title "Attention Devs"

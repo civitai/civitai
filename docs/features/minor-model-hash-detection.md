@@ -62,6 +62,7 @@ snapshot, not a guess.
 m.minor
 AND 'minor' = ANY(m."lockedProperties")
 AND m.meta->'minorFlagSnapshot'->>'source' IS DISTINCT FROM 'auto'
+AND m.meta->'minorFlagSnapshot'->>'source' IS DISTINCT FROM 'text-scan'
 ```
 
 Each clause earns its place:
@@ -73,6 +74,8 @@ Each clause earns its place:
   model becomes a seed contributing *every* hash on it — including hashes no moderator ever tied to
   minor content — so the seed set grows from machine decisions and a dry run can't predict what later
   rounds will match. Measured on a prod-scale clone: dry run said 300, the drain wrote 302.
+- Excluding `source='text-scan'` does the same for the text scan's minor verdicts: an unreviewed LLM
+  verdict must not flag other people's uploads. Upholding its appeal promotes it to `'manual'`.
 
 A moderator's own "Set as Minor" writes `source='manual'` and still seeds. Legacy flags (no snapshot at
 all) seed too: `NULL IS DISTINCT FROM 'auto'` is true. And an auto-flag a moderator affirms is
@@ -130,13 +133,14 @@ timeout still leaves a record of what committed.
 
 ## Snapshot and rollback
 
-`Model.meta.minorFlagSnapshot`, written idempotently (`WHERE NOT (meta ? key)`) so a re-flag can never
-clobber the original pre-state:
+`Model.meta.minorFlagSnapshot`. A re-flag of a model that is still minor never clobbers the original
+pre-state; a snapshot left behind by an unset is replaced (`WHERE NOT (meta ? key) OR NOT m.minor`), so a
+new flag never inherits an old flag's source and pre-state:
 
 | Field | Meaning |
 |-------|---------|
 | `at` | When the flag was applied |
-| `source` | `'auto'` (activity `setMinorAutoHash`) or `'manual'` |
+| `source` | `'auto'` (activity `setMinorAutoHash`), `'text-scan'` (`setMinorTextScan`) or `'manual'` |
 | `prevNsfw`, `prevSfwOnly`, `prevGalleryLevel` | Pre-flag values |
 | `prevLockedProperties` | Full pre-flag array |
 | `prevMinorImageIds` | Images already `minor` before the flag |
@@ -145,8 +149,8 @@ Snapshot capture is best-effort: losing it must block a later rollback, not the 
 
 `rollbackMinorHashAutoFlags` has two modes:
 
-- **Blanket** — `source IS DISTINCT FROM 'manual'` **and not human-confirmed**. A moderator's own
-  decision is never reverted as collateral of "undo the backfill".
+- **Blanket** — `source = 'auto'` **and not human-confirmed**. Neither a moderator's own decision nor a
+  text-scan flag (which has its own appeal path) is reverted as collateral of "undo the backfill".
 - **Targeted** (`modelIds`) — exactly those models, any source, no confirmation skip. Naming the model
   *is* the deliberate decision. This is the escape hatch for a mis-click.
 
@@ -208,7 +212,17 @@ it has an appeal. Actions:
   kept, so a targeted undo stays possible. If snapshot capture had failed, the promotion no-ops and the
   `ModActivity` row alone protects the flag.
 - **Revert** (`revertMinorHashAutoFlag`) — targeted rollback of that one model, plus a
-  `rollbackMinorAutoHash` `ModActivity`.
+  `rollbackMinorAutoHash` `ModActivity`. A moderator's revert (and their Unset as Minor) first records a
+  ruling on the model's current text in `meta.textScanFlags.minor.appealGranted`, so a rescan of the
+  same text cannot re-flag it.
+
+**Appeals** — every Pending Model appeal, including ones against a text-scan `poi` or `minor` flag
+(`meta.textScanFlags`). `resolveMinorFlagAppeal` rules per label: with both labels open a moderator can
+keep one and lift the other (`minor`/`poi` on `/api/mod/minor-flag/resolve-appeal`). Overturning a minor
+flag whose origin is `auto` or `text-scan` rolls it back to its snapshot; a moderator-origin flag takes
+the plain unset path instead. A grant covers the text it was about: if the owner edited the text while
+the appeal was open, the model is rescanned (`rescanQueued`). The hash-match detail renders only for
+hash-origin rows.
 
 Neither queue is paginated (`limit` default 1000, max 2000, plus a `truncated` flag). This is
 deliberate: rows *leave* these queues as they're actioned, so any server-side window — OFFSET or keyset
@@ -234,8 +248,9 @@ Both use the same sentence, and both are deliberately vague:
 
 It names no hash, no matched model, and no source, and it does not enumerate the restrictions
 applied. Each of those details would tell a repeat uploader exactly which bytes to change. The
-Auto-flagged tab reviews automated flags for their first 30 days, and owner appeals land in an Appeals
-queue (`/api/mod/minor-flag/resolve-appeal`). Past the window, the moderator app's
+Auto-flagged tab reviews automated flags for their first 30 days, and owner appeals land in the moderator
+app's Model Flag Appeals page (`/models/flag-appeals`, which calls `/api/mod/minor-flag/resolve-appeal`).
+Appeals there cover minor flags from any source and real-person flags, so they are not a tab of this queue. Past the window, the moderator app's
 `/models/minor-hash-matches?q=<modelId>` lookup still offers Revert / Keep flagged for any model with a
 flag snapshot.
 

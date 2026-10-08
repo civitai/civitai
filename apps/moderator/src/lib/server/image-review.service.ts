@@ -1,8 +1,9 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
+import { takePage } from './keyset-page';
 import type { MediaType } from '$lib/media/edge-url';
-import type { ImageReviewType } from '$lib/image-review';
+import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 
 export type ReviewTag = { id: number; name: string; nsfwLevel: number };
 
@@ -15,6 +16,7 @@ export type ImageReviewItem = {
   type: MediaType;
   needsReview: string | null;
   blockedFor: string | null;
+  ingestion: string;
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
@@ -49,7 +51,7 @@ export async function getImageReviewQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .leftJoin('Post as p', 'p.id', 'i.postId')
@@ -75,6 +77,7 @@ export async function getImageReviewQueue({
       'i.type',
       'i.needsReview',
       'i.blockedFor',
+      'i.ingestion',
       'i.minor',
       'i.poi',
       'i.acceptableMinor',
@@ -96,7 +99,7 @@ export async function getImageReviewQueue({
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', needsReview)
-    .where('i.ingestion', '=', 'Scanned')
+    .where('i.ingestion', 'in', reviewQueueIngestion(needsReview))
     .$if(!!tagIds?.length, (qb) =>
       qb.where(
         sql<boolean>`EXISTS (SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" IN (${sql.join(
@@ -116,8 +119,7 @@ export async function getImageReviewQueue({
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.id);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.id);
 
   const ids = rows.map((r) => r.id);
   const tagsByImage = new Map<number, ReviewTag[]>();
@@ -169,6 +171,12 @@ export async function getReviewQueueTags(
     .execute();
 }
 
+// A block keeps that flag, so its queue (and its count) must also list Blocked images, or they would
+// be held with no way to reach them.
+function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Blocked')[] {
+  return needsReview === FLAG_KEPT_THROUGH_BLOCK ? ['Scanned', 'Blocked'] : ['Scanned'];
+}
+
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
   const rows = await dbRead
@@ -177,7 +185,12 @@ export async function getImageReviewCounts(): Promise<Record<string, number>> {
     .select((eb) => eb.fn.countAll<number>().as('count'))
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
-    .where('ingestion', '=', 'Scanned')
+    .where((eb) =>
+      eb.or([
+        eb('ingestion', '=', 'Scanned'),
+        eb.and([eb('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK), eb('ingestion', '=', 'Blocked')]),
+      ])
+    )
     .groupBy('needsReview')
     .execute();
   return Object.fromEntries(rows.map((r) => [r.needsReview!, Number(r.count)]));
@@ -218,7 +231,7 @@ export async function getReportedImageQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .innerJoin('ImageReport as imgr', 'imgr.imageId', 'i.id')
@@ -252,8 +265,7 @@ export async function getReportedImageQueue({
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.reportId);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.reportId);
 
   const items: ReportedImageItem[] = rows.map((r) => ({
     id: r.id,
@@ -321,7 +333,7 @@ export async function getAppealImageQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .innerJoinLateral(
@@ -383,13 +395,14 @@ export async function getAppealImageQueue({
     ])
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', 'appeal')
-    .$if(cursor != null, (qb) => qb.where('i.id', '<', cursor!))
-    .orderBy('i.id', 'desc')
+    // Oldest appeal first, by appeal id: ordering by image id served the newest uploads first whatever
+    // the appeal's age. Appeal ids follow `createdAt` (1 inversion of 1ms in 21,864 on 2026-10-07).
+    .$if(cursor != null, (qb) => qb.where('appeal.id', '>', cursor!))
+    .orderBy('appeal.id', 'asc')
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.id);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
   const tosByImage = new Map<number, string>();

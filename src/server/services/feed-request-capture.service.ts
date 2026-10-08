@@ -108,6 +108,15 @@ export const CAPTURED_INPUT_KEYS = new Set<string>([
   'blockedFor',
 ]);
 
+/** The id sets a hub resolves to, in the shape `resolveHubSources` returns them. */
+export type FeedHubSources = {
+  userIds: number[];
+  modelVersionIds: number[];
+  collectionIds: number[];
+  tagGroups: number[][];
+  excluded: { userIds: number[]; modelVersionIds: number[]; tagGroups: number[][] };
+};
+
 export type CapturableSearchInput = {
   currentUserId?: number;
   isModerator?: boolean;
@@ -133,6 +142,11 @@ export type CapturableSearchInput = {
   postId?: number;
   collectionId?: number;
   hubId?: number;
+  /**
+   * Resolved by the primary path only; `hubId` without it is not servable. `null` is a hub
+   * that resolves to nothing for this viewer, which is an empty page and never the open feed.
+   */
+  hubSources?: FeedHubSources | null;
   types?: string[];
   baseModels?: string[];
   tools?: number[];

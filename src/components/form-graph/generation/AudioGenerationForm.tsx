@@ -1,4 +1,5 @@
 import { Checkbox, Input, Stack, Textarea } from '@mantine/core';
+import { FieldCorrectionNote } from './FieldCorrectionNote';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController, useField } from 'form-graph/react';
 
@@ -20,8 +21,8 @@ import type { GenerationStore } from './store';
 /**
  * The AUDIO generation form — one `<Controller graph={audioHub}>` per field.
  * The graph decides which fields apply to the selected ecosystem, so
- * this holds the superset of audio fields. `title` exists in the Ace graph
- * but has no control, matching v1.
+ * this holds the superset of audio fields. `title` exists in the Ace graph but has no
+ * control.
  */
 
 export function AudioGenerationForm({ store }: { store: GenerationStore }) {
@@ -331,8 +332,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={audioHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
       </AccordionLayout>

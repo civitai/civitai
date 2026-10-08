@@ -61,6 +61,10 @@ import {
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
+import {
+  listSubListingQueueSchema,
+  moderateSubListingSchema,
+} from '~/server/schema/blocks/app-sub-listing.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   recordStoreScopeApplied,
@@ -89,6 +93,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isHostForColor } from '~/server/utils/server-domain';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 /**
  * App Store Listings (W13) — asset pipeline + off-site submission router (NEW
@@ -385,6 +390,28 @@ function applyStoreGates(
     rawFloor as string | undefined
   );
   return { scope: narrowStoreScope(rawScope), floor: applyAudienceFloor(ctx) };
+}
+
+/** Map a `SubListingError` (duck-typed, so the service stays a lazy import) to TRPC. */
+function mapSubListingError(err: unknown): TRPCError {
+  if (err instanceof TRPCError) return err;
+  if (err instanceof Error && err.name === 'SubListingError') {
+    const status = (err as { status?: unknown }).status;
+    const code =
+      status === 403
+        ? 'FORBIDDEN'
+        : status === 404
+        ? 'NOT_FOUND'
+        : status === 409
+        ? 'CONFLICT'
+        : status === 429
+        ? 'TOO_MANY_REQUESTS'
+        : status === 503
+        ? 'SERVICE_UNAVAILABLE'
+        : 'BAD_REQUEST';
+    return new TRPCError({ code, message: err.message, cause: err });
+  }
+  return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Unexpected error', cause: err });
 }
 
 /**
@@ -1777,6 +1804,45 @@ export const appListingsRouter = router({
     }),
 
   /**
+   * MOD: store items awaiting review (new items plus staged edits), or the approved / hidden
+   * lists. `moderatorProcedure` is the server half of `isAppReviewer`, the `/apps/review` gate.
+   */
+  listSubListingQueue: moderatorProcedure
+    .input(listSubListingQueueSchema)
+    .query(async ({ input }) => {
+      const { listSubListingQueue } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await listSubListingQueue(input);
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
+  /** MOD: the tab-label count — new pending items plus staged edits. 0 while the tables are absent. */
+  countSubListingQueue: moderatorProcedure.query(async () => {
+    const { countSubListingQueue } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    return { count: await countSubListingQueue() };
+  }),
+
+  /** MOD: approve / hide / restore / approve-edit / reject-edit. Stamps `moderated_by_id`. */
+  moderateSubListing: moderatorProcedure
+    .input(moderateSubListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { moderateSubListing } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await moderateSubListing({ input, moderatorId: ctx.user.id });
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
+  /**
    * MOD: the ALL-STATUS listings management table (W13 post-approval mgmt, P2) —
    * every lifecycle status (draft|pending|approved|rejected|removed), keyset-
    * paginated, optional status/kind/search filters. Read-only `moderatorProcedure`
@@ -1833,6 +1899,11 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
+        // `SubListingCard` just because the viewer has the flag.
+        includeSubListings:
+          input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
     }),
 

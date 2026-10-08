@@ -37,7 +37,8 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * fail-closed 503 on an approved-status lookup failure is kept.
  *
  * Rate limit: per-blockInstanceId LLM bucket (NOT the catalog bucket) — each
- * request is up to two vendor round trips. Flag: `resourceIntentJev` (Flipt
+ * request is up to three vendor calls (stage 1, then two stage-3 calls in
+ * parallel). Flag: `resourceIntentJev` (Flipt
  * `resource-intent-jev`, default-deny when absent) is checked BEFORE the
  * response cache so a dark flag never reads, never spends.
  *
@@ -50,7 +51,7 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * 🔴 `insightFallback` is therefore PART OF THIS ROUTE'S PUBLIC BODY — this handler
  * spreads the service result, so adding a field to the response adds it here. That
  * is accepted rather than incidental: it is one bit saying "this shortlist is in
- * popularity order because our label read failed", the same category of
+ * seed order, not label order, because our label read failed", the same category of
  * service-health disclosure `degraded` already publishes, it carries no viewer,
  * model or moderation data, and a block that wanted to retry or to stop trusting
  * the ordering has no other way to know. The reason it lives on the response at all

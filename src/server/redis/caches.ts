@@ -1369,9 +1369,12 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
   // Brotli-compress every value at rest (see #4588). image-meta is the ELASTIC component of the
   // cache — its resident set swings ~5x under load and is what drives the cluster to its memory
   // cap — and its values are prompt/generation-parameter text, i.e. highly repetitive. Measured on
-  // 336 real values sampled AT A PEAK: 3.09x, 67.6% of bytes saved, at under 2% of app CPU as a
-  // deliberately pessimistic upper bound (that bound attributes ALL cache traffic to this one
-  // prefix). The codec is async (libuv threadpool), so it never blocks the event loop.
+  // 336 real values sampled AT A PEAK: 3.09x, 67.6% of bytes saved. Its "under 2% of app CPU"
+  // estimate did not account for musl's per-call cost of allocating brotli's default 4 MiB window:
+  // ~4x the CPU per ~3 KB compress on our alpine image, mostly kernel time on the libuv threadpool.
+  // compressPacked bounds that by sizing the window to the value (see packedBrotliWindowBits); no
+  // app-level CPU share has been re-measured since. The codec is async, so it never blocks the
+  // event loop.
   //
   // ALL values, not a size threshold: measured, `> 4 KiB` saves only 47.5% of the prefix's bytes
   // against 67.6% for everything — the ~20pp difference is the difference between clearing the cap
@@ -1419,6 +1422,8 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
 export const thumbnailCache = createCachedObject<{
   id: number;
   url: string;
+  width: number | null;
+  height: number | null;
   nsfwLevel: NsfwLevel;
   parentId?: number;
 }>({
@@ -1440,11 +1445,20 @@ export const thumbnailCache = createCachedObject<{
     if (thumbnailIds.length === 0) return {};
 
     const thumbnails = await db.$queryRaw<
-      { id: number; url: string; nsfwLevel: NsfwLevel; parentId: number }[]
+      {
+        id: number;
+        url: string;
+        width: number | null;
+        height: number | null;
+        nsfwLevel: NsfwLevel;
+        parentId: number;
+      }[]
     >`
         SELECT
           id,
           url,
+          width,
+          height,
           "nsfwLevel",
           cast(metadata->'parentId' as int) as "parentId"
         FROM "Image"
@@ -1456,6 +1470,20 @@ export const thumbnailCache = createCachedObject<{
   dontCacheFn: (data) => !data.nsfwLevel,
   ttl: CacheTTL.day,
 });
+
+/** The cache is keyed by video id, so a change to a thumbnail image must refresh its parent video. */
+export async function refreshThumbnailCache(imageIds: number | number[]) {
+  const ids = Array.isArray(imageIds) ? imageIds : [imageIds];
+  if (!ids.length) return;
+
+  const parents = await dbWrite.$queryRaw<{ parentId: number | null }[]>`
+    SELECT cast(metadata->'parentId' as int) as "parentId"
+    FROM "Image"
+    WHERE id IN (${Prisma.join(ids)})
+  `;
+  const parentIds = parents.map((x) => x.parentId).filter(isDefined);
+  await thumbnailCache.refresh([...new Set([...ids, ...parentIds])]);
+}
 
 type ArticleStatLookup = {
   articleId: number;

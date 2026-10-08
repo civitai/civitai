@@ -79,13 +79,15 @@ export type ModeratorDefinition<S extends z.ZodType, TOutput> = {
    * further use for — a confirmation the caller had to type, rather than an input that changes what
    * the action does. The check still runs; only the recorded copy is dropped.
    */
-  auditExclude?: (keyof z.input<S> & string)[];
+  auditExclude?: (KeysOfUnion<z.input<S>> & string)[];
   /**
    * Return `{ affected: {...} }` alongside the response to populate the audit row's `affected` column;
    * the rest is sent as JSON.
    */
   handler: (input: z.output<S>, ctx: ModeratorCtx) => Promise<TOutput>;
 };
+
+type KeysOfUnion<T> = T extends unknown ? keyof T : never;
 
 const DEFAULT_RATE_LIMIT = { max: 60, windowSeconds: 60 } as const;
 

@@ -30,6 +30,7 @@ import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -513,6 +514,10 @@ export const updateUserProfile = async ({
   }
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
+  if (
+    [profile.bio, profile.message, profile.sfwBio, profile.sfwMessage].some((v) => v !== undefined)
+  )
+    queueScamScan({ entityType: 'UserProfile', entityId: userId });
 
   return getUserWithProfile({ id: userId, sessionUserId: userId, domain });
 };

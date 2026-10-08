@@ -189,11 +189,12 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `article.schema.ts` (`getModeratorArticlesSchema` extends `infiniteQuerySchema`)
   - Infra: **Postgres only.** `ArticleContextMenu` may issue extra mutations — verify.
 
-- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve).
+- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve), **then retired**: the spoke's `/ratings` queue (`RatingReview`, every rated entity) replaced it, and the old path redirects there. The procedures below no longer exist.
   - Procedures: `article.getRatingReviews`, `article.getRatingReviewCounts` (queries)
   - Services: `article.service.ts` → `getArticleRatingReviews`, `getArticleRatingReviewCounts`
   - Schemas: `article.schema.ts` (`getArticleRatingReviewsSchema`) + `ReportStatus` enum
   - Infra: **Postgres only** (secondary image lookup for cover images)
+  - Generalized to `/ratings` (all rated entities) by text-scan plan 05; `/articles/ratings` redirects; `ArticleRatingReview` is frozen history, dropped in plan 06.
 
 - [ ] **`/moderator/models`** — `src/pages/moderator/models/index.tsx` — flag: none (`requireModerator`)
   - Procedures: `model.getAllPagedSimple` (query); `model.declineReview`, `modelVersion.declineReview` (mutations)
@@ -225,10 +226,11 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 - [ ] **`/moderator/generation-config`** — `generation-config.tsx` + `components/Moderation/GenerationConfig/` (`GateRulesSection`, `GeneratorMessagesSection`, `target-inputs`) — flag: none
   - Procedures: `getGateRules`, `getGeneratorMessages` (queries); `saveGateRule`, `deleteGateRule`, `saveGeneratorMessage`, `deleteGeneratorMessage` (mutations)
   - Services: `generation/generation.service.ts` (the same names)
-  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
+  - Schemas: `shared/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
   - Infra: **Redis** — sysRedis hashes `GENERATION.GATE_RULES` / `GENERATION.MESSAGES` (one field per entry, migrated on first use from `SYSTEM.FEATURES`; the status cards still read `SYSTEM.FEATURES`) **+ Flipt** (`GENERATION_TESTING`)
 - [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
-  **`/audit/generator-restrictions`** (label "Generator Restrictions").
+  **`/audit/generator-restrictions`** (label "Generator Restrictions"). Its `scam` type has since moved
+  to **`/users/scam-restrictions`** (Users nav section, own grant); `?type=scam` redirects there.
   - Spoke: `user-restriction.service.ts` reads the queue with Kysely and writes suspicious matches to the
     SAME `system:suspicious-audit-matches` list (shared Redis, 1000-entry trim) that
     `userRestriction.getSuspiciousMatches` still serves `/moderator/suspicious-audit-matches` from.

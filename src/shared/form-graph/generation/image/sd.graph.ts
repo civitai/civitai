@@ -1,5 +1,7 @@
-import { defineGraph } from 'form-graph';
+import { defineGraph, rootScope } from 'form-graph';
 import {
+  DRAFT_WORKFLOW,
+  getSdDraftMode,
   sd1AspectRatioBuckets,
   sd1CustomDimensionLimits,
   samplers,
@@ -28,8 +30,7 @@ import {
 import { familyScope, textBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
- * Stable Diffusion family (SD1 / SDXL / Pony / Illustrious / NoobAI),
- * ported from `stable-diffusion-graph.ts`.
+ * Stable Diffusion family (SD1 / SDXL / Pony / Illustrious / NoobAI).
  */
 
 const MAX_UPSCALE_RESOLUTION = 4096;
@@ -66,6 +67,10 @@ const STEPS = sliderDef({
 });
 const CLIP_SKIP = sliderDef({ min: 1, max: 3, default: 2 });
 
+// Draft's narrow ranges would clamp the stored values one-way, so draft keeps its own, per
+// ecosystem since SD1's and SDXL's ranges differ too.
+const draftScope = (ecosystem: string) => rootScope(DRAFT_WORKFLOW, ecosystem);
+
 const hasImages = (images: ImageEntry[] | undefined) => Array.isArray(images) && images.length > 0;
 
 const upscaleDims = (
@@ -91,8 +96,8 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
       modelWins: true,
     })
   )
-  // v1's checkpoint effect: an unlocked model from another ecosystem drags the
-  // ecosystem with it (when the workflow allows). The selection stays in the
+  // An unlocked model from another ecosystem drags the ecosystem with it (when the
+  // workflow allows). The selection stays in the
   // hub field (shadowed off the wire); this derived value carries the wire
   // name, and everything ecosystem-dependent below reads IT.
   .computed(
@@ -120,9 +125,24 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
       : SDXL_FULL_AR
   )
   .use(textBlock)
-  .field('sampler', SAMPLER)
-  .field('cfgScale', CFG)
-  .field('steps', STEPS)
+  .field('sampler', ({ effectiveEcosystem, _ext }) => {
+    if (_ext.workflow !== DRAFT_WORKFLOW) return SAMPLER;
+    const { sampler } = getSdDraftMode(effectiveEcosystem);
+    return {
+      ...selectDef({ options: [sampler], default: sampler }),
+      scope: draftScope(effectiveEcosystem),
+    };
+  })
+  .field('cfgScale', ({ effectiveEcosystem, _ext }) => {
+    if (_ext.workflow !== DRAFT_WORKFLOW) return CFG;
+    const { cfgScale } = getSdDraftMode(effectiveEcosystem);
+    return { ...sliderDef({ ...cfgScale, step: 0.5 }), scope: draftScope(effectiveEcosystem) };
+  })
+  .field('steps', ({ effectiveEcosystem, _ext }) => {
+    if (_ext.workflow !== DRAFT_WORKFLOW) return STEPS;
+    const { steps } = getSdDraftMode(effectiveEcosystem);
+    return { ...sliderDef(steps), scope: draftScope(effectiveEcosystem) };
+  })
   .field('clipSkip', CLIP_SKIP)
   .field('controlNets', ({ effectiveEcosystem, _ext }) =>
     _ext.workflow === 'txt2img'

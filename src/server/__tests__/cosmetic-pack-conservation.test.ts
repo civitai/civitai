@@ -56,6 +56,7 @@ const PACK_CREATOR = 902;
 const OTHER_CREATOR = 903;
 const RESELLER = 904;
 const THIRD_CREATOR = 905;
+const LISTER = 906;
 const PLATFORM_KEEPS = 0.3;
 
 type Member = Parameters<typeof purchaseCosmeticPack>[0]['members'][number];
@@ -200,6 +201,25 @@ const SHAPES: Shape[] = [
     members: [
       mkMember({ createdById: null, addedById: null }),
       mkMember({ cosmeticId: 1002, floorAmount: 900 }),
+    ],
+  },
+  {
+    // Official AND stale: the official member has to take part in scaling, or
+    // the foreign creator is paid as if it were not there.
+    // Priced between the foreign snapshot alone and foreign + official, so the
+    // official member is what tips it into scaling — and what left a remainder
+    // for the lister before.
+    name: 'an official member in a pack whose snapshots exceed the price',
+    price: 4000,
+    members: [
+      mkMember({ floorAmount: 100 }),
+      mkMember({
+        cosmeticId: 1002,
+        createdById: OTHER_CREATOR,
+        addedById: OTHER_CREATOR,
+        floorAmount: 3000,
+      }),
+      mkMember({ cosmeticId: 1003, createdById: null, addedById: LISTER, floorAmount: 2000 }),
     ],
   },
   {
@@ -394,6 +414,13 @@ describe.each(SHAPES)(
     const membersPaidFor = () =>
       members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
 
+    // Hand-written for the same reason, and shared for the same reason.
+    const isPayable = (m: Member) =>
+      m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId;
+    // Priced as foreign (not the lister's own), so the bank keeps their share.
+    const officialMembers = () =>
+      members.filter((m) => m.createdById == null && packCreatorId != null);
+
     // Computed from the shape, not by calling the code under test: every other
     // property bounds outflow by inflow, so a defect that charged everyone zero
     // would satisfy all of them while giving the shop away.
@@ -434,10 +461,11 @@ describe.each(SHAPES)(
 
     it('pays every foreign creator something attributable to their member', async () => {
       const { charged, payouts } = await setup();
-      const owedTo = members.filter(
-        (m) => m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId
+      const owedTo = members.filter(isPayable);
+      const snapshotTotal = [...owedTo, ...officialMembers()].reduce(
+        (sum, m) => sum + m.floorAmount,
+        0
       );
-      const snapshotTotal = owedTo.reduce((sum, m) => sum + m.floorAmount, 0);
       const scale = snapshotTotal > charged && snapshotTotal > 0 ? charged / snapshotTotal : 1;
       for (const member of owedTo) {
         const attributable = payouts.filter((p) =>
@@ -454,14 +482,28 @@ describe.each(SHAPES)(
       }
     });
 
+    // Justin, 2026-10-07: "Official item sales should go to the bank." The pack
+    // lister was paid on the whole remainder, official members' value included,
+    // and every other property here held while it happened.
+    it('pays the pack lister nothing for an official member', async () => {
+      const { charged, payouts } = await setup();
+      const covered = [...members.filter(isPayable), ...officialMembers()];
+      const snapshotTotal = covered.reduce((sum, m) => sum + m.floorAmount, 0);
+      const scale = snapshotTotal > charged && snapshotTotal > 0 ? charged / snapshotTotal : 1;
+      const coveredBasis = covered.reduce((sum, m) => sum + Math.floor(m.floorAmount * scale), 0);
+      const listerPaid = payouts
+        .filter((p) => p.externalTransactionId.endsWith(':pack'))
+        .reduce((sum, p) => sum + p.amount, 0);
+      expect(listerPaid).toBeLessThanOrEqual(
+        Math.floor(Math.max(0, charged - coveredBasis) * (1 - PLATFORM_KEEPS))
+      );
+    });
+
     it('pays nobody outside the expected recipient set', async () => {
       const { payouts } = await setup();
       const expected = new Set<number>(
         members
-          .filter(
-            (m) =>
-              m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId
-          )
+          .filter(isPayable)
           .flatMap((m) => [
             m.createdById as number,
             ...(m.addedById && m.addedById !== m.createdById && m.addedById !== buyerId
@@ -630,6 +672,16 @@ describe.each(SHAPES)(
       expect(createManyComponents.mock.calls.length).toBeLessThanOrEqual(1);
       const rows = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
       expect(rows).toHaveLength(membersPaidFor().length);
+    });
+
+    // Gross-sales milestones credit each creator these rows and the lister the
+    // price minus them, so a row recorded at its unscaled snapshot over-credits
+    // one creator and silently debits the other.
+    it('records attributions that never sum past what the buyer was charged', async () => {
+      const { charged } = await setup();
+      const rows: { unitAmount: number }[] = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
+      for (const row of rows) expect(row.unitAmount).toBeGreaterThanOrEqual(0);
+      expect(rows.reduce((sum, r) => sum + r.unitAmount, 0)).toBeLessThanOrEqual(charged);
     });
 
     // Identity, where the assertion above is only a count: a write that keeps the

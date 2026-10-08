@@ -17,7 +17,7 @@ import type {
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type OpenAIModel =

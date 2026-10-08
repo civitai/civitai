@@ -18,6 +18,7 @@ import {
   shouldResolveDirect,
 } from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
@@ -184,6 +185,7 @@ export default PublicEndpoint(
         ...input,
         user: session?.user,
         direct: shouldResolveDirect(req),
+        attribution: { caller: 'download-route', actor: resolveActorFor(session?.user) },
       });
 
       if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');

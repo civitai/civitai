@@ -15,6 +15,7 @@ import {
 } from '~/components/Apps/appListingDetailModActions';
 import {
   ALL_LISTING_MOD_ACTIONS,
+  actionOpensVisibility,
   listingModActions,
 } from '~/components/Apps/appListingModerationTableView';
 
@@ -26,6 +27,13 @@ import {
  */
 
 const KINDS = ['onsite', 'offsite'] as const;
+
+/**
+ * The purge-branch inputs `listingModActions` requires, pinned to the same fail-safe values
+ * the production call site in `appListingDetailModActions` passes, so the shared state
+ * machine is queried here exactly as the surface queries it.
+ */
+const NO_PURGE_INPUTS = { appBlockId: null, hasPendingBlockRequest: true } as const;
 
 /**
  * The first whitespace-delimited word of a label — the half a confirm button's verb is
@@ -53,24 +61,41 @@ describe('detailListingStatus — what this surface can honestly claim', () => {
 
 describe('appListingDetailModActions', () => {
   for (const kind of KINDS) {
-    it(`a moderator on a live ${kind} listing gets Contact owner + both takedowns, in canonical order`, () => {
-      expect(appListingDetailModActions({ isModerator: true, preview: false, kind })).toEqual([
-        'message-owner',
-        'reset-to-pending',
-        'hide',
-      ]);
+    it(`a moderator on a live ${kind} listing gets Contact owner, both takedowns and Set visibility, in canonical order`, () => {
+      expect(
+        appListingDetailModActions({
+          isModerator: true,
+          preview: false,
+          kind,
+          viewerOwnsListing: false,
+        })
+      ).toEqual(['message-owner', 'reset-to-pending', 'hide', 'set-visibility']);
     });
 
     it(`a NON-moderator on a live ${kind} listing gets nothing`, () => {
       // The negative arm is the point of the gate. Its positive control is the case
       // directly above: same kind, same posture, moderator true → a NON-empty set.
-      expect(appListingDetailModActions({ isModerator: false, preview: false, kind })).toEqual([]);
+      expect(
+        appListingDetailModActions({
+          isModerator: false,
+          preview: false,
+          kind,
+          viewerOwnsListing: false,
+        })
+      ).toEqual([]);
     });
 
     it(`a moderator in PREVIEW on a ${kind} listing gets nothing`, () => {
       // `detail.id` in preview can be a publish-REQUEST id (the fallback builder sets
       // `id: row.appListingId ?? row.id`), so every proc keyed on it could NOT_FOUND.
-      expect(appListingDetailModActions({ isModerator: true, preview: true, kind })).toEqual([]);
+      expect(
+        appListingDetailModActions({
+          isModerator: true,
+          preview: true,
+          kind,
+          viewerOwnsListing: false,
+        })
+      ).toEqual([]);
     });
   }
 
@@ -85,8 +110,18 @@ describe('appListingDetailModActions', () => {
    */
   it('is exactly the intersection of the shared state machine with this surface subset', () => {
     for (const kind of KINDS) {
-      const admitted = listingModActions({ status: 'approved', kind, hasPendingRequest: false });
-      const rendered = appListingDetailModActions({ isModerator: true, preview: false, kind });
+      const admitted = listingModActions({
+        status: 'approved',
+        kind,
+        hasPendingRequest: false,
+        ...NO_PURGE_INPUTS,
+      });
+      const rendered = appListingDetailModActions({
+        isModerator: true,
+        preview: false,
+        kind,
+        viewerOwnsListing: false,
+      });
       // Positive control on both sides: neither set is empty, so the comparison below is
       // a real one and not two empty arrays agreeing.
       expect(admitted.length).toBeGreaterThan(0);
@@ -107,13 +142,106 @@ describe('appListingDetailModActions', () => {
    */
   it('offers hide for an approved listing of either kind — the state machine admits it', () => {
     for (const kind of KINDS) {
-      expect(listingModActions({ status: 'approved', kind, hasPendingRequest: false })).toContain(
-        'hide'
-      );
-      expect(appListingDetailModActions({ isModerator: true, preview: false, kind })).toContain(
-        'hide'
-      );
+      expect(
+        listingModActions({
+          status: 'approved',
+          kind,
+          hasPendingRequest: false,
+          ...NO_PURGE_INPUTS,
+        })
+      ).toContain('hide');
+      expect(
+        appListingDetailModActions({
+          isModerator: true,
+          preview: false,
+          kind,
+          viewerOwnsListing: false,
+        })
+      ).toContain('hide');
     }
+  });
+
+  /**
+   * `set-visibility` reaches this surface through the same intersection as `hide`: the
+   * shared machine admits it on `approved` (via the visibility-eligibility predicate) and
+   * the subset now includes it. Both halves are asserted so the case cannot pass on the
+   * subset alone.
+   */
+  it('offers set-visibility for an approved listing of either kind — and routes it to the level picker', () => {
+    for (const kind of KINDS) {
+      expect(
+        listingModActions({
+          status: 'approved',
+          kind,
+          hasPendingRequest: false,
+          appBlockId: null,
+          hasPendingBlockRequest: true,
+        })
+      ).toContain('set-visibility');
+      expect(
+        appListingDetailModActions({
+          isModerator: true,
+          preview: false,
+          kind,
+          viewerOwnsListing: false,
+        })
+      ).toContain('set-visibility');
+      // Non-moderator and preview: withheld like every other mod action.
+      expect(
+        appListingDetailModActions({
+          isModerator: false,
+          preview: false,
+          kind,
+          viewerOwnsListing: false,
+        })
+      ).not.toContain('set-visibility');
+      expect(
+        appListingDetailModActions({
+          isModerator: true,
+          preview: true,
+          kind,
+          viewerOwnsListing: false,
+        })
+      ).not.toContain('set-visibility');
+    }
+    // The menu opens `ModListingVisibilityModal` for it — the same route the mgmt table uses.
+    expect(actionOpensVisibility('set-visibility')).toBe(true);
+  });
+
+  /**
+   * An owner who is also a moderator already has the owner "Visibility" item, so the
+   * moderator copy is withheld on their OWN listing — and only that item. The two arms
+   * differ ONLY in `viewerOwnsListing`.
+   */
+  it('withholds set-visibility (and only set-visibility) from a moderator who owns the listing', () => {
+    for (const kind of KINDS) {
+      const common = { isModerator: true, preview: false, kind } as const;
+      const notOwner = appListingDetailModActions({ ...common, viewerOwnsListing: false });
+      const owner = appListingDetailModActions({ ...common, viewerOwnsListing: true });
+      expect(notOwner).toContain('set-visibility');
+      expect(owner).not.toContain('set-visibility');
+      // Every other moderator action survives ownership, in the same order.
+      expect(owner).toEqual(['message-owner', 'reset-to-pending', 'hide']);
+      expect(owner).toEqual(notOwner.filter((a) => a !== 'set-visibility'));
+    }
+  });
+
+  it('owner-ness grants nothing: a non-moderator owner still gets no moderator actions', () => {
+    for (const kind of KINDS) {
+      expect(
+        appListingDetailModActions({
+          isModerator: false,
+          preview: false,
+          kind,
+          viewerOwnsListing: true,
+        })
+      ).toEqual([]);
+    }
+  });
+
+  it('set-visibility is not a takedown — it never opens the reason-gated takedown confirm', () => {
+    expect(isDetailTakedownAction('set-visibility')).toBe(false);
+    expect(detailModActionLabel('set-visibility')).toBe('Set visibility');
   });
 
   /**
@@ -133,9 +261,11 @@ describe('appListingDetailModActions', () => {
     for (const kind of KINDS) {
       for (const isModerator of [true, false]) {
         for (const preview of [true, false]) {
-          expect(appListingDetailModActions({ isModerator, preview, kind })).not.toContain(
-            'relist'
-          );
+          for (const viewerOwnsListing of [true, false]) {
+            expect(
+              appListingDetailModActions({ isModerator, preview, kind, viewerOwnsListing })
+            ).not.toContain('relist');
+          }
         }
       }
     }
@@ -144,7 +274,12 @@ describe('appListingDetailModActions', () => {
     // absence above is a fact about this surface rather than about a dead identifier.
     expect(ALL_LISTING_MOD_ACTIONS).toContain('relist');
     expect(
-      listingModActions({ status: 'removed', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'removed',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        ...NO_PURGE_INPUTS,
+      })
     ).toContain('relist');
   });
 
@@ -154,6 +289,7 @@ describe('appListingDetailModActions', () => {
         isModerator: true,
         preview: false,
         kind,
+        viewerOwnsListing: false,
       })) {
         expect(DETAIL_SURFACE_MOD_ACTIONS).toContain(action);
       }
@@ -526,7 +662,12 @@ describe('takedownConsequenceCopy', () => {
 describe('appListingDetailModActions — purge is unreachable from the detail surface', () => {
   it('never offers purge for a moderator on a live listing, either kind', () => {
     for (const kind of ['onsite', 'offsite']) {
-      const actions = appListingDetailModActions({ isModerator: true, preview: false, kind });
+      const actions = appListingDetailModActions({
+        isModerator: true,
+        preview: false,
+        kind,
+        viewerOwnsListing: false,
+      });
       expect(actions, `kind=${kind}`).not.toContain('purge');
       // Positive control: the surface IS returning its real action set, not an empty array —
       // otherwise "does not contain purge" is vacuously true.

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
 
 // Unit tests for bounty lock enforcement — locks come from the stored row, never from the
 // client payload. bounty.service.ts has a large import graph, so its transitive
@@ -20,6 +22,11 @@ const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockBuzzTransaction }
   })
 );
 
+// Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 vi.mock('~/libs/profanity-simple', () => ({
   createProfanityFilter: () => ({ evaluateContent: mockEvaluateContent }),
 }));
@@ -54,12 +61,16 @@ const MODERATOR_ID = 9;
 function mockStored({
   lockedProperties = [] as string[],
   complete = false,
-}: { lockedProperties?: string[]; complete?: boolean } = {}) {
+  poi = false,
+  meta = null as unknown,
+}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean; meta?: unknown } = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
     id: BOUNTY_ID,
     entryLimit: null,
     complete,
+    poi,
+    meta,
     lockedProperties,
     _count: { entries: 0 },
   });
@@ -89,6 +100,7 @@ const baseUpdate = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanMode).mockResolvedValue('off');
   mockStored();
   mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false });
   mockDbWrite.bounty.update.mockResolvedValue({ id: BOUNTY_ID, userId: OWNER_ID });
@@ -124,10 +136,10 @@ describe('updateBountyById — lock enforcement', () => {
   });
 
   it('ignores locks the client claims — only the stored row decides what is locked', async () => {
-    await updateBountyById({ ...baseUpdate, poi: true, lockedProperties: ['poi'] } as never);
+    await updateBountyById({ ...baseUpdate, nsfw: true, lockedProperties: ['nsfw'] } as never);
 
     const data = updateData();
-    expect(data.poi).toBe(true);
+    expect(data.nsfw).toBe(true);
     expect(data).not.toHaveProperty('lockedProperties');
   });
 
@@ -176,6 +188,28 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
       reason: 'threshold',
       metrics: {},
     });
+  });
+
+  it('refuses an update whose expiration precedes its start date', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    await expect(
+      upsert({
+        startsAt: new Date(Date.now() + 10 * day).toISOString(),
+        expiresAt: new Date(Date.now() + 2 * day).toISOString(),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('does not run once Bounty text scan is active for this bounty', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+
+    await upsert({ nsfw: false });
+
+    const data = updateData();
+    expect(data.nsfw).toBe(false);
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data.details ?? {}).not.toHaveProperty('profanityMatches');
+    expect(getTextScanMode).toHaveBeenCalledWith('Bounty', BOUNTY_ID);
   });
 
   it('marks the bounty nsfw and locks nsfw when nothing is locked yet', async () => {
@@ -251,6 +285,37 @@ describe('upsertBounty — create path', () => {
     expect(createData().lockedProperties).toEqual(['nsfw']);
   });
 
+  it('rejects a past start date as a bad request, not a server error', async () => {
+    await expect(
+      create({ startsAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Start date must be in the future' });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses an expiration before the start date, which the field bounds alone allow', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    await expect(
+      create({
+        startsAt: new Date(Date.now() + 10 * day).toISOString(),
+        expiresAt: new Date(Date.now() + 2 * day).toISOString(),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Expiration date must come after the start date' });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('judges the start date against the current day, not the day the module loaded', async () => {
+    const loadedAt = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(loadedAt + 5 * 24 * 60 * 60 * 1000);
+      await expect(
+        create({ startsAt: new Date(loadedAt + 2 * 24 * 60 * 60 * 1000).toISOString() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses to create an nsfw bounty paid in green buzz', async () => {
     await expect(create({ buzzType: 'green', nsfw: true })).rejects.toThrow(/Green Buzz/);
     expect(mockBuzzTransaction).not.toHaveBeenCalled();
@@ -276,5 +341,65 @@ describe('upsertBounty — create path', () => {
     const data = createData();
     expect(data.nsfw).toBe(true);
     expect(data.lockedProperties).toEqual(['nsfw']);
+  });
+});
+
+describe('updateBountyById — poi', () => {
+  it('refuses an owner turning poi on', async () => {
+    await expect(updateBountyById({ ...baseUpdate, poi: true } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockDbWrite.bounty.update).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner re-save a bounty that is already poi', async () => {
+    mockStored({ poi: true });
+    await updateBountyById({ ...baseUpdate, poi: true } as never);
+    expect(mockDbWrite.bounty.update).toHaveBeenCalled();
+  });
+
+  it('lets a moderator set poi', async () => {
+    await updateBountyById({
+      ...baseUpdate,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      poi: true,
+    } as never);
+    expect(updateData().poi).toBe(true);
+  });
+});
+
+describe('updateBountyById — a moderator clearing a text-scan poi flag', () => {
+  const flagged = {
+    textScanFlags: {
+      poi: {
+        at: 'x',
+        workflowId: 'wf-1',
+        reason: 'r',
+        textHash: 'h-flagged',
+        prev: { availability: 'Unsearchable' },
+      },
+    },
+  };
+  const moderatorEdit = { ...baseUpdate, userId: MODERATOR_ID, isModerator: true, poi: false };
+
+  it('restores the pre-flag availability and records a moderator ruling on the flagged text', async () => {
+    mockStored({ poi: true, meta: flagged });
+    await updateBountyById(moderatorEdit as never);
+
+    const data = updateData();
+    expect(data.availability).toBe('Unsearchable');
+    expect(data.meta.textScanFlags.poi).toMatchObject({
+      workflowId: 'wf-1',
+      appealGranted: { by: MODERATOR_ID, textHash: 'h-flagged', via: 'moderator' },
+    });
+  });
+
+  it('touches neither availability nor meta for a poi the text scan did not set', async () => {
+    mockStored({ poi: true, meta: null });
+    await updateBountyById(moderatorEdit as never);
+    const data = updateData();
+    expect(data).not.toHaveProperty('availability');
+    expect(data).not.toHaveProperty('meta');
   });
 });

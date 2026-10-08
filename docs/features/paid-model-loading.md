@@ -89,7 +89,7 @@ fetched when the panel renders (`getBoostCost`, 30s stale), so **each boostable 
 PUT**. For a boost bought on this page, the panel keeps the ETA it would have been. The rules are pure functions in `download-status.ts`. There is no site-wide
 download queue page.
 
-**Generator — both forms** (`generation_v2` data-graph and form-graph): when the whatIf reports
+**Generator** (`src/components/form-graph/generation/`): when the whatIf reports
 downloads, `DownloadReadyAlert` shows the resource count and size, and — when the boost would read as
 a different number (`isBoostable`) — the "Normally → Boosted" comparison and a **Boost download**
 switch with its price. That same test gates the second whatIf at `downloadPriority: "high"`, so a

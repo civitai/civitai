@@ -1,4 +1,4 @@
-import type { ModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
+import type { ModelSubstitutionCollector } from '~/shared/generation/model-substitution';
 
 /**
  * Drain a request's silent-checkpoint-substitution collector into

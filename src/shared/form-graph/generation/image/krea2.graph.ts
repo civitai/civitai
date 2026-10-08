@@ -14,14 +14,12 @@ import {
 } from '../shared';
 
 /**
- * Krea 2, ported from `krea2-graph.ts`. One locked checkpoint whose version
+ * Krea 2. One locked checkpoint whose version
  * selector splits across two engines: medium/large are FAL size tiers
  * (creativity + style references, no LoRA), raw/turbo are comfy builds (LoRA,
  * negative prompt, cfg/steps). `img2img:edit` overrides the version into the
  * comfy edit variants and swaps the picker down to the two comfy builds.
  */
-
-// ---- copied from krea2-graph.ts, which dies with the data-graph engine ------
 
 export const krea2VersionIds = {
   medium: 2983023,
@@ -61,7 +59,9 @@ const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
   [krea2VersionIds.turbo, 'turbo'],
 ]);
 
-/** Krea renders ~1MP area buckets — see krea2-graph.ts for the measurements. */
+export const isOfficialKrea2Version = (id: number) => krea2VersionIdToVariant.has(id);
+
+/** Krea renders ~1MP area buckets. */
 const krea2AspectRatioDimensions: Record<string, { width: number; height: number }> = {
   '16:9': { width: 1376, height: 768 },
   '4:3': { width: 1184, height: 896 },
@@ -178,6 +178,13 @@ const styleReferencesDef = {
     )
     .pipe(styleReferenceEntryOutputSchema.array().optional()),
   default: [] as Krea2StyleReferenceEntry[],
+  // Staged references outlive the family they were staged under, so the limit they came
+  // from is not the limit they end up under. `correct`, not `coerce`: the input above
+  // carries the same `.max()`, so this can never fire on the server parse.
+  correct: (value: Krea2StyleReferenceEntry[] | undefined) =>
+    (value?.length ?? 0) > KREA2_STYLE_REFERENCES_LIMIT
+      ? { value: value!.slice(0, KREA2_STYLE_REFERENCES_LIMIT), reason: 'over_cap' }
+      : undefined,
   meta: {
     limit: KREA2_STYLE_REFERENCES_LIMIT,
     strength: {
@@ -189,14 +196,12 @@ const styleReferencesDef = {
   },
 };
 
-// ---- end of krea2-graph.ts copies -------------------------------------------
-
 type Krea2VariantExt = FamilyExt & { model?: unknown };
 
 // Unknown ids are community checkpoints. Only the comfy builds can load one
 // via `diffusionModel`, so they fall back off the FAL tiers — and to the
 // full-step build, since turbo's 15-step / cfg-2 ceilings can't drive an
-// undistilled model. (v1 parity: kaydaxter's krea2-custom-checkpoints fix.)
+// undistilled model.
 const variantOf = (ext: Krea2VariantExt): Krea2Variant => {
   const id = modelIdOf(ext.model);
   if (ext.workflow === 'img2img:edit')
@@ -238,7 +243,7 @@ const editRaw = defineGraph<Krea2VariantExt>()
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 3 }))
   .field('steps', perModelSlider({ min: 1, max: 60, default: 30 }));
 
-/** Tagged: v1's `krea2Variant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `krea2Variant`. */
 const variants = branch('krea2Variant', variantOf, { fal, raw, turbo, editRaw, editTurbo });
 
 const RESOLUTION = enumDef({ options: krea2ResolutionOptions, default: '1K' });

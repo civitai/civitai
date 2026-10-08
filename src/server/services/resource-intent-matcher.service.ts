@@ -10,6 +10,7 @@ import {
 } from '~/server/meilisearch/client';
 import {
   clampResourceIntentCap,
+  RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT,
   RESOURCE_INTENT_ROLE_OPTIONS,
   type ResourceIntentCriteria,
   type ResourceIntentRole,
@@ -33,7 +34,8 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  * deterministic VERSION pool, order that pool against the `ResourceInsight`
  * labels, and return a capped shortlist for Jev stage 3.
  *
- * Gates (brief §3.3) — Jev output can reorder/drop within this set, never add:
+ * Gates (brief §3.3), applied to the shortlist AND `basePool`. Jev output only orders
+ * within them, never adds:
  *   - availability != Private (the index is published-only by construction)
  *   - model-level nsfwLevel bits intersected with the caller's browsing level
  *     (the authoritative maturity clamp is computed by the caller from the
@@ -43,29 +45,12 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  *   - the hard-coded `celebrity` tag exclusion
  *
  * Filter conventions mirror `resource-select.service.ts` (same index, same
- * meili-filter builder) — but NOT the same sort any more: see below.
+ * meili-filter builder).
  *
- * 🔴 The candidate POOL IS NOW SEEDED BY MEANING, not by popularity. An earlier
- * version of this comment said the opposite ("still seeded by popularity, because no
- * insight field is projected into the search index") and anticipated this change;
- * `insight.qualityScore` is now projected by
- * `~/server/search-index/models.search-index.ts`, so the seed is a TWO-TIER sort:
- * `insight.qualityScore:desc` first, `metrics.thumbsUpCount:desc` second.
- *
- * Popularity is retained as the SECOND key deliberately, and it is not a hedge. Only
- * ~1.1% of indexed models carry a label, and Meilisearch places documents missing a
- * sortable attribute in a trailing group whose internal order is otherwise arbitrary
- * (measured against v1.15.0 — see `modelInsightQualityScore`'s docstring). The second
- * key is what orders that group. Without it the unlabeled ~99% would come back in
- * document order, which is an arbitrary ordering presented as a ranked one.
- *
- * So the seed is "labeled models by meaning, then everything else by popularity" —
- * NOT "popularity, re-ranked". The distinction is the whole point of the change, and
- * the presence of `metrics.thumbsUpCount:desc` in the sort array does not contradict
- * it: what mattered was that popularity stopped being the FIRST key.
- *
- * `applyInsightRanking` still re-ranks within the returned pool and still tiebreaks on
- * the seed index, so this change does not touch the re-rank.
+ * 🔴 The pool is seeded by popularity alone (`searchShortlistModels`); labels act only
+ * through `applyInsightRanking`. Do not put role-filtered or quality-sorted documents back
+ * into the seed: a role-filtered page fills the pool and evicts the popular model the user
+ * attached (M3 study v2, docs/resource-intent-primitive.md).
  */
 
 export type ResourceIntentCoverage = { next: boolean; member: boolean };
@@ -81,8 +66,8 @@ export type ResourceIntentShortlistEntry = {
 };
 
 /**
- * Pool width as a multiple of the response cap, so a candidate the popularity
- * seed placed outside the response can still be promoted into it.
+ * Pool width as a multiple of the response cap, so a candidate the seed placed
+ * outside the shortlist can still be promoted into it.
  *
  * 🔴 The effective width is `min(cap * 2, RESOURCE_INTENT_MAX_SHORTLIST)`, which
  * starts shrinking at `cap = 128` and reaches 1x — i.e. reorder-the-visible-page
@@ -90,12 +75,15 @@ export type ResourceIntentShortlistEntry = {
  * the work bound as well as the lookahead) but it means the widening is a
  * property of the DEFAULT cap of 50, not of every request.
  *
- * `clampResourceIntentCap` is therefore the ONE bound on both the pool and the
- * search page below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
- * also raises this re-rank's work bound. A second ceiling here was deleted for
- * being unreachable while that constant stays under it; if it is ever raised past
- * Meilisearch's own `maxTotalHits`, the page silently truncates and the ceiling has
- * to come back.
+ * `clampResourceIntentCap` is therefore the ONE bound on the pool and on the seed
+ * page's `limit` below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
+ * also raises this re-rank's work bound, and the fetch bound with it. A second
+ * ceiling here was deleted for being unreachable while that
+ * constant stays under it; if it is ever raised past Meilisearch's own
+ * `maxTotalHits`, a page silently truncates and the ceiling has to come back. The
+ * one exception is `seedBasePool`'s deep page: a fixed
+ * `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT` fetch outside this bound, under the same
+ * `maxTotalHits` caveat.
  */
 const RERANK_POOL_MULTIPLIER = 2;
 
@@ -127,7 +115,7 @@ export function buildResourceIntentFilter({
 }
 
 /**
- * Expand model hits (already popularity-ordered by the Meili sort) into
+ * Expand model hits (already in seed order — see `searchShortlistModels`) into
  * version-level shortlist entries. Deterministic: hits in returned order,
  * versions in stored order, hard cap, no duplicates.
  */
@@ -251,16 +239,18 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
  * versions carry a label", and that argument is RETRACTED — not because the figure
  * is wrong, but because it is the rate over a population this function never sees.
  * It is corpus-wide (~1%: 9,900 labeled of ~0.94M eligible versions). The pool
- * handed to this function is seeded by a popularity sort, and the labeled set IS
- * the catalogue's high-usage head — the lowest `generationCount` among labeled
- * versions is 46,798 — so coverage INSIDE a pool runs ~30-45x the corpus rate:
- * 33.3% of the versions of the top 100 models by thumbs-up (350 of 1,050), and ~45%
- * restricted to the LoRA family (236 of 522). ⚠️ Provenance, because none of this
- * is reproducible from the tree: measured against the primary Postgres database by
- * the reviewer who raised the retraction and twice independently by auditors, NOT
- * by anything in this change. The queries were not captured. Treat the figures as
- * a three-way-agreeing external measurement and re-run them before building on
- * them.
+ * handed to this function is NOT a corpus sample: it is a top-by-thumbs-up page (see
+ * `searchShortlistModels`), and the labeled set IS the catalogue's high-usage head —
+ * the lowest `generationCount` among labeled versions is 46,798 — so coverage there
+ * runs ~30-45x the corpus rate: 33.3% of the versions of the top 100 models by
+ * thumbs-up (350 of 1,050), and ~45% restricted to the LoRA family (236 of 522). Those
+ * two figures were measured on popularity-ordered populations without the gate filter,
+ * so they approximate a pool rather than measure one.
+ * ⚠️ Provenance, because none of this is reproducible from the tree: measured
+ * against the primary Postgres database by the reviewer who raised the retraction
+ * and twice independently by auditors, NOT by anything in this change. The queries
+ * were not captured. Treat the figures as a three-way-agreeing external measurement
+ * and re-run them before building on them.
  *
  * So bucketing is not held up here by labels being rare, and nothing here is a
  * fresh argument minted to replace it. What survives is the sentence immediately
@@ -270,21 +260,22 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
  * inventing one. That is a reason, not merely a property — the honest distinction
  * is that it was promoted from a CONSEQUENCE of the policy to the whole of what
  * holds it up, not that it is somehow argument-free. Whether buckets or scores
- * serve better at the in-pool coverage measured above has never been tested, and
+ * serve better at the in-pool coverage described above has never been tested, and
  * it is the first thing to revisit once the shadow table can grade the ordering
  * (see the closing condition in `docs/resource-intent-primitive.md`).
  *
  * 🔴 This returns a permutation, but its CALLER slices to the response cap, so on a
- * pool wider than the cap the ordering decides WHICH candidates are returned and not
+ * pool wider than the cap the ordering decides WHICH candidates reach stage 3 and not
  * only in what order. That is the point of the wider pool; it also means a promotion
- * is an eviction, and the candidate evicted may be an unlabeled one.
+ * is an eviction from the shortlist, and the candidate evicted may be an unlabeled one.
+ * The response sees this only through stage 3's head; the fill is `basePool`.
  *
  * `qualityScore` separates candidates inside either labeled bucket, never for a
  * neutral one — reading it there would re-introduce exactly that burial, since there
  * is no quality score to compare an unlabeled candidate against.
  *
- * Tiebreaks on the seed order; `reorderShortlistByDistribution` in the calling
- * service tiebreaks the same way on THIS function's output, and the pipeline's
+ * Tiebreaks on the seed order; `combineStage3Answers` (`resource-intent-stage3.ts`)
+ * tiebreaks the same way on THIS function's output, and the pipeline's
  * determinism claim needs both.
  */
 export function applyInsightRanking(
@@ -307,6 +298,7 @@ export function applyInsightRanking(
     .map(({ entry }) => entry);
 }
 
+/** No search client ⇒ no hits. */
 async function searchShortlistModels(
   filter: string | null,
   poolCap: number
@@ -315,42 +307,11 @@ async function searchShortlistModels(
   if (!client) return [];
   const request: SearchParams = {
     filter: filter ?? undefined,
-    // 🔴 TWO-TIER, and the ORDER of these two keys is the load-bearing part — see this
-    // module's header. `insight.qualityScore` must stay FIRST; demoting it to second
-    // would silently restore a popularity-seeded pool while still mentioning insight.
-    // Pinned by `resource-intent-matcher.seed.test.ts`.
-    sort: ['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc'],
-    // 🔴 ONE DOCUMENT PER TARGETED VERSION — the POOL width, not the response cap,
-    // and no multiplier on top. A model USUALLY contributes at least one matching
-    // version, but not always: the indexed coverage and baseModel filters are both
-    // nested-array matches, so one document can match on two DIFFERENT versions and
-    // expand to zero (measured at 20 of the 49,000 documents the sweep below
-    // returned, 0.04%). What carries this width is that measurement, not the
-    // invariant.
-    //
-    // The sweep: over 98 populated role x baseModel x browsing-level cells, this
-    // width filled the pool in EVERY cell at each of the caps measured — 1, 5, 50
-    // and the maximum 255 — consuming 10-48 documents at the default cap of 50 and
-    // 173 in the worst cell at 255. ⚠️ It queried the live index but re-implemented
-    // THIS filter and expansion rather than calling them, so it is evidence about
-    // the index's shape, not a test of this function; re-measure through the service
-    // before trusting it against a change to `expandShortlist`. Caps in between are not individually swept; 255
-    // is the hardest point, since the multi-version head is consumed first and the
-    // margin narrows with depth (2.1x at cap 50 against 1.47x at 255).
-    //
-    // Separately, and by ARITHMETIC rather than measurement — no data needed, just
-    // the two expressions: this page is identical to the one BEFORE this feature for
-    // caps 1-127, strictly narrower for 128-255, and never wider. Stated against
-    // that baseline specifically, because this branch held three page widths in turn
-    // and the claim is only exact against the first.
-    //
-    // And back to MEASUREMENT for what the removed 2x cost: it added zero pool
-    // members in any cell, and cost 1.6-2.6x the payload and its blocking
-    // JSON.parse plus roughly double the index's own processing time, on a
-    // Meilisearch shared with the resource picker. At the maximum cap this form is
-    // also ~1.8x cheaper than the 500-document page the old arithmetic asked for
-    // there — a 1.96x document reduction, so that saving is measured too, not a
-    // ratio of the two expressions.
+    // 🔴 Popularity ONLY: no role filter and no quality key — see this module's header.
+    sort: ['metrics.thumbsUpCount:desc'],
+    // One document per targeted version, no multiplier. A document can still expand to
+    // zero versions (the coverage and baseModel filters are nested-array matches), so the
+    // pool can be narrower than `poolCap`.
     limit: poolCap,
   };
   try {
@@ -374,43 +335,35 @@ async function searchShortlistModels(
 }
 
 /**
- * What `findResourceIntentCandidates` returns, as a RESULT OBJECT rather than a
- * bare array, so the fail-soft path below cannot be silent.
- *
- * 🔴 `insightFallback` exists because the fallback is otherwise indistinguishable
- * from success at the seam: the caller receives a well-formed, correctly-capped
- * shortlist in popularity order and has no way to learn that the labels were never
- * read. That cost the caller its cache TTL decision — an unordered response was
- * cached for as long as a fully successful one. The TTL rule and the argument for
- * it live at `INSIGHT_FALLBACK_CACHE_TTL_SECONDS` in `resource-intent.service.ts`;
- * this comment deliberately does not restate the values.
+ * The first gate-passing version of each hit, one per model, in hit order, until `cap`
+ * models. Same gates as `expandShortlist`, which it calls per hit.
  */
-export type ResourceIntentMatchResult = {
-  entries: ResourceIntentShortlistEntry[];
-  /**
-   * `true` ⇒ the `ResourceInsight` read FAILED on this call and `entries` is the
-   * popularity seed order, unordered by any label.
-   *
-   * `false` is the narrow claim that no such failure happened — NOT that the
-   * ordering changed anything. An empty pool, a pool with no labeled version, and
-   * a pool every label left neutral all report `false`. Separating those is the
-   * shadow-table work in `docs/resource-intent-primitive.md`'s closing condition,
-   * of whose two clauses this flag supplies ONE CASE of ONE: "the ordering could
-   * not run". It says nothing about whether the ordering changed the returned
-   * slice, and nothing about an ordering that ran with nothing to order.
-   */
-  insightFallback: boolean;
+export function expandOneVersionPerModel(
+  hits: ModelSearchIndexRecord[],
+  opts: { baseModels: readonly string[] | null; coverage: ResourceIntentCoverage; cap: number }
+): ResourceIntentShortlistEntry[] {
+  const entries: ResourceIntentShortlistEntry[] = [];
+  for (const hit of hits) {
+    if (entries.length >= opts.cap) break;
+    const [first] = expandShortlist([hit], { ...opts, cap: 1 });
+    if (first) entries.push(first);
+  }
+  return entries;
+}
+
+type ResourceIntentSeed = {
+  cap: number;
+  poolCap: number;
+  filter: string | null;
+  baseModels: string[] | null;
+  pool: ResourceIntentShortlistEntry[];
 };
 
-export async function findResourceIntentCandidates(
-  criteria: ResourceIntentCriteria,
-  opts: {
-    browsingLevel: number;
-    coverage: ResourceIntentCoverage;
-    cap: number;
-  }
-): Promise<ResourceIntentMatchResult> {
-  if (criteria.role === 'none') return { entries: [], insightFallback: false };
+/** The candidate pool before any label is read, and the response cap it is later cut to. */
+async function seedResourceIntentPool(
+  criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
+  opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
+): Promise<ResourceIntentSeed> {
   const cap = clampResourceIntentCap(opts.cap);
   const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
   const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
@@ -421,23 +374,102 @@ export async function findResourceIntentCandidates(
     coverage: opts.coverage,
   });
   const hits = await searchShortlistModels(filter, poolCap);
-  const pool = expandShortlist(hits, {
-    baseModels,
-    coverage: opts.coverage,
-    cap: poolCap,
-  });
+  const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
+  return { cap, poolCap, filter, baseModels, pool };
+}
 
-  let insights: Map<number, ResourceIntentInsight>;
-  try {
-    insights = await loadResourceInsights(pool.map((entry) => entry.versionId));
-  } catch (error) {
+/**
+ * The hybrid's fill, built exactly as the screen built its BASE pool: one
+ * `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT`-document page under the seed's filter and sort,
+ * one version per model, the first `poolCap` models in popularity order. Always its own
+ * query, so it does not rely on the seed page being a prefix of it.
+ */
+async function seedBasePool(
+  seed: ResourceIntentSeed,
+  coverage: ResourceIntentCoverage
+): Promise<ResourceIntentShortlistEntry[]> {
+  const deep = await searchShortlistModels(seed.filter, RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT);
+  return expandOneVersionPerModel(deep, {
+    baseModels: seed.baseModels,
+    coverage,
+    cap: seed.poolCap,
+  });
+}
+
+/**
+ * What `findResourceIntentCandidates` returns, as a RESULT OBJECT rather than a
+ * bare array, so the fail-soft path below cannot be silent.
+ *
+ * 🔴 `insightFallback` exists because the fallback is otherwise indistinguishable
+ * from success at the seam: the caller receives a well-formed, correctly-capped
+ * shortlist in seed order and has no way to learn that the labels were never
+ * read. That cost the caller its cache TTL decision — an unordered response was
+ * cached for as long as a fully successful one. The TTL rule and the argument for
+ * it live at `INSIGHT_FALLBACK_CACHE_TTL_SECONDS` in `resource-intent.service.ts`;
+ * this comment deliberately does not restate the values.
+ */
+export type ResourceIntentMatchResult = {
+  entries: ResourceIntentShortlistEntry[];
+  /**
+   * `true` ⇒ the `ResourceInsight` read FAILED on this call and `entries` is the
+   * seed (popularity) order, with no per-version label
+   * ordering applied.
+   *
+   * `false` is the narrow claim that no such failure happened — NOT that the
+   * ordering changed anything. An empty pool, a pool with no labeled version, and
+   * a pool every label left neutral all report `false`. Separating those is the
+   * shadow-table work in `docs/resource-intent-primitive.md`'s closing condition,
+   * of whose two clauses this flag supplies ONE CASE of ONE: "the ordering could
+   * not run". It says nothing about whether the ordering changed the returned
+   * slice, and nothing about an ordering that ran with nothing to order.
+   */
+  insightFallback: boolean;
+  /**
+   * Pool versions whose label the re-rank PROMOTES (agrees on role or style family, at or
+   * above the promote floor). `0` ⇒ the ordering had nothing to promote — including on a
+   * fallback, where no label was read. The M3 study's positive control reads it.
+   */
+  promotableVersions: number;
+  /**
+   * The whole pool this call ranked, in seed order. The M3 study's POPULARITY arm is this
+   * pool cut to the cap, so the two arms share one seed.
+   */
+  pool: ResourceIntentShortlistEntry[];
+  /** The hybrid list's popularity fill — see `seedBasePool`. Independent of the label read. */
+  basePool: ResourceIntentShortlistEntry[];
+};
+
+export async function findResourceIntentCandidates(
+  criteria: ResourceIntentCriteria,
+  opts: {
+    browsingLevel: number;
+    coverage: ResourceIntentCoverage;
+    cap: number;
+  }
+): Promise<ResourceIntentMatchResult> {
+  if (criteria.role === 'none') {
+    return { entries: [], insightFallback: false, promotableVersions: 0, pool: [], basePool: [] };
+  }
+  const seed = await seedResourceIntentPool(criteria, opts);
+  const { cap, pool } = seed;
+  const [basePool, insightRead] = await Promise.all([
+    seedBasePool(seed, opts.coverage),
+    loadResourceInsights(pool.map((entry) => entry.versionId)).then(
+      (insights) => ({ insights }),
+      // Settled here, not in a try: the base pool must not wait on (or fail with) the label read.
+      (error: unknown) => ({ error })
+    ),
+  ]);
+
+  if ('error' in insightRead) {
+    const { error } = insightRead;
     // The caller's only other option is a fully degraded response, so an
     // unreachable label table costs the ordering refinement and nothing else —
     // but it is REPORTED, not swallowed. The log alone reached nobody who could
     // act on it inside the request: the caller decides this response's cache TTL,
     // and a silent fallback got the full-success hour.
     //
-    // ⚠️ This catch is DELIBERATELY broader than the repo's other fail-soft reads
+    // ⚠️ This fallback is DELIBERATELY broader than the repo's other fail-soft reads
     // of a hand-applied table — `isMissingTableError` in
     // `src/server/services/blocks/app-access.service.ts` and `isUndefinedTable` in
     // `src/server/services/apps/app-storage.service.ts` both swallow only the
@@ -456,10 +488,23 @@ export async function findResourceIntentCandidates(
       },
       'temp-search'
     ).catch(() => undefined);
-    return { entries: pool.slice(0, cap), insightFallback: true };
+    return {
+      entries: pool.slice(0, cap),
+      insightFallback: true,
+      promotableVersions: 0,
+      pool,
+      basePool,
+    };
   }
+  const { insights } = insightRead;
   return {
     entries: applyInsightRanking(pool, insights, criteria).slice(0, cap),
     insightFallback: false,
+    promotableVersions: pool.filter((entry) => {
+      const insight = insights.get(entry.versionId);
+      return insight !== undefined && insightBucket(insight, criteria) > 0;
+    }).length,
+    pool,
+    basePool,
   };
 }

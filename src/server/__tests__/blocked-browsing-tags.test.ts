@@ -237,6 +237,28 @@ describe('enforceBlockedBrowsingTags', () => {
     expect(input.disablePoi).toBe(true);
   });
 
+  it('treats a feed filtered by the viewer’s own username, in any case, as own-scoped', async () => {
+    const input = { username: 'Alice', browsingLevel: NsfwLevel.PG } as {
+      username: string;
+      browsingLevel: number;
+      excludedTagIds?: number[];
+      disablePoi?: boolean;
+    };
+    await enforceBlockedBrowsingTags(input, { id: 7, username: 'alice' });
+    expect(input.excludedTagIds).toBeUndefined();
+    expect(input.disablePoi).toBe(true);
+  });
+
+  it('still unions addon exclusions when a viewer with a username browses someone else’s feed', async () => {
+    const input = { username: 'Bob', browsingLevel: NsfwLevel.PG } as {
+      username: string;
+      browsingLevel: number;
+      excludedTagIds?: number[];
+    };
+    await enforceBlockedBrowsingTags(input, { id: 7, username: 'alice' });
+    expect(input.excludedTagIds).toContain(5188);
+  });
+
   it('unions addon exclusions into a non-own feed and preserves client-sent ids', async () => {
     const input = { excludedTagIds: [42], browsingLevel: NsfwLevel.PG } as {
       excludedTagIds?: number[];

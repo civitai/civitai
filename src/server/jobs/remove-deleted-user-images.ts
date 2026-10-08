@@ -118,6 +118,10 @@ async function drainUser(
           WHERE c."userId" = ${userId}
             AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM "Image" f
+          WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
+        )
       LIMIT ${budget}
     `;
 
@@ -169,6 +173,10 @@ async function drainUser(
             SELECT 1 FROM "CsamReport" c
             WHERE c."userId" = ${userId}
               AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" f
+            WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
           )
       `;
     }
@@ -224,7 +232,9 @@ async function queueBlockedImagesForDelete(userId: number) {
 
 /**
  * No statement-level CSAM gate here, unlike `drainUser`: blocking never touches S3, and the NCMEC
- * archive re-fetches from the CDN, which still serves a blocked image.
+ * archive re-fetches from the CDN, which still serves a blocked image. The block does keep the
+ * moderator-only review flag: `remove-blocked-images` holds a blocked image on it, so clearing it
+ * here would queue the image for purge.
  */
 async function blockUserImages(
   userId: number,
@@ -269,7 +279,7 @@ async function blockUserImages(
             SET ingestion = 'Blocked'::"ImageIngestionStatus",
                 "nsfwLevel" = ${NsfwLevel.Blocked},
                 "blockedFor" = ${BlockedReason.Moderated},
-                "needsReview" = NULL,
+                "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
                 "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
@@ -443,6 +453,9 @@ export const removeDeletedUserImages = createJob(
           WHERE c."userId" = u.id
             AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
+        )
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
@@ -488,6 +501,9 @@ export const removeDeletedUserImages = createJob(
             SELECT 1 FROM "CsamReport" c
             WHERE c."userId" = u.id
               AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
           )
           AND (
             EXISTS (

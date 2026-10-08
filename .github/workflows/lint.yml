@@ -864,7 +864,7 @@ jobs:
       # chromium-1228 against this repo's 1200) is a property of THAT HOST, not of
       # this repo. The escape hatch is `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`,
       # honoured by vitest.config.mts. Do NOT move the repo's playwright pin to
-      # match a laptop — see CLAUDE.md, "Browser/component tests on NixOS".
+      # match a laptop — see docs/dev/worktrees.md, "Browser/component tests on NixOS".
       - name: Install Chromium for Playwright
         run: pnpm exec playwright install --with-deps chromium
 

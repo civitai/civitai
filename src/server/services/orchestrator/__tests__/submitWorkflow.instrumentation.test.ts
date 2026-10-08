@@ -85,7 +85,7 @@ import {
   classifySubmitRetryOutcome,
   submitSourceForSurface,
 } from '~/server/services/orchestrator/orchestrator-submit-metrics';
-import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
+import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 import { withSpan } from '~/server/utils/otel-helpers';
 
 const DURATION = 'civitai_app_orchestrator_submit_duration_seconds';

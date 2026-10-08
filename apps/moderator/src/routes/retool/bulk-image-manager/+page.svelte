@@ -356,6 +356,9 @@
             {#if owner.bannedAt}<Badge variant="destructive">banned</Badge>{/if}
           </span>
         {/each}
+        {#if data.canSeeUserCard}
+          <span class="text-xs text-dark-2">Hover a name for the account's card and alerts.</span>
+        {/if}
       </div>
     {/if}
   </section>

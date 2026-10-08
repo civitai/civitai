@@ -7,6 +7,7 @@
     IconList,
     IconPlus,
     IconTrash,
+    IconX,
   } from '@tabler/icons-svelte';
   import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -26,6 +27,7 @@
   import { backend, browser, hrefFor, portalProps } from '$lib/host';
   import { locationHref } from '$lib/actions/locationHref';
   import { remixFromRun } from '$lib/reuse';
+  import { submitNotice } from '$lib/submit-notice.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
@@ -183,6 +185,24 @@
       <Button onclick={onNew}><IconPlus size={15} stroke={2} class="mr-1.5 inline" />New training</Button>
     </div>
   </div>
+
+  {#if submitNotice.message}
+    <div
+      role="alert"
+      class="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-400"
+    >
+      <IconAlertTriangle size={15} stroke={2} class="mt-px shrink-0" />
+      <p class="m-0 flex-1 font-mono">{submitNotice.message}</p>
+      <button
+        type="button"
+        aria-label="Dismiss"
+        onclick={() => submitNotice.clear()}
+        class="shrink-0 text-dark-2 transition hover:text-white"
+      >
+        <IconX size={14} stroke={2} />
+      </button>
+    </div>
+  {/if}
 
   {#if remixError}
     <p

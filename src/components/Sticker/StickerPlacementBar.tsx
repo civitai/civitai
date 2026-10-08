@@ -5,6 +5,7 @@ import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettin
 import { StickerCountChip, useStickerInviteStyle } from '~/components/Sticker/StickerCountChip';
 import { StickerHistoryButton } from '~/components/Sticker/StickerHistoryPanel';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
+import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
 import { barFreeLabel, freeHintText } from '~/components/Sticker/free-offer';
 import {
   useFreePlacementStanding,
@@ -82,6 +83,7 @@ export function StickerPlacementBar({
   const pending = (byImage.get(imageId) ?? []).filter((placement) => placement.isPending).length;
 
   const openTray = useStickerPlacementDraftStore((state) => state.open);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const revealed = useStickerRevealStore(stickersRevealed);
   const toggle = useStickerRevealStore((state) => state.toggle);
 
@@ -160,7 +162,9 @@ export function StickerPlacementBar({
   const settled = !countsLoading && !placementsLoading && !countsError;
   const inviting = !total && canPlace && settled;
 
-  if (!total && !canPlace) return null;
+  // Still drawn when the bar has nothing else to say: it is the only way out of
+  // preview, and the drafts outlive whatever made `canPlace` false.
+  if (!total && !canPlace) return <StickerPreviewToggle imageId={imageId} className={className} />;
 
   return (
     <>
@@ -297,6 +301,10 @@ export function StickerPlacementBar({
                 'border-none bg-yellow-4 px-3 py-2 dark:bg-yellow-6',
                 hintClasses.wiggle
               )}
+              // Hidden while previewing, which leaves the tray that normally covers
+              // it out of the way. Not closed: `onClose` is the dismissal, and a
+              // preview is not someone waving the hint away for the day.
+              style={previewing ? { visibility: 'hidden' } : undefined}
             >
               <div className="flex items-center gap-2">
                 <Text size="xs" fw={600} c="dark.8">
@@ -317,6 +325,8 @@ export function StickerPlacementBar({
           </Popover>
         )}
       </Button.Group>
+
+      <StickerPreviewToggle imageId={imageId} className="ml-2" />
 
       {/* Told which image this bar is for, so a session left open on another
           slide cannot keep the panel on screen bound to an image nobody is

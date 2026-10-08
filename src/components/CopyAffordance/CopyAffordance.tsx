@@ -39,8 +39,18 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * the defect those four shared — a copy control for an API key or a client secret with no
  * accessible name at all, announced to a screen reader as "button" — is a type error here
  * rather than something a reviewer has to notice. One remaining local copy is deliberate:
- * `Collections/CollectionEditModal.tsx` gates its control on `disabled={!joinUrl}`, which
- * this component does not model, so it keeps its own shell and carries an `aria-label`.
+ * `Collections/CollectionInviteLink.tsx` keeps its own shell and carries an `aria-label`.
+ *
+ * 🔴 THAT EXCEPTION NEEDS **TWO** PROPS HERE, NOT ONE, AND THIS SENTENCE USED TO CLAIM ONE.
+ * The `disabled={!joinUrl}` state this component does not model is the half that was written
+ * down. The other half is the INSET: `right={COPY_ICON_INSET}` is emitted as an INLINE STYLE
+ * (deliberately — see the note on that prop), and an inline style beats `iconClassName`'s
+ * Tailwind `right-2`, so `iconClassName` CANNOT move it. A caller at `right={10}` therefore
+ * needs an `inset` prop as well. And `bodyClickCopies={false}` is not a substitute for the
+ * first half: the icon's own `onClick` is unconditional, so the CONTROL would still copy `''`.
+ * Weigh the reuse trade against two new props on seven live consumers, none of which exercises
+ * a disabled state — and note that an unexercised `disabled` prop in here is precisely where
+ * the "guard on one element, handler on another" defect would reappear, for all seven.
  *
  * `onCopy` is OPTIONAL and defaults to nothing. That is what keeps `GetStartedBody`,
  * `CliSubmitCta` and {@link AgentOnboardingCard} the "pure presentational (props-only, no
@@ -196,16 +206,27 @@ export function CopyAffordance({
  * {@link AgentOnboardingCard}'s prose panel sets its own clearance in its stylesheet (its
  * control sits top-right, not right-middle), so it is a SECOND spelling of the same idea.
  *
- * ⚠️ EXCEPT ONE, AND IT IS NAMED HERE BECAUSE AN ENUMERATION THAT OMITS ITS COUNTEREXAMPLE
- * READS AS COVERAGE. `Collections/CollectionEditModal.tsx`'s invite-link block keeps its own
- * shell rather than routing through this component — it gates on `disabled={!joinUrl}`, which
- * this component does not model — and reserves NO right padding at all against a `right={10}`
- * control: a clearance of −1.75·R, i.e. −28px at a 16px root font size, on a full URL whose
- * tail therefore scroll-paints under the icon. DERIVED from that file's props and the rules
- * above, NOT measured — no fixture mounts it. PRE-EXISTING and outside this component's reach
- * either way; the deleted `src/components/Apps/` ledger scoped that directory out too, so it
- * would not have caught it. Fixing it needs its own padding AND its own geometry case, which
- * is a separate change from this one.
+ * ⚠️ AND ONE BODY AT A DIFFERENT INSET, WHICH IS WHY THE RELATION IS A FUNCTION. The
+ * invite-link block — now `~/components/Collections/CollectionInviteLink.tsx`, extracted from
+ * `Collections/CollectionEditModal.tsx` — keeps its own shell rather than routing through this
+ * component (it gates on `disabled={!joinUrl}`, which this component does not model) and sits
+ * at `right={10}`, so `COPY_BODY_PADDING_RIGHT` is the wrong number for it by 2px. It reserves
+ * {@link copyBodyPaddingRight}`(10)` instead, and is measured by the same geometry suite.
+ *
+ * ⚠️ IT RESERVED NOTHING AT ALL UNTIL THEN, AND THIS PARAGRAPH'S FIGURE WAS A DERIVATION THAT
+ * TURNED OUT TO BE RIGHT. It read "a clearance of −1.75·R, i.e. −28px at a 16px root font
+ * size … DERIVED from that file's props and the rules above, NOT measured — no fixture mounts
+ * it". A fixture mounts it now, and the measurement agrees exactly: **−28px at R=16** (the body
+ * reserved Mantine's default 10px against a 10px inset and a 28px control) and **−35px at
+ * R=20**, i.e. −1.75·R at both points. Recorded because a derivation that was confirmed is
+ * worth distinguishing from the three in this file's history that were overturned.
+ *
+ * ⚠️ BUT THE OVERLAP WAS **LATENT**, NOT LIVE, AND THE OLD PARAGRAPH IMPLIED OTHERWISE BY
+ * SAYING "on a full URL whose tail therefore scroll-paints under the icon". No full URL ever
+ * reached that body: its `env` read came from `process` rather than `~/env/client`, so the
+ * value was `''` unconditionally in the browser. The geometry above is what the body does to a
+ * URL that renders — which only became possible when that import was fixed, in the same commit
+ * as the padding. A measured clearance is not by itself evidence that anyone saw the defect.
  *
  * ⚠️ THE CLEARANCE IS A CLAIM ABOUT A BODY WHOSE VALUE *FITS*, AND NOTHING MORE. Measured at
  * 390px: `<Code block>` computes `white-space: pre` / `text-wrap-mode: nowrap` /
@@ -314,7 +335,32 @@ export const COPY_CONTROL_SIZE = 28;
  * boundary, so anything that widens the control by one pixel reds it. That is the right
  * direction to fail in, and it is not slack.
  */
-export const COPY_BODY_PADDING_RIGHT = rem(COPY_ICON_INSET + COPY_CONTROL_SIZE);
+export const COPY_BODY_PADDING_RIGHT = copyBodyPaddingRight(COPY_ICON_INSET);
+
+/**
+ * The clearance RULE, for a body whose control sits at an inset other than {@link
+ * COPY_ICON_INSET}.
+ *
+ * 🔴 EXTRACTED SO THE RELATION IS SPELLED ONCE. `COPY_BODY_PADDING_RIGHT` above is this
+ * function at this module's own inset; `Collections/CollectionInviteLink.tsx`'s invite-link
+ * block is the second caller, at `right={10}`. Before this existed, the only way to clear a
+ * control at a different inset was to retype `rem(inset + COPY_CONTROL_SIZE)` at the call
+ * site — two copies of one rule, either of which could be the one not updated when the
+ * control's box moves. The `rem()` and the `COPY_CONTROL_SIZE` term are the halves that have
+ * each already been got wrong once (see the two ⚠️ paragraphs above); the inset is the only
+ * part that is legitimately per-call-site, so it is the only parameter.
+ *
+ * ⚠️ NOT A WIDENING OF THE AFFORDANCE'S API. This exports the arithmetic, not a new prop:
+ * `CopyAffordance` itself still renders at one inset and nothing about its component surface
+ * changes. A caller passing its own inset is a caller that keeps its own shell, which is the
+ * situation the ⚠️ counterexample paragraph above describes.
+ *
+ * @param inset the control's distance from the body's right edge, in px at a 16px root font
+ *   size — the same unit the `right=` style prop takes.
+ */
+export function copyBodyPaddingRight(inset: number) {
+  return rem(inset + COPY_CONTROL_SIZE);
+}
 
 /** The default glyph pair, exported so a `renderGlyph` can wrap it rather than restate it. */
 export function CopyGlyph({ copied, size = COPY_ICON_SIZE }: { copied: boolean; size?: number }) {

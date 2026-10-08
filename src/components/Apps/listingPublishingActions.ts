@@ -247,6 +247,31 @@ export function showVisibility(row: PublishingActionRow): boolean {
 }
 
 /**
+ * What the store `⋮` menu's owner "Visibility" item should show once clicked.
+ *
+ * The card and detail DTOs carry no status, role or level, so the menu fetches the
+ * owner-scoped authoring context only when the item is clicked, and this decides what to
+ * render from that read. Eligibility is {@link showVisibility} on the FETCHED row — the
+ * same predicate the Publishing tab uses — so the menu cannot offer the picker where the
+ * tab would not.
+ *
+ *   - `loading` — no context yet and no error.
+ *   - `error` — the read failed (e.g. FORBIDDEN for a caller without a role).
+ *   - `ineligible` — loaded, but `showVisibility` refuses this row (not the owner, or a
+ *     status on which no level may be set).
+ *   - `ready` — render the picker.
+ */
+export type OwnerVisibilityLoadState = 'loading' | 'error' | 'ineligible' | 'ready';
+
+export function ownerVisibilityLoadState(input: {
+  isError: boolean;
+  context: PublishingActionRow | null | undefined;
+}): OwnerVisibilityLoadState {
+  if (input.context) return showVisibility(input.context) ? 'ready' : 'ineligible';
+  return input.isError ? 'error' : 'loading';
+}
+
+/**
  * Is this listing a MODERATOR takedown, i.e. should it say so instead of offering a way back?
  *
  * Deliberately NOT gated on `role`: a seated collaborator looking at a taken-down app needs

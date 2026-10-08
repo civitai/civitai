@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
   getGetUrl,
@@ -61,7 +62,7 @@ import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { isMature, maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
-import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/ecosystems/polyGen.handler';
+import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
 import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
 import type { Context } from '~/server/createContext';
 
@@ -1156,7 +1157,10 @@ export const getModel3DFiles = async ({
           const { url } = await getGetUrl(file.url, { s3, bucket, fileName: file.name });
           return { ...file, downloadUrl: url };
         }
-        const { url } = await resolveDownloadUrl(file.id, file.url, file.name);
+        const { url } = await resolveDownloadUrl(file.id, file.url, file.name, {
+          caller: 'model3d',
+          actor: resolveActorFor(user),
+        });
         return { ...file, downloadUrl: url };
       } catch {
         // TODO(model3d): surface re-presign failures to mods. For now we fall

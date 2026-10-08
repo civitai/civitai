@@ -46,6 +46,13 @@ export type ListingKindFilter = z.infer<typeof listingKindFilterSchema>;
 export const listingSortSchema = z.enum(['top-rated', 'popular', 'newest', 'name']);
 export type ListingSort = z.infer<typeof listingSortSchema>;
 
+/**
+ * Upper bound on the opaque keyset cursor. Sized for the `name` sort key (64 characters,
+ * up to 4 UTF-8 bytes each) plus id and pinned mean, base64url-encoded; lowering it stops
+ * pagination on pages ending in a long non-ASCII title.
+ */
+export const LISTING_CURSOR_MAX = 512;
+
 export const listAppListingsSchema = z.object({
   kind: listingKindFilterSchema.default('all'),
   // Category filter validated against the single-source taxonomy const (shared
@@ -53,8 +60,13 @@ export const listAppListingsSchema = z.object({
   category: z.enum(MARKETPLACE_CATEGORIES).optional(),
   sort: listingSortSchema.default('top-rated'),
   // Opaque keyset cursor (base64url) — see app-listing.service encode/decode.
-  cursor: z.string().max(128).optional(),
+  cursor: z.string().max(LISTING_CURSOR_MAX).optional(),
   limit: z.number().int().min(1).max(50).default(20),
+  /**
+   * Opt in to sub-listing cards (`SubListingCard`) in `items`; also needs the
+   * `app-store-sub-listings` flag. Only the `/apps` store grid asks.
+   */
+  includeSubListings: z.boolean().optional(),
 });
 export type ListAppListingsInput = z.infer<typeof listAppListingsSchema>;
 
@@ -73,7 +85,7 @@ export function getAppListingsListQuery() {
     kind: listingKindFilterSchema.default('all'),
     category: z.enum(MARKETPLACE_CATEGORIES).optional(),
     sort: listingSortSchema.default('top-rated'),
-    cursor: z.string().max(128).optional(),
+    cursor: z.string().max(LISTING_CURSOR_MAX).optional(),
     limit: z
       .preprocess(
         (v) => (v === undefined || v === null || v === '' ? undefined : Number(v)),
@@ -273,6 +285,34 @@ export type ListingCard = {
   openCount: number | null;
   kindData: ListingCardKindData;
 };
+
+/**
+ * One store card for a SUB-LISTING: an item a parent app placed in the store. Public-field
+ * allowlist like `ListingCard`. `kind` and `category` are the parent's, so the grid's filters
+ * and client-side search treat it like any other card; `contentRating` is the stricter of
+ * parent and item. `runHref` is built server-side under the parent's run route; there is no
+ * author-supplied URL.
+ *
+ * Only the tRPC store grid returns these (behind the `app-store-sub-listings` flag). The
+ * public REST catalog never does.
+ */
+export type SubListingCard = {
+  cardType: 'sub-listing';
+  id: string;
+  name: string;
+  tagline: string | null;
+  kind: ListingKind;
+  category: string | null;
+  contentRating: string | null;
+  /** The item image when it is cleared for this viewer, else the parent's cover. */
+  coverUrl: string | null;
+  /** The item's author. */
+  creator: ListingCreatorChip;
+  parent: { id: string; slug: string; name: string; iconUrl: string | null };
+  runHref: string;
+};
+
+export type StoreGridItem = ListingCard | SubListingCard;
 
 export type ListingGalleryScreenshot = {
   url: string;

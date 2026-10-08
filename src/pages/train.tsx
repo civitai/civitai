@@ -80,8 +80,6 @@ const schema = {
 };
 
 export default function TrainPage() {
-  // With the Training Studio on, every "train" CTA starts there instead of the old wizard —
-  // same swap the header menu makes. Logged-out visitors have no flags and keep the old path.
   const features = useFeatureFlags();
   const trainHref = features.trainingStudioUi ? '/training-studio?view=new' : '/models/train';
   return (

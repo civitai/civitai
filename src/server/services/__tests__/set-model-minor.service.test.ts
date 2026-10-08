@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ModelPoiMinor from '~/server/services/text-scan/actions/model-poi-minor';
 
 // Unit tests for setModelMinor — the moderator "Set as Minor" quick action.
 // model.service.ts has a very large import graph, so most of its transitive
@@ -26,6 +27,16 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: mockPreventReplicationLag,
   getDbWithoutLag: vi.fn(async () => mockDbRead),
   preventModelVersionLagBatch: vi.fn(),
+}));
+const { mockStampRuling } = vi.hoisted(() => ({ mockStampRuling: vi.fn() }));
+// Hand-listed: the real module loads every text-scan profile, whose graph this file stubs piecemeal.
+vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
+  stampModeratorTextScanRuling: mockStampRuling,
+}));
+const { mockReassertPoi } = vi.hoisted(() => ({ mockReassertPoi: vi.fn() }));
+vi.mock('~/server/services/text-scan/actions/model-poi-minor', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelPoiMinor>()),
+  reassertModelPoiRestrictions: mockReassertPoi,
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
@@ -360,6 +371,36 @@ describe('setModelMinor — unset', () => {
   });
 });
 
+// Unset strips the nsfw/sfwOnly locks the poi restriction also depends on.
+describe('setModelMinor — unset on a model that stays poi', () => {
+  it.each([
+    ['poi flagged after minor', [...MINOR_LOCKED_PROPERTIES, 'poi']],
+    ['poi flagged before minor', ['poi', 'nsfw', 'sfwOnly', 'minor']],
+  ])('reasserts the poi restrictions after the unset write (%s)', async (_label, locks) => {
+    mockBefore({ minor: true, poi: true, sfwOnly: true, lockedProperties: locks });
+    mockUpdateReturns({ poi: true });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(mockReassertPoi).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(mockDbWrite.model.update.mock.invocationCallOrder[0]).toBeLessThan(
+      mockReassertPoi.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('does not reassert for a model that is not poi, or on a set', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    mockBefore({ poi: true, lockedProperties: ['poi'] });
+    mockUpdateReturns({ poi: true });
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockReassertPoi).not.toHaveBeenCalled();
+  });
+});
+
 describe('setModelMinor — not found', () => {
   it('throws a not-found error when the model does not exist', async () => {
     mockDbRead.model.findUnique.mockResolvedValue(null);
@@ -418,13 +459,32 @@ describe('setModelMinor — pre-state snapshot', () => {
     expect(values).toContain('auto');
   });
 
-  it('guards against overwriting an existing snapshot', async () => {
+  it('marks a text-scan flag as text-scan, not manual — it is not a human decision', async () => {
+    mockBefore({});
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorTextScan',
+    });
+
+    const [, ...values] = snapshotCall()!;
+    expect(values).toContain('text-scan');
+    expect(values).not.toContain('manual');
+    expect(values).not.toContain('auto');
+  });
+
+  // An unset leaves the snapshot behind. Keeping it on the next flag would record the new flag
+  // under the old one's source and roll it back to a pre-state from the earlier flag.
+  it('keeps the original snapshot only while the model is still minor', async () => {
     mockBefore({});
 
     await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
 
     const text = Array.from(snapshotCall()![0] as TemplateStringsArray).join('?');
     expect(text).toContain(`NOT (COALESCE(m.meta, '{}'::jsonb) ?`);
+    expect(text).toContain('OR NOT m.minor');
     expect(text).toContain('"ModelVersion" mv');
     expect(text).toContain('i.minor');
   });
@@ -600,5 +660,40 @@ describe('setModelMinor — change history', () => {
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
+  });
+});
+
+// Review Focus 7.
+describe('setModelMinor — moderator ruling on unset', () => {
+  it('a moderator unset records a ruling on the current text, before the unset write', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockStampRuling.mockResolvedValue(true);
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID, recordTextScanRuling: true });
+
+    expect(mockStampRuling).toHaveBeenCalledWith({ modelId: MODEL_ID, userId: MODERATOR_ID, label: 'minor' });
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('records no ruling for a rollback-style unset or for a set', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: -1, activity: 'rollbackMinorAutoHash' });
+    mockBefore({});
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID, recordTextScanRuling: true });
+    expect(mockStampRuling).not.toHaveBeenCalled();
+  });
+
+  it('still unsets when the text cannot be read, and logs the miss', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+    mockStampRuling.mockResolvedValue(false);
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID, recordTextScanRuling: true });
+
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', modelId: MODEL_ID })
+    );
   });
 });

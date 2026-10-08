@@ -19,7 +19,7 @@ import {
   getOutputTypeForWorkflow,
   getEcosystemsForWorkflow,
   getValidEcosystemForWorkflow,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 // =============================================================================

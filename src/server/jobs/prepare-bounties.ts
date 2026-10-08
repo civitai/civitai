@@ -2,16 +2,7 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 import dayjs from '~/shared/utils/dayjs';
-import { Currency } from '~/shared/utils/prisma/enums';
-import {
-  createBuzzTransaction,
-  createBuzzTransactionMany,
-  getMultiAccountTransactionsByPrefix,
-  refundMultiAccountTransaction,
-  refundTransaction,
-} from '~/server/services/buzz.service';
-import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import type { Currency } from '~/shared/utils/prisma/enums';
 import { Tracker } from '../clickhouse/client';
 import { handleLogError } from '../utils/errorHandling';
 import {
@@ -23,7 +14,9 @@ import {
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
-import { isBountyTransactionPrefix } from '~/server/services/bounty.service';
+import { retryUnsettledBountyPayouts, settleBountyPayout } from '~/server/services/bounty.service';
+import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 
 const log = createLogger('prepare-bounties', 'blue');
 
@@ -50,6 +43,9 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       id: true,
       name: true,
       userId: true,
+      poi: true,
+      availability: true,
+      meta: true,
       user: {
         select: {
           id: true,
@@ -70,7 +66,8 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
   );
 
   // send emails to just expired bounties:
-  for (const { id, userId, user, name, _count } of justExpiredBounties) {
+  for (const { id, userId, user, name, _count, ...state } of justExpiredBounties) {
+    if (isTextScanPoiHidden(state)) continue;
     log('Sending bounty expired reminder to ', userId);
     if (user?.email) {
       bountyExpiredEmail
@@ -105,6 +102,9 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       id: true,
       userId: true,
       name: true,
+      poi: true,
+      availability: true,
+      meta: true,
       user: {
         select: {
           id: true,
@@ -120,7 +120,8 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
     needReminderBounties.map((b) => b.id)
   );
 
-  for (const { id, userId, user, name } of needReminderBounties) {
+  for (const { id, userId, user, name, ...state } of needReminderBounties) {
+    if (isTextScanPoiHidden(state)) continue;
     log('Sending bounty expired reminder to ', userId);
     if (user?.email && user?.username) {
       bountyExpiredReminderEmail
@@ -191,269 +192,124 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
 
   // Get latest results for date
   for (const { id, userId, name, user } of bounties) {
-    log(`Started bounty ${id}`);
-    const [mainBenefactor] = await dbWrite.$queryRaw<
-      {
-        currency: Currency;
-      }[]
-    >`SELECT currency FROM "BountyBenefactor" bf WHERE bf."bountyId" = ${id} AND bf."userId" = ${userId} LIMIT 1; `;
+    try {
+      await settleExpiredBounty({ id, userId, name, user, tracker });
+    } catch (error) {
+      // One bounty must not stop the sweep, or every later bounty waits for the next run.
+      logJob({
+        message: 'Failed to settle expired bounty',
+        data: { bountyId: id, error: (error as Error).message },
+      });
+    }
+  }
 
+  await setLastRun();
+});
+
+async function settleExpiredBounty({
+  id,
+  userId,
+  name,
+  user,
+  tracker,
+}: {
+  id: number;
+  userId: number | null;
+  name: string;
+  user: { id: number; email: string | null } | null;
+  tracker: Tracker;
+}) {
+  log(`Started bounty ${id}`);
+  // Claimed under the payout lock; a bounty a refund or manual award already claimed
+  // is left alone. Buzz moves only after the claim commits.
+  const claim = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, id);
+    if (!locked || locked.complete || locked.refunded) return null;
+
+    const [mainBenefactor] = await tx.$queryRaw<{ currency: Currency }[]>`
+        SELECT currency FROM "BountyBenefactor" bf WHERE bf."bountyId" = ${id} AND bf."userId" = ${userId} LIMIT 1;
+      `;
+    if (!mainBenefactor) return null;
     const { currency } = mainBenefactor;
-    log(" Bounty's main currency detected:", currency);
 
-    const [winnerEntry] = await dbWrite.$queryRaw<
-      {
-        id: number;
-        userId: number;
-      }[]
-    >`SELECT
-          be.id,
-          be."userId",
-          COALESCE(SUM(bb."unitAmount"), 0) AS "awardedUnitAmount",
-          bes."reactionCountAllTime" AS "reactionCountAllTime"
-      FROM "BountyEntry" be
-      LEFT JOIN "BountyEntryStat" bes on bes."bountyEntryId" = be.id
-      LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
-      WHERE be."bountyId" = ${id}
-      GROUP BY be.id, be."userId", bes."reactionCountAllTime"
-      ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
-    `;
+    if (isTextScanPoiHidden(locked)) {
+      await tx.$executeRawUnsafe(`
+          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${id};
+        `);
+      return { kind: 'refund' as const, currency, poiHidden: true };
+    }
 
-    if (!winnerEntry) {
-      // Return unawarded funds to benefactors
-      const benefactors = await dbWrite.$queryRaw<
-        {
-          userId: number;
-          unitAmount: number;
-          buzzTransactionId?: string[] | null;
-        }[]
-      >`SELECT
-            bf."userId",
-            bf."unitAmount",
-            bf."buzzTransactionId"
-        FROM "BountyBenefactor" bf
-        WHERE bf."bountyId" = ${id}
-          AND bf.currency = ${currency}::"Currency"
-          AND bf."awardedToId" IS NULL;
+    const [winnerEntry] = await tx.$queryRaw<{ id: number; userId: number }[]>`SELECT
+            be.id,
+            be."userId",
+            COALESCE(SUM(bb."unitAmount"), 0) AS "awardedUnitAmount",
+            bes."reactionCountAllTime" AS "reactionCountAllTime"
+        FROM "BountyEntry" be
+        LEFT JOIN "BountyEntryStat" bes on bes."bountyEntryId" = be.id
+        LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
+        WHERE be."bountyId" = ${id} AND be."userId" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "BountyBenefactor" own
+            WHERE own."bountyId" = ${id}
+              AND own."userId" = be."userId"
+              AND own.currency = ${currency}::"Currency"
+              AND own."awardedToId" IS NULL
+          )
+          AND be."userId" IS DISTINCT FROM ${userId}
+        GROUP BY be.id, be."userId", bes."reactionCountAllTime"
+        ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
       `;
 
-      // Now refund each of them (parallelized for performance):
-      for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
-        if (unitAmount > 0) {
-          switch (currency) {
-            case Currency.BUZZ:
-              {
-                if (buzzTransactionId && buzzTransactionId.length > 0) {
-                  // Process all transaction IDs in parallel for better performance
-                  const refundResults = await Promise.allSettled(
-                    buzzTransactionId.map((txId) =>
-                      isBountyTransactionPrefix(txId)
-                        ? refundMultiAccountTransaction({
-                            externalTransactionIdPrefix: txId,
-                            description: 'Reason: Bounty refund, no entries found on bounty',
-                          })
-                        : refundTransaction(
-                            txId,
-                            'Reason: Bounty refund, no entries found on bounty'
-                          )
-                    )
-                  );
+    if (!winnerEntry) {
+      await tx.$executeRawUnsafe(`
+          UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${id};
+        `);
+      return { kind: 'refund' as const, currency, poiHidden: false };
+    }
 
-                  // Log any failures for monitoring
-
-                  refundResults.forEach((refund, idx) => {
-                    if (refund.status === 'rejected') {
-                      logJob({
-                        message: 'Refund transaction failed',
-                        data: {
-                          bountyId: id,
-                          userId,
-                          txId: buzzTransactionId[idx],
-                          error: refund.reason,
-                        },
-                      });
-                    }
-                  });
-                } else {
-                  // Fallback: No transaction IDs recorded (legacy data or edge case)
-                  await createBuzzTransaction({
-                    fromAccountId: 0,
-                    toAccountId: userId,
-                    amount: unitAmount,
-                    type: TransactionType.Refund,
-                    description: 'Reason: Bounty refund, no entries found on bounty',
-                  });
-                }
-              }
-
-              break;
-            default: // Do no checks
-              break;
-          }
-        }
-      }
-
-      await dbWrite.$executeRawUnsafe(`
-        UPDATE "Bounty" b SET "complete" = true, "refunded" = true WHERE b.id = ${id};
+    // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
+    await tx.$executeRawUnsafe(`
+        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
       `);
+    await tx.$executeRawUnsafe(`
+        UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = NOW(), "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};
+      `);
+    return { kind: 'award' as const, currency, winnerEntry };
+  });
 
-      if (user) {
-        bountyRefundedEmail
-          .send({
-            bounty: { id, name },
-            user: { email: user.email },
-          })
-          .catch((error) =>
-            logJob({
-              message: 'Error sending bounty refunded email',
-              data: {
-                email: user.email,
-                bountyId: id,
-                error: error.message,
-                cause: error.cause,
-                stack: error.stack,
-              },
-            })
-          );
-      }
+  if (!claim) {
+    log(` Bounty ${id} was already claimed; skipped`);
+    return;
+  }
+  log(" Bounty's main currency detected:", claim.currency);
 
-      tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleLogError);
-      log(` No entry winner detected, bounty has been refunded`);
-      continue;
-    }
-
-    const { id: winnerEntryId, userId: winnerUserId } = winnerEntry;
-
-    const benefactors = await dbWrite.$queryRaw<
-      {
-        userId: number;
-        unitAmount: number;
-        buzzTransactionId?: string[] | null;
-      }[]
-    >`SELECT
-          bf."userId",
-          bf."unitAmount",
-          bf."buzzTransactionId"
-      FROM "BountyBenefactor" bf
-      WHERE bf."bountyId" = ${id}
-        AND bf.currency = ${currency}::"Currency"
-        AND bf."awardedToId" IS NULL;
-    `;
-
-    const awardedAmounts: Partial<Record<BuzzSpendType, number>> = {};
-    await Promise.all(
-      benefactors.map(async ({ unitAmount, buzzTransactionId }) => {
-        if (buzzTransactionId && buzzTransactionId.length > 0) {
-          // Process all transaction IDs in parallel for better performance
-          const txResults = await Promise.allSettled(
-            buzzTransactionId.map(async (txId) => {
-              if (isBountyTransactionPrefix(txId)) {
-                // If buzzTransactionId is a prefix, we need to get all transactions with this prefix
-                return await getMultiAccountTransactionsByPrefix(txId);
-              }
-              return null;
-            })
-          );
-
-          // Aggregate amounts from successful results
-          txResults.forEach((result, idx) => {
-            if (result.status === 'fulfilled' && result.value) {
-              result.value.forEach((d) => {
-                const accountType = d.accountType as BuzzSpendType;
-                // Makes it so we can pay exact amounts.
-                awardedAmounts[accountType] = (awardedAmounts[accountType] || 0) + d.amount;
-              });
-            } else if (result.status === 'fulfilled' && result.value === null) {
-              // Non-prefix transaction ID - use unitAmount
-              awardedAmounts['yellow'] = (awardedAmounts['yellow'] || 0) + unitAmount;
-            } else {
-              // Log failure
-              log(`Bounty ${id}: Failed to get transaction data for ${buzzTransactionId[idx]}`);
-            }
-          });
-        } else {
-          // No transaction IDs - use unitAmount
-          awardedAmounts['yellow'] = (awardedAmounts['yellow'] || 0) + unitAmount;
-        }
-      })
-    );
-
-    const awardedAmount = Object.values(awardedAmounts).reduce(
-      (sum, amount) => sum + (amount || 0),
-      0
-    );
-
-    log(
-      ` A total of ${awardedAmount} ${currency} will be awarded in this bounty to the entry ${winnerEntryId}`
-    );
-
-    await dbWrite.$transaction([
-      dbWrite.$executeRawUnsafe(`
-        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntryId}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
-      `),
-      dbWrite.$executeRawUnsafe(`
-        UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};
-      `),
-    ]);
-    tracker
-      .bountyEntry({ type: 'Award', bountyEntryId: winnerEntryId, userId: -1 })
-      .catch(handleLogError);
-
-    if (awardedAmount > 0) {
-      switch (currency) {
-        case Currency.BUZZ:
-          {
-            if (Object.keys(awardedAmounts).length > 0) {
-              const transactions = Object.keys(awardedAmounts).map((accountType) => {
-                return {
-                  fromAccountId: 0,
-                  toAccountId: winnerUserId,
-                  toAccountType: accountType as BuzzAccountType,
-                  amount: awardedAmounts[accountType as BuzzSpendType] || 0,
-                  type: TransactionType.Bounty,
-                  description: 'Reason: Bounty entry has been awarded!',
-                  details: {
-                    entityId: id,
-                    entityType: 'Bounty',
-                  },
-                  externalTransactionId: `bounty-award-${id}-${accountType}`,
-                };
-              });
-
-              await createBuzzTransactionMany(transactions);
-            } else {
-              await createBuzzTransaction({
-                fromAccountId: 0,
-                toAccountId: winnerUserId,
-                amount: awardedAmount,
-                type: TransactionType.Bounty,
-                description: 'Reason: Bounty entry has been awarded!',
-                details: {
-                  entityId: id,
-                  entityType: 'Bounty',
-                },
-              });
-            }
-          }
-
-          break;
-        default: // Do no checks
-          break;
-      }
-    }
-
-    await bountiesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  if (claim.kind === 'refund') {
+    await settleBountyPayout(id, {
+      firstAttempt: true,
+      refundDescription: claim.poiHidden
+        ? 'Reason: Bounty refund, bounty hidden pending review'
+        : 'Reason: Bounty refund, no entries found on bounty',
+    });
+    if (claim.poiHidden)
+      logToAxiom(
+        {
+          name: 'prepare-bounties',
+          type: 'info',
+          message: 'poi-hidden bounty refunded at expiry',
+          bountyId: id,
+        },
+        'webhooks'
+      ).catch();
 
     if (user) {
-      bountyAutomaticallyAwardedEmail
+      bountyRefundedEmail
         .send({
           bounty: { id, name },
-          entry: { id: winnerEntryId },
           user: { email: user.email },
         })
         .catch((error) =>
           logJob({
-            message: 'Error sending bounty awarded email',
+            message: 'Error sending bounty refunded email',
             data: {
               email: user.email,
               bountyId: id,
@@ -464,11 +320,50 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
           })
         );
     }
-    // Now
-    log(`Finished bounty ${id}`);
+
+    tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleLogError);
+    log(` No entry winner detected, bounty has been refunded`);
+    return;
   }
 
-  await setLastRun();
-});
+  const winnerEntryId = claim.winnerEntry.id;
+  tracker
+    .bountyEntry({ type: 'Award', bountyEntryId: winnerEntryId, userId: -1 })
+    .catch(handleLogError);
 
-export const bountyJobs = [prepareBounties];
+  if (!(await settleBountyPayout(id, { firstAttempt: true })))
+    logJob({
+      message: 'Bounty awarded but the Buzz payout failed; the retry job pays it',
+      data: { bountyId: id, winnerEntryId },
+    });
+
+  await bountiesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  if (user) {
+    bountyAutomaticallyAwardedEmail
+      .send({
+        bounty: { id, name },
+        entry: { id: winnerEntryId },
+        user: { email: user.email },
+      })
+      .catch((error) =>
+        logJob({
+          message: 'Error sending bounty awarded email',
+          data: {
+            email: user.email,
+            bountyId: id,
+            error: error.message,
+            cause: error.cause,
+            stack: error.stack,
+          },
+        })
+      );
+  }
+  log(`Finished bounty ${id}`);
+}
+
+const bountyPayoutRetry = createJob('bounty-payout-retry', '41 * * * *', async () =>
+  retryUnsettledBountyPayouts()
+);
+
+export const bountyJobs = [prepareBounties, bountyPayoutRetry];

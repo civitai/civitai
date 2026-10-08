@@ -460,6 +460,13 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   help: 'createCachedArray fail-open: ids sent to origin (lookupFn) by cache name — deduped DB load',
   labelNames: ['cache_name'] as const,
 });
+// Separate counter, not a cache_type on cache_miss_total: these ids are also counted there, so a
+// cache_type would be summed into hit-ratio totals twice.
+export const cacheMissWouldJoinCounter = registerCounterWithLabels({
+  name: 'cache_miss_would_join_total',
+  help: 'createCachedArray miss-fill lookups that per-process coalescing (the PR #5488 join rule) would have joined instead of running, by cache name. Measurement only; cross-process duplicates are not counted',
+  labelNames: ['cache_name'] as const,
+});
 
 // ClickHouse TRANSPORT-error fail-soft counter. Incremented when an INSTRUMENTED call site
 // degrades on a TRANSIENT ClickHouse connection/transport failure (socket hang up / Code 279 /

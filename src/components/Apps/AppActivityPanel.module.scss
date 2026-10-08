@@ -34,8 +34,8 @@
  * track yields a 0-width panel with no error; and `layout` containment makes the panel a
  * STACKING CONTEXT and a CONTAINING BLOCK for absolutely/fixed-positioned descendants, so an
  * inline `Menu`/`Popover`/`Tooltip` added inside it is offset against the panel rather than the
- * viewport, and can be stacking-trapped under a sibling — pass `withinPortal` there (see the root
- * CLAUDE.md note on that theme default).
+ * viewport, and can be stacking-trapped under a sibling — pass `withinPortal` there (see the
+ * .claude/rules/components.md note on that theme default).
  * ⚠️ NOT CLIPPED, though that is the obvious guess and an earlier revision of this note said it:
  * clipping needs PAINT containment, which `container-type: inline-size` does not apply. The
  * symptom to expect is a floating element in the wrong PLACE, which is why it would not be
