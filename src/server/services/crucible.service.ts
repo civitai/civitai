@@ -47,6 +47,7 @@ import type {
   RemoveCrucibleEntrySchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
+import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
 import {
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
@@ -358,7 +359,7 @@ export const createCrucible = async ({
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
-  if (!isModerator) assertSfwCrucibleText([name, description], nsfwLevel);
+  if (!isModerator) assertSfwCrucibleText([name, description ?? ''], nsfwLevel);
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
   assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
@@ -759,7 +760,7 @@ export const updateCrucible = async ({
   const next = {
     ...current,
     ...Object.fromEntries(provided.map((key) => [key, changes[key]])),
-  } as typeof current & { name?: string; description?: string };
+  } as typeof current & { name?: string; description?: string | null };
 
   const buzzType = crucible.buzzType as CrucibleBuzzType;
   // Only a requested level is checked: a text-scan escalation can put R on the stored mask, and that
@@ -769,7 +770,8 @@ export const updateCrucible = async ({
   assertCrucibleSettings(next);
 
   const nextName = changes.name ?? crucible.name;
-  const nextDescription = changes.description ?? crucible.description ?? '';
+  const nextDescription =
+    changes.description === undefined ? crucible.description : changes.description;
   // Only a real text change resets the verdict: an unchanged resubmit dedups on its content hash,
   // so no callback would ever move it back to Scanned.
   const textChanged =
@@ -779,7 +781,7 @@ export const updateCrucible = async ({
     isModerator,
     surface: 'crucible',
   });
-  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription], next.nsfwLevel);
+  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription ?? ''], next.nsfwLevel);
   // Only newly added ones: a required model unpublished later shouldn't block editing the rest.
   const addedResources = next.allowedResources.filter(
     (versionId) => !current.allowedResources.includes(versionId)
@@ -2504,6 +2506,95 @@ export function countRemainingPairs({
   return Math.max(0, Math.min(unjudgedPairs, byEntry, byVotes));
 }
 
+/** Pairs this judge voted on where both entries are still visible to them. */
+export function countJudgedPairs({
+  entryIds,
+  votedPairKeys,
+}: {
+  entryIds: number[];
+  votedPairKeys: string[];
+}) {
+  const visible = new Set(entryIds);
+  let judged = 0;
+  for (const key of votedPairKeys) {
+    const [a, b] = key.split(':').map(Number);
+    if (visible.has(a) && visible.has(b)) judged++;
+  }
+  return judged;
+}
+
+export type JudgingPairCount = {
+  remainingPairs: number;
+  judgedPairs: number;
+  visibleEntries: number;
+  judged: boolean;
+};
+
+/**
+ * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
+ * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
+ * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
+ * query off crucibles the judge never voted in, which the feed asks about most.
+ */
+export async function countJudgingPairs({
+  crucibleIds,
+  userId,
+  viewerLevel,
+  judgedOnly = false,
+}: {
+  crucibleIds: number[];
+  userId: number;
+  viewerLevel: number;
+  judgedOnly?: boolean;
+}) {
+  const counts = new Map<number, JudgingPairCount>();
+  const uniqueIds = [...new Set(crucibleIds)];
+  if (!uniqueIds.length) return counts;
+
+  const judgeState = await Promise.all(
+    uniqueIds.map(async (id) => {
+      const [judgeEntryVotes, votedPairKeys = []] = await Promise.all([
+        sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
+        sysRedis.sMembers(getVotedPairsKey(id, userId)),
+      ]);
+      return { id, judgeEntryVotes, votedPairKeys };
+    })
+  );
+  const counted = judgedOnly
+    ? judgeState.filter(({ votedPairKeys }) => votedPairKeys.length > 0)
+    : judgeState;
+  if (!counted.length) return counts;
+
+  const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
+    SELECT ce."crucibleId", ce.id
+    FROM "CrucibleEntry" ce
+    JOIN "Crucible" c ON c.id = ce."crucibleId"
+    JOIN "Image" i ON i.id = ce."imageId"
+    WHERE ce."crucibleId" IN (${Prisma.join(counted.map(({ id }) => id))})
+      AND ce."userId" != ${userId}
+      AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, viewerLevel)}
+  `;
+
+  const entryIds = new Map<number, number[]>(counted.map(({ id }) => [id, []]));
+  for (const { crucibleId, id } of entries) entryIds.get(crucibleId)?.push(id);
+
+  for (const { id: crucibleId, judgeEntryVotes, votedPairKeys } of counted) {
+    const visible = entryIds.get(crucibleId) ?? [];
+    counts.set(crucibleId, {
+      remainingPairs: countRemainingPairs({
+        entryIds: visible,
+        judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
+        votedPairKeys,
+        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+      }),
+      judgedPairs: countJudgedPairs({ entryIds: visible, votedPairKeys }),
+      visibleEntries: visible.length,
+      judged: votedPairKeys.length > 0,
+    });
+  }
+  return counts;
+}
+
 export const getJudgingProgress = async ({
   crucibleId,
   userId,
@@ -2538,34 +2629,81 @@ export const getJudgingProgress = async ({
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
-    return { remainingPairs: 0, votesUsedUp: false };
+    return { remainingPairs: 0, judgedPairs: 0, votesUsedUp: false };
 
-  const visibleImage = visibleEntryImageSql(
-    crucible.nsfwLevel,
-    getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel })
-  );
-  const [entries, judgeEntryVotes, votedPairKeys] = await Promise.all([
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT ce.id
-      FROM "CrucibleEntry" ce
-      JOIN "Image" i ON i.id = ce."imageId"
-      WHERE ce."crucibleId" = ${crucibleId}
-        AND ce."userId" != ${userId}
-        AND ${visibleImage}
-    `,
-    sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
-    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-  ]);
-
-  const remainingPairs = countRemainingPairs({
-    entryIds: entries.map(({ id }) => id),
-    judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
-    votedPairKeys,
-    maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+  const viewerLevel = getEffectiveBrowsingLevel({
+    isGreen,
+    isLoggedIn: true,
+    requested: browsingLevel,
   });
+  const counted = (await countJudgingPairs({ crucibleIds: [crucibleId], userId, viewerLevel })).get(
+    crucibleId
+  );
+  const remainingPairs = counted?.remainingPairs ?? 0;
   // Fewer than two visible entries also counts zero pairs, but that is the browsing level
   // hiding entries, not this judge's votes running out.
-  return { remainingPairs, votesUsedUp: remainingPairs === 0 && entries.length >= 2 };
+  return {
+    remainingPairs,
+    judgedPairs: counted?.judgedPairs ?? 0,
+    votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2,
+  };
+};
+
+/** What the crucible cards show a judge: whether each open crucible still has pairs for them. */
+export const getJudgingStatuses = async ({
+  crucibleIds,
+  browsingLevel,
+  userId,
+  isGreen = false,
+  isModerator = false,
+  blockedByUserIds,
+}: GetJudgingStatusesSchema & {
+  userId: number;
+  isGreen?: boolean;
+  isModerator?: boolean;
+  blockedByUserIds?: number[];
+}): Promise<CrucibleJudgingStatus[]> => {
+  const crucibles = await dbRead.crucible.findMany({
+    where: {
+      id: { in: crucibleIds },
+      status: CrucibleStatus.Active,
+      // Status lags the clock until finalize-crucibles runs.
+      OR: [{ endAt: null }, { endAt: { gt: new Date() } }],
+    },
+    select: {
+      id: true,
+      userId: true,
+      textNsfw: true,
+      nsfwLevel: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
+    },
+  });
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
+  const open = crucibles.filter(
+    (crucible) =>
+      !isCrucibleHiddenByScan(crucible, viewer) &&
+      !isCrucibleOffSite(crucible, viewer) &&
+      !isCrucibleBlockedForViewer(crucible, viewer)
+  );
+
+  const counts = await countJudgingPairs({
+    crucibleIds: open.map(({ id }) => id),
+    userId,
+    viewerLevel: getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel }),
+    judgedOnly: true,
+  });
+  return open.flatMap(({ id }) => {
+    const counted = counts.get(id);
+    if (!counted) return [];
+    const { remainingPairs, visibleEntries, judged } = counted;
+    return {
+      crucibleId: id,
+      judged,
+      available: remainingPairs > 0,
+      votesUsedUp: remainingPairs === 0 && visibleEntries >= 2,
+    };
+  });
 };
 
 type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };
@@ -4646,6 +4784,9 @@ export const getJudgeStats = async ({
   };
 };
 
+// Enough to cover every open crucible today; the caught-up filter runs after the SQL limit.
+const JUDGING_SUGGESTION_CANDIDATES = 50;
+
 /**
  * Still judgeable by this viewer, and inside their browsing level on both the crucible's rating and
  * its cover — the rule the landing feed applies client-side in useApplyHiddenPreferences.
@@ -4695,13 +4836,26 @@ export const getJudgingSuggestions = async ({
         ) judgeable
       ) = 2
     ORDER BY c."createdAt" DESC, c.id DESC
-    LIMIT ${limit}
+    LIMIT ${JUDGING_SUGGESTION_CANDIDATES}
   `;
   if (!rows.length) return [];
 
+  const counts = await countJudgingPairs({
+    crucibleIds: rows.map(({ id }) => id),
+    userId,
+    viewerLevel: browsingLevel,
+    judgedOnly: true,
+  });
+  // An uncounted candidate was never judged, and the SQL above guarantees it two judgeable entries.
+  const ids = rows
+    .map(({ id }) => id)
+    .filter((id) => (counts.get(id)?.remainingPairs ?? 1) > 0)
+    .slice(0, limit);
+  if (!ids.length) return [];
+
   return withPaidEntryCount(
     await dbRead.crucible.findMany({
-      where: { id: { in: rows.map(({ id }) => id) } },
+      where: { id: { in: ids } },
       select: crucibleListSelect,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })

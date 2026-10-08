@@ -51,6 +51,7 @@ import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
@@ -58,7 +59,10 @@ import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
-import { CrucibleStartJudgingButton } from '~/components/Crucible/CrucibleStartJudgingButton';
+import {
+  CrucibleCaughtUpNotice,
+  CrucibleStartJudgingButton,
+} from '~/components/Crucible/CrucibleStartJudgingButton';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import {
@@ -131,6 +135,21 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: judgesData } = trpc.crucible.getJudgesCount.useQuery(
     { crucibleId: id },
     { enabled: !!id }
+  );
+  // The global staleTime is Infinity; judging on the judge page changes this.
+  const { data: judgingProgress } = trpc.crucible.getJudgingProgress.useQuery(
+    { crucibleId: id, browsingLevel },
+    {
+      // Guarded procedure: a muted or unverified viewer gets FORBIDDEN.
+      enabled:
+        !!currentUser &&
+        !currentUser.muted &&
+        !requiresEmailVerification(currentUser) &&
+        crucible?.status === CrucibleStatus.Active &&
+        (!crucible.endAt || new Date(crucible.endAt) > new Date()),
+      staleTime: 0,
+      refetchOnMount: 'always',
+    }
   );
 
   // `?submit=1` (from the featured hero's "Enter Competition") opens the submit modal once, and is
@@ -401,11 +420,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
 
               {/* CTA Button - Start Judging */}
-              {canJudge && (
-                <CrucibleStartJudgingButton
-                  onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
-                />
-              )}
+              {canJudge &&
+                (judgingProgress?.votesUsedUp ? (
+                  <CrucibleCaughtUpNotice />
+                ) : (
+                  <CrucibleStartJudgingButton
+                    onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
+                  />
+                ))}
 
               {/* Entry Grid with User Entries section */}
               <CrucibleEntryGrid
