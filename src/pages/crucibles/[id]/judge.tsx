@@ -43,7 +43,7 @@ import { CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE } from '~/shared/constants/crucib
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 const querySchema = z.object({
@@ -95,7 +95,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     watched: WatchedMs;
   } | null>(null);
 
-  const { skippedEntryIds, skip, recordVote } = useJudgeSkipList();
+  const { skippedPairs, skip, recordVote } = useJudgeSkipList();
   // One judging session per visit to this page: leaving and coming back means watching in full again.
   const [judgingSessionId] = useState(uuidv4);
 
@@ -122,7 +122,6 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     judgeEligibility?.canJudge !== false &&
     !refusedForScore;
 
-  // Fetch judging pair (exclude recently skipped entries)
   const {
     data: pairData,
     isLoading: isLoadingPair,
@@ -133,7 +132,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     {
       crucibleId: id,
       browsingLevel,
-      excludeEntryIds: skippedEntryIds.length > 0 ? skippedEntryIds : undefined,
+      skippedPairs: skippedPairs.length > 0 ? skippedPairs : undefined,
       judgingSessionId,
     },
     {
@@ -228,6 +227,15 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       }
     : null;
 
+  // The server serves a skipped pair again only when no other pair is left, and a skip whose list
+  // didn't move fetches nothing, so without this the judge sees Skip count up and nothing change.
+  const pairKey = pair ? [pair.left.id, pair.right.id].sort((a, b) => a - b).join(':') : null;
+  const [skippedPairKey, setSkippedPairKey] = useState<string | null>(null);
+  const onlyPairLeft = !isFetchingPair && pairKey !== null && pairKey === skippedPairKey;
+  useEffect(() => {
+    if (onlyPairLeft) showOnlyPairLeftNotification();
+  }, [onlyPairLeft]);
+
   // State lags a render behind, and a vote that lands meanwhile claims an already-claimed pair.
   const votingRef = useRef(false);
   const handleVote = useCallback(
@@ -284,14 +292,16 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const handleSkip = useCallback(
     ({ unavailable }: { unavailable: boolean }) => {
       if (isVoting || isLoadingPair || !pair) return;
+      if (onlyPairLeft) return showOnlyPairLeftNotification();
 
       if (!unavailable) {
         setSessionSkips((prev) => prev + 1);
         setCurrentStreak(0);
       }
+      setSkippedPairKey(pairKey);
       skip(pair);
     },
-    [isVoting, isLoadingPair, pair, skip]
+    [isVoting, isLoadingPair, pair, pairKey, onlyPairLeft, skip]
   );
 
   // Check if all pairs judged on initial load
@@ -582,6 +592,15 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 }
 
 // Helper Components
+
+const showOnlyPairLeftNotification = () =>
+  showInfoNotification({
+    id: 'crucible-only-pair-left',
+    title: 'This is the only pair left for you',
+    message:
+      "You've judged or skipped everything else. Vote on it, or come back when new entries arrive.",
+    autoClose: 5000,
+  });
 
 type StatItemProps = {
   label: string;
