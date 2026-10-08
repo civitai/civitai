@@ -2,7 +2,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { extModeration } from '~/server/integrations/moderation';
-import { auditPromptEnriched } from '~/utils/metadata/audit';
+import { auditPromptEnriched, isBlankAuditInput } from '~/utils/metadata/audit';
 import { imageMetaOutput } from '~/server/schema/image.schema';
 import { bustCachesForPosts } from '~/server/services/post.service';
 import { createJob } from './job';
@@ -81,22 +81,24 @@ export const auditRemixSourcesJob = createJob(
         if (!parsedMeta.success) continue;
 
         const prompt = parsedMeta.data.prompt;
-        if (!prompt?.trim()) continue;
-
         const negativePrompt = parsedMeta.data.negativePrompt;
+        // Same both-fields-empty rule the audit applies: an empty prompt beside a non-empty
+        // negative prompt is still audited.
+        if (isBlankAuditInput(prompt, negativePrompt)) continue;
         audited++;
 
         // 4. Run prompt auditing (regex + external moderation)
         let isProblematic = false;
 
         // Regex-based audit
-        const { success } = auditPromptEnriched(prompt, negativePrompt, false);
+        const { success } = auditPromptEnriched(prompt ?? '', negativePrompt, false);
         if (!success) {
           isProblematic = true;
         }
 
-        // External moderation (only if regex passed)
-        if (!isProblematic) {
+        // External moderation (only if regex passed). It is sent the prompt alone, so there is
+        // nothing to send when the prompt is empty.
+        if (!isProblematic && prompt?.trim()) {
           try {
             // 'remixAudit' is observability only — it keeps this batch job's latency out of the
             // request-path population on the external-moderation histogram. Nobody is waiting on
