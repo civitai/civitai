@@ -17,6 +17,7 @@ import type * as NotificationService from '~/server/services/notification.servic
 import type * as FliptClient from '~/server/flipt/client';
 import { persistScoreBatch, settleTierGrants } from '~/server/jobs/update-user-score';
 import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const updatedRow = { userId: 7, oldTotal: '400', newTotal: '600' };
 const crossing = { userId: 7, milestoneKey: 'score:spark', name: 'Spark', threshold: 500 };
@@ -172,6 +173,64 @@ describe('persistScoreBatch before a definition launches', () => {
     await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(ctx.tierGrantErrors).toEqual([failure]);
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('persistScoreBatch alerts staff to a new Legend', () => {
+  const legendCrossing = {
+    userId: 7,
+    milestoneKey: 'score:legend',
+    name: 'Legend',
+    threshold: 1_000_000,
+  };
+  const staffAlerts = () =>
+    (mocks.createNotification.mock.calls as unknown as [{ type: string }][])
+      .map(([n]) => n)
+      .filter((n) => n.type === 'creator-legend-reached-staff');
+
+  beforeEach(() => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: { legendAlertUserIds: [1, 2] } });
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 7, username: 'newlegend' }]);
+  });
+
+  it('notifies the configured staff with who crossed', async () => {
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([
+      expect.objectContaining({
+        key: 'creator-legend-reached-staff:7',
+        userIds: [1, 2],
+        details: { userId: 7, username: 'newlegend' },
+      }),
+    ]);
+  });
+
+  // Staff want every new Legend; the user-facing announcement schedule is a different decision.
+  it('still alerts when the crossing is silenced for the user', async () => {
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: new Date(0) });
+    expect(staffAlerts()).toHaveLength(1);
+  });
+
+  // A silent grant (a tier already passed, the launch backfill) is a Founding Legend, not a new one.
+  it('does not alert on a silent grant', async () => {
+    const { ctx } = batchCtx({ grant: async () => [{ ...legendCrossing, silent: true }] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([]);
+  });
+
+  it('does not alert on a lower tier', async () => {
+    const { ctx } = batchCtx({ grant: async () => [crossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([]);
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends nothing when no recipient is configured', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([]);
   });
 });
 

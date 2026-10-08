@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FlagService from '~/server/services/creator-journey-flag.service';
-import type * as ConfigService from '~/server/services/discord-creator-journey-config.service';
+import type * as ConfigService from '~/server/services/creator-journey-config.service';
 import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
 
 const { mockDiscord, mockPgRead, mockAudience, mockConfig } = vi.hoisted(() => ({
@@ -24,9 +24,9 @@ vi.mock('~/server/services/creator-journey-flag.service', async (importOriginal)
   ...(await importOriginal<typeof FlagService>()),
   creatorJourneyAudienceAmong: mockAudience,
 }));
-vi.mock('~/server/services/discord-creator-journey-config.service', async (importOriginal) => ({
+vi.mock('~/server/services/creator-journey-config.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ConfigService>()),
-  getCreatorJourneyDiscordConfig: mockConfig,
+  getCreatorJourneyConfig: mockConfig,
 }));
 vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricExcluded>()),

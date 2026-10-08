@@ -11,7 +11,7 @@ import {
   milestoneShowableUserSql,
   toUtcTimestamp,
 } from '~/server/services/creator-milestone-exclusions';
-import { getCreatorJourneyDiscordConfig } from '~/server/services/discord-creator-journey-config.service';
+import { getCreatorJourneyConfig } from '~/server/services/creator-journey-config.service';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createJob } from './job';
@@ -142,7 +142,7 @@ export const applyDiscordCreatorJourneyRoles = async (
   discordRoles: DiscordRole[],
   now = new Date()
 ) => {
-  const config = await getCreatorJourneyDiscordConfig();
+  const config = await getCreatorJourneyConfig();
   const tiers = CREATOR_JOURNEY_TIERS.flatMap((tier) => {
     const roleId = config[tier.configField];
     const role = roleId ? discordRoles.find((r) => r.id === roleId) : undefined;

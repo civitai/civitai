@@ -24,6 +24,7 @@ import {
   notifyScoreTierCrossings,
 } from '~/server/services/creator-milestone-grant.service';
 import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
+import { alertNewLegends } from '~/server/services/creator-legend-alert.service';
 import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
   creatorJourneyAudience,
@@ -413,6 +414,8 @@ export async function persistScoreBatch(
   }
   // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
   await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
+  // Staff hear about every Legend crossing, including one whose user-facing announcement is silenced.
+  await alertNewLegends(audienceCrossings).catch((e) => log('new-legend alert failed', e));
 }
 
 // Persist per-category scores and recompute `total` for a batch of users in one
