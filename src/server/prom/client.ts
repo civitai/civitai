@@ -65,9 +65,9 @@ const redisMetricsBridge = {
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics =
   redisMetricsBridge;
 
-// pgPoolAcquireHistogram is registered in @civitai/db's db-helpers, not here, to avoid
-// a module-init cycle (this module imports pgDb → db-helpers, which would import the
-// histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
+// The pg pool acquire histogram is registered in ~/server/db/db-helpers (instrumentationRegistry),
+// not here, to avoid a module-init cycle (this module imports pgDb → db-helpers, which would import
+// the histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
 // `heavyBulkheadGaugeInitialized` was declared here and is gone: a globalThis flag guarding a
 // per-graph registry is the bug this file documents at length below, not a pattern to reach for.

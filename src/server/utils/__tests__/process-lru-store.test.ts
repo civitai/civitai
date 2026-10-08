@@ -68,15 +68,38 @@ describe('createProcessLruStoreResolver', () => {
     expect(create).toHaveBeenCalledTimes(2);
   });
 
-  it('never shares a store between caches whose sizing differs', () => {
+  // Invariant guard (no store option exists on main): every option that shapes the store is part
+  // of its id, so two same-named caches built differently never alias.
+  it.each([
+    ['max', { max: 11 }],
+    ['maxSize', { maxSize: 20_000 }],
+    ['ttl', { ttl: 30_000 }],
+    ['allowStale', { allowStale: true }],
+    ['sizeCalculation', { sizeCalculation: () => 1 }],
+    ['name', { name: 'other-name' }],
+  ] as const)('never shares a store between caches differing in %s', (_field, override) => {
     const graphA = createProcessLruStoreResolver();
     const graphB = createProcessLruStoreResolver();
 
     const a = createLruCache({ ...lruOptions('same-name'), store: graphA });
-    const b = createLruCache({ ...lruOptions('same-name'), maxSize: 20_000, store: graphB });
+    const b = createLruCache({ ...lruOptions('same-name'), ...override, store: graphB });
 
     a.set(1, { id: 1 });
     expect(b.get(1)).toBeUndefined();
+  });
+
+  it('control: identically built caches in two graphs DO share', () => {
+    const a = createLruCache({
+      ...lruOptions('same-name'),
+      store: createProcessLruStoreResolver(),
+    });
+    const b = createLruCache({
+      ...lruOptions('same-name'),
+      store: createProcessLruStoreResolver(),
+    });
+
+    a.set(1, { id: 1 });
+    expect(b.get(1)).toEqual({ id: 1 });
   });
 });
 

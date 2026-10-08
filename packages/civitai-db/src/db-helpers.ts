@@ -11,8 +11,8 @@ types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
   return new Date(stringValue.replace(' ', 'T') + 'Z');
 });
 
-// Histogram for pg Pool acquire latency. Defined here (not in prom/client.ts)
-// to avoid a module-init cycle: prom/client.ts imports pgDb/notifDb/datapacketDb,
+// Histogram for pg Pool acquire latency: name + factory live here (not in the app's prom/client.ts)
+// to avoid a module-init cycle: prom/client.ts imports pgDb/datapacketDb,
 // which import db-helpers. If db-helpers also imported a const from prom/client.ts,
 // webpack's CJS-style chunking can leave that binding in a Temporal Dead Zone
 // during module init — observed as "Cannot access 'S' before initialization" +

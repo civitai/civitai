@@ -101,8 +101,9 @@ afterAll(() => {
 
 describe('process-global server singletons (production)', () => {
   it('evaluates env/other as production in this file', async () => {
-    // Positive control for the premise: without it every case below could be exercising the
-    // non-production branch, which was already global.
+    // Control for the isProd mock, which is what makes the cases below red on code that
+    // branches on `isProd` (the pre-change shape). A shim branching on NODE_ENV directly would
+    // NOT be caught here: vitest runs with NODE_ENV=test.
     const { isProd } = await import('~/env/other');
     expect(isProd).toBe(true);
   });
@@ -135,6 +136,15 @@ describe('process-global server singletons (production)', () => {
     expect(b.pgDbWrite).toBe(a.pgDbWrite);
     expect(b.pgDbRead).toBe(a.pgDbRead);
     expect(b.pgDbReadLong).toBe(a.pgDbReadLong);
+  });
+
+  it('primary pg pools: read and read-long alias the one write pool when replica == primary', async () => {
+    setEnv({ DATABASE_REPLICA_URL: 'postgres://user:pass@localhost:5432/primary' });
+    const [a, b] = await evaluateTwice(() => import('~/server/db/pgDb'));
+    expect(factories.getClient).toHaveBeenCalledTimes(1);
+    expect(a.pgDbRead).toBe(a.pgDbWrite);
+    expect(a.pgDbReadLong).toBe(a.pgDbWrite);
+    expect(b.pgDbWrite).toBe(a.pgDbWrite);
   });
 
   it('datapacket read pool: one per process', async () => {
