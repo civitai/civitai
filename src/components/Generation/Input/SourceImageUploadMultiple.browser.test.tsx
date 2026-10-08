@@ -1023,6 +1023,10 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     await pickFiles(1);
     await expect.element(page.getByText(PREP_ERROR, { exact: true })).toBeVisible();
     expect(document.body.textContent).not.toContain('Image failed to load');
+    // The slot releases the generator too, and (by decision) sends no report.
+    await expect.poll(loaderCount).toBe(0);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(reports()).toEqual([]);
   });
 });
