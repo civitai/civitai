@@ -49,6 +49,7 @@ import { CrucibleJudgingDoneState } from '~/components/Crucible/CrucibleJudgingD
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import { CrucibleJudgingBriefing } from '~/components/Crucible/CrucibleJudgingBriefing';
+import { CRUCIBLE_NO_DESCRIPTION } from '~/components/Crucible/crucible-create-form';
 import { hasSeenBriefing, markBriefingSeen } from '~/components/Crucible/judging-briefing';
 import { JUDGING_RULES } from '~/components/Crucible/judging-rules';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -442,7 +443,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
   const onlyOwnEntries = judgeableEntryCount < 2;
   const showDoneState = allPairsJudged || onlyOwnEntries;
-  const theme = crucible.description ? removeTags(crucible.description) : '';
+  const description = crucible.description ? removeTags(crucible.description).trim() : '';
+  // The create form stores this placeholder for a blank description; it is no theme to show.
+  const theme = description === CRUCIBLE_NO_DESCRIPTION ? '' : description;
 
   return (
     <>
@@ -453,7 +456,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       />
 
       <div className="-mt-3 flex h-[calc(100%+0.75rem)] flex-col overflow-y-auto md:overflow-hidden">
-        <div className="shrink-0 border-b border-[#373a40] bg-[#25262b] py-2.5">
+        <div className="shrink-0 py-2.5">
           <Container size="xl">
             <div
               data-judge-chrome
@@ -666,7 +669,14 @@ function SwitchCrucibleMenu({ crucibleId }: { crucibleId: number }) {
   const suggestions = useApplyHiddenPreferences({ type: 'crucibles', data }).items.slice(0, 4);
 
   return (
-    <Menu position="bottom-end" width={260} withinPortal onOpen={() => setRequested(true)}>
+    <Menu
+      position="bottom-end"
+      width={320}
+      withinPortal
+      // The fixed width alone still overflows a phone; the label class lets a long name ellipsize.
+      classNames={{ dropdown: 'max-w-[calc(100vw-32px)]', itemLabel: 'min-w-0 truncate' }}
+      onOpen={() => setRequested(true)}
+    >
       <Menu.Target>
         <Button
           variant="subtle"
@@ -688,10 +698,8 @@ function SwitchCrucibleMenu({ crucibleId }: { crucibleId: number }) {
           </Text>
         ) : (
           suggestions.map((c) => (
-            <Menu.Item key={c.id} component={Link} href={`/crucibles/${c.id}/judge`}>
-              <Text size="sm" truncate>
-                {c.name}
-              </Text>
+            <Menu.Item key={c.id} component={Link} href={`/crucibles/${c.id}/judge`} title={c.name}>
+              {c.name}
             </Menu.Item>
           ))
         )}
