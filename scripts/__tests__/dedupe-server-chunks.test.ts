@@ -1,0 +1,222 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { normalise, parseStub, stubFor } from '../dedupe-server-chunks.mjs';
+
+/**
+ * `scripts/dedupe-server-chunks.mjs` replaces duplicate Turbopack server chunks (same bytes
+ * apart from the trailing sourceMappingURL comment) with a one-line stub that re-exports the
+ * canonical sibling. These cases drive the CLI over synthetic `.next/server` trees shaped
+ * like the real output: `module.exports=[id, factory, …]` chunks, an entry file that loads
+ * them with `R.c("server/chunks/…")`, and a chunk whose async loader lists chunk paths for
+ * `s.l(…)`.
+ *
+ * The load-bearing claim is behavioural, not textual: after the run, requiring a duplicate's
+ * path must hand back THE SAME module array as the canonical (so its source is never
+ * compiled), while every referenced path still loads. That is asserted by loading the tree
+ * in a child Node process, never by reading the stub's text.
+ */
+
+const SCRIPT = path.resolve(__dirname, '../dedupe-server-chunks.mjs');
+
+let root: string; // plays the role of `.next`
+let server: string; // `.next/server`
+
+beforeEach(() => {
+  root = mkdtempSync(path.join(tmpdir(), 'dedupe-chunks-'));
+  server = path.join(root, 'server');
+  mkdirSync(path.join(server, 'chunks', 'ssr'), { recursive: true });
+});
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+const chunk = (name: string, body: string) =>
+  `module.exports=[${body}];\n\n//# sourceMappingURL=${name}.map\n`;
+
+function write(rel: string, content: string) {
+  const p = path.join(server, rel);
+  mkdirSync(path.dirname(p), { recursive: true });
+  writeFileSync(p, content);
+}
+const read = (rel: string) => readFileSync(path.join(server, rel), 'utf8');
+
+function run(...args: string[]) {
+  const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+}
+
+/** Load `rels` (relative to `.next`) in a fresh Node process; report identity + factory ids. */
+function loadInChild(rels: string[]) {
+  const src = `
+    const path = require('path');
+    const root = ${JSON.stringify(root)};
+    const arrays = ${JSON.stringify(rels)}.map((r) => require(path.resolve(root, r)));
+    const ids = arrays.map((a) => a.filter((x) => typeof x === 'number'));
+    const same = arrays.map((a) => arrays.indexOf(a));
+    // Run every factory once so a broken chunk throws here.
+    const vals = arrays.map((a) => a.filter((x) => typeof x === 'function').map((f) => f()));
+    process.stdout.write(JSON.stringify({ ids, same, vals }));
+  `;
+  const r = spawnSync(process.execPath, ['-e', src], { encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`child failed: ${r.stderr}`);
+  return JSON.parse(r.stdout) as { ids: number[][]; same: number[]; vals: string[][] };
+}
+
+/** A small tree with every reference kind the real build uses. */
+function seedRealisticTree() {
+  // Three copies of one chunk (only the sourceMappingURL differs), plus an unrelated chunk.
+  write('chunks/_b2._.js', chunk('_b2._.js', `101,()=>"shared"`));
+  write('chunks/_a1._.js', chunk('_a1._.js', `101,()=>"shared"`));
+  write('chunks/_c3._.js', chunk('_c3._.js', `101,()=>"shared"`));
+  write('chunks/_other._.js', chunk('_other._.js', `202,()=>"other"`));
+  // A chunk whose async loader names a duplicate by path (the `s.l` reference kind).
+  write(
+    'chunks/_loader._.js',
+    chunk(
+      '_loader._.js',
+      `303,()=>JSON.stringify(["server/chunks/_c3._.js","server/chunks/_other._.js"])`
+    )
+  );
+  // An entry file referencing chunks via R.c (the entry reference kind).
+  write(
+    'pages/api/x.js',
+    [
+      'var R=require("../../chunks/[turbopack]_runtime.js")("server/pages/api/x.js")',
+      'R.c("server/chunks/_b2._.js")',
+      'R.c("server/chunks/_loader._.js")',
+      'module.exports=R.m(303)',
+      '',
+    ].join('\n')
+  );
+}
+
+describe('dedupe-server-chunks', () => {
+  it('stubs files identical apart from the sourceMappingURL to the first sibling by name', () => {
+    seedRealisticTree();
+    const before = read('chunks/_a1._.js');
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('stubbed 2 duplicates');
+    expect(read('chunks/_a1._.js')).toBe(before); // canonical untouched
+    expect(parseStub(readFileSync(path.join(server, 'chunks/_b2._.js')))).toBe('_a1._.js');
+    expect(parseStub(readFileSync(path.join(server, 'chunks/_c3._.js')))).toBe('_a1._.js');
+  });
+
+  it('every referenced duplicate path loads, and loads the canonical module array itself', () => {
+    seedRealisticTree();
+    const refs = [
+      'server/chunks/_a1._.js',
+      'server/chunks/_b2._.js', // R.c reference from the entry
+      'server/chunks/_c3._.js', // s.l reference inside a chunk
+      'server/chunks/_other._.js',
+    ];
+
+    // Control: before the run, each duplicate path is a separately compiled array.
+    const pre = loadInChild(refs);
+    expect(pre.same).toEqual([0, 1, 2, 3]);
+
+    expect(run(server).code).toBe(0);
+
+    const post = loadInChild(refs);
+    // One array object for all three copies — the duplicate source was never compiled.
+    expect(post.same).toEqual([0, 0, 0, 3]);
+    expect(post.ids).toEqual([[101], [101], [101], [202]]);
+    expect(post.vals).toEqual([['shared'], ['shared'], ['shared'], ['other']]);
+  });
+
+  it('does not group files whose content differs anywhere but the trailing comment', () => {
+    write('chunks/_a._.js', chunk('_a._.js', `1,()=>"x"`));
+    write('chunks/_b._.js', chunk('_b._.js', `1,()=>"y"`));
+    // A sourceMappingURL comment that is NOT at the end of the file is content.
+    write('chunks/_c._.js', `module.exports=[1,()=>"x"];\n//# sourceMappingURL=_c._.js.map\n0;\n`);
+    write('chunks/_d._.js', `module.exports=[1,()=>"x"];\n//# sourceMappingURL=_d._.js.map\n1;\n`);
+    const snapshot = ['_a', '_b', '_c', '_d'].map((n) => read(`chunks/${n}._.js`));
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('stubbed 0 duplicates');
+    expect(['_a', '_b', '_c', '_d'].map((n) => read(`chunks/${n}._.js`))).toEqual(snapshot);
+  });
+
+  it('never groups across directories and never touches a runtime file', () => {
+    const body = chunk('x', `7,()=>"same"`);
+    write('chunks/_a._.js', body);
+    write('chunks/ssr/_a._.js', body);
+    write('chunks/[turbopack]_runtime.js', body);
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('stubbed 0 duplicates');
+    expect(read('chunks/ssr/_a._.js')).toBe(body);
+    expect(read('chunks/[turbopack]_runtime.js')).toBe(body);
+  });
+
+  it('is idempotent: a second run changes nothing', () => {
+    seedRealisticTree();
+    expect(run(server).code).toBe(0);
+    const names = ['_a1', '_b2', '_c3', '_other', '_loader'];
+    const afterFirst = names.map((n) => read(`chunks/${n}._.js`));
+
+    const second = run(server);
+
+    expect(second.code).toBe(0);
+    expect(second.out).toContain('stubbed 0 duplicates');
+    expect(second.out).toContain('2 already stubbed');
+    expect(names.map((n) => read(`chunks/${n}._.js`))).toEqual(afterFirst);
+  });
+
+  it('--dry-run reports the duplicates and writes nothing', () => {
+    seedRealisticTree();
+    const before = read('chunks/_b2._.js');
+
+    const r = run(server, '--dry-run');
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('would stub 2 duplicates');
+    expect(read('chunks/_b2._.js')).toBe(before);
+  });
+
+  it('fails loudly (exit 1) when a stub points at a chunk that does not exist', () => {
+    write('chunks/_real._.js', chunk('_real._.js', `1,()=>"x"`));
+    write('chunks/_dangling._.js', stubFor('_missing._.js'));
+
+    const r = run(server);
+
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('_dangling._.js: stub target _missing._.js does not exist');
+  });
+
+  it('fails loudly (exit 1) when a stub points at another stub', () => {
+    write('chunks/_real._.js', chunk('_real._.js', `1,()=>"x"`));
+    write('chunks/_s1._.js', stubFor('_real._.js'));
+    write('chunks/_s2._.js', stubFor('_s1._.js'));
+
+    const r = run(server);
+
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('_s2._.js: stub target _s1._.js is itself a stub');
+  });
+
+  it('exits 2 when there is nothing to observe', () => {
+    expect(run(path.join(root, 'nope')).code).toBe(2);
+    expect(run(server).code).toBe(2); // chunks/ exists but holds no .js files
+    expect(run().code).toBe(2);
+  });
+
+  it('normalise strips only a trailing sourceMappingURL comment', () => {
+    const b = (s: string) => Buffer.from(s, 'latin1');
+    expect(normalise(b('A;\n//# sourceMappingURL=a.js.map\n')).toString()).toBe('A;');
+    expect(normalise(b('A;\n//# sourceMappingURL=a.js.map')).toString()).toBe('A;');
+    expect(normalise(b('A;\n//# sourceMappingURL=a.js.map\nB;\n')).toString()).toBe(
+      'A;\n//# sourceMappingURL=a.js.map\nB;\n'
+    );
+  });
+});
