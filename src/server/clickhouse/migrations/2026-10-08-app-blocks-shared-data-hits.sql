@@ -15,14 +15,21 @@
 -- must be non-zero. A zero without that positive write proves nothing.
 --
 -- One row per flagged leaf: a string value or object key inside a shared row's `data` blob, or a
--- counter key. The leaf TEXT is stored (truncated to 1 KB) so a reviewer can judge the hit; it is
--- user content that was already visible to the app's other users. That is why this table — and not
--- a log stream — holds it: the TTL below is the retention, enforced here, in the DDL.
+-- counter key.
+--
+-- 🔴 LEAF TEXT EXISTS ONLY ON SHADOW-MODE ROWS. A row written by a scan that ran because the shadow
+-- flag is on and enforce is off (the soak) stores the leaf TEXT (truncated to 1 KB) so a reviewer
+-- can judge the hit rate before the enforce flip; it is user content that was already visible to
+-- the app's other users. A row written in enforce mode stores NO text — `leafText` is '' — only the
+-- hash, the matched term and the metadata. That is why this table — and not a log stream — holds
+-- the text: the TTL below is its retention, enforced here, in the DDL. Every stored text is
+-- therefore gone at most 30 days (plus the merge lag below) after the soak ends, and leaving enforce
+-- on does not accumulate any.
 --
 -- Retention: rows expire 30 days after the start of the day they were written, and
 -- `ttl_only_drop_parts` drops each daily partition whole once all of it has expired. So a row lives
 -- at most 30 days plus the TTL merge scheduler's lag (`merge_with_ttl_timeout`, 4 h by default),
--- never longer.
+-- never longer. Enforce-mode rows (no text) expire on the same rolling TTL.
 --
 -- The per-write DENOMINATOR (writes scanned, leaves per write, counts per category, no text) is
 -- NOT here — it is the `app-blocks-shared-data-moderation-scan` Axiom event, one per scanned write.
@@ -51,6 +58,7 @@ CREATE TABLE IF NOT EXISTS default.appBlocksSharedDataHits
   matched String,
   leafLength UInt32,
   leafSha256 String,
+  -- the leaf as stored, cut to 1 KB — SHADOW-mode rows only; '' on every enforce-mode row
   leafText String
 )
 ENGINE = MergeTree
@@ -64,8 +72,8 @@ SETTINGS ttl_only_drop_parts = 1;
 --   SELECT category, mode, count(), uniqExact(leafSha256) FROM appBlocksSharedDataHits
 --   WHERE time > now() - INTERVAL 1 DAY GROUP BY 1, 2 ORDER BY 3 DESC;
 --
--- Review queue, newest first, one row per distinct leaf:
+-- Review queue (shadow-mode rows: the only ones with text), newest first, one row per distinct leaf:
 --
 --   SELECT any(appBlockId), any(rowKey), category, any(matched), any(leafText), count()
---   FROM appBlocksSharedDataHits WHERE time > now() - INTERVAL 7 DAY
+--   FROM appBlocksSharedDataHits WHERE time > now() - INTERVAL 7 DAY AND mode = 'shadow'
 --   GROUP BY leafSha256, category ORDER BY max(time) DESC LIMIT 100;

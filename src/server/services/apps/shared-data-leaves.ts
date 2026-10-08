@@ -20,8 +20,6 @@
  * in shadow mode.
  */
 
-import { stripInvisible } from '~/server/utils/confusable-fold';
-
 /** Maximum nesting of containers. The root object is depth 1. */
 export const SHARED_DATA_MAX_DEPTH = 32;
 /** Maximum number of DISTINCT leaf strings (values and keys together, after dedupe). */
@@ -32,18 +30,17 @@ export const SHARED_DATA_MAX_CHARS = 64_000;
 export type SharedDataLeafKind = 'value' | 'key';
 
 export interface SharedDataLeaf {
-  /** The leaf exactly as stored. */
+  /**
+   * The leaf exactly as stored. The checks do NOT read this as-is: `classifySharedTexts` strips
+   * every invisible character from it first (`stripInvisible`), and the record keeps it raw.
+   */
   raw: string;
-  /** What the checks read: `raw` through `stripFormatChars` (every invisible character removed). */
-  text: string;
   /**
    * JSON-pointer-style path of the FIRST occurrence, e.g. `x/tags/0`. A `key` leaf's path is the
    * path of the member it names — `kind` is what tells the two apart.
    */
   path: string;
   kind: SharedDataLeafKind;
-  /** How many times this exact raw string occurred (values and keys counted together). */
-  count: number;
 }
 
 export type SharedDataOverflow = 'depth' | 'leaves' | 'chars';
@@ -51,17 +48,6 @@ export type SharedDataOverflow = 'depth' | 'leaves' | 'chars';
 export type CollectSharedDataLeavesResult =
   | { leaves: SharedDataLeaf[] }
   | { overflow: SharedDataOverflow };
-
-/**
- * What the checks read: the leaf with every invisible character removed — all of `\p{Cf}` plus the
- * invisibles that are not `Cf` (Hangul fillers, the combining grapheme joiner, variation
- * selectors). Such a character renders as nothing, so a word split by one reads as the word to a
- * viewer while a regex sees two tokens. The class is the platform's one definition, shared with
- * the blocklist's confusable fold, so the two cannot disagree about what is invisible.
- */
-export function stripFormatChars(text: string): string {
-  return stripInvisible(text);
-}
 
 /** Escape a path segment so `/` inside a key cannot forge a path. */
 function segment(part: string | number): string {
@@ -77,20 +63,17 @@ function join(path: string, part: string | number): string {
  * nesting and a hostile shape cannot reach the engine's stack limit first.
  */
 export function collectSharedDataLeaves(data: unknown): CollectSharedDataLeavesResult {
+  // Exact strings are deduped: a repeated leaf is read once, at its first path.
   const byRaw = new Map<string, SharedDataLeaf>();
   let totalChars = 0;
 
   // Returns an overflow when adding this leaf breaks a cap, else undefined.
   const add = (raw: string, path: string, kind: SharedDataLeafKind): SharedDataOverflow | void => {
-    const seen = byRaw.get(raw);
-    if (seen) {
-      seen.count += 1;
-      return;
-    }
+    if (byRaw.has(raw)) return;
     if (byRaw.size + 1 > SHARED_DATA_MAX_LEAVES) return 'leaves';
     totalChars += raw.length;
     if (totalChars > SHARED_DATA_MAX_CHARS) return 'chars';
-    byRaw.set(raw, { raw, text: stripFormatChars(raw), path, kind, count: 1 });
+    byRaw.set(raw, { raw, path, kind });
   };
 
   // `depth` is the nesting level of the container being pushed; scalars carry their parent's.

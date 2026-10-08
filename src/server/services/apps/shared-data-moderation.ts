@@ -14,9 +14,9 @@ import {
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
+import { stripInvisible } from '~/server/utils/confusable-fold';
 import {
   collectSharedDataLeaves,
-  stripFormatChars,
   type SharedDataLeafKind,
   type SharedDataOverflow,
 } from '~/server/services/apps/shared-data-leaves';
@@ -40,7 +40,9 @@ import {
  *
  * 🔴 ENFORCE IMPLIES SCAN. With enforce on and shadow off, the scan still runs (inline) and still
  * records its hits and its denominator — otherwise turning shadow off after the enforce flip would
- * delete the telemetry at exactly the moment its rate is most worth watching. So the modes are
+ * delete the telemetry at exactly the moment its rate is most worth watching. An enforce-mode hit
+ * row carries NO leaf text, though (see `sharedDataHitRows`): only the hash, the matched term and
+ * metadata. Leaf text is recorded only by shadow-mode scans. So the modes are
  * `off` (both off — no scan, no record, behaviour identical to before this existed), `shadow`
  * (shadow on, enforce off) and `enforce` (enforce on, shadow either way).
  *
@@ -184,8 +186,13 @@ export async function classifySharedTexts(
   { isModerator = false }: { isModerator?: boolean } = {}
 ): Promise<SharedTextHit[]> {
   if (!inputs.length) return [];
-  // Checks read the leaf with format characters removed; the record keeps the raw leaf.
-  const texts = inputs.map((input) => stripFormatChars(input.raw));
+  // 🔴 Checks read the leaf with every invisible character removed — all of `\p{Cf}` plus the
+  // invisibles that are not `Cf` (Hangul fillers, the combining grapheme joiner, variation
+  // selectors). Such a character renders as nothing, so a word split by one reads as the word to a
+  // viewer while a regex sees two tokens. `stripInvisible` is the platform's one definition, shared
+  // with the blocklist's confusable fold. This is the ONLY place the strip happens; the record
+  // keeps the raw leaf.
+  const texts = inputs.map((input) => stripInvisible(input.raw));
   const hits: SharedTextHit[] = [];
 
   const blocklistHits = await findBlockedUserContent(texts, { exemptFromPatterns: isModerator });
@@ -256,7 +263,7 @@ export async function scanCounterKey(
 
 /**
  * The hit a rejection is attributed to: the highest-priority category present. A `pattern` hit
- * counts only when `enforcePatterns` — see `rejectSharedTextHit` in the router for why.
+ * counts only when `enforcePatterns` — see `sharedTextBlockingHit` in the router for why.
  */
 export function blockingHit(
   scan: SharedTextScan,
@@ -274,7 +281,7 @@ export function blockingHit(
 
 /** ClickHouse table holding the per-leaf hit list (30-day TTL — see its migration). */
 export const SHARED_DATA_HITS_TABLE = 'appBlocksSharedDataHits';
-/** Leaf text is kept for review, cut to this many UTF-8 bytes. */
+/** Leaf text (shadow-mode rows only) is kept for review, cut to this many UTF-8 bytes. */
 export const SHARED_DATA_HIT_TEXT_MAX_BYTES = 1024;
 /** The leaf path is cut too, because it is made of user-authored keys. */
 export const SHARED_DATA_HIT_PATH_MAX_BYTES = 512;
@@ -326,7 +333,15 @@ export function sharedDataHitRows(
     matched: hit.matched.slice(0, MATCHED_MAX_CHARS),
     leafLength: hit.leaf?.raw.length ?? 0,
     leafSha256: hit.leaf ? createHash('sha256').update(hit.leaf.raw, 'utf8').digest('hex') : '',
-    leafText: hit.leaf ? truncateUtf8(hit.leaf.raw, SHARED_DATA_HIT_TEXT_MAX_BYTES) : '',
+    // 🔴 TEXT ONLY FROM SHADOW-MODE SCANS. Shadow (the soak) keeps the text so a reviewer can
+    // judge the hit rate before the enforce flip; it expires with the row, 30 days after write, so
+    // every stored text is gone at most 30 days after the soak ends. Enforce stores NO text —
+    // hash, matched term and metadata only — so leaving enforce on does not keep accumulating
+    // user content. The empty string is the column default, not a placeholder for later.
+    leafText:
+      ctx.mode === 'shadow' && hit.leaf
+        ? truncateUtf8(hit.leaf.raw, SHARED_DATA_HIT_TEXT_MAX_BYTES)
+        : '',
   }));
 }
 
@@ -347,8 +362,9 @@ function categoryCounts(scan: SharedTextScan): Record<SharedDataHitCategory, num
  * Record one scan: a count-only Axiom event (the denominator — one per scanned write, hits or not)
  * and, when there are hits, one ClickHouse row per hit.
  *
- * 🔴 THE LEAF TEXT GOES TO CLICKHOUSE ONLY. It is user content, and the hit table is the one sink
- * here with a retention this repo enforces (a TTL in its DDL). The Axiom event carries counts and
+ * 🔴 THE LEAF TEXT GOES TO CLICKHOUSE ONLY, AND ONLY FROM A SHADOW-MODE SCAN (enforce rows carry
+ * none — see `sharedDataHitRows`). It is user content, and the hit table is the one sink here with
+ * a retention this repo enforces (a TTL in its DDL). The Axiom event carries counts and
  * nothing a user wrote — not the text, not the matched term — and so does every failure log below.
  * With no ClickHouse client (dev, build) the rows are dropped, never re-routed to a log.
  *

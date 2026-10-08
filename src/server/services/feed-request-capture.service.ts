@@ -214,9 +214,6 @@ const uintArray = (a: unknown) =>
 const stringArray = (a: unknown) => (Array.isArray(a) ? a.map(String) : []);
 const str = (v: unknown) => (v == null ? '' : String(v));
 
-// Moved to the shared ClickHouse helpers; re-exported so existing imports keep working.
-export { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
-
 export function buildFeedRequestRow(
   input: CapturableSearchInput,
   outcome: FeedRequestOutcome,

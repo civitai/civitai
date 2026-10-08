@@ -126,11 +126,22 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
     expect(loli.map((h) => h.category)).toContain('audit_regex');
     const profane = await classifySharedTexts([leaf('fu\u200Bck')]);
     expect(profane.map((h) => h.category)).toEqual(['audit_regex']);
-    // ...and the invisibles that are not \p{Cf} (here a Hangul filler).
-    const filler = await classifySharedTexts([leaf('fu\u3164ck')]);
-    expect(filler.map((h) => h.category)).toEqual(['audit_regex']);
+    // ...and the invisibles that are not \p{Cf}: Hangul filler, combining grapheme joiner,
+    // variation selectors (BMP and supplementary).
+    for (const split of ['fu\u3164ck', 'fu\u034Fck', 'fu\uFE0Fck', 'fu\u{E0100}ck']) {
+      const hits = await classifySharedTexts([leaf(split)]);
+      expect(hits.map((h) => h.category)).toEqual(['audit_regex']);
+    }
+    // A KEY leaf goes through the same strip (the walker hands keys over raw, like values).
+    const key = await classifySharedTexts([leaf('fu\u200Bck', 'tags/fu\u200Bck', 'key')]);
+    expect(key.map((h) => h.category)).toEqual(['audit_regex']);
     // The record keeps the raw leaf, not the stripped copy.
     expect(profane[0].leaf?.raw).toBe('fu\u200Bck');
+  });
+
+  it('INVARIANT GUARD: the strip leaves ordinary text and other categories alone', async () => {
+    await classifySharedTexts([leaf('plain text, émoji 🙂 and\ttabs')]);
+    expect(mockFindBlocked.mock.calls[0][0]).toEqual(['plain text, émoji 🙂 and\ttabs']);
   });
 
   it('🔴 a single leaf over the audit length ceiling is an OVERFLOW hit — unreviewable, not a content signal', async () => {
@@ -387,6 +398,25 @@ describe('recording', () => {
     );
     expect(long.startsWith(String(row.leafText))).toBe(true);
     expect(String(row.time)).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$/);
+  });
+
+  it('🔴 an ENFORCE-mode row carries NO leaf text — hash, matched term and metadata only', async () => {
+    const scan = await scanSharedData({ notes: MINOR });
+    const rows = sharedDataHitRows(scan, { ...ctx, mode: 'enforce', blocked: true });
+    const row = rows.find((r) => r.category === 'minor')!;
+    expect(row).toMatchObject({
+      mode: 'enforce',
+      blocked: 1,
+      matched: 'minor',
+      leafPath: 'notes',
+      leafLength: MINOR.length,
+      leafSha256: createHash('sha256').update(MINOR, 'utf8').digest('hex'),
+      leafText: '',
+    });
+    // Nothing a user wrote survives in any column (the matched term here is the category name).
+    for (const r of rows) expect(JSON.stringify(r)).not.toContain(MINOR);
+    // Control: the SAME scan recorded in shadow mode does carry the text.
+    expect(sharedDataHitRows(scan, ctx).find((r) => r.category === 'minor')?.leafText).toBe(MINOR);
   });
 
   it('emits ONE count-only denominator event — no leaf text and no matched term', async () => {

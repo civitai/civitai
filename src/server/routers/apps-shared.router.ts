@@ -66,6 +66,7 @@ import {
   scheduleSharedDataShadow,
   type SharedDataModerationMode,
   type SharedDataSurface,
+  type SharedTextHit,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import {
@@ -1442,85 +1443,93 @@ export async function incrementSharedCounter(
   }
 
   // The key is app-chosen text that `getTop` hands to every reader, so it is moderated as one
-  // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`). Enforce rejects
-  // here, before anything is written; shadow scans after the commit below.
+  // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`).
   //
-  // 🔴 ENFORCE SCANS EVERY INCREMENT; SHADOW ONLY THE ONE THAT CREATES THE KEY. Enforce must
-  // re-read an existing key: one written before the flag was on (or during shadow) would otherwise
-  // keep climbing into `getTop`'s public top-N, and an "it already exists" check outside the write
-  // transaction races a moderator purge that deletes the key. Shadow only measures, and a key's text
-  // never changes after creation, so it scans when the anchor INSERT below actually inserted —
-  // which keeps two blocklist reads and an event off every increment of a hot counter. The cost of
-  // that choice: a key that already existed when shadow was turned on is never scanned in shadow.
+  // 🔴 A COUNTER KEY IS SCANNED ONLY ON THE INCREMENT THAT CREATES IT — IN BOTH MODES. A key's text
+  // never changes after creation, so every later increment of an existing key reads nothing, which
+  // keeps two blocklist reads and an event off every increment of a hot counter. Keys that already
+  // existed before either flag was on are NOT re-checked per increment: they are covered by an
+  // offline replay run before the enforce flip (the live count of such keys was 0 when measured).
+  //
+  // "Creates" is decided by the anchor INSERT below actually inserting, inside the write
+  // transaction, so it cannot race a moderator purge or a concurrent creator. Shadow scans after the
+  // commit. Enforce must scan BEFORE the key exists, but not inside the transaction: the anchor
+  // INSERT fires the quota trigger, which holds this app's quota-row lock until commit, and a
+  // blocklist read must not hold every other shared write of the app behind it. So an enforce
+  // increment that would create the key rolls back, scans with no transaction open, and — if the
+  // key is clean — runs once more without the check (by then it may already exist, which is fine:
+  // whoever created it was scanned the same way).
   const moderationMode = await resolveSharedDataModerationMode(appBlockId);
   const pool = requireAppsDb();
-  if (moderationMode === 'enforce') {
+
+  /** One increment transaction. `null` = it would have created the key and was rolled back. */
+  const runIncrement = async (
+    rollBackCreate: boolean
+  ): Promise<{ createdKey: boolean; count: number } | null> => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // GUC drives the shared_kv quota trigger (byte/row accounting on the anchor).
+      await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+      // Anchor row so the counters FK holds. INSERT-or-ignore: created once per key.
+      const anchor = await client.query(
+        `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
+         VALUES ($1, $2, '{}'::jsonb)
+         ON CONFLICT (key) DO NOTHING`,
+        [key, uid]
+      );
+      const createdKey = (anchor.rowCount ?? 0) > 0;
+      if (rollBackCreate && createdKey) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const rows = (
+        await client.query<{ count: string }>(
+          `INSERT INTO ${schema}.counters AS c (key, count)
+           VALUES ($1, 1)
+           ON CONFLICT (key) DO UPDATE SET count = c.count + 1
+           RETURNING c.count::text AS count`,
+          [key]
+        )
+      ).rows;
+      await client.query('COMMIT');
+      return { createdKey, count: Number(rows[0]?.count ?? '0') };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  };
+
+  let outcome = await runIncrement(moderationMode === 'enforce');
+  if (!outcome) {
+    // Enforce, and this increment would create the key: scan it now, with no transaction open.
     const scan = await enforceScan(
       () => scanCounterKey(key, { isModerator: subjectUser?.isModerator }),
       { appBlockId, surface: 'counter' }
     );
-    await rejectSharedTextHit(scan, {
+    // Records the scan; on a hit, files the consequences against the caller (the would-be creator)
+    // and throws, so nothing was ever written.
+    await refuseSharedTextHit(scan, await sharedTextBlockingHit(scan), {
       schema,
       slug,
       appBlockId,
       uid,
       rowKey: key,
       surface: 'counter',
-      // 🔴 WHO A REFUSAL IS ATTRIBUTED TO. A key that ALREADY EXISTS was written by someone else
-      // (before enforce, or during shadow) and is still public via `getTop`, so its consequences
-      // go to the key's AUTHOR — the anchor row's `author_user_id` — with the KEY on the Report so a
-      // moderator can purge it, and DEDUPED per (author, key, reason) so a popular key's increments cannot
-      // flood the legal channel: the alert fires only when that Report row is new. A key that does
-      // not exist yet is the caller's own write, attributed as any other hit. The refusal itself is
-      // unconditional. Looked up only when there is a blocking hit, so the clean path pays nothing.
-      consequenceTarget: async () => {
-        const anchor = (
-          await pool.query<{ author_user_id: number }>(
-            `SELECT author_user_id FROM ${schema}.shared_kv WHERE key = $1`,
-            [key]
-          )
-        ).rows[0];
-        return anchor ? { uid: anchor.author_user_id, key, dedupe: true } : null;
-      },
+    });
+    outcome = await runIncrement(false);
+    if (!outcome) throw new Error('unreachable: runIncrement(false) never rolls back');
+  }
+  if (moderationMode === 'shadow' && outcome.createdKey) {
+    scheduleSharedDataShadow(() => scanCounterKey(key, { isModerator: subjectUser?.isModerator }), {
+      appBlockId,
+      rowKey: key,
+      surface: 'counter',
     });
   }
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    // GUC drives the shared_kv quota trigger (byte/row accounting on the anchor).
-    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
-    // Anchor row so the counters FK holds. INSERT-or-ignore: created once per key.
-    const anchor = await client.query(
-      `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
-       VALUES ($1, $2, '{}'::jsonb)
-       ON CONFLICT (key) DO NOTHING`,
-      [key, uid]
-    );
-    const createdKey = (anchor.rowCount ?? 0) > 0;
-    const rows = (
-      await client.query<{ count: string }>(
-        `INSERT INTO ${schema}.counters AS c (key, count)
-         VALUES ($1, 1)
-         ON CONFLICT (key) DO UPDATE SET count = c.count + 1
-         RETURNING c.count::text AS count`,
-        [key]
-      )
-    ).rows;
-    await client.query('COMMIT');
-    if (moderationMode === 'shadow' && createdKey) {
-      scheduleSharedDataShadow(
-        () => scanCounterKey(key, { isModerator: subjectUser?.isModerator }),
-        { appBlockId, rowKey: key, surface: 'counter' }
-      );
-    }
-    return { key, count: Number(rows[0]?.count ?? '0') };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+  return { key, count: outcome.count };
 }
 
 /**
@@ -1668,7 +1677,7 @@ export const appsModRouter = router({
  * `shared-data-moderation.ts` instead, governed by two per-app flags: off (the shipped
  * default — `data` is not read at all), shadow (scanned after the write commits, recorded,
  * never rejected — the caller schedules that from the returned `moderation`), or enforce
- * (scanned here, before the write, and rejected via `rejectSharedTextHit`). It holds
+ * (scanned here, before the write, and rejected via `refuseSharedTextHit`). It holds
  * PLAIN-JSON app state round-tripped as JSON (superjson-special types are NOT preserved),
  * and because `z.unknown()` does no validation, JSON.stringify can THROW (BigInt /
  * circular) — guarded to a clean BAD_REQUEST, never an unhandled 500. The whole
@@ -1746,7 +1755,7 @@ async function assertSharedValueSafeAndSerialize(params: {
       () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
       { appBlockId, surface: params.surface }
     );
-    await rejectSharedTextHit(scan, {
+    await refuseSharedTextHit(scan, await sharedTextBlockingHit(scan), {
       schema,
       slug,
       appBlockId,
@@ -1781,33 +1790,16 @@ async function fileSharedBlockConsequences(
     category: string;
     reason: string;
     field?: 'data' | 'counterKey';
-    /** The row the Report is about, when there is one. */
-    key?: string | null;
-    /**
-     * File at most one Report per (user, key, reason), and alert only when this call filed it. For a
-     * consequence that would otherwise repeat on every attempt at the same stored text.
-     */
-    dedupe?: boolean;
   }
 ): Promise<void> {
   const { policy } = block;
-  let alertable = true;
   if (policy === 'minor' || policy === 'poi' || policy === 'audit') {
-    if (block.dedupe && block.key) {
-      alertable = await insertAutoSharedReportDeduped(ctx.schema, {
-        key: block.key,
-        reporterUserId: ctx.uid,
-        reason: block.reason,
-      }).catch(() => true);
-    } else {
-      await insertSharedReport(ctx.schema, {
-        key: block.key ?? null,
-        reporterUserId: ctx.uid,
-        reason: block.reason,
-      }).catch(() => undefined);
-    }
+    await insertSharedReport(ctx.schema, {
+      key: null,
+      reporterUserId: ctx.uid,
+      reason: block.reason,
+    }).catch(() => undefined);
   }
-  if (!alertable) return;
   const alert =
     policy === 'minor' || policy === 'poi'
       ? { name: 'app-blocks-shared-storage-legal-block', type: 'error' }
@@ -1863,22 +1855,35 @@ async function enforceScan(
 }
 
 /**
- * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then
- * reject a hit with the SAME consequences a title/body hit has (`fileSharedBlockConsequences`) and
- * a BAD_REQUEST carrying only a generic message (never the matched term). An overflow (a blob too
- * deep, too wide or too long to read in full) is rejected too: an unread leaf must not pass by being
- * past a cap.
+ * The hit an ENFORCE scan is refused for, or `null` to let the write through.
  *
- * 🔴 A PATTERN-list hit rejects only while `user-content-pattern-enforce` is on — the same rule the
+ * 🔴 A PATTERN-list hit counts only while `user-content-pattern-enforce` is on — the same rule the
  * title/body belt follows inside `throwOnBlockedUserContent`, where a pattern hit is recorded but not
  * enforced until that flag flips. Otherwise turning this surface's enforce flag on would enforce the
  * pattern list on `data` while the same row's title is only recorded. The flag is read only when a
  * pattern hit exists, as there.
- *
- * The recording is not awaited and never throws, so it cannot change the outcome either way.
  */
-async function rejectSharedTextHit(
+async function sharedTextBlockingHit(scan: SharedTextScan): Promise<SharedTextHit | null> {
+  const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
+    ? await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE)
+    : false;
+  return blockingHit(scan, { enforcePatterns });
+}
+
+/**
+ * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then,
+ * when `hit` is set, reject it with the SAME consequences a title/body hit has
+ * (`fileSharedBlockConsequences`, attributed to the caller — the writer of the text) and a
+ * BAD_REQUEST carrying only a generic message (never the matched term). An overflow (a blob too
+ * deep, too wide or too long to read in full) is rejected too: an unread leaf must not pass by being
+ * past a cap. With `hit` null it only records.
+ *
+ * The recording is not awaited and never throws, so it cannot change the outcome either way. An
+ * enforce-mode record carries no leaf text (see `sharedDataHitRows`).
+ */
+async function refuseSharedTextHit(
   scan: SharedTextScan,
+  hit: SharedTextHit | null,
   ctx: {
     schema: string;
     slug: string;
@@ -1886,18 +1891,8 @@ async function rejectSharedTextHit(
     uid: number;
     rowKey: string;
     surface: SharedDataSurface;
-    /**
-     * Who a rejection's Report and alert are attributed to, when it is not the caller: `null` (or
-     * absent) means the caller. A failed lookup falls back to the caller — over-reporting, never
-     * silence.
-     */
-    consequenceTarget?: () => Promise<{ uid: number; key: string; dedupe: boolean } | null>;
   }
 ): Promise<void> {
-  const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
-    ? await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE)
-    : false;
-  const hit = blockingHit(scan, { enforcePatterns });
   void recordSharedDataScan(scan, {
     appBlockId: ctx.appBlockId,
     rowKey: ctx.rowKey,
@@ -1908,18 +1903,12 @@ async function rejectSharedTextHit(
   if (!hit) return;
 
   const field = ctx.surface === 'counter' ? 'counterKey' : 'data';
-  const target = ctx.consequenceTarget ? await ctx.consequenceTarget().catch(() => null) : null;
-  await fileSharedBlockConsequences(
-    { ...ctx, uid: target?.uid ?? ctx.uid },
-    {
-      policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
-      category: hit.category,
-      reason: `auto:${field}:${hit.category}`,
-      field,
-      key: target?.key ?? null,
-      dedupe: target?.dedupe ?? false,
-    }
-  );
+  await fileSharedBlockConsequences(ctx, {
+    policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
+    category: hit.category,
+    reason: `auto:${field}:${hit.category}`,
+    field,
+  });
 
   const message =
     hit.category === 'link'
@@ -1951,12 +1940,8 @@ async function insertSharedReport(
  *
  * `reporter_user_id` and `key` are both non-null on the user-report path (the
  * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to
- * the (reporter, key) pair, so it never collides with another user's report of the
- * same key. ⚠️ It does NOT look at `reason`, so a keyed AUTO report
- * (`insertAutoSharedReportDeduped`, an existing flagged counter key attributed to
- * its author) makes that author's own later user report of the key a no-op — the
- * harmless direction. The reverse must not happen, which is why the auto path has
- * its own helper rather than this one. NOTE (honest bound):
+ * the (reporter, key) pair, so it never collides with the auto-report rows
+ * (`key IS NULL`) or another user's report of the same key. NOTE (honest bound):
  * under two TRULY-simultaneous identical reports READ COMMITTED can admit both —
  * the per-(user, app) report rate limit is the hard ceiling; this collapses the
  * common repeat-click / retry case, which is the actual report-spam vector.
@@ -1972,34 +1957,6 @@ async function insertUserSharedReportDeduped(
      WHERE NOT EXISTS (
        SELECT 1 FROM ${schema}.shared_kv_reports
        WHERE reporter_user_id = $3 AND key = $2
-     )`,
-    [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
-  );
-  return (res.rowCount ?? 0) > 0;
-}
-
-/**
- * File an AUTO report row about a specific key, deduped per (reporter, key, REASON). Returns true
- * iff a NEW row was filed, so the caller alerts once per distinct finding rather than once per
- * attempt.
- *
- * 🔴 SEPARATE from `insertUserSharedReportDeduped`, whose slot is (reporter, key) alone. Sharing it
- * let a user report suppress a legal alert: an author who files one benign report on their own key
- * fills that slot, and every later auto refusal of the key would read as a duplicate and stay
- * silent. Keying on the reason also keeps an earlier `audit` finding from swallowing a later
- * `minor`/`poi` one on the same key. Same READ COMMITTED bound as the user helper.
- */
-async function insertAutoSharedReportDeduped(
-  schema: string,
-  args: { key: string; reporterUserId: number; reason: string }
-): Promise<boolean> {
-  const pool = requireAppsDb();
-  const res = await pool.query(
-    `INSERT INTO ${schema}.shared_kv_reports (id, key, reporter_user_id, reason)
-     SELECT $1, $2, $3, $4
-     WHERE NOT EXISTS (
-       SELECT 1 FROM ${schema}.shared_kv_reports
-       WHERE reporter_user_id = $3 AND key = $2 AND reason = $4
      )`,
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );

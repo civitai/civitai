@@ -5,7 +5,6 @@ import {
   SHARED_DATA_MAX_CHARS,
   SHARED_DATA_MAX_DEPTH,
   SHARED_DATA_MAX_LEAVES,
-  stripFormatChars,
 } from '../shared-data-leaves';
 
 /**
@@ -57,17 +56,15 @@ describe('collectSharedDataLeaves — what counts as a leaf', () => {
     ]);
   });
 
-  it('dedupes exact strings — first path wins, every occurrence counted (values and keys together)', () => {
+  it('dedupes exact strings — first path wins (values and keys together)', () => {
     const leaves = leavesOf({ a: 'same', b: ['same', 'same'], c: { same: 0 } });
     const same = leaves.find((l) => l.raw === 'same');
-    expect(same).toMatchObject({ path: 'a', kind: 'value', count: 4 });
+    expect(same).toEqual({ raw: 'same', path: 'a', kind: 'value' });
     expect(leaves.filter((l) => l.raw === 'same')).toHaveLength(1);
   });
 
   it('reads a bare string, and returns nothing for an absent blob or a scalar', () => {
-    expect(leavesOf('just text')).toEqual([
-      { raw: 'just text', text: 'just text', path: '', kind: 'value', count: 1 },
-    ]);
+    expect(leavesOf('just text')).toEqual([{ raw: 'just text', path: '', kind: 'value' }]);
     expect(collectSharedDataLeaves(undefined)).toEqual({ leaves: [] });
     expect(leavesOf(42)).toEqual([]);
   });
@@ -91,28 +88,15 @@ describe('collectSharedDataLeaves — what counts as a leaf', () => {
 });
 
 describe('collectSharedDataLeaves — format characters', () => {
-  it('keeps the raw leaf and hands checks a copy with every \\p{Cf} removed', () => {
-    const raw = 'lo​li ‍word⁠s﻿ ­soft';
-    const [leaf] = leavesOf({ x: raw }).filter((l) => l.kind === 'value');
-    expect(leaf.raw).toBe(raw);
-    expect(leaf.text).toBe('loli words soft');
-  });
-
-  it('also strips the invisibles that are NOT \\p{Cf}: Hangul filler, grapheme joiner, variation selectors', () => {
-    const raw = 'lo\u3164li lo\u034Fli lo\uFE0Fli lo\u{E0100}li';
-    const [leaf] = leavesOf({ x: raw }).filter((l) => l.kind === 'value');
-    expect(leaf.text).toBe('loli loli loli loli');
-  });
-
-  it('strips format characters from keys too', () => {
-    const [key] = leavesOf({ 'hid​den': 1 });
-    expect(key).toMatchObject({ raw: 'hid​den', text: 'hidden', kind: 'key' });
-  });
-
-  it('stripFormatChars leaves ordinary text and other categories alone', () => {
-    expect(stripFormatChars('plain text, émoji 🙂 and\ttabs')).toBe(
-      'plain text, émoji 🙂 and\ttabs'
-    );
+  // The walker does NOT strip invisibles: the checks do, in `classifySharedTexts` (pinned in
+  // shared-data-moderation.test.ts). The walker's job is to hand over the leaf exactly as stored.
+  it('keeps the raw leaf, invisible characters and all, for values and keys', () => {
+    const value = 'lo\u200Bli \u200Dword\u2060s\uFEFF \u00ADsoft';
+    const key = 'hid\u3164den';
+    expect(leavesOf({ [key]: value })).toEqual([
+      { raw: key, path: key, kind: 'key' },
+      { raw: value, path: key, kind: 'value' },
+    ]);
   });
 });
 
@@ -160,7 +144,7 @@ describe('collectSharedDataLeaves — caps report overflow instead of truncating
   it('duplicates do not count toward the leaf cap', () => {
     const value = Array.from({ length: SHARED_DATA_MAX_LEAVES * 3 }, () => 'repeated');
     expect(collectSharedDataLeaves(stored(value))).toEqual({
-      leaves: [expect.objectContaining({ raw: 'repeated', count: SHARED_DATA_MAX_LEAVES * 3 })],
+      leaves: [{ raw: 'repeated', path: '0', kind: 'value' }],
     });
   });
 
@@ -187,7 +171,7 @@ describe('collectSharedDataLeaves — caps report overflow instead of truncating
   it('a duplicated long string counts once toward the chars cap', () => {
     const long = 'x'.repeat(SHARED_DATA_MAX_CHARS - 10);
     expect(collectSharedDataLeaves(stored([long, long, long]))).toEqual({
-      leaves: [expect.objectContaining({ count: 3 })],
+      leaves: [{ raw: long, path: '0', kind: 'value' }],
     });
   });
 });

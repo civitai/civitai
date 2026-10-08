@@ -2523,7 +2523,7 @@ describe('shared `data` local moderation', () => {
       expect(reportReasons()).toEqual([]);
     });
 
-    it('records the rejected hit with blocked=1 and no row key (a create that never got one)', async () => {
+    it('records the rejected hit with blocked=1, no row key (a create that never got one) and NO leaf text', async () => {
       await appendData({ x: MINOR }).catch(() => undefined);
       await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
       const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
@@ -2534,8 +2534,11 @@ describe('shared `data` local moderation', () => {
           mode: 'enforce',
           rowKey: '',
           leafPath: 'x',
+          // Enforce stores the hash, matched term and metadata only — never the text.
+          leafText: '',
         })
       );
+      expect(JSON.stringify(rows)).not.toContain(MINOR);
     });
 
     it('clean `data` is written, and the scan still emits its denominator', async () => {

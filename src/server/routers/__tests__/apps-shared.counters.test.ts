@@ -294,6 +294,18 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       .filter((c) => String(c[0]).includes('shared_kv_reports'))
       .map((c) => String((c[1] as unknown[])[3]));
   }
+  // A refused increment may have opened the transaction (the creating INSERT decides whether the
+  // key is scanned), but it must leave nothing behind: no counter row, no COMMIT, a ROLLBACK.
+  function expectNoCounterWrite() {
+    const sql = mockClient.query.mock.calls.map((c) => String(c[0]));
+    expect(sql.some((q) => q.includes('.counters'))).toBe(false);
+    expect(sql).not.toContain('COMMIT');
+    expect(sql).toContain('ROLLBACK');
+  }
+  const scanEvents = () =>
+    mockLog.mock.calls.filter(
+      (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-data-moderation-scan'
+    );
   const flushImmediates = async () => {
     for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
   };
@@ -322,8 +334,7 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       code: 'BAD_REQUEST',
       message: 'Content flagged for review',
     });
-    expect(mockPool.connect).not.toHaveBeenCalled();
-    expect(mockClient.query).not.toHaveBeenCalled();
+    expectNoCounterWrite();
     expect(reportReasons()).toEqual(['auto:counterKey:minor']);
   });
 
@@ -332,7 +343,7 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     await expect(incrementSharedCounter('tok', 'playcount:lo\u200Bli')).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
-    expect(mockClient.query).not.toHaveBeenCalled();
+    expectNoCounterWrite();
   });
 
   it('enforce: a clean key increments, and the blocklist saw the key as ONE array entry', async () => {
@@ -355,84 +366,58 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       code: 'BAD_REQUEST',
       message: 'Content could not be reviewed right now. Please try again.',
     });
-    expect(mockClient.query).not.toHaveBeenCalled();
+    expectNoCounterWrite();
   });
 
-  // The key exists to EVERY reader: the anchor lookup finds its author (77, not the caller 42),
-  // and the anchor INSERT conflicts. `reportRowIsNew` is what the deduped Report INSERT reports.
-  function existingKey({ reportRowIsNew = true }: { reportRowIsNew?: boolean } = {}) {
-    mockPool.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('SELECT author_user_id FROM'))
-        return { rows: [{ author_user_id: 77 }], rowCount: 1 };
-      if (sql.includes('shared_kv_reports')) return { rows: [], rowCount: reportRowIsNew ? 1 : 0 };
-      return { rows: [], rowCount: 0 };
-    });
+  // The anchor INSERT conflicts: the key already exists, so this increment does not create it.
+  function existingKey() {
     mockClient.query.mockImplementation(async (sql: string) =>
       String(sql).includes('INTO "app_app_voting".shared_kv')
         ? { rows: [], rowCount: 0 }
         : { rows: [{ count: '3' }], rowCount: 1 }
     );
   }
-  const legalAlerts = () =>
-    mockLog.mock.calls
-      .map((c) => c[0] as { name?: string; userId?: number })
-      .filter((p) => p.name === 'app-blocks-shared-storage-legal-block');
-  const reportRows = () =>
-    mockPool.query.mock.calls
-      .filter((c) => String(c[0]).includes('shared_kv_reports'))
-      .map((c) => c[1] as unknown[]);
 
-  it('🔴 enforce: an EXISTING flagged key is still scanned — its increments are refused, so it cannot climb into getTop', async () => {
+  it('🔴 enforce: an increment of an EXISTING key is NOT scanned — keys are checked at creation only', async () => {
+    // Pre-existing keys are covered by the offline replay before the enforce flip, not here.
     setFlags({ enforce: true });
     existingKey();
-    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
+    await expect(incrementSharedCounter('tok', BAD_KEY)).resolves.toEqual({
+      key: BAD_KEY,
+      count: 3,
     });
-    expect(mockClient.query).not.toHaveBeenCalled();
+    await flushImmediates();
+    expect(mockFindBlocked).not.toHaveBeenCalled();
+    expect(scanEvents()).toEqual([]);
+    expect(reportReasons()).toEqual([]);
+    expect(allClientSql()).toContain('COMMIT');
   });
 
-  it('enforce: an existing key’s Report and alert go to its AUTHOR, with the key, looked up in THIS app', async () => {
+  it('enforce: a creating increment is rolled back, scanned with NO transaction open, then written', async () => {
+    // The anchor INSERT takes the app's quota-row lock; a blocklist read must not hold it.
     setFlags({ enforce: true });
-    existingKey();
-    await incrementSharedCounter('tok', BAD_KEY).catch(() => undefined);
-    const lookup = mockPool.query.mock.calls.find((c) =>
-      String(c[0]).includes('SELECT author_user_id FROM')
-    );
-    expect(String(lookup?.[0])).toContain(`${schemaFor('app-voting')}.shared_kv`);
-    expect(lookup?.[1]).toEqual([BAD_KEY]);
-    // [id, key, reporter, reason]
-    expect(reportRows()).toEqual([[expect.any(String), BAD_KEY, 77, 'auto:counterKey:minor']]);
-    // Deduped on the REASON too, so the author's own user report of the key (same reporter, same
-    // key, different reason) cannot occupy the slot and silence the legal alert.
-    const insert = mockPool.query.mock.calls.find((c) =>
-      String(c[0]).includes('shared_kv_reports')
-    );
-    expect(String(insert?.[0]).replace(/\s+/g, ' ')).toContain(
-      'WHERE reporter_user_id = $3 AND key = $2 AND reason = $4'
-    );
-    expect(legalAlerts()).toEqual([expect.objectContaining({ userId: 77, field: 'counterKey' })]);
-  });
-
-  it('enforce: a REPEAT refusal of the same existing key files nothing new and does not alert again', async () => {
-    setFlags({ enforce: true });
-    existingKey({ reportRowIsNew: false });
-    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
+    const order: string[] = [];
+    mockClient.query.mockImplementation(async (sql: string) => {
+      order.push(String(sql).includes('.counters') ? 'counters' : String(sql).split(/\s/)[0]);
+      return { rows: [{ count: '3' }], rowCount: 1 };
     });
-    expect(legalAlerts()).toEqual([]);
-  });
-
-  it('enforce: a failed author lookup falls back to the caller — over-reporting, never silence', async () => {
-    setFlags({ enforce: true });
-    mockPool.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('SELECT author_user_id FROM')) throw new Error('pool exhausted');
-      return { rows: [], rowCount: 1 };
+    mockFindBlocked.mockImplementation(async () => {
+      order.push('scan');
+      return [];
     });
-    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    });
-    expect(reportRows()).toEqual([[expect.any(String), null, 42, 'auto:counterKey:minor']]);
-    expect(legalAlerts()).toEqual([expect.objectContaining({ userId: 42 })]);
+    await incrementSharedCounter('tok', 'playcount:7');
+    expect(order).toEqual([
+      'BEGIN',
+      'SET',
+      'INSERT',
+      'ROLLBACK',
+      'scan',
+      'BEGIN',
+      'SET',
+      'INSERT',
+      'counters',
+      'COMMIT',
+    ]);
   });
 
   it('enforce: a NEW flagged key files the Report and legal alert against its writer', async () => {
@@ -440,7 +425,11 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });
-    expect(reportReasons()).toEqual(['auto:counterKey:minor']);
+    // [id, key, reporter, reason]: the caller, no key (the key was rolled back and never existed).
+    const reportRows = mockPool.query.mock.calls
+      .filter((c) => String(c[0]).includes('shared_kv_reports'))
+      .map((c) => c[1] as unknown[]);
+    expect(reportRows).toEqual([[expect.any(String), null, 42, 'auto:counterKey:minor']]);
     expect(
       mockLog.mock.calls.some(
         (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-storage-legal-block'
@@ -465,10 +454,7 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     });
     await flushImmediates();
     expect(mockFindBlocked).toHaveBeenCalledTimes(1);
-    const scans = mockLog.mock.calls.filter(
-      (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-data-moderation-scan'
-    );
-    expect(scans).toHaveLength(1);
+    expect(scanEvents()).toHaveLength(1);
   });
 
   it('SEAM: the subject’s moderator bit reaches the blocklist for a counter key', async () => {
@@ -480,11 +466,7 @@ describe('incrementSharedCounter — counter-key moderation', () => {
 
   it('shadow: an increment of an EXISTING key (anchor INSERT inserted nothing) is not scanned', async () => {
     setFlags({ shadow: true });
-    mockClient.query.mockImplementation(async (sql: string) =>
-      String(sql).includes('INTO "app_app_voting".shared_kv')
-        ? { rows: [], rowCount: 0 }
-        : { rows: [{ count: '3' }], rowCount: 1 }
-    );
+    existingKey();
     await expect(incrementSharedCounter('tok', BAD_KEY)).resolves.toEqual({
       key: BAD_KEY,
       count: 3,
