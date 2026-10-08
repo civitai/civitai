@@ -1286,7 +1286,7 @@ describe('SourceImageUploadMultiple — signed out', () => {
     mocks.sessionLoading = true;
     const actual = await vi.importActual<typeof ConsumerBlobUpload>('~/utils/consumer-blob-upload');
     mocks.uploadConsumerBlob.mockImplementation(actual.uploadConsumerBlob);
-    const presign = vi.fn(async () => new Response(null, { status: 401 }));
+    const presign = vi.fn<typeof fetch>(async () => new Response(null, { status: 401 }));
     vi.stubGlobal('fetch', presign);
     try {
       renderWithProviders(<PendingHarness max={3} />);

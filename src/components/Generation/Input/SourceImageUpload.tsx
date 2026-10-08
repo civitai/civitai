@@ -13,8 +13,7 @@ import {
 } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile } from '~/utils/file-utils';
-import { SIGN_IN_TO_UPLOAD_MESSAGE, uploadConsumerBlob } from '~/utils/consumer-blob-upload';
-import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
+import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
 import { getImageDimensions } from '~/utils/image-utils';
@@ -64,7 +63,6 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     const [Warning, setWarning] = useState<JSX.Element | null>(null);
     // Store drawing elements for re-editing
     const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
-    const { signedOut, requireSignIn } = useSignInToUpload();
 
     function handleWarnOnMissingAiMetadata(Warning: JSX.Element | null) {
       setWarning(Warning);
@@ -89,15 +87,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       handleDropCapture(files[0]);
     }
 
-    // A pick or drop: a signed-out user is sent to sign in instead of starting the upload.
     async function handleDropCapture(src: File | Blob | string) {
-      if (requireSignIn()) return;
-      await uploadSource(src);
-    }
-
-    async function uploadSource(src: File | Blob | string) {
-      // Reached without a gesture from a Blob value, so a signed-out user gets a message, not a window.
-      if (signedOut) return setError(SIGN_IN_TO_UPLOAD_MESSAGE);
       setLoading(true);
       setError(null);
       handleWarnOnMissingAiMetadata(null);
@@ -127,7 +117,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       if (!error || error === timeoutError) {
         if (value && typeof value === 'string' && (value as string).length > 0)
           handleUrlChange(value);
-        else if (value && value instanceof Blob) uploadSource(value);
+        else if (value && value instanceof Blob) handleDropCapture(value);
       } else if (error) {
         onChange?.(null);
       }
@@ -189,7 +179,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     }
 
     async function handleDrawingComplete(drawingBlob: Blob, elements: DrawingElement[]) {
-      if (!onDrawingComplete || requireSignIn()) return;
+      if (!onDrawingComplete) return;
 
       // Store elements for re-editing
       setDrawingLines(elements);
