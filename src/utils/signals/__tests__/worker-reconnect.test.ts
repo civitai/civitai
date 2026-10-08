@@ -16,77 +16,86 @@ class FakeConnection {
   state = 'Disconnected';
   connectionId: string | null = null;
   closeCallbacks: Callback[] = [];
-  reconnectingCallbacks: Callback[] = [];
-  reconnectedCallbacks: Callback[] = [];
+  constructor(private readonly accessTokenFactory: () => string) {}
   start = vi.fn(async () => {
-    hub.starts.push({ connection: this, at: Date.now() });
+    hub.starts.push({ connection: this, at: Date.now(), token: this.accessTokenFactory() });
     this.state = 'Connecting';
     await Promise.resolve();
     if (hub.up) {
       this.state = 'Connected';
       if (hub.dropAfterMs !== null) {
-        // A hub that completes the handshake and then closes the connection, refusing reconnection
-        // (as a server-side `OnConnectedAsync` failure does): onclose with an error, no reconnect.
-        setTimeout(() => {
-          if (this.state !== 'Connected') return;
-          this.state = 'Disconnected';
-          this.closeCallbacks.forEach((cb) => cb(new Error('server closed the connection')));
-        }, hub.dropAfterMs);
+        // A hub that completes the handshake and then closes the connection (as a server-side
+        // `OnConnectedAsync` failure does).
+        setTimeout(() => this.drop(new Error('server closed the connection')), hub.dropAfterMs);
       }
       return;
     }
+    // A failed start rejects; SignalR does not fire onclose for it.
     this.state = 'Disconnected';
     throw new Error('hub unreachable');
   });
   stop = vi.fn(async () => {
+    if (this.state === 'Disconnected') return;
     this.state = 'Disconnected';
+    // Real SignalR fires onclose (without an error) before stop() resolves.
     this.closeCallbacks.forEach((cb) => cb());
   });
-  invoke = vi.fn(async () => undefined);
+  /** The connection is lost: with no automatic reconnect configured, SignalR fires onclose. */
+  drop(error = new Error('connection lost')) {
+    if (this.state !== 'Connected') return;
+    this.state = 'Disconnected';
+    this.closeCallbacks.forEach((cb) => cb(error));
+  }
+  invoke = vi.fn(async () => {
+    if (hub.silent) return new Promise<never>(() => undefined);
+    return undefined;
+  });
   send = vi.fn(async () => undefined);
   on = vi.fn();
   onclose(cb: Callback) {
     this.closeCallbacks.push(cb);
   }
-  onreconnecting(cb: Callback) {
-    this.reconnectingCallbacks.push(cb);
-  }
-  onreconnected(cb: Callback) {
-    this.reconnectedCallbacks.push(cb);
-  }
+  // Present so an older worker script (which registers these) can still run against the fake.
+  onreconnecting = vi.fn();
+  onreconnected = vi.fn();
 }
 
 const hub = {
   up: false,
   connections: [] as FakeConnection[],
-  reconnectArg: undefined as unknown,
-  starts: [] as { connection: FakeConnection; at: number }[],
+  automaticReconnectCalls: 0,
+  starts: [] as { connection: FakeConnection; at: number; token: string }[],
   /** When set, every connection the hub accepts is closed by the server this long after. */
   dropAfterMs: null as number | null,
-  tabAnswersClosed: false,
+  /** The hub keeps the socket open but never answers an invoke. */
+  silent: false,
 };
 
 vi.mock('@microsoft/signalr', async (importOriginal) => {
   const actual = await importOriginal<typeof SignalR>();
   class HubConnectionBuilder {
-    withUrl() {
+    private accessTokenFactory: () => string = () => '';
+    withUrl(_url: string, options: { accessTokenFactory: () => string }) {
+      this.accessTokenFactory = options.accessTokenFactory;
       return this;
     }
     configureLogging() {
       return this;
     }
-    withAutomaticReconnect(arg: unknown) {
-      hub.reconnectArg = arg;
+    withAutomaticReconnect() {
+      hub.automaticReconnectCalls += 1;
       return this;
     }
     build() {
-      const connection = new FakeConnection();
+      const connection = new FakeConnection(this.accessTokenFactory);
       hub.connections.push(connection);
       return connection;
     }
   }
   return { ...actual, HubConnectionBuilder };
 });
+
+type StateMessage = { type: 'connection:state'; state: string | null };
 
 type Port = {
   postMessage: ReturnType<typeof vi.fn>;
@@ -96,18 +105,7 @@ type Port = {
 let port: Port;
 
 async function loadWorker() {
-  port = {
-    // Optionally answer 'closed' with connection:init, as every tab does (useSignalsWorker's
-    // reconnectCount effect). Off by default: most tests send their inits explicitly.
-    postMessage: vi.fn((message: { type?: string; state?: string }) => {
-      if (
-        hub.tabAnswersClosed &&
-        message?.type === 'connection:state' &&
-        message.state === 'closed'
-      )
-        void init(9);
-    }),
-  };
+  port = { postMessage: vi.fn() };
   // Without `SharedWorkerGlobalScope` the script treats `self` as its one port (the dedicated-Worker
   // fallback), which is what lets a test talk to it directly.
   vi.stubGlobal('self', port);
@@ -118,16 +116,29 @@ async function send(data: unknown) {
   await port.onmessage!({ data });
 }
 
-const init = (tokenFetchedAt = 1) =>
-  send({ type: 'connection:init', token: 'token', userId: 1, tokenFetchedAt });
+const init = (tokenFetchedAt = 1, token = 'token') =>
+  send({ type: 'connection:init', token, userId: 1, tokenFetchedAt });
 
 /** Every `start()` call across every connection the worker built, as offsets from `t0`. */
 function startTimes(t0: number, connection?: FakeConnection) {
   return hub.starts.filter((s) => !connection || s.connection === connection).map((s) => s.at - t0);
 }
 
+/** `start()` calls on `connection` after `t0` (a dropped connection is restarted, not rebuilt). */
+function startsSince(t0: number, connection: FakeConnection) {
+  return startTimes(t0, connection).filter((t) => t > 0);
+}
+
 function gaps(times: number[]) {
   return times.slice(1).map((t, i) => t - times[i]);
+}
+
+/** The connection states the worker has broadcast to its port, in order. */
+function statesSent() {
+  return port.postMessage.mock.calls
+    .map(([m]) => m as StateMessage)
+    .filter((m) => m?.type === 'connection:state')
+    .map((m) => m.state);
 }
 
 /** Advance in 100ms steps so every retry the worker schedules fires and settles. */
@@ -143,10 +154,10 @@ beforeEach(async () => {
   vi.resetModules();
   hub.up = false;
   hub.connections = [];
-  hub.reconnectArg = undefined;
+  hub.automaticReconnectCalls = 0;
   hub.starts = [];
   hub.dropAfterMs = null;
-  hub.tabAnswersClosed = false;
+  hub.silent = false;
   await loadWorker();
 });
 
@@ -161,6 +172,17 @@ async function startOutage(random: number) {
   const t0 = Date.now();
   await init();
   return t0;
+}
+
+/** Connect, and stay up long enough to count as stable. */
+async function connectStably(random = 1) {
+  vi.spyOn(Math, 'random').mockReturnValue(random);
+  hub.up = true;
+  await init();
+  await runFor(61_000);
+  const connection = hub.connections.at(-1)!;
+  expect(connection.state).toBe('Connected');
+  return connection;
 }
 
 describe('signals worker: hub start() retry', () => {
@@ -191,27 +213,6 @@ describe('signals worker: hub start() retry', () => {
     expect(startTimes(t0)).toEqual([0]);
   });
 
-  it('resets the schedule after a successful connect', async () => {
-    const t0 = await startOutage(1);
-    await runFor(3 * 60_000);
-    expect(startTimes(t0).length).toBeGreaterThan(4);
-
-    hub.up = true;
-    await runFor(3 * 60_000); // the next scheduled retry connects
-    const connection = hub.connections.at(-1)!;
-    expect(connection.state).toBe('Connected');
-    await runFor(61_000); // stays up long enough to count as stable
-
-    // The hub goes away again: a fresh outage starts from the 3s step, not from the cap.
-    hub.up = false;
-    await connection.stop(); // fires onclose → the worker drops the connection
-    const t1 = Date.now();
-    await init(3);
-    await runFor(30_000);
-    const fresh = startTimes(t1, hub.connections.at(-1)!);
-    expect(fresh.slice(0, 3)).toEqual([0, 3_000, 9_000]);
-  });
-
   // Invariant guard (manual reconnect bypassed the 5s retry before this change too): a forced
   // reconnect must keep bypassing the now much longer backoff.
   it('debug:reconnect bypasses the backoff', async () => {
@@ -226,91 +227,6 @@ describe('signals worker: hub start() retry', () => {
     expect(startTimes(t0).length).toBe(before + 1);
     expect(startTimes(t1, hub.connections.at(-1)!)).toEqual([0]);
   });
-});
-
-describe('signals worker: SignalR automatic reconnect', () => {
-  it('uses a jittered retry policy rather than a fixed delay array', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(1);
-    hub.up = true;
-    await init();
-    await runFor(61_000); // a stable connection, so no earlier failures offset the schedule
-    const policy = hub.reconnectArg as SignalR.IRetryPolicy;
-    expect(Array.isArray(policy)).toBe(false);
-    const delay = (previousRetryCount: number, elapsedMilliseconds = 0) =>
-      policy.nextRetryDelayInMilliseconds({
-        previousRetryCount,
-        elapsedMilliseconds,
-        retryReason: new Error('x'),
-      });
-
-    expect([0, 1, 2, 6, 20].map((n) => delay(n))).toEqual([3_000, 6_000, 12_000, 180_000, 180_000]);
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    // The first reconnect is no longer an instant, fleet-synchronised 0ms.
-    expect(delay(0)).toBe(500);
-    // Gives up after 5 minutes, handing over to the start() retry below.
-    expect(delay(9, 5 * 60_000)).toBeNull();
-  });
-
-  it('after giving up, the start() retry continues at the reconnect cadence instead of restarting it', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(1);
-    hub.up = true;
-    await init();
-    const connection = hub.connections[0];
-    expect(connection.state).toBe('Connected');
-    await runFor(61_000); // a stable connection: the backoff starts this outage from zero
-
-    // The hub dies; SignalR walks the policy through 7 failed attempts, and the 8th call — past the
-    // 5 minute limit — gives up and closes the connection.
-    hub.up = false;
-    const policy = hub.reconnectArg as SignalR.IRetryPolicy;
-    connection.reconnectingCallbacks.forEach((cb) => cb(new Error('lost')));
-    const delays = [0, 1, 2, 3, 4, 5, 6, 7].map((n) =>
-      policy.nextRetryDelayInMilliseconds({
-        previousRetryCount: n,
-        elapsedMilliseconds: n * 45_000,
-        retryReason: new Error('lost'),
-      })
-    );
-    expect(delays.at(-1)).toBeNull();
-    connection.state = 'Disconnected';
-    // Real SignalR passes NO error here: `_reconnect` ends with `_completeClose()`.
-    connection.closeCallbacks.forEach((cb) => cb());
-
-    // Every tab answers 'closed' with connection:init.
-    const t1 = Date.now();
-    await init(2);
-    await init(3);
-    await runFor(60_000);
-    // Previously: an immediate start() per init. Now the first attempt waits its turn on the
-    // schedule, 7 failures in → the 180s step.
-    expect(hub.connections.at(-1)!.start).not.toHaveBeenCalled();
-    await runFor(130_000);
-    expect(startTimes(t1, hub.connections.at(-1)!)).toEqual([180_000]);
-  });
-
-  it('debug:reconnect during an automatic reconnect does not inherit its failure count', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(1);
-    hub.up = true;
-    await init();
-    const connection = hub.connections[0];
-    await runFor(61_000);
-    hub.up = false;
-    const policy = hub.reconnectArg as SignalR.IRetryPolicy;
-    connection.reconnectingCallbacks.forEach((cb) => cb(new Error('lost')));
-    for (const n of [0, 1, 2, 3])
-      policy.nextRetryDelayInMilliseconds({
-        previousRetryCount: n,
-        elapsedMilliseconds: n * 10_000,
-        retryReason: new Error('lost'),
-      });
-
-    // `stop()` mid-reconnect fires onclose too; that close must not carry the 4 failures back.
-    await send({ type: 'debug:reconnect' });
-    const t1 = Date.now();
-    await init(2);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(startTimes(t1, hub.connections.at(-1)!)).toEqual([0]);
-  });
 
   it('a user switch during an outage connects the new user immediately', async () => {
     await startOutage(1);
@@ -322,12 +238,88 @@ describe('signals worker: SignalR automatic reconnect', () => {
   });
 });
 
+describe('signals worker: a lost connection', () => {
+  it('uses no SignalR automatic reconnect: the backoff retry is the only mechanism', async () => {
+    await connectStably();
+    expect(hub.automaticReconnectCalls).toBe(0);
+  });
+
+  it("reports 'reconnecting' for the whole outage, then 'connected' — never 'closed'", async () => {
+    const connection = await connectStably();
+    port.postMessage.mockClear();
+    hub.up = false;
+    const t1 = Date.now();
+    connection.drop();
+    await runFor(20 * 60_000); // a long outage: many failed attempts
+    expect(startsSince(t1, connection).length).toBeGreaterThan(5);
+    expect(statesSent()).toEqual(['reconnecting']);
+
+    hub.up = true;
+    await runFor(4 * 60_000);
+    expect(statesSent()).toEqual(['reconnecting', 'connected']);
+  });
+
+  it('retries the same connection with the token the worker holds — no tab involvement', async () => {
+    const connection = await connectStably();
+    await init(50, 'newer'); // another tab's newer token reached the worker while connected
+    hub.up = false;
+    const t1 = Date.now();
+    connection.drop();
+    await runFor(10_000);
+    expect(hub.connections).toHaveLength(1);
+    const retries = hub.starts.filter((s) => s.at > t1);
+    expect(retries.map((s) => [s.at - t1, s.token])).toEqual([
+      [3_000, 'newer'],
+      [9_000, 'newer'],
+    ]);
+  });
+
+  it('the first retry after a stable connection drops is jittered, not instant', async () => {
+    const connection = await connectStably(0);
+    hub.up = false;
+    const t1 = Date.now();
+    connection.drop();
+    await runFor(1_200);
+    // random() = 0 → the 500ms floor; random() = 1 gives 3s (above). Never a fleet-synchronised 0.
+    expect(startsSince(t1, connection)).toEqual([500, 1_000]);
+  });
+
+  it('a stable connection resets the schedule: a later drop starts from the first step', async () => {
+    const t0 = await startOutage(1);
+    await runFor(3 * 60_000);
+    expect(startTimes(t0).length).toBeGreaterThan(4);
+
+    hub.up = true;
+    await runFor(3 * 60_000); // the next scheduled retry connects
+    const connection = hub.connections.at(-1)!;
+    expect(connection.state).toBe('Connected');
+    await runFor(61_000); // stays up long enough to count as stable
+
+    hub.up = false;
+    const t1 = Date.now();
+    connection.drop();
+    await runFor(30_000);
+    expect(startsSince(t1, connection).slice(0, 3)).toEqual([3_000, 9_000, 21_000]);
+  });
+
+  it('a stale (zombie) connection is dropped and retried on the backoff', async () => {
+    const connection = await connectStably();
+    hub.silent = true; // socket open, nothing answers
+    port.postMessage.mockClear();
+    const t1 = Date.now();
+    await runFor(5 * 60_000);
+    expect(statesSent()).toContain('reconnecting');
+    expect(statesSent()).not.toContain('closed');
+    // Still up as far as `start()` is concerned, so the retry reconnects the same object.
+    expect(startsSince(t1, connection).length).toBeGreaterThan(0);
+  });
+});
+
 describe('signals worker: connections that drop before they are stable', () => {
   it('a hub that accepts and then closes every connection still backs off', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(1);
     hub.up = true;
     hub.dropAfterMs = 1_000;
-    hub.tabAnswersClosed = true;
     const t0 = Date.now();
     await init();
     await runFor(8 * 60_000);
@@ -338,40 +330,38 @@ describe('signals worker: connections that drop before they are stable', () => {
     ]);
   });
 
-  it("SignalR's automatic reconnect also escalates across short-lived connections", async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(1);
-    hub.up = true;
-    await init();
-    const connection = hub.connections[0];
-    const policy = hub.reconnectArg as SignalR.IRetryPolicy;
-    const firstDelayAfterDrop = () =>
-      policy.nextRetryDelayInMilliseconds({
-        previousRetryCount: 0,
-        elapsedMilliseconds: 0,
-        retryReason: new Error('lost'),
-      });
-    const reconnected = () => connection.reconnectedCallbacks.forEach((cb) => cb('id'));
-
-    await runFor(10_000);
-    expect(firstDelayAfterDrop()).toBe(6_000); // dropped after 10s: one failure already
-    reconnected();
-    await runFor(10_000);
-    expect(firstDelayAfterDrop()).toBe(12_000); // and again
-    reconnected();
-    await runFor(61_000);
-    expect(firstDelayAfterDrop()).toBe(3_000); // stable for a minute: back to the first step
-  });
-
   it('debug:reconnect on a connection younger than a minute still bypasses the backoff', async () => {
     hub.up = true;
     await init();
     await runFor(10_000);
-    // Dropping a not-yet-stable connection must not count against the forced reconnect.
     await send({ type: 'debug:reconnect' });
     const t1 = Date.now();
     await init(2);
     await vi.advanceTimersByTimeAsync(0);
     expect(startTimes(t1, hub.connections.at(-1)!)).toEqual([0]);
+  });
+
+  it("a forced reconnect cancels the old connection's stability timer", async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    hub.up = true;
+    await init();
+    await runFor(10_000); // young connection: its 60s stability timer is pending
+    hub.up = false;
+    await send({ type: 'debug:reconnect' });
+    const t1 = Date.now();
+    await init(2);
+    await runFor(3 * 60_000);
+    // The old timer firing mid-outage would reset the backoff and cancel the pending retry.
+    expect(startTimes(t1, hub.connections.at(-1)!)).toEqual([
+      0, 3_000, 9_000, 21_000, 45_000, 93_000,
+    ]);
+  });
+
+  it('debug:reconnect reports closed (so tabs re-init), not a drop', async () => {
+    await connectStably();
+    port.postMessage.mockClear();
+    await send({ type: 'debug:reconnect' });
+    expect(statesSent()).toEqual(['closed']);
   });
 
   it('a tab loading while a not-yet-stable connection is up schedules no attempt', async () => {
@@ -389,31 +379,5 @@ describe('signals worker: connections that drop before they are stable', () => {
     await send({ type: 'debug:dump' });
     expect(dumps[0].connectRetry?.failures).toBeGreaterThan(0);
     expect(dumps[0].connectRetry?.nextAttemptAt).toBeNull();
-  });
-
-  it('a successful automatic reconnect clears its retry count', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(1);
-    hub.up = true;
-    await init();
-    const connection = hub.connections[0];
-    await runFor(61_000);
-    const policy = hub.reconnectArg as SignalR.IRetryPolicy;
-    for (const n of [0, 1, 2])
-      policy.nextRetryDelayInMilliseconds({
-        previousRetryCount: n,
-        elapsedMilliseconds: n * 10_000,
-        retryReason: new Error('lost'),
-      });
-    connection.reconnectedCallbacks.forEach((cb) => cb('id')); // reconnected on the 3rd try
-    await runFor(61_000); // and stayed up
-
-    // A later close that skips the reconnect loop (server Close, reconnect not allowed) must not
-    // replay those 2 retries as failures.
-    connection.state = 'Disconnected';
-    connection.closeCallbacks.forEach((cb) => cb(new Error('server closed the connection')));
-    const t1 = Date.now();
-    await init(2);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(startTimes(t1, hub.connections.at(-1)!)).toEqual([0]);
   });
 });

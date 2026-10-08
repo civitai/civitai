@@ -1,14 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BackoffRetry,
-  createHubReconnectPolicy,
   getBackoffDelay,
-  getHubReconnectDelay,
   HUB_CONNECT_BACKOFF,
-  HUB_RECONNECT_GIVE_UP_MS,
   TOKEN_FETCH_RETRY_BACKOFF,
   TOKEN_REFRESH_BACKOFF,
-  TOKEN_REVALIDATE_BACKOFF,
 } from '~/utils/signals/backoff';
 
 // Fixture bounds chosen so no ceiling equals `minMs` or another ceiling, and the cap is not a
@@ -49,54 +45,8 @@ describe('getBackoffDelay', () => {
     ['hub connect', HUB_CONNECT_BACKOFF, [3_000, 6_000, 12_000, 24_000, 48_000, 96_000, 180_000]],
     ['token refresh', TOKEN_REFRESH_BACKOFF, [30_000, 60_000, 120_000, 240_000, 480_000, 600_000]],
     ['token fetch retry', TOKEN_FETCH_RETRY_BACKOFF, [4_000, 8_000, 16_000, 32_000, 60_000]],
-    ['token revalidate', TOKEN_REVALIDATE_BACKOFF, [600_000, 1_200_000, 2_400_000, 3_600_000]],
   ])('%s schedule ceilings', (_name, config, expected) => {
     expect(expected.map((_, n) => getBackoffDelay(n, config, fixed(1)))).toEqual(expected);
-  });
-});
-
-describe('getHubReconnectDelay', () => {
-  it('starts jittered rather than at a fleet-synchronised 0', () => {
-    const at = (r: number) =>
-      getHubReconnectDelay({ previousRetryCount: 0, elapsedMilliseconds: 0 }, 0, fixed(r));
-    expect([at(0), at(1)]).toEqual([500, 3_000]);
-  });
-
-  it('gives up once it has been retrying for 5 minutes, and not before', () => {
-    const at = (elapsedMilliseconds: number) =>
-      getHubReconnectDelay({ previousRetryCount: 6, elapsedMilliseconds }, 0, fixed(1));
-    expect(at(HUB_RECONNECT_GIVE_UP_MS - 1)).toBe(180_000);
-    expect(at(HUB_RECONNECT_GIVE_UP_MS)).toBeNull();
-  });
-
-  it('starts further up the schedule by the failures counted before the reconnect began', () => {
-    const at = (previousRetryCount: number, priorFailures: number) =>
-      getHubReconnectDelay({ previousRetryCount, elapsedMilliseconds: 0 }, priorFailures, fixed(1));
-    expect([at(0, 0), at(0, 2), at(1, 2), at(0, 50)]).toEqual([3_000, 12_000, 24_000, 180_000]);
-  });
-
-  it('createHubReconnectPolicy calls its observer BEFORE reading the prior failures', () => {
-    const calls: string[] = [];
-    let prior = 0;
-    const policy = createHubReconnectPolicy({
-      onRetry: ({ previousRetryCount }) => {
-        calls.push(`retry ${previousRetryCount}`);
-        prior = 2; // e.g. the observer just counted a connection that dropped before it was stable
-      },
-      priorFailures: () => {
-        calls.push('prior');
-        return prior;
-      },
-    });
-    vi.spyOn(Math, 'random').mockReturnValue(1);
-    const delay = policy.nextRetryDelayInMilliseconds({
-      previousRetryCount: 0,
-      elapsedMilliseconds: 0,
-      retryReason: new Error('x'),
-    });
-    vi.restoreAllMocks();
-    expect(calls).toEqual(['retry 0', 'prior']);
-    expect(delay).toBe(12_000);
   });
 });
 
@@ -156,22 +106,15 @@ describe('BackoffRetry', () => {
       CONFIG,
       fixed(1)
     );
-    retry.countFailures(3); // e.g. the automatic reconnect already failed 3 times
-    retry.request();
-    expect(runs).toEqual([]);
+    retry.request(); // fails at 0
     fail = false;
-    vi.advanceTimersByTime(4_000); // the 3rd step: ceiling 4s
-    expect(runs).toEqual([4_000]);
-  });
-
-  it('countFailures adds to the count without scheduling an attempt', () => {
-    const { retry, runs } = failingRetry();
-    retry.countFailures(2);
-    retry.countFailures();
-    retry.countFailures(-4); // ignored: never moves the count backwards
-    expect(retry.getStatus()).toEqual({ failures: 3, nextAttemptAt: null });
-    vi.advanceTimersByTime(60_000);
-    expect(runs).toEqual([]);
+    vi.advanceTimersByTime(1_000); // the retry at 1s works, but nobody has called succeeded() yet
+    expect(runs).toEqual([0, 1_000]);
+    // e.g. a connection that is up but not yet stable: the failure count still stands
+    retry.request();
+    expect(runs).toEqual([0, 1_000]);
+    vi.advanceTimersByTime(1_000); // the 1st step again: ceiling 1s
+    expect(runs).toEqual([0, 1_000, 2_000]);
   });
 
   it('succeeded() resets the schedule to the first step', () => {

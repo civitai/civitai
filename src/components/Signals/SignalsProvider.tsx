@@ -103,7 +103,7 @@ export const useSignalTopic = (topic: TopicString | undefined, notify?: boolean)
 };
 
 // On a signal-hub disruption, ALL connected clients drop and reconnect within
-// a few seconds (the worker's reconnect policy makes its first attempt within
+// a few seconds (the worker's reconnect backoff makes its first attempt within
 // 0.5-3s, jittered — see `~/utils/signals/backoff`). Previously each reconnect invalidated `buzz.getBuzzAccount` and
 // `orchestrator.queryGeneratedImages` after only an ~8-15s debounce, so a
 // fleet-wide reconnect produced tens of thousands of synchronized refetches in

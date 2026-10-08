@@ -18,15 +18,14 @@ import {
   HUB_STABLE_CONNECTION_MS,
   TOKEN_FETCH_RETRY_BACKOFF,
   TOKEN_REFRESH_BACKOFF,
-  TOKEN_REVALIDATE_BACKOFF,
 } from './backoff';
 import { EventEmitter, teardownSignalWorker } from './utils';
 
 const WORKER_PING_TIMEOUT_MS = 3000;
 const STALE_SCRIPT_MAX_RETRIES = 3;
 const STALE_SCRIPT_RETRY_DELAY_MS = 60_000;
-// The token re-mint below already retries for as long as the hub stays unreachable, so the query's
-// own retries only cover a one-off blip. Every retry is a `signals.getToken` against an API that, in
+// A tab left without a token keeps re-fetching on the backoff below, so the query's own retries only
+// cover a one-off blip. Every retry is a `signals.getToken` against an API that, in
 // an outage, is often the thing already saturated.
 const TOKEN_FETCH_MAX_RETRIES = 2;
 
@@ -88,14 +87,6 @@ export function useSignalsWorker(options?: {
   const accessToken = tokenQuery.data?.accessToken;
   // Re-mints since the hub last accepted a connection; picks the next step of the backoff below.
   const tokenRefreshAttemptRef = useRef(0);
-  // The last real token this tab was given, for this user. A re-mint that comes back degraded (`{}`)
-  // must not take the tab's token away: the token never expires, so the tab keeps handing this one to
-  // the worker — on every 'closed', and to a replacement worker — and stays on the slow re-mint
-  // schedule rather than the no-token one.
-  const lastTokenRef = useRef<{ token: string; fetchedAt: number; userId: number }>();
-  if (accessToken && userId)
-    lastTokenRef.current = { token: accessToken, fetchedAt: tokenQuery.dataUpdatedAt, userId };
-  const workerToken = lastTokenRef.current?.userId === userId ? lastTokenRef.current : undefined;
 
   const emitterRef = useRef(new EventEmitter());
   const debugStateRef = useRef<SignalsWorkerDebugState>();
@@ -202,25 +193,23 @@ export function useSignalsWorker(options?: {
       } else if (data.type === 'connection:state') {
         setConnection(data.state ?? 'closed');
         onStateChange?.({ state: data.state, message: data.message });
-        // The token is NOT re-minted here: it carries no expiry, so the one this tab holds is retried
-        // first, and the backed-off refresh below replaces it only if the hub keeps refusing.
+        // The token is NOT re-minted here: signals tokens carry no expiry, so the one this tab holds
+        // is handed back to the worker as is. (A lost connection never even reaches 'closed': the
+        // worker reports 'reconnecting' and retries with the token it already has.)
         if (data.state === 'closed') setReconnectCount((c) => c + 1);
       }
     };
   }, [worker]);
 
-  // While the connection stays closed, re-fetch the token on a jittered backoff. A tab that has
-  // never held a token (the degraded `{}` response, or a failed fetch) never opens a connection and
-  // gets no further 'closed', so this is the only way it recovers (it used to need a reload): ~5-30s
-  // after the close, doubling to a 10 min ceiling. Once a tab has had a token, the worker keeps
-  // retrying with it, so it is re-minted only as a slow safety net (TOKEN_REVALIDATE_BACKOFF) — even
-  // if a re-mint comes back `{}`. Re-minting on
-  // every 'closed' instead, in every tab at once, multiplied `signals.getToken` ~50x in one outage.
-  // Each settled fetch re-arms the timer with the next step. Deliberately keyed on the query's own
-  // state only — anything that re-rendered more often would keep pushing the timer back and the
-  // refresh would never fire.
+  // A tab WITHOUT a token (the degraded `{}` response, or a failed fetch) never opens a connection
+  // and gets no further state change, so it re-fetches on a jittered backoff — ~5-30s, doubling to a
+  // 10 min ceiling — instead of waiting for a reload as it used to. A tab that holds a token never
+  // re-mints it: it does not expire. Re-minting on every 'closed', in every tab at once, multiplied
+  // `signals.getToken` ~50x in one outage. Each settled fetch re-arms the timer with the next step.
+  // Deliberately keyed on the query's own state only — anything that re-rendered more often would
+  // keep pushing the timer back and the refresh would never fire.
   const tokenIsFetching = tokenQuery.isFetching;
-  const tokenInPlay = !!workerToken;
+  const hasToken = !!accessToken;
   useEffect(() => {
     if (connection === 'connected') {
       // Like the worker's own backoff, reset only once the connection has proved stable: a hub that
@@ -230,34 +219,31 @@ export function useSignalsWorker(options?: {
       }, HUB_STABLE_CONNECTION_MS);
       return () => clearTimeout(timer);
     }
-    if (!userId || connection !== 'closed' || tokenIsFetching) return;
-    const config = tokenInPlay ? TOKEN_REVALIDATE_BACKOFF : TOKEN_REFRESH_BACKOFF;
+    if (!userId || hasToken || connection !== 'closed' || tokenIsFetching) return;
     const timer = setTimeout(() => {
       tokenRefreshAttemptRef.current += 1;
       queryUtils.signals.getToken.invalidate();
-    }, getBackoffDelay(tokenRefreshAttemptRef.current, config));
+    }, getBackoffDelay(tokenRefreshAttemptRef.current, TOKEN_REFRESH_BACKOFF));
     return () => clearTimeout(timer);
   }, [
     userId,
     connection,
-    tokenInPlay,
+    hasToken,
     tokenIsFetching,
     tokenQuery.dataUpdatedAt,
     tokenQuery.errorUpdatedAt,
   ]);
 
   // init
-  const workerTokenValue = workerToken?.token;
-  const workerTokenFetchedAt = workerToken?.fetchedAt;
   useEffect(() => {
-    if (worker && ready && workerTokenValue && workerTokenFetchedAt !== undefined && userId)
+    if (worker && ready && accessToken && userId)
       worker.port.postMessage({
         type: 'connection:init',
-        token: workerTokenValue,
+        token: accessToken,
         userId,
-        tokenFetchedAt: workerTokenFetchedAt,
+        tokenFetchedAt: tokenQuery.dataUpdatedAt,
       });
-  }, [worker, workerTokenValue, workerTokenFetchedAt, ready, userId, reconnectCount]);
+  }, [worker, accessToken, tokenQuery.dataUpdatedAt, ready, userId, reconnectCount]);
 
   const workerMethods = useMemo(() => {
     function send(target: string, args: Record<string, unknown>) {
