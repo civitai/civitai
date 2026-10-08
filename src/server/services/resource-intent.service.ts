@@ -8,7 +8,7 @@ import {
   RESOURCE_INTENT_DEFAULT_LIMIT,
   RESOURCE_INTENT_SPEC_HASH,
   QUESTION_SPEC_VERSION,
-  STAGE3_MAX_RANKED,
+  RESOURCE_INTENT_HYBRID_HEAD_MODELS,
   resourceIntentResponseSchema,
   type ResourceIntentInput,
   type ResourceIntentResponse,
@@ -16,7 +16,7 @@ import {
 } from '~/server/schema/resource-intent.schema';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { askJev, JEV_TIMEOUT_MS, JevError, type JevChoiceQuestion } from '~/server/services/ai/jev';
+import { askJev, JEV_TIMEOUT_MS, JevError } from '~/server/services/ai/jev';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import {
   findResourceIntentCandidates,
@@ -29,11 +29,20 @@ import {
   compileCriteria,
   parseResourceIntentStage1Answers,
 } from '~/server/services/resource-intent-stage1';
+import {
+  buildStage3Question,
+  buildStage3State,
+  combineStage3Answers,
+  mergeHybrid,
+  RESOURCE_INTENT_STAGE3_SPEC_HASH,
+  stage3Orders,
+} from '~/server/services/resource-intent-stage3';
 import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-maturity';
 
 /**
  * Resource-intent primitive — cache → Jev stage 1 (intent/criteria) →
- * deterministic matcher → Jev stage 3 (Choice over the shortlist) → suggestions.
+ * deterministic matcher → Jev stage 3 (two Choice calls over the shortlist,
+ * averaged) → HYBRID_10 merge with the matcher's `basePool` → suggestions.
  *
  * Fail-closed, with ONE documented exception. A Jev error in any stage, a
  * stage-3 parse error, a hydration error, and a matcher error OTHER than the
@@ -49,15 +58,17 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * writing a new one. If you are about to reword it a fourth time: enumerate the
  * `catch` sites, do not generalise over them, and note the enumeration above
  * names the DEGRADING ones only — several other catches here swallow without
- * touching the degraded contract. Jev
- * output can only reorder/drop within the gate-passing shortlist; every gate
- * (availability, maturity, coverage, baseModel, celebrity) is applied in
- * deterministic code BEFORE Jev ranks, and the stage-3 option list contains
- * exactly the shortlisted keys, so an unknown version can never be added.
+ * touching the degraded contract. Jev output only orders the stage-3 head. Every
+ * suggestion, head or `basePool` fill, passed every gate (availability, maturity,
+ * coverage, baseModel, celebrity) in deterministic code, and the stage-3 options are
+ * positional keys into the shortlist, so Jev can never add a version.
  *
- * `none` is a first-class answer: when stage 1's role argmax is `none` (or
- * stage 3 picks `none`), the response carries empty suggestions without being
- * degraded — the model judged the prompt needs no resource.
+ * `none` is a first-class answer at stage 1: when the role argmax is `none`, the
+ * response carries empty suggestions without being degraded — the model judged the
+ * prompt needs no resource. Stage 3's `none` is reported (`stage3NoneProbability`)
+ * and never empties the list: the arm screen measured that rule costing hit@10.
+ *
+ * Suggestions are `mergeHybrid`'s HYBRID_10 list (`resource-intent-stage3.ts`).
  *
  * A label-read failure is NOT a degrade: the matcher falls back to the seed (popularity)
  * order and reports it, and the response carries `insightFallback: true`
@@ -89,9 +100,9 @@ const DEGRADED_CACHE_TTL_SECONDS = 60;
  *
  * Why not just reuse `DEGRADED_CACHE_TTL_SECONDS`: the two paths look alike on
  * response QUALITY and are asymmetric on RETRY COST, which is what a TTL actually
- * buys. The label read sits BETWEEN the two Jev round trips, so an
+ * buys. The label read sits BETWEEN stage 1 and stage 3, so an
  * `insightFallback` miss has already paid stage 1 and goes on to pay stage 3 in
- * full — two BILLED vendor calls, plus the Meilisearch query and hydration. The
+ * full — three BILLED vendor calls, plus up to two Meilisearch queries and hydration. The
  * dominant degraded case is stage-1 Jev throwing, which costs ONE call and that
  * one abandoned, with no stage 3, no search and no hydration. The benefit axis
  * inverts too: a degraded response is useless, so retrying it fast is worth
@@ -179,50 +190,13 @@ export function resourceIntentCacheKey(input: {
         String(input.browsingLevel),
         String(input.cap),
         RESOURCE_INTENT_SPEC_HASH,
+        RESOURCE_INTENT_STAGE3_SPEC_HASH,
       ].join('|')
     )
     .digest('hex');
   // `as const` keeps the template-literal type: the redis client is typed over
   // the registered REDIS_KEYS templates and rejects a plain `string`.
   return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
-}
-
-export function buildStage3Question(shortlist: ResourceIntentShortlistEntry[]): JevChoiceQuestion {
-  // Jev Choice caps at 255 options and `none` always rides along, so the ranked
-  // list leaves it room (the default shortlist of 50 never hits this).
-  const ranked = shortlist.slice(0, STAGE3_MAX_RANKED);
-  return {
-    id: 'resourceVersion',
-    type: 'choice',
-    prompt: [
-      'Given the prompt, which of these community resources (if any) fits best? Reply with the option key of the best match, or "none" if no listed resource fits.',
-      ...ranked.map(
-        (entry, i) =>
-          `${i}: ${entry.modelName} — ${entry.versionName} (${entry.modelType}, ${entry.baseModel})`
-      ),
-    ].join('\n'),
-    options: [...ranked.map((_, i) => String(i)), 'none'],
-  };
-}
-
-/**
- * Tiebreaks on the incoming index, so an indifferent distribution preserves the
- * matcher's order. `applyInsightRanking` tiebreaks the same way on the seed
- * order; the two stages together are what makes the whole pipeline's order
- * deterministic, so changing either tiebreak in isolation breaks that claim for
- * one stage only.
- */
-function reorderShortlistByDistribution(
-  shortlist: ResourceIntentShortlistEntry[],
-  distribution: Record<string, number>
-): ResourceIntentShortlistEntry[] {
-  return shortlist
-    .map((entry, index) => ({ entry, index, probability: distribution[String(index)] ?? 0 }))
-    .sort((a, b) => {
-      if (a.probability !== b.probability) return b.probability - a.probability;
-      return a.index - b.index;
-    })
-    .map(({ entry }) => entry);
 }
 
 async function hydrateSuggestions(
@@ -273,6 +247,7 @@ type ShadowEvent = {
   baseModel: string;
   browsingLevel: number;
   specHash: string;
+  stage3SpecHash: string;
   specVersion: number;
   criteriaVersion: number;
   model: string;
@@ -289,6 +264,8 @@ type ShadowEvent = {
   shortlistCount: number;
   suggestionIds: number[];
   noneProbability: number;
+  stage1NoneProbability: number | null;
+  stage3NoneProbability: number | null;
 };
 
 async function writeShadowEvent(event: ShadowEvent): Promise<void> {
@@ -380,12 +357,10 @@ export async function getResourceIntent(
       const criteria = compileCriteria(intent, baseModel);
 
       let suggestions: ResourceIntentSuggestion[] = [];
-      let noneProbability: number | null = intent.role.distribution['none'] ?? null;
+      const stage1NoneProbability = intent.role.distribution['none'] ?? null;
+      let stage3NoneProbability: number | null = null;
 
-      if (criteria.role === 'none') {
-        // First-class none: the model judged the prompt needs no resource.
-        suggestions = [];
-      } else {
+      if (criteria.role !== 'none') {
         const matched = await findResourceIntentCandidates(criteria, {
           browsingLevel: ctx.browsingLevel,
           coverage,
@@ -394,25 +369,36 @@ export async function getResourceIntent(
         const shortlist = matched.entries;
         insightFallback = matched.insightFallback;
         shortlistCount = shortlist.length;
+        let head: ResourceIntentShortlistEntry[] = [];
         if (shortlist.length > 0) {
-          const stage3 = await askJev(
-            { state: { prompt: input.prompt }, questions: [buildStage3Question(shortlist)] },
-            { timeoutMs: JEV_TIMEOUT_MS }
+          const orders = stage3Orders(shortlist, matched.pool);
+          const state = buildStage3State(input.prompt, criteria);
+          const stage3 = await Promise.all(
+            orders.map((order) =>
+              askJev(
+                { state, questions: [buildStage3Question(order.map((i) => shortlist[i]))] },
+                { timeoutMs: JEV_TIMEOUT_MS }
+              )
+            )
           );
-          const stage3Answer = stage3.answers[0];
-          if (stage3Answer?.type !== 'choice') {
-            degradedReason = 'jev_stage3_shape';
-            throw new Error('stage-3 answer did not match the question spec');
-          }
-          noneProbability = stage3Answer.distribution['none'] ?? 0;
-          if (stage3Answer.value === 'none') {
-            // Stage 3's argmax says nothing on the shortlist fits.
-            suggestions = [];
-          } else {
-            const ordered = reorderShortlistByDistribution(shortlist, stage3Answer.distribution);
-            suggestions = await hydrateSuggestions(ordered, ctx.browsingLevel);
-          }
+          const distributions = stage3.map(({ answers: [answer] }) => {
+            if (answer?.type !== 'choice') {
+              degradedReason = 'jev_stage3_shape';
+              throw new Error('stage-3 answer did not match the question spec');
+            }
+            return answer.distribution;
+          });
+          const combined = combineStage3Answers(shortlist.length, orders, distributions);
+          stage3NoneProbability = combined.noneProbability;
+          head = combined.order.map((i) => shortlist[i]);
         }
+        const ranked = mergeHybrid(
+          head,
+          matched.basePool,
+          Math.min(RESOURCE_INTENT_HYBRID_HEAD_MODELS, cap),
+          cap
+        );
+        suggestions = await hydrateSuggestions(ranked, ctx.browsingLevel);
       }
 
       response = {
@@ -421,7 +407,9 @@ export async function getResourceIntent(
         intent,
         criteria,
         suggestions,
-        noneProbability,
+        noneProbability: stage3NoneProbability ?? stage1NoneProbability,
+        stage1NoneProbability,
+        stage3NoneProbability,
         model: stage1.model,
         criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
       };
@@ -435,6 +423,8 @@ export async function getResourceIntent(
         criteria: null,
         suggestions: [],
         noneProbability: null,
+        stage1NoneProbability: null,
+        stage3NoneProbability: null,
         model: DEGRADED_MODEL,
         criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
       };
@@ -514,6 +504,7 @@ export async function getResourceIntent(
       baseModel: input.baseModel ?? '',
       browsingLevel: ctx.browsingLevel,
       specHash: RESOURCE_INTENT_SPEC_HASH,
+      stage3SpecHash: RESOURCE_INTENT_STAGE3_SPEC_HASH,
       specVersion: QUESTION_SPEC_VERSION,
       criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
       model: response?.model ?? DEGRADED_MODEL,
@@ -529,6 +520,8 @@ export async function getResourceIntent(
       shortlistCount,
       suggestionIds: (response?.suggestions ?? []).map((suggestion) => suggestion.versionId),
       noneProbability: response?.noneProbability ?? 0,
+      stage1NoneProbability: response?.stage1NoneProbability ?? null,
+      stage3NoneProbability: response?.stage3NoneProbability ?? null,
     });
   })();
 
