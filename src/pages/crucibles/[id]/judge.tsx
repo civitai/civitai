@@ -48,6 +48,8 @@ import { CrucibleJudgeStreak } from '~/components/Crucible/CrucibleJudgeStreak';
 import { CrucibleJudgingDoneState } from '~/components/Crucible/CrucibleJudgingDoneState';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
+import { CrucibleJudgingBriefing } from '~/components/Crucible/CrucibleJudgingBriefing';
+import { hasSeenBriefing, markBriefingSeen } from '~/components/Crucible/judging-briefing';
 import { JUDGING_RULES } from '~/components/Crucible/judging-rules';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -112,6 +114,16 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const { skippedEntryIds, skip, recordVote } = useJudgeSkipList();
   // One judging session per visit to this page: leaving and coming back means watching in full again.
   const [judgingSessionId] = useState(uuidv4);
+
+  // Read after mount: localStorage doesn't exist during server rendering.
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  useEffect(() => {
+    setBriefingOpen(!hasSeenBriefing(id, window.localStorage));
+  }, [id]);
+  const dismissBriefing = useCallback(() => {
+    markBriefingSeen(id, window.localStorage);
+    setBriefingOpen(false);
+  }, [id]);
 
   // Held in state rather than derived during render: `new Date()` differs between the server and
   // the client, so deriving it inline is a hydration mismatch.
@@ -548,35 +560,51 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
               </Group>
             </Alert>
           ) : (
-            <CrucibleJudgingUI
-              className="flex-1 md:min-h-0"
-              pair={pair}
-              isLoading={isLoadingPair || isVoting}
-              disabled={isVoting || !!voteError}
-              minViewSeconds={crucible.minViewSeconds}
-              onVote={handleVote}
-              onSkip={handleSkip}
-              footerStart={
-                <JudgingSessionStats
-                  sessionVotes={sessionVotes}
-                  totalPairsRated={(judgeStats?.totalPairsRated ?? 0) + sessionVotes}
-                  percentileRank={judgeStats?.percentileRank}
-                  judgedPairs={progress?.judgedPairs}
-                  remainingPairs={progress?.remainingPairs}
+            <div className="relative flex flex-1 flex-col md:min-h-0">
+              <CrucibleJudgingUI
+                className={clsx(
+                  'flex-1 md:min-h-0',
+                  briefingOpen && 'pointer-events-none select-none opacity-25'
+                )}
+                pair={pair}
+                isLoading={isLoadingPair || isVoting}
+                disabled={isVoting || !!voteError}
+                minViewSeconds={crucible.minViewSeconds}
+                onVote={handleVote}
+                onSkip={handleSkip}
+                footerStart={
+                  <JudgingSessionStats
+                    sessionVotes={sessionVotes}
+                    totalPairsRated={(judgeStats?.totalPairsRated ?? 0) + sessionVotes}
+                    percentileRank={judgeStats?.percentileRank}
+                    judgedPairs={progress?.judgedPairs}
+                    remainingPairs={progress?.remainingPairs}
+                  />
+                }
+                footerEnd={
+                  <div className="flex flex-col items-start gap-1.5 md:items-end">
+                    <CrucibleJudgeStreak streak={currentStreak} resetAt={streakResetAt} />
+                    {timeRemaining && (
+                      <span className="inline-flex items-center gap-1 text-xs text-[#909296]">
+                        <IconHourglass size={14} />
+                        Ends in {timeRemaining}
+                      </span>
+                    )}
+                  </div>
+                }
+              />
+              {briefingOpen && (
+                <CrucibleJudgingBriefing
+                  name={crucible.name}
+                  theme={theme}
+                  image={crucible.image}
+                  contentType={crucible.contentType}
+                  nsfwLevel={crucible.nsfwLevel}
+                  browsingLevel={browsingLevel}
+                  onDismiss={dismissBriefing}
                 />
-              }
-              footerEnd={
-                <div className="flex flex-col items-start gap-1.5 md:items-end">
-                  <CrucibleJudgeStreak streak={currentStreak} resetAt={streakResetAt} />
-                  {timeRemaining && (
-                    <span className="inline-flex items-center gap-1 text-xs text-[#909296]">
-                      <IconHourglass size={14} />
-                      Ends in {timeRemaining}
-                    </span>
-                  )}
-                </div>
-              }
-            />
+              )}
+            </div>
           )}
         </Container>
       </div>

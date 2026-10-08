@@ -25,6 +25,16 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (impor
   useApplyHiddenPreferences: () => ({ items: [] }),
 }));
 
+vi.mock('~/components/Crucible/CrucibleJudgeNextButton', () => ({
+  CrucibleJudgeNextButton: ({
+    label,
+    excludeCrucibleId,
+  }: {
+    label: string;
+    excludeCrucibleId: number;
+  }) => <button data-exclude={excludeCrucibleId}>{label}</button>,
+}));
+
 const { CrucibleJudgingDoneState } = await import('~/components/Crucible/CrucibleJudgingDoneState');
 
 const render = (
@@ -51,6 +61,31 @@ describe('CrucibleJudgingDoneState', () => {
     );
     expect(document.body.textContent).toContain('never shown the same pair twice');
     expect(document.body.textContent).toContain('47 pairs');
+  });
+
+  test('celebrates being caught up with a way back and a way on', async () => {
+    render({ votesUsedUp: true });
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain("You're caught up here"));
+    expect(document.body.textContent).toContain(
+      'You judged every pair open to you in Test Crucible. New entries open new pairs until it ends.'
+    );
+    const back = [...document.querySelectorAll('a')].find(
+      (a) => a.textContent === 'Back to crucible'
+    );
+    expect(back?.getAttribute('href')).toContain('/crucibles/1');
+    const next = [...document.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Next crucible'
+    );
+    expect(next?.getAttribute('data-exclude')).toBe('1');
+    expect(document.body.textContent).not.toContain('more crucible');
+  });
+
+  test('keeps the plain back button when votes are not used up', async () => {
+    render({ votesUsedUp: false });
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain('Back to Test Crucible'));
+    expect(document.body.textContent).not.toContain('Next crucible');
   });
 
   test('explains own-entry exclusion instead when there is nothing to judge yet', async () => {
