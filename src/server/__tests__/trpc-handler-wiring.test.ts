@@ -193,7 +193,7 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Expected-404 skip: image.getGenerationData NOT_FOUND is counted, not logged
+  // Allowlisted-404 skip: image.getGenerationData NOT_FOUND is counted, not logged
   // -------------------------------------------------------------------------
 
   const GEN_DATA = 'image.getGenerationData';

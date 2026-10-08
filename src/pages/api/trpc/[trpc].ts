@@ -102,9 +102,10 @@ const trpcHandler = createNextApiHandler({
       // can only ever suppress the cap rejection itself.
       if (shouldSkipBatchCapLog(req, error)) return error;
 
-      // Expected 404s. `image.getGenerationData` answers NOT_FOUND for every image that has no
-      // generation metadata — an ordinary outcome for a large share of its calls, not a fault —
-      // and at that volume its lines were most of this route's Axiom ingest, each paying
+      // Uninformative 404s. `image.getGenerationData` answers NOT_FOUND only when the image id
+      // does not exist (an image without generation metadata still returns normally). Most of
+      // that volume comes from clients calling the procedure directly to enumerate ids, and at
+      // that rate its lines were most of this route's Axiom ingest, each paying
       // JSON.stringify(input) + an ingest for a line that says nothing the 404 doesn't.
       //
       // Narrow by construction: `shouldSkipExpectedNotFoundLog` matches only the exact
@@ -174,7 +175,7 @@ const trpcHandler = createNextApiHandler({
       // (INTERNAL_SERVER_ERROR / TIMEOUT — the invisible raw-500 class) or a
       // remaining client-fault 4xx (BAD_REQUEST / NOT_FOUND / CONFLICT /
       // PRECONDITION_FAILED); FORBIDDEN/UNAUTHORIZED/TOO_MANY_REQUESTS/
-      // SERVICE_UNAVAILABLE, and the allowlisted expected 404s, already returned
+      // SERVICE_UNAVAILABLE, and the allowlisted 404s, already returned
       // above. buildCentralErrorLog un-masks
       // the `.cause` chain for server faults and tags severity `type:'error'` (so
       // 500s are queryable as detected_level="error"), while tagging the client-

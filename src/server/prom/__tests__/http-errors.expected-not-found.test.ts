@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import * as httpErrors from '~/server/prom/http-errors';
 
 /**
- * The expected-404 log skip for tRPC `onError`, and the counter that replaces the log line.
+ * The allowlisted-404 log skip for tRPC `onError`, and the counter that replaces the log line.
  *
  * Two properties, each of which fails silently if lost:
  *  1. The skip stays NARROW — only the exact (procedure path, code) pairs in the allowlist. A
@@ -34,7 +34,7 @@ async function countFor(path: string, code: string): Promise<number | undefined>
 
 describe('shouldSkipExpectedNotFoundLog', () => {
   it('pins the allowlist to exactly one pair: image.getGenerationData / NOT_FOUND', () => {
-    // Adding a second expected-404 procedure is meant to be a one-line change — and this is the
+    // Adding a second allowlisted-404 procedure is meant to be a one-line change — and this is the
     // line that makes the reviewer see it.
     expect(httpErrors.EXPECTED_NOT_FOUND_LOG_SKIPS).toEqual([{ path: PATH, code: 'NOT_FOUND' }]);
   });

@@ -212,22 +212,22 @@ export function recordTrpcError(error: unknown, path?: string): void {
 // Expected tRPC 404s: skipped from the Axiom ingest, counted here instead
 // ---------------------------------------------------------------------------
 //
-// Some procedures answer NOT_FOUND as a normal outcome rather than a fault. The tRPC
-// `onError` skips the Axiom ingest for exactly the (path, code) pairs below, because at their
-// volume the per-error JSON.stringify(input) + ingest is pure cost: the line says nothing the
-// status code doesn't.
+// Some procedures answer NOT_FOUND at a volume where the log line carries nothing the status
+// code doesn't. The tRPC `onError` skips the Axiom ingest for exactly the (path, code) pairs
+// below, because there the per-error JSON.stringify(input) + ingest is pure cost.
 //
 // `recordTrpcError` above counts only >= 500, so once the log line is skipped nothing else
-// records these errors. The counter below is that record: it lets the expected-404 rate be
-// re-derived (and a change in it noticed) without paying for a log line per error.
+// records these errors. The counter below is that record: it lets the 404 rate be re-derived,
+// and a change in it noticed (for example a client starting to enumerate ids), without paying
+// for a log line per error.
 
 /**
  * The (procedure path, code) pairs whose Axiom ingest the tRPC `onError` skips. Exact matches
  * only — never a prefix, never "every NOT_FOUND". Adding a procedure is one line here; the
  * test pins the full set, so the addition is visible in review.
  *
- * - `image.getGenerationData` / NOT_FOUND: an image with no generation metadata is an ordinary
- *   answer, and a large share of the procedure's calls get it.
+ * - `image.getGenerationData` / NOT_FOUND: thrown only when the image id does not exist. The
+ *   volume is dominated by clients calling the procedure directly to enumerate ids.
  */
 export const EXPECTED_NOT_FOUND_LOG_SKIPS: ReadonlyArray<{
   readonly path: string;
@@ -235,7 +235,7 @@ export const EXPECTED_NOT_FOUND_LOG_SKIPS: ReadonlyArray<{
 }> = [{ path: 'image.getGenerationData', code: 'NOT_FOUND' }];
 
 /**
- * Whether the tRPC `onError` should skip the Axiom ingest for this error as an expected 404.
+ * Whether the tRPC `onError` should skip the Axiom ingest for this error as an allowlisted 404.
  * Requires a real TRPCError AND an exact allowlisted (path, code) pair, so it cannot widen into
  * a blanket NOT_FOUND skip that would hide genuine client-fault bugs on other procedures.
  */
@@ -263,7 +263,7 @@ export const trpcUnloggedClientErrorCounter: client.Counter<string> =
   globalThis.__civitaiTrpcUnloggedClientErrorCounter ??
   (globalThis.__civitaiTrpcUnloggedClientErrorCounter = new client.Counter({
     name: UNLOGGED_NAME,
-    help: 'tRPC client-fault errors whose Axiom log line is deliberately skipped as an expected outcome (see EXPECTED_NOT_FOUND_LOG_SKIPS), by procedure path and tRPC code. UNSAMPLED, one increment per procedure error. These are NOT in civitai_app_http_errors_total (5xx only) and NOT in Axiom, so this is their only count. `path` matches trpc_procedure_duration_seconds, so rate(this) / rate(that _count) is the per-procedure share of calls.',
+    help: 'tRPC client-fault errors whose Axiom log line is deliberately skipped as uninformative (see EXPECTED_NOT_FOUND_LOG_SKIPS), by procedure path and tRPC code. UNSAMPLED, one increment per procedure error. These are NOT in civitai_app_http_errors_total (5xx only) and NOT in Axiom, so this is their only count. `path` matches trpc_procedure_duration_seconds, so rate(this) / rate(that _count) is the per-procedure share of calls.',
     labelNames: ['path', 'code'],
   }));
 
