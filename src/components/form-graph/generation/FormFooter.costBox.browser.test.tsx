@@ -5,6 +5,7 @@ import type * as BuzzModule from '~/components/Buzz/useBuzz';
 import type * as ToursModule from '~/components/Tours/ToursProvider';
 import type * as GenerationProviderModule from '~/components/ImageGeneration/GenerationProvider';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
+import type * as ResourceDataProviderModule from '~/components/generation_v2/inputs/ResourceDataProvider';
 import type { GenerationStore } from '~/components/form-graph/generation/store';
 
 /**
@@ -91,6 +92,20 @@ vi.mock('~/components/ImageGeneration/GenerationProvider', async (orig) => ({
 vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
   ...(await orig<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ creatorComp: false, isGreen: true }),
+}));
+
+// The cost box reads creator-tip eligibility from the resource data context; with no resources
+// selected no tip applies, so the displayed cost stays exactly the fixture total.
+vi.mock('~/components/generation_v2/inputs/ResourceDataProvider', async (orig) => ({
+  ...(await orig<typeof ResourceDataProviderModule>()),
+  useResourceDataContext: () => ({
+    registerResourceId: () => undefined,
+    unregisterResourceId: () => undefined,
+    getResourceData: () => undefined,
+    resources: [],
+    isLoading: false,
+    isResourceLoading: () => false,
+  }),
 }));
 
 // eslint-disable-next-line import/first
