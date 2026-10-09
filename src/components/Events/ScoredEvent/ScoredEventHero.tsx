@@ -199,27 +199,30 @@ export function ScoredEventHero({
         {team ? (
           <Group
             gap="lg"
-            wrap="nowrap"
-            className="w-fit rounded-lg border border-solid px-4 py-3"
+            className="max-w-full rounded-lg border border-solid px-4 py-3 @sm:w-fit"
             style={{ borderColor: teamColor(team) }}
             data-testid="hero-team"
           >
-            {myHat && (
-              <div className="w-14 shrink-0">
-                <EdgeMedia src={myHat} width={112} alt="" />
-              </div>
-            )}
-            <Stack gap={0}>
-              <Text size="xs" c="dimmed" tt="uppercase" fw={700} lts={0.5}>
-                You&apos;re on
-              </Text>
-              <Text fw={800} size="xl" c={teamColor(team)}>
-                Team {team}
-              </Text>
-            </Stack>
-            {!!rank && <Figure label="Rank" value={`#${rank}`} />}
-            <Figure label="Team points" value={<AnimatedCount value={teamPoints ?? 0} />} />
-            <Figure label="From your hats" value={<AnimatedCount value={points ?? 0} />} />
+            <Group gap="sm" wrap="nowrap">
+              {myHat && (
+                <div className="w-14 shrink-0">
+                  <EdgeMedia src={myHat} width={112} alt="" />
+                </div>
+              )}
+              <Stack gap={0}>
+                <Text size="xs" c="dimmed" tt="uppercase" fw={700} lts={0.5}>
+                  You&apos;re on
+                </Text>
+                <Text fw={800} size="xl" c={teamColor(team)} className="whitespace-nowrap">
+                  Team {team}
+                </Text>
+              </Stack>
+            </Group>
+            <Group gap="lg" wrap="nowrap">
+              {!!rank && <Figure label="Rank" value={`#${rank}`} />}
+              <Figure label="Team points" value={<AnimatedCount value={teamPoints ?? 0} />} />
+              <Figure label="Your hats" value={<AnimatedCount value={points ?? 0} />} />
+            </Group>
           </Group>
         ) : (
           !ended && (
