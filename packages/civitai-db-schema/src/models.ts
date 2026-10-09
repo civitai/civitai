@@ -3102,6 +3102,35 @@ export interface UserCosmetic {
   remaining: number | null;
 }
 
+export interface EventCosmeticPlacement {
+  id: bigint;
+  event: string;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  entityType: CosmeticEntity;
+  entityId: number;
+  entityOwnerId: number | null;
+  startedAt: Date;
+  endedAt: Date | null;
+  updatedAt: Date;
+}
+
+export interface EventCosmeticScoreDaily {
+  event: string;
+  day: Date;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  impressions: number;
+  anonImpressions: number;
+  reactions: number;
+  points: number;
+  updatedAt: Date;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;
