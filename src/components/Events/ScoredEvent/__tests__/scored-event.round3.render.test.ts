@@ -144,13 +144,42 @@ describe('Your hats cards', () => {
     ]);
   });
 
+  // Justin, 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above
+  // the 2x2, side by side only from 15rem, and its cells show whole thousands.
+  it('stacks the points above the four ways on a narrow card, with whole thousands', () => {
+    const card = cards([
+      hat({ placedOn: placed, impressions: 123_456, reactions: 98_765 }),
+    ]).querySelector('[data-testid="my-hat"]')!;
+    const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+    expect(stats.parentElement!.className).toBe('@container');
+    expect(stats.className.split(' ')).toEqual(
+      expect.arrayContaining(['flex', 'flex-col', '@[15rem]:grid'])
+    );
+    expect(
+      [...stats.querySelectorAll<HTMLElement>('[data-way]')].slice(0, 2).map((w) => w.textContent)
+    ).toEqual(['123kviews', '99kreactions']);
+  });
+
+  // Justin, 2026-10-09: the points tile is at least square, as wide as the 2x2 beside it is tall.
+  it('keeps the points tile at least as wide as the 2x2 is tall', () => {
+    const stats = cards([hat({ placedOn: placed })]).querySelector<HTMLElement>(
+      '[data-testid="hat-stats"]'
+    )!;
+    const points = stats.querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
+    const cells = [...stats.querySelectorAll<HTMLElement>('[data-way]')];
+    // Two 28px cells and a 6px gap: 62px.
+    expect(cells.every((c) => c.className.split(' ').includes('h-7'))).toBe(true);
+    expect(points.className.split(' ')).toContain('@[15rem]:min-w-[62px]');
+  });
+
   it('puts Move on the picture of a worn hat, not under the card', () => {
     const card = cards([hat({ placedOn: placed })]).querySelector('[data-testid="my-hat"]')!;
     const move = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Move')!;
     const picture = card.querySelector('[data-testid="thumb"]')!.parentElement!;
     expect(picture.contains(move)).toBe(true);
     expect(move.className).toContain('absolute');
-    expect(card.textContent).toContain('On your image');
+    // No line saying what it's on: the picture shows it (Justin, 2026-10-09).
+    expect(card.textContent).not.toMatch(/On your|Not on anything/);
   });
 
   it('shows an unworn hat on its own art, with Place it on the picture', () => {
@@ -159,7 +188,7 @@ describe('Your hats cards', () => {
     expect(srcs(card)).toEqual(['hat-art']);
     const place = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Place it')!;
     expect(place.parentElement!.contains(card.querySelector('img'))).toBe(true);
-    expect(card.textContent).toContain('Not on anything yet');
+    expect(card.textContent).not.toMatch(/On your|Not on anything/);
   });
 
   // Justin and Ellie, 2026-10-09: hats are kept after the event, so they can still be moved and

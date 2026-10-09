@@ -34,6 +34,9 @@ export type HatStatCounts = {
 
 /**
  * What a hat earned: its points large in its team's colour, beside the four ways that make them up.
+ * The points tile is at least square (Justin, 2026-10-09): its minimum width is the 2x2's height,
+ * two way tiles and a gap, and a long number widens it. A card too narrow for both side by side
+ * stacks the points above the 2x2.
  */
 export function HatStats({
   stats,
@@ -45,13 +48,24 @@ export function HatStats({
   /** A hat card's width rather than the popover's. */
   compact?: boolean;
 }) {
-  return (
+  const content = (
     <div
-      className={clsx('grid gap-1.5', compact ? 'grid-cols-[64px_1fr]' : 'grid-cols-[76px_1fr]')}
+      className={clsx(
+        'gap-1.5',
+        compact
+          ? 'flex flex-col @[15rem]:grid @[15rem]:grid-cols-[auto_minmax(0,1fr)]'
+          : 'grid grid-cols-[auto_minmax(0,1fr)]'
+      )}
       data-testid="hat-stats"
     >
       <div
-        className="flex min-w-0 flex-col items-center justify-center rounded-md bg-gray-1 px-1 py-1.5 dark:bg-dark-5"
+        className={clsx(
+          'flex min-w-0 justify-center rounded-md bg-gray-1 px-2 dark:bg-dark-5',
+          compact
+            ? // Stacked: one row, the number beside its word. Side by side: a square tile.
+              'items-baseline gap-1.5 py-1 @[15rem]:min-w-[62px] @[15rem]:flex-col @[15rem]:items-center @[15rem]:gap-0'
+            : 'min-w-[86px] flex-col items-center py-1.5'
+        )}
         // A tint of the team colour over the tile's own grey, so it reads in both themes.
         style={
           color
@@ -82,6 +96,8 @@ export function HatStats({
       </div>
     </div>
   );
+  // The card is the container the stacking reads.
+  return compact ? <div className="@container">{content}</div> : content;
 }
 
 /** A card has no room for the words: there each way is its icon and number, the word its label. */
@@ -103,16 +119,19 @@ function WayStat({
       fw={800}
       size="sm"
       c={value === undefined ? 'dimmed' : undefined}
-      className="tabular-nums"
+      className="truncate tabular-nums"
       lh={1.25}
     >
-      {value === undefined ? '–' : abbreviateNumber(value)}
+      {value === undefined
+        ? '–'
+        : // A card's cells are narrow: whole thousands (124k), never a clipped 123.5k.
+          abbreviateNumber(value, compact ? { decimals: 0 } : undefined)}
     </Text>
   );
   if (compact)
     return (
       <div
-        className="flex min-w-0 items-center gap-1.5 rounded-md bg-gray-1 px-2 py-1 dark:bg-dark-5"
+        className="flex h-7 min-w-0 items-center gap-1 rounded-md bg-gray-1 px-1.5 dark:bg-dark-5"
         title={way}
         data-way={way}
       >
@@ -123,7 +142,8 @@ function WayStat({
     );
   return (
     <div
-      className="flex min-w-0 flex-col rounded-md bg-gray-1 px-1.5 py-1 dark:bg-dark-5"
+      // Fixed heights: the points tile's minimum width (86px, 62px compact) is two of these and a gap.
+      className="flex h-10 min-w-0 flex-col justify-center rounded-md bg-gray-1 px-1.5 dark:bg-dark-5"
       data-way={way}
     >
       {figure}

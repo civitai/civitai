@@ -146,7 +146,9 @@ describe('a hatted feed card', () => {
     expect(opts).toEqual({ enabled: true });
 
     const dropdown = popover()!;
-    expect(dropdown.textContent).toContain("Civitai's 4th Birthday · Team hat");
+    // No eyebrow naming the event: the button below already does (Justin, 2026-10-09).
+    expect(dropdown.textContent).not.toContain('Team hat');
+    expect(dropdown.textContent).toMatch(/^Party Cap/);
     expect(dropdown.textContent).toContain('Party Cap');
     expect(dropdown.textContent).toContain('Worn by');
     expect(dropdown.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
@@ -466,6 +468,24 @@ describe('the popover layout', () => {
       ['comments', '3'],
       ['remixes', '0'],
     ]);
+  });
+
+  // Justin, 2026-10-09: the points tile is at least square, as wide as the 2x2 beside it is tall,
+  // and the popover keeps one decimal (123.5k) where a card rounds.
+  it('keeps the points tile at least square, with a decimal in each way', () => {
+    wornHat.result = {
+      data: { ...WORN, impressions: 123_456 },
+      isLoading: false,
+      isError: false,
+    };
+    renderCard();
+    clickHat();
+    const points = stats().querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
+    const cells = [...stats().querySelectorAll<HTMLElement>('[data-way]')];
+    // Two 40px cells and a 6px gap: 86px.
+    expect(cells.every((c) => c.className.split(' ').includes('h-10'))).toBe(true);
+    expect(points.className.split(' ')).toContain('min-w-[86px]');
+    expect(cells[0].textContent).toBe('123.5kviews');
   });
 
   it("colours the points in the hat's team colour", () => {

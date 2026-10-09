@@ -132,18 +132,9 @@ export function MyEventHats({
                 </Button>
               </div>
               <Stack gap={8} p="sm" className="flex-1">
-                <Stack gap={0} className="min-w-0">
-                  <Text fw={700} size="sm" truncate>
-                    {hat.name}
-                  </Text>
-                  <Text size="xs" c="dimmed" truncate>
-                    {hat.placedOn
-                      ? `On ${
-                          hat.placedOn.title ?? `your ${hat.placedOn.entityType.toLowerCase()}`
-                        }`
-                      : 'Not on anything yet'}
-                  </Text>
-                </Stack>
+                <Text fw={700} size="sm" truncate>
+                  {hat.name}
+                </Text>
                 <div className="mt-auto">
                   <HatStats stats={hat} color={teamColor} compact />
                 </div>
