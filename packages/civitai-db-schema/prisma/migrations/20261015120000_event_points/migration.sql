@@ -13,6 +13,13 @@ ALTER TABLE "EventCosmeticScoreDaily"
   ADD COLUMN IF NOT EXISTS "remixes"    INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS "modelLikes" INTEGER NOT NULL DEFAULT 0;
 
+-- The hat sync job reads an event's open placements every minute. Without this it walks every
+-- placement the event ever had, ended ones included. CONCURRENTLY, so run it on its own, outside a
+-- transaction.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "EventCosmeticPlacement_event_open_idx"
+  ON "EventCosmeticPlacement" ("event", "startedAt", "id")
+  WHERE "endedAt" IS NULL;
+
 -- ClickHouse (apply separately, against the default database):
 --
 -- The points ledger. One row per first qualifying action (or removal) on content wearing an event

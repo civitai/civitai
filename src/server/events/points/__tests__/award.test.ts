@@ -21,7 +21,10 @@ function fakeRedis() {
   const sets = new Map<string, Set<string>>();
   const hashes = new Map<string, Map<string, string>>();
   const streams = new Map<string, { id: string; message: Record<string, string> }[]>();
+  // Absolute expiry (unix seconds) per key, as EXPIRE / EXPIREAT left it.
+  const ttls = new Map<string, number>();
   let seq = 0;
+  let clock = () => Date.now();
   const redis = {
     async sAdd(key: string, member: string) {
       const set = sets.get(key) ?? new Set();
@@ -33,10 +36,12 @@ function fakeRedis() {
     async sRem(key: string, member: string) {
       return sets.get(key)?.delete(member) ? 1 : 0;
     },
-    async expire() {
+    async expire(key: string, seconds: number) {
+      ttls.set(key, Math.floor(clock() / 1000) + seconds);
       return true;
     },
-    async expireAt() {
+    async expireAt(key: string, at: number) {
+      ttls.set(key, at);
       return true;
     },
     async hIncrBy(key: string, field: string, by: number) {
@@ -49,16 +54,31 @@ function fakeRedis() {
     async hGetAll(key: string) {
       return Object.fromEntries(hashes.get(key) ?? []);
     },
-    async xRange(key: string, start: string, _end: string, opts?: { COUNT?: number }) {
+    // Real XRANGE argument order: start is the low end ('-' or an id, '(' for exclusive), end '+'.
+    async xRange(key: string, start: string, end: string, opts?: { COUNT?: number }) {
+      if (start === '+' || end === '-') return [];
       const all = streams.get(key) ?? [];
       const after = start.startsWith('(') ? start.slice(1) : undefined;
       const rows = after ? all.filter((e) => streamIdBefore(after, e.id)) : all;
       return opts?.COUNT ? rows.slice(0, opts.COUNT) : rows;
     },
-    async xRevRange(key: string, _s: string, _e: string, opts?: { COUNT?: number }) {
+    // XREVRANGE takes the high end first: '+' then '-'.
+    async xRevRange(key: string, end: string, start: string, opts?: { COUNT?: number }) {
+      if (end !== '+' || start !== '-') return [];
       const rows = [...(streams.get(key) ?? [])].reverse();
       return opts?.COUNT ? rows.slice(0, opts.COUNT) : rows;
     },
+  };
+  // Drops the oldest log entries, as XTRIM does.
+  const trimLog = (event: string, keep: number) => {
+    const log = streams.get(eventPointKeys(event).hatsLog) ?? [];
+    log.splice(0, Math.max(0, log.length - keep));
+  };
+  // Changes the hats hash without logging it, as when the change's log entry was trimmed away.
+  const setHatUnlogged = (event: string, entity: string, value: string) => {
+    const hash = hashes.get(eventPointKeys(event).hats) ?? new Map();
+    hashes.set(eventPointKeys(event).hats, hash);
+    hash.set(entity, value);
   };
   const setHat = (event: string, entity: string, value: string) => {
     const keys = eventPointKeys(event);
@@ -70,7 +90,16 @@ function fakeRedis() {
     streams.set(keys.hatsLog, log);
     log.push({ id: `${1000 + ++seq}-0`, message: { k: entity, v: value } });
   };
-  return { redis: redis as unknown as EventPointsRedis, sets, hashes, setHat };
+  return {
+    redis: redis as unknown as EventPointsRedis,
+    sets,
+    hashes,
+    ttls,
+    setHat,
+    setHatUnlogged,
+    trimLog,
+    setClock: (fn: () => number) => (clock = fn),
+  };
 }
 
 const START = new Date('2026-11-01T00:00:00.000Z');
@@ -120,6 +149,7 @@ function livePoints(scope: 'hat' | 'team' | 'owner', field: string) {
 beforeEach(() => {
   now = new Date('2026-11-05T12:00:00.000Z');
   fake = fakeRedis();
+  fake.setClock(() => now.getTime());
   ledger = [];
   fake.setHat(EVENT.name, 'Image:100', encodeHat(HAT));
   build();
@@ -173,11 +203,6 @@ describe('awardEventPoints', () => {
     expect(livePoints('team', 'Yellow')).toBe(50);
     // Every first is still a fact in the ledger; the referee decides what scores.
     expect(ledger).toHaveLength(47);
-  });
-
-  it('gives a second person their own 50', async () => {
-    await engine.awardEventPoints([reaction(1), reaction(2)]);
-    expect(livePoints('hat', HAT_FIELD)).toBe(10);
   });
 
   it('counts a view once per person per post per UTC day', async () => {
@@ -241,17 +266,187 @@ describe('awardEventPoints', () => {
     });
     await engine.refresh();
     await expect(engine.awardEventPoints([reaction(1)])).resolves.toBeUndefined();
-    expect(logError).toHaveBeenCalledWith('event points: award failed', expect.anything());
+    expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.award', expect.any(Error));
+  });
+
+  it('keeps the other actions of a batch when one fails in Redis', async () => {
+    const real = fake.redis.sAdd;
+    build({
+      redis: {
+        ...fake.redis,
+        sAdd: ((key: string, member: string) =>
+          member === '2'
+            ? Promise.reject(new Error('redis blip'))
+            : real(key as never, member)) as typeof real,
+      },
+    });
+    await engine.awardEventPoints([reaction(1), reaction(2), reaction(3)]);
+    expect(ledger.map((r) => r.actorId)).toEqual([1, 3]);
+  });
+
+  it('writes the whole fact to the ledger: who, what, which hat, and the source id', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    expect(ledger).toEqual([
+      {
+        event: EVENT.name,
+        time: '2026-11-05 12:00:00.000',
+        type: 'reaction',
+        op: 'add',
+        actorId: 1,
+        entityType: 'Image',
+        entityId: 100,
+        ownerId: OWNER,
+        cosmeticId: 7,
+        claimKey: 'claimed',
+        team: 'Yellow',
+        sourceId: 'ImageReaction:100:1',
+      },
+    ]);
+  });
+
+  it('queues the hat for a signals push when its total moves, and only then', async () => {
+    const changed = () => [...(fake.sets.get(eventPointKeys(EVENT.name).changed) ?? [])];
+    await engine.awardEventPoints([reaction(OWNER)]);
+    expect(changed()).toEqual([]);
+    await engine.awardEventPoints([reaction(1)]);
+    expect(changed()).toEqual([HAT_FIELD]);
+  });
+
+  it('expires day-scoped keys an hour after their UTC day, and event keys after finalization', async () => {
+    const view = { type: 'view' as const, actorId: 1, entityType: 'Image' as const, entityId: 100 };
+    await engine.awardEventPoints([view, reaction(2)]);
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    const endOfDayPlusHour = Date.UTC(2026, 10, 6, 1) / 1000;
+    expect(fake.ttls.get(keys.seen('view', 'Image', 100, '2026-11-05'))).toBe(endOfDayPlusHour);
+    expect(fake.ttls.get(keys.cap('2026-11-05', OWNER))).toBe(endOfDayPlusHour);
+    const finalized = (END.getTime() + scoring.finalizeAfterMs) / 1000;
+    expect(fake.ttls.get(keys.seen('reaction', 'Image', 100))).toBe(finalized + 2 * 24 * 60 * 60);
+  });
+});
+
+describe('the 50-point cap', () => {
+  const view = (actorId: number, entityId: number) => ({
+    type: 'view' as const,
+    actorId,
+    entityType: 'Image' as const,
+    entityId,
+  });
+  const OTHER = { ownerId: 20, cosmeticId: 8, claimKey: 'claimed', team: 'Blue' };
+  beforeEach(() => {
+    for (let id = 200; id < 260; id++) fake.setHat(EVENT.name, `Image:${id}`, encodeHat(HAT));
+    for (let id = 300; id < 360; id++) fake.setHat(EVENT.name, `Image:${id}`, encodeHat(OTHER));
+    build();
+  });
+  const views = (actorId: number, from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => view(actorId, from + i));
+
+  it('is per person: a second person still gives their full 50 after the first is capped', async () => {
+    await engine.awardEventPoints(views(1, 200, 60));
+    await engine.awardEventPoints(views(2, 200, 60));
+    expect(livePoints('owner', String(OWNER))).toBe(100);
+  });
+
+  it('is per creator: capped on one creator, the same person still gives another creator 50', async () => {
+    await engine.awardEventPoints(views(1, 200, 60));
+    await engine.awardEventPoints(views(1, 300, 60));
+    expect(livePoints('owner', String(OWNER))).toBe(50);
+    expect(livePoints('owner', '20')).toBe(50);
+  });
+
+  it('is per UTC day: the next day starts a fresh 50', async () => {
+    now = new Date('2026-11-05T23:50:00.000Z');
+    await engine.awardEventPoints(views(1, 200, 60));
+    now = new Date('2026-11-06T00:10:00.000Z');
+    await engine.awardEventPoints(views(1, 200, 60));
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    let total = 0;
+    for (let b = liveBucket(now) - 10; b <= liveBucket(now); b++)
+      total += Number(fake.hashes.get(keys.live(b, 'owner'))?.get(String(OWNER)) ?? 0);
+    expect(total).toBe(100);
+  });
+});
+
+describe('when the ledger write fails', () => {
+  it('takes the dedupe marks back, so the same action earns when it comes again', async () => {
+    let fail = true;
+    const logError = vi.fn();
+    build({
+      logError,
+      insertLedger: async (rows) => {
+        if (fail) throw new Error('clickhouse down');
+        ledger.push(...rows);
+      },
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(logError).toHaveBeenCalledWith(
+      'ledger',
+      'eventPoints.insertLedger',
+      expect.any(Error),
+      { rows: 1 }
+    );
+    fail = false;
+    await engine.awardEventPoints([reaction(1)]);
+    expect(ledger.map((r) => r.actorId)).toEqual([1]);
+  });
+});
+
+describe('state refresh', () => {
+  it('picks up hat changes on its own, without a caller ever waiting on it', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    fake.setHat(EVENT.name, 'Image:400', encodeHat(HAT));
+    now = new Date(now.getTime() + 31 * 1000);
+    // Stale: this call starts a refresh in the background and still uses the old map.
+    expect(engine.isHattedEntity('Image', 400)).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(engine.isHattedEntity('Image', 400)).toBe(true);
+  });
+
+  it('reloads the whole map when the change log was trimmed past where it had read', async () => {
+    await engine.refresh();
+    fake.setHatUnlogged(EVENT.name, 'Image:401', encodeHat(HAT));
+    fake.setHat(EVENT.name, 'Image:402', encodeHat(HAT));
+    fake.setHat(EVENT.name, 'Image:403', encodeHat(HAT));
+    fake.trimLog(EVENT.name, 1);
+    now = new Date(now.getTime() + 31 * 1000);
+    await engine.refresh();
+    expect(engine.isHattedEntity('Image', 401)).toBe(true);
+    expect(engine.isHattedEntity('Image', 402)).toBe(true);
+  });
+
+  it('backs off after a failed refresh instead of retrying on every call', async () => {
+    const loadScoredEvents = vi.fn(() => Promise.reject(new Error('down')));
+    build({ loadScoredEvents });
+    for (let i = 0; i < 50; i++) engine.isHattedEntity('Image', 100);
+    await new Promise((r) => setTimeout(r, 0));
+    for (let i = 0; i < 50; i++) engine.isHattedEntity('Image', 100);
+    expect(loadScoredEvents).toHaveBeenCalledTimes(1);
+    now = new Date(now.getTime() + 11 * 1000);
+    engine.isHattedEntity('Image', 100);
+    expect(loadScoredEvents).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('removeEventPoints', () => {
-  it('writes a removal only for someone who earned there, and lets them earn again after', async () => {
+  it('writes removals on hatted posts only, and lets the person earn again after', async () => {
     await engine.awardEventPoints([reaction(1)]);
     await engine.removeEventPoints([reaction(1), reaction(2), reaction(1, 999)]);
-    expect(ledger.map((r) => `${r.op}:${r.actorId}`)).toEqual(['add:1', 'remove:1']);
+    expect(ledger.map((r) => `${r.op}:${r.actorId}:${r.entityId}`)).toEqual([
+      'add:1:100',
+      'remove:1:100',
+      'remove:2:100',
+    ]);
     await engine.awardEventPoints([reaction(1)]);
-    expect(ledger.map((r) => `${r.op}:${r.actorId}`)).toEqual(['add:1', 'remove:1', 'add:1']);
+    expect(ledger.at(-1)).toMatchObject({ op: 'add', actorId: 1 });
+  });
+
+  it('pairs the removal with its add by source id, even when Redis lost the dedupe mark', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    fake.sets.clear();
+    await engine.removeEventPoints([reaction(1)]);
+    expect(ledger.map((r) => [r.op, r.sourceId])).toEqual([
+      ['add', 'ImageReaction:100:1'],
+      ['remove', 'ImageReaction:100:1'],
+    ]);
   });
 });
 

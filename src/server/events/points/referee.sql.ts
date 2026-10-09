@@ -1,38 +1,33 @@
 // The referee: exact per-hat, per-day points for one season of a scored event, computed from the
 // points ledger alone. The live totals in sysRedis are reset to this every run.
 //
+// It recomputes only the days from recomputeFrom (the hourly run: yesterday and today; the nightly
+// run: the whole season). Earlier days are final and read from the Postgres snapshot instead. Daily
+// types (views) are read only for the recomputed days; everything else is read for the whole season,
+// because whether an action is a first depends on the whole season.
+//
 // Rules, in the order the query applies them:
 // - Only rows in [seasonStart, cut) count.
 // - A sourceId names one (kind, entity, person), e.g. one person's reactions on one image. Its adds
 //   count only while its latest row is an add: removing the last reaction nets it out, reacting
 //   again brings it back.
-// - Actors banned or excluded from leaderboards (their latest state), or registered within the
-//   new-account window, earn nobody anything. userActivities records the affected user in
-//   targetUserId. Owners banned or excluded earn nothing either.
+// - Actors in restrictedActors (banned, deleted, excluded from leaderboards, or registered within the
+//   new-account window) earn nobody anything; owners in restrictedOwners earn nothing. Both lists
+//   are read from Postgres "User" by the caller.
 // - Each person counts once per (type, entity) for the whole season, or once per UTC day for types
 //   listed in dailyTypes; the earliest surviving add is the one kept, with the hat it was on.
 // - Each kept action is worth its type's weight. Per (UTC day, owner, person), in time order, weights
 //   are credited until the cap; the action that crosses it gets what was left.
 //
-// Params: event, seasonStart, cut, newAccountCutoff, cap, types (Array(String)),
-// weights (Array(UInt32), aligned with types), dailyTypes (Array(String)).
+// Params: event, seasonStart, recomputeFrom, cut, cap, types (Array(String)), weights (Array(UInt32),
+// aligned with types), dailyTypes (Array(String)), restrictedActors, restrictedOwners (Array(Int32)).
 export const eventPointsRefereeSql = /* sql */ `
 WITH
-  restrictedUsers AS (
-    SELECT targetUserId AS userId FROM userActivities
-    WHERE type IN ('Banned', 'Unbanned', 'ExcludedFromLeaderboard', 'UnexcludedFromLeaderboard')
-    GROUP BY targetUserId
-    HAVING argMaxIf(toString(type), time, type IN ('Banned', 'Unbanned')) = 'Banned'
-      OR argMaxIf(toString(type), time, type IN ('ExcludedFromLeaderboard', 'UnexcludedFromLeaderboard')) = 'ExcludedFromLeaderboard'
-  ),
-  newAccounts AS (
-    SELECT targetUserId AS userId FROM userActivities
-    WHERE type = 'Registration' AND time >= {newAccountCutoff:DateTime64(3)}
-  ),
   seasonRows AS (
     SELECT * FROM event_point_events
     WHERE event = {event:String}
       AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
+      AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
   ),
   firsts AS (
     SELECT
@@ -42,13 +37,12 @@ WITH
       argMin((ownerId, cosmeticId, claimKey, team), time) AS hat
     FROM seasonRows
     WHERE op = 'add'
-      AND (sourceId = '' OR sourceId IN (
-        SELECT sourceId FROM seasonRows WHERE sourceId != ''
-        GROUP BY sourceId HAVING argMax(op, time) = 'add'
+      AND (sourceId = '' OR (type, actorId, sourceId) IN (
+        SELECT type, actorId, sourceId FROM seasonRows WHERE sourceId != ''
+        GROUP BY type, actorId, sourceId HAVING argMax(op, time) = 'add'
       ))
-      AND actorId NOT IN (SELECT userId FROM restrictedUsers)
-      AND actorId NOT IN (SELECT userId FROM newAccounts)
-      AND ownerId NOT IN (SELECT userId FROM restrictedUsers)
+      AND NOT has({restrictedActors:Array(Int32)}, actorId)
+      AND NOT has({restrictedOwners:Array(Int32)}, ownerId)
     GROUP BY type, actorId, entityType, entityId, onceKey
   ),
   weighted AS (
@@ -75,7 +69,9 @@ WITH
   )
 SELECT
   day,
-  hat.1 AS userId, hat.2 AS cosmeticId, hat.3 AS claimKey, hat.4 AS team,
+  hat.1 AS userId, hat.2 AS cosmeticId, hat.3 AS claimKey,
+  -- One row per hat per day: the snapshot's key has no team, so a hat never splits across two.
+  any(hat.4) AS team,
   toUInt64(sum(granted)) AS points,
   toUInt64(countIf(type = 'view' AND granted > 0)) AS views,
   toUInt64(countIf(type = 'reaction' AND granted > 0)) AS reactions,
@@ -84,6 +80,17 @@ SELECT
   toUInt64(countIf(type = 'remix' AND granted > 0)) AS remixes,
   toUInt64(countIf(type = 'modelLike' AND granted > 0)) AS modelLikes
 FROM credited
-GROUP BY day, hat
+WHERE day >= toDate({recomputeFrom:DateTime64(3)})
+GROUP BY day, userId, cosmeticId, claimKey
 ORDER BY day, userId, cosmeticId, claimKey
+`;
+
+// Everyone the recomputed rows could credit or be credited by, so their accounts can be checked in
+// Postgres. Same window as the query above.
+export const eventPointsRefereeUsersSql = /* sql */ `
+SELECT groupUniqArray(actorId) AS actors, groupUniqArray(ownerId) AS owners
+FROM event_point_events
+WHERE event = {event:String}
+  AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
+  AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
 `;

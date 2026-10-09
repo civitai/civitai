@@ -19,6 +19,18 @@ export function eventPointKeys(event: string) {
   } as const;
 }
 
+// When a scored event's points machinery runs at all: from the preview (or the start) until scoring
+// finalizes. Whether an action counts is narrower (it must also fall before endDate).
+export const eventPointsWindow = (event: {
+  previewFrom?: Date;
+  startDate: Date;
+  endDate: Date;
+  scoring: { finalizeAfterMs: number };
+}) => ({
+  from: event.previewFrom ?? event.startDate,
+  to: new Date(event.endDate.getTime() + event.scoring.finalizeAfterMs),
+});
+
 // A scored event's preview (flagged testers, before the start) and the event itself keep separate
 // dedupe, cap and total keys, so nothing a tester did before launch counts, or blocks, after it.
 export type EventPointSeason = 'preview' | 'live';

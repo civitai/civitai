@@ -1,9 +1,11 @@
 import { chunk } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
-import { flagAudienceAmong, getEventScoringPhase } from '~/server/events/event-access';
+import type { EventScoring } from '~/server/events/base.event';
+import { flagAudienceAmong, getEventScoringPhase, type GatedEvent } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
-import { encodeHat, entityKey, eventPointKeys } from '~/server/events/points/keys';
+import { encodeHat, entityKey, eventPointKeys, eventPointsWindow } from '~/server/events/points/keys';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
+import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 
 // Enough log for an app server that missed a few refreshes; one further behind reloads the hash.
@@ -72,34 +74,53 @@ export async function syncEventHats(now = new Date()) {
   for (const eventDef of events) {
     const { scoring } = eventDef;
     if (!scoring) continue;
-    if (now.getTime() > eventDef.endDate.getTime() + scoring.finalizeAfterMs) continue;
-    const keys = eventPointKeys(eventDef.name);
-    const entityTypes = [
-      ...new Set(Object.values(scoring.types).flatMap((rule) => rule?.entities ?? [])),
-    ];
-
-    // Outside a scoring window nothing earns, so the desired map is empty and every hat comes off.
-    const phase = await getEventScoringPhase(eventDef, now);
-    const desired = phase
-      ? await desiredEventHats({ name: eventDef.name, entityTypes }, phase.fliptKey)
-      : new Map<string, string>();
-
-    const current = (await sysRedis.hGetAll(keys.hats)) ?? {};
-    const { set, remove } = diffHats(current, desired);
-    // Hash first, then the log entry, so a server that reloads between the two still converges.
-    for (const part of chunk(set, 500))
-      await Promise.all(part.map(([key, value]) => sysRedis.hSet(keys.hats, key, value)));
-    for (const part of chunk(remove, 500))
-      await Promise.all(part.map((key) => sysRedis.hDel(keys.hats, key)));
-    for (const part of chunk([...set, ...remove.map((key) => [key, ''] as const)], 500))
-      await Promise.all(part.map(([k, v]) => sysRedis.xAdd(keys.hatsLog, '*', { k, v })));
-    if (set.length || remove.length)
-      await sysRedis.xTrim(keys.hatsLog, 'MAXLEN', HATS_LOG_MAX, { strategyModifier: '~' });
-
-    for (const [type, rule] of Object.entries(scoring.types))
-      if (rule) await sysRedis.hSetNX(keys.weights, type, String(rule.weight));
-
-    results.push({ event: eventDef.name, set: set.length, removed: remove.length });
+    if (now > eventPointsWindow({ ...eventDef, scoring }).to) continue;
+    // One event failing (an unreadable flag throws) must not stop the others' hats syncing.
+    try {
+      results.push(await syncOneEvent({ ...eventDef, scoring }, now));
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'event-points',
+        fn: 'syncEventHats',
+        event: eventDef.name,
+        error,
+      }).catch(() => undefined);
+    }
   }
   return results;
+}
+
+async function syncOneEvent(
+  eventDef: GatedEvent & { endDate: Date; scoring: EventScoring },
+  now: Date
+) {
+  const { scoring } = eventDef;
+  const keys = eventPointKeys(eventDef.name);
+  const entityTypes = [
+    ...new Set(Object.values(scoring.types).flatMap((rule) => rule?.entities ?? [])),
+  ];
+
+  // Outside a scoring window nothing earns, so the desired map is empty and every hat comes off.
+  const phase = await getEventScoringPhase(eventDef, now);
+  const desired = phase
+    ? await desiredEventHats({ name: eventDef.name, entityTypes }, phase.fliptKey)
+    : new Map<string, string>();
+
+  const current = (await sysRedis.hGetAll(keys.hats)) ?? {};
+  const { set, remove } = diffHats(current, desired);
+  // Hash first, then the log entry, so a server that reloads between the two still converges.
+  for (const part of chunk(set, 500))
+    await Promise.all(part.map(([key, value]) => sysRedis.hSet(keys.hats, key, value)));
+  for (const part of chunk(remove, 500))
+    await Promise.all(part.map((key) => sysRedis.hDel(keys.hats, key)));
+  for (const part of chunk([...set, ...remove.map((key) => [key, ''] as const)], 500))
+    await Promise.all(part.map(([k, v]) => sysRedis.xAdd(keys.hatsLog, '*', { k, v })));
+  if (set.length || remove.length)
+    await sysRedis.xTrim(keys.hatsLog, 'MAXLEN', HATS_LOG_MAX, { strategyModifier: '~' });
+
+  for (const [type, rule] of Object.entries(scoring.types))
+    if (rule) await sysRedis.hSetNX(keys.weights, type, String(rule.weight));
+
+  return { event: eventDef.name, set: set.length, removed: remove.length };
 }

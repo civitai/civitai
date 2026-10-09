@@ -26,18 +26,35 @@ export function liveBucketRange(cut: number, now: Date) {
   return buckets;
 }
 
-async function readTotals(event: PointsEvent, scope: TotalScope, fields: string[], now: Date) {
-  const totals: Record<string, number> = Object.fromEntries(fields.map((f) => [f, 0]));
-  if (!fields.length) return totals;
+export type PointsReadRedis = Pick<typeof sysRedis, 'get' | 'hmGet'>;
+
+export async function readTotals(
+  event: PointsEvent,
+  scope: TotalScope,
+  fields: string[],
+  now: Date,
+  redis: PointsReadRedis = sysRedis
+) {
+  if (!fields.length) return {} as Record<string, number>;
   const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, now));
-  const cut = Number((await sysRedis.get(keys.cut)) ?? 0);
-  const sources = [keys.base(scope), ...liveBucketRange(cut, now).map((b) => keys.live(b, scope))];
-  const values = await Promise.all(sources.map((key) => sysRedis.hmGet(key, fields)));
-  for (const row of values)
-    row.forEach((value, i) => {
-      if (value) totals[fields[i]] += Number(value) || 0;
-    });
-  return totals;
+  // The referee replaces the base and moves the cut together. Read the cut on both sides of the sums
+  // and retry once if it moved, so a read never pairs the new base with the old cut's buckets.
+  for (let attempt = 0; ; attempt++) {
+    const cut = Number((await redis.get(keys.cut)) ?? 0);
+    const sources = [
+      keys.base(scope),
+      ...liveBucketRange(cut, now).map((b) => keys.live(b, scope)),
+    ];
+    const values = await Promise.all(sources.map((key) => redis.hmGet(key, fields)));
+    const cutAfter = Number((await redis.get(keys.cut)) ?? 0);
+    if (cutAfter !== cut && attempt === 0) continue;
+    const totals: Record<string, number> = Object.fromEntries(fields.map((f) => [f, 0]));
+    for (const row of values)
+      row.forEach((value, i) => {
+        if (value) totals[fields[i]] += Number(value) || 0;
+      });
+    return totals;
+  }
 }
 
 // Live points per hat, keyed by hatField.

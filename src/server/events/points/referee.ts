@@ -2,7 +2,7 @@ import { chunk } from 'lodash-es';
 import type { EventScoring } from '~/server/events/base.event';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
   eventPointKeys,
   eventSeasonKeys,
@@ -11,13 +11,19 @@ import {
   type EventPointSeason,
   type TotalScope,
 } from '~/server/events/points/keys';
-import { eventPointsRefereeSql } from '~/server/events/points/referee.sql';
+import {
+  eventPointsRefereeSql,
+  eventPointsRefereeUsersSql,
+} from '~/server/events/points/referee.sql';
 import { sysRedis } from '~/server/redis/client';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 // Settle only up to a bucket boundary this far back, so ledger rows still in ClickHouse's async
 // insert buffer land before their bucket is settled.
 const SETTLE_LAG_MS = 10 * 60 * 1000;
+// The hour (UTC) whose run recomputes the whole season, picking up late removals and bans on days
+// the hourly runs treat as final.
+const FULL_RECOMPUTE_HOUR = 3;
 
 export type RefereeEvent = {
   name: string;
@@ -42,18 +48,25 @@ export type RefereeRow = {
   modelLikes: number;
 };
 
-// The season's window and the cut-off this run settles to: a bucket boundary at least SETTLE_LAG_MS
-// in the past, never past the season's end.
+const startOfUtcDay = (time: Date) =>
+  new Date(Date.UTC(time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate()));
+
+// The season's window, the cut-off this run settles to (a bucket boundary at least SETTLE_LAG_MS in
+// the past, never past the season's end), and the first day it recomputes: the day before the cut's
+// day, or the whole season on the nightly full run.
 export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now: Date) {
   const start = season === 'preview' ? event.previewFrom ?? event.startDate : event.startDate;
   const end = season === 'preview' ? event.startDate : event.endDate;
   const settled = Math.floor((now.getTime() - SETTLE_LAG_MS) / LIVE_BUCKET_MS) * LIVE_BUCKET_MS;
   const cut = new Date(Math.min(settled, end.getTime()));
-  return { start, cut };
+  const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR;
+  const dayBefore = new Date(startOfUtcDay(cut).getTime() - DAY_MS);
+  const recomputeFrom = full || dayBefore < start ? start : dayBefore;
+  return { start, cut, recomputeFrom };
 }
 
-// Totals per hat, team and owner over every day of the season.
-export function refereeTotals(rows: RefereeRow[]) {
+// Totals per hat, team and owner: the final days from the snapshot plus the recomputed rows.
+export function refereeTotals(rows: Pick<RefereeRow, 'userId' | 'cosmeticId' | 'claimKey' | 'team' | 'points'>[]) {
   const totals: Record<TotalScope, Map<string, number>> = {
     hat: new Map(),
     team: new Map(),
@@ -91,30 +104,85 @@ export function changedHats(
   return changed;
 }
 
-async function queryReferee(event: RefereeEvent, start: Date, cut: Date) {
-  if (!clickhouse) throw new Error('ClickHouse is not configured');
+type Window = ReturnType<typeof refereeWindow>;
+
+export function refereeQueryParams(
+  event: RefereeEvent,
+  window: Window,
+  liveWeights: Record<string, string> | undefined,
+  restricted: { actors: number[]; owners: number[] }
+) {
   const types = Object.entries(event.scoring.types).filter(([, rule]) => !!rule);
-  const weights = await sysRedis.hGetAll(eventPointKeys(event.name).weights);
+  return {
+    event: event.name,
+    seasonStart: formatClickhouseDateTime64(window.start),
+    recomputeFrom: formatClickhouseDateTime64(window.recomputeFrom),
+    cut: formatClickhouseDateTime64(window.cut),
+    cap: event.scoring.capPerActorPerOwnerPerDay,
+    types: types.map(([type]) => type),
+    // The live weights, so the referee and the live totals agree; the config fills any gap.
+    weights: types.map(([type, rule]) => {
+      const live = liveWeights?.[type] != null ? Number(liveWeights[type]) : NaN;
+      return Number.isFinite(live) ? live : rule!.weight;
+    }),
+    dailyTypes: types.filter(([, rule]) => rule!.once === 'day').map(([type]) => type),
+    restrictedActors: restricted.actors,
+    restrictedOwners: restricted.owners,
+  };
+}
+
+// Of the people the recomputed rows involve, those who must not earn or give points, from their
+// accounts in Postgres: banned, deleted or excluded from leaderboards; actors also when registered
+// inside the new-account window.
+async function restrictedUsers(event: RefereeEvent, window: Window) {
+  if (!clickhouse) throw new Error('ClickHouse is not configured');
+  const params = refereeQueryParams(event, window, undefined, { actors: [], owners: [] });
+  const result = await clickhouse.query({
+    query: eventPointsRefereeUsersSql,
+    format: 'JSONEachRow',
+    query_params: params,
+  });
+  const [users] = await result.json<{ actors: number[]; owners: number[] }>();
+  const ids = [...new Set([...(users?.actors ?? []), ...(users?.owners ?? [])].map(Number))];
+  const newAccountCutoff = new Date(
+    event.startDate.getTime() - event.scoring.newAccountDays * DAY_MS
+  );
+  const actors = new Set<number>();
+  const owners = new Set<number>();
+  for (const part of chunk(ids, 10_000)) {
+    const rows = await dbRead.$queryRaw<{ id: number; hidden: boolean }[]>`
+      SELECT id,
+        ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR "excludeFromLeaderboards") AS hidden
+      FROM "User"
+      WHERE id = ANY(${part}::int[])
+        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR "excludeFromLeaderboards"
+          OR "createdAt" >= ${newAccountCutoff})
+    `;
+    for (const r of rows) {
+      actors.add(r.id);
+      if (r.hidden) owners.add(r.id);
+    }
+  }
+  return { actors: [...actors], owners: [...owners] };
+}
+
+async function queryReferee(event: RefereeEvent, window: Window) {
+  if (!clickhouse) throw new Error('ClickHouse is not configured');
+  const [weights, restricted] = await Promise.all([
+    sysRedis.hGetAll(eventPointKeys(event.name).weights),
+    restrictedUsers(event, window),
+  ]);
   const result = await clickhouse.query({
     query: eventPointsRefereeSql,
     format: 'JSONEachRow',
-    clickhouse_settings: { max_execution_time: 120 },
-    query_params: {
-      event: event.name,
-      seasonStart: formatClickhouseDateTime64(start),
-      cut: formatClickhouseDateTime64(cut),
-      newAccountCutoff: formatClickhouseDateTime64(
-        event.startDate.getTime() - event.scoring.newAccountDays * DAY_MS
-      ),
-      cap: event.scoring.capPerActorPerOwnerPerDay,
-      types: types.map(([type]) => type),
-      // The live weights, so the referee and the live totals agree; the config fills any gap.
-      weights: types.map(([type, rule]) => {
-        const live = weights?.[type] != null ? Number(weights[type]) : NaN;
-        return Number.isFinite(live) ? live : rule!.weight;
-      }),
-      dailyTypes: types.filter(([, rule]) => rule!.once === 'day').map(([type]) => type),
+    // A whole-season run on the nightly pass groups every first of the season; spill to disk rather
+    // than fail on memory, and allow it the time.
+    clickhouse_settings: {
+      max_execution_time: 600,
+      max_bytes_before_external_group_by: '8000000000',
+      max_bytes_before_external_sort: '8000000000',
     },
+    query_params: refereeQueryParams(event, window, weights, restricted),
   });
   return (await result.json<RefereeRow>()).map((r) => ({
     day: String(r.day),
@@ -132,15 +200,17 @@ async function queryReferee(event: RefereeEvent, start: Date, cut: Date) {
   }));
 }
 
+const isoDay = (time: Date) => time.toISOString().slice(0, 10);
+
 // The durable record: one row per hat per day, which the standings, the winner and the per-hat
-// counts read. Recomputing the season replaces it, so a rerun never double counts.
-async function writeDailySnapshot(event: RefereeEvent, start: Date, end: Date, rows: RefereeRow[]) {
-  const fromDay = start.toISOString().slice(0, 10);
-  const toDay = end.toISOString().slice(0, 10);
+// counts read. Recomputing a day replaces it, so a rerun never double counts. Days before
+// recomputeFrom are left as they are.
+async function writeDailySnapshot(event: RefereeEvent, window: Window, rows: RefereeRow[]) {
   await dbWrite.$transaction([
     dbWrite.$executeRaw`
       DELETE FROM "EventCosmeticScoreDaily"
-      WHERE event = ${event.name} AND day >= ${fromDay}::date AND day <= ${toDay}::date
+      WHERE event = ${event.name}
+        AND day >= ${isoDay(window.recomputeFrom)}::date AND day <= ${isoDay(window.cut)}::date
     `,
     ...chunk(rows, 5000).map(
       (part) => dbWrite.$executeRaw`
@@ -169,25 +239,43 @@ async function writeDailySnapshot(event: RefereeEvent, start: Date, end: Date, r
   ]);
 }
 
+// Per-hat points on the days this run leaves final, from the snapshot.
+async function finalDayTotals(event: RefereeEvent, window: Window) {
+  if (window.recomputeFrom <= window.start) return [];
+  return dbWrite.$queryRaw<
+    { userId: number; cosmeticId: number; claimKey: string; team: string; points: number }[]
+  >`
+    SELECT "userId", "cosmeticId", "claimKey", min(team) AS team, sum(points)::int AS points
+    FROM "EventCosmeticScoreDaily"
+    WHERE event = ${event.name}
+      AND day >= ${isoDay(window.start)}::date AND day < ${isoDay(window.recomputeFrom)}::date
+    GROUP BY "userId", "cosmeticId", "claimKey"
+  `;
+}
+
+export type RefereeRedis = Pick<typeof sysRedis, 'get' | 'hGetAll' | 'del' | 'hSet' | 'multi' | 'sAdd'>;
+
 const TMP_SUFFIX = ':next';
 
 // Replaces the live base with the referee's totals and moves the cut, in one MULTI, so a reader
-// never sees the new base with the old cut (which would count the settled buckets twice).
-async function resetLiveBase(
-  event: RefereeEvent,
+// never sees the new base with the old cut (which would count the settled buckets twice). Hats whose
+// shown total moved go into the changed set, so the signals ticker pushes the correction.
+export async function resetLiveBase(
+  redis: RefereeRedis,
+  event: { name: string },
   season: EventPointSeason,
   cut: Date,
   totals: ReturnType<typeof refereeTotals>
 ) {
   const keys = eventSeasonKeys(event.name, season);
-  const oldCutBucket = Number((await sysRedis.get(keys.cut)) ?? 0);
+  const oldCutBucket = Number((await redis.get(keys.cut)) ?? 0);
   const newCutBucket = cut.getTime() / LIVE_BUCKET_MS;
 
-  const oldHatBase = (await sysRedis.hGetAll(keys.base('hat'))) ?? {};
-  const settled: Record<string, string>[] = [];
+  const oldHatBase = (await redis.hGetAll(keys.base('hat'))) ?? {};
+  const settledKeys: ReturnType<typeof keys.live>[] = [];
   if (oldCutBucket)
-    for (let b = oldCutBucket; b < newCutBucket; b++)
-      settled.push((await sysRedis.hGetAll(keys.live(b, 'hat'))) ?? {});
+    for (let b = oldCutBucket; b < newCutBucket; b++) settledKeys.push(keys.live(b, 'hat'));
+  const settled = await Promise.all(settledKeys.map(async (key) => (await redis.hGetAll(key)) ?? {}));
   const changed = oldCutBucket
     ? changedHats(oldHatBase, settled, totals.hat)
     : [...totals.hat.keys()];
@@ -195,11 +283,11 @@ async function resetLiveBase(
   const scopes: TotalScope[] = ['hat', 'team', 'owner'];
   for (const scope of scopes) {
     const tmp = `${keys.base(scope)}${TMP_SUFFIX}` as const;
-    await sysRedis.del(tmp);
+    await redis.del(tmp);
     for (const part of chunk([...totals[scope].entries()], 1000))
-      await sysRedis.hSet(tmp, Object.fromEntries(part.map(([k, v]) => [k, String(v)])));
+      await redis.hSet(tmp, Object.fromEntries(part.map(([k, v]) => [k, String(v)])));
   }
-  const multi = sysRedis.multi();
+  const multi = redis.multi();
   for (const scope of scopes) {
     const tmp = `${keys.base(scope)}${TMP_SUFFIX}`;
     if (totals[scope].size) multi.rename(tmp, keys.base(scope));
@@ -209,21 +297,33 @@ async function resetLiveBase(
   await multi.exec();
 
   for (const part of chunk(changed, 1000))
-    await sysRedis.sAdd(eventPointKeys(event.name).changed, part);
+    await redis.sAdd(eventPointKeys(event.name).changed, part);
   return changed.length;
 }
 
-// Settles one season of a scored event: recompute from the ledger, write the daily snapshot, reset
-// the live base. Returns what it did, for the job log.
+// Settles one season of a scored event: recompute the open days from the ledger, write them to the
+// daily snapshot, and reset the live base to the season's total. Returns what it did, for the job log.
 export async function runEventPointsReferee(
   event: RefereeEvent,
   season: EventPointSeason,
   now = new Date()
 ) {
-  const { start, cut } = refereeWindow(event, season, now);
-  if (cut <= start) return { season, rows: 0, changed: 0 };
-  const rows = await queryReferee(event, start, cut);
-  await writeDailySnapshot(event, start, cut, rows);
-  const changed = await resetLiveBase(event, season, cut, refereeTotals(rows));
-  return { season, rows: rows.length, changed };
+  const window = refereeWindow(event, season, now);
+  if (window.cut <= window.start) return { season, rows: 0, changed: 0 };
+  const rows = await queryReferee(event, window);
+  await writeDailySnapshot(event, window, rows);
+  const final = await finalDayTotals(event, window);
+  const changed = await resetLiveBase(
+    sysRedis,
+    event,
+    season,
+    window.cut,
+    refereeTotals([...final, ...rows])
+  );
+  return {
+    season,
+    rows: rows.length,
+    changed,
+    recomputeFrom: window.recomputeFrom.toISOString(),
+  };
 }
