@@ -2409,6 +2409,21 @@ describe('event points on approval', () => {
     ]);
   });
 
+  it('awards on the approval, before the payout runs', async () => {
+    givenPlacement();
+    await hold();
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    // A payout that throws is resumed by a sweeper that never awards, so the award cannot wait on it.
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    expect(createBuzzTransaction).toHaveBeenCalled();
+    expect(awardEventPoints.mock.invocationCallOrder[0]).toBeLessThan(
+      createBuzzTransaction.mock.invocationCallOrder[0]
+    );
+  });
+
   it('awards nothing on a decline', async () => {
     givenPlacement();
     await hold();

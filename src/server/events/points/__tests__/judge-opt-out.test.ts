@@ -90,11 +90,17 @@ describe('eventPoints: false', () => {
 });
 
 // The judge's call sites. Read from source because driving the judging job end to end needs the
-// whole challenge pipeline; each call's argument object must carry the opt-out.
-const JUDGE_FILES = [
-  'src/server/jobs/daily-challenge-processing.ts',
-  'src/pages/api/mod/daily-challenge/re-review.ts',
-];
+// whole challenge pipeline; each call's argument object must carry the opt-out. The counts are
+// exact, so a call added, removed or rewritten without an object literal fails here rather than
+// slipping past the walk.
+const JUDGE_CALLS: Record<string, Record<'toggleReaction' | 'upsertComment', number>> = {
+  'src/server/jobs/daily-challenge-processing.ts': { toggleReaction: 1, upsertComment: 1 },
+  'src/pages/api/mod/daily-challenge/re-review.ts': { toggleReaction: 0, upsertComment: 1 },
+};
+
+// Comments out, so a commented-out `// eventPoints: false,` cannot satisfy the check.
+const withoutComments = (source: string) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
 
 function callArguments(source: string, fn: string) {
   const calls: string[] = [];
@@ -114,14 +120,20 @@ function callArguments(source: string, fn: string) {
 }
 
 describe("the judge's call sites opt out", () => {
-  it.each(JUDGE_FILES)('%s passes eventPoints: false on every reaction and comment', (file) => {
-    const source = readFileSync(join(process.cwd(), file), 'utf8');
-    const calls = [
-      ...callArguments(source, 'toggleReaction'),
-      ...callArguments(source, 'upsertComment'),
-    ];
-    // A walk that finds nothing would make the check below vacuous.
-    expect(calls.length).toBeGreaterThan(0);
-    for (const args of calls) expect(args).toMatch(/\beventPoints: false,/);
-  });
+  it.each(Object.entries(JUDGE_CALLS))(
+    '%s passes eventPoints: false on every reaction and comment',
+    (file, expected) => {
+      const source = withoutComments(readFileSync(join(process.cwd(), file), 'utf8'));
+      for (const fn of ['toggleReaction', 'upsertComment'] as const) {
+        const calls = callArguments(source, fn);
+        expect({ fn, literalCalls: calls.length }).toEqual({ fn, literalCalls: expected[fn] });
+        // Every call of any shape, so `fn(args)` cannot hide from the literal walk above.
+        expect({ fn, allCalls: source.split(`${fn}(`).length - 1 }).toEqual({
+          fn,
+          allCalls: expected[fn],
+        });
+        for (const args of calls) expect(args).toMatch(/^\s*eventPoints: false,$/m);
+      }
+    }
+  );
 });

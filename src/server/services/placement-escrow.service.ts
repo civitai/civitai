@@ -669,12 +669,14 @@ export async function settlePlacement({
   // the payout below reads the winner's outcome off the row, not this action.
   if (count === 0 && placement.status !== status) return { settled: false, placement };
 
+  // Event points ride the approval itself, not the payout: a payout that throws is resumed by a
+  // sweeper that never fires this, and an award stamped after a slow payout could land after a
+  // takedown of the same placement.
+  if (count > 0 && status === 'approved') void onPlacementApproved(placement);
+
   await payOutPlacement(placement);
 
-  if (count > 0 && status === 'approved') {
-    await rewardAccepted(placement);
-    void onPlacementApproved(placement);
-  }
+  if (count > 0 && status === 'approved') await rewardAccepted(placement);
 
   return { settled: count > 0, placement };
 }
