@@ -100,4 +100,10 @@ export const WATCHLIST = [
     module: 'packages/civitai-telemetry/src/otel-logs.ts',
     why: 'Holds the memoized OTel Logger and the bridge counters in module scope, and is loaded only from the instrumentation entry, which is also what registers the LoggerProvider. A second copy would be a second bridge that never sees that registration — and whose counters register into a registry nothing scrapes.',
   },
+  {
+    rule: 'SHARED_STATE',
+    module: 'src/server/signals/wrapper.ts',
+    globalKey: '__civitaiSignalsWrapperState',
+    why: 'The one object holding the per-lane p-limit limiters and queue counters and the shared circuit breaker behind withSignals(). This module is emitted as one runtime module PER Turbopack runtime (measured on a local production build: one module id under `chunks/`, carried by 21 chunks, and one under `chunks/ssr/`, carried by 21), so one process evaluates it twice. A copy with private state gets its own concurrency cap, its own queue bound and its own circuit — the per-lane limits apply per copy, not per process, and a backend outage tripped through one copy never fails calls made through the other — and the collect()-based gauges `civitai_app_signals_call_active`/`_call_queue_depth`/`_circuit_state` read whichever copy owns the hook. Vitest cannot see this (it loads each module once) except where a test forces two copies, as `src/server/signals/__tests__/wrapper-gauges.dual-graph.test.ts` does.',
+  },
 ];

@@ -44,9 +44,9 @@ const DEFAULT_ENV = {
   SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 5,
 };
 
-// The lane gauges are real prom-client gauges whose collect() reads the module
-// instance that created them. prom-client is not reset by vi.resetModules, so
-// drop them before each load so the fresh module registers its own.
+// prom-client is not reset by vi.resetModules, so drop the gauges before each
+// load, and drop the wrapper's process-wide state (it lives on globalThis by
+// design) so every test starts from fresh limiters and a CLOSED circuit.
 const GAUGES = [
   'civitai_app_signals_call_active',
   'civitai_app_signals_call_queue_depth',
@@ -58,8 +58,7 @@ async function load(overrides: Partial<typeof DEFAULT_ENV> = {}) {
   Object.assign(envMock, DEFAULT_ENV, overrides);
   const promClient = (await import('prom-client')).default;
   for (const g of GAUGES) promClient.register.removeSingleMetric(g);
-  delete (globalThis as { signalsWrapperGaugesRegistered?: boolean })
-    .signalsWrapperGaugesRegistered;
+  delete globalThis.__civitaiSignalsWrapperState;
   vi.resetModules();
   counters.clear();
   return import('~/server/signals/wrapper');

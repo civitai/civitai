@@ -167,24 +167,66 @@ type Lane = {
   shedFeedsCircuit: boolean;
 };
 
-const lanes: Record<SignalsLane, Lane> = {
-  default: {
-    limiter: pLimit(env.SIGNALS_CALL_CONCURRENCY),
-    concurrency: () => env.SIGNALS_CALL_CONCURRENCY,
-    maxQueue: () => env.SIGNALS_CALL_MAX_QUEUE,
-    outstanding: 0,
-    queued: 0,
-    shedFeedsCircuit: true,
+// 🔴 SHARED_STATE: the lanes (limiters + queue counters) and the circuit live on
+// globalThis, not in module scope.
+//
+// The production server build emits this module once per Turbopack runtime
+// (`chunks/` for API routes + instrumentation, `chunks/ssr/` for page SSR —
+// measured: one module id under each), and each runtime keeps its own module
+// cache, so ONE Node process evaluates it twice. With module-scope state each
+// copy had its own limiters, queue bounds and circuit: every per-lane limit
+// applied PER COPY (a pod's real signals in-flight cap was copies × limit), a
+// backend outage tripped through one copy never failed calls made through the
+// other, and the collect()-based gauges read whichever copy owned the hook.
+// prom-client is externalized, so both copies already share ONE registry and
+// one set of counters; this makes the limiters and the circuit match.
+//
+// `??=`, not `=`: with `=`, a later copy would REPLACE the state and orphan the
+// first copy's in-flight slots and counts. Enrolled in
+// scripts/server-graph-watchlist.mjs so the build fails if an emitted copy
+// loses this pin. Vitest loads each module once and cannot see any of this
+// unless forced to (src/server/signals/__tests__/wrapper-gauges.dual-graph.test.ts).
+// Mirrors the Meili wrapper's `__civitaiMeiliWrapperState`.
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiSignalsWrapperState:
+    | {
+        lanes: Record<SignalsLane, Lane>;
+        circuit: Circuit;
+      }
+    | undefined;
+}
+
+const signalsWrapperState = (globalThis.__civitaiSignalsWrapperState ??= {
+  lanes: {
+    default: {
+      limiter: pLimit(env.SIGNALS_CALL_CONCURRENCY),
+      concurrency: () => env.SIGNALS_CALL_CONCURRENCY,
+      maxQueue: () => env.SIGNALS_CALL_MAX_QUEUE,
+      outstanding: 0,
+      queued: 0,
+      shedFeedsCircuit: true,
+    },
+    token: {
+      limiter: pLimit(env.SIGNALS_TOKEN_CALL_CONCURRENCY),
+      concurrency: () => env.SIGNALS_TOKEN_CALL_CONCURRENCY,
+      maxQueue: () => env.SIGNALS_TOKEN_CALL_MAX_QUEUE,
+      outstanding: 0,
+      queued: 0,
+      shedFeedsCircuit: false,
+    },
   },
-  token: {
-    limiter: pLimit(env.SIGNALS_TOKEN_CALL_CONCURRENCY),
-    concurrency: () => env.SIGNALS_TOKEN_CALL_CONCURRENCY,
-    maxQueue: () => env.SIGNALS_TOKEN_CALL_MAX_QUEUE,
-    outstanding: 0,
-    queued: 0,
-    shedFeedsCircuit: false,
+  circuit: {
+    state: 'CLOSED',
+    failures: [],
+    backendFailures: [],
+    cooldownUntil: 0,
+    trialInFlight: false,
   },
-};
+});
+
+// Process-wide, shared by every emitted copy of this module (SHARED_STATE above).
+const lanes = signalsWrapperState.lanes;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Observability — single backend; per-lane metrics carry a `lane` label
@@ -217,70 +259,50 @@ const signalsCallQueueExpirationsCounter = registerCounterWithLabels({
   labelNames: ['lane'] as const,
 });
 
-// Active/queue gauges are sampled lazily on /metrics scrape so the hot path
-// stays untouched. Use raw prom-client + HMR guard so we don't need to plumb
-// label-less helpers through prom/client.ts.
-declare global {
-  // eslint-disable-next-line no-var
-  var signalsWrapperGaugesRegistered: boolean | undefined;
-}
-
-function unlabeledGauge(name: string, help: string, collect: (g: client.Gauge<string>) => void) {
+// Active/queue/circuit gauges are sampled lazily on /metrics scrape so the hot
+// path stays untouched. Raw prom-client (not the ~/server/prom/client helpers,
+// which many tests hand-mock without gauge exports). Every emitted copy
+// get-or-creates each gauge in the one shared registry and installs its
+// collect(); since every copy's collect() reads the SAME shared state, it does
+// not matter which copy's hook is installed last (this replaces an earlier
+// first-copy-wins registration flag).
+type CollectHook = { collect: () => void };
+function sharedGauge(name: string, help: string, labelNames: string[] = []) {
   const full = `civitai_app_${name}`;
-  try {
-    return new client.Gauge({
-      name: full,
-      help,
-      collect() {
-        collect(this as unknown as client.Gauge<string>);
-      },
-    });
-  } catch {
-    return client.register.getSingleMetric(full) as client.Gauge<string>;
-  }
-}
-
-function laneGauge(name: string, help: string, value: (lane: Lane) => number) {
-  const full = `civitai_app_${name}`;
-  try {
-    return new client.Gauge({
-      name: full,
-      help,
-      labelNames: ['lane'],
-      collect() {
-        for (const lane of LANE_NAMES) this.set({ lane }, value(lanes[lane]));
-      },
-    });
-  } catch {
-    return client.register.getSingleMetric(full) as client.Gauge<string>;
-  }
-}
-
-if (!global.signalsWrapperGaugesRegistered) {
-  laneGauge('signals_call_active', 'Occupied limiter slots per lane', (lane) => {
-    return lane.limiter.activeCount;
-  });
-  // The wrapper's own live count of waiting calls — the population the queue
-  // bound limits. limiter.pendingCount reports the same number on a real event
-  // loop (a queued call cannot settle before it is dequeued: FIFO + one
-  // deadline length); this keeps gauge and bound on one definition.
-  laneGauge(
-    'signals_call_queue_depth',
-    'Live queued (waiting for a slot) signals calls per lane',
-    (lane) => {
-      return lane.queued;
-    }
+  return (
+    (client.register.getSingleMetric(full) as client.Gauge<string> | undefined) ??
+    new client.Gauge({ name: full, help, labelNames })
   );
-  unlabeledGauge(
-    'signals_circuit_state',
-    'Signals circuit breaker state (0=CLOSED, 1=HALF_OPEN, 2=OPEN)',
-    (g) => {
-      const s = circuit.state;
-      g.set(s === 'CLOSED' ? 0 : s === 'HALF_OPEN' ? 1 : 2);
-    }
-  );
-  global.signalsWrapperGaugesRegistered = true;
 }
+const signalsCallActiveGauge = sharedGauge(
+  'signals_call_active',
+  'Occupied limiter slots per lane',
+  ['lane']
+);
+// The wrapper's own live count of waiting calls — the population the queue
+// bound limits. limiter.pendingCount reports the same number on a real event
+// loop (a queued call cannot settle before it is dequeued: FIFO + one deadline
+// length); this keeps gauge and bound on one definition.
+const signalsCallQueueDepthGauge = sharedGauge(
+  'signals_call_queue_depth',
+  'Live queued (waiting for a slot) signals calls per lane',
+  ['lane']
+);
+const signalsCircuitStateGauge = sharedGauge(
+  'signals_circuit_state',
+  'Signals circuit breaker state (0=CLOSED, 1=HALF_OPEN, 2=OPEN)'
+);
+(signalsCallActiveGauge as unknown as CollectHook).collect = function collect() {
+  for (const lane of LANE_NAMES)
+    signalsCallActiveGauge.set({ lane }, lanes[lane].limiter.activeCount);
+};
+(signalsCallQueueDepthGauge as unknown as CollectHook).collect = function collect() {
+  for (const lane of LANE_NAMES) signalsCallQueueDepthGauge.set({ lane }, lanes[lane].queued);
+};
+(signalsCircuitStateGauge as unknown as CollectHook).collect = function collect() {
+  const st = circuit.state;
+  signalsCircuitStateGauge.set(st === 'CLOSED' ? 0 : st === 'HALF_OPEN' ? 1 : 2);
+};
 
 const signalsCallDurationHistogram = registerHistogram({
   name: 'signals_call_duration_seconds',
@@ -332,13 +354,8 @@ type Circuit = {
   trialInFlight: boolean;
 };
 
-const circuit: Circuit = {
-  state: 'CLOSED',
-  failures: [],
-  backendFailures: [],
-  cooldownUntil: 0,
-  trialInFlight: false,
-};
+// Process-wide, shared by every emitted copy of this module (SHARED_STATE above).
+const circuit: Circuit = signalsWrapperState.circuit;
 
 function circuitWindowMs() {
   return env.SIGNALS_CIRCUIT_WINDOW_SECONDS * 1000;
