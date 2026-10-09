@@ -15,14 +15,24 @@ describe('decorationFrameBox', () => {
   });
 
   it('scales per-side offsets from the 96px authoring size', () => {
+    // Every side different, so a swapped side or axis lands somewhere else.
     expect(
-      decorationFrameBox(192, { offsets: { top: -12, right: -6, bottom: 0, left: -6 } })
-    ).toEqual({ left: -12, top: -24, width: 216, height: 216 });
+      decorationFrameBox(192, { offsets: { top: -12, right: -6, bottom: -24, left: -3 } })
+    ).toEqual({ left: -6, top: -24, width: 210, height: 264 });
+  });
+
+  it('grows a pixel offset by that many pixels, as `calc(100% + 12px)` does', () => {
+    expect(decorationFrameBox(92, { offset: '12px' })).toEqual({
+      left: -6,
+      top: -6,
+      width: 104,
+      height: 104,
+    });
   });
 
   it('matches the avatar box with no offset, or one it cannot read', () => {
     const avatar = { left: 0, top: 0, width: 92, height: 92 };
     expect(decorationFrameBox(92, {})).toEqual(avatar);
-    expect(decorationFrameBox(92, { offset: '12px' })).toEqual(avatar);
+    expect(decorationFrameBox(92, { offset: 'auto' })).toEqual(avatar);
   });
 });

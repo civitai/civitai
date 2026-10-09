@@ -57,7 +57,13 @@ export function decorationFrameBox(
       height: size - px(offsets.top + offsets.bottom),
     };
   }
-  const grow = offset?.endsWith('%') ? (parseFloat(offset) / 100) * size : 0;
-  const frame = size + (Number.isFinite(grow) ? grow : 0);
+  // `calc(100% + <offset>)`: a percentage of the avatar, or a length in pixels.
+  const amount = parseFloat(offset ?? '');
+  const grow = !Number.isFinite(amount)
+    ? 0
+    : offset?.endsWith('%')
+    ? (amount / 100) * size
+    : amount;
+  const frame = size + grow;
   return { left: (size - frame) / 2, top: (size - frame) / 2, width: frame, height: frame };
 }

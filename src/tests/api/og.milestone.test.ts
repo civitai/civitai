@@ -120,6 +120,8 @@ describe('/api/og?type=milestone', () => {
     };
 
     const bare = await png({});
+    // The same card renders to the same bytes, so the differences below are the art.
+    expect(Buffer.compare(await png({}), bare)).toBe(0);
     const framed = await png({ decoration: { url: 'https://edge/frame', offset: '30%' } });
     const badged = await png({ profileBadgeUrl: 'https://edge/badge' });
 

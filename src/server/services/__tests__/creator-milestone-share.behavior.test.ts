@@ -95,7 +95,7 @@ async function attachBadge(slug: ScoreTierSlug) {
   return id;
 }
 
-type Wearing = { equipped?: boolean; toContent?: number };
+type Wearing = { equipped?: boolean | string; toContent?: number };
 async function wear(userId: number, type: string, data: Record<string, unknown>, at: Wearing = {}) {
   const { rows } = await q(`INSERT INTO "Cosmetic" (type, data) VALUES ($1, $2) RETURNING id`, [
     type,
@@ -107,7 +107,7 @@ async function wear(userId: number, type: string, data: Record<string, unknown>,
     [
       userId,
       (rows[0] as { id: number }).id,
-      at.equipped === false ? null : CROSSED,
+      at.equipped === false ? null : typeof at.equipped === 'string' ? at.equipped : CROSSED,
       at.toContent ?? null,
     ]
   );
@@ -206,6 +206,26 @@ describe('milestone share card', () => {
     expect(result?.decoration).toMatchObject({ offset: '30%' });
     expect(result?.decoration?.url).toContain('frame-art/anim');
     expect(result?.profileBadgeUrl).toContain('profile-badge-art/anim');
+  });
+
+  it("shows only this creator's cosmetics, never another wearer's", async () => {
+    await addUser(CREATOR);
+    await addUser(CREATOR + 1);
+    await grant(CREATOR, 'supernova');
+    await wear(CREATOR + 1, 'ProfileDecoration', { url: 'other-frame' });
+    await wear(CREATOR + 1, 'Badge', { url: 'other-badge' });
+
+    expect(await card()).toMatchObject({ decoration: null, profileBadgeUrl: null });
+  });
+
+  it('wears the most recently equipped one when two of a kind are worn', async () => {
+    await addUser(CREATOR);
+    await grant(CREATOR, 'supernova');
+    await wear(CREATOR, 'Badge', { url: 'old-badge' }, { equipped: '2026-01-01 00:00:00' });
+    await wear(CREATOR, 'Badge', { url: 'new-badge' }, { equipped: '2026-06-01 00:00:00' });
+    await wear(CREATOR, 'Badge', { url: 'mid-badge' }, { equipped: '2026-03-01 00:00:00' });
+
+    expect((await card())?.profileBadgeUrl).toContain('new-badge/anim');
   });
 
   it('leaves off a cosmetic that is owned but not worn, or worn on a piece of content', async () => {
