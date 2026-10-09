@@ -469,6 +469,7 @@ describe('getEventHatCatalog', () => {
     expect(sql(catalog)).toBe(
       `SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url ` +
         `FROM "Cosmetic" c WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
+        `AND c."createdById" IS NULL ` +
         `AND (c.data->>'design' = ? OR c.id = ANY(?::int[])) ORDER BY c.id`
     );
     expect(values).toEqual(['birthday2026', 'basic', [7, 9]]);

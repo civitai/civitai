@@ -100,7 +100,10 @@ export function EventRules({ data }: { data: EventData }) {
                 Signed-out views count, up to a fair share. Bot-like browsing doesn&apos;t.
               </FairRule>
               {cooldownMin > 0 && (
-                <FairRule>A hat can move again {cooldownMin} minutes after it was placed.</FairRule>
+                <FairRule>
+                  A hat can move again {cooldownMin} {cooldownMin === 1 ? 'minute' : 'minutes'}{' '}
+                  after it was placed.
+                </FairRule>
               )}
               <FairRule>Buzz spent doesn&apos;t score. Only attention does.</FairRule>
             </Stack>

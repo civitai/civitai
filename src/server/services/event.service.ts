@@ -321,10 +321,12 @@ export async function getEventHatCatalog({ event, viewer }: EventInput & Viewer)
           WHERE ssi."shopItemId" = si.id AND ss.published
         )
     `;
+    // Official art only (createdById null), as the shop shows unflagged viewers.
     const rows = await dbRead.$queryRaw<CatalogRow[]>`
       SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url
       FROM "Cosmetic" c
       WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ${event}
+        AND c."createdById" IS NULL
         AND (c.data->>'design' = ${joinDesign} OR c.id = ANY(${onSale.map((r) => r.id)}::int[]))
       ORDER BY c.id
     `;

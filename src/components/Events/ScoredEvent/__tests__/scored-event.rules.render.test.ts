@@ -113,6 +113,11 @@ describe('How it works', () => {
     expect(fair(render({ decoration: { ...decoration, moveCooldownMs: 0 } }))).toEqual(
       expected.filter((r) => !r.startsWith('A hat can move'))
     );
+    act(() => root?.unmount());
+    host?.remove();
+    expect(fair(render({ decoration: { ...decoration, moveCooldownMs: 60_000 } }))).toContain(
+      'A hat can move again 1 minute after it was placed.'
+    );
   });
 
   it('puts the prize on its own banner', () => {
