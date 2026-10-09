@@ -4,7 +4,7 @@ import { trpc } from '~/utils/trpc';
 // Its own module so the profile nav, on every profile tab, does not pull in the badge components.
 export function useProfileAchievements(userId: number | undefined) {
   const features = useFeatureFlags();
-  const enabled = features.creatorJourney && !!userId;
+  const enabled = !!features.creatorJourney && !!userId;
   const { data, isLoading } = trpc.creatorJourney.getProfileAchievements.useQuery(
     { userId: userId ?? 0 },
     { enabled }
