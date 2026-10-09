@@ -1,12 +1,11 @@
-import { Stack, Text } from '@mantine/core';
-import { IconShoppingBag } from '@tabler/icons-react';
+import { Stack } from '@mantine/core';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
 import { EventRules } from '~/components/Events/ScoredEvent/EventRules';
+import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPreview';
 import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
 import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
-import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -72,7 +71,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
   const points = hats.reduce((sum, h) => sum + h.points, 0);
 
   const sections: Record<ScoredSection, ReactNode> = {
-    standings: standings && <TeamStandings standings={standings} myTeam={team} />,
+    standings: standings && (
+      <TeamStandings standings={standings} myTeam={team} startDate={data.startDate} />
+    ),
     hats: joined && hats.length > 0 && (
       <MyEventHats
         event={event}
@@ -85,15 +86,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     shop: team ? (
       <TeamHatShelf event={event} team={team} />
     ) : (
-      <SpotlightBorderCard color="var(--mantine-color-blue-5)">
-        <Stack gap={4} p="lg" align="center" ta="center">
-          <IconShoppingBag size={28} />
-          <Text fw={700}>Join to shop for hats</Text>
-          <Text c="dimmed" size="sm">
-            Hats come in your team&apos;s colour, so the shop opens once you have a team.
-          </Text>
-        </Stack>
-      </SpotlightBorderCard>
+      <HatCatalogPreview event={event} onJoin={handleJoin} joining={equipping} />
     ),
     topHats: standings && <TopHats standings={standings} />,
     rules: <EventRules data={data} />,

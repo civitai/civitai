@@ -22,6 +22,7 @@ import {
   getEventStandings,
   getMyEventCosmeticScores,
   getEventCosmeticScores,
+  getEventHatCatalog,
   getMyEventHats,
   getPlaceableEventContent,
 } from '~/server/services/event.service';
@@ -113,6 +114,12 @@ export const eventRouter = router({
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) => getEventStandings({ ...input, viewer: ctx.user })),
+  getHatCatalog: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .use(eventGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    .query(({ ctx, input }) => getEventHatCatalog({ ...input, viewer: ctx.user })),
   getMyCosmeticScores: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)

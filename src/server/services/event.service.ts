@@ -296,6 +296,61 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
   }
 }
 
+type CatalogRow = { design: string | null; team: string | null; name: string; url: string | null };
+
+// Every design of this event's decorations in every team colour, for visitors deciding whether to
+// join: the free join design and what is on sale now. Read access only: it shows art and names,
+// never prices or the viewer's own team, and is edge-cached for anonymous visitors, so a design
+// staged for a later drop must not appear until its shop item is available. "On sale" is the
+// shop's own rule (getShopSectionsWithItems) plus availableFrom.
+export async function getEventHatCatalog({ event, viewer }: EventInput & Viewer) {
+  try {
+    await eventEngine.assertReadable(event, viewer);
+    const joinDesign = eventEngine.getJoinDesign(event) ?? null;
+    // Two reads: as one correlated EXISTS the planner estimates one row and JITs the query.
+    const onSale = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT DISTINCT si."cosmeticId" AS id
+      FROM "CosmeticShopItem" si
+      WHERE si."cosmeticId" IS NOT NULL AND si.status = 'Published' AND si.listed
+        AND si."archivedAt" IS NULL
+        AND (si."availableFrom" IS NULL OR si."availableFrom" <= now())
+        AND (si."availableTo" IS NULL OR si."availableTo" >= now())
+        AND EXISTS (
+          SELECT 1 FROM "CosmeticShopSectionItem" ssi
+          JOIN "CosmeticShopSection" ss ON ss.id = ssi."shopSectionId"
+          WHERE ssi."shopItemId" = si.id AND ss.published
+        )
+    `;
+    // Official art only (createdById null), as the shop shows unflagged viewers.
+    const rows = await dbRead.$queryRaw<CatalogRow[]>`
+      SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url
+      FROM "Cosmetic" c
+      WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ${event}
+        AND c."createdById" IS NULL
+        AND (c.data->>'design' = ${joinDesign} OR c.id = ANY(${onSale.map((r) => r.id)}::int[]))
+      ORDER BY c.id
+    `;
+    const designs = new Map<
+      string,
+      { design: string; name: string; hats: { team: string; url: string }[] }
+    >();
+    for (const r of rows) {
+      if (!r.design || !r.team || !r.url) continue;
+      let entry = designs.get(r.design);
+      if (!entry) {
+        const suffix = ` - ${r.team}`;
+        const name = r.name.endsWith(suffix) ? r.name.slice(0, -suffix.length) : r.name;
+        entry = { design: r.design, name, hats: [] };
+        designs.set(r.design, entry);
+      }
+      entry.hats.push({ team: r.team, url: r.url });
+    }
+    return [...designs.values()];
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
 export async function getMyEventCosmeticScores({
   event,
   user,

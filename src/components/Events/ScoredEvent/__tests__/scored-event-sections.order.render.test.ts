@@ -57,6 +57,9 @@ vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
 }));
 vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({ MyEventHats: marker('hats') }));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: marker('shop') }));
+vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
+  HatCatalogPreview: marker('catalog'),
+}));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marker('rules') }));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: marker('standings'),
@@ -108,21 +111,17 @@ function sections({
       )
     )
   );
-  // The page's own children in order; the not-joined shop slot is the join prompt card.
+  // The page's own children in order.
   const page = host.querySelector('.mantine-Stack-root')!;
-  return [...page.children].map(
-    (el) =>
-      el.getAttribute('data-section') ??
-      (el.textContent?.includes('Join to shop for hats') ? 'joinPrompt' : el.outerHTML)
-  );
+  return [...page.children].map((el) => el.getAttribute('data-section') ?? el.outerHTML);
 }
 
 describe('ScoredEventSections order', () => {
-  it('a visitor who has not joined: how it works, the shop prompt, then the standings', () => {
+  it('a visitor who has not joined: how it works, the hat catalogue, then the standings', () => {
     expect(sections({ joined: false, ended: false })).toEqual([
       'hero',
       'rules',
-      'joinPrompt',
+      'catalog',
       'standings',
       'topHats',
     ]);

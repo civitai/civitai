@@ -15,6 +15,7 @@ const { engine, scoring } = vi.hoisted(() => ({
     getReadableScoredEvent: vi.fn(),
     assertReadable: vi.fn(),
     isJoinEvent: vi.fn(),
+    getJoinDesign: vi.fn(() => 'basic'),
     join: vi.fn(),
     queueAddRole: vi.fn(),
     getUserData: vi.fn(),
@@ -397,5 +398,80 @@ describe('getEventStandings decoration', () => {
     const res = await service.getEventStandings({ event: 'birthday2026', viewer });
     expect(res.teamHats).toEqual([]);
     expect(res.teams).toEqual([]);
+  });
+});
+
+describe('getEventHatCatalog', () => {
+  const row = (design: string | null, team: string | null, url: string | null) => ({
+    design,
+    team,
+    name: `${design} Cap - ${team}`,
+    url,
+  });
+
+  it('refuses an event the caller may not read, and reads nothing', async () => {
+    engine.assertReadable.mockImplementation(notStarted);
+    await expect(
+      service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined })
+    ).rejects.toThrow("That event doesn't exist");
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('groups the hats by design in catalogue order, named without the team', async () => {
+    engine.assertReadable.mockResolvedValue('open');
+    dbMock.dbRead.$queryRaw
+      .mockResolvedValueOnce([{ id: 1 }])
+      .mockResolvedValueOnce([
+        row('bolt', 'Yellow', 'y1'),
+        row('crown', 'Yellow', 'y2'),
+        row('bolt', 'Blue', 'b1'),
+        row(null, 'Blue', 'x'),
+        row('crown', 'Blue', null),
+        row('crown', null, 'z'),
+        { design: 'plain', team: 'Green', name: 'Plain Hat', url: 'g3' },
+      ]);
+    const designs = await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
+    expect(designs).toEqual([
+      {
+        design: 'bolt',
+        name: 'bolt Cap',
+        hats: [
+          { team: 'Yellow', url: 'y1' },
+          { team: 'Blue', url: 'b1' },
+        ],
+      },
+      { design: 'crown', name: 'crown Cap', hats: [{ team: 'Yellow', url: 'y2' }] },
+      { design: 'plain', name: 'Plain Hat', hats: [{ team: 'Green', url: 'g3' }] },
+    ]);
+  });
+
+  // The rows are the mock's, so pin both whole queries: what is on sale now by the shop's own rule
+  // (it is edge-cached for anonymous visitors), then this event's join design and those, in id order.
+  it("queries only this event's join design and on-sale decorations, in id order", async () => {
+    engine.assertReadable.mockResolvedValue('open');
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ id: 7 }, { id: 9 }]).mockResolvedValueOnce([]);
+    await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
+    const calls = dbMock.dbRead.$queryRaw.mock.calls as [string[], ...unknown[]][];
+    const sql = (strings: string[]) => strings.join('?').replace(/\s+/g, ' ').trim();
+    expect(calls).toHaveLength(2);
+    const [[onSale, ...onSaleValues], [catalog, ...values]] = calls;
+    expect(sql(onSale)).toBe(
+      `SELECT DISTINCT si."cosmeticId" AS id FROM "CosmeticShopItem" si ` +
+        `WHERE si."cosmeticId" IS NOT NULL AND si.status = 'Published' AND si.listed ` +
+        `AND si."archivedAt" IS NULL ` +
+        `AND (si."availableFrom" IS NULL OR si."availableFrom" <= now()) ` +
+        `AND (si."availableTo" IS NULL OR si."availableTo" >= now()) ` +
+        `AND EXISTS ( SELECT 1 FROM "CosmeticShopSectionItem" ssi ` +
+        `JOIN "CosmeticShopSection" ss ON ss.id = ssi."shopSectionId" ` +
+        `WHERE ssi."shopItemId" = si.id AND ss.published )`
+    );
+    expect(onSaleValues).toEqual([]);
+    expect(sql(catalog)).toBe(
+      `SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url ` +
+        `FROM "Cosmetic" c WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
+        `AND c."createdById" IS NULL ` +
+        `AND (c.data->>'design' = ? OR c.id = ANY(?::int[])) ORDER BY c.id`
+    );
+    expect(values).toEqual(['birthday2026', 'basic', [7, 9]]);
   });
 });

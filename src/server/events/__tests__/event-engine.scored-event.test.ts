@@ -8,6 +8,7 @@ import {
   BIRTHDAY_2026_STARTS_AT,
   BIRTHDAY_2026_TEAMS,
 } from '~/shared/constants/birthday2026.constants';
+import { EVENT_DECORATION_DEFINITIONS } from '~/shared/constants/event-decoration.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
 
 const { mockCreateNotification, mockRefresh, mockScoring } = vi.hoisted(() => ({
@@ -116,6 +117,18 @@ describe('event registration', () => {
   it('does not share Date objects with the constants', () => {
     expect(birthday2026.startDate).not.toBe(BIRTHDAY_2026_STARTS_AT);
     expect(birthday2026.endDate).not.toBe(BIRTHDAY_2026_ENDS_AT);
+  });
+
+  // The page once said "Move it whenever you like" while placement enforced a 10-minute wait.
+  it("states the move wait that placement enforces in the page's placing step", () => {
+    const { moveCooldownMs } = EVENT_DECORATION_DEFINITIONS.find(
+      (d) => d.event === BIRTHDAY_2026_EVENT
+    )!;
+    expect(moveCooldownMs).toBe(10 * 60_000);
+    expect(birthday2026.page?.steps[1]).toEqual({
+      title: 'Hat your best work',
+      body: 'Each hat sits on one of your own posts at a time, alongside any frame. Move it any time, with a 10-minute wait between moves.',
+    });
   });
 
   it('assigns teams exactly as on launch day (golden vector)', async () => {

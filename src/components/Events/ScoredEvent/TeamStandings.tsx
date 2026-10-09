@@ -1,4 +1,4 @@
-import { Group, Progress, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Group, Paper, Progress, SegmentedControl, Stack, Text } from '@mantine/core';
 import { IconChartLine, IconFlame, IconTrophy } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';
 import {
@@ -19,17 +19,28 @@ import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderC
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { RouterOutput } from '~/types/router';
+import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 ChartJS.register(TimeScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
 type Standings = RouterOutput['event']['getStandings'];
 
-export function TeamStandings({ standings, myTeam }: { standings: Standings; myTeam?: string }) {
+export function TeamStandings({
+  standings,
+  myTeam,
+  startDate,
+}: {
+  standings: Standings;
+  myTeam?: string;
+  startDate: Date;
+}) {
   const teamColor = useTeamColor();
   const [mode, setMode] = useState<'points' | 'position'>('points');
   const lead = standings.teams[0]?.score ?? 0;
   const teams = standings.teams.length;
+  const hatOf = (team: string) => standings.teamHats.find((h) => h.team === team)?.url;
+  const charted = standings.history.some((h) => h.scores.length);
 
   const data = useMemo(() => {
     if (mode === 'points')
@@ -94,29 +105,40 @@ export function TeamStandings({ standings, myTeam }: { standings: Standings; myT
         }
       />
 
-      <div className="grid gap-4 @md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <Stack gap="sm">
+      <div
+        className={
+          charted ? 'grid gap-4 @md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]' : 'flex flex-col gap-4'
+        }
+      >
+        <Stack gap="sm" data-testid="standings-rows">
           {standings.teams.map((t) => {
             const color = teamColor(t.team) ?? 'gray';
             const mine = t.team === myTeam;
+            const hat = hatOf(t.team);
             return (
-              <SpotlightBorderCard key={t.team} color={color} size={200}>
+              <Paper
+                key={t.team}
+                withBorder
+                radius="md"
+                data-mine={mine || undefined}
+                style={
+                  mine ? { borderColor: color, boxShadow: `0 0 18px -4px ${color}` } : undefined
+                }
+              >
                 <Group gap="md" p="md" wrap="nowrap">
-                  <Text fw={800} fz={28} w={28} ta="center">
+                  <Text fw={800} fz={22} w={22} ta="center">
                     {t.rank}
                   </Text>
+                  <div className="w-10 shrink-0">
+                    {hat && <EdgeMedia src={hat} width={80} alt="" />}
+                  </div>
                   <Stack gap={6} className="min-w-0 flex-1">
                     <Group justify="space-between" gap="xs" wrap="nowrap">
                       <Text fw={700} c={color} truncate>
                         Team {t.team}
-                        {mine && (
-                          <Text component="span" size="xs" c="dimmed" fw={500}>
-                            {' '}
-                            (your team)
-                          </Text>
-                        )}
+                        {mine && ' · you'}
                       </Text>
-                      <Text fw={700} className="tabular-nums">
+                      <Text fw={800} className="tabular-nums">
                         {numberWithCommas(t.score)}
                       </Text>
                     </Group>
@@ -129,42 +151,45 @@ export function TeamStandings({ standings, myTeam }: { standings: Standings; myT
                     />
                   </Stack>
                 </Group>
-              </SpotlightBorderCard>
+              </Paper>
             );
           })}
         </Stack>
 
-        <SpotlightBorderCard color="var(--mantine-color-blue-5)" size={320}>
-          <Stack gap="sm" p="md" h="100%">
-            <Group justify="space-between">
-              <Group gap={6}>
-                <IconChartLine size={18} />
-                <Text fw={700}>
-                  {mode === 'points' ? 'Points over time' : 'Positions over time'}
-                </Text>
+        {charted ? (
+          <SpotlightBorderCard color="var(--mantine-color-blue-5)" size={320}>
+            <Stack gap="sm" p="md" h="100%">
+              <Group justify="space-between">
+                <Group gap={6}>
+                  <IconChartLine size={18} />
+                  <Text fw={700}>
+                    {mode === 'points' ? 'Points over time' : 'Positions over time'}
+                  </Text>
+                </Group>
+                <SegmentedControl
+                  size="xs"
+                  radius="xl"
+                  value={mode}
+                  onChange={(v) => setMode(v as typeof mode)}
+                  data={[
+                    { label: 'Points', value: 'points' },
+                    { label: 'Position', value: 'position' },
+                  ]}
+                />
               </Group>
-              <SegmentedControl
-                size="xs"
-                radius="xl"
-                value={mode}
-                onChange={(v) => setMode(v as typeof mode)}
-                data={[
-                  { label: 'Points', value: 'points' },
-                  { label: 'Position', value: 'position' },
-                ]}
-              />
-            </Group>
-            <div className="relative min-h-[240px] flex-1">
-              {standings.history.some((h) => h.scores.length) ? (
+              <div className="relative min-h-[240px] flex-1">
                 <Line options={options} data={data} />
-              ) : (
-                <Text size="sm" c="dimmed" ta="center" pt="xl">
-                  The chart starts after the first hour of scoring.
-                </Text>
-              )}
-            </div>
-          </Stack>
-        </SpotlightBorderCard>
+              </div>
+            </Stack>
+          </SpotlightBorderCard>
+        ) : (
+          <Text size="sm" c="dimmed" data-testid="chart-pending">
+            <IconChartLine size={14} className="inline align-[-2px]" />{' '}
+            {startDate > new Date()
+              ? `Scoring starts ${formatDate(startDate, 'MMM D')}. The chart fills in from there.`
+              : 'The chart starts after the first hour of scoring.'}
+          </Text>
+        )}
       </div>
     </Stack>
   );
@@ -183,7 +208,7 @@ export function TopHats({ standings }: { standings: Standings }) {
         color="orange"
         subtitle="The hats that have earned the most points so far."
       />
-      <SpotlightBorderCard color="var(--mantine-color-yellow-5)" size={320}>
+      <Paper withBorder radius="md">
         <Stack gap={0}>
           {top.map((c, i) => {
             const cosmetic = standings.cosmetics[c.cosmeticId];
@@ -221,7 +246,7 @@ export function TopHats({ standings }: { standings: Standings }) {
             );
           })}
         </Stack>
-      </SpotlightBorderCard>
+      </Paper>
     </Stack>
   );
 }

@@ -327,6 +327,10 @@ export const eventEngine = {
   },
   // Each team's join hat art, for the page to show what joining gets you. Ungated: callers check
   // access first.
+  // The design every member gets free on joining, which is never a shop item.
+  getJoinDesign(event: string) {
+    return getEventDef(event).join?.design;
+  },
   async getJoinHats(event: string) {
     const eventDef = getEventDef(event);
     return eventDef.join ? getJoinHats(eventDef) : [];

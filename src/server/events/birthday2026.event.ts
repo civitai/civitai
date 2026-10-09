@@ -6,11 +6,17 @@ import {
   BIRTHDAY_2026_STARTS_AT,
   BIRTHDAY_2026_TEAMS,
 } from '~/shared/constants/birthday2026.constants';
+import { EVENT_DECORATION_DEFINITIONS } from '~/shared/constants/event-decoration.constants';
 import { createEvent } from './base.event';
 
 // The event name is the redis key, the PRNG seed for team assignment, the cosmetics' data.event and
 // the page slug. Typed against the REDIS_KEYS entry so the two strings cannot drift apart.
 const name: (typeof REDIS_KEYS)['BIRTHDAY']['2026']['BASE'] = BIRTHDAY_2026_EVENT;
+
+// The page states the wait the placement service enforces, read from the same definition.
+const moveCooldownMin =
+  (EVENT_DECORATION_DEFINITIONS.find((d) => d.event === BIRTHDAY_2026_EVENT)?.moveCooldownMs ?? 0) /
+  60_000;
 
 export const birthday2026 = createEvent(name, {
   title: "Civitai's 4th Birthday",
@@ -28,7 +34,7 @@ export const birthday2026 = createEvent(name, {
       },
       {
         title: 'Hat your best work',
-        body: 'Each hat sits on one of your own posts at a time, alongside any frame. Move it whenever you like.',
+        body: `Each hat sits on one of your own posts at a time, alongside any frame. Move it any time, with a ${moveCooldownMin}-minute wait between moves.`,
       },
       {
         title: 'Score for your team',

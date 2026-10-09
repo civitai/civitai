@@ -43,4 +43,28 @@ describe('EventSectionHeading', () => {
     );
     expect(host.querySelector('button')?.textContent).toBe('Points');
   });
+
+  // Centred on the title and subtitle together, the icon drifted down whenever a subtitle wrapped.
+  it('aligns the icon to the title line, not the whole heading block', () => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() =>
+      root!.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(EventSectionHeading, {
+            icon: IconTrophy,
+            title: 'Team standings',
+            subtitle: 'Updated hourly',
+          })
+        )
+      )
+    );
+    const icon = host.querySelector<HTMLElement>('.mantine-ThemeIcon-root')!;
+    const row = icon.parentElement!;
+    expect(row.style.getPropertyValue('--group-align')).toBe('flex-start');
+    expect(icon.className).toContain('-mt-0.5');
+  });
 });
