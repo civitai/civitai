@@ -192,5 +192,5 @@ export const playsToEnd = (durationSeconds: number | null, capSeconds: number) =
 /** Bounds how far one judge can move a single entry. */
 export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
 
-// Enough to cover every open crucible today; the caught-up filter runs after the SQL limit.
+// Candidate pool for getJudgingSuggestions; the caught-up filter runs after the SQL LIMIT, so keep it above the open-crucible count.
 export const CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES = 50;

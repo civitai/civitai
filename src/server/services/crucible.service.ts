@@ -2515,6 +2515,15 @@ export function countRemainingPairs({
   return Math.max(0, Math.min(unjudgedPairs, byEntry, byVotes));
 }
 
+/** `countRemainingPairs` for a judge with no votes yet, in O(1). */
+export function countUnjudgedRemainingPairs(entryCount: number, maxVotesPerEntry: number) {
+  const n = entryCount;
+  return Math.max(
+    0,
+    Math.min((n * (n - 1)) / 2, n * Math.min(maxVotesPerEntry, n - 1), n * maxVotesPerEntry - 1)
+  );
+}
+
 /** Pairs this judge voted on where both entries are still visible to them. */
 export function countJudgedPairs({
   entryIds,
@@ -4914,17 +4923,12 @@ export const getJudgingSuggestions = async ({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })
   );
-  // A never-judged crucible's entries aren't counted (see judgedOnly), so its count is the
-  // no-votes figure over every entry: an overestimate, good enough to weight Start Judging.
+  // countJudgingPairs skips crucibles the judge never voted in (judgedOnly), so estimate those from
+  // the raw entry count: an overestimate, fine for weighting.
   return suggestions.map((crucible) => ({
     ...crucible,
     remainingPairs:
       counts.get(crucible.id)?.remainingPairs ??
-      countRemainingPairs({
-        entryIds: Array.from({ length: crucible._count.entries }, (_, i) => i),
-        judgeEntryVotes: {},
-        votedPairKeys: [],
-        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
-      }),
+      countUnjudgedRemainingPairs(crucible._count.entries, CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY),
   }));
 };

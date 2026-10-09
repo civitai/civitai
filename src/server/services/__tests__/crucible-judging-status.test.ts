@@ -250,7 +250,6 @@ describe('getJudgingSuggestions', () => {
 
     const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 2 });
 
-    // 1: three entries, one pair voted. 2: four unjudged entries make six pairs.
     expect(suggestions.map((c) => [c.id, c.remainingPairs])).toEqual([
       [1, 2],
       [2, 6],

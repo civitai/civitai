@@ -97,6 +97,18 @@ describe('pickWeightedCrucible', () => {
     }
   });
 
+  it('weighs a crucible past its endAt as closing now', () => {
+    const lapsed = { id: 7, endAt: inDays(-3), remainingPairs: 40 };
+    expect(judgingWeight(lapsed, now)).toBe(
+      judgingWeight({ ...lapsed, endAt: new Date(now) }, now)
+    );
+  });
+
+  it('returns null when no crucible has pairs left', () => {
+    const caughtUp = { id: 6, endAt: inDays(1), remainingPairs: 0 };
+    expect(pickWeightedCrucible([caughtUp, { ...caughtUp, id: 8 }], { now })).toBeNull();
+  });
+
   it('reads an endAt that arrives as a string', () => {
     const asString = { ...closingSoon, endAt: inDays(0.5).toISOString() as unknown as Date };
     expect(judgingWeight(asString, now)).toBe(judgingWeight(closingSoon, now));
