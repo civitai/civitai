@@ -256,33 +256,40 @@ export const APP_FEEDBACK_HIDE_COPY = {
   },
 } as const;
 
-/**
- * The loaded pages with one row's hidden state set from a successful write. Used instead of a
- * refetch: `modList` reads a replica, which can still serve the pre-write row and flip the button
- * back. Who hid it is unknown until the next real read.
- */
 type HideableRow = {
   id: number;
   hiddenFromOwnerAt: Date | null;
   hiddenByModeratorUsername: string | null;
 };
 
+/**
+ * The loaded pages with one row's hidden state set from a successful write, used instead of a
+ * refetch: `modList` reads a replica, which can still serve the pre-write row and flip the button
+ * back. A row that no longer matches the list's hidden filter is dropped. Who hid it is unknown
+ * until the next real read.
+ */
 export function patchHiddenInPages<D extends { pages: { items: HideableRow[] }[] }>(
   data: D | undefined,
-  id: number,
-  hidden: boolean,
-  now: Date
+  {
+    id,
+    hidden,
+    filter,
+    now,
+  }: { id: number; hidden: boolean; filter: AppFeedbackHiddenFilter; now: Date }
 ): D | undefined {
   if (!data) return data;
+  const dropped = (filter === 'visible' && hidden) || (filter === 'hidden' && !hidden);
   return {
     ...data,
     pages: data.pages.map((page) => ({
       ...page,
-      items: page.items.map((item) =>
-        item.id === id
-          ? { ...item, hiddenFromOwnerAt: hidden ? now : null, hiddenByModeratorUsername: null }
-          : item
-      ),
+      items: page.items.flatMap((item) => {
+        if (item.id !== id) return [item];
+        if (dropped) return [];
+        return [
+          { ...item, hiddenFromOwnerAt: hidden ? now : null, hiddenByModeratorUsername: null },
+        ];
+      }),
     })),
   };
 }

@@ -28,8 +28,8 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const invalidator = (name: string) => ({
-    invalidate: () => {
-      m.invalidated.push(name);
+    invalidate: (_input?: unknown, filters?: { refetchType?: string }) => {
+      m.invalidated.push(filters?.refetchType ? `${name}:${filters.refetchType}` : name);
       return Promise.resolve();
     },
   });
@@ -209,7 +209,7 @@ describe('AppFeedbackModQueue', () => {
     expect(m.calls).toStrictEqual([{ id: 501, hidden: true }]);
     expect(m.successes).toStrictEqual(['Hidden from the developer']);
     // The list is patched, not refetched: a replica read could still serve the unhidden row.
-    expect(m.patched).toHaveLength(1);
+    await vi.waitFor(() => expect(m.patched).toHaveLength(1));
     expect(m.patched[0].input).toStrictEqual(m.listInputs.at(-1));
     const next = m.patched[0].updater({ pages: [{ items: m.rows }], pageParams: [null] }) as {
       pages: { items: { id: number; hiddenFromOwnerAt: Date | null }[] }[];
@@ -218,7 +218,23 @@ describe('AppFeedbackModQueue', () => {
       [501, true],
       [502, false],
     ]);
-    await vi.waitFor(() => expect(m.invalidated).toStrictEqual(['modCountFlagged']));
+    // Other cached filter views are marked stale without a refetch; the badge refetches.
+    await vi.waitFor(() =>
+      expect(m.invalidated).toStrictEqual(['modList:none', 'modCountFlagged'])
+    );
+  });
+
+  test('hiding under the "visible" filter drops the row from that list', async () => {
+    router.query = { tab: 'app-feedback', hidden: 'visible' };
+    m.rows = [row(), row({ id: 502 })];
+    renderWithProviders(<AppFeedbackModQueue />);
+    await userEvent.click(page.getByRole('button', { name: 'Hide from developer' }).first());
+    await userEvent.click(page.getByTestId('app-feedback-confirm'));
+    await vi.waitFor(() => expect(m.patched).toHaveLength(1));
+    const next = m.patched[0].updater({ pages: [{ items: m.rows }], pageParams: [null] }) as {
+      pages: { items: { id: number }[] }[];
+    };
+    expect(next.pages[0].items.map((i) => i.id)).toStrictEqual([502]);
   });
 
   test('a hidden row offers Unhide and says who hid it', async () => {

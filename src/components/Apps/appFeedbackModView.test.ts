@@ -297,7 +297,7 @@ describe('patchHiddenInPages', () => {
   };
 
   it('hides only the written row, on whichever page it is', () => {
-    const next = patchHiddenInPages(data, 2, true, at)!;
+    const next = patchHiddenInPages(data, { id: 2, hidden: true, filter: 'all', now: at })!;
     expect(next.pages[1].items[0]).toStrictEqual({
       id: 2,
       hiddenFromOwnerAt: at,
@@ -310,7 +310,7 @@ describe('patchHiddenInPages', () => {
   });
 
   it('unhides, clearing who hid it', () => {
-    const next = patchHiddenInPages(data, 3, false, at)!;
+    const next = patchHiddenInPages(data, { id: 3, hidden: false, filter: 'all', now: at })!;
     expect(next.pages[1].items[1]).toMatchObject({
       hiddenFromOwnerAt: null,
       hiddenByModeratorUsername: null,
@@ -318,7 +318,23 @@ describe('patchHiddenInPages', () => {
   });
 
   it('leaves an unloaded list alone', () => {
-    expect(patchHiddenInPages(undefined, 1, true, at)).toBeUndefined();
+    expect(
+      patchHiddenInPages(undefined, { id: 1, hidden: true, filter: 'all', now: at })
+    ).toBeUndefined();
+  });
+
+  it('drops the row from a list filtered to the state it just left', () => {
+    const ids = (d: typeof data | undefined) => d!.pages.flatMap((p) => p.items.map((i) => i.id));
+    expect(
+      ids(patchHiddenInPages(data, { id: 2, hidden: true, filter: 'visible', now: at }))
+    ).toStrictEqual([1, 3]);
+    expect(
+      ids(patchHiddenInPages(data, { id: 3, hidden: false, filter: 'hidden', now: at }))
+    ).toStrictEqual([1, 2]);
+    // Control: the matching filter keeps it.
+    expect(
+      ids(patchHiddenInPages(data, { id: 2, hidden: true, filter: 'hidden', now: at }))
+    ).toStrictEqual([1, 2, 3]);
   });
 });
 
