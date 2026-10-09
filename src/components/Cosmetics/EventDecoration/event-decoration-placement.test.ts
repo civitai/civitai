@@ -397,7 +397,7 @@ describe('a hat with its own fit', () => {
     );
   });
 
-  // The ranges a mod can set. Chosen in the proposal Justin's lead approved (2026-10-09).
+  // The ranges a mod can set, agreed for the hat editor (2026-10-09). Change them deliberately.
   it('limits each setting to the agreed range', () => {
     expect(HAT_FIT_LIMITS).toEqual({
       size: [24, 64],
