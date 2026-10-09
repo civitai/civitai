@@ -21,6 +21,7 @@ import {
   INBOX_STATUS_FILTERS,
   inboxActionError,
   inboxEmptyMessages,
+  INBOX_PRIVACY_NOTE,
   inboxStatusFilterInput,
   OWNER_STATUS_LABELS,
   ownerStatusChoices,
@@ -33,10 +34,6 @@ import type { ListingKind } from '~/shared/constants/app-capabilities.constants'
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-/**
- * The listing editor's Feedback tab: private feedback people sent this app from its chrome,
- * newest first. Renders only the owner projection `appFeedback.listForListing` returns.
- */
 export function AppFeedbackInboxPanel({
   appListingId,
   kind,
@@ -54,9 +51,8 @@ export function AppFeedbackInboxPanel({
   return (
     <Stack gap="md" data-testid="app-feedback-inbox">
       <Alert color="gray" variant="light" icon={<IconLock size={16} />}>
-        <Text size="sm">
-          Private feedback from people using this app. Only you, your collaborators and Civitai
-          moderators can read it — it never appears on the app&apos;s page.
+        <Text size="sm" data-testid="app-feedback-privacy">
+          {INBOX_PRIVACY_NOTE}
         </Text>
       </Alert>
 
@@ -131,19 +127,24 @@ function FeedbackRow({
   const [actionError, setActionError] = useState<InboxActionError | null>(null);
   const [confirmingFlag, setConfirmingFlag] = useState(false);
 
-  const onSettledOk = () => {
+  // Returned to the mutation so it stays pending until the fresh row arrives: re-enabling the
+  // buttons over the stale row would send the old `expectedOwnerStatus` and CONFLICT on the
+  // owner's own change.
+  const refreshAfterWrite = () => {
     setActionError(null);
-    void utils.appFeedback.listForListing.invalidate({ appListingId });
-    void utils.appFeedback.countNewForMyListings.invalidate();
+    return Promise.all([
+      utils.appFeedback.listForListing.invalidate({ appListingId }),
+      utils.appFeedback.countNewForMyListings.invalidate(),
+    ]);
   };
   const setStatus = trpc.appFeedback.setOwnerStatus.useMutation({
-    onSuccess: onSettledOk,
+    onSuccess: refreshAfterWrite,
     onError: (e) => setActionError(inboxActionError(e)),
   });
   const flag = trpc.appFeedback.flagAbusive.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
+      await refreshAfterWrite();
       setConfirmingFlag(false);
-      onSettledOk();
     },
     onError: (e) => {
       setConfirmingFlag(false);

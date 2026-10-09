@@ -8,6 +8,7 @@ import {
   INBOX_FILTER_EMPTY_MESSAGE,
   INBOX_GENERIC_ERROR_MESSAGE,
   INBOX_NO_ACCESS_MESSAGE,
+  INBOX_PRIVACY_NOTE,
   INBOX_STALE_MESSAGE,
   INBOX_STATUS_FILTERS,
   inboxActionError,
@@ -181,6 +182,22 @@ describe('labels and filters', () => {
     expect(inboxStatusFilterInput('all')).toBeUndefined();
     expect(inboxStatusFilterInput('new')).toBe('new');
     expect(inboxStatusFilterInput('resolved')).toBe('resolved');
+  });
+});
+
+describe('the copy owners read, pinned literally', () => {
+  it('privacy, empty, stale and lost-access wording', () => {
+    expect(INBOX_PRIVACY_NOTE).toBe(
+      "Private feedback from people using this app. Only you, your collaborators and Civitai moderators can read it — it never appears on the app's page."
+    );
+    expect(INBOX_EMPTY_MESSAGE).toBe(
+      'No feedback yet. When people using this app send it private feedback, it shows up here.'
+    );
+    expect(INBOX_EMPTY_OFFSITE_NOTE).toBe(
+      "Feedback is sent from the menu of an app running on Civitai, so Standalone apps don't receive any yet."
+    );
+    expect(INBOX_STALE_MESSAGE).toBe('Someone already changed this feedback. Refresh to see it.');
+    expect(INBOX_NO_ACCESS_MESSAGE).toBe("You no longer have access to this app's feedback.");
   });
 });
 

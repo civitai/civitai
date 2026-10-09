@@ -43,7 +43,6 @@ const mocks = vi.hoisted(() => ({
   orphansError: null as string | null,
   orphansLoading: false,
   appBlocksFlag: true,
-  /** What `appFeedback.countNewForMyListings` resolves to. */
   feedbackCounts: undefined as Record<string, number> | undefined,
 }));
 
@@ -1627,6 +1626,18 @@ describe('the new-feedback badge links each row to its own Feedback tab', () => 
     await expect
       .element(page.getByTestId('apps-mine-feedback-apl_seat'))
       .toHaveTextContent('1 new feedback');
+  });
+
+  test('counts that land AFTER the rows still reach them', async () => {
+    const rows = [row({ appListingId: 'apl_late', status: 'approved' })];
+    const { rerender } = await renderWithProviders(<MyAppsBodyView rows={rows} />);
+    await expect.element(page.getByTestId('apps-mine-row-apl_late')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-feedback-apl_late').elements()).toHaveLength(0);
+
+    await rerender(<MyAppsBodyView rows={rows} newFeedbackCounts={{ apl_late: 3 }} />);
+    await expect
+      .element(page.getByTestId('apps-mine-feedback-apl_late'))
+      .toHaveTextContent('3 new feedback');
   });
 
   test('the container feeds the count query into the rows', async () => {

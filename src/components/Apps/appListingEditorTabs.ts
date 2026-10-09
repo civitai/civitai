@@ -311,13 +311,12 @@ export function isOwnerUnpublishedTabContext(
  *                       `listingHistory` authorizes through `resolveListingAccess` (owner
  *                       OR accepted seat) and reads no status, so it refuses nothing this
  *                       page can reach. It is also what keeps the set non-empty: an editor
- *                       on a `removed` listing gets `['history']`, never `[]`, so
+ *                       on a `removed` listing still gets `history` (and `feedback`), never `[]`, so
  *                       `resolveEditorTab`'s `allowed[0]` fallback always has an answer.
  *
  *   - `feedback`      — ALWAYS, like `history`, and LAST so no narrowed set's landing tab moves.
- *                       `appFeedback.listForListing` / `setOwnerStatus` / `flagAbusive` authorize
- *                       through `resolveListingAccess` (owner OR accepted seat) and read no
- *                       status or kind: reports about a since-delisted app stay readable.
+ *                       The inbox procs gate on the seat alone, never status or kind, so
+ *                       reports about a delisted app stay readable.
  */
 export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const tabs: EditorTab[] = [];

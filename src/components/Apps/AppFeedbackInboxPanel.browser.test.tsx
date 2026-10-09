@@ -15,10 +15,8 @@ import {
 } from '~/components/Apps/appFeedbackInbox';
 
 /**
- * The owner inbox's click path, against a mocked data layer: listing, paging, the status
- * control (and its conflict path), the flag confirm, empty and error states. The decisions are
- * pinned in the node `unit` project (`appFeedbackInbox.test.ts`); this file pins that the panel
- * actually wires them.
+ * The decisions are pinned in `appFeedbackInbox.test.ts` (node `unit`); this file pins that the
+ * panel actually wires them.
  */
 
 type Row = {
@@ -35,7 +33,7 @@ type Row = {
 };
 
 type MutationOpts = {
-  onSuccess?: () => void;
+  onSuccess?: () => unknown;
   onError?: (e: { message: string; data: { code: string } }) => void;
 };
 
@@ -51,6 +49,10 @@ const mocks = vi.hoisted(() => ({
   failWith: null as null | string,
   listInvalidations: [] as unknown[],
   countInvalidations: 0,
+  /** Leave every mutation in flight: no callback fires and `isPending` stays true. */
+  pending: false,
+  /** What each `onSuccess` returned — React Query keeps the mutation pending on a promise. */
+  successReturns: [] as unknown[],
 }));
 
 // Looked up per call: `beforeEach` replaces the arrays, so capturing one here would record
@@ -59,11 +61,12 @@ function mutation(record: 'statusCalls' | 'flagCalls') {
   return (opts: MutationOpts) => ({
     mutate: (input: unknown) => {
       mocks[record].push(input);
+      if (mocks.pending) return;
       if (mocks.failWith)
         opts.onError?.({ message: 'server text', data: { code: mocks.failWith } });
-      else opts.onSuccess?.();
+      else mocks.successReturns.push(opts.onSuccess?.());
     },
-    isPending: false,
+    isPending: mocks.pending,
     variables: undefined,
   });
 }
@@ -102,8 +105,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     {
       useUtils: () => ({
         appFeedback: {
-          listForListing: { invalidate: (input: unknown) => mocks.listInvalidations.push(input) },
-          countNewForMyListings: { invalidate: () => (mocks.countInvalidations += 1) },
+          listForListing: {
+            invalidate: async (input: unknown) => {
+              mocks.listInvalidations.push(input);
+            },
+          },
+          countNewForMyListings: {
+            invalidate: async () => {
+              mocks.countInvalidations += 1;
+            },
+          },
         },
       }),
     }
@@ -112,7 +123,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppFeedbackInboxPanel } = await import('./AppFeedbackInboxPanel');
 
-/** Pairwise distinct on every rendered field, so no assertion can pass on a neighbour's value. */
+/** Pairwise distinct on every rendered text field (message, reporter, meta, date, status). */
 const NEWEST: Row = {
   id: 301,
   message: 'The upscale button does nothing on mobile',
@@ -162,6 +173,8 @@ beforeEach(() => {
   mocks.failWith = null;
   mocks.listInvalidations = [];
   mocks.countInvalidations = 0;
+  mocks.pending = false;
+  mocks.successReturns = [];
 });
 
 const filterOption = (label: string) =>
@@ -245,6 +258,21 @@ describe('owner status', () => {
     expect(mocks.countInvalidations).toBe(1);
   });
 
+  test('the write stays pending until the refreshed list lands (onSuccess returns the refetch)', async () => {
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    await userEvent.click(byId('set-resolved', NEWEST.id));
+    expect(mocks.successReturns).toHaveLength(1);
+    expect(mocks.successReturns[0]).toBeInstanceOf(Promise);
+  });
+
+  test('while a write is in flight every action on the row is disabled', async () => {
+    mocks.pending = true;
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    for (const part of ['set-acknowledged', 'set-resolved', 'set-wont_fix', 'flag']) {
+      await expect.element(byId(part, NEWEST.id)).toBeDisabled();
+    }
+  });
+
   test('a set row does not offer its own status and sends what the owner saw', async () => {
     renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
     await expect.element(byId('set-resolved', OLDER.id)).toBeInTheDocument();
@@ -267,6 +295,7 @@ describe('owner status', () => {
     await expect.element(byId('error', NEWEST.id)).toHaveTextContent(INBOX_STALE_MESSAGE);
     expect(byId('error', OLDER.id).elements()).toHaveLength(0);
     expect(mocks.listInvalidations).toEqual([]);
+    expect(mocks.countInvalidations).toBe(0);
 
     await userEvent.click(byId('refresh', NEWEST.id));
     expect(mocks.refetchCalls).toBe(1);
@@ -317,6 +346,15 @@ describe('flag as abusive', () => {
 });
 
 describe('empty and error states', () => {
+  test('the privacy note is always shown above the list', async () => {
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    await expect
+      .element(page.getByTestId('app-feedback-privacy'))
+      .toHaveTextContent(
+        "Private feedback from people using this app. Only you, your collaborators and Civitai moderators can read it — it never appears on the app's page."
+      );
+  });
+
   test('on-site, nothing yet: the inbox explanation only', async () => {
     mocks.pages = [{ items: [], nextCursor: undefined }];
     renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
@@ -339,6 +377,9 @@ describe('empty and error states', () => {
     await expect
       .element(page.getByTestId('app-feedback-empty'))
       .toHaveTextContent(INBOX_FILTER_EMPTY_MESSAGE);
+    expect(page.getByTestId('app-feedback-empty').element().textContent).not.toContain(
+      INBOX_EMPTY_MESSAGE
+    );
   });
 
   test('a failed read is an error, never the empty state', async () => {

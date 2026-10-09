@@ -948,7 +948,7 @@ export function MyAppsBody() {
     retry: false,
   });
 
-  // A failed count only costs the badge; the rows above it are the page.
+  // No error state on purpose: a failed count only hides the badges.
   const feedbackCountsQuery = trpc.appFeedback.countNewForMyListings.useQuery(undefined, {
     retry: false,
   });

@@ -241,20 +241,20 @@ describe('🔴 a NON-AUTHORABLE listing gets the narrowed set — one case per w
     expect(editorTabsFor(removedOwner)).not.toContain('earnings');
   });
 
-  it('🔴 the OWNER set is EXACTLY Publishing + History — nothing else may creep in', () => {
+  it('🔴 the OWNER set is EXACTLY Publishing, History, Feedback — nothing else may creep in', () => {
     // The aggregate, AFTER the five named absences rather than instead of them. It is what
     // catches a tab added in future that none of the cases above happens to name.
     expect(editorTabsFor(removedOwner)).toEqual(['publishing', 'history', 'feedback']);
   });
 
-  it('🔴 a seated EDITOR on a removed listing gets History ALONE — never Publishing', () => {
+  it('🔴 a seated EDITOR on a removed listing gets History + Feedback — never Publishing', () => {
     // Both takedown procs are owner-scoped server-side, so an editor offered Publishing gets
     // a guaranteed red toast. Same status as the owner case above, different role — so this
     // isolates the ROLE clause, which this change makes load-bearing for the first time.
     expect(editorTabsFor({ ...removedOwner, role: 'editor' })).toEqual(['history', 'feedback']);
   });
 
-  it('🔴 a REJECTED listing gets History ALONE, even for the owner — nothing to publish', () => {
+  it('🔴 a REJECTED listing gets History + Feedback, even for the owner — nothing to publish', () => {
     // A rejected app never reached the store, so neither control exists and
     // `isPublishableListingStatus` withholds the tab. A DIFFERENT answer from the removed
     // owner case, so a mutant that treats every non-authorable status alike fails here.
@@ -613,7 +613,7 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
     expect(editorTabsFor(ownerUnpublished)).not.toContain('earnings');
   });
 
-  it('🔴 the OWNER set is EXACTLY Details, Media, Publishing, History — in that order', () => {
+  it('🔴 the OWNER set is EXACTLY Details, Media, Publishing, History, Feedback — in that order', () => {
     // The aggregate AFTER the named cases, so a tab that creeps in later is caught even if
     // no case above happens to name it. Order matters: the panel renders in this sequence.
     expect(editorTabsFor(ownerUnpublished)).toEqual([
@@ -667,7 +667,7 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
   it('🔴 the ACTION alone is not enough — a REJECTED listing carrying it stays narrowed', () => {
     // The STATUS clause, isolated. `rejected` is non-authorable and is not the repair state,
     // and `isPublishableListingStatus` withholds Publishing too, so the answer is History
-    // alone — a DIFFERENT answer from the removed cases above, which is what stops a mutant
+    // + Feedback — a DIFFERENT answer from the removed cases above, which is what stops a mutant
     // treating every non-authorable status alike.
     expect(editorTabsFor({ ...ownerUnpublished, status: 'rejected' })).toEqual([
       'history',

@@ -11,9 +11,8 @@ import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants'
 import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
 
 /**
- * Pure decisions behind the owner's feedback inbox (the listing editor's Feedback tab) and the
- * `/apps/build` new-feedback badge. They live here so the node `unit` project covers them; the
- * `*.browser.test.tsx` suites do not gate merges.
+ * Pure decisions behind the Feedback tab and the `/apps/build` badge, kept out of the components
+ * so the node `unit` project covers them.
  */
 
 export const OWNER_STATUS_LABELS: Readonly<Record<FeedbackOwnerStatus, string>> = Object.freeze({
@@ -22,7 +21,6 @@ export const OWNER_STATUS_LABELS: Readonly<Record<FeedbackOwnerStatus, string>> 
   wont_fix: "Won't fix",
 });
 
-/** `null` in the column means the developer has not acted on it yet. */
 export function ownerStatusLabel(status: FeedbackOwnerStatus | null): string {
   return status ? OWNER_STATUS_LABELS[status] : 'New';
 }
@@ -40,7 +38,6 @@ export function ownerStatusColor(status: FeedbackOwnerStatus | null): string {
   }
 }
 
-/** The inbox filter, in display order; `all` sends no filter at all. */
 export const INBOX_STATUS_FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'new', label: 'New' },
@@ -57,7 +54,7 @@ export function inboxStatusFilterInput(
   return filter === 'all' ? undefined : filter;
 }
 
-/** Statuses the owner can move a row to. There is no way back to "New". */
+/** No way back to "New": `setOwnerStatus` accepts no null. */
 export function ownerStatusChoices(current: FeedbackOwnerStatus | null): FeedbackOwnerStatus[] {
   return FEEDBACK_OWNER_STATUSES.filter((s) => s !== current);
 }
@@ -84,7 +81,7 @@ const SURFACE_LABELS: Readonly<Record<AppFeedbackSurface, string>> = Object.free
   slot: 'Model page',
 });
 
-/** "v1.4.0 (3f9c2ab) · App page" — what was running and where; the date renders separately. */
+/** Version/sha and surface, e.g. ["v1.4.0 (3f9c2ab)", "App page"]; the caller appends the date. */
 export function feedbackRowMeta(row: {
   appBlockVersion: string | null;
   appBlockSha: string | null;
@@ -100,8 +97,10 @@ export function feedbackRowMeta(row: {
   return [version, surface].filter((part): part is string => part !== null);
 }
 
+export const INBOX_PRIVACY_NOTE =
+  "Private feedback from people using this app. Only you, your collaborators and Civitai moderators can read it — it never appears on the app's page.";
 export const INBOX_EMPTY_MESSAGE =
-  'No feedback yet. When people using this app send it private feedback, it shows up here. Only you, your collaborators and Civitai moderators can read it.';
+  'No feedback yet. When people using this app send it private feedback, it shows up here.';
 export const INBOX_EMPTY_OFFSITE_NOTE = `Feedback is sent from the menu of an app running on Civitai, so ${STANDALONE_KIND_LABEL} apps don't receive any yet.`;
 export const INBOX_FILTER_EMPTY_MESSAGE = 'No feedback with this status.';
 
@@ -125,8 +124,8 @@ export type InboxActionError = { kind: 'stale' | 'no_access' | 'other'; message:
 type TrpcLikeError = { message?: string | null; data?: { code?: string | null } | null };
 
 /**
- * A CONFLICT means the row moved since the owner loaded it (another status, already flagged,
- * or hidden by a moderator) — the fix is a refresh, never a retry of the same write.
+ * A CONFLICT means the row changed or left the owner's view since it loaded; the fix is a
+ * refresh, never a retry of the same write.
  */
 export function inboxActionError(error: TrpcLikeError): InboxActionError {
   switch (error.data?.code) {
