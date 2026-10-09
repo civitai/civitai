@@ -2869,6 +2869,28 @@ export type File = {
   entityType: string;
   metadata: unknown | null;
 };
+export type GameFrameGame = {
+  id: Generated<number>;
+  slug: string;
+  title: string;
+  userId: number | null;
+  official: Generated<boolean>;
+  visibility: string;
+  url: string;
+  coverUrl: string | null;
+  stateAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type GameFrameGameReport = {
+  gameFrameGameId: number;
+  reportId: number;
+};
+export type GameFrameReportReceipt = {
+  gfReportId: string;
+  reportId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type GenerationBaseModel = {
   baseModel: string;
 };
@@ -5225,6 +5247,9 @@ export type DB = {
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;
+  GameFrameGame: GameFrameGame;
+  GameFrameGameReport: GameFrameGameReport;
+  GameFrameReportReceipt: GameFrameReportReceipt;
   GenerationBaseModel: GenerationBaseModel;
   GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;

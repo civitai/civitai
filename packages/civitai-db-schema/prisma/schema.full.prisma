@@ -649,6 +649,8 @@ model User {
   crucibleEngagements                CrucibleEngagement[]
   prizes                             Prize[]
 
+  gameFrameGames          GameFrameGame[]
+
   @@index([deletedAt])
 }
 
@@ -1627,6 +1629,8 @@ model Report {
   model3dReview  Model3DReviewReport?
   announcement   AnnouncementReport?
   crucible       CrucibleReport?
+  gameFrameGame  GameFrameGameReport?
+  gameFrameReceipts GameFrameReportReceipt[]
 }
 
 model ResourceReviewReport {
@@ -9427,6 +9431,47 @@ model CrucibleReport {
 
   @@id([reportId, crucibleId])
   @@index([crucibleId], type: Hash)
+}
+
+/// A Civitai Games (Game Frame) game, mirrored so it can be reported like any other entity. Rows are
+/// only ever written from Game Frame's payloads (/api/internal/game-frame/*); nothing else edits them.
+model GameFrameGame {
+  id         Int       @id @default(autoincrement())
+  slug       String    @unique
+  title      String
+  userId     Int?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  official   Boolean   @default(false)
+  visibility String
+  url        String
+  coverUrl   String?
+  stateAt    DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  reports GameFrameGameReport[]
+
+  @@index([userId])
+}
+
+model GameFrameGameReport {
+  gameFrameGameId Int
+  gameFrameGame   GameFrameGame @relation(fields: [gameFrameGameId], references: [id], onDelete: Cascade)
+  reportId        Int           @unique
+  report          Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, gameFrameGameId])
+  @@index([gameFrameGameId], type: Hash)
+}
+
+/// One row per Game Frame report accepted, so a resend returns the original report.
+model GameFrameReportReceipt {
+  gfReportId String   @id
+  reportId   Int
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
 }
 
 model CrucibleEntry {

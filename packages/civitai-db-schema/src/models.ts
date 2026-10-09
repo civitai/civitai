@@ -721,6 +721,7 @@ export interface User {
   crucibleEntries?: CrucibleEntry[];
   crucibleEngagements?: CrucibleEngagement[];
   prizes?: Prize[];
+  gameFrameGames?: GameFrameGame[];
 }
 
 export interface CustomerSubscription {
@@ -1312,6 +1313,8 @@ export interface Report {
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
   crucible?: CrucibleReport | null;
+  gameFrameGame?: GameFrameGameReport | null;
+  gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
 export interface ResourceReviewReport {
@@ -5990,6 +5993,36 @@ export interface CrucibleReport {
   crucible?: Crucible;
   reportId: number;
   report?: Report;
+}
+
+export interface GameFrameGame {
+  id: number;
+  slug: string;
+  title: string;
+  userId: number | null;
+  user?: User | null;
+  official: boolean;
+  visibility: string;
+  url: string;
+  coverUrl: string | null;
+  stateAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  reports?: GameFrameGameReport[];
+}
+
+export interface GameFrameGameReport {
+  gameFrameGameId: number;
+  gameFrameGame?: GameFrameGame;
+  reportId: number;
+  report?: Report;
+}
+
+export interface GameFrameReportReceipt {
+  gfReportId: string;
+  reportId: number;
+  report?: Report;
+  createdAt: Date;
 }
 
 export interface CrucibleEntry {
