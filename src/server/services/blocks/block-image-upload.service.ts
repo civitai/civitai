@@ -11,6 +11,7 @@ import type { OffsiteRatingValue } from '~/shared/constants/browsingLevel.consta
 import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
 import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
+import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
 import type { SessionUser } from '~/types/session';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
 
@@ -99,26 +100,24 @@ const MAX_OUTPUT_REDIRECTS = 3;
  * Is this a supported still-image by MAGIC BYTES (not by the url/extension or a
  * spoofable content-type header)? JPEG / PNG / GIF / WEBP. Returns the canonical
  * content-type so the store upload is labelled from the BYTES, not the response.
+ * This caller's rules (shared sniffer, {@link sniffImageFormat}): the 4-byte PNG
+ * prefix, GIF accepted, and nothing shorter than 12 bytes.
  */
-function sniffSupportedImage(b: Buffer): string | null {
-  if (b.length < 12) return null;
-  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
-  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
-  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif';
-  if (
-    b[0] === 0x52 &&
-    b[1] === 0x49 &&
-    b[2] === 0x46 &&
-    b[3] === 0x46 && // 'RIFF'
-    b[8] === 0x57 &&
-    b[9] === 0x45 &&
-    b[10] === 0x42 &&
-    b[11] === 0x50 // 'WEBP'
-  ) {
-    return 'image/webp';
-  }
-  return null;
+export function sniffSupportedImage(b: Buffer): string | null {
+  const format = sniffImageFormat(b, {
+    formats: ['jpeg', 'png', 'gif', 'webp'],
+    pngSignature: 'prefix',
+    minLength: 12,
+  });
+  return format ? SUPPORTED_IMAGE_CONTENT_TYPE[format] : null;
 }
+
+const SUPPORTED_IMAGE_CONTENT_TYPE: Record<ImageMagicFormat, string> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
 
 /**
  * Hardened fetch of a generation output blob: host-allowlisted ({@link isAllowedOutputHost}),
