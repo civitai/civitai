@@ -89,19 +89,23 @@ const hero = (page: { headline: string; dates?: string }) =>
       joining: false,
     })
   );
+// The only badge on a hero with no preview and no team is the date badge.
+const badges = (page: HTMLElement) =>
+  [...page.querySelectorAll('.mantine-Badge-label')].map((b) => b.textContent);
 
 describe('ScoredEventHero date badge', () => {
   it("shows the event's own dates verbatim, untouched by the viewer's timezone", () => {
     const page = hero({ headline: 'Hats', dates: 'November 11 to 25' });
-    expect(page.textContent).toContain('November 11 to 25');
+    expect(badges(page)).toEqual(['November 11 to 25']);
   });
 
   // Positive control: without `dates` the badge still prints a range, so the arm above cannot pass
   // because the badge is missing.
   it('falls back to the formatted start and end without one', () => {
     const page = hero({ headline: 'Hats' });
-    expect(page.textContent).toMatch(/Nov 11 to Nov 2[56]/);
-    expect(page.textContent).not.toContain('November 11 to 25');
+    const [badge, ...rest] = badges(page);
+    expect(badge).toMatch(/^Nov 11 to Nov 2[56]$/);
+    expect(rest).toEqual([]);
   });
 });
 
@@ -142,12 +146,12 @@ describe('PlaceHatModal tiles', () => {
 });
 
 describe('MyEventHats cooldown', () => {
-  const hats = (over: Partial<MyHat>) =>
+  const hats = (over: Partial<MyHat>, fetchedAt = Date.now()) =>
     render(
       React.createElement(MyEventHats, {
         event: 'birthday2026',
         hats: [hat({ placedAt: new Date(), ...over })],
-        fetchedAt: Date.now(),
+        fetchedAt,
         teamColor: 'pink',
         ended: false,
       })
@@ -166,6 +170,19 @@ describe('MyEventHats cooldown', () => {
 
   it('unlocks the Move button once the server says the cooldown is over', () => {
     const page = hats({ movableAt: new Date(Date.now() + 5 * MINUTE), moveCooldownLeftMs: 0 });
+    expect(page.textContent).not.toContain('Can move in');
+    expect(page.querySelector('button')?.disabled).toBe(false);
+  });
+
+  // The server's count is as of the fetch; the time since then comes off it.
+  it('takes the time since the fetch off the server count', () => {
+    const page = hats({ moveCooldownLeftMs: 10 * MINUTE }, Date.now() - 3 * MINUTE);
+    expect(page.textContent).toContain('Can move in 7 min');
+    expect(page.querySelector('button')?.disabled).toBe(true);
+  });
+
+  it('unlocks once the cooldown has run out since the fetch', () => {
+    const page = hats({ moveCooldownLeftMs: 10 * MINUTE }, Date.now() - 11 * MINUTE);
     expect(page.textContent).not.toContain('Can move in');
     expect(page.querySelector('button')?.disabled).toBe(false);
   });
