@@ -80,12 +80,16 @@ export default function PlaceHatModal({
               return (
                 <UnstyledButton
                   key={`${c.entityType}:${c.entityId}`}
-                  disabled={equipping || current}
-                  onClick={() => place(c.entityType, c.entityId)}
+                  // The post wearing this hat can't be picked. It is not a button at all: a
+                  // disabled one swallows real clicks on the hat inside it, so it would not burst.
+                  component={current ? 'div' : 'button'}
+                  disabled={!current && equipping}
+                  onClick={current ? undefined : () => place(c.entityType, c.entityId)}
                   className={clsx(
-                    'flex flex-col gap-1 rounded-md p-1 hover:bg-gray-1 dark:hover:bg-dark-5',
-                    // The post wearing this hat can't be picked, but stays undimmed so its hat shows.
-                    !current && 'disabled:opacity-50'
+                    'flex flex-col gap-1 rounded-md p-1',
+                    current
+                      ? 'cursor-default'
+                      : 'hover:bg-gray-1 disabled:opacity-50 dark:hover:bg-dark-5'
                   )}
                 >
                   <EventContentThumb

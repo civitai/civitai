@@ -21,6 +21,7 @@ const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let placeable: unknown[] = [];
+const { equip } = vi.hoisted(() => ({ equip: vi.fn() }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
@@ -40,14 +41,16 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 }));
 vi.mock('~/components/Cosmetics/cosmetics.util', async (importOriginal) => ({
   ...(await importOriginal<typeof CosmeticsUtil>()),
-  useEquipContentDecoration: () => ({ equip: vi.fn(), isLoading: false }),
+  useEquipContentDecoration: () => ({ equip, isLoading: false }),
 }));
 vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof EventsUtils>()),
   useTeamColor: () => () => 'pink',
 }));
 vi.mock('~/components/Events/ScoredEvent/EventContentThumb', () => ({
-  EventContentThumb: () => null,
+  // Records which tile wears a hat, by the hat's art.
+  EventContentThumb: ({ hat }: { hat?: { url: string } }) =>
+    hat ? React.createElement('span', { 'data-hat': hat.url }) : null,
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
 vi.mock('~/components/Countdown/Countdown', () => ({ Countdown: () => null }));
@@ -153,6 +156,40 @@ describe('PlaceHatModal tiles', () => {
     const grid = modal.querySelector('button')!.parentElement!;
     expect(grid.className.split(' ')).toEqual(
       expect.arrayContaining(['pl-6', 'pt-6', '[--event-decoration-grow:1]'])
+    );
+  });
+
+  // A browser drops real clicks inside a disabled button, so the wearing tile is no button at all
+  // and its hat bursts. The real-click check is PlaceHatModal.wearing-hat.browser.test.tsx, which
+  // no CI job runs; this pins the structure in the unit suite.
+  it('keeps the hat on the wearing tile out of any button', () => {
+    placeable = [
+      { entityType: 'Image', entityId: 500, title: null, image: null },
+      { entityType: 'Image', entityId: 501, title: null, image: null },
+    ];
+    const placedOn = { entityType: 'Image', entityId: 500 } as MyHat['placedOn'];
+    const worn = hat({ placedOn, data: { type: 'hat', event: 'birthday2026', url: 'u' } as never });
+    const modal = render(
+      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: worn, myHats: [worn] })
+    );
+    // EventContentThumb (which draws the hat) is mocked here; its tile is what must not be a button.
+    const wearing = [...modal.querySelectorAll('p')].find(
+      (p) => p.textContent === 'Wearing this hat now'
+    )!;
+    expect(wearing.closest('button')).toBeNull();
+    // The wearing tile still shows the hat.
+    expect(wearing.parentElement!.querySelector('[data-hat="u"]')).not.toBeNull();
+    const tiles = [...modal.querySelectorAll('button')].filter(
+      (b) => !b.hasAttribute('data-event-decoration')
+    );
+    expect(tiles).toHaveLength(1);
+    // And it still can't be picked, while the other post can.
+    equip.mockClear();
+    act(() => wearing.click());
+    expect(equip).not.toHaveBeenCalled();
+    act(() => tiles[0].click());
+    expect(equip).toHaveBeenCalledWith(
+      expect.objectContaining({ equippedToType: 'Image', equippedToId: 501 })
     );
   });
 });
