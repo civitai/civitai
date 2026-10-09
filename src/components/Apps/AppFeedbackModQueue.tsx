@@ -253,9 +253,11 @@ export function AppFeedbackModQueue() {
         message: APP_FEEDBACK_HIDE_COPY[data.hidden ? 'hide' : 'unhide'].done,
       });
       setPending(null);
-      // Every other cached filter view goes stale (refetched on its next visit, after the replica
-      // has caught up); the one on screen is patched, which also clears its stale mark.
+      // Every other cached filter view goes stale and refetches on its next visit, by which time
+      // the replica has usually caught up. The one on screen is patched, which also clears its
+      // stale mark; an in-flight fetch of it is cancelled first so its result cannot overwrite it.
       await utils.appFeedback.modList.invalidate(undefined, { refetchType: 'none' });
+      await utils.appFeedback.modList.cancel(listInput);
       utils.appFeedback.modList.setInfiniteData(listInput, (prev) =>
         patchHiddenInPages(prev, {
           id: data.id,

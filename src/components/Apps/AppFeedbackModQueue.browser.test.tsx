@@ -14,6 +14,8 @@ const m = vi.hoisted(() => ({
   listInputs: [] as Record<string, unknown>[],
   calls: [] as Record<string, unknown>[],
   invalidated: [] as string[],
+  /** Every cache call, in order, with whether it targeted all keys or one. */
+  events: [] as string[],
   fail: null as null | { message: string; data: { code: string } },
   errors: [] as string[],
   successes: [] as string[],
@@ -30,6 +32,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const invalidator = (name: string) => ({
     invalidate: (_input?: unknown, filters?: { refetchType?: string }) => {
       m.invalidated.push(filters?.refetchType ? `${name}:${filters.refetchType}` : name);
+      m.events.push(
+        `invalidate ${name} ${_input === undefined ? 'all' : 'one'}${
+          filters?.refetchType ? ` ${filters.refetchType}` : ''
+        }`
+      );
       return Promise.resolve();
     },
   });
@@ -72,7 +79,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           appFeedback: {
             modList: {
               ...invalidator('modList'),
+              cancel: (input: unknown) => {
+                m.events.push(`cancel modList ${input === undefined ? 'all' : 'one'}`);
+                return Promise.resolve();
+              },
               setInfiniteData: (input: unknown, updater: (prev: unknown) => unknown) => {
+                m.events.push('patch modList');
                 m.patched.push({ input, updater });
               },
             },
@@ -133,6 +145,7 @@ beforeEach(() => {
   m.listInputs = [];
   m.calls = [];
   m.invalidated = [];
+  m.events = [];
   m.fail = null;
   m.errors = [];
   m.successes = [];
@@ -219,8 +232,15 @@ describe('AppFeedbackModQueue', () => {
       [502, false],
     ]);
     // Other cached filter views are marked stale without a refetch; the badge refetches.
+    // Order matters: stale-marking after the patch would leave the visible view stale too, and
+    // an in-flight fetch must be cancelled before the patch or its replica result overwrites it.
     await vi.waitFor(() =>
-      expect(m.invalidated).toStrictEqual(['modList:none', 'modCountFlagged'])
+      expect(m.events).toStrictEqual([
+        'invalidate modList all none',
+        'cancel modList one',
+        'patch modList',
+        'invalidate modCountFlagged all',
+      ])
     );
   });
 
