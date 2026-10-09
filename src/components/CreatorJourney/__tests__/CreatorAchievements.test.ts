@@ -241,3 +241,16 @@ describe('Artless milestone hexagon', () => {
     });
   });
 });
+
+// Truncating cut off the badge name, which is the point of the tile (lead review, 2026-10-09).
+describe('Ladder tile names', () => {
+  it('wraps a long name onto a second line instead of truncating it', () => {
+    const el = render(new Map([['create:models-1', null]]));
+    const name = [...(tile(el, '25 Models')?.querySelectorAll<HTMLElement>('*') ?? [])].find(
+      (node) => node.textContent === '25 Models'
+    );
+    expect(name?.className).not.toMatch(/truncate/);
+    expect(name?.getAttribute('data-line-clamp')).toBe('true');
+    expect(name?.style.getPropertyValue('--text-line-clamp')).toBe('2');
+  });
+});

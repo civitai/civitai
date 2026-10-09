@@ -702,6 +702,7 @@ describe('compete wins', () => {
     const { activity } = await getCreatorJourney(42);
 
     expect(activity.milestones.map((m) => m.current)).toEqual([3, 3, 3]);
+    expect(activity.winBreakdown).toEqual({ challenges: 2, crucibles: 1 });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'creator-journey-ledger-wins' })
     );

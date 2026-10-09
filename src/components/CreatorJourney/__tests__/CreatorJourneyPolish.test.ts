@@ -158,5 +158,8 @@ describe('journey page polish', () => {
     const page = mount(journey([secret('secret:a', false)]));
     const img = page.querySelector('[data-state="locked"] img');
     expect(img?.className.split(' ')).toContain('scale-x-110');
+    // Only the placeholder art is drawn narrow; real badge art must not be stretched.
+    const earned = mount(journey([secret('secret:b', true)]));
+    expect(earned.querySelector('[data-state="earned"] .scale-x-110')).toBeNull();
   });
 });

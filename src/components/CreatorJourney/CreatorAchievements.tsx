@@ -223,7 +223,8 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
     >
       <MilestoneBadge milestone={milestone} state={state} size={48} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <Text size="sm" fw={700} truncate>
+        {/* Five tiles share a row, so a long name wraps rather than losing its end. */}
+        <Text size="sm" fw={700} lineClamp={2}>
           {milestone.name}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
