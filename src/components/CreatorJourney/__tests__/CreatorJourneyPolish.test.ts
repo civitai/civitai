@@ -152,4 +152,11 @@ describe('journey page polish', () => {
     expect(art('locked')[0]).toContain(HIDDEN_ACHIEVEMENT_PLACEHOLDER);
     expect(art('earned')).toEqual(['']);
   });
+
+  // Measured 2026-10-09: the placeholder art's hexagon is 0.79 as wide as tall, the badge art 0.87.
+  it('widens the placeholder art to an even hexagon', () => {
+    const page = mount(journey([secret('secret:a', false)]));
+    const img = page.querySelector('[data-state="locked"] img');
+    expect(img?.className.split(' ')).toContain('scale-x-110');
+  });
 });

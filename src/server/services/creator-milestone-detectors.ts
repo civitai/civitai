@@ -158,7 +158,12 @@ export const activityValuesSql = `SELECT
     least(coalesce((SELECT sum(s.amount) FROM (${shopSalesSource}) s WHERE s."userId" = $1), 0),
       2147483647)::int AS revenue,
     -- Wins in Postgres only; the page adds the ledger's.
-    (SELECT count(*) FROM (${competeWinsSource}) s WHERE s."userId" = $1)::int AS wins`;
+    w.wins, w."crucibleWins"
+  FROM (
+    SELECT count(*)::int AS wins,
+      (count(*) FILTER (WHERE s.contest LIKE 'crucible:%'))::int AS "crucibleWins"
+    FROM (${competeWinsSource}) s WHERE s."userId" = $1
+  ) w`;
 
 function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
   switch (entry.detector) {

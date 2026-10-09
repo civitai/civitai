@@ -53,7 +53,8 @@ function SecretTile({ secret }: { secret: Secret }) {
           src={HIDDEN_ACHIEVEMENT_PLACEHOLDER}
           alt=""
           width={144}
-          className="size-[52px] shrink-0 object-contain"
+          // The placeholder art is drawn about a tenth narrower than a regular hexagon.
+          className="size-[52px] shrink-0 scale-x-110 object-contain"
           optimized
         />
       )}

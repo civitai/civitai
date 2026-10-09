@@ -7,6 +7,7 @@ import { SCORE_TIERS, scoreTierKey } from '~/shared/constants/creator-journey.co
 export type BadgeState = 'earned' | 'next' | 'locked';
 
 export const HEXAGON = 'polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%)';
+export const HEXAGON_ASPECT = Math.sqrt(3) / 2;
 export const DEFAULT_ACCENT = '#f59f00';
 
 export const tierAccents: Record<string, string> = Object.fromEntries(
