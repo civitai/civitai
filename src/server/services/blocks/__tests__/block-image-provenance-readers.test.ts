@@ -4,8 +4,9 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
- * EVERY site in `src/` that names an App Blocks provenance key, by owning declaration, with the
- * role it plays. Derived from the AST (comments cannot count), compared as a SET in both
+ * EVERY site in `src/` that names an App Blocks provenance key — by constant (aliases included),
+ * string or template literal, or as a property/binding name — by owning declaration, with the role
+ * it plays. Derived from the AST (comments cannot count), compared as a SET in both
  * directions, so adding or removing a reader fails here whether or not its author knew this file
  * existed.
  *
@@ -99,16 +100,33 @@ function deriveSites(): Map<string, Set<string>> {
     if (![...KEY_IDENTIFIERS, ...KEY_LITERALS].some((k) => text.includes(k))) continue;
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const rel = path.relative(REPO_ROOT, file).split(path.sep).join('/');
+    // `import { BLOCK_UPLOADED_APP_ID_META_KEY as K }` — later uses of `K` are uses of the key.
+    const aliases = new Map<string, string>();
+    const collectAliases = (node: ts.Node): void => {
+      if (
+        ts.isImportSpecifier(node) &&
+        node.propertyName &&
+        KEY_IDENTIFIERS.has(node.propertyName.text)
+      ) {
+        aliases.set(node.name.text, node.propertyName.text);
+      }
+      ts.forEachChild(node, collectAliases);
+    };
+    collectAliases(source);
     const visit = (node: ts.Node): void => {
       let token: string | null = null;
-      if (ts.isIdentifier(node) && KEY_IDENTIFIERS.has(node.text)) {
+      if (ts.isIdentifier(node)) {
         const p = node.parent;
         const wiring =
           ts.isImportSpecifier(p) ||
           ts.isExportSpecifier(p) ||
           ts.isImportClause(p) ||
           ts.isNamespaceImport(p);
-        if (!wiring) token = node.text;
+        if (KEY_IDENTIFIERS.has(node.text) && !wiring) token = node.text;
+        else if (aliases.has(node.text) && !wiring) token = aliases.get(node.text) ?? null;
+        // A property access, binding or shorthand spelled as the key itself
+        // (`meta.blockUploadedAppId`, `const { blockUploadedAppId } = meta`) reads it too.
+        else if (KEY_LITERALS.has(node.text)) token = `'${node.text}'`;
       } else if (ts.isStringLiteral(node) || ts.isTemplateLiteralToken(node)) {
         // `includes`, not equality: a raw SQL template can spell the key inside a larger string
         // (`metadata->>'blockUploadedAppId'`), and that is a reader too.

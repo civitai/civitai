@@ -1,13 +1,9 @@
 /**
- * `OPEN_IMAGE_UPLOAD { bytes }` — the PURE core of a page block uploading an image it PRODUCED in
- * the viewer's tab (no picker). The host feeds the bytes into the same store upload → persist →
- * scan → gate pipeline a picked `display` upload uses; the only server-visible difference is the
- * `blockUploadedAppId` provenance stamp, which makes the image postable by this app as a
- * `{ kind: 'published' }` post source.
- *
- * Mirrors the `SAVE_IMAGE { bytes }` patterns in `saveImageDownload.ts`: an `ArrayBuffer`-only
- * resolver, a content-sniffed type (never the caller's), and a per-host rolling-window limit
- * applied cap-first.
+ * `OPEN_IMAGE_UPLOAD { bytes }` — the pure core of a page block uploading an image it produced in
+ * the viewer's tab (no picker). Same store upload → persist → scan → gate pipeline as a picked
+ * `display` upload, but authorized and persisted through `blocks.authorizeAppUploadImage` /
+ * `blocks.persistAppUploadImage`, which stamp `blockUploadedAppId` so this app can post it as a
+ * `{ kind: 'published' }` source.
  */
 
 import { BLOCK_IMAGE_MAX_BYTES } from '~/shared/constants/block-image-upload.constants';
@@ -19,6 +15,7 @@ import {
   saveBytesWindowHasRoom,
   sniffSaveBytesImage,
   type BytesWindowLimits,
+  type SaveBytesImageType,
   type SaveBytesWindowEntry,
 } from './saveImageDownload';
 
@@ -26,7 +23,6 @@ import {
 export const UPLOAD_BYTES_MAX_BYTES = BLOCK_IMAGE_MAX_BYTES;
 /** Each upload creates a real, scanned Image row, so the window is far longer than a save's. */
 export const UPLOAD_BYTES_WINDOW_MS = 60_000;
-/** An app posts what it just made: one image, or a fixed one and a retry, per minute is the use. */
 export const UPLOAD_BYTES_MAX_PER_WINDOW = 3;
 /** Two max-size files per window, so a burst cannot hold more than that in the viewer's tab. */
 export const UPLOAD_BYTES_MAX_BYTES_PER_WINDOW = 2 * UPLOAD_BYTES_MAX_BYTES;
@@ -45,8 +41,6 @@ export const UPLOAD_BYTES_NO_TOKEN_ERROR = 'no block token';
 
 /** `Image.name`'s bound in the persist input. */
 const UPLOAD_BYTES_MAX_FILENAME_LENGTH = 255;
-
-export type UploadBytesImageType = 'image/png' | 'image/webp' | 'image/jpeg';
 
 export type ImageUploadBytesRequest =
   | { kind: 'none' }
@@ -72,7 +66,7 @@ export function resolveImageUploadBytes(raw: unknown): ImageUploadBytesRequest {
   };
 }
 
-function uploadBytesFilename(raw: string | undefined, type: UploadBytesImageType): string {
+function uploadBytesFilename(raw: string | undefined, type: SaveBytesImageType): string {
   const name = forceSaveBytesExtension(sanitizeSaveBytesFilename(raw), type);
   if (name.length <= UPLOAD_BYTES_MAX_FILENAME_LENGTH) return name;
   const dot = name.lastIndexOf('.');
@@ -86,7 +80,7 @@ function uploadBytesFilename(raw: string | undefined, type: UploadBytesImageType
  *   1. the per-file cap on `byteLength` — FIRST, so an over-cap file is always too-large, never
  *      `busy` (a retry could never succeed);
  *   2. the window pre-check, non-recording — a full window refuses `busy` before any sniffing;
- *   3. sniff PNG / WebP / JPEG by magic bytes (the shared sniffer, via `sniffSaveBytesImage`);
+ *   3. sniff PNG / WebP / JPEG by magic bytes;
  *   4. record it in the window — only an upload that will run counts.
  */
 export function processUploadBytes(
@@ -95,7 +89,7 @@ export function processUploadBytes(
   now: number
 ): {
   result:
-    | { ok: true; contentType: UploadBytesImageType; filename: string }
+    | { ok: true; contentType: SaveBytesImageType; filename: string }
     | { ok: false; error: string };
   recent: SaveBytesWindowEntry[];
 } {
@@ -107,7 +101,7 @@ export function processUploadBytes(
     return { result: { ok: false, error: UPLOAD_BYTES_BUSY_ERROR }, recent: [...recent] };
   }
   const type = sniffSaveBytesImage(new Uint8Array(req.bytes));
-  if (type !== 'image/png' && type !== 'image/webp' && type !== 'image/jpeg') {
+  if (!type) {
     return {
       result: { ok: false, error: UPLOAD_BYTES_TYPE_NOT_ALLOWED_ERROR },
       recent: [...recent],

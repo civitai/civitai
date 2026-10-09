@@ -128,6 +128,7 @@ import {
   isAppBlocksPostCreationEnabled,
 } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
+import { persistBlockUploadImageSchema } from '~/server/schema/blocks/block-image-upload.schema';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
@@ -5323,12 +5324,36 @@ export const blocksRouter = router({
     }),
 
   /**
-   * `OPEN_IMAGE_UPLOAD { bytes }` — persist an image the page block PRODUCED in the viewer's tab,
-   * after the host uploaded those bytes through the same store upload a picked `display` image
-   * uses. The persistence and scan are `blockImageUpload.persist`'s, unchanged; the host then polls
-   * the same `blockImageUpload.gate`. The ONE difference is the row is stamped with the verified
-   * token appId under `blockUploadedAppId`, which is what lets this app name it as a
-   * `{ kind: 'published' }` post source.
+   * `OPEN_IMAGE_UPLOAD { bytes }`, step 1 of 2: may this page app upload an image for this viewer
+   * at all? The host asks BEFORE it puts any bytes in the image store, so an app the step-2 gates
+   * would refuse never gets content stored under the viewer's upload key. Same gates as step 2; it
+   * confers nothing — `persistAppUploadImage` re-runs them.
+   */
+  authorizeAppUploadImage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .input(z.object({ blockToken: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const { claims } = await authorizeBlockPostRequest(input.blockToken, 'upload', ctx.user.id);
+      if (!isPageToken(claims)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'image byte uploads are available to page apps only',
+        });
+      }
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      return { ok: true as const };
+    }),
+
+  /**
+   * `OPEN_IMAGE_UPLOAD { bytes }`, step 2 of 2: persist the uploaded image exactly as
+   * `blockImageUpload.persist` does, except the row is stamped `blockUploadedAppId` = the verified
+   * token appId, which lets this app post it as a `{ kind: 'published' }` source.
    *
    * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
    * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
@@ -5345,11 +5370,9 @@ export const blocksRouter = router({
       })
     )
     .input(
-      z.object({
-        blockToken: z.string().min(1),
-        url: z.string().uuid(),
-        name: z.string().max(255).nullish(),
-      })
+      persistBlockUploadImageSchema
+        .pick({ url: true, name: true })
+        .extend({ blockToken: z.string().min(1) })
     )
     .mutation(async ({ ctx, input }) => {
       const { claims, userId } = await authorizeBlockPostRequest(

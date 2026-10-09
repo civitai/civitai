@@ -10,16 +10,17 @@ import { UPLOAD_BYTES_MAX_PER_WINDOW } from '~/components/AppBlocks/imageUploadB
 
 /**
  * `OPEN_IMAGE_UPLOAD { bytes }` on the REAL PageBlockHost: an image the block made in its tab is
- * uploaded with NO picker, through the same store upload a picked image uses, persisted by
- * `blocks.persistAppUploadImage`, and gated by the same scan poll — replying the same shapes a
- * picked `display` upload does, or `{ requestId, error }`.
+ * authorized, uploaded with NO picker through the same store upload a picked image uses,
+ * persisted by `blocks.persistAppUploadImage`, and gated by the same scan poll — replying exactly
+ * once, with the moderated shape a picked `display` upload returns or `{ requestId, error }`.
  *
- * The store upload (`useCFImageUpload`) and the three server calls are the only stubs; the
- * request parse, limits, uploader, poller and reply mapping all run for real.
+ * The store upload (`useCFImageUpload`) and the four server calls are the only stubs; the request
+ * parse, limits, uploader, poller and reply mapping all run for real.
  */
 
 const h = vi.hoisted(() => ({
   uploadToCF: vi.fn(),
+  authorize: vi.fn(),
   persist: vi.fn(),
   gate: vi.fn(),
 }));
@@ -40,6 +41,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),
   trpc: makeTrpcProxy({
+    'blocks.authorizeAppUploadImage': { useMutation: () => ({ mutateAsync: h.authorize }) },
     'blocks.persistAppUploadImage': { useMutation: () => ({ mutateAsync: h.persist }) },
     'blockImageUpload.gate': { useMutation: () => ({ mutateAsync: h.gate }) },
     'apps.shared': makeInertSubRouter(),
@@ -51,23 +53,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 
 const KEY = '33333333-3333-4333-8333-333333333333';
+const OBJECT_URL = 'blob:host/preview-of-upload';
+/** Distinct from every other number in this file, so a mixed-up id cannot pass. */
+const PERSISTED_ID = 78;
 const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48];
 const GIF = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00];
 const pngBytes = () => new Uint8Array(PNG).buffer;
 
-const READY = {
-  status: 'ready' as const,
-  imageId: 77,
-  nsfwLevel: 1,
-  contentRating: 'pg',
-  url: 'https://image.civitai.com/xG/77/width=1200/original.jpeg',
-};
 const SELECTED = {
-  imageId: 77,
+  imageId: PERSISTED_ID,
   nsfwLevel: 1,
   contentRating: 'pg',
-  url: 'https://image.civitai.com/xG/77/width=1200/original.jpeg',
+  url: 'https://image.civitai.com/xG/78/width=1200/original.jpeg',
 };
+const READY = { status: 'ready' as const, ...SELECTED };
 
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 const baseProps = {
@@ -123,6 +122,13 @@ function listenForReply() {
   };
 }
 
+/** EVERY IMAGE_UPLOAD_RESULT for one requestId — a list, so a second reply cannot hide. */
+function repliesFor(replies: ReturnType<typeof listenForReply>, requestId: string) {
+  return replies
+    .of('IMAGE_UPLOAD_RESULT')
+    .filter((p) => (p as { requestId: string }).requestId === requestId);
+}
+
 async function driveToReady() {
   await vi.waitFor(() => {
     if (!iframe().contentWindow) throw new Error('not mounted yet');
@@ -133,22 +139,22 @@ async function driveToReady() {
   });
 }
 
-/** Every IMAGE_UPLOAD_RESULT so far, keyed by requestId. */
-function resultsById(replies: ReturnType<typeof listenForReply>) {
-  return Object.fromEntries(
-    replies.of('IMAGE_UPLOAD_RESULT').map((p) => [(p as { requestId: string }).requestId, p])
-  );
-}
+/** Lets any reply that WOULD follow a settled request arrive before asserting there is none. */
+const settle = () => new Promise((r) => setTimeout(r, 150));
 
 beforeEach(() => {
   useDialogStore.getState().closeAll();
-  h.uploadToCF.mockReset().mockResolvedValue({ id: KEY, url: 'u', objectUrl: 'o', type: 'image' });
-  h.persist.mockReset().mockResolvedValue({ imageId: 77 });
+  h.uploadToCF
+    .mockReset()
+    .mockResolvedValue({ id: KEY, url: 'u', objectUrl: OBJECT_URL, type: 'image' });
+  h.authorize.mockReset().mockResolvedValue({ ok: true });
+  h.persist.mockReset().mockResolvedValue({ imageId: PERSISTED_ID });
   h.gate.mockReset().mockResolvedValue(READY);
 });
 
 describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
-  test('CROSS-FRAME: an ArrayBuffer from the opaque sandbox is uploaded with no picker and replies the moderated image; a Uint8Array is refused', async () => {
+  test('CROSS-FRAME: an ArrayBuffer from the opaque sandbox is uploaded with no picker and replies the moderated image once; a Uint8Array is refused', async () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
     renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
     await vi.waitFor(() => {
       if (!iframe().contentWindow) throw new Error('not mounted yet');
@@ -164,6 +170,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     };
     window.addEventListener('message', onEcho);
     try {
+      // The `blockToken` in the first payload is a decoy: the host must use its own.
       el.srcdoc =
         `<script>
         var sent = false;
@@ -171,7 +178,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
           if (sent) return;
           sent = true;
           var png = new Uint8Array([${PNG.join(',')}]);
-          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_ab', bytes: png.buffer.slice(0), filename: 'fixed meta.png' } }, '*');
+          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_ab', bytes: png.buffer.slice(0), filename: 'fixed meta.png', blockToken: 'tok_evil' } }, '*');
           parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_u8', bytes: new Uint8Array(png) } }, '*');
         }
         window.addEventListener('message', function (e) {
@@ -183,40 +190,48 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
         setTimeout(go, 300);
       </` + `script>`;
 
-      await vi.waitFor(() => {
-        const results = Object.fromEntries(
-          echoes
-            .filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT')
-            .map((m) => [(m.data.payload as { requestId: string }).requestId, m.data.payload])
-        );
-        expect(results).toEqual({
-          rq_xf_ab: { requestId: 'rq_xf_ab', selected: SELECTED },
-          rq_xf_u8: { requestId: 'rq_xf_u8', error: 'invalid image-upload request' },
-        });
-      });
+      const uploadReplies = () =>
+        echoes.filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT').map((m) => m.data.payload);
+      await vi.waitFor(() => expect(uploadReplies()).toHaveLength(2));
+      await settle();
+      expect(uploadReplies()).toEqual(
+        expect.arrayContaining([
+          { requestId: 'rq_xf_ab', selected: SELECTED },
+          { requestId: 'rq_xf_u8', error: 'invalid image-upload request' },
+        ])
+      );
+      expect(uploadReplies()).toHaveLength(2);
+      expect(echoes.filter((m) => m.data.type === 'IMAGE_SCAN_RESOLVED')).toEqual([]);
       // Positive control that the messages really crossed realms: an opaque sandbox posts as 'null'.
       expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
     } finally {
       window.removeEventListener('message', onEcho);
     }
 
-    // No picker: the whole point of the variant.
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // Authorized with the HOST's token before anything was uploaded.
+    expect(h.authorize).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
+    expect(h.authorize.mock.invocationCallOrder[0]).toBeLessThan(
+      h.uploadToCF.mock.invocationCallOrder[0]
+    );
     // The bytes reached the store upload unchanged, typed from their content.
     expect(h.uploadToCF).toHaveBeenCalledTimes(1);
     const file = h.uploadToCF.mock.calls[0][0] as File;
     expect([file.name, file.type]).toEqual(['fixed meta.png', 'image/png']);
     expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual(PNG);
-    // Persisted through the stamping proc with the HOST's token, then gated on that id.
     expect(h.persist).toHaveBeenCalledWith({
       blockToken: 'tok_abc',
       url: KEY,
       name: 'fixed meta.png',
     });
-    expect(h.gate).toHaveBeenCalledWith({ imageId: 77 });
+    // Gated on the PERSISTED id.
+    expect(h.gate).toHaveBeenCalledWith({ imageId: PERSISTED_ID });
+    // The upload hook's preview object URL is released rather than pinning the file in memory.
+    expect(revoke).toHaveBeenCalledWith(OBJECT_URL);
+    revoke.mockRestore();
   });
 
-  test('asyncScan: replies the PENDING handle on persist, then pushes the verdict', async () => {
+  test('asyncScan is ignored: one moderated reply, no pending handle, no push', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
@@ -226,50 +241,50 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       asyncScan: true,
     });
 
-    await vi.waitFor(() => {
-      expect(replies.of('IMAGE_SCAN_RESOLVED')).toEqual([
-        { requestId: 'rq_async', imageId: 77, result: { status: 'scanned', image: SELECTED } },
-      ]);
-    });
-    expect(replies.of('IMAGE_UPLOAD_RESULT')).toEqual([
-      {
-        requestId: 'rq_async',
-        selected: { status: 'pending', imageId: 77, url: expect.stringContaining(KEY) },
-      },
+    await vi.waitFor(() => expect(repliesFor(replies, 'rq_async')).toHaveLength(1));
+    await settle();
+    expect(repliesFor(replies, 'rq_async')).toEqual([
+      { requestId: 'rq_async', selected: SELECTED },
     ]);
+    expect(replies.of('IMAGE_SCAN_RESOLVED')).toEqual([]);
     replies.stop();
   });
 
-  test('every refusal and failure replies `{ requestId, error }` — never the bare cancelled shape', async () => {
+  test('a refused authorization uploads NOTHING to the store', async () => {
+    h.authorize.mockRejectedValueOnce(new Error('block lacks posts:write:self scope'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_scope', bytes: pngBytes() });
+    await vi.waitFor(() =>
+      expect(repliesFor(replies, 'rq_scope')).toEqual([
+        { requestId: 'rq_scope', error: 'block lacks posts:write:self scope' },
+      ])
+    );
+    expect(h.uploadToCF).not.toHaveBeenCalled();
+    expect(h.persist).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('every refusal and failure replies `{ requestId, error }` exactly once — never the bare cancelled shape', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
 
-    // A GIF is not an allowed type: refused before any upload.
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_gif', bytes: new Uint8Array(GIF).buffer });
-    // generationSource never creates an Image row, so bytes cannot ride it.
     postFromBlock('OPEN_IMAGE_UPLOAD', {
       requestId: 'rq_src',
       bytes: pngBytes(),
       purpose: 'generationSource',
     });
-    await vi.waitFor(() =>
-      expect(resultsById(replies)).toEqual({
-        rq_gif: { requestId: 'rq_gif', error: 'file type is not allowed' },
-        rq_src: { requestId: 'rq_src', error: 'invalid image-upload request' },
-      })
-    );
-    expect(h.uploadToCF).not.toHaveBeenCalled();
+    h.persist.mockRejectedValueOnce(new Error('posting from apps is not enabled'));
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_persist', bytes: pngBytes() });
 
-    // The server refusing the persist (here: the app lacks the post scope).
-    h.persist.mockRejectedValueOnce(new Error('block lacks posts:write:self scope'));
-    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_scope', bytes: pngBytes() });
-    await vi.waitFor(() =>
-      expect(resultsById(replies).rq_scope).toEqual({
-        requestId: 'rq_scope',
-        error: 'block lacks posts:write:self scope',
-      })
-    );
+    await vi.waitFor(() => {
+      expect(repliesFor(replies, 'rq_gif')).toHaveLength(1);
+      expect(repliesFor(replies, 'rq_src')).toHaveLength(1);
+      expect(repliesFor(replies, 'rq_persist')).toHaveLength(1);
+    });
 
     // The scan refusing the image (a thrown BAD_REQUEST from the gate).
     h.gate.mockRejectedValueOnce(
@@ -278,14 +293,59 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       })
     );
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_flag', bytes: pngBytes() });
-    await vi.waitFor(() =>
-      expect(resultsById(replies).rq_flag).toEqual({
-        requestId: 'rq_flag',
-        error: 'that image was flagged during review — choose a different image',
-      })
-    );
+    await vi.waitFor(() => expect(repliesFor(replies, 'rq_flag')).toHaveLength(1));
+    await settle();
+
+    expect(
+      ['rq_gif', 'rq_src', 'rq_persist', 'rq_flag'].map((id) => repliesFor(replies, id))
+    ).toEqual([
+      [{ requestId: 'rq_gif', error: 'file type is not allowed' }],
+      [{ requestId: 'rq_src', error: 'invalid image-upload request' }],
+      [{ requestId: 'rq_persist', error: 'posting from apps is not enabled' }],
+      [
+        {
+          requestId: 'rq_flag',
+          error: 'that image was flagged during review — choose a different image',
+        },
+      ],
+    ]);
+    expect(replies.of('IMAGE_SCAN_RESOLVED')).toEqual([]);
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
     replies.stop();
+  });
+
+  test('a requestId reused while its upload is in flight is refused, and does not spend the window', async () => {
+    // The bridge itself drops a repeated requestId for 5 s (usePostMessage's replay dedup), so the
+    // reuse that reaches the host is a later one: move the clock past that, inside the 60 s window.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    try {
+      h.gate.mockResolvedValue({ status: 'pending' });
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_dup', bytes: pngBytes() });
+      await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(1));
+      offset = 6_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_dup', bytes: pngBytes() });
+      await vi.waitFor(() =>
+        expect(repliesFor(replies, 'rq_dup')).toEqual([
+          { requestId: 'rq_dup', error: 'invalid image-upload request' },
+        ])
+      );
+      // The window still has room for the rest of its budget after the refused duplicate.
+      for (let i = 1; i < UPLOAD_BYTES_MAX_PER_WINDOW; i++) {
+        postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: `rq_more_${i}`, bytes: pngBytes() });
+      }
+      await vi.waitFor(() =>
+        expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW)
+      );
+      expect(repliesFor(replies, `rq_more_${UPLOAD_BYTES_MAX_PER_WINDOW - 1}`)).toEqual([]);
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   test(`the ${
@@ -299,10 +359,9 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: `rq_${i}`, bytes: pngBytes() });
     }
     await vi.waitFor(() =>
-      expect(resultsById(replies)[`rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`]).toEqual({
-        requestId: `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`,
-        error: 'busy',
-      })
+      expect(repliesFor(replies, `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`)).toEqual([
+        { requestId: `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`, error: 'busy' },
+      ])
     );
     await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW));
     replies.stop();
@@ -314,9 +373,12 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     const replies = listenForReply();
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_tok', bytes: pngBytes() });
     await vi.waitFor(() =>
-      expect(resultsById(replies).rq_tok).toEqual({ requestId: 'rq_tok', error: 'no block token' })
+      expect(repliesFor(replies, 'rq_tok')).toEqual([
+        { requestId: 'rq_tok', error: 'no block token' },
+      ])
     );
     expect(h.uploadToCF).not.toHaveBeenCalled();
+    expect(h.authorize).not.toHaveBeenCalled();
     replies.stop();
   });
 });

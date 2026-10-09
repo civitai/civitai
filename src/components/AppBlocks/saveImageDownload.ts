@@ -118,11 +118,10 @@ function liveSaveBytesWindow(
 }
 
 /**
- * NON-recording check: would a save of `size` bytes fit in the window right now? True only if fewer
- * than `maxPerWindow` saves are live AND their total plus `size` stays within `maxBytesPerWindow`
- * (the SAVE_BYTES_* constants by default). `size` is the raw `byteLength`, known before any
- * decoding, so the host can refuse `busy` without classifying (which decodes + JSON-parses up to
- * 50 MB on the main thread).
+ * NON-recording check: would an entry of `size` bytes fit in the window right now? True only if
+ * fewer than `maxPerWindow` entries are live AND their total plus `size` stays within
+ * `maxBytesPerWindow` (the SAVE_BYTES_* constants by default). `size` is the raw `byteLength`, so a
+ * caller can refuse `busy` before any decoding.
  */
 export function saveBytesWindowHasRoom(
   recent: readonly SaveBytesWindowEntry[],
@@ -411,7 +410,7 @@ export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
  * server's `detectImageType` and `sniffSupportedImage` use). This caller's rules: full 8-byte PNG
  * signature and no GIF, the same set `detectImageType` accepts.
  */
-export function sniffSaveBytesImage(b: Uint8Array): SaveBytesType | null {
+export function sniffSaveBytesImage(b: Uint8Array): SaveBytesImageType | null {
   const format = sniffImageFormat(b, { formats: ['png', 'webp', 'jpeg'], pngSignature: 'full' });
   return format ? SAVE_BYTES_IMAGE_TYPE[format] : null;
 }
@@ -421,6 +420,8 @@ const SAVE_BYTES_IMAGE_TYPE = {
   webp: 'image/webp',
   jpeg: 'image/jpeg',
 } as const satisfies Partial<Record<ImageMagicFormat, SaveBytesType>>;
+
+export type SaveBytesImageType = (typeof SAVE_BYTES_IMAGE_TYPE)[keyof typeof SAVE_BYTES_IMAGE_TYPE];
 
 /**
  * Classify block-supplied bytes by CONTENT. The `filename` only chooses JSON over plain text, and

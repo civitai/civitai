@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -339,13 +340,15 @@ describe('resolveAppPublishedImages', () => {
     // `toContain('blockPublishedAppId')` over the text alone reports a false
     // ABSENCE here for a marker that is very much being applied.
     const rawCall = dbMock.dbRead.$queryRaw.mock.calls[0];
-    const sql = (rawCall[0] as string[]).join('?');
-    const params = rawCall.slice(1);
-    expect(sql).toContain('i."userId" = ');
-    expect(sql).toContain('i."postId" IS NULL');
-    expect(sql).toContain('i."metadata"->>(');
+    // Flattened, because the provenance OR-group is a nested `Prisma.sql` fragment.
+    const flat = Prisma.sql(rawCall[0] as TemplateStringsArray, ...(rawCall.slice(1) as never[]));
+    const params = flat.values;
+    expect(flat.text).toContain('i."userId" = ');
+    expect(flat.text).toContain('i."postId" IS NULL');
+    expect(flat.text).toContain('i."metadata"->>(');
     expect(params).toContain(VIEWER_USER_ID);
     expect(params).toContain(BLOCK_POST_APP_ID_META_KEY);
+    expect(params).toContain('blockUploadedAppId');
     expect(params).toContain(APP_ID);
   });
 

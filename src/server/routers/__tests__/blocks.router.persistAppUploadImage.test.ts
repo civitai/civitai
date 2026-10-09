@@ -15,6 +15,7 @@ const {
   mockIsAppBlocksPostCreationEnabled,
   mockGetSessionUser,
   mockCheckPublishRate,
+  mockCheckCatalogRate,
   mockPersistUpload,
 } = vi.hoisted(() => ({
   mockAuthorizeBlockBridgeToken: vi.fn(),
@@ -23,6 +24,7 @@ const {
   mockIsAppBlocksPostCreationEnabled: vi.fn(),
   mockGetSessionUser: vi.fn(),
   mockCheckPublishRate: vi.fn(),
+  mockCheckCatalogRate: vi.fn(),
   mockPersistUpload: vi.fn(),
 }));
 
@@ -42,7 +44,7 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => mockGetSessionUser(...a) },
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
-  checkBlockCatalogRateLimit: vi.fn(),
+  checkBlockCatalogRateLimit: (...a: unknown[]) => mockCheckCatalogRate(...a),
   checkBlockPostRateLimit: vi.fn(),
   checkBlockPostAppRateLimit: vi.fn(),
   checkBlockPublishRateLimit: (...a: unknown[]) => mockCheckPublishRate(...a),
@@ -109,6 +111,7 @@ beforeEach(() => {
   mockIsAppBlocksPostCreationEnabled.mockResolvedValue(true);
   mockGetSessionUser.mockResolvedValue({ id: VIEWER_ID });
   mockCheckPublishRate.mockResolvedValue({ allowed: true });
+  mockCheckCatalogRate.mockResolvedValue({ allowed: true });
   mockPersistUpload.mockResolvedValue({ imageId: 777 });
 });
 
@@ -178,5 +181,53 @@ describe('blocks.persistAppUploadImage', () => {
     );
     await call().catch(() => undefined);
     expect(mockCheckPublishRate).not.toHaveBeenCalled();
+  });
+});
+
+describe('blocks.authorizeAppUploadImage — the gate the host runs BEFORE any bytes reach the store', () => {
+  const authorize = (c = ctx()) =>
+    blocksRouter.createCaller(c as never).authorizeAppUploadImage({ blockToken: 'tok' });
+
+  it('admits a page app holding posts:write:self, charging only the read bucket', async () => {
+    await expect(authorize()).resolves.toEqual({ ok: true });
+    expect(mockCheckCatalogRate).toHaveBeenCalledWith('page_apb_alpha');
+    expect(mockCheckPublishRate).not.toHaveBeenCalled();
+    expect(mockPersistUpload).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'an app without posts:write:self',
+      () => mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ scopes: [] })),
+      { code: 'FORBIDDEN', message: 'block lacks posts:write:self scope' },
+    ],
+    [
+      'post creation switched off',
+      () => mockIsAppBlocksPostCreationEnabled.mockResolvedValue(false),
+      { code: 'FORBIDDEN', message: 'posting from apps is not enabled' },
+    ],
+    [
+      'a model-slot (non-page) token',
+      () =>
+        mockAuthorizeBlockBridgeToken.mockResolvedValue(
+          claims({ blockInstanceId: 'bki_alpha', ctx: { slotId: 'model.sidebar_top', modelId: 5 } })
+        ),
+      { code: 'FORBIDDEN', message: 'image byte uploads are available to page apps only' },
+    ],
+    [
+      'the read bucket refusing',
+      () => mockCheckCatalogRate.mockResolvedValue({ allowed: false }),
+      { code: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded, please retry shortly.' },
+    ],
+  ])('refuses %s', async (_label, arrange, expected) => {
+    arrange();
+    await expect(authorize()).rejects.toMatchObject(expected);
+  });
+
+  it('refuses a session that is not the token subject', async () => {
+    await expect(authorize(ctx({ id: OTHER_USER_ID }))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'this app session belongs to a different account; reload the page to continue',
+    });
   });
 });

@@ -1,13 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import {
-  BLOCK_POSTABLE_APP_ID_META_KEYS,
-  BLOCK_PUBLISHED_APP_ID_META_KEY,
-  BLOCK_UPLOADED_APP_ID_META_KEY,
-} from '~/server/services/blocks/block-image-upload.service';
+import { BLOCK_POSTABLE_APP_ID_META_KEYS } from '~/server/services/blocks/block-image-upload.service';
 import { isAllowedOutputHost } from '~/server/services/blocks/block-image-upload.logic';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
@@ -510,11 +506,10 @@ const POST_PREVIEW_EDGE_WIDTH = 450;
  *     does NOT have this conjunct, because that read is BY DESIGN cross-user;
  *     copying it here unchanged would have let a block pull ANOTHER viewer's
  *     image of the same app into this viewer's post.
- *   - `metadata->>'blockPublishedAppId' = <token appId>` OR
- *     `metadata->>'blockUploadedAppId' = <token appId>` — the app may only re-use
- *     what IT published or uploaded, never another app's images. The uploaded key
- *     is safe here, and ONLY here, because the owner conjunct above already binds
- *     the row to this viewer; the cross-user grid read must never accept it.
+ *   - `blockPublishedAppId` OR `blockUploadedAppId` = <token appId> — only what
+ *     THIS app published or uploaded. The uploaded key is safe here, and only
+ *     here, because the owner conjunct above binds the row to this viewer; the
+ *     cross-user gated read must never accept it.
  *   - `postId IS NULL` — an image already in a post is not adoptable. This also
  *     makes double-posting impossible without a second check.
  *   - `classifyGatedImageForViewer` — terminally `Scanned`, unflagged, and within
@@ -579,10 +574,12 @@ export async function resolveAppPublishedImages(input: {
     WHERE i."id" = ANY(${ids}::int[])
       AND i."userId" = ${input.userId}
       AND i."postId" IS NULL
-      AND (
-        i."metadata"->>(${BLOCK_PUBLISHED_APP_ID_META_KEY}::text) = ${input.appId}
-        OR i."metadata"->>(${BLOCK_UPLOADED_APP_ID_META_KEY}::text) = ${input.appId}
-      )
+      AND (${Prisma.join(
+        BLOCK_POSTABLE_APP_ID_META_KEYS.map(
+          (key) => Prisma.sql`i."metadata"->>(${key}::text) = ${input.appId}`
+        ),
+        ' OR '
+      )})
   `;
 
   const byId = new Map(rows.map((r) => [r.id, r]));
