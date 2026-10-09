@@ -210,8 +210,29 @@ describe('a hatted feed card', () => {
     });
     expect(popover()).toBeNull();
     expect(enabledFlags().at(-1)).toBe(false);
-    // Nothing else (a modal the card sits in) also takes this Escape.
+    // Nothing around the card also takes this Escape: not a React handler above it, and not a
+    // Mantine Modal, which skips a key from an element marked to stop it.
     expect(outerKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('marks the hat so a Mantine Modal leaves its Escape alone only while it is open', () => {
+    renderCard();
+    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
+    clickHat();
+    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBe('true');
+    clickHat();
+    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
+  });
+
+  it('keeps the popover open, and the key moving, for any other key on the hat', () => {
+    renderCard();
+    clickHat();
+    for (const key of ['Enter', ' ', 'Tab', 'a'])
+      act(() => {
+        hatButton().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      });
+    expect(popover()).not.toBeNull();
+    expect(outerKeyDown).toHaveBeenCalledTimes(4);
   });
 
   // With nothing open, Escape on a focused hat still reaches whatever is around the card.
@@ -346,5 +367,16 @@ describe('a hat not worn on content', () => {
     expect(wornHat.useQuery).not.toHaveBeenCalled();
     expect(popover()).toBeNull();
     expect(document.querySelector('[aria-hidden] span span')).not.toBeNull();
+  });
+
+  // It opens nothing, so it has nothing to close: Escape after a click still reaches its surroundings.
+  it('keeps Escape for its surroundings after a click', () => {
+    render(React.createElement(EventDecorationOverlay, { decoration: HAT }));
+    clickHat();
+    act(() => {
+      hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(outerKeyDown).toHaveBeenCalledTimes(1);
+    expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
   });
 });
