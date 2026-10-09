@@ -288,6 +288,8 @@ describe('the daily job after a failed run', () => {
   let sendsByKey: Map<string, number>;
   let failDates: Set<string>;
   let queriedDates: string[];
+  let updateEvents: string[];
+  let failNextStamp: boolean;
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -296,6 +298,8 @@ describe('the daily job after a failed run', () => {
     sendsByKey = new Map();
     failDates = new Set();
     queriedDates = [];
+    updateEvents = [];
+    failNextStamp = false;
     loggingMock.logToAxiom.mockClear();
 
     vi.mocked(getJobDate).mockImplementation(async (_key, defaultValue) => {
@@ -303,12 +307,20 @@ describe('the daily job after a failed run', () => {
       return [
         lastPayout ?? defaultValue ?? new Date(0),
         async (date?: Date) => {
+          if (failNextStamp) {
+            failNextStamp = false;
+            throw new Error('KeyValue write failed');
+          }
           lastPayout = date ?? runStartedAt;
         },
       ] as const;
     });
     mockClickhouseQuery.mockReset();
     mockClickhouseQuery.mockImplementation(async (strings: TemplateStringsArray, ...values) => {
+      if (strings.join('').includes('manual_events')) {
+        updateEvents.push(String(values[0]));
+        return [];
+      }
       if (!strings.join('').includes('resourceCompensations')) return [];
       const date = (values[0] as Date).toISOString().slice(0, 10);
       queriedDates.push(date);
@@ -358,6 +370,31 @@ describe('the daily job after a failed run', () => {
     expect(paidDates()).toEqual(['2026-10-04', '2026-10-05', '2026-10-06']);
     expect(resentKeys()).toEqual([]);
     expect(yellowHeld()).toBe(3 * 56);
+    // One compensation update per paid date, and none for the failed attempt.
+    expect(updateEvents).toEqual(['2026-10-04', '2026-10-05', '2026-10-06']);
+  });
+
+  it('a date paid but not stamped is resent under the same keys and pays nothing more', async () => {
+    lastPayout = day('2026-10-04');
+    failNextStamp = true;
+    await expect(runJobAt(at2am('2026-10-05'))).rejects.toThrow('KeyValue write failed');
+    const keysAfterCrash = [...ledger.keys()].sort();
+
+    await runJobAt(at2am('2026-10-05'));
+
+    expect(keysAfterCrash).toEqual(['creator-tip-comp-2026-10-04-7-Yellow']);
+    expect([...ledger.keys()].sort()).toEqual(keysAfterCrash);
+    expect(resentKeys()).toEqual(keysAfterCrash);
+    expect(yellowHeld()).toBe(56);
+    expect(lastPayout).toEqual(day('2026-10-05'));
+  });
+
+  it('pays nothing on the first run ever, with no last-payout date stored', async () => {
+    await runJobAt(at2am('2026-10-05'));
+
+    expect(queriedDates).toEqual([]);
+    expect(ledger.size).toBe(0);
+    expect(lastPayout).toBeUndefined();
   });
 
   it('a second run on the same day pays nothing', async () => {
