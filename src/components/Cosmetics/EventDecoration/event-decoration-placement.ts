@@ -1,4 +1,5 @@
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import { constants } from '~/server/common/constants';
 import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
@@ -15,6 +16,19 @@ export const DEFAULT_HAT_PLACEMENT: HatPlacement = 'corner';
  * (brim to top) that sits inside the card. `grow` is the hover scale, about the brim.
  */
 export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
+
+/**
+ * The card width the look was chosen on (a feed card, and PreviewCard's default). A smaller card
+ * that passes its width wears the hat scaled down to match; no card wears it larger.
+ */
+export const HAT_LOOK_CARD_WIDTH = constants.cardSizes.image;
+
+/** How much a hat shrinks on a card this wide: 1 for a feed card, a wider one, or no width. */
+export function getHatCardScale(cardWidth?: number) {
+  return isFiniteNumber(cardWidth) && cardWidth > 0
+    ? Math.min(1, cardWidth / HAT_LOOK_CARD_WIDTH)
+    : 1;
+}
 
 const within = ([lo, hi]: readonly [number, number], value: number) =>
   Math.min(hi, Math.max(lo, value));
@@ -50,14 +64,17 @@ const isNumbers = (value: unknown, length: number): value is number[] =>
 /**
  * The hat's box, in px from the card's top-left corner, rotated about the middle of its brim.
  * Sizing and the overhang solve use the art's own brim and outline when its fit gives them, so
- * every design is worn at the same size and none is cropped.
+ * every design is worn at the same size and none is cropped. On a card narrower than a feed card
+ * (`cardWidth`), the size, nudge and offset shrink with it; the container's room does not.
  */
 export function getHatLayout(
   placement: HatPlacement,
   fit?: EventDecorationFit,
   allowance = HAT_ALLOWANCE[placement],
-  nudge = 0
+  nudge = 0,
+  cardWidth?: number
 ) {
+  const cardScale = getHatCardScale(cardWidth);
   const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
   const [left, top, right, bottom] =
     isNumbers(fit?.bounds, 4) && fit.bounds[2] > fit.bounds[0] && fit.bounds[3] > fit.bounds[1]
@@ -78,17 +95,18 @@ export function getHatLayout(
     [right, bottom],
   ];
   const brimWidth =
-    isFiniteNumber(fit?.size) && fit.size > 0
+    (isFiniteNumber(fit?.size) && fit.size > 0
       ? within(HAT_FIT_LIMITS.size, fit.size)
-      : HAT_LOOK.brim;
+      : HAT_LOOK.brim) * cardScale;
   const tilt = isFiniteNumber(fit?.tilt) ? within(HAT_FIT_LIMITS.tilt, fit.tilt) : HAT_LOOK.tilt;
   const depth = isFiniteNumber(fit?.depth)
     ? within(HAT_FIT_LIMITS.depth, fit.depth)
     : HAT_LOOK.onCard;
   const grow = isFiniteNumber(fit?.grow) ? within(HAT_FIT_LIMITS.grow, fit.grow) : HAT_LOOK.grow;
   const [offsetX, offsetY] = isNumbers(fit?.offset, 2)
-    ? fit.offset.map((x) => within(HAT_FIT_LIMITS.offset, x))
+    ? fit.offset.map((x) => within(HAT_FIT_LIMITS.offset, x) * cardScale)
     : [0, 0];
+  const cardNudge = nudge * cardScale;
 
   const scale = brimWidth / (brimRight - brimLeft);
   const pivot = { x: (brimLeft + brimRight) / 2, y: brimY };
@@ -108,8 +126,8 @@ export function getHatLayout(
   const maxX = Math.max(...points.map((p) => p.x));
   const maxY = Math.max(...points.map((p) => p.y));
 
-  const pivotX = Math.max(-sin * inset - nudge + offsetX, -allowance - minX);
-  const pivotY = Math.max(cos * inset - nudge + offsetY, -allowance - minY);
+  const pivotX = Math.max(-sin * inset - cardNudge + offsetX, -allowance - minX);
+  const pivotY = Math.max(cos * inset - cardNudge + offsetY, -allowance - minY);
 
   return {
     width: canvasW * scale,
@@ -157,21 +175,25 @@ export function getEventDecorationClearLeft(
   decoration: { type: string; fit?: EventDecorationFit },
   placement = DEFAULT_HAT_PLACEMENT,
   allowance?: number,
-  nudge = 0
+  nudge = 0,
+  cardWidth?: number
 ) {
   if (decoration.type !== 'hat') return 0;
-  return Math.ceil(getHatLayout(placement, decoration.fit, allowance, nudge).reach.right) + 4;
+  return (
+    Math.ceil(getHatLayout(placement, decoration.fit, allowance, nudge, cardWidth).reach.right) + 4
+  );
 }
 
 /** `--event-decoration-clear-left` for a card: follows a corner hat its container moves in. */
 export function getEventDecorationClearLeftCss(
   decoration: { type: string; fit?: EventDecorationFit },
   placement = DEFAULT_HAT_PLACEMENT,
-  nudge = 0
+  nudge = 0,
+  cardWidth?: number
 ) {
   if (decoration.type !== 'hat' || placement !== 'corner')
-    return `${getEventDecorationClearLeft(decoration, placement)}px`;
-  const { reach } = getHatLayout('corner', decoration.fit, Infinity, nudge);
+    return `${getEventDecorationClearLeft(decoration, placement, undefined, 0, cardWidth)}px`;
+  const { reach } = getHatLayout('corner', decoration.fit, Infinity, nudge, cardWidth);
   return `calc(${Math.ceil(reach.right) + 4}px + ${hatShiftCss(reach.left)})`;
 }
 
