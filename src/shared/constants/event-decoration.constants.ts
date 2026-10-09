@@ -47,7 +47,7 @@ export type EventDecorationFit = {
   bounds?: [number, number, number, number];
   /** [left, right, y] of the brim, the widest row the hat rests on. Defaults to the bounds' bottom edge. */
   brim?: [number, number, number];
-  /** Convex outline of the visible pixels, as [x, y] points. Defaults to the bounds' corners. */
+  /** Convex outline of the visible pixels, as [x, y] points in ring order (it is drawn as a polygon). Defaults to the bounds. */
   outline?: [number, number][];
   /** Brim width on a card, in CSS px. */
   size?: number;

@@ -134,9 +134,16 @@ describe('MasonryColumnsVirtual with worn hats', () => {
     );
     expect(getComputedStyle(plain).contentVisibility).toBe('auto');
 
-    // Held on the way out until the hat has settled back, then restored.
+    expect(getComputedStyle(wearer).transitionDelay).toBe('0s');
+
+    // Held on the way out until the hat has settled back, then restored. The hold is read as a
+    // style fact: the value it holds leaves on a timer, so reading that would race the runner.
     await userEvent.unhover(card(1));
-    expect(getComputedStyle(wearer).contentVisibility).toBe('visible');
+    const leaving = getComputedStyle(wearer);
+    expect(leaving.transitionProperty).toBe('content-visibility, z-index');
+    const settle = parseFloat(getComputedStyle(hat()).transitionDuration);
+    for (const delay of leaving.transitionDelay.split(','))
+      expect(parseFloat(delay)).toBeGreaterThan(settle);
     await vi.waitFor(
       () => expect(getComputedStyle(wearer).contentVisibility).toBe('auto'),
       GROW_WAIT
@@ -153,8 +160,11 @@ describe('MasonryColumnsVirtual with worn hats', () => {
       getComputedStyle(el).clipPath.startsWith('polygon(')
     );
     expect(hitLayers).toHaveLength(1);
-    await userEvent.tab();
+
+    expect(getComputedStyle(hat()).outlineStyle).toBe('none');
+    for (let i = 0; i < 10 && document.activeElement !== hat(); i++) await userEvent.tab();
     expect(document.activeElement).toBe(hat());
+    expect(getComputedStyle(hat()).outlineStyle).not.toBe('none');
   });
 
   test.each([undefined, 8, 0])(

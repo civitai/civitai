@@ -212,7 +212,7 @@ it('wears the look chosen on real cards', () => {
 // ITEM_BLEED, so home blocks restate it: room above and left of their edge cards, traded from
 // margin to padding around the cards' own 8px (`p-2`) so nothing moves.
 const declared = (file: string, declaration: string) =>
-  new RegExp(String.raw`^\s*${declaration.replace(/[()[\]]/g, '$&')}`, 'm').test(
+  new RegExp(String.raw`^\s*${declaration.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'm').test(
     readFileSync(file, 'utf8')
   );
 
@@ -232,6 +232,10 @@ it.each([
   ],
   ['src/components/Profile/Sections/ShowcaseGrid.module.scss', '--event-decoration-grow: 1;'],
   ['src/components/HomeBlocks/HomeBlock.module.scss', '--event-decoration-grow: 1;'],
+  [
+    'src/components/HomeBlocks/HomeBlock.module.scss',
+    '--event-decoration-allowance: calc(var(--mantine-spacing-md) + 8px);',
+  ],
 ])('%s declares %s', (file, declaration) => {
   expect(declared(file, declaration)).toBe(true);
 });
