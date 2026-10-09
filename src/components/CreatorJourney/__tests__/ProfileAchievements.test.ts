@@ -4,6 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
 const mocks = vi.hoisted(() => ({
   viewer: null as {
@@ -20,16 +21,14 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: {
-    creatorJourney: {
-      isMilestoneShareable: {
-        useQuery: (input: unknown, { enabled }: { enabled: boolean }) => {
-          mocks.shareQueries.push({ input, enabled });
-          return { data: enabled ? mocks.shareable : undefined };
-        },
+  trpc: makeTrpcProxy({
+    'creatorJourney.isMilestoneShareable': {
+      useQuery: (input: unknown, { enabled }: { enabled: boolean }) => {
+        mocks.shareQueries.push({ input, enabled });
+        return { data: enabled ? mocks.shareable : undefined };
       },
     },
-  },
+  }),
 }));
 // The site share popover needs the app's providers; what it is handed is what this file checks.
 vi.mock('~/components/ShareButton/ShareButton', () => ({
