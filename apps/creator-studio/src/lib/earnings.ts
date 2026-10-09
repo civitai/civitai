@@ -8,6 +8,7 @@ export const EARNINGS_SOURCES = [
   'licenseFee',
   'accessSale',
   'cosmeticSale',
+  'otherCredit',
 ] as const;
 export type EarningsSource = (typeof EARNINGS_SOURCES)[number];
 
@@ -18,6 +19,7 @@ export const SOURCE_LABEL: Record<EarningsSource, string> = {
   licenseFee: 'License fees',
   accessSale: 'Access sales',
   cosmeticSale: 'Cosmetic sales',
+  otherCredit: 'Other credits',
 };
 
 // Per-source line colors for the earnings trend chart (distinct hues; not the buzz-currency palette).
@@ -28,6 +30,7 @@ export const SOURCE_COLOR: Record<EarningsSource, string> = {
   licenseFee: '#40c057',
   accessSale: '#9775fa',
   cosmeticSale: '#f783ac',
+  otherCredit: '#868e96',
 };
 
 // The buzz account types every buzz-only earnings read is restricted to — the trend series, the monthly table,
