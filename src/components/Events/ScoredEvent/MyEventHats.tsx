@@ -1,5 +1,12 @@
 import { Button, Group, SimpleGrid, Stack, Text } from '@mantine/core';
-import { IconArrowsMove, IconClock, IconEye, IconHeart, IconHanger } from '@tabler/icons-react';
+import {
+  IconArrowsMove,
+  IconClock,
+  IconEye,
+  IconHanger,
+  IconHeart,
+  IconPlus,
+} from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -156,6 +163,19 @@ export function MyEventHats({
             </SpotlightBorderCard>
           );
         })}
+        {!ended && (
+          <a
+            href="#team-hats"
+            className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-gray-4 p-4 text-center no-underline hover:border-gray-6 dark:border-dark-3 dark:hover:border-dark-1"
+            data-testid="get-another-hat"
+          >
+            <IconPlus size={28} className="text-dimmed" />
+            <Text fw={700}>Get another hat</Text>
+            <Text size="sm" c="dimmed">
+              Every hat is one more post scoring for your team.
+            </Text>
+          </a>
+        )}
       </SimpleGrid>
     </Stack>
   );
