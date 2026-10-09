@@ -117,6 +117,9 @@ const hero = (props: Partial<HeroProps> = {}) =>
       ...props,
     })
   );
+// The ended hero's status line, matched whole so an added sentence turns it red.
+const endedLine = (el: HTMLElement) =>
+  [...el.querySelectorAll('p')].map((p) => p.textContent ?? '').find((t) => t.startsWith('Ended'));
 const srcs = (el: HTMLElement) => [...el.querySelectorAll('img')].map((i) => i.dataset.src);
 
 describe('hero art (A1)', () => {
@@ -199,14 +202,14 @@ describe('ended hero (A10)', () => {
   it('while the final scores are tallied, names nobody and says so', () => {
     const el = hero({ ...over, finalizing: true });
     expect(el.querySelector('h1')!.textContent).toBe('Civitai turns 4.Pick up a hat.');
-    expect(el.textContent).toContain('Final scores are being tallied.');
+    expect(endedLine(el)).toMatch(/^Ended [A-Z][a-z]+ \d+\. Final scores are being tallied\.$/);
     expect(el.querySelector('[data-testid="hero-prize"]')).toBeNull();
   });
 
   it('with no result to report, says only that it ended', () => {
     const el = hero(over);
     expect(el.querySelector('h1')!.textContent).toBe('Civitai turns 4.Pick up a hat.');
-    expect(el.textContent).toMatch(/Ended [A-Z][a-z]+ \d+\./);
+    expect(endedLine(el)).toMatch(/^Ended [A-Z][a-z]+ \d+\.$/);
     expect(el.textContent).not.toContain('being tallied');
     expect(el.querySelector('[data-testid="hero-prize"]')).toBeNull();
   });
