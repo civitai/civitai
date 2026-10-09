@@ -119,9 +119,9 @@ describe('team shelf (A3)', () => {
     const el = shelf();
     expect(el.querySelector('#team-hats')).not.toBeNull();
     expect(tiles(el).map((t) => [srcs(t)[0], t.textContent])).toEqual([
-      ['hat-1', 'Bolt Cap500 BUZZ'],
-      ['hat-3', 'Sold Cap500 BUZZSold out'],
-      ['hat-2', 'Crown1500 BUZZ'],
+      ['hat-1', 'Bolt CapBuy500'],
+      ['hat-3', 'Sold CapSold out'],
+      ['hat-2', 'CrownBuy1,500'],
     ]);
   });
 
@@ -270,17 +270,17 @@ describe('standings rows (A7)', () => {
       })
     );
     expect(el.querySelector('[data-testid="chart-pending"]')?.textContent).toBe(
-      ' The chart starts after the first hour of scoring.'
+      'The graph is on its wayIt draws its first point after the first hour of scoring.'
     );
   });
 
-  it('before any scoring, shows one line saying when it starts instead of an empty chart', () => {
+  it('before any scoring, shows where the chart will be and when scoring starts', () => {
     const el = render(
       React.createElement(TeamStandings, { standings: standings(), startDate: later })
     );
     expect(el.querySelector('[data-testid="chart"]')).toBeNull();
     expect(el.querySelector('[data-testid="chart-pending"]')?.textContent).toBe(
-      ' Scoring starts Nov 11. The chart fills in from there.'
+      "Competition hasn't started yetThere will be a graph of every team's points here. Scoring starts Nov 11."
     );
   });
 

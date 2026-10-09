@@ -119,6 +119,30 @@ describe('event registration', () => {
     expect(birthday2026.endDate).not.toBe(BIRTHDAY_2026_ENDS_AT);
   });
 
+  // The champion badge art as uploaded to the CDN and checked there, so an accidental edit to an id
+  // (a broken image on the prize banner) fails here.
+  it('names the uploaded prize badge art for every team, animated and still', () => {
+    expect(birthday2026.page?.prizeBadge).toEqual({
+      Yellow: {
+        animated: '5cf4f411-bb05-4afc-86b9-0ce9fbd8c683',
+        static: 'c447b59d-bc02-4e7f-a83b-ad1efe3a70cf',
+      },
+      Blue: {
+        animated: 'd0aedf96-8bb4-4837-9e22-f13662391e98',
+        static: 'aa5ee01e-dfee-458a-9431-16c5e8656754',
+      },
+      Pink: {
+        animated: '54cec518-332c-49cb-8584-359df0ff2ff8',
+        static: '271a8ed5-46ae-47bc-8e63-7f913859bd3b',
+      },
+      Green: {
+        animated: '3d5d9dea-c84a-4801-bf95-78dae8731010',
+        static: '0c6d2d0a-ab63-45ee-925f-4019ee78db20',
+      },
+    });
+    expect(Object.keys(birthday2026.page?.prizeBadge ?? {})).toEqual([...BIRTHDAY_2026_TEAMS]);
+  });
+
   // The page once said "Move it whenever you like" while placement enforced a 10-minute wait.
   it("states the move wait that placement enforces in the page's placing step", () => {
     const { moveCooldownMs } = EVENT_DECORATION_DEFINITIONS.find(
