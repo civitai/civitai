@@ -255,7 +255,7 @@ export function AppFeedbackModQueue() {
       setPending(null);
       // Every other cached filter view goes stale and refetches on its next visit, by which time
       // the replica has usually caught up. The one on screen is patched, which also clears its
-      // stale mark; an in-flight fetch of it is cancelled first so its result cannot overwrite it.
+      // stale mark; in-flight fetches matching its input are cancelled first so none overwrites it.
       await utils.appFeedback.modList.invalidate(undefined, { refetchType: 'none' });
       await utils.appFeedback.modList.cancel(listInput);
       utils.appFeedback.modList.setInfiniteData(listInput, (prev) =>

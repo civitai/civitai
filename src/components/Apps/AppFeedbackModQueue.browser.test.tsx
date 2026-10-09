@@ -16,6 +16,7 @@ const m = vi.hoisted(() => ({
   invalidated: [] as string[],
   /** Every cache call, in order, with whether it targeted all keys or one. */
   events: [] as string[],
+  cancelInputs: [] as unknown[],
   fail: null as null | { message: string; data: { code: string } },
   errors: [] as string[],
   successes: [] as string[],
@@ -81,6 +82,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               ...invalidator('modList'),
               cancel: (input: unknown) => {
                 m.events.push(`cancel modList ${input === undefined ? 'all' : 'one'}`);
+                m.cancelInputs.push(input);
                 return Promise.resolve();
               },
               setInfiniteData: (input: unknown, updater: (prev: unknown) => unknown) => {
@@ -146,6 +148,7 @@ beforeEach(() => {
   m.calls = [];
   m.invalidated = [];
   m.events = [];
+  m.cancelInputs = [];
   m.fail = null;
   m.errors = [];
   m.successes = [];
@@ -242,6 +245,7 @@ describe('AppFeedbackModQueue', () => {
         'invalidate modCountFlagged all',
       ])
     );
+    expect(m.cancelInputs).toStrictEqual([m.listInputs.at(-1)]);
   });
 
   test('hiding under the "visible" filter drops the row from that list', async () => {
