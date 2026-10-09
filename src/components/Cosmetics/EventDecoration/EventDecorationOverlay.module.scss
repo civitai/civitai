@@ -6,11 +6,9 @@
   background: none;
   cursor: pointer;
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
-  clip-path: var(--hat-hit-area, none);
+  pointer-events: none;
 
   &:focus-visible {
-    // The clip would hide the focus ring.
-    clip-path: none;
     outline: 2px solid theme('colors.blue.5');
     outline-offset: 2px;
   }
@@ -77,6 +75,12 @@
         1
       );
   }
+}
+
+.hit {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
 }
 
 .burst {

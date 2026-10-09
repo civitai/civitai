@@ -6,8 +6,8 @@ import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-
 import {
   DEFAULT_HAT_PLACEMENT,
   getHatLayout,
-  HAT_ALLOWANCE,
   HAT_LOOK,
+  hatShiftCss,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type {
   EventDecorationData,
@@ -48,9 +48,7 @@ function CardHat({
   const layout = getHatLayout(placement, fit, placement === 'corner' ? Infinity : undefined);
   // Moved into the card only as far as its container's room requires, which only CSS knows.
   const fitInto = (at: number, reach: number) =>
-    placement === 'corner'
-      ? `calc(${at}px + max(0px, -1 * var(--event-decoration-allowance, ${HAT_ALLOWANCE.corner}px) - ${reach}px))`
-      : at;
+    placement === 'corner' ? `calc(${at}px + ${hatShiftCss(reach)})` : at;
   const box = {
     left: fitInto(layout.left, layout.reach.left),
     top: fitInto(layout.top, layout.reach.top),
@@ -69,7 +67,7 @@ function CardHat({
         aria-label="Party hat"
         data-event-decoration="hat"
         className={clsx(styles.hat, grows)}
-        style={{ ...box, '--hat-hit-area': layout.hitArea } as CSSProperties}
+        style={box}
         onClick={(e) => {
           // The card underneath is a link.
           e.preventDefault();
@@ -87,6 +85,8 @@ function CardHat({
           className={styles.art}
           optimized
         />
+        {/* Takes the clicks in the hat's shape; clipping the button would cut its shadow and ring. */}
+        <span className={styles.hit} style={{ clipPath: layout.hitArea }} />
       </button>
       {burst > 0 && (
         // Beside the button rather than in it, so the hat's clip does not cut the burst short.

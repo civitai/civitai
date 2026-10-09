@@ -95,10 +95,17 @@ export function getHatLayout(
     left: pivotX - pivot.x * scale,
     top: pivotY - pivot.y * scale,
     origin: `${pivot.x * scale}px ${pivot.y * scale}px`,
-    /** The art's own outline, so clicks beside the hat reach whatever is under it. */
-    hitArea:
-      artOutline &&
-      `polygon(${artOutline.map(([x, y]) => `${x * scale}px ${y * scale}px`).join(', ')})`,
+    /** The art's own outline (or its bounds), so clicks beside the hat reach what is under it. */
+    hitArea: `polygon(${(
+      artOutline ?? [
+        [left, top],
+        [right, top],
+        [right, bottom],
+        [left, bottom],
+      ]
+    )
+      .map(([x, y]) => `${x * scale}px ${y * scale}px`)
+      .join(', ')})`,
     /** Visible extent on the card at rest, for whatever has to keep clear of the hat. */
     reach: {
       left: pivotX + minX,
@@ -110,14 +117,32 @@ export function getHatLayout(
 }
 
 /**
+ * How far a container with less room moves a corner hat in, as CSS: only CSS can read the
+ * container's `--event-decoration-allowance`. `reach` is the hat's edge with no room limit.
+ */
+export const hatShiftCss = (reach: number) =>
+  `max(0px, -1 * var(--event-decoration-allowance, ${HAT_ALLOWANCE.corner}px) - ${reach}px)`;
+
+/**
  * How much of the card's top-left a decoration covers, for corner content (the moderator's
- * browsing-level chip, the creator's avatar) to step clear of. Exposed to CSS as
- * `--event-decoration-clear-left`.
+ * browsing-level chip, the creator's avatar) to step clear of.
  */
 export function getEventDecorationClearLeft(
   decoration: { type: string; fit?: EventDecorationFit },
-  placement = DEFAULT_HAT_PLACEMENT
+  placement = DEFAULT_HAT_PLACEMENT,
+  allowance?: number
 ) {
   if (decoration.type !== 'hat') return 0;
-  return Math.ceil(getHatLayout(placement, decoration.fit).reach.right) + 4;
+  return Math.ceil(getHatLayout(placement, decoration.fit, allowance).reach.right) + 4;
+}
+
+/** `--event-decoration-clear-left` for a card: follows a corner hat its container moves in. */
+export function getEventDecorationClearLeftCss(
+  decoration: { type: string; fit?: EventDecorationFit },
+  placement = DEFAULT_HAT_PLACEMENT
+) {
+  if (decoration.type !== 'hat' || placement !== 'corner')
+    return `${getEventDecorationClearLeft(decoration, placement)}px`;
+  const { reach } = getHatLayout('corner', decoration.fit, Infinity);
+  return `calc(${Math.ceil(reach.right) + 4}px + ${hatShiftCss(reach.left)})`;
 }

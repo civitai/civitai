@@ -8,6 +8,7 @@ import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import {
+  getEventDecorationClearLeft,
   getHatLayout,
   HAT_LOOK,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
@@ -61,7 +62,12 @@ const items: Item[] = Array.from({ length: 8 }, (_, i) => ({ id: i }));
 /** Card 1 (the right column's first card) wears a hat; the rest are plain. */
 function Card({ data }: { data: Item }) {
   const card = (
-    <div data-testid="card" data-id={data.id} style={{ height: 200, background: '#888' }} />
+    <div data-testid="card" data-id={data.id} style={{ height: 200, background: '#888' }}>
+      <div
+        data-testid={data.id === 1 ? 'chip' : undefined}
+        style={{ paddingLeft: 'var(--event-decoration-clear-left)' }}
+      />
+    </div>
   );
   return data.id === 1 ? (
     <TwCosmeticWrapper eventDecoration={HAT} data-testid="hat-wearer">
@@ -93,7 +99,8 @@ function Gallery({ style }: { style?: React.CSSProperties }) {
 
 const card = (id: number) => document.querySelector(`[data-testid="card"][data-id="${id}"]`)!;
 const hat = () => document.querySelector('button[data-event-decoration="hat"]') as HTMLElement;
-const itemOf = (el: Element) => el.closest('[style*="padding"]') as HTMLElement;
+const itemOf = (el: Element) => el.closest('[data-masonry-item]') as HTMLElement;
+const GROW_WAIT = { timeout: 5000 };
 
 describe('MasonryColumnsVirtual with worn hats', () => {
   // ITEM_BLEED is wider than the gap between cards, so the right column's item padding lies over
@@ -111,14 +118,59 @@ describe('MasonryColumnsVirtual with worn hats', () => {
   test('the hat grows on hover and its item stops cropping it', async () => {
     await renderAtViewport(<Gallery />, VIEWPORT);
     await vi.waitFor(() => expect(hat()).toBeTruthy());
+    const [wearer, plain] = [itemOf(card(1)), itemOf(card(0))];
     expect(getComputedStyle(hat()).scale).toBe('none');
-    expect(getComputedStyle(itemOf(card(1))).contentVisibility).toBe('auto');
+    expect(getComputedStyle(wearer).contentVisibility).toBe('auto');
+    expect(getComputedStyle(wearer).zIndex).toBe('1');
+    expect(getComputedStyle(plain).zIndex).toBe('auto');
 
+    // Released at once on the way in, before the hat has grown past the crop.
     await userEvent.hover(card(1));
-    await vi.waitFor(() => expect(getComputedStyle(hat()).scale).toBe(String(HAT_LOOK.grow)));
-    expect(getComputedStyle(itemOf(card(1))).contentVisibility).toBe('visible');
-    expect(getComputedStyle(itemOf(card(0))).contentVisibility).toBe('auto');
+    expect(getComputedStyle(wearer).contentVisibility).toBe('visible');
+    expect(getComputedStyle(wearer).zIndex).toBe('2');
+    await vi.waitFor(
+      () => expect(getComputedStyle(hat()).scale).toBe(String(HAT_LOOK.grow)),
+      GROW_WAIT
+    );
+    expect(getComputedStyle(plain).contentVisibility).toBe('auto');
+
+    // Held on the way out until the hat has settled back, then restored.
+    await userEvent.unhover(card(1));
+    expect(getComputedStyle(wearer).contentVisibility).toBe('visible');
+    await vi.waitFor(
+      () => expect(getComputedStyle(wearer).contentVisibility).toBe('auto'),
+      GROW_WAIT
+    );
+    expect(getComputedStyle(wearer).zIndex).toBe('1');
   });
+
+  // Only an inner layer is clipped to the art: clipping the button cut its shadow and focus ring.
+  test('the hat itself is never clipped, only the layer that takes clicks', async () => {
+    await renderAtViewport(<Gallery />, VIEWPORT);
+    await vi.waitFor(() => expect(hat()).toBeTruthy());
+    expect(getComputedStyle(hat()).clipPath).toBe('none');
+    const hitLayers = [...hat().querySelectorAll('*')].filter((el) =>
+      getComputedStyle(el).clipPath.startsWith('polygon(')
+    );
+    expect(hitLayers).toHaveLength(1);
+    await userEvent.tab();
+    expect(document.activeElement).toBe(hat());
+  });
+
+  test.each([undefined, 8, 0])(
+    'corner chips step clear of a hat its container moves in (%spx of room)',
+    async (allowance) => {
+      const style =
+        allowance === undefined
+          ? undefined
+          : ({ '--event-decoration-allowance': `${allowance}px` } as React.CSSProperties);
+      await renderAtViewport(<Gallery style={style} />, VIEWPORT);
+      await vi.waitFor(() => expect(hat()).toBeTruthy());
+      const chip = document.querySelector('[data-testid="chip"]')!;
+      const expected = getEventDecorationClearLeft({ type: 'hat', fit: FIT }, 'corner', allowance);
+      expect(Math.abs(parseFloat(getComputedStyle(chip).paddingLeft) - expected)).toBeLessThan(1);
+    }
+  );
 
   test.each([undefined, 8, 0])(
     'a container giving %spx of room moves the hat in to fit it',
@@ -156,6 +208,9 @@ describe('MasonryColumnsVirtual with worn hats', () => {
     const beside = toPage(4 * scale, 150 * scale);
     expect(document.elementFromPoint(inside.x, inside.y)?.closest('button')).toBe(el);
     expect(document.elementFromPoint(beside.x, beside.y)?.closest('button')).not.toBe(el);
+    // The same point does hit the canvas once the clip is gone, so it is on the canvas.
+    for (const layer of el.querySelectorAll<HTMLElement>('*')) layer.style.clipPath = 'none';
+    expect(document.elementFromPoint(beside.x, beside.y)?.closest('button')).toBe(el);
   });
 
   test('where growth is switched off, the hovered hat stays at rest size', async () => {
@@ -166,6 +221,6 @@ describe('MasonryColumnsVirtual with worn hats', () => {
     await vi.waitFor(() => expect(hat()).toBeTruthy());
     await userEvent.hover(card(1));
     await nextLayout();
-    await vi.waitFor(() => expect(getComputedStyle(hat()).scale).toBe('1'));
+    await vi.waitFor(() => expect(getComputedStyle(hat()).scale).toBe('1'), GROW_WAIT);
   });
 });

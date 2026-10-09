@@ -208,19 +208,39 @@ it('wears the look chosen on real cards', () => {
   expect(HAT_LOOK).toEqual({ brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 });
 });
 
-// SCSS cannot import ITEM_BLEED, so home blocks restate it: room above and left of their edge
-// cards, traded from margin to padding around the cards' own 8px (`p-2`) so nothing moves.
+// These are text pins: they see the declaration, not the rendered room. SCSS cannot import
+// ITEM_BLEED, so home blocks restate it: room above and left of their edge cards, traded from
+// margin to padding around the cards' own 8px (`p-2`) so nothing moves.
+const declared = (file: string, declaration: string) =>
+  new RegExp(String.raw`^\s*${declaration.replace(/[()[\]]/g, '$&')}`, 'm').test(
+    readFileSync(file, 'utf8')
+  );
+
 it('home blocks give edge cards the same room as the feed', () => {
-  const scss = readFileSync('src/components/HomeBlocks/HomeBlock.module.scss', 'utf8');
-  const grid = scss.slice(scss.indexOf('.grid {'));
+  const file = 'src/components/HomeBlocks/HomeBlock.module.scss';
   for (const side of ['top', 'left']) {
-    expect(grid).toContain(`margin-${side}: -${ITEM_BLEED}px;`);
-    expect(grid).toContain(`padding-${side}: ${ITEM_BLEED - 8}px;`);
+    expect(declared(file, `margin-${side}: -${ITEM_BLEED}px;`)).toBe(true);
+    expect(declared(file, `padding-${side}: ${ITEM_BLEED - 8}px;`)).toBe(true);
   }
 });
 
-// Each axis is moved in on its own: a hat leaning far left overshoots the left edge, an upright
-// one the top.
+// Containers that clip at a card's edge declare their room and keep hats at rest size.
+it.each([
+  [
+    'src/components/Profile/Sections/ShowcaseGrid.module.scss',
+    '--event-decoration-allowance: 8px;',
+  ],
+  ['src/components/Profile/Sections/ShowcaseGrid.module.scss', '--event-decoration-grow: 1;'],
+  ['src/components/HomeBlocks/HomeBlock.module.scss', '--event-decoration-grow: 1;'],
+])('%s declares %s', (file, declaration) => {
+  expect(declared(file, declaration)).toBe(true);
+});
+
+it('masonry carousels give hats no room and no growth', () => {
+  const source = readFileSync('src/components/MasonryColumns/MasonryCarousel.tsx', 'utf8');
+  expect(source).toMatch(/'\[--event-decoration-allowance:0px\] \[--event-decoration-grow:1\]'/);
+});
+
 describe('a hat too big for the bleed', () => {
   it('is moved right until it fits the left edge', () => {
     const { reach } = getHatLayout('corner', { ...ART.basic, size: 120, tilt: -80 });
@@ -249,9 +269,13 @@ it('outlines its hit area with the art, not the canvas', () => {
       .map(([x, y]) => `${x * scale}px ${y * scale}px`)
       .join(', ')})`
   );
-  expect(
-    getHatLayout('corner', { canvas: [128, 160], bounds: [0, 0, 128, 156] }).hitArea
-  ).toBeUndefined();
+  const plain = getHatLayout('corner', { canvas: [128, 160], bounds: [8, 4, 120, 150] });
+  const s = plain.width / 128;
+  expect(plain.hitArea).toBe(
+    `polygon(${8 * s}px ${4 * s}px, ${120 * s}px ${4 * s}px, ${120 * s}px ${150 * s}px, ${
+      8 * s
+    }px ${150 * s}px)`
+  );
 });
 
 describe('getEventDecorationClearLeft', () => {
