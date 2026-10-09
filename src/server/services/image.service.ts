@@ -2602,7 +2602,9 @@ const getAllImagesUncaptured = async (
       includeBaseModel
         ? imageResourcesCache.fetch(imageIds, { writeBack: cacheWriteBack })
         : undefined,
-      includeCosmetics ? getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
+      // Not behind `include: ['cosmetics']`: every surface that shows the image (the model page
+      // carousel asks for no includes) must show the hat it is scored for. Empty between events.
+      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
     ])
   );
 
@@ -3180,9 +3182,8 @@ export const getAllImagesIndex = async (
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
-      include?.includes('cosmetics')
-        ? getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' })
-        : undefined,
+      // Unconditional for the same reason as in getAllImages.
+      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
     ])
   );
 
