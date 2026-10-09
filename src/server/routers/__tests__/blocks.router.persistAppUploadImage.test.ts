@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * `blocks.persistAppUploadImage` — the server half of `OPEN_IMAGE_UPLOAD { bytes }`. It persists
  * an app's own upload with the `blockUploadedAppId` stamp, so it is gated as a post: the shared
- * post preamble, page tokens only, and the per-instance publish bucket.
+ * post preamble and page tokens only. `blocks.authorizeAppUploadImage`, which the host calls
+ * before the store upload, runs the same gates and takes the upload's publish-bucket charge.
  *
  * Every refusal also asserts the persist never ran, so it cannot be credited to a later gate.
  */
@@ -123,7 +124,15 @@ describe('blocks.persistAppUploadImage', () => {
       userId: VIEWER_ID,
       uploadedByAppId: 'appblk-alpha',
     });
-    expect(mockCheckPublishRate).toHaveBeenCalledWith('page_apb_alpha', 1);
+  });
+
+  it('charges NO block bucket: the preflight took the charge before the bytes were stored', async () => {
+    // Charging here too refused uploads AFTER storage whenever the preflight's own increment
+    // landed on the fixed window's last slot.
+    mockCheckPublishRate.mockResolvedValue({ allowed: false });
+    await expect(call()).resolves.toEqual({ imageId: 777 });
+    expect(mockCheckPublishRate).not.toHaveBeenCalled();
+    expect(mockCheckCatalogRate).not.toHaveBeenCalled();
   });
 
   it('never takes the stamped appId from the request body', async () => {
@@ -156,11 +165,6 @@ describe('blocks.persistAppUploadImage', () => {
         ),
       { code: 'FORBIDDEN', message: 'image byte uploads are available to page apps only' },
     ],
-    [
-      'the publish bucket refusing',
-      () => mockCheckPublishRate.mockResolvedValue({ allowed: false }),
-      { code: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded, please retry shortly.' },
-    ],
   ])('refuses %s, and never persists', async (_label, arrange, expected) => {
     arrange();
     await expect(call()).rejects.toMatchObject(expected);
@@ -174,21 +178,13 @@ describe('blocks.persistAppUploadImage', () => {
     });
     expect(mockPersistUpload).not.toHaveBeenCalled();
   });
-
-  it('a non-page token is refused BEFORE the publish bucket is charged', async () => {
-    mockAuthorizeBlockBridgeToken.mockResolvedValue(
-      claims({ blockInstanceId: 'bki_alpha', ctx: { slotId: 'model.sidebar_top', modelId: 5 } })
-    );
-    await call().catch(() => undefined);
-    expect(mockCheckPublishRate).not.toHaveBeenCalled();
-  });
 });
 
 describe('blocks.authorizeAppUploadImage — the gate the host runs BEFORE any bytes reach the store', () => {
   const authorize = (c = ctx()) =>
     blocksRouter.createCaller(c as never).authorizeAppUploadImage({ blockToken: 'tok' });
 
-  it('admits a page app holding posts:write:self, charging the SAME publish bucket as persist', async () => {
+  it('admits a page app holding posts:write:self, taking the upload’s one publish-bucket charge', async () => {
     await expect(authorize()).resolves.toEqual({ ok: true });
     expect(mockCheckPublishRate).toHaveBeenCalledWith('page_apb_alpha', 1);
     expect(mockCheckCatalogRate).not.toHaveBeenCalled();
@@ -215,13 +211,21 @@ describe('blocks.authorizeAppUploadImage — the gate the host runs BEFORE any b
       { code: 'FORBIDDEN', message: 'image byte uploads are available to page apps only' },
     ],
     [
-      'the publish bucket refusing — so a persist that would be refused never gets bytes stored',
+      'the publish bucket refusing (before any bytes are stored)',
       () => mockCheckPublishRate.mockResolvedValue({ allowed: false }),
       { code: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded, please retry shortly.' },
     ],
   ])('refuses %s', async (_label, arrange, expected) => {
     arrange();
     await expect(authorize()).rejects.toMatchObject(expected);
+  });
+
+  it('a non-page token is refused BEFORE the publish bucket is charged', async () => {
+    mockAuthorizeBlockBridgeToken.mockResolvedValue(
+      claims({ blockInstanceId: 'bki_alpha', ctx: { slotId: 'model.sidebar_top', modelId: 5 } })
+    );
+    await authorize().catch(() => undefined);
+    expect(mockCheckPublishRate).not.toHaveBeenCalled();
   });
 
   it('refuses a session that is not the token subject', async () => {

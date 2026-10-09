@@ -186,11 +186,11 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   authorizeAppUploadImage: {
     buckets: ['publish'],
-    why: 'The pre-upload half of OPEN_IMAGE_UPLOAD { bytes }: it admits a store upload, so it charges the same publish bucket as the persist half — a refusal must land before the bytes are stored.',
+    why: 'The pre-upload half of OPEN_IMAGE_UPLOAD { bytes }: the upload’s one publish-bucket charge, taken BEFORE the bytes are stored so a bucket refusal never lands after them.',
   },
   persistAppUploadImage: {
-    buckets: ['publish'],
-    why: 'Persists one scanned Image row per call from an app-produced upload — the same per-image origin cost publishGenerationOutputs bounds, so the same bucket, weight 1.',
+    buckets: [],
+    why: 'DELIBERATELY NONE. The upload’s publish-bucket charge is taken by authorizeAppUploadImage before the bytes are stored; charging again here refused uploads AFTER storage at the bucket boundary (fixed window: increment then compare). A direct call skipping the preflight is the viewer’s own signed-in session, bounded by the per-user 60/h rateLimit like blockImageUpload.persist.',
   },
   previewTrainingQuote: {
     buckets: ['catalog'],
@@ -568,7 +568,14 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
       .filter(([, d]) => d.buckets.length === 0)
       .map(([name]) => name)
       .sort();
-    expect(unlimited).toEqual(['listMyWorkflows', 'submitWorkflow', 'updateUserSettings']);
+    // `persistAppUploadImage`: its bucket charge moved to its preflight, `authorizeAppUploadImage`,
+    // so a refusal lands before the bytes are stored rather than after.
+    expect(unlimited).toEqual([
+      'listMyWorkflows',
+      'persistAppUploadImage',
+      'submitWorkflow',
+      'updateUserSettings',
+    ]);
   });
 
   it('pollWorkflow charges a bucket of its OWN — not the catalog one', () => {

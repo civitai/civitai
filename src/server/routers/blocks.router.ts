@@ -5325,10 +5325,9 @@ export const blocksRouter = router({
 
   /**
    * `OPEN_IMAGE_UPLOAD { bytes }`, step 1 of 2, run BEFORE any bytes reach the image store: the
-   * same preamble, page-only check, publish bucket and per-user limit as step 2, so the store
-   * upload happens only for a request step 2 would admit (barring a change between the two calls).
-   * It confers nothing; `persistAppUploadImage` re-runs all of it. Each upload therefore spends
-   * two publish-bucket tokens.
+   * post preamble, the page-only check and the upload's ONE publish-bucket charge. Charging the
+   * bucket here and only here is what keeps a bucket refusal from landing after the bytes are
+   * stored; step 2 re-runs the authorization but charges no block bucket.
    */
   authorizeAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
@@ -5365,8 +5364,9 @@ export const blocksRouter = router({
    *
    * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
    * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
-   * post-creation flag), page tokens only, and the per-instance publish bucket that already
-   * bounds how many scanned Image rows an app can create.
+   * post-creation flag) and page tokens only. The publish bucket was charged by step 1; a caller
+   * that skips step 1 is the signed-in viewer's own session, bounded by the per-user limit below
+   * exactly as `blockImageUpload.persist` is.
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
@@ -5392,13 +5392,6 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'image byte uploads are available to page apps only',
-        });
-      }
-      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
-      if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
         });
       }
       const { persistBlockUploadImage } = await import(
