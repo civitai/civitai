@@ -8,6 +8,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   cosmeticCache,
   cosmeticEntityCaches,
+  eventDecorationEntityCaches,
   refreshOwnedStickerCache,
   userCosmeticCache,
   userOwnedStickerCache,
@@ -25,13 +26,24 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  getEventDecorationDefinition,
+  getLiveEventDecorationEntityTypes,
+  isEventDecorationData,
+  isEventDecorationLive,
+} from '~/shared/constants/event-decoration.constants';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
 import {
   STICKER_PLACEMENT_RATING_MASK,
   stickerPlacementRatingFlags,
 } from '~/shared/constants/cosmetic-flags.constants';
-import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
+import type {
+  EventDecorationCosmetic,
+  StickerCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -210,11 +222,15 @@ export async function equipCosmeticToEntity({
       equippedToType: true,
       forId: true,
       forType: true,
-      cosmetic: { select: { type: true } },
+      data: true,
+      cosmetic: { select: { type: true, data: true } },
     },
   });
 
   if (!userCosmetic) throw new Error("You don't have that cosmetic");
+  const eventDecoration = isEventDecorationData(userCosmetic.cosmetic.data)
+    ? userCosmetic.cosmetic.data
+    : undefined;
   // Same rule as equipCosmetic: stickers are owned, not equipped. This is the
   // other door into that state — it would hand the decoration renderer a `data`
   // shape with no cssFrame or offset, on an entity nobody chose it for.
@@ -228,19 +244,48 @@ export async function equipCosmeticToEntity({
   ) {
     throw new Error('You cannot equip this cosmetic to this entity');
   }
+  const now = new Date();
+  if (eventDecoration)
+    await assertCanPlaceEventDecoration({
+      decoration: eventDecoration,
+      placedAt: getPlacedAt(userCosmetic.data),
+      userId,
+      equippedToId,
+      equippedToType,
+      now,
+    });
 
-  // Unequip any cosmetic equipped on that entity
-  await dbWrite.userCosmetic.updateMany({
+  // An entity wears one frame and one event decoration: equipping either displaces only its own kind.
+  const onEntity = await dbWrite.userCosmetic.findMany({
     where: { userId, equippedToId, equippedToType },
-    data: { equippedToId: null, equippedToType: null, equippedAt: null },
+    select: { cosmeticId: true, claimKey: true, cosmetic: { select: { data: true } } },
   });
+  const displaced = onEntity.filter(
+    (x) => isEventDecorationData(x.cosmetic.data) === !!eventDecoration
+  );
+  if (displaced.length)
+    await dbWrite.userCosmetic.updateMany({
+      where: {
+        userId,
+        OR: displaced.map((x) => ({ cosmeticId: x.cosmeticId, claimKey: x.claimKey })),
+      },
+      data: { equippedToId: null, equippedToType: null, equippedAt: null },
+    });
 
   const updated = await dbWrite.userCosmetic.updateMany({
     where: { userId, cosmeticId, claimKey },
-    data: { equippedToId, equippedToType, equippedAt: new Date() },
+    data: {
+      equippedToId,
+      equippedToType,
+      equippedAt: now,
+      // equippedAt is cleared on unequip, so the cooldown keeps its own record of the last placement.
+      ...(eventDecoration && {
+        data: { ...asObject(userCosmetic.data), placedAt: now.toISOString() },
+      }),
+    },
   });
 
-  await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
+  await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
@@ -258,7 +303,7 @@ export async function equipCosmeticToEntity({
 
   // Clear cache for previous entity if it was equipped
   if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
-    await cosmeticEntityCaches[userCosmetic.equippedToType].refresh(userCosmetic.equippedToId);
+    await refreshEntityDecorationCaches(userCosmetic.equippedToType, [userCosmetic.equippedToId]);
   }
 
   return updated;
@@ -276,7 +321,7 @@ export async function unequipCosmetic({
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
 
-  await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
+  await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
@@ -304,6 +349,82 @@ export async function getCosmeticsForEntity({
 }) {
   if (ids.length === 0) return {};
   return await cosmeticEntityCaches[entity].fetch(ids);
+}
+
+/** The event decoration each entity wears. Skips the read while no event lets this type wear one. */
+export async function getEventDecorationsForEntity({
+  ids,
+  entity,
+}: {
+  ids: number[];
+  entity: CosmeticEntity;
+}): Promise<Record<number, WithClaimKey<EventDecorationCosmetic>>> {
+  if (ids.length === 0 || !getLiveEventDecorationEntityTypes().has(entity)) return {};
+  return await eventDecorationEntityCaches[entity].fetch(ids);
+}
+
+async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
+  await cosmeticEntityCaches[type].refresh(ids);
+  await eventDecorationEntityCaches[type].refresh(ids);
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function getPlacedAt(userData: unknown) {
+  const placedAt = asObject(userData).placedAt;
+  return typeof placedAt === 'string' ? new Date(placedAt) : undefined;
+}
+
+/**
+ * An event decoration counts toward its owner's team score, so unlike a frame it may only go on
+ * content the wearer owns, of a type its event allows, while that event runs, and not again
+ * within the event's cooldown.
+ */
+async function assertCanPlaceEventDecoration({
+  decoration,
+  placedAt,
+  userId,
+  equippedToId,
+  equippedToType,
+  now,
+}: {
+  decoration: EventDecorationData;
+  placedAt: Date | undefined;
+  userId: number;
+  equippedToId: number;
+  equippedToType: CosmeticEntity;
+  now: Date;
+}) {
+  const definition = getEventDecorationDefinition(decoration.event);
+  if (!definition || !isEventDecorationLive(definition, now))
+    throw throwBadRequestError('This can only be used while its event is running');
+  if (!definition.entityTypes.includes(equippedToType))
+    throw throwBadRequestError('This cannot be put on that kind of content');
+
+  const readyAt = placedAt && new Date(placedAt.getTime() + definition.moveCooldownMs);
+  if (readyAt && readyAt > now)
+    throw throwBadRequestError(
+      `This was moved recently. You can move it again at ${readyAt.toISOString()}`
+    );
+
+  const where = { id: equippedToId };
+  const select = { userId: true } as const;
+  const owner =
+    equippedToType === 'Image'
+      ? await dbWrite.image.findUnique({ where, select })
+      : equippedToType === 'Model'
+      ? await dbWrite.model.findUnique({ where, select })
+      : equippedToType === 'Article'
+      ? await dbWrite.article.findUnique({ where, select })
+      : equippedToType === 'Post'
+      ? await dbWrite.post.findUnique({ where, select })
+      : null; // No owner lookup for this type yet: refuse rather than guess.
+  if (!owner || owner.userId !== userId)
+    throw throwAuthorizationError('You can only decorate your own content');
 }
 
 export const grantCosmetics = async ({
@@ -391,7 +512,7 @@ export async function revokeCosmeticsFromUsers({
     ]);
   }
   for (const [type, ids] of equippedByType) {
-    await cosmeticEntityCaches[type].refresh(ids);
+    await refreshEntityDecorationCaches(type, ids);
     if (type === 'Model')
       await modelsSearchIndex.queueUpdate(
         ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))

@@ -18,6 +18,11 @@ import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
+import {
+  getEventDecorationDefinition,
+  isEventDecorationData,
+  isEventDecorationLive,
+} from '~/shared/constants/event-decoration.constants';
 
 const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
@@ -28,6 +33,7 @@ export default function CardDecorationModal({
   entityId,
   image,
   currentCosmetic,
+  kind = 'frame',
 }: Props) {
   const dialog = useDialogContext();
   const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
@@ -86,6 +92,8 @@ export default function CardDecorationModal({
     userCosmetics?.contentDecorations.filter(
       ({ data, forId, forType }) =>
         (data.url || data.cssFrame) &&
+        // A frame and an event decoration are worn side by side, so each picker lists only its own.
+        (kind === 'event' ? isWearableEventDecoration(data, entityType) : !isEventDecorationData(data)) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
     ) ?? [];
@@ -97,7 +105,7 @@ export default function CardDecorationModal({
     <Modal
       {...dialog}
       onClose={handleClose}
-      title="Content Decorations"
+      title={kind === 'event' ? 'Event Decorations' : 'Content Decorations'}
       closeButtonProps={{
         'aria-label': 'Close content decorations modal',
       }}
@@ -172,7 +180,7 @@ export default function CardDecorationModal({
                     </Paper>
                   </Group>
                 )}
-              <PreviewCard image={image} decoration={selectedItem} />
+              <PreviewCard image={image} decoration={selectedItem} kind={kind} />
               <Button
                 radius="xl"
                 type="submit"
@@ -196,13 +204,24 @@ export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
   image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'name' | 'type' | 'thumbnailUrl'>;
-  currentCosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  currentCosmetic?: WithClaimKey<Pick<ContentDecorationCosmetic, 'id'>> | null;
+  /** Frames and event decorations are worn side by side; each has its own picker. */
+  kind?: 'frame' | 'event';
 };
+
+function isWearableEventDecoration(data: unknown, entityType: CosmeticEntity) {
+  if (!isEventDecorationData(data)) return false;
+  const definition = getEventDecorationDefinition(data.event);
+  return (
+    !!definition && isEventDecorationLive(definition) && definition.entityTypes.includes(entityType)
+  );
+}
 
 export const PreviewCard = ({
   image,
   decoration,
-}: Pick<Props, 'image'> & { decoration?: ContentDecorationCosmetic }) => {
+  kind = 'frame',
+}: Pick<Props, 'image' | 'kind'> & { decoration?: ContentDecorationCosmetic }) => {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const imageWidth =
     originalAspectRatio > 1
@@ -215,7 +234,13 @@ export const PreviewCard = ({
   const cardHeight = heightRatio * constants.cardSizes.image;
 
   return (
-    <MasonryCard height={cardHeight} frameDecoration={decoration}>
+    <MasonryCard
+      height={cardHeight}
+      frameDecoration={kind === 'frame' ? decoration : undefined}
+      eventDecoration={
+        kind === 'event' && isEventDecorationData(decoration?.data) ? decoration?.data : undefined
+      }
+    >
       <EdgeMedia2
         src={image.url}
         type={image.type}

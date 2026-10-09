@@ -32,7 +32,12 @@ import {
 } from '~/server/redis/donation-goals-cache';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import {
   type ImageTagComposite,
@@ -292,8 +297,10 @@ export const cosmeticEntityCaches = Object.fromEntries(
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
           FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
-            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity";
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+            AND (c.data->>'event') IS NULL;
         `;
         return Object.fromEntries(
           entityCosmetics.map((x) => [
@@ -330,6 +337,48 @@ export const cosmeticEntityCaches = Object.fromEntries(
     }),
   ])
 ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
+
+type EntityEventDecorationLookupRaw = { equippedToId: number; cosmeticId: number; claimKey: string };
+/** The event decoration each entity wears, cached apart from its frame so neither displaces the other. */
+export const eventDecorationEntityCaches = Object.fromEntries(
+  Object.values(CosmeticEntity).map((entity) => [
+    entity as CosmeticEntity,
+    createCachedObject<WithClaimKey<EventDecorationCosmetic>>({
+      key: `${REDIS_KEYS.CACHES.COSMETICS}:event:${entity}`,
+      idKey: 'equippedToId',
+      cacheNotFound: false,
+      staleWhileRevalidate: false,
+      lookupFn: async (ids) => {
+        const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
+          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey"
+          FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+          WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+            AND (c.data->>'event') IS NOT NULL;
+        `;
+        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
+        const result: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
+        for (const row of rows) {
+          const cosmetic = cosmetics[row.cosmeticId];
+          if (!cosmetic || !isEventDecorationData(cosmetic.data)) continue;
+          result[row.equippedToId] = {
+            id: cosmetic.id,
+            name: cosmetic.name,
+            type: cosmetic.type,
+            source: cosmetic.source,
+            data: cosmetic.data,
+            claimKey: row.claimKey,
+            equippedToId: row.equippedToId,
+            equippedToType: entity as CosmeticEntity,
+          };
+        }
+        return result;
+      },
+      ttl: CacheTTL.day,
+    }),
+  ])
+) as Record<CosmeticEntity, CachedObject<WithClaimKey<EventDecorationCosmetic>>>;
 
 type CachedUserMultiplier = UserMultipliers;
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({

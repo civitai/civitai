@@ -2,11 +2,19 @@ import React, { forwardRef } from 'react';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 export const CosmeticCard = forwardRef<HTMLElement, Props>(
-  ({ href, children, className, onClick, cosmetic, cosmeticStyle, ...props }, ref) => {
+  (
+    { href, children, className, onClick, cosmetic, cosmeticStyle, eventDecoration, ...props },
+    ref
+  ) => {
     return (
-      <TwCosmeticWrapper cosmetic={cosmetic} style={cosmeticStyle}>
+      <TwCosmeticWrapper
+        cosmetic={cosmetic}
+        eventDecoration={eventDecoration}
+        style={cosmeticStyle}
+      >
         <TwCard ref={ref} onClick={onClick} href={href} className={className} {...props}>
           {children}
         </TwCard>
@@ -23,4 +31,5 @@ type Props = React.HTMLAttributes<HTMLElement> & {
   onClick?: React.MouseEventHandler;
   cosmetic?: ContentDecorationCosmetic['data'];
   cosmeticStyle?: React.CSSProperties;
+  eventDecoration?: EventDecorationData | null;
 };

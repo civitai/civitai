@@ -41,7 +41,11 @@ export function ModelShopCard({
   ]);
 
   return (
-    <TwCosmeticWrapper cosmetic={data.cosmetic?.data} className="h-full">
+    <TwCosmeticWrapper
+      cosmetic={data.cosmetic?.data}
+      eventDecoration={data.eventDecoration?.data}
+      className="h-full"
+    >
       <Paper ref={impressionRef} className={classes.card}>
         <Stack h="100%" gap="md">
           <div className={classes.cardHeader}>
