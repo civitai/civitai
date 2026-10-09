@@ -1,4 +1,8 @@
 import { useMemo } from 'react';
+import {
+  isPurchaseAlreadyCompleted,
+  withPurchaseIntentKey,
+} from '~/components/CosmeticShop/purchase-intent-keys';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
@@ -182,47 +186,57 @@ export const useMutateCosmeticShop = () => {
     },
   });
 
+  const refreshAfterPurchase = async (shopItemId: number) => {
+    // A pack's amount due depends on what the buyer owns, so a purchase changes it.
+    await queryUtils.creatorShop.getPack.invalidate();
+    await queryUtils.userProfile.get.invalidate();
+    await queryUtils.user.getCosmetics.invalidate();
+    if (currentUser?.id) {
+      await queryUtils.user.getCreator.invalidate({
+        id: currentUser.id,
+      });
+    }
+
+    queryUtils.cosmeticShop.getShop.setData({}, (data) => {
+      if (!data) return [];
+
+      const sections = data.map((section) => {
+        const updatedItems = section.items.map((item) => {
+          if (item.shopItem.id === shopItemId) {
+            return {
+              ...item,
+              shopItem: {
+                ...item.shopItem,
+                meta: {
+                  ...item.shopItem.meta,
+                  purchases: (item.shopItem.meta.purchases ?? 0) + 1,
+                },
+              },
+            };
+          }
+
+          return item;
+        });
+
+        return {
+          ...section,
+          items: updatedItems,
+        };
+      });
+
+      return sections;
+    });
+  };
+
   const purchaseShopItemMutation = trpc.cosmeticShop.purchaseShopItem.useMutation({
     async onSuccess(_, { shopItemId }) {
-      await queryUtils.userProfile.get.invalidate();
-      await queryUtils.user.getCosmetics.invalidate();
-      if (currentUser?.id) {
-        await queryUtils.user.getCreator.invalidate({
-          id: currentUser.id,
-        });
-      }
-
-      queryUtils.cosmeticShop.getShop.setData({}, (data) => {
-        if (!data) return [];
-
-        const sections = data.map((section) => {
-          const updatedItems = section.items.map((item) => {
-            if (item.shopItem.id === shopItemId) {
-              return {
-                ...item,
-                shopItem: {
-                  ...item.shopItem,
-                  meta: {
-                    ...item.shopItem.meta,
-                    purchases: (item.shopItem.meta.purchases ?? 0) + 1,
-                  },
-                },
-              };
-            }
-
-            return item;
-          });
-
-          return {
-            ...section,
-            items: updatedItems,
-          };
-        });
-
-        return sections;
-      });
+      await refreshAfterPurchase(shopItemId);
     },
     onError(error) {
+      // Not a failure: see handlePurchaseShopItemMutation.
+      if (isPurchaseAlreadyCompleted(error)) return;
+      // A refusal may be a price that moved; show the buyer the current one.
+      void queryUtils.creatorShop.getPack.invalidate();
       onError(error, 'Failed to purchase cosmetic');
     },
   });
@@ -242,8 +256,20 @@ export const useMutateCosmeticShop = () => {
   const handleDeleteShopItemMutation = (data: GetByIdInput) => {
     return deleteShopItemMutation.mutateAsync(data);
   };
-  const handlePurchaseShopItemMutation = (data: PurchaseCosmeticShopItemInput) => {
-    return purchaseShopItemMutation.mutateAsync(data);
+  // Every purchase carries a per-intent key (purchase-intent-keys.ts), so a
+  // double press or a retry is charged once. A purchase the server already
+  // completed under this key is the buyer's, not an error: refresh what they
+  // hold and report it, so the caller never offers to sell it again.
+  const handlePurchaseShopItemMutation = async (data: PurchaseCosmeticShopItemInput) => {
+    try {
+      return await withPurchaseIntentKey(data.shopItemId, data.idempotencyKey, (idempotencyKey) =>
+        purchaseShopItemMutation.mutateAsync({ ...data, idempotencyKey })
+      );
+    } catch (error) {
+      if (!isPurchaseAlreadyCompleted(error)) throw error;
+      await refreshAfterPurchase(data.shopItemId);
+      return { alreadyCompleted: true as const };
+    }
   };
   const handleUpsertCosmetic = (data: UpsertCosmeticInput) => {
     return upsertCosmeticMutation.mutateAsync(data);

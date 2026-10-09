@@ -434,6 +434,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   for (const [what, failure] of [
     ['an error with no ledger status', () => new TypeError('fetch failed')],
     ['a ledger 408', () => ledgerError(408, 'INTERNAL_SERVER_ERROR')],
+    ['a ledger 500', () => ledgerError(500, 'INTERNAL_SERVER_ERROR')],
     ['a ledger 503', () => ledgerError(503, 'INTERNAL_SERVER_ERROR')],
   ] as const) {
     it(`a charge failing with ${what} keeps the claim pending`, async () => {

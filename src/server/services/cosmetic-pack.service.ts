@@ -483,7 +483,7 @@ export const purchaseCosmeticPack = async ({
   stickersEnabled,
 }: {
   userId: number;
-  /** The buyer's purchase intent. A replay is answered from its claim (shop-purchase-charge.ts). */
+  /** The buyer's purchase intent. A retry under the same key is answered from its claim (shop-purchase-charge.ts). */
   idempotencyKey?: string;
   shopItem: {
     id: number;
