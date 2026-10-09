@@ -249,6 +249,8 @@ describe('runPayout', () => {
     expect(sent).toHaveLength(2);
     expect(generationTipAmountPaidCounter.inc).toHaveBeenCalledWith({ account_type: 'Yellow' }, 6);
     expect(creatorCompAmountPaidCounter.inc).toHaveBeenCalledWith({ account_type: 'Yellow' }, 50);
+    expect(generationTipAmountPaidCounter.inc).toHaveBeenCalledTimes(1);
+    expect(creatorCompAmountPaidCounter.inc).toHaveBeenCalledTimes(1);
   });
 
   it('pays a creator whose rows span ClickHouse batches one compensation and one tip transaction', async () => {
