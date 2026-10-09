@@ -52,6 +52,9 @@ export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
   return Math.max(0, Math.ceil((cooldownLeftMs - Math.max(0, elapsedMs)) / 60_000));
 }
 
+/** The page's card surface (shop tiles, hat cards, standings rows): a step lighter than the page. */
+export const EVENT_CARD_SURFACE = 'bg-white dark:bg-dark-6';
+
 export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'rules';
 
 /**

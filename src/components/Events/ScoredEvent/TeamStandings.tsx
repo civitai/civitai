@@ -14,7 +14,10 @@ import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
-import { teamPositionsOverTime } from '~/components/Events/ScoredEvent/scored-event.utils';
+import {
+  EVENT_CARD_SURFACE,
+  teamPositionsOverTime,
+} from '~/components/Events/ScoredEvent/scored-event.utils';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -117,6 +120,7 @@ export function TeamStandings({
                 key={t.team}
                 withBorder
                 radius="md"
+                className={EVENT_CARD_SURFACE}
                 data-mine={mine || undefined}
                 style={
                   mine ? { borderColor: color, boxShadow: `0 0 18px -4px ${color}` } : undefined

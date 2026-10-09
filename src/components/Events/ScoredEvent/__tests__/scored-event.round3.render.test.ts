@@ -255,6 +255,73 @@ describe('team shelf tiers', () => {
   });
 });
 
+describe('one card surface', () => {
+  // The standings rows, hat cards and shop tiles share the shop tiles' surface, a step lighter
+  // than the page in dark mode.
+  it('dresses standings rows, hat cards and shop tiles alike', () => {
+    shopSections = [
+      {
+        items: [
+          {
+            shopItem: {
+              id: 1,
+              title: 'Bolt Cap',
+              unitAmount: 500,
+              availableQuantity: null,
+              meta: {},
+              cosmetic: { id: 101, data: { url: 'hat-1' } },
+            },
+          },
+        ],
+      },
+    ];
+    const standings = {
+      teams: [{ team: 'Blue', score: 20, rank: 1 }],
+      history: [],
+      teamHats: [],
+      topCosmetics: [],
+      cosmetics: {},
+      users: {},
+      updatedAt: new Date(),
+    } as unknown as React.ComponentProps<typeof TeamStandings>['standings'];
+    const el = render(
+      React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(TeamStandings, { standings, startDate: new Date(2099, 10, 11, 12) }),
+        React.createElement(TeamHatShelf, { event: 'birthday2026', team: 'Blue' }),
+        React.createElement(MyEventHats, {
+          event: 'birthday2026',
+          hats: [
+            {
+              cosmeticId: 31,
+              claimKey: 'c',
+              name: 'Cap',
+              data: { url: 'u' },
+              placedOn: null,
+              moveCooldownLeftMs: 0,
+              points: 0,
+              impressions: 0,
+              reactions: 0,
+            },
+          ] as unknown as React.ComponentProps<typeof MyEventHats>['hats'],
+          fetchedAt: Date.now(),
+          teamColor: '#339af0',
+          ended: false,
+        })
+      )
+    );
+    const surfaces = [
+      el.querySelector('[data-testid="standings-rows"] .mantine-Paper-root')!,
+      el.querySelector('button[data-tier]')!,
+      el.querySelector('[data-testid="my-hat"]')!,
+    ];
+    surfaces.forEach((s) =>
+      expect(s.className.split(' ')).toEqual(expect.arrayContaining(['bg-white', 'dark:bg-dark-6']))
+    );
+  });
+});
+
 describe('standings beside the chart', () => {
   const standings = {
     teams: [

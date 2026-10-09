@@ -6,14 +6,16 @@ import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectio
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
-import { minutesUntilMovable } from '~/components/Events/ScoredEvent/scored-event.utils';
+import {
+  EVENT_CARD_SURFACE,
+  minutesUntilMovable,
+} from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 type MyHat = RouterOutput['event']['getMyHats'][number];
 
-const CARD =
-  'flex flex-col overflow-hidden rounded-lg border border-solid border-gray-3 bg-white dark:border-dark-4 dark:bg-dark-6';
+const CARD = `flex flex-col overflow-hidden rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
 
 export function MyEventHats({
   event,

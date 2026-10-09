@@ -5,6 +5,7 @@ import type { CSSProperties } from 'react';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
+import { EVENT_CARD_SURFACE } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -69,8 +70,9 @@ export function EventHatTile({
         soldOut ? `${item.title}, sold out` : item.cosmetic ? `Buy ${item.title}` : item.title
       }
       className={clsx(
-        'group flex flex-col gap-2 rounded-lg border-2 border-solid border-gray-3 bg-white p-2 transition [--tile-bg:white]',
-        'dark:border-dark-4 dark:bg-dark-6 dark:[--tile-bg:var(--mantine-color-dark-6)]',
+        'group flex flex-col gap-2 rounded-lg border-2 border-solid border-gray-3 p-2 transition [--tile-bg:white]',
+        'dark:border-dark-4 dark:[--tile-bg:var(--mantine-color-dark-6)]',
+        EVENT_CARD_SURFACE,
         'enabled:hover:-translate-y-0.5 enabled:hover:shadow-lg disabled:opacity-50',
         'motion-reduce:transition-none motion-reduce:hover:translate-y-0',
         tier > 0 && TIERED
