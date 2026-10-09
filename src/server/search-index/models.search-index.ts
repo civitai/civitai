@@ -353,9 +353,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // the two coexist, and reading only the widget is how the singular one was missed.
       //
       // So the two are un-ANDed on that page today for one reason only: the page reads no
-      // `insight.*` yet. (The resource-intent matcher's purpose seed does filter
-      // `insight.role`, but beside the array form `versions.baseModel IN [...]` when a base
-      // model is requested, so it has the any-version analogue, not this predicate.) The
+      // `insight.*` yet. The
       // FIRST `insight.*` filter added to that page
       // inherits a cross-version `version.*` predicate whether its author asks for one or not,
       // and the disagreement probability rises with a model's version count — which correlates
@@ -390,9 +388,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // documents in BOTH sort directions, so writing it costs nothing in ordering.
       //
       // Without this, a retracted label (`stale = true`, a re-label below the confidence
-      // floor, or a deleted version) keeps its top-of-pool seeding forever: the row is
-      // gone from Postgres, so the re-rank never reaches `insightBucket` and leaves the
-      // candidate neutral — which PRESERVES the head position the stale score bought.
+      // floor, or a deleted version) leaves its old score and role in the index, and any
+      // filter or sort on them would still see it.
       const insightProjection = modelInsightProjection(
         modelVersions.map((v) => v.id),
         insights

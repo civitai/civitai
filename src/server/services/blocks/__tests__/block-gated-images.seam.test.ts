@@ -51,6 +51,9 @@ const EXPECTED_CALL_SITES = [
   // It reads `pending` only to choose WHICH refusal to report ("wait for the
   // scan"); a pending image is refused exactly like a hidden one and no url leaves.
   'server/services/blocks/block-training-dataset.service.ts',
+  // The store's sub-listing card image — anything not `visible` falls back to the parent's
+  // cover, so `pending` never yields the item image.
+  'server/services/blocks/app-sub-listing-store.service.ts',
 ].sort();
 
 /** Files that may gate on `=== 'hidden'` (i.e. the projection, which handles
@@ -321,6 +324,7 @@ describe(`${SYMBOL} seam`, () => {
     // Named rather than counted: allow-listing the last consumer, or emptying the ledger, would
     // otherwise leave this case iterating nothing and reporting green.
     expect(targets).toEqual([
+      'server/services/blocks/app-sub-listing-store.service.ts',
       'server/services/blocks/block-post.service.ts',
       'server/services/blocks/block-training-dataset.service.ts',
     ]);

@@ -1,18 +1,25 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { SEED, boolDef, enumDef, imagesDef, sliderDef, textDef } from '../defs';
+import {
+  truncateCoerce,
+  clampCorrect,
+  SEED,
+  boolDef,
+  enumDef,
+  imagesDef,
+  sliderDef,
+  textDef,
+} from '../defs';
 import { familyScope, type FamilyExt } from '../shared';
 
 /**
- * PolyGen (Meshy via Fal), ported from `polygen-graph.ts`. Both Meshy versions
+ * PolyGen (Meshy via Fal). Both Meshy versions
  * behind one ecosystem — `polygenVersion` is a control, flag-gated (v7 needs
  * `meshyV7Generator`) and workflow-clamped (v7 has no text-to-3D, so
  * v7-on-text clamps back to v6). Flat field set gated per version/workflow,
- * mirroring v1's `when`s.
+ * conditional on the same fields.
  */
-
-// ---- copied from polygen-graph.ts, which dies with the data-graph engine ----
 
 export const polygenVersions = ['v6', 'v7'] as const;
 export type PolygenVersion = (typeof polygenVersions)[number];
@@ -91,8 +98,6 @@ export function isPolygenVersionRunnable(version: PolygenVersion, workflow: stri
   return version === 'v6' || !workflow.startsWith('txt');
 }
 
-// ---- end of polygen-graph.ts copies -----------------------------------------
-
 export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
   .field('polygenVersion', ({ _ext }) => {
     // options render flag-gated; the transforms validate flag- AND
@@ -164,6 +169,7 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
       .max(POLYGEN_MAX_TEXTURE_PROMPT_LENGTH, 'Texture prompt is too long')
       .optional(),
     default: '',
+    coerce: truncateCoerce(POLYGEN_MAX_TEXTURE_PROMPT_LENGTH),
     meta: {
       placeholder: 'Weathered oak with bronze fittings…',
       maxLength: POLYGEN_MAX_TEXTURE_PROMPT_LENGTH,
@@ -210,6 +216,11 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
             .max(POLYGEN_MAX_ANIMATION_ACTION_ID)
             .optional(),
           default: POLYGEN_MIN_ANIMATION_ACTION_ID,
+          correct: clampCorrect({
+            min: POLYGEN_MIN_ANIMATION_ACTION_ID,
+            max: POLYGEN_MAX_ANIMATION_ACTION_ID,
+            fallback: POLYGEN_MIN_ANIMATION_ACTION_ID,
+          }),
           meta: {
             min: POLYGEN_MIN_ANIMATION_ACTION_ID,
             max: POLYGEN_MAX_ANIMATION_ACTION_ID,

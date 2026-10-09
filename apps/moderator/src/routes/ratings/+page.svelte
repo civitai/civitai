@@ -1,0 +1,312 @@
+<script lang="ts">
+  import { dateTime, plural } from '$lib/format';
+  import { untrack } from 'svelte';
+  import { applyAction, enhance } from '$app/forms';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
+  import type { SubmitFunction } from '@sveltejs/kit';
+  import { IconExternalLink } from '@tabler/icons-svelte';
+  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import {
+    Pagination,
+    PaginationContent,
+    PaginationEllipsis,
+    PaginationItem,
+    PaginationLink,
+    PaginationNext,
+    PaginationPrevious,
+  } from '@civitai/ui/components/ui/pagination/index.js';
+  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import { userUrl } from '$lib/entity-url';
+  import {
+    ratingReviewStatusFilters,
+    ratingReviewStatusBadge,
+    ratingReviewTypeFilters,
+  } from '$lib/rating-review';
+  import {
+    ratingReviewEntityLabels,
+    ratingReviewLevelLabel,
+  } from '@civitai/shared/rating-review';
+  import type { ActionData, PageData } from './$types';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // Local copies so a resolve prunes the row + adjusts counts client-side without a refetch (mods blast the
+  // queue); a real navigation resyncs.
+  let items = $state(untrack(() => data.items));
+  let counts = $state(untrack(() => data.counts));
+  $effect(() => {
+    items = data.items;
+    counts = data.counts;
+  });
+
+  const total = $derived(counts[data.status] ?? 0);
+  const totalPages = $derived(Math.max(1, Math.ceil(total / data.limit)));
+  const fmtDate = dateTime;
+
+  let applying = $state<{ reviewId: number; level: number } | null>(null);
+
+  // Applied level → Approved (matched the suggestion) vs Rejected (overrode); the action returns which.
+  const resolveReview =
+    (reviewId: number): SubmitFunction =>
+    ({ submitter }) => {
+      applying = { reviewId, level: Number((submitter as HTMLButtonElement | null)?.value) };
+      return async ({ result }) => {
+        applying = null;
+        if (result.type === 'success') {
+          items = items.filter((r) => r.id !== reviewId);
+          const status = (result.data as { status?: 'Actioned' | 'Unactioned' } | undefined)
+            ?.status;
+          counts = {
+            Pending: Math.max(0, counts.Pending - 1),
+            Actioned: counts.Actioned + (status === 'Actioned' ? 1 : 0),
+            Unactioned: counts.Unactioned + (status === 'Unactioned' ? 1 : 0),
+          };
+        } else {
+          await applyAction(result);
+        }
+      };
+    };
+
+  function urlWith(params: Record<string, string | number | null>) {
+    const url = new URL(page.url);
+    for (const [k, v] of Object.entries(params)) {
+      if (v === null) url.searchParams.delete(k);
+      else url.searchParams.set(k, String(v));
+    }
+    return url.pathname + url.search;
+  }
+</script>
+
+<header class="page-header">
+  <h1>Rating Disputes</h1>
+  <div class="mt-1 flex flex-wrap gap-2">
+    <Badge class={ratingReviewStatusBadge.Pending.class}>
+      {plural(counts.Pending, 'dispute')} pending
+    </Badge>
+    <Badge class={ratingReviewStatusBadge.Actioned.class}>
+      {plural(counts.Actioned, 'dispute')} approved
+    </Badge>
+    <Badge class={ratingReviewStatusBadge.Unactioned.class}>
+      {plural(counts.Unactioned, 'dispute')} rejected
+    </Badge>
+  </div>
+</header>
+
+{#if form?.error}
+  <ErrorAlert class="mb-4" message={form.error} />
+{/if}
+
+<Tabs
+  value={data.status}
+  onValueChange={(v) => v && goto(urlWith({ status: v, page: 1 }))}
+  class="mb-4"
+>
+  <TabsList>
+    {#each ratingReviewStatusFilters as f (f.value)}
+      <TabsTrigger value={f.value}>{f.label}</TabsTrigger>
+    {/each}
+  </TabsList>
+</Tabs>
+
+<Tabs
+  value={data.type ?? 'all'}
+  onValueChange={(v) => v && goto(urlWith({ type: v === 'all' ? null : v, page: 1 }))}
+  class="mb-4"
+>
+  <TabsList>
+    {#each ratingReviewTypeFilters as f (f.value)}
+      <TabsTrigger value={f.value}>{f.label}</TabsTrigger>
+    {/each}
+  </TabsList>
+</Tabs>
+
+{#if items.length === 0}
+  <div class="placeholder">No reviews in this bucket.</div>
+{:else}
+  <div class="flex flex-col gap-3">
+    {#each items as review (review.id)}
+      {@const entity = review.entity}
+      {@const title = entity?.title ?? `${review.entityType} #${review.entityId}`}
+      {@const href = entity?.path ? data.civitaiUrl + entity.path : null}
+      <div class="flex gap-4 rounded-xl border p-3">
+        <div class="size-28 shrink-0 overflow-hidden rounded-lg bg-muted">
+          {#if entity?.coverUrl}
+            <EdgeMedia
+              src={entity.coverUrl}
+              type={entity.coverType ?? undefined}
+              width={112}
+              alt={title}
+              class="size-full object-cover"
+            />
+          {/if}
+        </div>
+
+        <div class="flex min-w-0 flex-1 flex-col gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">{ratingReviewEntityLabels[review.entityType]}</Badge>
+            {#if href}
+              <a {href} target="_blank" rel="noreferrer" class="truncate font-semibold">
+                {title}
+              </a>
+              <a {href} target="_blank" rel="noreferrer" class="text-muted-foreground">
+                <IconExternalLink size={14} />
+              </a>
+            {:else}
+              <span class="truncate font-semibold">{title}</span>
+            {/if}
+            {#if !entity}
+              <span class="text-xs italic text-muted-foreground">Deleted</span>
+            {/if}
+            {#if ratingReviewStatusBadge[review.status]}
+              <Badge class={ratingReviewStatusBadge[review.status].class}>
+                {ratingReviewStatusBadge[review.status].label}
+              </Badge>
+            {/if}
+            <div class="ml-auto flex items-center gap-2 text-sm">
+              {#if review.user.username}
+                <a href={userUrl(data.civitaiUrl, review.user.username)} target="_blank" rel="noreferrer">
+                  {review.user.username}
+                </a>
+              {:else}
+                <span class="text-muted-foreground">User #{review.user.id}</span>
+              {/if}
+              <span class="text-xs text-muted-foreground">· {fmtDate(review.createdAt)}</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2">
+            <div class="rounded-md border px-2 py-1">
+              <div class="text-xs text-muted-foreground">System</div>
+              <div class="text-sm font-semibold">{ratingReviewLevelLabel(review.entityType, review.currentLevel)}</div>
+            </div>
+            <div class="rounded-md border border-blue-500/40 bg-blue-500/10 px-2 py-1">
+              <div class="text-xs text-muted-foreground">Owner suggested</div>
+              <div class="text-sm font-semibold">{ratingReviewLevelLabel(review.entityType, review.suggestedLevel)}</div>
+            </div>
+            <div class="rounded-md border border-dashed px-2 py-1">
+              <div class="text-xs text-muted-foreground">Mod applied</div>
+              <div class="text-sm font-semibold">{ratingReviewLevelLabel(review.entityType, review.appliedLevel)}</div>
+            </div>
+          </div>
+
+          {#if review.scan}
+            <div class="rounded-md border border-orange-500/40 bg-orange-500/10 p-2 text-sm">
+              <span class="text-xs font-medium text-muted-foreground">
+                Text scan · {ratingReviewLevelLabel(review.entityType, review.scan.level)}
+              </span>
+              {#if review.scan.reason}
+                <p class="whitespace-pre-wrap">{review.scan.reason}</p>
+              {/if}
+            </div>
+          {:else}
+            <span class="text-xs italic text-muted-foreground">No text-scan raise on record</span>
+          {/if}
+
+          {#if review.userComment}
+            <div class="rounded-md bg-muted/40 p-2 text-sm">
+              <span class="text-xs font-medium text-muted-foreground">Owner comment</span>
+              <p class="whitespace-pre-wrap">{review.userComment}</p>
+            </div>
+          {:else}
+            <span class="text-xs italic text-muted-foreground">No comment from owner</span>
+          {/if}
+
+          {#if review.status === 'Pending'}
+            <form
+              method="POST"
+              action="?/resolve"
+              use:enhance={resolveReview(review.id)}
+              class="flex flex-col gap-2"
+            >
+              <input type="hidden" name="reviewId" value={review.id} />
+              <Textarea
+                name="modComment"
+                rows={2}
+                placeholder="Optional moderator comment (visible to owner)"
+                maxlength={1000}
+              />
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-xs text-muted-foreground">Apply rating:</span>
+                {#each review.levelOptions as level (level)}
+                  <Button
+                    type="submit"
+                    name="appliedLevel"
+                    value={level}
+                    size="sm"
+                    variant={level === review.suggestedLevel ? 'default' : 'outline'}
+                    disabled={applying?.reviewId === review.id}
+                    title={level === review.suggestedLevel
+                      ? 'Approve the owner’s suggestion'
+                      : 'Override to this level'}
+                  >
+                    {applying?.reviewId === review.id && applying.level === level
+                      ? 'Applying…'
+                      : ratingReviewLevelLabel(review.entityType, level)}
+                  </Button>
+                {/each}
+              </div>
+              {#if review.entityType === 'Collection'}
+                <p class="text-xs text-dark-2">
+                  SFW removes the text rating; NSFW items still rate this collection.
+                </p>
+              {/if}
+            </form>
+          {:else}
+            <div class="flex flex-col gap-1 text-sm">
+              <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                {#if review.resolver}
+                  <span>Resolved by {review.resolver.username ?? `User #${review.resolver.id}`}</span>
+                {:else}
+                  <span class="italic">Auto-approved</span>
+                {/if}
+                {#if review.resolvedAt}<span>· {fmtDate(review.resolvedAt)}</span>{/if}
+              </div>
+              {#if review.modComment}
+                <p class="whitespace-pre-wrap">{review.modComment}</p>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/each}
+  </div>
+{/if}
+
+<div class="mt-4 flex flex-wrap items-center justify-between gap-2">
+  <span class="text-sm text-muted-foreground">Page {data.page} of {totalPages}</span>
+  <Pagination
+    count={total}
+    perPage={data.limit}
+    page={data.page}
+    onPageChange={(p) => p !== data.page && goto(urlWith({ page: p }))}
+  >
+    {#snippet children({ pages, currentPage })}
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationPrevious />
+        </PaginationItem>
+        {#each pages as p (p.key)}
+          {#if p.type === 'ellipsis'}
+            <PaginationItem>
+              <PaginationEllipsis />
+            </PaginationItem>
+          {:else}
+            <PaginationItem>
+              <PaginationLink page={p} isActive={currentPage === p.value}>
+                {p.value}
+              </PaginationLink>
+            </PaginationItem>
+          {/if}
+        {/each}
+        <PaginationItem>
+          <PaginationNext />
+        </PaginationItem>
+      </PaginationContent>
+    {/snippet}
+  </Pagination>
+</div>

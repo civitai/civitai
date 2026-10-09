@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as GenerationGraphStore from '~/store/generation-graph.store';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 const setData = vi.fn();
@@ -70,12 +70,13 @@ describe('the seeded ratio survives the generation graph', () => {
     await startRemix({ kind: 'edit', image: image({ nsfwLevel: 4 }) });
     const { params } = setData.mock.calls[0][0];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const graph = generationGraph as any;
-    graph.init({ workflow: params.workflow, ecosystem: params.ecosystem }, ext);
-    graph.set(params);
+    const store = generationHub.createStore({
+      ext,
+      defaults: { workflow: params.workflow, ecosystem: params.ecosystem },
+    } as never);
+    store.set(params);
 
-    const { aspectRatio } = graph.getSnapshot();
+    const { aspectRatio } = store.getState() as { aspectRatio: { value: string } };
     expect(aspectRatio).toMatchObject(SOURCE);
     expect(aspectRatio.value).not.toBe('1:1');
   });

@@ -98,9 +98,7 @@ export const modelsSortableAttributes = [
   // So any client sorting on this MUST pass a second key, or the ~99% of documents with no
   // VALUE come back in document order — an arbitrary ordering wearing a ranked one's clothes.
   // (That remainder is not the same thing as "unlabeled": 863 labeled models sit in it too,
-  // for the reasons ./filterable-attributes.ts enumerates.) The one caller that sorts on it
-  // today (`searchShortlistModels` in ~/server/services/resource-intent-matcher.service.ts)
-  // passes `metrics.thumbsUpCount:desc` as that second key.
+  // for the reasons ./filterable-attributes.ts enumerates.) Nothing sorts on it today.
   //
   // Deliberately NOT added to ./displayed-attributes.ts: it is stored-but-undisplayed,
   // the same shape as `sortMetrics`, which that file documents. Sorting and filtering on an

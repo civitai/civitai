@@ -96,6 +96,8 @@ import {
   assertUserAccountInGoodStanding,
 } from '~/server/services/challenge-eligibility.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { settleSkippedChallengeScan } from '~/server/services/text-scan/actions/challenge';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { enrichMyChallengeCards } from '~/server/services/challenge-participation.util';
 import {
   getEffectiveBrowsingLevel,
@@ -1277,6 +1279,16 @@ export async function getModeratorChallenges(input: GetModeratorChallengesInput)
   };
 }
 
+// An edit derives nsfwLevel from allowedNsfwLevel; a moderator's resolved rating outranks it.
+function pinModeratorNsfwLevel(tx: Prisma.TransactionClient, id: number) {
+  return tx.$executeRaw`
+    UPDATE "Challenge" SET "nsfwLevel" = "moderatorNsfwLevel"
+    WHERE id = ${id}
+      AND "moderatorNsfwLevel" IS NOT NULL
+      AND "nsfwLevel" IS DISTINCT FROM "moderatorNsfwLevel"
+  `;
+}
+
 export async function upsertChallenge({
   userId,
   ...input
@@ -1487,6 +1499,7 @@ export async function upsertChallenge({
             'This challenge changed while you were saving (it may have started, been completed, or been cancelled). Re-open it in a moment to see its current state.',
         });
       }
+      await pinModeratorNsfwLevel(tx, id);
       const updated = await tx.challenge.findUniqueOrThrow({ where: { id } });
 
       // Sync collection metadata if challenge has a collection
@@ -1851,6 +1864,7 @@ export async function upsertUserChallenge({
           code: 'PRECONDITION_FAILED',
           message: 'A published challenge can no longer be edited.',
         });
+      await pinModeratorNsfwLevel(tx, id);
       const saved = await tx.challenge.findUniqueOrThrow({ where: { id } });
 
       if (existing.collectionId) {
@@ -2002,15 +2016,21 @@ export async function scanUserChallenge(challengeId: number): Promise<void> {
   if (!challenge) return;
 
   try {
-    await submitTextModeration({
+    await submitTextModerationOrScan({
       entityType: 'Challenge',
       entityId: challengeId,
-      content: buildChallengeModerationText({
-        ...challenge,
-        themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
-      }),
-      labels: [...CHALLENGE_MODERATION_LABELS],
-      priority: 'low',
+      onActiveSkip: (reason) => settleSkippedChallengeScan(challengeId, reason),
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Challenge',
+          entityId: challengeId,
+          content: buildChallengeModerationText({
+            ...challenge,
+            themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+          }),
+          labels: [...CHALLENGE_MODERATION_LABELS],
+          priority: 'low',
+        }),
     });
   } catch (e) {
     // Submit failure already persists a Failed EntityModeration row (the retry cron re-submits);
@@ -2075,16 +2095,22 @@ export async function rescanChallenge({
     }
   }
 
-  const workflow = await submitTextModeration({
+  const workflow = await submitTextModerationOrScan({
     entityType: 'Challenge',
     entityId: id,
-    content: buildChallengeModerationText({
-      ...challenge,
-      themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
-    }),
-    labels: [...CHALLENGE_MODERATION_LABELS],
-    priority: 'low',
-    forceRescan: true,
+    force: true,
+    xguard: () =>
+      submitTextModeration({
+        entityType: 'Challenge',
+        entityId: id,
+        content: buildChallengeModerationText({
+          ...challenge,
+          themeElements: parseChallengeMetadata(challenge.metadata).themeElements,
+        }),
+        labels: [...CHALLENGE_MODERATION_LABELS],
+        priority: 'low',
+        forceRescan: true,
+      }),
   });
 
   await logToAxiom({

@@ -320,6 +320,9 @@ export const FIXED_SCOPE_NOTES: Record<string, string> = {
   'goods:read:self':
     "Can't be withdrawn. It reads only what this app itself has sold you — the query is bound " +
     'server-side to this app, so it cannot see anything you own from anywhere else.',
+  'apps:store:items:write':
+    "Can't be withdrawn. Only items you authored in this app can be listed, and each one is " +
+    'checked server-side and reviewed by a moderator before it appears in the App Store.',
 };
 
 /**

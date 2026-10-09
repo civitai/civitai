@@ -2,6 +2,7 @@ import { Anchor, Card, Group, Stack, Text } from '@mantine/core';
 import { IconConfetti } from '@tabler/icons-react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
+import { creatorScoreActivities } from '~/components/Account/creator-score-copy';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -18,18 +19,22 @@ import {
   pendingCreatorScoreUnlocks,
 } from '~/shared/utils/creator-score-unlocks';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { capitalize } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type Entity = 'model' | 'article';
 
+const countsToward = (activities: string) =>
+  `${capitalize(activities)} on it now count toward your Creator Score.`;
+
 const copy: Record<Entity, { title: string; counts: string }> = {
   model: {
     title: 'Your first model is live',
-    counts: 'Downloads, generations and reviews on it now count toward your Creator Score.',
+    counts: countsToward(creatorScoreActivities.models),
   },
   article: {
     title: 'Your first article is live',
-    counts: 'Reads, reactions and comments on it now count toward your Creator Score.',
+    counts: countsToward(creatorScoreActivities.articles),
   },
 };
 

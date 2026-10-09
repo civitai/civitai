@@ -8,7 +8,7 @@ import { maxRandomSeed } from '~/server/common/constants';
 import { samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras, type EcosystemData } from './types';
 
 export const createChromaInput = defineHandler<EcosystemData<'Chroma'>, [ImageGenStepTemplate]>(

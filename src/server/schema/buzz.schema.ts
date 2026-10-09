@@ -83,10 +83,10 @@ export type BuzzTransactionDetails = z.infer<typeof buzzTransactionDetails>;
 export const getBuzzTransactionResponse = z.object({
   date: z.coerce.date(),
   // The buzz service returns a NAME for the transaction types it knows and the raw enum NUMBER for the
-  // ones it doesn't — LicenseFee (27) and AppAuthorFee (28) are the live cases, and the same numbers
-  // reach ClickHouse (see the `'27'` handling in creator-studio's earnings reads and
-  // `fromClickhouseTransactionType`). Collapsing every numeric value to Tip labelled
-  // each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all a fee-earning creator saw.
+  // ones it doesn't — LicenseFee (27) and AppAuthorFee (28) are the live cases. ClickHouse spells
+  // its unnamed members differently; see `fromClickhouseTransactionType`. Collapsing every numeric
+  // value to Tip labelled each daily license-fee payout as "Tip" on the Buzz Dashboard, which is all
+  // a fee-earning creator saw.
   type: z.any().transform((value): TransactionType => {
     const numeric = /^\d+$/.test(String(value)) ? Number(value) : null;
     if (numeric === null) return TransactionType[value as keyof typeof TransactionType];
@@ -205,7 +205,7 @@ export const getBuzzAccountTransactionsSchema =
   getUserBuzzTransactionsSchema.merge(getBuzzAccountSchema);
 export type GetBuzzAccountTransactionsSchema = z.infer<typeof getBuzzAccountTransactionsSchema>;
 
-export const compensationSources = ['compensation', 'licenseFee'] as const;
+export const compensationSources = ['compensation', 'licenseFee', 'tip'] as const;
 export type CompensationSource = (typeof compensationSources)[number];
 
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;

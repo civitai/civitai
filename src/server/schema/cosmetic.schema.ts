@@ -2,13 +2,13 @@ import { CosmeticType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { STICKER_TOPUP_MAX_QUANTITY } from '~/shared/utils/sticker-token';
-import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
+import { stickerPlacementRatings } from '~/shared/constants/cosmetic-flags.constants';
+import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 
-export type SetCosmeticFlagInput = z.infer<typeof setCosmeticFlagSchema>;
-export const setCosmeticFlagSchema = z.object({
+export type SetStickerPlacementRatingInput = z.infer<typeof setStickerPlacementRatingSchema>;
+export const setStickerPlacementRatingSchema = z.object({
   id: z.number().int().positive(),
-  flag: z.literal(CosmeticFlag.SfwPlacementsOnly),
-  enabled: z.boolean(),
+  rating: z.enum(stickerPlacementRatings),
 });
 
 export type GetPaginatedCosmeticsInput = z.infer<typeof getPaginatedCosmeticsSchema>;
@@ -59,4 +59,30 @@ export const cosmeticInputSchema = z.object({
   id: z.number(),
   claimKey: z.string(),
   // data: z.object({}).passthrough().nullable(),
+});
+
+const inRange = ([lo, hi]: readonly [number, number]) => z.number().min(lo).max(hi);
+
+/**
+ * A moderator's change to one event hat's placement. Only these fields can be set, so the art's
+ * measured shape (canvas, bounds, brim, outline) is never touched; `null` puts a field back to the
+ * default look.
+ */
+export type UpdateEventHatFitInput = z.infer<typeof updateEventHatFitSchema>;
+export const updateEventHatFitSchema = z.object({
+  id: z.number().int().positive(),
+  fit: z
+    .object({
+      size: inRange(HAT_FIT_LIMITS.size).nullable(),
+      tilt: inRange(HAT_FIT_LIMITS.tilt).nullable(),
+      depth: inRange(HAT_FIT_LIMITS.depth).nullable(),
+      grow: inRange(HAT_FIT_LIMITS.grow).nullable(),
+      offset: z.tuple([inRange(HAT_FIT_LIMITS.offset), inRange(HAT_FIT_LIMITS.offset)]).nullable(),
+    })
+    .partial()
+    .strict()
+    // An empty edit would still refresh every card wearing the hat, for nothing.
+    .refine((fit) => Object.values(fit).some((value) => value !== undefined), {
+      message: 'Change at least one setting',
+    }),
 });

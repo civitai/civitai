@@ -1,5 +1,12 @@
 // src/utils/trpc.ts
-import { QueryClient, type QueryClientConfig } from '@tanstack/react-query';
+import {
+  QueryClient,
+  type DefaultError,
+  type DefaultedQueryObserverOptions,
+  type QueryClientConfig,
+  type QueryKey,
+  type QueryObserverOptions,
+} from '@tanstack/react-query';
 import type { CreateTRPCClient, TRPCLink } from '@trpc/client';
 import {
   createTRPCClient,
@@ -209,9 +216,11 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'article.getCivitaiNews',
   'bug.getLatest',
   'changelog.getLatest',
+  'event.getCosmeticScores',
   'event.getDonors',
   'event.getPartners',
   'event.getRewards',
+  'event.getStandings',
   'event.getTeamScoreHistory',
   'event.getTeamScores',
   'generation.checkResourcesCoverage',
@@ -388,6 +397,43 @@ const queryClientConfig: QueryClientConfig = {
 };
 
 /**
+ * Per-request QueryClient for SSR: every query on it gets `gcTime: Infinity`, overriding any
+ * per-query value.
+ *
+ * Why: query-core skips the GC timer for a server query only when it falls back to its DEFAULT
+ * gcTime (Infinity on the server). An explicit per-query `gcTime` (e.g. `ModelTensorMetadata`'s
+ * 30 min) wins over that default, and the `Query` constructor calls `scheduleGc()` even for a
+ * disabled query. The timer's closure holds the Query, which holds this client and its whole
+ * cache — so one render of such a component pinned the render's entire QueryCache for the
+ * gcTime. A production SSR heap snapshot held ~700 such caches (~100 MB) on one pod.
+ *
+ * With `gcTime: Infinity` no timer is ever scheduled, so the client is collectable as soon as the
+ * render that created it is done. Nothing is lost: a server-side client lives for one render and
+ * is never reused. Server-only — the browser keeps plain `QueryClient`, where per-query gcTime is
+ * the real cache-eviction policy.
+ *
+ * All query building (`useQuery`, `fetchQuery`, `ensureQueryData`, `hydrate`) passes through
+ * `QueryCache.build` → `client.defaultQueryOptions`, so this one override covers every path.
+ */
+class ServerQueryClient extends QueryClient {
+  override defaultQueryOptions<
+    TQueryFnData = unknown,
+    TError = DefaultError,
+    TData = TQueryFnData,
+    TQueryData = TQueryFnData,
+    TQueryKey extends QueryKey = QueryKey,
+    TPageParam = never
+  >(
+    options:
+      | QueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey, TPageParam>
+      | DefaultedQueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey>
+  ): DefaultedQueryObserverOptions<TQueryFnData, TError, TData, TQueryData, TQueryKey> {
+    const defaulted = super.defaultQueryOptions(options);
+    return defaulted.gcTime === Infinity ? defaulted : { ...defaulted, gcTime: Infinity };
+  }
+}
+
+/**
  * Browser-only QueryClient singleton.
  *
  * IMPORTANT: never construct this at module scope. Doing so on the server
@@ -404,8 +450,8 @@ function getBrowserQueryClient(): QueryClient {
   if (typeof window === 'undefined') {
     throw new Error(
       '[trpc] queryClient was accessed on the server. Use `useQueryClient()` ' +
-        'inside a component, or pass `queryClientConfig` to tRPC so a fresh ' +
-        'QueryClient is created per request.'
+        'inside a component — on the server tRPC builds a fresh per-request ' +
+        'QueryClient (see `ServerQueryClient`).'
     );
   }
   if (!browserQueryClient) browserQueryClient = new QueryClient(queryClientConfig);
@@ -472,11 +518,14 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext> = createTRPCNext<A
       // `setQueriesData`/`cancelQueries` would target a different cache than
       // the one `useQuery` hooks subscribe to.
       //
-      // On the server, omit `queryClient` so `@trpc/next` falls through to
-      // `new QueryClient(config.queryClientConfig)` per request — the prior
-      // module-scope singleton accumulated 11,962 `Query` objects per pod
-      // (heap snapshot, civitai-dp-prod, 2026-05-14).
-      ...(isClient ? { queryClient: getBrowserQueryClient() } : { queryClientConfig }),
+      // On the server, build a FRESH client per call: `withTRPC` calls `config()` once per
+      // render (in a `useState` initializer), so this is one client per request — the prior
+      // module-scope singleton accumulated 11,962 `Query` objects per pod (heap snapshot,
+      // civitai-dp-prod, 2026-05-14). It is a `ServerQueryClient` so no query on it can
+      // schedule a GC timer that keeps the request's cache alive after the render.
+      ...(isClient
+        ? { queryClient: getBrowserQueryClient() }
+        : { queryClient: new ServerQueryClient(queryClientConfig) }),
       links: [
         authedCacheBypassLink,
         loggerLink({

@@ -3434,7 +3434,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       {
         field: 'overview',
         claim: '4K availability per version',
-        note: 'Page previously implied 4K from v4.0 onward, including the v5.0 Pro flagship. On Civitai the 2K/4K switch exists only on v4.5 and v5.0 Lite (see `versionsWithResolutionToggle` in seedream-graph.ts); everything else renders at 2K. The upstream ByteDance claim about v4.0 is left attributed in the overview. Corrected 2026-07-27 after a user reported a 4K request returning 2K.',
+        note: 'Page previously implied 4K from v4.0 onward, including the v5.0 Pro flagship. On Civitai the 2K/4K switch exists only on v4.5 and v5.0 Lite (see `versionsWithResolutionToggle` in `image/seedream.graph.ts`); everything else renders at 2K. The upstream ByteDance claim about v4.0 is left attributed in the overview. Corrected 2026-07-27 after a user reported a 4K request returning 2K.',
       },
       {
         field: 'faq',

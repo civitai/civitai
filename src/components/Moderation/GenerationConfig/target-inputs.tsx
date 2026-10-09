@@ -2,7 +2,7 @@ import type { ComboboxProps } from '@mantine/core';
 import { Badge, Group, MultiSelect, Stack, TagsInput, Text } from '@mantine/core';
 import { useMemo } from 'react';
 import { ecosystemByKey, ecosystems } from '~/shared/constants/basemodel.constants';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 
 /** Parse a TagsInput value (strings) into positive integers; returns the bad entries separately. */
 export function parseIds(values: string[] | undefined): { ids: number[]; invalid: string[] } {

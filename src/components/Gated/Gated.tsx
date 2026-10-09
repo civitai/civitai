@@ -25,6 +25,7 @@ import {
 import { useSession } from '~/providers/SessionProvider';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { Meta, type MetaProps } from '~/components/Meta/Meta';
+import { ownDomainCanonical } from '~/components/Meta/canonical';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
 import { useAdGate } from '~/components/Ads/AdsProvider';
@@ -166,7 +167,7 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   children,
 }: GatedProps<TImage>) {
   const { state, isPaywalled } = useGated({ contentNsfwLevel, nsfw, bypassRating });
-  const { allowMatureContent } = useAppContext();
+  const { allowMatureContent, domain, serverDomains } = useAppContext();
 
   // Rating, not `state` — a PG13 page still serves ads while showing a login gate.
   useAdGate(!!suppressAds || isAdGatedContent({ contentNsfwLevel, nsfw }));
@@ -204,6 +205,10 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   const finalMeta: MetaProps<TImage> = {
     ...meta,
     deIndex: meta.deIndex || shouldDefaultDeIndex,
+    canonical:
+      meta.canonical && allowMatureContent && !isSafeForCanonical
+        ? ownDomainCanonical(meta.canonical, domain, serverDomains)
+        : meta.canonical,
     schema: isPaywalled
       ? meta.schema
         ? {

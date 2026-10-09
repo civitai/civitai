@@ -1154,6 +1154,7 @@ export const UserRestrictionStatus = {
   Pending: 'Pending',
   Upheld: 'Upheld',
   Overturned: 'Overturned',
+  AccountDeleted: 'AccountDeleted',
 } as const;
 
 export type UserRestrictionStatus =
@@ -1167,6 +1168,7 @@ export const StrikeReason = {
   HarassmentContent: 'HarassmentContent',
   ProhibitedContent: 'ProhibitedContent',
   ManualModAction: 'ManualModAction',
+  Scam: 'Scam',
 } as const;
 
 export type StrikeReason = (typeof StrikeReason)[keyof typeof StrikeReason];

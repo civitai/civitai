@@ -26,7 +26,7 @@ The implementation followed the plan; the notable specifics and deviations:
 
 ### Client (as-built)
 
-- `GenerationCtx.selfHostedDisabledEcosystems`, populated in `GenerationFormProvider` via `useSelfHostedDisabledEcosystems()`.
+- `GenerationCtx.selfHostedDisabledEcosystems`, populated in `BaseGenerationForm`'s `ext` memo via `useSelfHostedDisabledEcosystems()`.
 - **Ecosystem node** keeps disabled keys in `compatibleEcosystems`, exposes `meta.disabledEcosystems`, and rejects them in the `output` refine. **Gotcha:** `meta` must be a **function** `(ctx, ext) => …` (not a static object) — the node factory only re-runs on its `['workflow','output']` deps, so a static meta never reflects the async-loaded `ext` (config). `_updateAllMeta` only recomputes function-form meta. A shared `getEcosystemLists(workflow, ext)` helper keeps the factory and meta in sync.
 - **`BaseModelInput`** renders disabled items present-but-disabled with a badge (**"Members only"** yellow / **"Disabled"** gray) + tooltip, blocks click/Enter. Group display items (ZImage, Flux2Klein, LTXV) resolve to their **default ecosystem key** before the disabled check (their `key` is the group id, not an ecosystem key).
 - **Alert + Generate button** — the self-hosted alert was moved out of `GenerationForm` into `FormFooter`'s `PriorityAlertSpace` as the **first** priority branch (`SelfHostedBlockedAlert`), sharing a `useSelfHostedBlock()` hook with `FormFooter`, which **hides the entire submit/reset row** when blocked. Members-only copy links to `syncAccount(//green/pricing)` (the existing membership-upsell pattern).
@@ -55,7 +55,7 @@ The input types that route to our GPUs (provided by `@dev`, from `@civitai/clien
 
 ### Derived self-hosted ecosystem set
 
-Mapping each input type to the ecosystem(s) whose handler produces it (router: `src/server/services/orchestrator/ecosystems/index.ts`):
+Mapping each input type to the ecosystem(s) whose handler produces it (router: `src/server/services/orchestrator/form-graph/index.ts`):
 
 | Input type                | Ecosystems (ECO keys)                                                                                                      | Handler                                                                                                            |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -141,15 +141,15 @@ Returning the **resolved per-user list** keeps tier logic server-side (consisten
 
 The disabled list flows the **same path `gatedEcosystems` already takes**, but with **disable** semantics instead of **hide**. This keeps validation inside `generationGraph` and gives the components a single source of truth via the ecosystem node's `meta`.
 
-**The flow:** `getGenerationConfig` → `GenerationFormProvider` builds `externalContext: GenerationCtx` (`GenerationFormProvider.tsx:266`) → ecosystem node reads `ext` → ecosystem node `meta` → `GenerationForm` → `BaseModelInput`.
+**The flow:** `getGenerationConfig` → `BaseGenerationForm` builds `ext: GenerationCtx` (`BaseGenerationForm.tsx:86`) → the ecosystem field reads `_ext` → field `meta` → the form body → `BaseModelInput`.
 
-1. **Graph context** (`src/shared/data-graph/generation/context.ts`): add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx` (sibling of `gatedEcosystems` at line 28). Populate it in `GenerationFormProvider`'s `externalContext` memo (alongside `gatedEcosystems`, `GenerationFormProvider.tsx:278`) from `useGenerationConfig().selfHostedDisabledEcosystems`.
+1. **Graph context** (`src/shared/generation/context.ts`): add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx` (sibling of `gatedEcosystems` at line 28). Populate it in `BaseGenerationForm`'s `ext` memo (alongside `gatedEcosystems`, `src/components/form-graph/generation/BaseGenerationForm.tsx:86`) from `useGenerationConfig().selfHostedDisabledEcosystems`.
 
-2. **Ecosystem node** (`src/shared/data-graph/generation/ecosystem-graph.ts:119`): unlike `gatedEcosystems`, **do NOT filter** these out of `compatibleEcosystems` — we want them to render. Instead:
+2. **Ecosystem field** (`src/shared/form-graph/generation/hub.graph.ts`): unlike `gatedEcosystems`, **do NOT filter** these out of `compatibleEcosystems` — we want them to render. Instead:
 
    - Add `disabledEcosystems` to the node's `meta` (the resolved list intersected with `compatibleEcosystems`), plus the reason/`selfHostedMode` (or a pre-derived badge label) so the picker can label the badge without re-reading config.
-   - Add a `.refine()` on the node's `output` schema rejecting a selected disabled ecosystem (`message: 'Ecosystem is currently unavailable'`), mirroring the gated refine at line 150. **This is where validation lives** — a disabled selection makes the graph invalid, which is what blocks submission.
-   - Do **not** add it to the `input` transform's drop logic (line 143) — we want the disabled value to stay selected so the alert + disabled state show, rather than silently snapping to a default.
+   - Add a `.refine()` on the node's `output` schema rejecting a selected disabled ecosystem (`message: 'Ecosystem is currently unavailable'`), mirroring the gated refine beside it. **This is where validation lives** — a disabled selection makes the graph invalid, which is what blocks submission.
+   - Do **not** add it to the `input` transform's drop logic — we want the disabled value to stay selected so the alert + disabled state show, rather than silently snapping to a default.
 
 3. **`BaseModelInput`** (`src/components/generation_v2/inputs/BaseModelInput.tsx`): add a `disabledEcosystems` prop fed from `meta?.disabledEcosystems` (`GenerationForm.tsx:470`). Render those items present-but-disabled, distinct from the `applyExcludeFilter` _removal_ used for gated items (line 624). The item rows are `UnstyledButton`s rendered in **two places** — the recent list (~line 344) and the grouped list (~line 400) — so factor a small per-item renderer or apply the treatment in both. For a disabled item:
 
@@ -187,9 +187,9 @@ For provider-discriminated handlers, the produced input also carries `provider` 
 
 | Area              | File                                                      | Change                                                                                                                                                   |
 | ----------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Graph context     | `src/shared/data-graph/generation/context.ts`             | add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx`                                                                                         |
-| Context wiring    | `src/components/generation_v2/GenerationFormProvider.tsx` | populate the new ctx field from `useGenerationConfig()` (alongside `gatedEcosystems`)                                                                    |
-| Ecosystem node    | `src/shared/data-graph/generation/ecosystem-graph.ts`     | expose `meta.disabledEcosystems` (keep them in `compatibleEcosystems`) + `output` `.refine()` rejecting a disabled selection — **validation lives here** |
+| Graph context     | `src/shared/generation/context.ts`                        | add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx`                                                                                         |
+| Context wiring    | `src/components/form-graph/generation/BaseGenerationForm.tsx` | populate the new ctx field from `useGenerationConfig()` (alongside `gatedEcosystems`)                                                                    |
+| Ecosystem field   | `src/shared/form-graph/generation/hub.graph.ts`           | expose `meta.disabledEcosystems` (keep them in `compatibleEcosystems`) + `output` `.refine()` rejecting a disabled selection — **validation lives here** |
 | Base model picker | `src/components/generation_v2/inputs/BaseModelInput.tsx`  | `disabledEcosystems` prop fed from node `meta`; render disabled (not removed)                                                                            |
 | Alerts            | `src/components/generation_v2/ResourceAlerts.tsx`         | self-hosted-disabled alert; copy keyed on `selfHostedMode`                                                                                               |
 

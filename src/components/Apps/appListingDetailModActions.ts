@@ -32,7 +32,12 @@ import {
  */
 
 /**
- * The actions the DETAIL body implements, of the seven {@link ListingModAction}s.
+ * The actions the DETAIL body implements, of the eight {@link ListingModAction}s.
+ *
+ * `set-visibility` opens the same `ModListingVisibilityModal` the /apps/review mgmt table
+ * uses. Like every member here it is offered only when {@link listingModActions} admits it
+ * for this surface's status, which it does for `approved` via the shared visibility
+ * eligibility predicate.
  *
  * 🔴 THE FOUR OMISSIONS ARE DECISIONS, NOT GAPS, and each has a reason that is about this
  * surface rather than about effort:
@@ -49,7 +54,12 @@ import {
  * Every omitted lifecycle action is still reachable, one click away, via the menu's link
  * to the review queue.
  */
-export const DETAIL_SURFACE_MOD_ACTIONS = ['message-owner', 'reset-to-pending', 'hide'] as const;
+export const DETAIL_SURFACE_MOD_ACTIONS = [
+  'message-owner',
+  'reset-to-pending',
+  'hide',
+  'set-visibility',
+] as const;
 export type DetailSurfaceModAction = (typeof DETAIL_SURFACE_MOD_ACTIONS)[number];
 
 /**
@@ -187,16 +197,22 @@ export function detailListingStatus(input: { preview: boolean }): 'approved' | n
  * proc behind these items is `moderatorProcedure` plus an inner `isModerator` recheck,
  * which is the real boundary — but rendering a control a viewer's session cannot use is
  * its own defect, so it is spelled here once rather than at each item.
+ *
+ * `viewerOwnsListing` drops `set-visibility` and nothing else: an owner already has the
+ * owner "Visibility" item for their own listing, so a moderator who owns it is offered
+ * the moderator picker only on listings they do NOT own. Required, with no default, so
+ * every caller has to answer it.
  */
 export function appListingDetailModActions(input: {
   isModerator: boolean;
   preview: boolean;
   kind: string;
+  viewerOwnsListing: boolean;
 }): DetailSurfaceModAction[] {
   if (!input.isModerator) return [];
   const status = detailListingStatus({ preview: input.preview });
   if (status === null) return [];
-  return listingModActions({
+  const actions = listingModActions({
     status,
     kind: input.kind,
     // This surface never holds a publish REQUEST, so it can never offer `review`.
@@ -210,12 +226,13 @@ export function appListingDetailModActions(input: {
     // direction is withhold, not offer.
     //
     // This surface has no honest source for either value — it is handed `{isModerator,
-    // preview, kind}` and nothing else. Do not invent one: a real value here would be a claim
+    // preview, kind, viewerOwnsListing}` and nothing else. Do not invent one: a real value here would be a claim
     // about a listing this function cannot see. Widening the input is the correct move if this
     // surface ever needs to offer `purge`.
     appBlockId: null,
     hasPendingBlockRequest: true,
   }).filter(isDetailSurfaceModAction);
+  return input.viewerOwnsListing ? actions.filter((a) => a !== 'set-visibility') : actions;
 }
 
 /** Type guard for the surface subset — a narrowing `includes`, kept out of the filter. */
@@ -246,6 +263,10 @@ export function detailModActionLabel(action: DetailSurfaceModAction): string {
       // off the store; only this one comes back without a re-review. A moderator picking
       // between two items that both read "Unpublish" would be choosing at random.
       return 'Hide from store (reversible)';
+    case 'set-visibility':
+      // The verb matches the modal's own title and submit button ("Set visibility"), so the
+      // item and the dialog it opens read as one action.
+      return 'Set visibility';
   }
 }
 

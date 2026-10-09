@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
   assertMediaPresentForPublish,
@@ -14,6 +15,10 @@ import {
   filterViewableModelVersions,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -159,7 +164,11 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import {
   imageSelect,
@@ -178,7 +187,10 @@ import {
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import {
   getVisibleModel3DIdForPost,
   getVisibleModel3DIds,
@@ -831,7 +843,13 @@ export async function queueReplacedImageDeletion(ids: number[]) {
 export async function deleteImages(
   ids: number[],
   updatePosts = true,
-  { retractPublicBlobs = false }: PurgeResizeCacheRetraction = {}
+  {
+    retractPublicBlobs = false,
+    onlyWhere,
+  }: PurgeResizeCacheRetraction & {
+    /** Extra condition on the DELETE itself; ids it excludes are skipped and not returned. */
+    onlyWhere?: Prisma.Sql;
+  } = {}
 ) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
@@ -854,6 +872,7 @@ export async function deleteImages(
     >`
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(ids)})
+        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
@@ -1055,16 +1074,18 @@ export async function handleBlockImages({
     const invalidateExistence = invalidateManyImageExistence(ids);
 
     await Promise.all([
-      dbWrite.image.updateMany({
-        where: { id: { in: ids } },
-        data: {
-          needsReview: null,
-          ingestion: 'Blocked',
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: BlockedReason.Moderated,
-          updatedAt: new Date(),
-        },
-      }),
+      dbWrite.image
+        .updateMany({
+          where: { id: { in: ids } },
+          data: {
+            ingestion: 'Blocked',
+            nsfwLevel: NsfwLevel.Blocked,
+            blockedFor: BlockedReason.Moderated,
+            updatedAt: new Date(),
+          },
+        })
+        .then(() => clearReviewFlagsOnBlock(ids))
+        .then(() => keepPendingAppealFlags(ids)),
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
       invalidateExistence,
@@ -1569,8 +1590,13 @@ type GetAllImagesRaw = {
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
   user?: SessionUser;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   // Request color, used to pick which "new & upcoming" board backs `newCreators`.
   domain?: DomainColor;
+  // Server-only: not in the tRPC schema, so a client cannot set or lift it.
+  newCreatorsMaxFollowers?: number;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -1711,6 +1737,8 @@ const getAllImagesUncaptured = async (
     userId?: number;
     /** Rethrow a statement timeout instead of answering it with an empty page. */
     throwOnStatementTimeout?: boolean;
+    /** `false`: the per-image caches serve hits but don't write misses back. */
+    cacheWriteBack?: boolean;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -1758,6 +1786,7 @@ const getAllImagesUncaptured = async (
     generation,
     reviewId,
     newCreators,
+    newCreatorsMaxFollowers,
     domain,
     prioritizedUserIds,
     include,
@@ -1785,6 +1814,7 @@ const getAllImagesUncaptured = async (
     poiOnly,
     minorOnly,
     pendingReviewOnly,
+    cacheWriteBack,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
   let { dbTarget = 'read' } = input;
@@ -1870,7 +1900,9 @@ const getAllImagesUncaptured = async (
         })
       : false,
     userId && followed ? getUserFollows(userId) : undefined,
-    newCreators ? getNewCreatorUserIds({ entity: 'images', domain }) : undefined,
+    newCreators
+      ? getNewCreatorUserIds({ entity: 'images', domain, maxFollowers: newCreatorsMaxFollowers })
+      : undefined,
     collectionId
       ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
       : undefined,
@@ -2540,10 +2572,13 @@ const getAllImagesUncaptured = async (
     imageMetrics,
     imageMeta,
     imageResources,
+    eventDecorations,
   ] = await withSpan('image:getAllImages:parallelFetch', () =>
     Promise.all([
       userId ? getUserReactionsForImages({ imageIds, userId }) : undefined,
-      include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
+      include?.includes('tagIds')
+        ? tagIdsForImagesCache.fetch(imageIds, { writeBack: cacheWriteBack })
+        : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
       include?.includes('tags') && userId
         ? dbRead.tagsOnImageVote.findMany({
@@ -2558,7 +2593,17 @@ const getAllImagesUncaptured = async (
       getThumbnailsForImages(videoIds),
       getImageMetricsObject(rawImages),
       include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
-      includeBaseModel ? imageResourcesCache.fetch(imageIds) : undefined,
+      includeBaseModel
+        ? imageResourcesCache.fetch(imageIds, { writeBack: cacheWriteBack })
+        : undefined,
+      // Not behind `include: ['cosmetics']`: every surface that shows the image (the model page
+      // carousel asks for no includes) must show the hat it is scored for. Empty between events.
+      getEventDecorationsForEntity({
+        ids: imageIds,
+        entity: 'Image',
+        writeBack: cacheWriteBack,
+        viewer: input.eventDecorationViewer,
+      }),
     ])
   );
 
@@ -2622,6 +2667,7 @@ const getAllImagesUncaptured = async (
         availability?: Availability;
         nsfwLevel: NsfwLevel;
         cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+        eventDecoration?: WithClaimKey<EventDecorationCosmetic> | null;
         metadata: ImageMetadata | VideoMetadata | null;
         onSite: boolean;
         modelVersionIds?: number[];
@@ -2684,6 +2730,7 @@ const getAllImagesUncaptured = async (
         tags: tagsByImageId?.get(i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
+        eventDecoration: eventDecorations?.[i.id] ?? null,
         thumbnailUrl: thumbnail?.url,
         judgeScore,
       };
@@ -2817,21 +2864,26 @@ async function prepareImageFeedRequest(
  * image query the rows are loaded with; the feed's paging and period are dropped from it.
  */
 async function serveImagesFromFeedService(
-  searchInput: CapturableSearchInput & { domain?: DomainColor },
+  searchInput: CapturableSearchInput & { domain?: DomainColor; newCreatorsMaxFollowers?: number },
   hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
   route: FeedPrimaryRoute
 ) {
   const started = Date.now();
   const { currentUserId } = searchInput;
-  const [followedUserIds, newCreatorUserIds] = await Promise.all([
+  const [followedUserIds, newCreatorUserIds, hub] = await Promise.all([
     searchInput.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
     searchInput.newCreators
-      ? getNewCreatorUserIds({ entity: 'images', domain: searchInput.domain })
+      ? getNewCreatorUserIds({
+          entity: 'images',
+          domain: searchInput.domain,
+          maxFollowers: searchInput.newCreatorsMaxFollowers,
+        })
       : undefined,
+    searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId) : undefined,
   ]);
   const served = await withSpan('image:feedPrimary', () =>
     serveFromFeed(
-      { ...searchInput, followedUserIds, newCreatorUserIds },
+      { ...searchInput, followedUserIds, newCreatorUserIds, ...hub },
       {
         fetchFeed: fetchFeedPrimary,
         hydrate: async (ids) =>
@@ -3101,6 +3153,7 @@ export const getAllImagesIndex = async (
     imageMetrics,
     tagIdsVar,
     tagsVar,
+    imageEventDecorations,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
       // These enrichment fetches are independent (each takes pre-computed
@@ -3128,6 +3181,12 @@ export const getAllImagesIndex = async (
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
+      // Unconditional for the same reason as in getAllImages.
+      getEventDecorationsForEntity({
+        ids: imageIds,
+        entity: 'Image',
+        viewer: input.eventDecorationViewer,
+      }),
     ])
   );
 
@@ -3211,6 +3270,7 @@ export const getAllImagesIndex = async (
         stats: toImageV2Stats(metrics),
         reactions,
         cosmetic: imageCosmetics?.[sr.id] ?? null,
+        eventDecoration: imageEventDecorations?.[sr.id] ?? null,
         // TODO fix below
         availability: Availability.Public,
         tags: tagsByImageId?.get(sr.id) ?? [],
@@ -3303,6 +3363,7 @@ export const makeMeiliImageSearchSort = (
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
   domain?: DomainColor;
+  newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -3672,6 +3733,28 @@ async function resolvedHubSources(input: ImageSearchInput) {
   });
 }
 
+/**
+ * A hub as the feed service is asked for it: its sources, and the browsing level under the hub's
+ * own cap. `hubSources: null` wherever the index path would return an empty page (no such hub
+ * for this viewer, no source left, a cap that leaves the viewer nothing), so the same requests
+ * are empty on both paths. Undefined while hubs are not switched over: the hub is then not
+ * servable by the feed and the request takes the index path.
+ */
+async function resolveHubForFeed(searchInput: CapturableSearchInput, viewerId: number | undefined) {
+  const enabled = await getFliptBoolean(
+    FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
+    viewerId?.toString() || 'anonymous',
+    feedFliptContext(searchInput)
+  );
+  if (!enabled) return undefined;
+  const input = searchInput as ImageSearchInput;
+  const sources = await resolvedHubSources(input);
+  if (!sources || !hubFilterArms(sources, input)) return { hubSources: null };
+  const browsingLevel = hubBrowsingLevel(input.browsingLevel, sources);
+  if (browsingLevel !== undefined && !browsingLevel) return { hubSources: null };
+  return { hubSources: sources, browsingLevel };
+}
+
 type HubFilterClause = { field: MetricsImageFilterableAttribute; ids: number[] };
 /**
  * One arm of the OR a hub's sources become. Its clauses are ANDed, which only a tag
@@ -3835,6 +3918,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     newCreators,
+    newCreatorsMaxFollowers,
     hubId,
     domain,
     // TODO check the unused stuff in here
@@ -3930,7 +4014,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   // set is global per domain rather than per viewer. An unpopulated board returns
   // nothing rather than degrading to the unfiltered feed.
   if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    const newCreatorIds = await getNewCreatorUserIds({
+      entity: 'images',
+      domain,
+      maxFollowers: newCreatorsMaxFollowers,
+    });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
@@ -4467,6 +4555,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     blockedFor,
     // TODO check the unused stuff in here
     newCreators,
+    newCreatorsMaxFollowers,
     hubId,
     domain,
   } = input;
@@ -4547,7 +4636,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 
   if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    const newCreatorIds = await getNewCreatorUserIds({
+      entity: 'images',
+      domain,
+      maxFollowers: newCreatorsMaxFollowers,
+    });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
@@ -6962,11 +7055,16 @@ export const getEntityCoverImage = async ({
     tagsVar = await getImageTagsForImages(imageIds);
   }
 
-  const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
+  const imageIds = images.map((i) => i.id);
+  const [cosmetics, eventDecorations] = await Promise.all([
+    getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }),
+    getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
+  ]);
 
   return attachTagsToImages(images, tagsVar).map((i) => ({
     ...i,
     cosmetic: cosmetics[i.id],
+    eventDecoration: eventDecorations[i.id] ?? null,
   }));
 };
 
@@ -7165,9 +7263,29 @@ export async function reportCsamImages({
   ip?: string;
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
-  await dbWrite.image.updateMany({
-    where: { id: { in: imageIds } },
-    data: { needsReview: 'csam' },
+  // Flag first: an appeal that starts after this is refused by createEntityAppeal, and one that
+  // committed before it is closed below. One transaction, so a failed close cannot leave the flag
+  // beside a still-pending appeal.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: { needsReview: 'csam' },
+    });
+    // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
+    // the uploader is not told.
+    await tx.appeal.updateMany({
+      where: {
+        entityType: EntityType.Image,
+        entityId: { in: imageIds },
+        status: AppealStatus.Pending,
+      },
+      data: {
+        status: AppealStatus.Rejected,
+        resolvedBy: user.id,
+        resolvedAt: new Date(),
+        internalNotes: 'Closed by CSAM report',
+      },
+    });
   });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },

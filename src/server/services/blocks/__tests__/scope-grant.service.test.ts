@@ -1412,6 +1412,9 @@ describe('scope-grant.service', () => {
         'apps:storage:shared:read',
         'apps:storage:shared:write',
         'apps:storage:write',
+        // App Store items: gated per call (parent switch, trust, authorship, text safety, rate
+        // limits, moderator approval). A consent gate would silently drop it from tokens.
+        'apps:store:items:write',
         'collections:read:self',
         'collections:write:self',
         // Added by the digital-goods rail: the app's own sales ledger, filtered to this viewer and

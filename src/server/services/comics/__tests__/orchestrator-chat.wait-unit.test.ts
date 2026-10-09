@@ -137,7 +137,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
   /**
    * Any `wait` property, wherever it appears — plus the ES-shorthand `{ wait }`
    * forward, captured as the sentinel token `wait` so it lands in the runtime
-   * bucket rather than vanishing.
+   * bucket rather than vanishing. A template's `${wait}` is not one.
    *
    * The key may be QUOTED. That is not hypothetical tidiness: with an
    * unquoted-only key pattern, a planted `{ "wait": 60000 }` passed all 8 tests
@@ -155,7 +155,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
    * `CandidateImageModal.tsx` reported as a wait site with the value
    * `'pointer'`.
    */
-  const WAIT_SITE = /(?:[{,]|^)\s*["']?\bwait["']?\s*:\s*([^,}\n]+)|\{\s*(wait)\s*\}/gm;
+  const WAIT_SITE = /(?:[{,]|^)\s*["']?\bwait["']?\s*:\s*([^,}\n]+)|(?<!\$)\{\s*(wait)\s*\}/gm;
 
   type Kind = 'literal' | 'identifier' | 'expression';
   const classify = (value: string): Kind => {
@@ -206,9 +206,11 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
    * HTTP param on one of our own endpoints — it is not an outbound orchestrator
    * wait. Excluded so the ledger tracks values we SEND. (The one such endpoint
    * that does forward to the orchestrator, `xguard-test.ts`, is still tracked
-   * via its actual forward, `wait: input.wait`.)
+   * via its actual forward, `wait: input.wait`.) A type keyword (`wait: number`)
+   * is an annotation, not a value.
    */
-  const isSchemaDecl = (token: string) => /^z(\.|$)/.test(token) || /Schema/.test(token);
+  const isSchemaDecl = (token: string) =>
+    /^z(\.|$)/.test(token) || /Schema/.test(token) || /^(number|string|boolean)$/.test(token);
 
   const sites = walk(SRC).flatMap((file) => {
     const raw = fs.readFileSync(file, 'utf8');
@@ -350,6 +352,7 @@ describe('every statically-resolvable `wait:` in src/ is a seconds value', () =>
         'server/services/training.service.ts:true',
         'pages/api/testing/xguard-test.ts:input.wait',
         'pages/api/testing/chat-completion-scan.ts:input.wait',
+        'server/services/text-scan/harness.ts:input.wait',
       ])
     );
   });

@@ -29,6 +29,7 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
   input: {
@@ -233,6 +234,7 @@ export const createOrUpdateComment = async ({
     entityId: result.id,
   });
   await preventReplicationLag('commentModel', input.modelId);
+  queueScamScan({ entityType: 'Comment', entityId: result.id });
   return result;
 };
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReportStatus } from '$lib/reports';
+import type * as GameFrame from '$lib/server/game-frame';
 
 /**
  * What only the action layer decides: that a service outcome is TRANSLATED rather than discarded.
@@ -14,13 +15,22 @@ const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
 const removePlacement = vi.fn();
 const canAccess = vi.fn(() => true);
 
+const getReportedGame = vi.fn();
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
   setReportStatus,
   updateReportNotes,
+  getReportedGame,
+  getGameMirrors: vi.fn(async () => []),
 }));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
+const delistGame = vi.fn();
+vi.mock('$lib/server/game-frame', async (importOriginal) => ({
+  ...(await importOriginal<typeof GameFrame>()),
+  delistGame,
+}));
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 // Stubbed for a different reason than the others: no database, but `canAccess` reads a grants store
 // only the request hook fills, so the real one answers false for everything here.
 vi.mock('$lib/server/access', () => ({ canAccess }));
@@ -33,12 +43,13 @@ const MOD = { id: 7 };
  * A REAL `FormData`, not a Map: `Map.get` gives `undefined` where `FormData.get` gives `null`, and
  * `Number()` maps those to NaN and 0 — opposite sides of `removePlacement`'s `Number.isInteger`.
  */
-const event = (form: Record<string, string> = {}) => {
+const event = (form: Record<string, string> = {}, slug = 'image') => {
   const data = new FormData();
   for (const [key, value] of Object.entries(form)) data.append(key, value);
   return {
     request: { formData: async () => data },
     locals: { user: MOD },
+    params: { slug },
     getClientAddress: () => '203.0.113.9',
   } as never;
 };
@@ -221,5 +232,60 @@ describe('saveNotes action', () => {
 
     expect(failure(result).status).toBe(410);
     expect((result as { data: { gone?: boolean } }).data.gone).toBe(true);
+  });
+});
+
+describe('delistGame action', () => {
+  const game = { slug: 'kraken-cove', reason: 'TOSViolation', violation: 'Hate or harassment' };
+  const delist = (form: Record<string, string> = { id: '991' }, slug = 'game') =>
+    actions.delistGame(event(form, slug));
+
+  beforeEach(() => getReportedGame.mockResolvedValue(game));
+
+  it('delists, then sets the report Actioned and names the forks', async () => {
+    delistGame.mockResolvedValue({ ok: true, affected: 2 });
+
+    const result = await delist();
+
+    expect(delistGame).toHaveBeenCalledWith({
+      slug: 'kraken-cove',
+      reason: 'Reported: Hate or harassment; report #991',
+      reportId: 991,
+      moderator: { id: 7, username: null },
+    });
+    expect(setReportStatus).toHaveBeenCalledWith({
+      id: 991,
+      status: ReportStatus.Actioned,
+      userId: 7,
+      ip: '203.0.113.9',
+    });
+    expect(result).toEqual({ success: true, delisted: 'Delisted (+2 forks)' });
+  });
+
+  it('leaves the report untouched when Game Frame refuses', async () => {
+    delistGame.mockResolvedValue({
+      ok: false,
+      status: 502,
+      message: 'Game Frame refused the delist (config).',
+    });
+
+    expect(failure(await delist())).toEqual({
+      status: 502,
+      error: 'Game Frame refused the delist (config).',
+    });
+    expect(setReportStatus).not.toHaveBeenCalled();
+  });
+
+  it('only runs on the game queue, and only for a moderator with access to it', async () => {
+    expect(failure(await delist({ id: '991' }, 'image')).status).toBe(403);
+    canAccess.mockReturnValue(false);
+    expect(failure(await delist()).status).toBe(403);
+    expect(delistGame).not.toHaveBeenCalled();
+  });
+
+  it('refuses a report that is not about a game without calling Game Frame', async () => {
+    getReportedGame.mockResolvedValue(null);
+    expect(failure(await delist()).status).toBe(410);
+    expect(delistGame).not.toHaveBeenCalled();
   });
 });

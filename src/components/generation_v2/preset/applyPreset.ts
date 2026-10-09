@@ -25,7 +25,7 @@ function extractResourceIds(values: PresetValues): number[] {
 
 /**
  * Hydrate a preset's resource refs and push the values into the generation form
- * via `generationGraphStore.setData`. `GenerationFormProvider` picks this up and
+ * via `generationGraphStore.setData`. `BaseGenerationForm` picks this up and
  * applies it to the graph as a `replay` run, reusing the same reset + set flow
  * that remix uses.
  *
@@ -66,7 +66,7 @@ export async function applyPreset(preset: {
     runType: 'replay',
   });
 
-  // `GenerationFormProvider` subscribes to the graph store and applies the
+  // `BaseGenerationForm` subscribes to the graph store and applies the
   // reset + set synchronously from the subscribe callback, so by the time
   // `setData` returns the graph reflects the applied preset. Read the live
   // snapshot and use that as the baseline — the graph normalizes some values

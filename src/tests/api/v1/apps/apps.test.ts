@@ -196,6 +196,19 @@ describe('GET /api/v1/apps (list)', () => {
     expect(mockList).toHaveBeenCalledTimes(1);
   });
 
+  // Sub-listings are a store-grid feature; the public catalog never asks for them, whoever
+  // calls, so its body is unchanged by the feature.
+  it.each([
+    ['anonymous', undefined],
+    ['a moderator', MOD],
+  ])('never asks the service for sub-listings (%s)', async (_label, user) => {
+    const { req, res } = createMocks();
+    await (listHandler as unknown as Handler)(req, res, user);
+    expect(res._status()).toBe(200);
+    const [, opts] = mockList.mock.calls[0];
+    expect(opts.includeSubListings).toBeFalsy();
+  });
+
   it('a mod (full scope) gets the catalog — service called WITH the resolved scope', async () => {
     const { req, res } = createMocks();
     await (listHandler as unknown as Handler)(req, res, MOD);

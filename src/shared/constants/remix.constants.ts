@@ -8,7 +8,7 @@ import {
   minimaxVersionIds,
   nanoBananaVersionIds,
   qwenVersionIds,
-} from '~/shared/data-graph/generation/version-ids';
+} from '~/shared/generation/version-ids';
 
 export type RemixKind = 'edit' | 'video';
 

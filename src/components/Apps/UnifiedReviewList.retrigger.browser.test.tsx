@@ -53,7 +53,6 @@ function onsiteRow(over: Partial<Record<string, unknown>> = {}): OnsiteReviewReq
     submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
     // The lifecycle projection `listApprovedRequests` now selects.
     deployState: null,
-    deployDetail: null,
     deployUpdatedAt: null,
     ...over,
   } as unknown as OnsiteReviewRequest;
@@ -116,6 +115,32 @@ describe('Approved tab — the Deploy column exposes a stranded approval', () =>
     expect(page.getByTestId(DEPLOY_CHIP).elements()).toHaveLength(0);
     expect(page.getByTestId(RETRIGGER).elements()).toHaveLength(0);
     expect(page.getByText('Deploy', { exact: true }).elements()).toHaveLength(0);
+  });
+});
+
+describe('Approved tab — a failed build names its step and class (structured, no excerpt)', () => {
+  test('the chip reads "failed · security scan · unknown"', async () => {
+    renderApproved({
+      row: onsiteRow({
+        deployState: 'failed',
+        deployUpdatedAt: JUST_NOW,
+        buildSignals: { failedStep: 'scan', failureClass: 'unknown' },
+      }),
+      onRetrigger: vi.fn(),
+    });
+    await expect
+      .element(page.getByTestId(DEPLOY_CHIP))
+      .toHaveTextContent('failed · security scan · unknown');
+  });
+
+  test('without signals the chip is the bare state, as before', async () => {
+    renderApproved({
+      row: onsiteRow({ deployState: 'failed', deployUpdatedAt: JUST_NOW, buildSignals: null }),
+      onRetrigger: vi.fn(),
+    });
+    const chip = page.getByTestId(DEPLOY_CHIP);
+    await expect.element(chip).toBeInTheDocument();
+    expect(chip.element().textContent).toBe('failed');
   });
 });
 

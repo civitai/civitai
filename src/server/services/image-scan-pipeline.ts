@@ -51,6 +51,7 @@ import {
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -332,6 +333,8 @@ export async function loadImageForScan(imageId: number) {
       nsfwLevelLocked: true,
       nsfwLevel: true,
       ingestion: true,
+      blockedFor: true,
+      needsReview: true,
     },
   });
 
@@ -608,6 +611,29 @@ export async function resolveScanOutcome({
     }
   }
 
+  // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
+  // A rescan request may already have cleared `ingestion` and `blockedFor`; it leaves the Blocked level.
+  if ((await getPendingAppealImageIds([image.id])).size) {
+    toUpdate.needsReview = 'appeal';
+    reviewKey = 'appeal';
+    const wasBlocked =
+      image.ingestion === ImageIngestionStatus.Blocked ||
+      image.nsfwLevel === NsfwLevel.Blocked ||
+      image.blockedFor != null;
+    if (wasBlocked && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = image.blockedFor ?? BlockedReason.Moderated;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    }
+  }
+
+  // This review flag outranks an appeal and is only ever lifted by a moderator, never by a scan. The
+  // SET re-checks the stored value for a flag that lands after the image was loaded.
+  if (image.needsReview === 'csam') {
+    toUpdate.needsReview = 'csam';
+    reviewKey = 'csam';
+  }
+
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
@@ -616,7 +642,8 @@ export async function resolveScanOutcome({
       "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${toUpdate.nsfwLevel as number},
-      "needsReview" = ${(toUpdate.needsReview as string) ?? null},
+      "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
+        ELSE ${(toUpdate.needsReview as string) ?? null} END,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},

@@ -14,7 +14,8 @@ export function useEarningsSource() {
   // default source only to discard it.
   const ready = useMounted();
   // The value goes straight into a tRPC enum input; anything else in storage would fail validation.
-  const source: CompensationSource = stored === 'licenseFee' ? 'licenseFee' : 'compensation';
+  const source: CompensationSource =
+    stored === 'licenseFee' || stored === 'tip' ? stored : 'compensation';
 
   return { source, setSource, ready };
 }

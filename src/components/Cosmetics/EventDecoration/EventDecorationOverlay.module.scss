@@ -1,0 +1,136 @@
+.hat {
+  position: absolute;
+  z-index: 11;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+  pointer-events: none;
+
+  &:focus-visible {
+    outline: 2px solid theme('colors.blue.5');
+    outline-offset: 2px;
+  }
+}
+
+// Worn on a card: grows up and out about its brim while the card is hovered or focused, with a
+// spring on the way up and a quicker settle on the way down. Damped-spring samples; browsers
+// without `linear()` keep the cubic-bezier.
+.grows {
+  transition: scale 320ms cubic-bezier(0.3, 1.4, 0.6, 1);
+  transition: scale 320ms
+    linear(
+      0,
+      0.094,
+      0.3,
+      0.533,
+      0.741,
+      0.9,
+      1.004,
+      1.061,
+      1.082,
+      1.08,
+      1.065,
+      1.046,
+      1.027,
+      1.012,
+      1.002,
+      0.996,
+      1
+    );
+}
+
+@media (hover: hover) {
+  :global([data-event-decoration='hat']):hover > .grows,
+  :global([data-event-decoration='hat']):focus-within > .grows {
+    scale: var(--event-decoration-grow, var(--hat-grow));
+    transition: scale 650ms cubic-bezier(0.2, 1.8, 0.4, 1);
+    transition: scale 650ms
+      linear(
+        0,
+        0.082,
+        0.282,
+        0.531,
+        0.778,
+        0.983,
+        1.129,
+        1.21,
+        1.234,
+        1.214,
+        1.167,
+        1.109,
+        1.051,
+        1.003,
+        0.97,
+        0.951,
+        0.945,
+        0.95,
+        0.961,
+        0.975,
+        0.988,
+        0.999,
+        1.007,
+        1.012,
+        1
+      );
+  }
+}
+
+.hit {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+}
+
+.burst {
+  position: absolute;
+  z-index: 11;
+  pointer-events: none;
+}
+
+.art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.confetti {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  pointer-events: none;
+
+  & > span {
+    position: absolute;
+    width: 5px;
+    height: 7px;
+    border-radius: 1px;
+    animation: confetti 700ms ease-out forwards;
+  }
+}
+
+@keyframes confetti {
+  from {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translate(var(--dx), var(--dy)) rotate(260deg);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hat,
+  .grows,
+  :global([data-event-decoration='hat']):hover > .grows,
+  :global([data-event-decoration='hat']):focus-within > .grows {
+    transition: none;
+  }
+  .confetti {
+    display: none;
+  }
+}

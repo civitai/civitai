@@ -60,7 +60,7 @@ surface across the whole codebase, not just the data-graph.** Plan for a cycle-f
 - **Break bidirectional edges by extracting shared leaf values** (constants, schemas, enums)
   into zero-import leaf modules. Example fix from this session: moved `klingVersionIds` /
   `nanoBananaVersionIds` / `viduVersionIds` out of the `*-graph.ts` files into a new leaf
-  `src/shared/data-graph/generation/version-ids.ts`; both the graphs and `config/workflows.ts`
+  `src/shared/generation/version-ids.ts`; both the graphs and `config/workflows.ts`
   import the leaf → edge becomes one-directional. (Graph files re-export the consts so existing
   handler imports keep working.)
 - **Import leaf schemas from their source, not via a big module's re-export.** `kling-graph`

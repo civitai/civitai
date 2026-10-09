@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
-import { viduVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
+import { viduVersionIds } from '~/shared/generation/version-ids';
 import { checkpointDef } from '../checkpoint';
 import {
   SEED,
@@ -16,21 +16,21 @@ import {
 import { familyScope, modelIdOf, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Vidu (Q1 + Q3), ported from `vidu-graph.ts`. Q1 exposes style, movement
+ * Vidu (Q1 + Q3 + Q4). Q1 exposes style, movement
  * amplitude and the prompt enhancer; Q3 swaps those for resolution-scaled
- * ratios, duration, draft and audio toggles. Image-driven workflows emit NO
- * aspect ratio (v1 hides the node; the handler derives it from the source).
- * Q3 on ref2vid rewrites the workflow to img2vid — that rule lives in
+ * ratios, duration, draft and audio toggles. Q4 is image-driven only: one start
+ * frame on img2vid, up to 15 references on ref2vid. Image-driven workflows emit NO
+ * aspect ratio — the handler derives it from the source — except Q4 ref2vid.
+ * Q3 on ref2vid and Q4 on txt2vid rewrite the workflow — those rules live in
  * `../reconcile.ts`.
  */
 
 export { viduVersionIds };
 
-// ---- copied from vidu-graph.ts, which dies with the data-graph engine -------
-
 const viduVersionOptions = [
   { label: 'Q1', value: viduVersionIds.q1 },
   { label: 'Q3', value: viduVersionIds.q3 },
+  { label: 'Q4', value: viduVersionIds.q4 },
 ];
 
 const viduAspectRatios = [
@@ -58,11 +58,21 @@ const viduQ3Resolutions = [
   { label: '1080p', value: '1080p' },
 ] as const;
 
+const viduQ4Resolutions = [
+  { label: '540p', value: '540p' },
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
+  { label: '2K', value: '2K' },
+  { label: '4K', value: '4K' },
+] as const;
+
 const resolutionPixels: Record<string, number> = {
   '360p': 360,
   '540p': 540,
   '720p': 720,
   '1080p': 1080,
+  '2K': 1440,
+  '4K': 2160,
 };
 
 function getViduQ3AspectRatios(resolution: string): AspectRatioOption[] {
@@ -76,24 +86,12 @@ function getViduQ3AspectRatios(resolution: string): AspectRatioOption[] {
   ];
 }
 
-// ---- end of vidu-graph.ts copies --------------------------------------------
-
 const isQ3 = (model: unknown) => modelIdOf(model) === viduVersionIds.q3;
+const isQ4 = (model: unknown) => modelIdOf(model) === viduVersionIds.q4;
+/** Q1 is the only build with style, movement amplitude and the prompt enhancer. */
+const isQ1 = (model: unknown) => !isQ3(model) && !isQ4(model);
 
 export const vidu = defineGraph<FamilyExt>({ scope: familyScope })
-  .field(
-    'images',
-    workflowScoped(({ _ext }) => {
-      if (isWorkflowOrVariant(_ext.workflow, 'img2vid'))
-        return imagesDef({
-          slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
-          warnOnMissingAiMetadata: true,
-        });
-      if (_ext.workflow === 'img2vid:ref2vid')
-        return imagesDef({ max: 7, warnOnMissingAiMetadata: true });
-      return null;
-    })
-  )
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
@@ -103,22 +101,44 @@ export const vidu = defineGraph<FamilyExt>({ scope: familyScope })
       defaultModelId: viduVersionIds.q1,
     })
   )
+  .field(
+    'images',
+    workflowScoped(({ model, _ext }) => {
+      if (isWorkflowOrVariant(_ext.workflow, 'img2vid'))
+        return imagesDef({
+          slots: isQ4(model)
+            ? [{ label: 'First Frame', required: true }]
+            : [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
+          warnOnMissingAiMetadata: true,
+        });
+      if (_ext.workflow === 'img2vid:ref2vid')
+        return imagesDef({ max: isQ4(model) ? 15 : 7, warnOnMissingAiMetadata: true });
+      return null;
+    })
+  )
   .field('seed', SEED)
   .field('enablePromptEnhancer', ({ model }) =>
-    !isQ3(model) ? { input: z.boolean().optional(), output: z.boolean(), default: true } : null
+    isQ1(model) ? { input: z.boolean().optional(), output: z.boolean(), default: true } : null
   )
   .field('style', ({ model, _ext }) =>
-    !isQ3(model) && _ext.workflow === 'txt2vid'
+    isQ1(model) && _ext.workflow === 'txt2vid'
       ? enumDef({ options: viduStyles, default: 'general' })
       : null
   )
-  .field('resolution', ({ model }) =>
-    isQ3(model) ? enumDef({ options: viduQ3Resolutions, default: '720p' }) : null
-  )
-  // image-driven workflows emit NO ratio: v1 hides the node and the handler
+  .field('resolution', ({ model }) => {
+    if (isQ3(model)) return enumDef({ options: viduQ3Resolutions, default: '720p' });
+    if (isQ4(model)) return enumDef({ options: viduQ4Resolutions, default: '720p' });
+    return null;
+  })
+  // image-driven workflows emit NO ratio: the handler
   // derives it from the source image
   .field('aspectRatio', ({ model, resolution, _ext }) => {
     const img2vid = isWorkflowOrVariant(_ext.workflow, 'img2vid');
+    if (isQ4(model)) {
+      return _ext.workflow === 'img2vid:ref2vid'
+        ? aspectRatioDef({ options: getViduQ3AspectRatios(resolution ?? '720p'), default: '16:9' })
+        : null;
+    }
     if (isQ3(model)) {
       return img2vid
         ? null
@@ -130,13 +150,20 @@ export const vidu = defineGraph<FamilyExt>({ scope: familyScope })
       : null;
   })
   .field('movementAmplitude', ({ model }) =>
-    !isQ3(model) ? enumDef({ options: viduMovementAmplitudes, default: 'auto' }) : null
+    isQ1(model) ? enumDef({ options: viduMovementAmplitudes, default: 'auto' }) : null
   )
-  .field('duration', ({ model }) =>
-    isQ3(model) ? sliderDef({ min: 1, max: 16, default: 5 }) : null
-  )
+  .field('duration', ({ model, _ext }) => {
+    if (isQ3(model)) return sliderDef({ min: 1, max: 16, default: 5 });
+    // Q4 image-to-video starts at 3s, reference-to-video at 1s
+    if (isQ4(model))
+      return sliderDef({ min: _ext.workflow === 'img2vid:ref2vid' ? 1 : 3, max: 16, default: 5 });
+    return null;
+  })
   .field('draft', ({ model }) => (isQ3(model) ? boolDef(false) : null))
-  .field('enableAudio', ({ model }) => (isQ3(model) ? boolDef(false) : null))
+  // Q4 image-to-video always generates audio; only its ref2vid takes the toggle
+  .field('enableAudio', ({ model, _ext }) =>
+    isQ3(model) || (isQ4(model) && _ext.workflow === 'img2vid:ref2vid') ? boolDef(false) : null
+  )
   .use(promptOnlyTextBlock);
 
 export {
@@ -145,5 +172,6 @@ export {
   viduStyles,
   viduMovementAmplitudes,
   viduQ3Resolutions,
+  viduQ4Resolutions,
   getViduQ3AspectRatios,
 };

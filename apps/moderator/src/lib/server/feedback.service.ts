@@ -1,6 +1,10 @@
 import { dbRead, dbWrite } from './db';
 import { recordModActivity, recordModActivityBatch } from './mod-activity';
-import { FEEDBACK_PAGE_SIZE, type FeedbackStatus } from '$lib/feedback';
+import {
+  FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT,
+  FEEDBACK_PAGE_SIZE,
+  type FeedbackStatus,
+} from '$lib/feedback';
 import {
   isFeedbackSortState,
   type FeedbackSort,
@@ -282,6 +286,7 @@ export async function getFeedbackRow(id: number): Promise<FeedbackRow | null> {
 
 export async function getFeedbackList(input: {
   statuses: readonly FeedbackStatus[];
+  /** Absent means every area except `FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT`, not every area. */
   area?: string | null;
   cursor?: number | null;
   /**
@@ -370,7 +375,9 @@ export async function getFeedbackList(input: {
 
   // An empty selection is every status, said by the caller rather than implied here.
   if (input.statuses.length) query = query.where('f.status', 'in', [...input.statuses]);
-  if (input.area) query = query.where('f.area', '=', input.area);
+  query = input.area
+    ? query.where('f.area', '=', input.area)
+    : query.where('f.area', 'not in', [...FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT]);
 
   if (input.cursor) {
     if (!sort) {
@@ -435,17 +442,22 @@ export async function getFeedbackList(input: {
 }
 
 /**
- * The sidebar badge.
+ * The sidebar badge: what the queue's default view shows, so it leaves out the same areas.
  *
- * Cheap enough to sit in `sidebar-counts.service.ts`' single `Promise.all` without `bounded()`:
- * `Feedback_status_createdAt_idx` serves it as an index-only scan, the producer is rate-limited to
- * five submissions per user per hour, and the whole map is behind a 60-second cache.
+ * Cheap enough to sit in `sidebar-counts.service.ts`' single `Promise.all` without `bounded()`: the
+ * table is small, the producer is rate-limited to five submissions per user per hour, and the whole
+ * map is behind a 60-second cache. The plan depends on table size and vacuum state, so no plan shape
+ * is claimed here: at tens of rows the planner seq-scans; on PGlite at 5,000+ rows it chose a
+ * bitmap heap scan before VACUUM and an index-only scan on `Feedback_area_status_createdAt_idx`
+ * after `VACUUM ANALYZE`. The no-`bounded()` decision rests on the size and cache above, not on
+ * any particular plan.
  */
 export async function countNewFeedback(): Promise<number> {
   const row = await dbRead
     .selectFrom('Feedback')
     .select((eb) => eb.fn.countAll<number>().as('count'))
     .where('status', '=', 'new')
+    .where('area', 'not in', [...FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT])
     .executeTakeFirst();
   return Number(row?.count ?? 0);
 }

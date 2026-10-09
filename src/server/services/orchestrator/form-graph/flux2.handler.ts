@@ -12,7 +12,7 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { flux2ModeOf, type Flux2Mode } from '~/shared/form-graph/generation/image/flux2.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type Flux2Input =

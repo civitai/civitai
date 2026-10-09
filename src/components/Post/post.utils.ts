@@ -8,6 +8,7 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostSort } from '~/server/common/enums';
 import type { PostsQueryInput, UpdatePostCollectionTagIdInput } from '~/server/schema/post.schema';
+import { isViewerUsername } from '~/utils/is-viewer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -52,7 +53,7 @@ export const useQueryPosts = (
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(filters.username && filters.username.toLowerCase() === currentUser?.username?.toLowerCase()
+    ...(isViewerUsername(currentUser, filters.username)
       ? []
       : browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);

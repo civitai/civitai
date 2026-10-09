@@ -983,6 +983,7 @@ that reporter to that build.
       (procedures → `load`/actions, services → Kysely in `$lib/server`), with `comics-review` as the
       nearest precedent. ⚠️ **The page is absent from that checklist**, which is how it was missed.
       Now at `/models/minor-hash-matches`, under a new **Models** nav group between Images and Articles.
+      The Appeals tab has since become its own page, `/models/flag-appeals` (`?tab=appeals` redirects).
       **Reads ported, writes not — that split is the point.** `revert` runs `setModelMinor`, which owns
       the search-index sync, the cache busting and the per-image propagation, then restores five columns
       from the flag snapshot; `resolveAppeal` also closes the `Appeal` row and refuses to uphold against

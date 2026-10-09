@@ -17,7 +17,7 @@ const mockGetAppealCount = mockDbRead.appeal.count;
 // object, so `dbWrite.appeal.create` only ever saw calls made OUTSIDE the transaction; handing the
 // callback the canonical write client instead would collapse the two and let an in-transaction
 // call satisfy an assertion that means "written outside the transaction".
-const tx = { image: { update: vi.fn() }, appeal: { create: vi.fn() } };
+const tx = { $executeRaw: vi.fn(async () => 1), appeal: { create: vi.fn() } };
 mockDbWrite.$transaction.mockImplementation((cb: (t: typeof tx) => unknown) => cb(tx));
 
 const { mockCreateMultiAccountBuzzTransaction, mockRefundMultiAccountTransaction } = vi.hoisted(

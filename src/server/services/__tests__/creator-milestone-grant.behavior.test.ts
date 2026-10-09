@@ -13,8 +13,11 @@ import type * as NotificationService from '~/server/services/notification.servic
 import { applyUserScoreUpdates, persistScoreBatch } from '~/server/jobs/update-user-score';
 import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import {
+  achievedAtIsObserved,
+  achievedAtIsObservedSql,
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
+  grantMilestones,
   grantScoreTierMilestones,
   previewMilestoneCosmetics,
   previewScoreTierBackfill,
@@ -29,9 +32,11 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * excluding property, so an exclusion that matched everyone would fail on the twin.
  */
 
-const MIGRATION = join(
-  process.cwd(),
-  'packages/civitai-db-schema/prisma/migrations/20261005120000_creator_milestone/migration.sql'
+const MIGRATIONS = [
+  '20261005120000_creator_milestone',
+  '20261007120000_creator_milestone_cosmetic',
+].map((name) =>
+  join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql')
 );
 
 const holder = { db: null as unknown as PGlite };
@@ -74,6 +79,21 @@ async function attachCosmetic(key: string) {
   return id;
 }
 
+async function attachExtraCosmetic(key: string) {
+  const [{ id }] = await q<{ id: number }>(`INSERT INTO "Cosmetic" DEFAULT VALUES RETURNING id`);
+  await q(`INSERT INTO "CreatorMilestoneCosmetic" ("milestoneKey", "cosmeticId") VALUES ($1, $2)`, [
+    key,
+    id,
+  ]);
+  return id;
+}
+
+const cosmeticsOf = (userId: number) =>
+  q<{ cosmeticId: number; claimKey: string }>(
+    `SELECT "cosmeticId", "claimKey" FROM "UserCosmetic" WHERE "userId" = $1 ORDER BY 1`,
+    [userId]
+  );
+
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
@@ -87,7 +107,9 @@ beforeAll(async () => {
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
   `);
-  await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  // Twice: migrations are applied by hand, possibly more than once.
+  for (const migration of [...MIGRATIONS, ...MIGRATIONS])
+    await holder.db.exec(readFileSync(migration, 'utf8'));
   // Definitions the score detector must ignore: another track below every score, and a score row
   // without a threshold. The migration seeds neither, so without them the track and threshold
   // filters would be untested.
@@ -99,7 +121,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "UserCosmetic", "UserCreatorMilestone", "User";
+    TRUNCATE "UserCosmetic", "UserCreatorMilestone", "User", "CreatorMilestoneCosmetic";
     UPDATE "CreatorMilestone" SET "cosmeticId" = NULL;
   `);
 });
@@ -163,6 +185,31 @@ describe('nightly grant', () => {
     ]);
   });
 
+  it('returns each crossing with the tier name and threshold the notification names', async () => {
+    const { crossings } = await runNight();
+    expect(crossings.find((c) => c.userId === NO_PRIOR_TOTAL)).toEqual({
+      userId: NO_PRIOR_TOTAL,
+      milestoneKey: 'score:spark',
+      name: 'Spark',
+      threshold: 500,
+    });
+  });
+
+  // An old total sitting exactly on a threshold had already reached it, so that tier is a late grant.
+  it.each([
+    [500, []],
+    [499, ['score:spark']],
+  ])('at an old total of %i, announces %j', async (oldTotal, announced) => {
+    const AT_EDGE = 20;
+    await addUser(AT_EDGE, oldTotal);
+    const transitions = await applyUserScoreUpdates(pg, [[String(AT_EDGE), { models: 600 }]]);
+    const crossings = await grantScoreTierMilestones(pg, transitions);
+    expect(crossings.map((c) => c.milestoneKey)).toEqual(announced);
+    expect(await held(AT_EDGE)).toEqual([
+      { milestoneKey: 'score:spark', seen: announced.length === 0 },
+    ]);
+  });
+
   it('grants nothing twice', async () => {
     const { transitions } = await runNight();
     expect(await grantScoreTierMilestones(pg, transitions)).toEqual([]);
@@ -181,6 +228,83 @@ describe('nightly grant', () => {
       { userId: LATE, claimKey: 'score:spark' },
       { userId: NO_PRIOR_TOTAL, claimKey: 'score:spark' },
     ]);
+  });
+});
+
+describe('shared writer', () => {
+  const ACHIEVED = '2025-03-04 05:06:07';
+  const candidates = (rows: { userId: number; achievedAt: string | null; silent: boolean }[]) => ({
+    sql: `SELECT x."userId", 'create:decoy' AS "milestoneKey", x."achievedAt", x.silent
+      FROM jsonb_to_recordset($1::jsonb) AS x("userId" int, "achievedAt" timestamp, silent boolean)`,
+    params: [JSON.stringify(rows)],
+  });
+
+  beforeEach(async () => {
+    await addUser(ELIGIBLE, null);
+    await addUser(LATE, null);
+    await addUser(DELETED, null, 'deleted');
+    await addUser(BANNED, null, 'banned');
+    await addUser(SYSTEM, null);
+  });
+
+  it('grants any detector key with its own achievedAt, silent rows seen, excluded accounts skipped', async () => {
+    const cosmeticId = await attachCosmetic('create:decoy');
+    const grants = await grantMilestones(
+      pg,
+      candidates([
+        { userId: ELIGIBLE, achievedAt: ACHIEVED, silent: false },
+        { userId: LATE, achievedAt: null, silent: true },
+        { userId: DELETED, achievedAt: null, silent: false },
+        { userId: BANNED, achievedAt: null, silent: false },
+        { userId: SYSTEM, achievedAt: null, silent: false },
+      ])
+    );
+    expect(grants.map((g) => `${g.userId}:${g.silent}`).sort()).toEqual([
+      `${ELIGIBLE}:false`,
+      `${LATE}:true`,
+    ]);
+    expect(
+      await q(
+        `SELECT "userId", to_char("achievedAt", 'YYYY-MM-DD HH24:MI:SS') AS at, "seenAt" IS NOT NULL AS seen
+         FROM "UserCreatorMilestone" WHERE "userId" = $1`,
+        [ELIGIBLE]
+      )
+    ).toEqual([{ userId: ELIGIBLE, at: ACHIEVED, seen: false }]);
+    expect(await held(LATE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
+    expect(
+      await q(`SELECT "userId" FROM "UserCosmetic" WHERE "cosmeticId" = $1 ORDER BY 1`, [
+        cosmeticId,
+      ])
+    ).toEqual([{ userId: ELIGIBLE }, { userId: LATE }]);
+  });
+
+  it('stamps a candidate with no achievedAt at grant time', async () => {
+    await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: false }]));
+    // Compared in SQL: a timestamp without zone round-tripped through a JS Date shifts by the host TZ.
+    const [{ secondsAgo }] = await q<{ secondsAgo: number }>(
+      `SELECT extract(epoch FROM CURRENT_TIMESTAMP::timestamp - "achievedAt")::float AS "secondsAgo"
+       FROM "UserCreatorMilestone" WHERE "userId" = $1`,
+      [ELIGIBLE]
+    );
+    expect(Math.abs(secondsAgo)).toBeLessThan(60);
+  });
+
+  // A detector whose silent expression can be NULL must fail quiet, never announce.
+  it('treats a NULL silent as silent', async () => {
+    const grants = await grantMilestones(
+      pg,
+      candidates([{ userId: ELIGIBLE, achievedAt: null, silent: null as unknown as boolean }])
+    );
+    expect(grants.map((g) => g.silent)).toEqual([true]);
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
+  });
+
+  it('returns nothing for a milestone already held, and leaves the held row as it was', async () => {
+    await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: true }]));
+    expect(
+      await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: false }]))
+    ).toEqual([]);
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
   });
 });
 
@@ -231,6 +355,91 @@ describe('backfill', () => {
   });
 });
 
+/**
+ * Founding Legends and the showcase's "new this month" read achievedAtIsObserved, so each grant path
+ * has to leave the row shape it expects. Not pinned here: a crossing before a definition launches is
+ * inserted unseen and stamped seen in a later statement, so it reads as observed unless both land in
+ * the same millisecond, in which case it reads as unobserved and simply goes undated. Wrapping the
+ * grant and markMilestonesSeen in one transaction would make that every time, and nothing here would
+ * notice.
+ */
+describe('achievedAtIsObserved on every grant path', () => {
+  const rowOf = async (userId: number, key: string) => {
+    const [row] = await q<{ achievedAt: Date; seenAt: Date | null }>(
+      `SELECT "achievedAt", "seenAt" FROM "UserCreatorMilestone" WHERE "userId" = $1 AND "milestoneKey" = $2`,
+      [userId, key]
+    );
+    return row;
+  };
+
+  it('is false for a nightly late grant of a tier the old total had already passed', async () => {
+    await addUser(LATE, 4000);
+    const transitions = await applyUserScoreUpdates(pg, [[String(LATE), { models: 3000 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(achievedAtIsObserved(await rowOf(LATE, 'score:spark'))).toBe(false);
+  });
+
+  it('is true for a nightly crossing, before and after the user sees it', async () => {
+    await addUser(ELIGIBLE, 400);
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 600 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'score:spark'))).toBe(true);
+    await q(
+      `UPDATE "UserCreatorMilestone" SET "seenAt" = "achievedAt" + interval '2 days' WHERE "userId" = $1`,
+      [ELIGIBLE]
+    );
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'score:spark'))).toBe(true);
+  });
+
+  it('is false for a row the launch backfill granted', async () => {
+    await addUser(ELIGIBLE, 600);
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'score:spark'))).toBe(false);
+  });
+
+  it('agrees with its SQL form on every row shape', async () => {
+    await addUser(LATE, 4000);
+    await addUser(ELIGIBLE, 400);
+    const transitions = await applyUserScoreUpdates(pg, [
+      [String(LATE), { models: 3000 }],
+      [String(ELIGIBLE), { models: 600 }],
+    ]);
+    await grantScoreTierMilestones(pg, transitions);
+    await q(
+      `UPDATE "UserCreatorMilestone" SET "seenAt" = "achievedAt" + interval '1 day' WHERE "userId" = $1`,
+      [ELIGIBLE]
+    );
+    await addUser(DELETED, null);
+    await grantMilestones(pg, {
+      sql: `SELECT $1::int AS "userId", 'create:decoy' AS "milestoneKey", NULL::timestamp AS "achievedAt", false AS silent`,
+      params: [DELETED],
+    });
+    const rows = await q<{ achievedAt: Date; seenAt: Date | null; observed: boolean }>(
+      `SELECT "achievedAt", "seenAt", ${achievedAtIsObservedSql('ucm')} AS observed
+         FROM "UserCreatorMilestone" ucm`
+    );
+    expect(new Set(rows.map((row) => row.observed))).toEqual(new Set([true, false]));
+    for (const row of rows) expect(row.observed).toBe(achievedAtIsObserved(row));
+  });
+
+  it('follows the detector on the shared writer: its own date is observed, none is not', async () => {
+    await addUser(ELIGIBLE, null);
+    await addUser(LATE, null);
+    await grantMilestones(pg, {
+      sql: `SELECT x."userId", 'create:decoy' AS "milestoneKey", x."achievedAt", true AS silent
+        FROM jsonb_to_recordset($1::jsonb) AS x("userId" int, "achievedAt" timestamp)`,
+      params: [
+        JSON.stringify([
+          { userId: ELIGIBLE, achievedAt: '2025-03-04 05:06:07' },
+          { userId: LATE, achievedAt: null },
+        ]),
+      ],
+    });
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'create:decoy'))).toBe(true);
+    expect(achievedAtIsObserved(await rowOf(LATE, 'create:decoy'))).toBe(false);
+  });
+});
+
 describe('cosmetics for existing holders', () => {
   it('grants an attached cosmetic only to eligible holders, and revokes nothing', async () => {
     await addUser(ELIGIBLE, 600);
@@ -255,6 +464,69 @@ describe('cosmetics for existing holders', () => {
 
     const again = await grantMilestoneCosmeticsBatch(pg, { afterUserId: 0, limit: 10 });
     expect(again.inserted).toBe(0);
+  });
+});
+
+describe('cosmetics beyond the badge', () => {
+  it('grants a crossing its badge and every extra, each claimed under the milestone key', async () => {
+    await addUser(ELIGIBLE, 400);
+    const badge = await attachCosmetic('score:spark');
+    const plate = await attachExtraCosmetic('score:spark');
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 600 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([
+      { cosmeticId: badge, claimKey: 'score:spark' },
+      { cosmeticId: plate, claimKey: 'score:spark' },
+    ]);
+  });
+
+  it('grants an extra on a milestone that has no badge', async () => {
+    await addUser(ELIGIBLE, 400);
+    const plate = await attachExtraCosmetic('score:spark');
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 600 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([{ cosmeticId: plate, claimKey: 'score:spark' }]);
+  });
+
+  it('gives an extra added later to holders who already have the badge, previewed exactly', async () => {
+    await addUser(ELIGIBLE, 600);
+    await addUser(LATE, 600);
+    const badge = await attachCosmetic('score:spark');
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([{ cosmeticId: badge, claimKey: 'score:spark' }]);
+
+    const plate = await attachExtraCosmetic('score:spark');
+    expect(await previewMilestoneCosmetics(pg, { afterUserId: 0 })).toEqual({ users: 2, rows: 2 });
+    expect(
+      await grantMilestoneCosmeticsBatch(pg, {
+        afterUserId: 0,
+        limit: 10,
+        milestoneKey: 'score:spark',
+      })
+    ).toEqual({ users: 2, inserted: 2, lastUserId: LATE });
+    for (const holderId of [ELIGIBLE, LATE]) {
+      expect(await cosmeticsOf(holderId)).toEqual([
+        { cosmeticId: badge, claimKey: 'score:spark' },
+        { cosmeticId: plate, claimKey: 'score:spark' },
+      ]);
+    }
+    expect(await previewMilestoneCosmetics(pg, { afterUserId: 0 })).toEqual({ users: 0, rows: 0 });
+  });
+
+  it('counts a cosmetic listed as both badge and extra once, in the preview as in the grant', async () => {
+    await addUser(ELIGIBLE, 600);
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    const badge = await attachCosmetic('score:spark');
+    await q(
+      `INSERT INTO "CreatorMilestoneCosmetic" ("milestoneKey", "cosmeticId") VALUES ($1, $2)`,
+      ['score:spark', badge]
+    );
+    expect(await previewMilestoneCosmetics(pg, { afterUserId: 0 })).toEqual({ users: 1, rows: 1 });
+    expect(await grantMilestoneCosmeticsBatch(pg, { afterUserId: 0, limit: 10 })).toEqual({
+      users: 1,
+      inserted: 1,
+      lastUserId: ELIGIBLE,
+    });
   });
 });
 

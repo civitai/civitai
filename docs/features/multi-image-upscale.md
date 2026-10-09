@@ -20,18 +20,18 @@ The upscale workflow (`img2img:upscale`) currently only accepts a single image. 
 
 | File | Change |
 |------|--------|
-| `src/shared/data-graph/generation/image-upscale-graph.ts` | max:10, new `imageUpscaleResults` computed node, update `upscaleSelection` for batch |
+| `src/shared/form-graph/generation/workflows/image-upscale.graph.ts` | max:10, new `imageUpscaleResults` computed node, update `upscaleSelection` for batch |
 | `src/components/generation_v2/hooks/useGeneratedItemWorkflows.ts` | Append logic when already in upscale mode |
 | `src/store/generation-graph.store.ts` | Add `'append'` to `RunType` |
-| `src/components/generation_v2/GenerationFormProvider.tsx` | Handle `'append'` runType (merge images with dedup) |
+| `src/components/form-graph/generation/BaseGenerationForm.tsx` | Handle `'append'` runType (merge images with dedup) |
 | `src/server/services/orchestrator/orchestration-new.service.ts` | Fan out to N comfy steps, update `generateFromGraph` and `whatIfFromGraph` |
-| `src/components/generation_v2/FormFooter.tsx` | Collect per-image sourceMetadata |
+| `src/components/form-graph/generation/FormFooter.tsx` | Collect per-image sourceMetadata |
 | `src/components/generation_v2/inputs/UpscaleDimensionsInput.tsx` | Batch results summary UI |
-| `src/components/generation_v2/GenerationForm.tsx` | Render batch results controller |
+| `src/components/form-graph/generation/ImageGenerationForm.tsx` | Render batch results controller |
 
 ## Implementation Steps
 
-### 1. Graph: `image-upscale-graph.ts`
+### 1. Graph: `workflows/image-upscale.graph.ts`
 
 #### 1a. Change images node to max 10
 
@@ -98,7 +98,7 @@ Per-image computed array. For each image + the current `upscaleSelection`:
 export type RunType = 'run' | 'remix' | 'replay' | 'patch' | 'append';
 ```
 
-#### 2b. `GenerationFormProvider.tsx`: Handle `'append'` runType
+#### 2b. `BaseGenerationForm.tsx`: Handle `'append'` runType
 
 In the store data application logic, add a branch for `'append'`:
 
@@ -110,7 +110,7 @@ In the store data application logic, add a branch for `'append'`:
 
 #### 2c. `useGeneratedItemWorkflows.ts`: Always append for upscale
 
-@ai: Agreed — no need to check current workflow. Every "Upscale" click always uses `runType: 'append'`. The append handler in `GenerationFormProvider` will set the workflow to `img2img:upscale` if not already set, and append the image. If the form is on a different workflow, the append handler switches to upscale and starts the batch.
+@ai: Agreed — no need to check current workflow. Every "Upscale" click always uses `runType: 'append'`. The append handler in `BaseGenerationForm` will set the workflow to `img2img:upscale` if not already set, and append the image. If the form is on a different workflow, the append handler switches to upscale and starts the batch.
 
 1. Store sourceMetadata for the new image URL
 2. Call `generationGraphStore.setData()` with `runType: 'append'`, `workflow: 'img2img:upscale'`, and the new image in `params.images`
@@ -129,7 +129,7 @@ Returns `StepInput[]` (one per non-excluded image):
 
 ```typescript
 async function createImageUpscaleSteps(
-  data: Extract<GenerationGraphOutput, { workflow: 'img2img:upscale' }>
+  data: Extract<GenerationData, { workflow: 'img2img:upscale' }>
 ): Promise<StepInput[]> {
   const results: ImageUpscaleResult[] = data.imageUpscaleResults ?? [];
   const images = data.images ?? [];

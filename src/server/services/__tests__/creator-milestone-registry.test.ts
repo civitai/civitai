@@ -3,6 +3,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  activityMeasureOf,
   creatorMilestoneRegistry,
   isMilestoneAnnounced,
   milestoneKeysFor,
@@ -47,7 +48,7 @@ beforeAll(async () => {
   const db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY);
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text);
   `);
   for (const file of migrations) await db.exec(readFileSync(file, 'utf8'));
   seeded = (
@@ -71,6 +72,43 @@ describe('creator milestone registry', () => {
       expect(byKey.get(key), key).toMatchObject({ track: 'score' });
       expect(byKey.get(key)?.threshold, key).not.toBeNull();
     }
+  });
+
+  it('seeds every activity key with the track and threshold its name states', () => {
+    const activity = seeded.filter((row) => row.track !== 'score');
+    expect(activity.length).toBeGreaterThan(0);
+    for (const row of activity) {
+      const [track, rest] = row.key.split(':');
+      expect({ key: row.key, track: row.track, threshold: row.threshold }).toEqual({
+        key: row.key,
+        track,
+        threshold: Number(rest.split('-').pop()),
+      });
+    }
+  });
+
+  // Product decision (2026-10-09): every visible ladder runs wood, bronze, silver, gold, diamond,
+  // one rung per metal, so every measure has exactly five rungs. Adding or dropping a rung means
+  // re-deciding the badge art for the whole ladder; change this only with that decision.
+  it('gives every activity measure exactly five rungs, one per badge metal', () => {
+    const rungs = new Map<string, number[]>();
+    for (const [key, entry] of Object.entries(creatorMilestoneRegistry)) {
+      const measure = activityMeasureOf(entry);
+      if (!measure) continue;
+      rungs.set(measure, [...(rungs.get(measure) ?? []), Number(key.split('-').pop())]);
+    }
+    expect(Object.fromEntries([...rungs].map(([measure, list]) => [measure, list.length]))).toEqual(
+      {
+        models: 5,
+        articles: 5,
+        downloads: 5,
+        followers: 5,
+        reactions: 5,
+        revenue: 5,
+        votes: 5,
+        wins: 5,
+      }
+    );
   });
 
   it('gives every definition a real launch date', () => {

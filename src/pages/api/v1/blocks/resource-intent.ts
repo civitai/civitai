@@ -37,7 +37,8 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * fail-closed 503 on an approved-status lookup failure is kept.
  *
  * Rate limit: per-blockInstanceId LLM bucket (NOT the catalog bucket) — each
- * request is up to two vendor round trips. Flag: `resourceIntentJev` (Flipt
+ * request is up to three vendor calls (stage 1, then two stage-3 calls in
+ * parallel). Flag: `resourceIntentJev` (Flipt
  * `resource-intent-jev`, default-deny when absent) is checked BEFORE the
  * response cache so a dark flag never reads, never spends.
  *

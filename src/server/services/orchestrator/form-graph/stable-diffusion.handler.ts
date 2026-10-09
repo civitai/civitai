@@ -26,9 +26,9 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 import { maxRandomSeed } from '~/server/common/constants';
-import { createComfyInput } from '../ecosystems/comfy-input';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { createComfyInput } from '../handlers/comfy-input';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildControlNetSteps } from '../handlers/controlnets.helper';
 import type { EcosystemData } from './types';
 
 const IMAGE_GEN_ECOSYSTEM: Record<string, 'sd1' | 'sdxl' | undefined> = {

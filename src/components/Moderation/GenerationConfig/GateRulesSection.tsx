@@ -19,11 +19,7 @@ import { useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import type {
-  GateAvailableTo,
-  GatePresentation,
-  GateRule,
-} from '~/shared/data-graph/generation/gates';
+import type { GateAvailableTo, GatePresentation, GateRule } from '~/shared/generation/gates';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import {

@@ -15,12 +15,6 @@ import {
  */
 
 describe('RUM_EXPERIMENT_FLAGS (curated allowlist)', () => {
-  it('includes the feedReserveCls experiment with its explicit exp_ attribute name', () => {
-    const entry = RUM_EXPERIMENT_FLAGS.find((f) => f.flag === 'feedReserveCls');
-    expect(entry).toBeDefined();
-    expect(entry?.attr).toBe('exp_feed_reserve_cls');
-  });
-
   it('includes the genTabDeferView experiment with its explicit exp_ attribute name', () => {
     const entry = RUM_EXPERIMENT_FLAGS.find((f) => f.flag === 'genTabDeferView');
     expect(entry).toBeDefined();
@@ -40,17 +34,7 @@ describe('RUM_EXPERIMENT_FLAGS (curated allowlist)', () => {
 });
 
 describe('buildRumExperimentAttributes', () => {
-  it('emits "true" for an enabled curated flag', () => {
-    const attrs = buildRumExperimentAttributes({ feedReserveCls: true });
-    expect(attrs.exp_feed_reserve_cls).toBe('true');
-  });
-
-  it('emits "false" for a disabled curated flag (the off cohort must be queryable too)', () => {
-    const attrs = buildRumExperimentAttributes({ feedReserveCls: false });
-    expect(attrs.exp_feed_reserve_cls).toBe('false');
-  });
-
-  it('emits "true"/"false" cohorts for the genTabDeferView experiment', () => {
+  it('emits "true"/"false" cohorts for a curated flag (the off cohort must be queryable too)', () => {
     expect(buildRumExperimentAttributes({ genTabDeferView: true }).exp_gen_tab_defer_view).toBe(
       'true'
     );
@@ -61,12 +45,11 @@ describe('buildRumExperimentAttributes', () => {
 
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
-    expect(attrs.exp_feed_reserve_cls).toBe('false');
     expect(attrs.exp_gen_tab_defer_view).toBe('false');
   });
 
   it('coerces every value to a string (MetaAttributes must be strings)', () => {
-    const attrs = buildRumExperimentAttributes({ feedReserveCls: true });
+    const attrs = buildRumExperimentAttributes({ genTabDeferView: true });
     for (const value of Object.values(attrs)) {
       expect(typeof value).toBe('string');
     }
@@ -75,7 +58,7 @@ describe('buildRumExperimentAttributes', () => {
   it('only emits allowlisted flags — never leaks a non-curated flag onto beacons', () => {
     // A truthy flag that is NOT in the curated allowlist must not appear as any attribute.
     const features = {
-      feedReserveCls: true,
+      genTabDeferView: true,
       // Not in RUM_EXPERIMENT_FLAGS — must be dropped (cardinality/PII/noise guard).
       isModerator: true,
       redBrowsingLevel: true,
@@ -94,7 +77,7 @@ describe('buildRumExperimentAttributes', () => {
   });
 
   it('emits exactly one attribute per curated flag', () => {
-    const attrs = buildRumExperimentAttributes({ feedReserveCls: true });
+    const attrs = buildRumExperimentAttributes({ genTabDeferView: true });
     expect(Object.keys(attrs).length).toBe(RUM_EXPERIMENT_FLAGS.length);
   });
 });

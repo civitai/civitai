@@ -50,14 +50,16 @@ const SRC = path.resolve(__dirname, '../../..');
 const BODY_MODULE = 'components/Apps/AppListingActionsMenu.tsx';
 
 /**
- * Every modal the overflow menu opens. All four: the rule is the same for all of them,
- * and two of them were the mutants measured above as uncaught.
+ * Every modal the overflow menu opens. All of them: the rule is the same for each, and
+ * two of them were the mutants measured above as uncaught.
  */
 const MENU_MODALS = [
   'ReviewListingModal',
   'ReportListingModal',
   'MessageAppOwnerModal',
   'ListingTakedownModal',
+  'ListingVisibilityMenuModal',
+  'ModListingVisibilityModal',
 ] as const;
 
 /** A `data-testid` known to live INSIDE the dropdown — the extractor's positive control. */
@@ -113,6 +115,17 @@ describe('the detail body mounts every menu-opened modal OUTSIDE Menu.Dropdown',
       expect(inside).toEqual([]);
     });
   }
+
+  it('MENU_MODALS lists every *Modal the menu module mounts (a ledger, not a sample)', () => {
+    // Without this, a modal added to the menu but not to the list above is checked by
+    // nothing — the per-modal cases only cover names someone remembered to add.
+    const mounted = new Set(
+      [...source().matchAll(/<([A-Z][A-Za-z0-9]*Modal)[\s/>]/g)].map((m) => m[1])
+    );
+    // Positive control: the regex sees the menu's modals at all.
+    expect(mounted.size).toBeGreaterThan(0);
+    expect([...mounted].sort()).toEqual([...MENU_MODALS].sort());
+  });
 
   it('the placement detector fires on a modal moved INSIDE the dropdown', () => {
     // 🔴 The negative control, on synthetic source rather than by editing the real file:

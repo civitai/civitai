@@ -17,7 +17,8 @@ export const processVote = async (
   crucibleId: number,
   winnerEntryId: number,
   loserEntryId: number,
-  stored?: { winner: StoredEntryRating; loser: StoredEntryRating }
+  stored?: { winner: StoredEntryRating; loser: StoredEntryRating },
+  frozen?: 'winner' | 'loser'
 ): Promise<{ winnerElo: number; loserElo: number }> => {
   const result = await crucibleEloRedis.processVoteAtomic(
     crucibleId,
@@ -28,7 +29,8 @@ export const processVote = async (
       establishedK: K_FACTOR_ESTABLISHED,
       provisionalVotes: PROVISIONAL_VOTE_THRESHOLD,
     },
-    stored
+    stored,
+    frozen
   );
 
   log(

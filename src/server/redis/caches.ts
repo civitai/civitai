@@ -32,7 +32,12 @@ import {
 } from '~/server/redis/donation-goals-cache';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import {
   type ImageTagComposite,
@@ -292,8 +297,10 @@ export const cosmeticEntityCaches = Object.fromEntries(
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
           FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
-            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity";
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+            AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string';
         `;
         return Object.fromEntries(
           entityCosmetics.map((x) => [
@@ -330,6 +337,54 @@ export const cosmeticEntityCaches = Object.fromEntries(
     }),
   ])
 ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
+
+type EntityEventDecorationLookupRaw = {
+  equippedToId: number;
+  cosmeticId: number;
+  claimKey: string;
+};
+/** The event decoration each entity wears, cached apart from its frame so neither displaces the other. */
+export const eventDecorationEntityCaches = Object.fromEntries(
+  Object.values(CosmeticEntity).map((entity) => [
+    entity as CosmeticEntity,
+    createCachedObject<WithClaimKey<EventDecorationCosmetic>>({
+      key: `${REDIS_KEYS.CACHES.COSMETICS}:event:${entity}`,
+      idKey: 'equippedToId',
+      // Read on every image feed page while an event runs, and almost no entity wears one, so
+      // misses are cached too. Equip, unequip and revoke refresh, which overwrites a cached miss.
+      notFoundTtl: CacheTTL.hour,
+      staleWhileRevalidate: false,
+      lookupFn: async (ids) => {
+        const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
+          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey"
+          FROM "UserCosmetic" uc
+          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+          WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
+            AND jsonb_typeof(c.data->'event') = 'string';
+        `;
+        const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
+        const result: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
+        for (const row of rows) {
+          const cosmetic = cosmetics[row.cosmeticId];
+          if (!cosmetic || !isEventDecorationData(cosmetic.data)) continue;
+          result[row.equippedToId] = {
+            id: cosmetic.id,
+            name: cosmetic.name,
+            type: cosmetic.type,
+            source: cosmetic.source,
+            data: cosmetic.data,
+            claimKey: row.claimKey,
+            equippedToId: row.equippedToId,
+            equippedToType: entity as CosmeticEntity,
+          };
+        }
+        return result;
+      },
+      ttl: CacheTTL.day,
+    }),
+  ])
+) as Record<CosmeticEntity, CachedObject<WithClaimKey<EventDecorationCosmetic>>>;
 
 type CachedUserMultiplier = UserMultipliers;
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
@@ -1369,9 +1424,12 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
   // Brotli-compress every value at rest (see #4588). image-meta is the ELASTIC component of the
   // cache — its resident set swings ~5x under load and is what drives the cluster to its memory
   // cap — and its values are prompt/generation-parameter text, i.e. highly repetitive. Measured on
-  // 336 real values sampled AT A PEAK: 3.09x, 67.6% of bytes saved, at under 2% of app CPU as a
-  // deliberately pessimistic upper bound (that bound attributes ALL cache traffic to this one
-  // prefix). The codec is async (libuv threadpool), so it never blocks the event loop.
+  // 336 real values sampled AT A PEAK: 3.09x, 67.6% of bytes saved. Its "under 2% of app CPU"
+  // estimate did not account for musl's per-call cost of allocating brotli's default 4 MiB window:
+  // ~4x the CPU per ~3 KB compress on our alpine image, mostly kernel time on the libuv threadpool.
+  // compressPacked bounds that by sizing the window to the value (see packedBrotliWindowBits); no
+  // app-level CPU share has been re-measured since. The codec is async, so it never blocks the
+  // event loop.
   //
   // ALL values, not a size threshold: measured, `> 4 KiB` saves only 47.5% of the prefix's bytes
   // against 67.6% for everything — the ~20pp difference is the difference between clearing the cap

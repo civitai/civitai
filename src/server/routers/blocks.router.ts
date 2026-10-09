@@ -181,7 +181,7 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
-import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
+import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -943,7 +943,7 @@ function buildGateVersion(gate: {
 //   3. enforces the platform's REAL generation-compatibility check against the
 //      checkpoint.
 // The compatibility check is the correctness boundary: the orchestrator belt
-// filters by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by
+// filters by resource TYPE (the belt keeps a LoRA-typed resource), NOT by
 // generation compatibility — so an incompatible LoRA of type LORA is PASSED
 // downstream and billed for, producing a gen the viewer paid for that quietly
 // ignored (or degraded) their LoRA. This explicit check is what prevents such a
@@ -2886,9 +2886,10 @@ export const blocksRouter = router({
    * `retriggerBuildSchema` and the service's supersede guard.
    *
    * MOD-ONLY IS A DELIBERATE CHOICE, not an oversight: owner self-service would
-   * need its own abuse controls and a build-capacity budget. The owner instead
-   * gets the real build-failure reason on /apps/my-submissions plus a
-   * "contact a moderator" affordance.
+   * need its own abuse controls and a build-capacity budget. The app's team instead
+   * sees the failure on the listing's History tab (`ListingHistoryPanel`): a
+   * headline, a best-effort cause, the build-log excerpt, and — for anything that
+   * is not their code to fix — guidance to contact us rather than resubmit.
    */
   retriggerBuild: moderatorProcedure
     .use(enforceAppBlocksFlag)

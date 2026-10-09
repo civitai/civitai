@@ -2,7 +2,14 @@ import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import { mingAspectRatios, mingResolutions } from '~/shared/constants/ming.constants';
 import { checkpointDef } from '../checkpoint';
-import { SEED, aspectRatioDef, img2imgImages, resourcesDef, sliderDef } from '../defs';
+import {
+  optionFallback,
+  SEED,
+  aspectRatioDef,
+  img2imgImages,
+  resourcesDef,
+  sliderDef,
+} from '../defs';
 import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
 // The locked default version comes from `ecosystemSettings` rather than an argument here, so the
@@ -22,6 +29,7 @@ export const ming = defineGraph<FamilyExt>({ scope: familyScope })
     input: z.enum(mingResolutions).optional(),
     output: z.enum(mingResolutions),
     default: '1K',
+    correct: optionFallback(mingResolutions, '1K'),
     meta: { options: mingResolutions.map((value) => ({ label: value, value })) },
   })
   .field('aspectRatio', ({ resolution, _ext }) =>

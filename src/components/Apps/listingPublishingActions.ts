@@ -12,7 +12,7 @@ import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
  * **Publishing** tab (`/apps/listing/<appListingId>/edit?tab=publishing`).
  *
  * 🔴 WHY A LEDGER AND NOT JUST A FIX. PR #4154 consolidated `/apps/my-submissions` into
- * `/apps/mine` and orphaned `MySubmissionsList`, which was the only surface carrying the
+ * `/apps/mine` and orphaned `MySubmissionsList` (since deleted), which was the only surface carrying the
  * owner **Unpublish** / **Republish** controls. The new page body contained zero
  * occurrences of `unpublish`. The gap was DISCLOSED in that PR and then reviewed three
  * times without being caught, because every round asked "is the new page correct?" and
@@ -244,6 +244,31 @@ export function showRepublish(row: PublishingActionRow): boolean {
  */
 export function showVisibility(row: PublishingActionRow): boolean {
   return row.role === 'owner' && maxVisibilityForStatus(row.status) !== null;
+}
+
+/**
+ * What the store `⋮` menu's owner "Visibility" item should show once clicked.
+ *
+ * The card and detail DTOs carry no status, role or level, so the menu fetches the
+ * owner-scoped authoring context only when the item is clicked, and this decides what to
+ * render from that read. Eligibility is {@link showVisibility} on the FETCHED row — the
+ * same predicate the Publishing tab uses — so the menu cannot offer the picker where the
+ * tab would not.
+ *
+ *   - `loading` — no context yet and no error.
+ *   - `error` — the read failed (e.g. FORBIDDEN for a caller without a role).
+ *   - `ineligible` — loaded, but `showVisibility` refuses this row (not the owner, or a
+ *     status on which no level may be set).
+ *   - `ready` — render the picker.
+ */
+export type OwnerVisibilityLoadState = 'loading' | 'error' | 'ineligible' | 'ready';
+
+export function ownerVisibilityLoadState(input: {
+  isError: boolean;
+  context: PublishingActionRow | null | undefined;
+}): OwnerVisibilityLoadState {
+  if (input.context) return showVisibility(input.context) ? 'ready' : 'ineligible';
+  return input.isError ? 'error' : 'loading';
 }
 
 /**

@@ -1,7 +1,7 @@
 ---
 title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
-lastmod: 2026-08-26
+lastmod: 2026-10-06
 ---
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [civitai.com](https://civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
@@ -113,7 +113,8 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - (c) Content involving minors (under 18), including:
 
   - Photorealistic depictions of minors in any context.
-  - Content depicting minors in dangerous, harmful, or inappropriate situations.
+  - Sexual content involving minors in any style, including stylized, anime, or cartoon depictions.
+  - Violence against minors, or content that places minors (including characters who appear to be under 18) in a violent context where harm to a minor is shown or implied, such as a child who appears abused or injured, or weapons in a school or other setting associated with minors with an apparent intent to harm. Ordinary depictions of children at play, sports, or minor accidental injuries are not prohibited by this item.
   - Any content that could endanger or exploit minors.
 
 - (d) Illegal or violent activities, including:

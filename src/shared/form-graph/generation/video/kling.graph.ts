@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
-import { klingVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { klingVersionIds } from '~/shared/generation/version-ids';
 import { checkpointDef } from '../checkpoint';
 import {
+  optionFallback,
   SEED,
   aspectRatioDef,
   boolDef,
@@ -16,16 +17,13 @@ import {
 import { familyScope, makeTextBlock, modelIdOf, textBlock, type FamilyExt } from '../shared';
 
 /**
- * Kling (V1.6 / V2 / V2.5 Turbo on the legacy engine, V3 on kling-v3),
- * ported from `kling-graph.ts`. ref2vid exists only on V3, so that workflow
- * FORCES the model to V3 (probed — v1's workflow-triggered effect wins over
- * its model-triggered fallback). V3's `multiShot`/`klingElements` subtree is
- * dead in v1 (`when: false` root) and is not ported. V3 derives an
+ * Kling (V1.6 / V2 / V2.5 Turbo on the legacy engine, V3 on kling-v3).
+ * ref2vid exists only on V3, so that workflow FORCES the model to V3 — the
+ * workflow wins over the model-driven fallback. V3's `multiShot`/`klingElements`
+ * subtree is not built — it was unreachable in the retired lane. V3 derives an
  * `operation` from the workflow; legacy carries the negative prompt, V3 does
  * not.
  */
-
-// ---- copied from kling-graph.ts, which dies with the data-graph engine ------
 
 const klingVersionOptions = [
   { label: 'V1.6', value: klingVersionIds.v1_6 },
@@ -60,8 +58,6 @@ function getV3Operation(workflow: string): KlingV3Operation {
   return 'text-to-video';
 }
 
-// ---- end of kling-graph.ts copies -------------------------------------------
-
 export { klingVersionIds };
 
 type KlingExt = FamilyExt & { model?: ResourceData };
@@ -87,6 +83,7 @@ const legacy = defineGraph<KlingExt>()
           input: z.enum(['standard', 'professional']).optional(),
           output: z.enum(['standard', 'professional']),
           default: 'standard' as const,
+          correct: optionFallback(['standard', 'professional'] as const, 'standard'),
           meta: { options: klingModes },
         }
       : null
@@ -138,7 +135,7 @@ const v3 = defineGraph<KlingExt>()
   .field('generateAudio', boolDef(false))
   .use(makeTextBlock({ negativePrompt: false, promptAlwaysRequired: true }));
 
-/** Tagged: v1's `klingVersion` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `klingVersion`. */
 const versions = branch(
   'klingVersion',
   (ext: KlingExt): KlingVersion => (modelIdOf(ext.model) === klingVersionIds.v3 ? 'v3' : 'legacy'),

@@ -10,14 +10,17 @@ import type { SearchParams } from 'meilisearch';
  * The candidate SEED: which documents `searchShortlistModels` hands `expandShortlist`.
  *
  * Two layers, because they fail differently:
- *   - query-shape tests pin what each of the two pages ASKS the index for;
- *   - a behavioural test runs the real matcher against a small in-memory index that
- *     honours the role filter, the sort array and the limit, so a change to the seed
- *     shows up as a change in the RETURNED shortlist rather than only in a spelling.
+ *   - query-shape tests pin what the one seed page ASKS the index for;
+ *   - behavioural tests run the real matcher against a small in-memory index that
+ *     honours a role filter, the sort array and the limit, so a change to the seed
+ *     shows up as a change in the POOL and the RETURNED shortlist rather than only in a
+ *     spelling.
  *
- * The fake index understands exactly the filter clause and the sort fields this seed
- * uses and throws on any other sort field, so it cannot silently ignore a key it was
- * never taught. Its own controls are the first describe block below.
+ * The fake index also honours the role clause and the `insight.qualityScore` sort, so a
+ * seed that reintroduces either is graded on what it returns rather than dying on an
+ * unsupported field. It throws on any other sort field, so it cannot
+ * silently ignore a key it was never taught. Its own controls are the first describe
+ * block below.
  */
 
 const searchWithSignal = vi.fn();
@@ -38,12 +41,9 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
   coverageAudience: vi.fn(async () => ({ next: false, member: false })),
 }));
 
-const {
-  buildResourceIntentFilter,
-  buildResourceIntentSeedQueries,
-  findResourceIntentCandidates,
-  mergeSeedHits,
-} = await import('~/server/services/resource-intent-matcher.service');
+const { buildResourceIntentFilter, findResourceIntentCandidates } = await import(
+  '~/server/services/resource-intent-matcher.service'
+);
 const { RESOURCE_INTENT_MAX_SHORTLIST } = await import('~/server/schema/resource-intent.schema');
 
 const COVERAGE = { next: false, member: false };
@@ -71,28 +71,19 @@ type FakeDoc = {
 };
 
 /** One single-version model; a label, when given, is projected the way the index does. */
-const docOf = (
-  modelId: number,
-  versionId: number,
-  thumbsUpCount: number,
-  label?: Label,
-  // Multi-version models: the versions, and which one the projected label came from.
-  multi?: { versions: FakeDoc['versions']; labelVersionId: number }
-) =>
+const docOf = (modelId: number, versionId: number, thumbsUpCount: number, label?: Label) =>
   ({
     id: modelId,
     name: `model-${modelId}`,
     type: 'LORA',
     metrics: { thumbsUpCount },
-    versions: multi?.versions ?? [
-      { id: versionId, name: 'v1', baseModel: BASE_MODEL, canGenerate: true },
-    ],
+    versions: [{ id: versionId, name: 'v1', baseModel: BASE_MODEL, canGenerate: true }],
     insight: label
       ? {
           qualityScore: label.qualityScore,
           role: label.role,
           styleFamily: label.styleFamily,
-          modelVersionId: multi?.labelVersionId ?? versionId,
+          modelVersionId: versionId,
         }
       : { qualityScore: null, role: null, styleFamily: null, modelVersionId: null },
   } satisfies FakeDoc);
@@ -194,63 +185,9 @@ describe('the fake index — controls on the instrument', () => {
   });
 });
 
-describe('buildResourceIntentSeedQueries — what each page asks for', () => {
-  const filter = buildResourceIntentFilter({
-    modelTypes: ['LORA'],
-    baseModels: [BASE_MODEL],
-    browsingLevel: 3,
-    coverage: COVERAGE,
-  });
-
-  it('🔴 the PURPOSE page carries the role filter AND the quality-first sort', () => {
-    const { purpose } = buildResourceIntentSeedQueries({ filter, role: 'clothing', poolCap: 37 });
-    expect(purpose.filter).toBe(`(${filter} AND insight.role = "clothing")`);
-    expect(purpose.sort).toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc']);
-    expect(purpose.limit).toBe(37);
-  });
-
-  it('🔴 the POPULARITY page is the gate filter alone, sorted by popularity alone', () => {
-    const { popularity } = buildResourceIntentSeedQueries({
-      filter,
-      role: 'clothing',
-      poolCap: 37,
-    });
-    expect(popularity.filter).toBe(filter);
-    expect(popularity.sort).toEqual(['metrics.thumbsUpCount:desc']);
-    expect(popularity.limit).toBe(37);
-  });
-
-  it('carries the REQUESTED role, not a fixed one', () => {
-    const { purpose } = buildResourceIntentSeedQueries({ filter, role: 'style', poolCap: 37 });
-    expect(purpose.filter).toBe(`(${filter} AND insight.role = "style")`);
-  });
-});
-
-describe('mergeSeedHits — purpose first, popularity fill, one entry per model', () => {
-  const hit = (id: number) => ({ id } as never);
-  const ids = (hits: { id: number }[]) => hits.map((h) => h.id);
-
-  it('🔴 keeps purpose hits first and popularity hits after, each in its own order', () => {
-    expect(ids(mergeSeedHits([hit(7), hit(3)], [hit(9), hit(1)], 10))).toEqual([7, 3, 9, 1]);
-  });
-
-  it('🔴 dedupes by model id, keeping the PURPOSE position', () => {
-    expect(ids(mergeSeedHits([hit(7), hit(3)], [hit(3), hit(9), hit(7), hit(1)], 10))).toEqual([
-      7, 3, 9, 1,
-    ]);
-  });
-
-  it('truncates to the pool width, so the merge is never wider than one page', () => {
-    expect(ids(mergeSeedHits([hit(7), hit(3)], [hit(9), hit(1)], 3))).toEqual([7, 3, 9]);
-    // A duplicate does not spend a slot: the fill reaches past it.
-    expect(ids(mergeSeedHits([hit(7)], [hit(7), hit(9), hit(1)], 2))).toEqual([7, 9]);
-  });
-});
-
 /**
- * A busy cell: more labeled `character` models than the pool is wide (every one scoring
- * higher than any `clothing` model), the given `clothing` models, and an unlabeled head
- * more popular than everything else.
+ * A busy cell: more labeled `character` models than the pool is wide, the given `clothing`
+ * models, and an unlabeled head more popular than everything else.
  */
 function busyCell(
   clothing: { modelId: number; versionId: number; quality: number; thumbs: number }[],
@@ -287,6 +224,14 @@ function busyCell(
   serveLabels(labels);
 }
 
+/** The version ids the label read was scoped to — i.e. the pool, in seed order. */
+const pooledVersionIds = () =>
+  (
+    dbMock.dbRead.resourceInsight.findMany.mock.calls[0][0] as {
+      where: { modelVersionId: { in: number[] } };
+    }
+  ).where.modelVersionId.in;
+
 describe('findResourceIntentCandidates — the seed reaches the shortlist', () => {
   const criteria = {
     criteriaVersion: 2,
@@ -297,49 +242,50 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
     baseModel: BASE_MODEL,
   };
 
-  it('issues exactly the two pages, one with the role and one without', async () => {
+  it('🔴 issues exactly two pages, each the gate filter alone, sorted by popularity alone', async () => {
     await findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 });
     const calls = seedCalls();
+    // The seed page, then the hybrid fill's own 500-document page.
     expect(calls).toHaveLength(2);
-    const purpose = calls.filter((c) => String(c.filter).includes('insight.role = "clothing"'));
-    const popularity = calls.filter((c) => !String(c.filter).includes('insight.role'));
-    expect(purpose).toHaveLength(1);
-    expect(popularity).toHaveLength(1);
-    expect(purpose[0].sort).toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc']);
-    expect(popularity[0].sort).toEqual(['metrics.thumbsUpCount:desc']);
-    // cap 5 -> a pool of 10, on both pages.
-    expect(purpose[0].limit).toBe(10);
-    expect(popularity[0].limit).toBe(10);
+    const gates = buildResourceIntentFilter({
+      modelTypes: ['LORA'],
+      baseModels: [BASE_MODEL],
+      browsingLevel: 3,
+      coverage: COVERAGE,
+    });
+    for (const call of calls) {
+      expect(call.filter).toBe(gates);
+      expect(String(call.filter)).not.toContain('insight.');
+      expect(call.sort).toEqual(['metrics.thumbsUpCount:desc']);
+    }
+    // cap 5 -> a pool of 10.
+    expect(calls.map((c) => c.limit)).toEqual([10, 500]);
   });
 
-  it('both pages take the clamped pool width at the maximum cap', async () => {
+  it('the page takes the clamped pool width at the maximum cap', async () => {
     await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: RESOURCE_INTENT_MAX_SHORTLIST,
     });
-    // 2 x 255 would be 510; the clamp holds both pages to the shortlist maximum.
-    expect(seedCalls().map((c) => c.limit)).toEqual([
-      RESOURCE_INTENT_MAX_SHORTLIST,
-      RESOURCE_INTENT_MAX_SHORTLIST,
-    ]);
+    // 2 x 255 would be 510; the clamp holds the seed page to the shortlist maximum.
+    expect(seedCalls().map((c) => c.limit)).toEqual([RESOURCE_INTENT_MAX_SHORTLIST, 500]);
   });
 
-  // 🔴 THE SATURATED CELL — the defect this seed exists to fix. A seed sorted on quality
-  // alone fills the whole pool with `character` (all of which outscore `clothing`), so the
-  // re-rank has nothing to promote and the response is five models for the wrong purpose.
-  // Here the purpose page is SHORT (3 matches, pool of 10), so the popularity page fills.
-  //
-  // The groups are separated on the fields the seed sorts by: `clothing` is the least
-  // popular and lowest-scoring labeled group, the unlabeled models the most popular. So
-  // dropping the role clause, swapping the merge order, or sorting the fill by quality
-  // each change the returned list.
-  it('🔴 a busy cell returns the requested purpose first, then the popular unlabeled fill', async () => {
-    busyCell([
-      { modelId: 3301, versionId: 330001, quality: 0.61, thumbs: 5 },
-      { modelId: 3302, versionId: 330002, quality: 0.54, thumbs: 7 },
-      { modelId: 3303, versionId: 330003, quality: 0.47, thumbs: 6 },
-    ]);
+  // 🔴 REGRESSION — the M3 v2 failure. Fourteen `clothing` matches would fill the 10-wide
+  // pool on their own, and a purpose-first seed admitted only them, evicting the popular
+  // unlabeled models a user is most likely to have attached. The seed is now the
+  // popularity page alone, so those models stay in the pool and the role-matched ones,
+  // all less popular than the pool's last member, do not enter it.
+  it('🔴 role matches that would fill the pool do not evict the popular unlabeled models', async () => {
+    busyCell(
+      Array.from({ length: 14 }, (_, i) => ({
+        modelId: 3400 + i,
+        versionId: 340000 + i,
+        quality: 0.69 - i * 0.03,
+        thumbs: 10 + i,
+      }))
+    );
 
     const { entries, insightFallback } = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
@@ -347,157 +293,30 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
       cap: 5,
     });
 
-    expect(insightFallback).toBe(false);
-    expect(entries.map((e) => e.versionId)).toEqual([
-      // the three clothing models, by quality
-      330001, 330002, 330003,
-      // then the most popular unlabeled models, in popularity order
-      550000, 550001,
+    expect(pooledVersionIds()).toContain(550000);
+    expect(pooledVersionIds()).toEqual([
+      550000, 550001, 550002, 550003, 550004, 550005, 550006, 550007, 550008, 550009,
     ]);
-  });
-
-  // 🔴 A FULL purpose page: more `clothing` matches (14) than the pool is wide (10), so the
-  // purpose page's SORT decides which of them enter the pool, and the popularity page
-  // contributes nothing. Quality and popularity run in OPPOSITE directions inside the
-  // clothing group, so a purpose page sorted by thumbs would pool the ten least-good
-  // matches and return a different five.
-  it('🔴 a full purpose page admits its matches by QUALITY, and no fill reaches the pool', async () => {
-    busyCell(
-      Array.from({ length: 14 }, (_, i) => ({
-        modelId: 3400 + i,
-        versionId: 340000 + i,
-        quality: 0.69 - i * 0.03,
-        thumbs: 10 + i,
-      }))
-    );
-
-    const { entries } = await findResourceIntentCandidates(criteria, {
-      browsingLevel: 3,
-      coverage: COVERAGE,
-      cap: 5,
-    });
-
-    expect(entries.map((e) => e.versionId)).toEqual([340000, 340001, 340002, 340003, 340004]);
-    // The label read is scoped to the pool: ten clothing versions, nothing unlabeled.
-    const pooled = (
-      dbMock.dbRead.resourceInsight.findMany.mock.calls[0][0] as {
-        where: { modelVersionId: { in: number[] } };
-      }
-    ).where.modelVersionId.in;
-    expect(pooled).toEqual(Array.from({ length: 10 }, (_, i) => 340000 + i));
-  });
-
-  // 🔴 The popularity page is fetched ONLY when the purpose page came back short. A full
-  // purpose page fills the pool on its own, so a second request would be pure cost.
-  it('🔴 a FULL purpose page issues no popularity request', async () => {
-    busyCell(
-      Array.from({ length: 14 }, (_, i) => ({
-        modelId: 3400 + i,
-        versionId: 340000 + i,
-        quality: 0.69 - i * 0.03,
-        thumbs: 10 + i,
-      }))
-    );
-
-    await findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 });
-
-    const calls = seedCalls();
-    expect(calls).toHaveLength(1);
-    expect(String(calls[0].filter)).toContain('insight.role = "clothing"');
-  });
-
-  it('🔴 a SHORT purpose page is followed by the popularity request, at the full width', async () => {
-    busyCell([
-      { modelId: 3301, versionId: 330001, quality: 0.61, thumbs: 5 },
-      { modelId: 3302, versionId: 330002, quality: 0.54, thumbs: 7 },
-    ]);
-
-    await findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 });
-
     const calls = seedCalls();
     expect(calls).toHaveLength(2);
-    expect(String(calls[0].filter)).toContain('insight.role = "clothing"');
-    expect(String(calls[1].filter)).not.toContain('insight.role');
-    expect(calls[1].sort).toEqual(['metrics.thumbsUpCount:desc']);
-    // Not `poolCap - 2`: the merge drops popularity hits already on the purpose page.
-    expect(calls[1].limit).toBe(10);
+    for (const call of calls) {
+      expect(String(call.filter)).not.toContain('insight.role');
+      expect(call.sort).toEqual(['metrics.thumbsUpCount:desc']);
+    }
+    expect(insightFallback).toBe(false);
+    expect(entries.map((e) => e.versionId)).toEqual([550000, 550001, 550002, 550003, 550004]);
   });
 
-  // 🔴 Either page failing fails the seed — there is no popularity-only fallback.
-  it('🔴 a failing purpose page fails the seed and requests no popularity page', async () => {
-    searchWithSignal.mockImplementation(async (_index, _q, params: SearchParams) => {
-      if (String(params.filter).includes('insight.role')) throw new Error('page failed');
-      return { hits: [], estimatedTotalHits: 0 };
-    });
-
-    await expect(
-      findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
-    ).rejects.toThrow('page failed');
-    expect(seedCalls()).toHaveLength(1);
-  });
-
-  it('🔴 a failing popularity page (after a short purpose page) fails the seed', async () => {
-    searchWithSignal.mockImplementation(async (_index, _q, params: SearchParams) => {
-      if (!String(params.filter).includes('insight.role')) throw new Error('page failed');
-      return { hits: [], estimatedTotalHits: 0 };
-    });
-
-    await expect(
-      findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
-    ).rejects.toThrow('page failed');
-    expect(seedCalls()).toHaveLength(2);
-  });
-
-  // 🔴 The SEED ADVANTAGE of a cross-base-model match, pinned as the behaviour it is. Model
-  // 3701's projected `clothing` role came from its SDXL version; the request is for Pony, so
-  // only its UNLABELED Pony version enters the pool. The re-rank leaves that version neutral
-  // — but neutral keeps seed order, so it leads every unlabeled fill candidate. (Not every
-  // fill candidate: see the next case.) If this changes, it should change on purpose.
-  it('🔴 a role matched on ANOTHER base model still seeds its neutral version ahead of the unlabeled fill', async () => {
-    const clothingLabel = {
+  // The labels still act — through the re-rank, on the popularity pool. Cap 4 -> a pool
+  // of 8: 5601 (a confident label for another role and style) is the most popular, the
+  // `clothing` + `anime_manga` model 3901 the least popular member. The re-rank moves
+  // 3901 to the head and 5601 to the tail, out of the first four: a re-rank that promoted
+  // without demoting would return 560100 second.
+  const reorderCell = () => {
+    const agrees = {
       role: 'clothing',
-      styleFamily: 'photorealistic',
-      qualityScore: 0.8,
-      confidence: 0.9,
-    };
-    busyCell([], {
-      docs: [
-        docOf(3701, 370002, 1, clothingLabel, {
-          versions: [
-            { id: 370001, name: 'sdxl', baseModel: 'SDXL 1.0', canGenerate: true },
-            { id: 370002, name: 'pony', baseModel: BASE_MODEL, canGenerate: true },
-          ],
-          labelVersionId: 370001,
-        }),
-      ],
-      labels: [[370001, clothingLabel]],
-    });
-
-    const { entries } = await findResourceIntentCandidates(criteria, {
-      browsingLevel: 3,
-      coverage: COVERAGE,
-      cap: 3,
-    });
-
-    expect(entries.map((e) => e.versionId)).toEqual([370002, 550000, 550001]);
-  });
-
-  // 🔴 The other direction of that seed advantage. It holds only WITHIN the neutral bucket:
-  // the re-rank sorts bucket-first, and a fill version promoted on STYLE FAMILY alone (a
-  // `character` label agreeing on `anime_manga`) lands in bucket 1 and outranks the neutral
-  // purpose-page version. A demoted fill version (`character` + `photorealistic`, more
-  // popular than every unlabeled one) sorts below it and below the unlabeled fill.
-  it('🔴 that neutral version is outranked by a style-promoted fill version, and outranks a demoted one', async () => {
-    const clothingLabel = {
-      role: 'clothing',
-      styleFamily: 'photorealistic',
-      qualityScore: 0.8,
-      confidence: 0.9,
-    };
-    const styleAgrees = {
-      role: 'character',
       styleFamily: 'anime_manga',
-      qualityScore: 0.5,
+      qualityScore: 0.6,
       confidence: 0.9,
     };
     const disagrees = {
@@ -507,33 +326,115 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
       confidence: 0.9,
     };
     busyCell([], {
-      docs: [
-        docOf(3701, 370002, 1, clothingLabel, {
-          versions: [
-            { id: 370001, name: 'sdxl', baseModel: 'SDXL 1.0', canGenerate: true },
-            { id: 370002, name: 'pony', baseModel: BASE_MODEL, canGenerate: true },
-          ],
-          labelVersionId: 370001,
-        }),
-        docOf(5600, 560000, 9500, styleAgrees),
-        docOf(5601, 560100, 9400, disagrees),
-      ],
+      docs: [docOf(3901, 390100, 8930, agrees), docOf(5601, 560100, 9500, disagrees)],
       labels: [
-        [370001, clothingLabel],
-        [560000, styleAgrees],
+        [390100, agrees],
         [560100, disagrees],
       ],
     });
+  };
 
-    // cap 4 -> pool of 8: the purpose page holds only 3701, the fill the 7 most popular.
-    const { entries } = await findResourceIntentCandidates(criteria, {
+  it('🔴 the label re-rank still reorders the popularity pool', async () => {
+    reorderCell();
+
+    const { entries, insightFallback, promotableVersions } = await findResourceIntentCandidates(
+      criteria,
+      { browsingLevel: 3, coverage: COVERAGE, cap: 4 }
+    );
+
+    // Only 390100 promotes: 560100 demotes and the rest carry no label.
+    expect(promotableVersions).toBe(1);
+    expect(pooledVersionIds()).toEqual([
+      560100, 550000, 550001, 550002, 550003, 550004, 550005, 390100,
+    ]);
+    expect(insightFallback).toBe(false);
+    expect(entries.map((e) => e.versionId)).toEqual([390100, 550000, 550001, 550002]);
+  });
+
+  it('control: with the label read failing, the same cell serves the popularity order', async () => {
+    reorderCell();
+    dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('label table down'));
+
+    const result = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 4,
     });
+    const { entries, insightFallback } = result;
 
-    // 5601 is seeded ahead of every unlabeled version (it is more popular), so its absence
-    // from the first four is the demotion putting it behind 370002 and the unlabeled fill.
-    expect(entries.map((e) => e.versionId)).toEqual([560000, 370002, 550000, 550001]);
+    expect(insightFallback).toBe(true);
+    expect(entries.map((e) => e.versionId)).toEqual([560100, 550000, 550001, 550002]);
+    expect(result.promotableVersions).toBe(0);
+  });
+
+  it('🔴 promotableVersions counts only labels the re-rank PROMOTES — not neutral, not demoted', async () => {
+    const label = (role: string, styleFamily: string, confidence: number) => ({
+      role,
+      styleFamily,
+      qualityScore: 0.5,
+      confidence,
+    });
+    const agrees = label('clothing', 'photorealistic', 0.9); // role agrees → promoted
+    const belowFloor = label('clothing', 'anime_manga', 0.1); // agrees, under the floor → neutral
+    const placeless = label('none', 'other', 0.9); // `none` role, `other` style → neutral
+    const disagrees = label('character', 'photorealistic', 0.9); // → demoted
+    busyCell([], {
+      docs: [
+        docOf(3901, 390100, 9600, agrees),
+        docOf(3902, 390200, 9590, belowFloor),
+        docOf(3903, 390300, 9580, placeless),
+        docOf(5601, 560100, 9570, disagrees),
+      ],
+      labels: [
+        [390100, agrees],
+        [390200, belowFloor],
+        [390300, placeless],
+        [560100, disagrees],
+      ],
+    });
+
+    const { promotableVersions } = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+
+    expect(pooledVersionIds().slice(0, 4)).toEqual([390100, 390200, 390300, 560100]);
+    expect(promotableVersions).toBe(1);
+  });
+
+  it('promotableVersions counts the POOL, not the returned slice', async () => {
+    const agrees = {
+      role: 'clothing',
+      styleFamily: 'anime_manga',
+      qualityScore: 0.5,
+      confidence: 0.9,
+    };
+    busyCell([], {
+      docs: [docOf(3901, 390100, 9600, agrees), docOf(3902, 390200, 9590, agrees)],
+      labels: [
+        [390100, agrees],
+        [390200, agrees],
+      ],
+    });
+
+    // cap 1 -> a pool of 2: both promote, one is returned.
+    const { entries, promotableVersions } = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 1,
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(promotableVersions).toBe(2);
+  });
+
+  it('🔴 a failing seed page fails the seed', async () => {
+    searchWithSignal.mockRejectedValue(new Error('page failed'));
+
+    await expect(
+      findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
+    ).rejects.toThrow('page failed');
+    expect(seedCalls()).toHaveLength(1);
   });
 });

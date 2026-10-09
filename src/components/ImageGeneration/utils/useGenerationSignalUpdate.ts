@@ -2,11 +2,11 @@ import type { WorkflowStepEvent } from '@civitai/client';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { type InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { extractTrpcErrorCode } from '~/components/AppBlocks/blockImageScanLogic';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
 import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
 import { normalizePreparation } from '~/shared/orchestrator/download-preparation';
 import type {
   NormalizedStep,
@@ -64,7 +64,11 @@ export function useTextToImageSignalUpdate() {
     if (data.status !== 'unassigned') {
       signalStepEventsDictionary[data.workflowId] = { ...data };
     }
-    debouncer(() => updateSignaledWorkflows());
+    debouncer(() =>
+      updateSignaledWorkflows().catch((error) =>
+        console.error('[generation] signaled workflow update failed', error)
+      )
+    );
   });
 }
 
@@ -98,20 +102,57 @@ export function mergeSignaledStep(
   }
 }
 
+/**
+ * Which updates to apply from one settled poll batch, and which ids to stop polling.
+ *
+ * Pure and exported because this decision is what regressed, and the caller it lives in writes to
+ * the query cache and a zustand store. A card's queue slot is released only once its status is
+ * written back, so an id that silently stays in the batch pins the slot counter.
+ */
+export function resolvePollOutcomes(
+  workflowIds: string[],
+  outcomes: PromiseSettledResult<WorkflowStatusUpdate>[]
+) {
+  const updates: NonNullable<WorkflowStatusUpdate>[] = [];
+  const drop = new Set<string>();
+
+  for (const [index, outcome] of outcomes.entries()) {
+    const id = workflowIds[index];
+    if (outcome.status === 'rejected') {
+      // A transient failure keeps its id, so a blip does not abandon a running job. NOT_FOUND
+      // never recovers, and an id left in the set is re-requested every minute all session.
+      if (extractTrpcErrorCode(outcome.reason) === 'NOT_FOUND') drop.add(id);
+      continue;
+    }
+    // The orchestrator answers for a workflow it no longer has by resolving undefined rather
+    // than throwing, which is the same dead end as NOT_FOUND.
+    if (!outcome.value) {
+      drop.add(id);
+      continue;
+    }
+    updates.push(outcome.value);
+    if (!POLLABLE_STATUSES.includes(outcome.value.status)) drop.add(id);
+  }
+
+  return { updates, drop };
+}
+
 export async function updateWorkflowsStatus(workflowIds: string[]) {
   if (!workflowIds.length) return;
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const updates = await Promise.all(workflowIds.map(fetchSignaledWorkflow)).then((data) =>
-    data.filter(isDefined)
-  );
 
-  for (const update of updates) {
-    if (!POLLABLE_STATUSES.includes(update.status)) {
-      usePollableWorkflowIdsStore.setState(({ ids }) => ({
-        ids: ids.filter((id) => id !== update.id),
-      }));
-    }
-  }
+  // allSettled, never all: one rejected id used to throw past the prune and the cache write
+  // below, so NO id was pruned and NO status was applied — the failing id stayed in the batch and
+  // froze the slot counter for every other job until the page was reloaded.
+  const outcomes = await Promise.allSettled(workflowIds.map(fetchSignaledWorkflow));
+  const { updates, drop } = resolvePollOutcomes(workflowIds, outcomes);
+
+  if (drop.size)
+    usePollableWorkflowIdsStore.setState(({ ids }) => ({
+      ids: ids.filter((id) => !drop.has(id)),
+    }));
+
+  if (!updates.length) return;
 
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
     produce(state, (old?: InfiniteTextToImageRequests) => {
@@ -165,9 +206,13 @@ function usePollWorkflows() {
     }
 
     if (!intervalRef.current) {
-      intervalRef.current = window.setInterval(async () => {
+      intervalRef.current = window.setInterval(() => {
         const ids = usePollableWorkflowIdsStore.getState().ids;
-        await updateWorkflowsStatus(ids);
+        // Nothing awaits this timer, so an escaping rejection is an unhandled one with no stack
+        // worth reading. Report it instead; the next tick retries.
+        updateWorkflowsStatus(ids).catch((error) =>
+          console.error('[generation] workflow status poll failed', error)
+        );
       }, 60000);
     }
 

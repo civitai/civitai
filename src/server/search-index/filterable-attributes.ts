@@ -74,8 +74,9 @@ export const modelsFilterableAttributes = [
   'minor',
   'hasActivePaidAccess',
   // Carried so a filter can split the models with a PROMOTABLE label — ≈7,023 of them — from
-  // everything else, which is what a retrieval comparison needs to put a purpose-query arm
-  // against a popularity arm over the slice the feature actually acts on. 🔴 That "everything
+  // everything else (the labeled-vs-unlabeled arms described below; the M3 retrieval
+  // comparison does not split on it — its matcher arm reaches labels through the re-rank's
+  // Postgres read). 🔴 That "everything
   // else" side is NOT the unlabeled set: it holds 863 labeled models too, for the reasons
   // enumerated below. Do not describe it as the unlabeled tier.
   // Verified on Meilisearch v1.15.0 that filtering works on this field even though
@@ -156,12 +157,14 @@ export const modelsFilterableAttributes = [
   // PER-BATCH, so a partial fault still leaves thousands of labeled documents and passes any
   // loose threshold.
   //
-  // 🔴 NO COMMITTED RUNNER IMPLEMENTS THESE ARMS. `scripts/eval-resource-intent-goldset.ts`
-  // measures stage-1 label agreement and contains no reference to `insight`, `qualityScore`,
-  // Meilisearch or any index filter; `docs/resource-intent-primitive.md` records that the
-  // retrieval comparison is provided by neither that evaluator nor this change. So the control
-  // above belongs to whatever retrieval comparison gets BUILT — do not go looking for these
-  // arms in the gold-set evaluator, because they are not there.
+  // 🔴 NO COMMITTED RUNNER IMPLEMENTS THESE ARMS — the labeled-vs-unlabeled split by
+  // `IS NOT NULL` / `IS NULL` above. The M3 study DOES now carry a retrieval comparison
+  // (`scripts/eval-resource-intent-retrieval.ts`, run from the gold-set runner), but its
+  // arms are different ones: the shipped matcher (popularity seed + label re-rank) against
+  // that seed alone, both over the same gate filter, neither filtering on this attribute's
+  // nullness, and its own positive control reads `ResourceInsight` rows, not this index.
+  // So the `IS NOT NULL` control above still belongs to whatever labeled-vs-unlabeled
+  // comparison gets built.
   //
   // Measured on v1.15.0 over a mixed fixture (labeled / written-null / key-absent): EXISTS
   // returned 5 of 7 including every written null, NOT EXISTS returned only the 2 whose key
@@ -256,18 +259,15 @@ export const modelsFilterableAttributes = [
   // adding them to ./sortable-attributes.ts. They are unordered categories, so a
   // `role:desc` would order alphabetically and read as meaningful ranking; Meilisearch
   // accepts a sort on any declared sortable attribute without complaint, so that mistake
-  // is silent. A purpose query wants an EQUALITY filter (`insight.role = "style"`), which
-  // is exactly what this list buys.
+  // is silent. A purpose query would want an EQUALITY filter (`insight.role = "style"`),
+  // which is exactly what this list buys.
   //
-  // 🔴 ONE READER: `insight.role` is filtered by `searchShortlistModels`
-  // (~/server/services/resource-intent-matcher.service.ts), whose purpose page is the gate
-  // filter AND `insight.role = <requested role>`; `insight.styleFamily` is read by nothing.
-  // A document only ACQUIRES these fields when it is rewritten, so a model whose document
-  // predates its label carries a null role and reaches the shortlist only through the
-  // seed's popularity page. ⚠️ When a base model is requested, that reader ANDs the role
-  // with the ARRAY form `versions.baseModel IN [...]`, so it inherits the cross-version
-  // caveat in ./models.search-index.ts: the role may come from a version on a different
-  // base model than the versions the shortlist then expands to.
+  // 🔴 NO READER: nothing filters on either field — the resource-intent matcher and the
+  // M3 study both read labels from Postgres. A document only ACQUIRES these fields when it
+  // is rewritten, so a model whose document predates its label carries a null role. ⚠️ A future filter that ANDs the role
+  // with the ARRAY form `versions.baseModel IN [...]` inherits the cross-version caveat in
+  // ./models.search-index.ts: the role may come from a version on a different base model
+  // than the versions it then expands to.
   //
   // 🔴 ⚠️ DO NOT RE-DERIVE THAT AS "THE LISTS ONLY REACH A LIVE INDEX THROUGH A RESET" — a
   // draft of this very entry said exactly that, and it is the claim the ⚠️ paragraph beside

@@ -1,6 +1,8 @@
 import type { MantineColor, NotificationProps } from '@mantine/core';
 import { Notification } from '@mantine/core';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import type { SignalsDebugApi, TopicFailure } from '~/components/Signals/signals-debug';
+import { createSignalsDebug } from '~/components/Signals/signals-debug';
 import type { SignalMessages } from '~/server/common/enums';
 import type { SignalTopic } from '~/server/common/enums';
 import { useDebouncer } from '~/utils/debouncer';
@@ -24,24 +26,11 @@ type RetryState = {
 
 declare global {
   interface Window {
-    __signals?: {
-      /** Current topic → refcount map. */
-      getTopicRefs: () => Record<string, number>;
-      /** Topics with a retry scheduled after a failed subscribe. */
-      getPendingRetries: () => Record<string, { attempts: number }>;
-      /**
-       * Last time each topic was acknowledged as subscribed by the hub (a
-       * `topic:status` with `ok: true` for `subscribe` / `subscribeNotify`).
-       * In steady state, ages should stay <60s thanks to the 50s keep-alive
-       * interval. An age >60s on an active topic indicates the keep-alive
-       * isn't reaching the hub (e.g., worker stuck, connection issue).
-       */
-      getLastConfirmed: () => Record<string, { ageMs: number; at: string }>;
-      /** Deltas currently accumulated in the metric-signals store. */
+    /** Signals debugging from the browser console; `__signals.help()` lists the methods. */
+    __signals?: SignalsDebugApi & {
       getDeltas: () => Record<string, number>;
       /** Simulates a push from the hub — applies a delta directly to the store. */
       emitMetric: MetricSignalsStoreState['applyDelta'];
-      /** Clears accumulated deltas for an entity (or a single metric). */
       clearDeltas: MetricSignalsStoreState['clearDelta'];
     };
   }
@@ -71,17 +60,11 @@ const signalStatusDictionary: Record<SignalStatus, MantineColor> = {
 };
 
 // Retry policy for failed `subscribe`/`subscribeNotify` calls. Only kicks in
-// for hub-side failures while the connection was up — `no-connection` cases
-// are handled by the reconnect effect, not by retries.
+// for hub-side failures while the connection was up — on `no-connection` the
+// worker re-subscribes once it reconnects.
 const RETRY_MAX_ATTEMPTS = 4;
 const RETRY_BASE_DELAY_MS = 1000;
 const RETRY_MAX_DELAY_MS = 30_000;
-
-// Hub drops topic subscriptions 60s after the last `subscribe` call, so we
-// refresh every active topic on a single provider-level interval. 50s gives
-// a 10s margin before TTL expiry. One interval for all topics — cheaper than
-// per-topic timers, and complementary to the reconnect effect.
-const KEEP_ALIVE_INTERVAL_MS = 50_000;
 
 const SignalContext = createContext<SignalState | null>(null);
 export const useSignalContext = () => {
@@ -120,8 +103,8 @@ export const useSignalTopic = (topic: TopicString | undefined, notify?: boolean)
 };
 
 // On a signal-hub disruption, ALL connected clients drop and reconnect within
-// the same few seconds (the worker's `withAutomaticReconnect` backoff schedule
-// starts at 0). Previously each reconnect invalidated `buzz.getBuzzAccount` and
+// a few seconds (the worker's reconnect backoff makes its first attempt within
+// 0.5-3s, jittered — see `~/utils/signals/backoff`). Previously each reconnect invalidated `buzz.getBuzzAccount` and
 // `orchestrator.queryGeneratedImages` after only an ~8-15s debounce, so a
 // fleet-wide reconnect produced tens of thousands of synchronized refetches in
 // a single ~10s window — saturating the API's single Node thread (CPU-pin /
@@ -148,7 +131,7 @@ const RECONNECT_INVALIDATE_DELAY_MAX_MS = 90_000;
 // Minimum disconnect duration before a reconnect is allowed to invalidate.
 // Live balance/generation deltas are pushed continuously via signal and applied
 // with `setData` while connected, so a brief disconnect can't have dropped
-// meaningful state. The worker reconnects with backoff [0,2,10,18,...]s and the
+// meaningful state. The worker's first reconnect attempts land within seconds and the
 // hub keeps group memberships briefly; a disconnect shorter than this almost
 // certainly missed no pushes, so refetching would be pure wasted load. We pick
 // 10s as a conservative floor: long enough to skip the common instant/near-
@@ -191,18 +174,19 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   // updates on unmount.
   const topicRefs = useRef<Map<string, number>>();
   if (!topicRefs.current) topicRefs.current = new Map();
-  // Last-seen `notify` flag per topic, used when the reconnect effect and
-  // retry scheduler re-register.
+  // Last-seen `notify` flag per topic, replayed to a new worker port and by the retry scheduler.
   const topicNotify = useRef<Map<string, boolean | undefined>>();
   if (!topicNotify.current) topicNotify.current = new Map();
   // Outstanding retries for topics whose subscribe call failed at the hub.
   const topicRetries = useRef<Map<string, RetryState>>();
   if (!topicRetries.current) topicRetries.current = new Map();
-  // Timestamp of the last `topic:status` confirmation (ok=true) per topic.
-  // Used for dev observability only; lets us spot silently-dropped
-  // subscriptions in long-lived sessions.
+  // Last subscribe confirmation / failure per topic — observability only, read by
+  // `window.__signals` to spot silently-dropped subscriptions.
   const topicLastConfirmed = useRef<Map<string, number>>();
   if (!topicLastConfirmed.current) topicLastConfirmed.current = new Map();
+  const topicLastFailure = useRef<Map<string, TopicFailure>>();
+  if (!topicLastFailure.current) topicLastFailure.current = new Map();
+  const debugRef = useRef<SignalsDebugApi>();
 
   const worker = useSignalsWorker({
     onStateChange: ({ state }) => {
@@ -284,6 +268,8 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       if (count <= 1) {
         refs.delete(topic);
         topicNotify.current!.delete(topic);
+        topicLastConfirmed.current!.delete(topic);
+        topicLastFailure.current!.delete(topic);
         cancelRetry(topic);
         worker?.topicUnsubscribe(topic);
         useSignalTopicsStore.getState().removeTopic(topic);
@@ -296,22 +282,28 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
 
   // On every failed `subscribe` / `subscribeNotify`, schedule an exponential-
   // backoff retry — up to RETRY_MAX_ATTEMPTS. `no-connection` failures are
-  // skipped (the reconnect effect covers them). A later success clears the
+  // skipped (the worker re-subscribes on reconnect). A later success clears the
   // retry; a later release clears it too.
   useEffect(() => {
     if (!worker) return;
     const handler: TopicStatusHandler = (status) => {
       if (status.method === 'unsubscribe') return;
       const refs = topicRefs.current!;
+      // The worker broadcasts every tab's topic results; ignore topics this tab doesn't hold.
+      if ((refs.get(status.topic) ?? 0) === 0) return;
       if (status.ok) {
         topicLastConfirmed.current!.set(status.topic, Date.now());
+        topicLastFailure.current!.delete(status.topic);
         cancelRetry(status.topic);
         return;
       }
-      // Only retry while something still wants this topic.
-      if ((refs.get(status.topic) ?? 0) === 0) return;
-      // 'no-connection' means the connection dropped; reconnect effect handles it.
-      if (status.reason === 'no-connection') return;
+      topicLastFailure.current!.set(status.topic, {
+        at: Date.now(),
+        reason: status.reason ?? 'unknown',
+      });
+      // The worker re-subscribes everything when the connection comes back, and a timed-out call is
+      // still queued at the hub — retrying it only deepens the queue.
+      if (status.reason === 'no-connection' || status.reason === 'timeout') return;
       const retries = topicRetries.current!;
       const prev = retries.get(status.topic);
       const nextAttempts = prev ? prev.attempts + 1 : 1;
@@ -336,38 +328,21 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     return () => worker.offTopicStatus(handler);
   }, [worker, cancelRetry]);
 
-  // Reconnect-driven re-registration. On every transition into 'connected'
-  // (including the initial connect), re-register every topic with active
-  // subscribers. The hub's group memberships are tied to the SignalR
-  // connection and are lost on drop. Running on any 'connected' transition
-  // covers initial-mount races (component mounted before worker was ready)
-  // and reconnection after drops.
-  useEffect(() => {
-    if (!worker || status !== 'connected') return;
-    const refs = topicRefs.current!;
-    for (const topic of refs.keys()) {
-      // Cancel any pending retry — fresh reconnect resets the state.
-      cancelRetry(topic);
-      worker.topicRegister(topic, topicNotify.current!.get(topic));
-    }
-  }, [status, worker, cancelRetry]);
-
-  // Keep-alive: hub drops each registration 60s after the last `subscribe`
-  // call, so refresh every active topic on a single provider-level interval.
-  // Skip when not connected — the reconnect effect re-registers on the next
-  // 'connected' transition.
+  // The worker remembers each tab's topics per port, and re-subscribes and keeps them alive across
+  // reconnects itself. A port starts empty (first mount, replaced worker) or is emptied when the
+  // worker took this tab for dead, so hand it the topics in both cases.
   useEffect(() => {
     if (!worker) return;
-    const interval = setInterval(() => {
-      if (status !== 'connected') return;
-      const refs = topicRefs.current!;
-      const notifyMap = topicNotify.current!;
-      for (const topic of refs.keys()) {
-        worker.topicRegister(topic, notifyMap.get(topic));
+    const registerAll = () => {
+      for (const topic of topicRefs.current!.keys()) {
+        worker.topicRegister(topic, topicNotify.current!.get(topic));
       }
-    }, KEEP_ALIVE_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [worker, status]);
+    };
+    registerAll();
+    worker.onPortReset(registerAll);
+    debugRef.current?.rebindWatchers();
+    return () => worker.offPortReset(registerAll);
+  }, [worker]);
 
   // Clean up retry timers on provider unmount.
   useEffect(() => {
@@ -378,32 +353,35 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Dev-only: expose diagnostics + helpers on `window.__signals` so the
-  // refcount, retry, and topic-status behavior can be exercised from the
-  // console. Guarded by NODE_ENV so it's stripped in production.
+  // Not dev-gated: support debugs user reports from the user's console.
+  const workerRef = useRef(worker);
+  workerRef.current = worker;
+  const statusRef = useRef(status);
+  statusRef.current = status;
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const refs = topicRefs.current!;
-    const retries = topicRetries.current!;
-    const confirmed = topicLastConfirmed.current!;
-    window.__signals = {
-      getTopicRefs: () => Object.fromEntries(refs),
-      getPendingRetries: () =>
-        Object.fromEntries(Array.from(retries, ([t, r]) => [t, { attempts: r.attempts }])),
-      getLastConfirmed: () => {
-        const now = Date.now();
-        return Object.fromEntries(
-          Array.from(confirmed, ([t, ts]) => [
-            t,
-            { ageMs: now - ts, at: new Date(ts).toISOString() },
-          ])
-        );
+    const debug = createSignalsDebug({
+      getWorker: () => workerRef.current,
+      getProviderStatus: () => statusRef.current,
+      topicRefs: topicRefs.current!,
+      topicRetries: topicRetries.current!,
+      topicLastConfirmed: topicLastConfirmed.current!,
+      topicLastFailure: topicLastFailure.current!,
+      resubscribeAll: () => {
+        for (const topic of topicRefs.current!.keys()) {
+          workerRef.current?.topicRegister(topic, topicNotify.current!.get(topic));
+        }
       },
+    });
+    debugRef.current = debug;
+    window.__signals = {
+      ...debug,
       getDeltas: () => ({ ...useMetricSignalsStore.getState().deltas }),
       emitMetric: useMetricSignalsStore.getState().applyDelta,
       clearDeltas: useMetricSignalsStore.getState().clearDelta,
     };
     return () => {
+      debug.unwatch();
+      debugRef.current = undefined;
       delete window.__signals;
     };
   }, []);

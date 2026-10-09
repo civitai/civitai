@@ -63,7 +63,7 @@ import {
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
-import { APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
+import { APPEAL_ALREADY_PENDING, IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -126,22 +126,44 @@ const reportedPlacementFilter = ({
   };
 };
 
-const validateReportCreation = async ({
-  userId,
+/**
+ * Game reports are all filed against one game, and most of Game Frame's reasons share
+ * `TOSViolation`. Without the violation in the match, a "Child abuse and exploitation" report folds
+ * into an earlier "Hate or harassment" one, and the queue shows the moderator the hate label.
+ */
+const reportedViolationFilter = ({
+  reportType,
+  reason,
+  details,
+}: {
+  reportType: ReportEntity;
+  reason: ReportReason;
+  details?: MixedObject;
+}) => {
+  if (reportType !== ReportEntity.GameFrameGame || reason !== ReportReason.TOSViolation) return {};
+  const violation = (details as { violation?: unknown } | undefined)?.violation;
+  if (typeof violation !== 'string' || !violation)
+    throw throwBadRequestError('report: a game TOS report must name its violation');
+  return { details: { path: ['violation'], equals: violation } };
+};
+
+/** The existing report a new one on this entity would be folded into, if any. */
+export const findReportToFoldInto = ({
   reportType,
   entityReportId,
   reason,
   details,
+  tx,
 }: {
-  userId: number;
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
   details?: MixedObject;
-}): Promise<Report | null> => {
-  // Look if there's already a report for this type with the same reason
+  tx?: Prisma.TransactionClient;
+}) => {
+  const db = tx ?? dbWrite;
   const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
-  const existingReport = await dbWrite.report.findFirst({
+  return db.report.findFirst({
     where: {
       reason,
       [reportType]: { [entityIdField]: entityReportId },
@@ -153,8 +175,34 @@ const validateReportCreation = async ({
       // a different one does not. Every other reason is unaffected — the
       // predicate is only added when there is a placement to add it for.
       ...reportedPlacementFilter({ reason, details }),
+      ...reportedViolationFilter({ reportType, reason, details }),
     },
     orderBy: { id: 'desc' },
+  });
+};
+
+const validateReportCreation = async ({
+  userId,
+  reportType,
+  entityReportId,
+  reason,
+  details,
+  tx,
+}: {
+  userId: number;
+  reportType: ReportEntity;
+  entityReportId: number;
+  reason: ReportReason;
+  details?: MixedObject;
+  tx?: Prisma.TransactionClient;
+}): Promise<Report | null> => {
+  const db = tx ?? dbWrite;
+  const existingReport = await findReportToFoldInto({
+    reportType,
+    entityReportId,
+    reason,
+    details,
+    tx,
   });
 
   if (!existingReport) return null;
@@ -168,7 +216,7 @@ const validateReportCreation = async ({
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
   if (previouslyReviewedCount > 0 && alsoReportedBy.length >= previouslyReviewedCount * 2) {
-    const updatedReport = await dbWrite.report.update({
+    const updatedReport = await db.report.update({
       where: { id },
       data: {
         status: ReportStatus.Pending,
@@ -181,7 +229,7 @@ const validateReportCreation = async ({
     return updatedReport;
   }
 
-  const updatedReport = await dbWrite.report.update({
+  const updatedReport = await db.report.update({
     where: { id },
     data: {
       alsoReportedBy: [...alsoReportedBy, userId],
@@ -211,6 +259,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Model3DReview]: 'model3dReview',
   [ReportEntity.Announcement]: 'announcement',
   [ReportEntity.Crucible]: 'crucible',
+  [ReportEntity.GameFrameGame]: 'gameFrameGame',
 };
 
 const reportTypeConnectionMap = {
@@ -232,13 +281,23 @@ const reportTypeConnectionMap = {
   [ReportEntity.Model3DReview]: 'model3dReviewId',
   [ReportEntity.Announcement]: 'announcementId',
   [ReportEntity.Crucible]: 'crucibleId',
+  [ReportEntity.GameFrameGame]: 'gameFrameGameId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
   [ReportReason.NSFW]: ReportStatus.Actioned,
 };
 
-type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
+type CreateReportProps = CreateReportInput & {
+  userId: number;
+  isModerator?: boolean;
+  /**
+   * Fold and create on the caller's transaction instead of opening one. The Game Frame endpoint
+   * needs its idempotency receipt committed atomically with the report, or a resend after a crash
+   * re-appends the reporter to `alsoReportedBy` and pays them twice.
+   */
+  tx?: Prisma.TransactionClient;
+};
 /**
  * A sticker report names the placement it is about, and the placement has to be
  * on the thing being reported.
@@ -281,6 +340,7 @@ export const createReport = async ({
   id,
   isModerator,
   type,
+  tx: callerTx,
   ...data
 }: CreateReportProps) => {
   // Add report type to details for notifications
@@ -324,7 +384,7 @@ export const createReport = async ({
 
   // Nothing automated acts on a crucible's mature-content report, unlike an image's or a model's
   // tag votes, so it goes to a moderator like any other reason: deduped, and left Pending.
-  const awaitsModerator = type === ReportEntity.Crucible;
+  const awaitsModerator = type === ReportEntity.Crucible || type === ReportEntity.GameFrameGame;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -333,6 +393,7 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details: data.details as MixedObject,
+          tx: callerTx,
         })
       : null;
   if (validReport) return validReport;
@@ -358,7 +419,7 @@ export const createReport = async ({
 
   let recomputeArticleNsfwLevelId: number | null = null;
 
-  const createdReport = await dbWrite.$transaction(async (tx) => {
+  const writeReport = async (tx: Prisma.TransactionClient) => {
     // create the report
     const createdReport = await tx.report.create({
       data: {
@@ -491,7 +552,10 @@ export const createReport = async ({
     }
 
     return createdReport;
-  });
+  };
+  const createdReport = callerTx
+    ? await writeReport(callerTx)
+    : await dbWrite.$transaction(writeReport);
 
   // Runs after the tx commits so the subquery in updateArticleNsfwLevels
   // picks up the newly-Actioned NSFW report we just inserted.
@@ -606,9 +670,11 @@ export function getLatestAppeal({
   });
 }
 
-export function reopenModelAppeal({ id, message }: { id: number; message: string }) {
+export function reopenAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
-    where: { id },
+    // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
+    // moderator-only review flag. A reopen has no such check, so it must never reach an image.
+    where: { id, entityType: { not: EntityType.Image } },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
@@ -619,6 +685,9 @@ export function reopenModelAppeal({ id, message }: { id: number; message: string
       resolvedAt: null,
       resolvedBy: null,
       resolvedMessage: null,
+      // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
+      resolvedReason: null,
+      internalNotes: null,
     },
   });
 }
@@ -682,6 +751,12 @@ export async function getAppealDetails({
         select: { id: true, name: true, userId: true },
       });
       break;
+    case EntityType.Bounty:
+      entityDetails = await dbRead.bounty.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, name: true, userId: true },
+      });
+      break;
     default:
       // Do nothing
       break;
@@ -738,13 +813,16 @@ export async function createEntityAppeal({
   try {
     const appeal = await dbWrite.$transaction(async (tx) => {
       switch (entityType) {
-        case EntityType.Image:
-          // Update entity with needsReview = appeal
-          await tx.image.update({
-            where: { id: entityId },
-            data: { needsReview: 'appeal' },
-          });
+        case EntityType.Image: {
+          // The handler refuses any flagged image off a replica read. This re-checks only the
+          // moderator-only flag, under the row lock, so one set in between is never overwritten.
+          const updated = await tx.$executeRaw`
+            UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
+            WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
+          `;
+          if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
           break;
+        }
         default:
           // Do nothing
           break;
@@ -792,7 +870,7 @@ export async function createEntityAppeal({
 // Display label + (when the entity is publicly reachable) a link for an
 // appealed item, surfaced in the resolution email. Entity types with no public
 // URL fall back to a label-only reference.
-function appealEntityLink(
+export function appealEntityLink(
   entityType: EntityType,
   entityId: number
 ): { url?: string; label: string } {
@@ -801,6 +879,8 @@ function appealEntityLink(
       return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
     case EntityType.Model:
       return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
+    case EntityType.Bounty:
+      return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
@@ -908,6 +988,7 @@ export async function resolveEntityAppeal({
       buzzTransactionId: true,
       status: true,
       userId: true,
+      createdAt: true,
     },
   });
   if (appeals.length === 0) return [];
@@ -926,6 +1007,9 @@ export async function resolveEntityAppeal({
     switch (appeal.entityType) {
       case EntityType.Image:
         try {
+          // No moderator-only review-flag guard, unlike the moderator app's twin: a Pending image
+          // appeal cannot sit beside that flag (`createEntityAppeal` refuses, `reportCsamImages`
+          // closes it), so there is nothing here for one to protect.
           const updated = await dbWrite.image.update({
             where: { id: appeal.entityId },
             data: approved
@@ -989,9 +1073,11 @@ export async function resolveEntityAppeal({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      // Per appeal, not per entity: an entity can be appealed again after a re-block, and the
-      // notification service reuses the row for a repeated key, so the second decision would vanish.
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${appeal.id}`,
+      // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
+      // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
+        appeal.id
+      }:${appeal.createdAt.getTime()}`,
       details: {
         entityType: appeal.entityType,
         entityId: appeal.entityId,

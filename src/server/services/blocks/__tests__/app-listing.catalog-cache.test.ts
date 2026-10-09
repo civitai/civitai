@@ -142,6 +142,7 @@ async function keyFor(opts: {
   scope?: StoreVisibilityScope;
   redCapable?: boolean;
   floor?: ListingAudienceFloor;
+  includeSubListings?: boolean;
 }) {
   await listAvailableListings({ ...BASE_INPUT }, opts);
   return deriveKey(lastCall().sql);
@@ -170,6 +171,7 @@ async function prefixFor(opts: {
   scope?: StoreVisibilityScope;
   redCapable?: boolean;
   floor?: ListingAudienceFloor;
+  includeSubListings?: boolean;
 }) {
   return keyPrefix(await keyFor(opts));
 }
@@ -448,6 +450,25 @@ describe('/apps catalog cache — the key separates viewers', () => {
    * There are two tags in `app-listing-cache.constants`, and swapping them would make
    * every mutation appear to bust while the catalog entry survived its full TTL.
    */
+  // The sub-listing flag changes which ROWS the statement returns, so a flag-on page served
+  // to a flag-off viewer would leak cards the flag is meant to hold back.
+  it('🔴 the sub-listing flag is a LITERAL key segment', async () => {
+    const on = await prefixFor({ scope: 'full', redCapable: false, includeSubListings: true });
+    const off = await prefixFor({ scope: 'full', redCapable: false, includeSubListings: false });
+    expect(on).not.toBe(off);
+    expect(on.split(':')).toContain('sl');
+    expect(off.split(':')).toContain('nosl');
+  });
+
+  it('only the flag-on statement reads the sub-listing tables', async () => {
+    const sqlText = (call: { sql: unknown }) => (call.sql as { sql: string }).sql;
+    await keyFor({ scope: 'full', redCapable: false, includeSubListings: false });
+    expect(sqlText(lastCall())).not.toContain('app_sub_listings');
+    await keyFor({ scope: 'full', redCapable: false, includeSubListings: true });
+    expect(sqlText(lastCall())).toContain('app_sub_listings');
+    expect(lastCall().options?.tag).toEqual([APP_LISTING_CATALOG_TAG]);
+  });
+
   it('🔴 the buster busts the CATALOG tag, not the recommend-mean tag', async () => {
     await bustAppListingCatalogCache();
     expect(bustCacheTag).toHaveBeenCalledTimes(1);

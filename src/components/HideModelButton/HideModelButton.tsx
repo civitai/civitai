@@ -7,15 +7,16 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isViewer } from '~/utils/is-viewer';
 import { showSuccessNotification } from '~/utils/notifications';
 
-export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props }: Props) {
+export function HideModelButton({ model, as = 'button', onToggleHide, ...props }: Props) {
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
 
   const models = useHiddenPreferencesData().hiddenModels;
   const hiddenModels = models.filter((x) => x.hidden);
-  const alreadyHiding = hiddenModels.some((x) => x.id === modelId);
+  const alreadyHiding = hiddenModels.some((x) => x.id === model.id);
 
   const toggleHiddenMutation = useToggleHiddenPreferences();
 
@@ -23,7 +24,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
     e.preventDefault();
     e.stopPropagation();
     if (!alreadyHiding) await utils.model.getAll.invalidate({ hidden: true }, { exact: false });
-    toggleHiddenMutation.mutateAsync({ kind: 'model', data: [{ id: modelId }] }).then(() => {
+    toggleHiddenMutation.mutateAsync({ kind: 'model', data: [{ id: model.id }] }).then(() => {
       showSuccessNotification({
         title: `Model ${alreadyHiding ? 'unhidden' : 'hidden'}`,
         message: `This model will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
@@ -32,7 +33,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
     onToggleHide?.();
   };
 
-  if (currentUser != null && modelId === currentUser.id) return null;
+  if (isViewer(currentUser, model.user.id)) return null;
 
   return as === 'button' ? (
     <LoginRedirect reason="hide-content">
@@ -60,7 +61,7 @@ export function HideModelButton({ modelId, as = 'button', onToggleHide, ...props
 }
 
 type Props = Omit<ButtonProps, 'onClick'> & {
-  modelId: number;
+  model: { id: number; user: { id: number } };
   as?: 'menu-item' | 'button';
   onToggleHide?: () => void;
 };

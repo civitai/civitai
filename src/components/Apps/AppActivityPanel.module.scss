@@ -42,7 +42,7 @@
  * matched to this paragraph if the paragraph predicted clipping.
  *
  * 🔴 AND NOT `Table.ScrollContainer`, WHICH IS THIS FOLDER'S USUAL ANSWER to a table wider than
- * its box (`MySubmissionsList`, `OffsiteSubmissionsList`, `ReportTabs`, with a shared
+ * its box (`OffsiteSubmissionsList`, `ReportTabs`, with a shared
  * `SUBMISSIONS_TABLE_MIN_WIDTH`). Horizontal scroll works at 1424px where the table is nearly
  * whole; at 408px it would be a 735px table dragged through a 408px window, five columns at a
  * time, on a read-only panel opened over a running app. Cards are not a rejection of that

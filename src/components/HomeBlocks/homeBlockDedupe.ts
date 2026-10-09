@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from 'react';
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import { capPerUser, ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { capPerUser } from '~/shared/utils/cap-per-user';
 
 type ClaimState = {
   claims: Record<number, string[]>;

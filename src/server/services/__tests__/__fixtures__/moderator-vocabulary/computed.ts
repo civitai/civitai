@@ -13,7 +13,7 @@
 // That shape is refused by name — see `assertEnvironmentIndependent` in the harness.
 const RULINGS_ADDED_LATER = ['bot-account'];
 const REFUSAL_TAIL =
-  ' restrictions — the verdict path still sends generation-specific notices. This restriction was NOT resolved.';
+  ' restrictions — no verdict effects are defined for this type. This restriction was NOT resolved.';
 
 export const RESTRICTION_TYPES = ['generation', ...RULINGS_ADDED_LATER, 'spam-account'] as const;
 

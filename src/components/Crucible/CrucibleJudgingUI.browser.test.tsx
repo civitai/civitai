@@ -68,6 +68,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
 });
 
 const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgingUI');
+const { CrucibleJudgingBriefing } = await import('~/components/Crucible/CrucibleJudgingBriefing');
 
 const srcOf = (id: number) => `0000000${id}-0000-4000-8000-000000000000`;
 
@@ -102,11 +103,11 @@ const advance = async (side: 0 | 1, clicks: number) => {
 const card = (side: 'left' | 'right') =>
   document.querySelector<HTMLElement>(`[aria-label="Vote for ${side} video"]`);
 
-// Anchored on the CARD's aria-label, not on the button's text. The text is "Vote" or
-// "Watch Ns more" depending on the very gate under test, so a text matcher made the button vanish
-// exactly when an assertion needed it — and every `toBeUndefined` then passed vacuously.
+// Anchored on the button's side, not on its text. The text is "Vote" or "Watch Ns more"
+// depending on the very gate under test, so a text matcher made the button vanish exactly when an
+// assertion needed it — and every `toBeUndefined` then passed vacuously.
 const voteButton = (side: 'left' | 'right') =>
-  card(side)?.querySelector<HTMLButtonElement>('[data-testid="judge-vote"]') ?? null;
+  document.querySelector<HTMLButtonElement>(`[data-testid="judge-vote"][data-side="${side}"]`);
 
 const mediaStatus = (side: 'left' | 'right') =>
   card(side)?.querySelector<HTMLElement>('[data-media-status]')?.dataset.mediaStatus;
@@ -313,9 +314,7 @@ describe('CrucibleJudgingUI — minimum view time', () => {
 });
 
 const skipPairButton = () =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
-    b.textContent?.includes('Skip Pair')
-  );
+  document.querySelector<HTMLButtonElement>('[data-testid="judge-skip"]');
 
 describe('CrucibleJudgingUI — clip already judged this session', () => {
   const pairWithWatch = (left: number, right: number) =>
@@ -409,6 +408,63 @@ describe('CrucibleJudgingUI — repeated clicks', () => {
     await pastFeedbackDelay();
 
     expect(onVote).toHaveBeenCalledTimes(1);
+  });
+
+  test('two clicks on an image inside the feedback delay cast one vote', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={{ left: entry(1, 'image'), right: entry(2, 'image') } as never}
+        onVote={onVote}
+        onSkip={vi.fn()}
+      />
+    );
+    const imageCard = () =>
+      document.querySelector<HTMLElement>('[aria-label="Vote for left image"]');
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+
+    imageCard()!.click();
+    imageCard()!.click();
+    await pastFeedbackDelay();
+
+    expect(onVote).toHaveBeenCalledTimes(1);
+    expect(onVote.mock.calls[0][0]).toBe(1);
+  });
+
+  test('onVoteCast reports the chosen side before the vote lands', async () => {
+    const onVote = vi.fn();
+    const onVoteCast = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairOf(1, 2)}
+        onVote={onVote}
+        onVoteCast={onVoteCast}
+        onSkip={vi.fn()}
+      />
+    );
+    await expectBothCardsRendered();
+
+    voteButton('right')!.click();
+
+    expect(onVoteCast).toHaveBeenCalledTimes(1);
+    expect(onVoteCast).toHaveBeenCalledWith('right');
+    expect(onVote).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVoteCast).toHaveBeenCalledTimes(1);
+  });
+
+  test('a click on a video does not vote; the vote button still does', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    expect(voteButton('left')!.disabled, 'precondition: voting is open').toBe(false);
+
+    video('left').click();
+    await pastFeedbackDelay();
+    expect(onVote).not.toHaveBeenCalled();
+
+    voteButton('left')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
   });
 
   test('takes the next vote once the first has landed', async () => {
@@ -764,6 +820,139 @@ describe('CrucibleJudgingUI — sequenced preview', () => {
     await vi.waitFor(() => expect(playheads.get(srcOf(1))).toBeLessThan(1));
     expect(label('left')).toMatch(/^Watch \d+s more/);
   });
+
+  // 4.04s against a 3s rule: inside the 35% tolerance, and the cap is reached on the fourth click
+  // while the playhead only wraps on the fifth.
+  const PAST_CAP_CLIP_SECONDS = 4.04;
+
+  test('a clip a little past the rule plays on to its end, without delaying the vote', async () => {
+    const { pause } = spies();
+    clipDurations.set(srcOf(2), PAST_CAP_CLIP_SECONDS);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 4);
+    await advance(1, 4);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    await afterPassiveEffects();
+    expect(sidesCalledOn(pause)).not.toContain('right');
+
+    await advance(1, 1);
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toContain('right'));
+  });
+
+  test('the right clip waits for a left clip a little past the rule to finish', async () => {
+    const { play, pause } = spies();
+    clipDurations.set(srcOf(1), PAST_CAP_CLIP_SECONDS);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 4);
+    await vi.waitFor(() => expect(label('left')).toMatch(/^Vote/));
+    await afterPassiveEffects();
+    expect(sidesCalledOn(play)).not.toContain('right');
+    expect(sidesCalledOn(pause)).not.toContain('left');
+
+    await advance(0, 1);
+
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toContain('right'));
+    expect(sidesCalledOn(pause)).toContain('left');
+  });
+
+  test('a skip to the end of a clip a little past the rule unlocks nothing', async () => {
+    // Negative control: within the tolerance, a wrap ends playback; it never stands in for the rule.
+    spies();
+    clipDurations.set(srcOf(1), PAST_CAP_CLIP_SECONDS);
+    playheads.set(srcOf(1), 3.9);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 1);
+
+    await vi.waitFor(() => expect(playheads.get(srcOf(1))).toBeLessThan(1));
+    expect(label('left')).toMatch(/^Watch \d+s more/);
+  });
+});
+
+describe('CrucibleJudgingUI — paused under the briefing', () => {
+  function PausedHarness({
+    initiallyPaused,
+    minViewSeconds = 3,
+  }: {
+    initiallyPaused: boolean;
+    minViewSeconds?: number;
+  }) {
+    const [paused, setPaused] = useState(initiallyPaused);
+    return (
+      <>
+        <button type="button" data-testid="toggle-paused" onClick={() => setPaused((p) => !p)}>
+          toggle
+        </button>
+        <CrucibleJudgingUI
+          pair={pairOf(1, 2)}
+          minViewSeconds={minViewSeconds}
+          paused={paused}
+          onVote={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      </>
+    );
+  }
+  const togglePaused = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="toggle-paused"]')!.click();
+
+  test('plays nothing and counts no playback until unpaused, then starts on the left', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused />);
+    await expectBothCardsRendered();
+
+    // Enough playback to clear the rule, were it counted.
+    await advance(0, 4);
+    await afterPassiveEffects();
+    expect(label('left')).toMatch(/^Watch 3s more/);
+    expect(sidesCalledOn(play)).toEqual([]);
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toEqual(['left']));
+    await advance(0, 4);
+    await vi.waitFor(() => expect(label('left')).toMatch(/^Vote/));
+  });
+
+  test('pausing stops the autoplaying clip', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused={false} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toEqual(['left']));
+    pause.mockClear();
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toContain('left'));
+  });
+
+  test('pausing also stops a clip the judge started, outside any sequence', async () => {
+    // No rule, so no sequence: the only pause comes from `paused` itself.
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(<PausedHarness initiallyPaused={false} minViewSeconds={0} />);
+    await expectBothCardsRendered();
+    await afterPassiveEffects();
+    pause.mockClear();
+
+    togglePaused();
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toEqual(['left', 'right']));
+  });
 });
 
 describe('CrucibleJudgingUI — hotkeys', () => {
@@ -798,6 +987,93 @@ describe('CrucibleJudgingUI — hotkeys', () => {
     await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
     await settle();
     expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CrucibleJudgingUI — keys the arena does not own', () => {
+  const pressOn = (target: Element, key: string, code: string) => {
+    const event = new KeyboardEvent('keydown', { key, code, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+  const briefing = () => document.querySelector('[role="dialog"]');
+
+  function BriefingHarness({ onVote, onSkip }: { onVote: OnVote; onSkip: () => void }) {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <div data-judge-chrome>
+          <button type="button" data-testid="chrome-button">
+            Rules
+          </button>
+        </div>
+        <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={onSkip} />
+        {open && (
+          <CrucibleJudgingBriefing
+            name="Test crucible"
+            theme=""
+            image={null}
+            contentType={'video' as never}
+            nsfwLevel={1}
+            browsingLevel={1}
+            onDismiss={() => setOpen(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  test('an arrow key behind the briefing casts the vote and closes the briefing', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    expect(briefing()).toBeTruthy();
+
+    pressOn(document.documentElement, 'ArrowLeft', 'ArrowLeft');
+
+    await vi.waitFor(() => expect(briefing()).toBeNull());
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVote.mock.calls[0][0]).toBe(1);
+  });
+
+  test('the briefing focuses its start button and is modal', async () => {
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={vi.fn()} />);
+    await vi.waitFor(() => expect(briefing()).toBeTruthy());
+
+    expect(briefing()!.getAttribute('aria-modal')).toBe('true');
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Start judging'));
+  });
+
+  test('Space on the focused start button closes the briefing without skipping', async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Start judging'));
+
+    const event = pressOn(document.activeElement!, ' ', 'Space');
+
+    await vi.waitFor(() => expect(briefing()).toBeNull());
+    await settle();
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  test('Space on a page header control is left to that control', async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+    const chromeButton = document.querySelector('[data-testid="chrome-button"]')!;
+
+    const event = pressOn(chromeButton, ' ', 'Space');
+    await settle();
+
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+
+    // Negative control: the same press with focus nowhere in particular still skips.
+    pressOn(document.body, ' ', 'Space');
+    await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
   });
 });
 

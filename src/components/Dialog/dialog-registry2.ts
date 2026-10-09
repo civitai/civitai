@@ -88,8 +88,8 @@ export const dialogs = dialogFactory({
   'card-decoration': {
     component: dynamic(() => import('~/components/Modals/CardDecorationModal')),
   },
-  'article-rating-review': {
-    component: dynamic(() => import('~/components/Article/ArticleRatingReviewModal')),
+  'rating-review': {
+    component: dynamic(() => import('~/components/RatingReview/RatingReviewModal')),
   },
   'collection-collaborators': {
     component: dynamic(
@@ -98,6 +98,9 @@ export const dialogs = dialogFactory({
   },
   'crucible-submit-entry': {
     component: dynamic(() => import('~/components/Crucible/CrucibleSubmitEntryModal')),
+  },
+  'banking-change-notice': {
+    component: dynamic(() => import('~/components/Buzz/CreatorProgramV2/BankingChangeNoticeModal')),
   },
 });
 

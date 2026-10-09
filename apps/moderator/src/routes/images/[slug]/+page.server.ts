@@ -13,6 +13,8 @@ import {
   acceptImage,
   blockImage,
   closedAppellants,
+  dismissReviewFlag,
+  FlagOnlyRemovedError,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
@@ -20,12 +22,14 @@ import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
-import { IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
+import { FLAG_KEPT_THROUGH_BLOCK, IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { setImageFlag } from '$lib/server/user-actions.service';
+import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
+import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
 import { allBrowsingLevelsWithBlockedFlag } from '@civitai/shared';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
@@ -36,6 +40,9 @@ const querySchema = z.object({
 });
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
+
+const FLAG_ONLY_REASON = 'removed with only the review flag left';
+const FLAG_ONLY_REMEDY = 'Dismiss the flag from its review queue, or restore the image. Reload.';
 
 /** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
  *  guarantees the value is one of the enum's. Returns the refusal message on a bad value, like the
@@ -153,6 +160,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
 };
 
 // accept/block also resolve a coupled report when a `reportId` is posted: accept → Unactioned, block → Actioned.
+function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
+  const input = parseForm(z.object(resolutionReasonFields), form);
+  return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
+}
+
 export const actions: Actions = {
   accept: async ({ request, locals }) => {
     const form = await request.formData();
@@ -161,7 +173,16 @@ export const actions: Actions = {
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
 
-    await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
+    try {
+      await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
+    } catch (e) {
+      if (e instanceof FlagOnlyRemovedError)
+        return fail(409, {
+          error: `This image was ${FLAG_ONLY_REASON}. ${FLAG_ONLY_REMEDY}`,
+          imageId,
+        });
+      throw e;
+    }
     if (reportId)
       await setReportStatus({
         id: reportId,
@@ -196,6 +217,21 @@ export const actions: Actions = {
     return { success: true, imageId };
   },
 
+  // Only from the flag's own queue: the page gate is per path, and every queue posts to this route.
+  dismissFlag: async ({ request, locals, params }) => {
+    if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
+    const form = await request.formData();
+    const imageId = Number(form.get('imageId'));
+    if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const dismissed = await dismissReviewFlag({ imageId, userId: locals.user.id });
+    if (!dismissed)
+      return fail(409, {
+        error: 'This image is no longer flagged or no longer removed. Reload.',
+        imageId,
+      });
+    return { success: true, imageId };
+  },
+
   resolveAppeal: async ({ request, locals }) => {
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
@@ -205,11 +241,14 @@ export const actions: Actions = {
       String(form.get('resolvedMessage') ?? '')
         .trim()
         .slice(0, 1000) || undefined;
+    const reason = parseResolutionReason(form, status);
+    if (typeof reason === 'string') return fail(400, { error: reason, imageId });
 
     const closed = await resolveImageAppeal({
       imageId,
       status,
       resolvedMessage,
+      ...reason,
       userId: locals.user.id,
     });
     if (!closed)
@@ -287,13 +326,35 @@ export const actions: Actions = {
     const imageIds = parseIds(form.get('imageIds'));
     const reportIds = parseIds(form.get('reportIds'));
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
+    const refused: number[] = [];
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
       imageIds.map((imageId) =>
-        acceptImage({ imageId, removeMinorFlag, userId: locals.user.id, deferAppealEmail: true })
+        acceptImage({
+          imageId,
+          removeMinorFlag,
+          userId: locals.user.id,
+          deferAppealEmail: true,
+        }).catch((e) => {
+          if (!(e instanceof FlagOnlyRemovedError)) throw e;
+          refused.push(imageId);
+          return undefined;
+        })
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), true);
+    // Which report belongs to which image is not posted, so a partial batch moves no report.
+    if (refused.length)
+      return fail(409, {
+        error: [
+          `${imageIds.length - refused.length} of ${imageIds.length} accepted.`,
+          reportIds.length ? 'No report was moved.' : '',
+          `Not accepted (${FLAG_ONLY_REASON}): ${refused.join(', ')}.`,
+          FLAG_ONLY_REMEDY,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      });
     await Promise.all(
       reportIds.map((id) =>
         setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })
@@ -325,9 +386,17 @@ export const actions: Actions = {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
+    const reason = parseResolutionReason(form, status);
+    if (typeof reason === 'string') return fail(400, { error: reason });
     const closed = await Promise.all(
       imageIds.map((imageId) =>
-        resolveImageAppeal({ imageId, status, userId: locals.user.id, deferAppealEmail: true })
+        resolveImageAppeal({
+          imageId,
+          status,
+          ...reason,
+          userId: locals.user.id,
+          deferAppealEmail: true,
+        })
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), status === 'Approved');

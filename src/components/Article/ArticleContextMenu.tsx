@@ -27,6 +27,7 @@ import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
 import { IconLock, IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { useRescanArticle } from '~/hooks/useRescanArticle';
 import type { ArticleGetById } from '~/types/router';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -177,12 +178,20 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         {currentUser && (isOwner || isModerator) && (
           <>
             {isOwner && article.coverImage && !atDetailsPage && (
-              <AddArtFrameMenuItem
-                entityType={CosmeticEntity.Article}
-                entityId={article.id}
-                image={article.coverImage}
-                currentCosmetic={article.cosmetic}
-              />
+              <>
+                <AddArtFrameMenuItem
+                  entityType={CosmeticEntity.Article}
+                  entityId={article.id}
+                  image={article.coverImage}
+                  currentCosmetic={article.cosmetic}
+                />
+                <AddEventDecorationMenuItem
+                  entityType={CosmeticEntity.Article}
+                  entityId={article.id}
+                  image={article.coverImage}
+                  currentCosmetic={article.eventDecoration}
+                />
+              </>
             )}
             <Menu.Item
               color="red"

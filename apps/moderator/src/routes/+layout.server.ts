@@ -4,6 +4,7 @@ import type { LayoutServerLoad } from './$types';
 import { navForUser } from '$lib/server/access';
 import { civitaiLinkUrl } from '$lib/server/civitai-url';
 import { recordPageVisit } from '$lib/server/page-visits';
+import { canSeeUserCard } from '$lib/server/user-card';
 
 // Records one page visit per landing, keyed by matched route id (so dynamic pages roll up to one row):
 //   - Read `url.pathname`, never `url.searchParams` — SvelteKit re-runs the load on a path change but NOT
@@ -28,5 +29,6 @@ export const load: LayoutServerLoad = ({ locals, url, route }) => {
     grants: locals.grants,
     // The one place link destinations are decided — every page reads it from here.
     civitaiUrl: civitaiLinkUrl(),
+    canSeeUserCard: canSeeUserCard(locals),
   };
 };

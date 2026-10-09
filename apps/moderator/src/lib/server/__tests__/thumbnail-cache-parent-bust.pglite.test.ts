@@ -70,6 +70,7 @@ CREATE TABLE "Image" (
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
+CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,

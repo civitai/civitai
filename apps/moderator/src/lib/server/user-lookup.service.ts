@@ -277,56 +277,52 @@ export async function getLiveStrikes(
   return rows.map(toLiveStrike);
 }
 
-export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
-  const [
-    identity,
-    profile,
-    scores,
-    counts,
-    stats,
-    reportsFiled,
-    reportedContent,
-    subscription,
-    curator,
-    ranks,
-    strikeCountAllTime,
-    modContact,
-    strikes,
-  ] = await Promise.all([
-    getIdentity(userId),
-    getProfile(userId),
-    getScores(userId),
-    getCounts(userId),
-    getStats(userId),
-    getReportsFiled(userId),
-    getReportedContent(userId),
-    getSubscription(userId),
-    getCuratorStatus(userId),
-    getLeaderboardRanks(userId),
-    // A different database, so it rides the same Promise.all rather than a second round trip. Failure
-    // degrades to "no strikes shown": the moderator database being down must not blank a lookup.
-    strikeCountsByUserIds([userId]).catch(() => new Map<number, number>()),
-    // Unbounded scan over ChatMessage; a slow or failing one must not blank the whole lookup, which
-    // is what moving it out of /api/user-signals would otherwise have cost.
-    getModeratorContact(userId).catch(() => ({ chats: null, lastAt: null, chatIds: [] })),
-    getActiveStrikes(userId),
-  ]);
+/** Everything User Lookup's header shows. Every page about one account renders the same card — as a
+ *  header or in the popover on a user link — so an alert cannot show in one place and not another. */
+export type UserCard = Pick<
+  UserLookupResult,
+  'identity' | 'subscription' | 'curator' | 'strikeCountAllTime' | 'strikes' | 'modContact'
+>;
+
+export async function getUserCard(userId: number): Promise<UserCard | null> {
+  const [identity, subscription, curator, strikeCountAllTime, modContact, strikes] =
+    await Promise.all([
+      getIdentity(userId),
+      getSubscription(userId),
+      getCuratorStatus(userId),
+      // A different database, so it rides the same Promise.all rather than a second round trip.
+      // Failure degrades to "no strikes shown": the moderator database being down must not blank a card.
+      strikeCountsByUserIds([userId]).catch(() => new Map<number, number>()),
+      // Unbounded scan over ChatMessage; a slow or failing one must not blank the whole card.
+      getModeratorContact(userId).catch(() => ({ chats: null, lastAt: null, chatIds: [] })),
+      getActiveStrikes(userId),
+    ]);
   return identity
     ? {
         identity,
-        profile,
-        scores,
-        counts,
-        stats,
-        reportsFiled,
-        reportedContent,
         subscription,
         curator,
-        ranks,
         strikeCountAllTime: strikeCountAllTime.get(userId) ?? 0,
         strikes,
         modContact,
       }
+    : null;
+}
+
+export async function getUserLookup(userId: number): Promise<UserLookupResult | null> {
+  const [card, profile, scores, counts, stats, reportsFiled, reportedContent, ranks] =
+    await Promise.all([
+      getUserCard(userId),
+      getProfile(userId),
+      getScores(userId),
+      getCounts(userId),
+      getStats(userId),
+      getReportsFiled(userId),
+      getReportedContent(userId),
+      getLeaderboardRanks(userId),
+    ]);
+  return card
+    ? { ...card, profile, scores, counts, stats, reportsFiled, reportedContent, ranks }
     : null;
 }
 

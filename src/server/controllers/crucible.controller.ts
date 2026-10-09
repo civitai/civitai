@@ -6,12 +6,14 @@ import type {
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
   RemoveCrucibleEntrySchema,
+  WithdrawCrucibleEntrySchema,
   UpdateCrucibleSchema,
   GetFeaturedCrucibleSchema,
   CreateCrucibleInputSchema,
   GetCrucibleByIdSchema,
   GetCrucibleRequiredModelsSchema,
   GetJudgingProgressSchema,
+  GetJudgingStatusesSchema,
   GetCruciblesInfiniteSchema,
   GetJudgesCountSchema,
   GetJudgeStatsSchema,
@@ -36,6 +38,7 @@ import {
   createCrucibleEntryPost,
   cancelCrucible,
   removeCrucibleEntry,
+  withdrawCrucibleEntry,
   updateCrucible,
   createCrucible,
   getCrucibleDetail,
@@ -43,6 +46,7 @@ import {
   getCrucibleMinVotesToPlace,
   getCrucibleRequiredModels,
   getJudgingProgress,
+  getJudgingStatuses,
   getCrucibles,
   getFeaturedCrucible,
   getJudgesCount,
@@ -257,6 +261,21 @@ export const getJudgingProgressHandler = async ({
     blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
   });
 
+export const getJudgingStatusesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetJudgingStatusesSchema;
+  ctx: ProtectedContext;
+}) =>
+  getJudgingStatuses({
+    ...input,
+    userId: ctx.user.id,
+    isGreen: !!ctx.features?.isGreen,
+    isModerator: ctx.user.isModerator,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
+  });
+
 export const submitVoteHandler = async ({
   input,
   ctx,
@@ -303,6 +322,14 @@ export const removeCrucibleEntryHandler = ({
   input: RemoveCrucibleEntrySchema;
   ctx: ProtectedContext;
 }) => removeCrucibleEntry({ ...input, moderatorId: ctx.user.id });
+
+export const withdrawCrucibleEntryHandler = ({
+  input,
+  ctx,
+}: {
+  input: WithdrawCrucibleEntrySchema;
+  ctx: ProtectedContext;
+}) => withdrawCrucibleEntry({ ...input, userId: ctx.user.id });
 
 export const updateCrucibleHandler = async ({
   input,

@@ -2,7 +2,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { isAppBlocksAuthorFeeEnabled } from '~/server/services/app-blocks-flag';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { APP_AUTHOR_FEE_DESCRIPTION, TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import {
@@ -575,7 +575,7 @@ async function chargeBlockAuthorFeeUncounted(
         fromAccountType: buzzType,
         toAccountType: buzzType,
         amount: feeBuzz,
-        description: 'App author fee',
+        description: APP_AUTHOR_FEE_DESCRIPTION,
         type: TransactionType.AppAuthorFee,
         externalTransactionId: blockAuthorFeeChargeKey(workflowId),
       },
@@ -1021,7 +1021,7 @@ async function refundBlockAuthorFee(args: {
         fromAccountType: buzzType,
         toAccountType: buzzType,
         amount: feeBuzz,
-        description: 'App author fee refund',
+        description: `${APP_AUTHOR_FEE_DESCRIPTION} refund`,
         type: TransactionType.Refund,
         externalTransactionId: blockAuthorFeeReversalKey(workflowId),
       },

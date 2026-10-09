@@ -345,6 +345,7 @@ export const userSettingsSchema = z.object({
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -421,6 +422,7 @@ export const setUserSettingsInput = z.object({
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
   hideStickerBook: z.boolean().optional(),
   hidePurchasedStickers: z.boolean().optional(),

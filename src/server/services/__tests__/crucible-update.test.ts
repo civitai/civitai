@@ -4,6 +4,7 @@ import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-f
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import {
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -12,6 +13,7 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
@@ -23,6 +25,11 @@ const submitTextModeration = vi.fn();
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TextModerationService>()),
   submitTextModeration,
+}));
+
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -71,6 +78,8 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   entryLimit: 1,
   freeEntriesPerUser: 0,
   maxTotalEntries: null,
+  entryWarningPercent: 20,
+  entryCutoffPercent: 0,
   minViewSeconds: null,
   maxClipSeconds: null,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
@@ -119,6 +128,18 @@ describe('updateCrucible — text scan', () => {
     expect(written()).toMatchObject({ ingestion: 'Pending', scannedAt: null });
     expect(submitTextModeration).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: 'Crucible', entityId: 1, content: 'New name' })
+    );
+  });
+
+  it('clears the description and rescans what is left', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ name: 'Old name', description: null });
+
+    await edit({ description: null });
+
+    expect(written()).toMatchObject({ description: null, ingestion: 'Pending' });
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(
+      ['Old name', null],
+      expect.objectContaining({ surface: 'crucible' })
     );
   });
 
@@ -548,10 +569,70 @@ describe('updateCrucible — free entries', () => {
   });
 });
 
+describe('updateCrucible — late entries', () => {
+  it('lets the owner set when entrants are warned and entries close', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ entryWarningPercent: 30, entryCutoffPercent: 15 });
+
+    expect(written()).toMatchObject({ entryWarningPercent: 30, entryCutoffPercent: 15 });
+  });
+
+  it('refuses entries closing before the warning starts, against the stored warning', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryWarningPercent: 20 }));
+
+    await expect(edit({ entryCutoffPercent: 25 })).rejects.toThrow(
+      CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a warning lowered to or below the stored cutoff', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryWarningPercent: 30, entryCutoffPercent: 15 }));
+
+    await expect(edit({ entryWarningPercent: 15 })).rejects.toThrow(
+      CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('reads the stored shares it checks an edit against', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ entryCutoffPercent: 15 });
+
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ entryWarningPercent: true, entryCutoffPercent: true }),
+      })
+    );
+  });
+
+  it('locks them once the crucible has started', async () => {
+    findUnique.mockResolvedValue(crucible());
+
+    await expect(edit({ entryCutoffPercent: 15 })).rejects.toThrow(
+      /only its name, description and images can change/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
 describe('updateCrucible — content and images', () => {
   it('keeps a green crucible SFW', async () => {
     findUnique.mockResolvedValue(upcoming({ buzzType: 'green' }));
     await expect(edit({ nsfwLevel: 1 | 4 })).rejects.toThrow(/green Buzz crucible/);
+  });
+
+  it('lets a green crucible whose stored mask carries R still edit its description', async () => {
+    findUnique.mockResolvedValue(crucible({ buzzType: 'green', nsfwLevel: 7 }));
+    await edit({ description: 'Fresh description' });
+    expect(written()).toMatchObject({ description: 'Fresh description' });
+  });
+
+  it('still refuses a green crucible update that sets the mask to include R', async () => {
+    findUnique.mockResolvedValue(upcoming({ buzzType: 'green', nsfwLevel: 7 }));
+    await expect(edit({ nsfwLevel: 7 })).rejects.toThrow(/green Buzz crucible/);
   });
 
   it('runs the blocked-content guard on the text it will store', async () => {

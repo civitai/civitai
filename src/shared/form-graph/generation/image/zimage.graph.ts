@@ -18,11 +18,10 @@ import {
 } from '../shared';
 
 /**
- * ZImage family (ZImageTurbo / ZImageBase), ported from `z-image-graph.ts`.
+ * ZImage family (ZImageTurbo / ZImageBase).
  * Turbo has fixed sampler/scheduler and no negative prompt; Base exposes both.
  */
 
-// Copied from z-image-graph.ts, which dies with the data-graph engine.
 const zImageVersionIds = { turbo: 2442439, base: 2635223 } as const;
 const zImageModeVersionOptions = [
   { label: 'Turbo', value: zImageVersionIds.turbo },
@@ -68,7 +67,7 @@ const base = defineGraph<FamilyExt>()
   .field('controlNets', ({ _ext }) => (_ext.workflow === 'txt2img' ? CONTROL_NETS : null))
   .field('seed', SEED);
 
-/** Tagged: v1's `zImageMode` computed becomes the branch key, same state shape. */
+/** Tagged: the picked key is stamped into state as `zImageMode`. */
 const modes = branch('zImageMode', (ext: FamilyExt) => modeOf(ext.ecosystem), { turbo, base });
 
 export const zimage = defineGraph<FamilyExt>({ scope: familyScope })
@@ -81,9 +80,6 @@ export const zimage = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .use(modes)
-  // Base's negative prompt is a full EDITOR, but it lives inside v1's mode
-  // subgraph where its snippet registration never fires — the oracle's
-  // targets carry `prompt` alone.
   .use(
     makeTextBlock({
       negativePrompt: (ext) => modeOf(ext.ecosystem) === 'base',

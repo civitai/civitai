@@ -225,8 +225,8 @@ export type AppBlockEndpoint =
   | 'generation_resources'
   // The resource-intent primitive (`POST /api/v1/blocks/resource-intent`). Its
   // OWN label rather than folding into 'generation_resources': that route is a
-  // bounded id-keyed rehydrate, this one is up to TWO vendor LLM round trips
-  // plus a Meili search, so its latency is dominated by an external service —
+  // bounded id-keyed rehydrate, this one is up to two sequential vendor round trips (up to three calls)
+  // plus up to two Meili searches, so its latency is dominated by an external service —
   // merging them would bury the only block route that can be slow for a
   // vendor-billing reason inside a constant-time read's p95.
   | 'resource_intent'
@@ -254,7 +254,11 @@ export type AppBlockEndpoint =
   // Merging them would put the checkout path's p95 behind the volume of a
   // read every app makes on mount.
   | 'goods_purchase'
-  | 'entitlements';
+  | 'entitlements'
+  // App Store sub-listings (store items): the two writes and the author's own read.
+  | 'sub_listings_upsert'
+  | 'sub_listings_withdraw'
+  | 'sub_listings_mine';
 // NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
 //
 // 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists

@@ -128,25 +128,26 @@ Every route is owner-scoped in v1 — there are no public presets.
 
 ## Key Integration Points
 
-### Saving — `graph.getSnapshot()`
+### Saving — the form bridge's `getState()`
 
-The DataGraph's `getSnapshot()` returns all current node values. At save time we take the whole snapshot (minus the excluded keys) and send it to `generationPreset.create`:
+`GenerationFormBridge` (`src/components/Generate/useGenerationFormBridge.ts`) exposes the mounted
+form's resolved values; `getState()` is `store.getSnapshot().state`. At save time we take the whole
+snapshot (minus the excluded keys) and send it to `generationPreset.create`:
 
 ```ts
-const snapshot = graph.getSnapshot();
-const values = Object.fromEntries(
-  Object.entries(snapshot).filter(([k]) => !PRESET_EXCLUDED_KEYS.has(k))
-);
+const values = filterPresetValues(bridge.getState(), makeIsComputed(bridge));
 ```
 
-The excluded keys are shared between save and dirty-detection — see [Dirty State Detection](#dirty-state-detection).
+`filterPresetValues` lives in `src/components/generation_v2/preset/PresetControl.tsx` and drops both
+`PRESET_EXCLUDED_KEYS` and the active branch's computed keys. The excluded keys are shared between
+save and dirty-detection — see [Dirty State Detection](#dirty-state-detection).
 
-### Applying — `graph.set(values)`
+### Applying — `generationGraphStore.setData`
 
 ```ts
-// graph.set accepts partial updates; inactive/unknown nodes are silently ignored.
-// The graph handles ecosystem switching when the checkpoint belongs to a different ecosystem.
-graph.set(preset.values);
+// `runType: 'replay'` makes BaseGenerationForm reset-then-set synchronously from its
+// store subscription, so the form reflects the preset by the time setData returns.
+generationGraphStore.setData({ params, resources, runType: 'replay' });
 ```
 
 ### Resource reference shape

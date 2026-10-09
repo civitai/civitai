@@ -4,13 +4,11 @@ import { SEED, aspectRatioDef, img2imgImages } from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Reve 2.1, ported from `reve-graph.ts`. Locked single version; no LoRAs,
+ * Reve 2.1. Locked single version; no LoRAs,
  * sampler, cfg, steps, or CLIP skip. txt2img picks an aspect ratio; edit takes
  * up to 4 reference frames (addressed as <frame>N</frame> in the prompt) and
  * derives the ratio from them.
  */
-
-// ---- copied from reve-graph.ts, which dies with the data-graph engine -------
 
 export const reveVersionId = 3133202;
 
@@ -29,8 +27,6 @@ const reveAspectRatios = [
 ];
 
 const revePriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
-
-// ---- end of reve-graph.ts copies --------------------------------------------
 
 export const reve = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>

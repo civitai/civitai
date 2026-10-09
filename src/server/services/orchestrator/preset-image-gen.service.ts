@@ -60,9 +60,8 @@ const OPENAI_SIZES: PresetSize[] = [
  */
 export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
   NanoBanana2: {
-    // V2 is dispatched via the ecosystem handler at
-    // `src/server/services/orchestrator/ecosystems/nano-banana.handler.ts`,
-    // which keys off the resource versionId to produce the v2 input shape.
+    // V2 is dispatched by `form-graph/nano-banana.handler.ts` off the resource
+    // versionId, not from anything in this config.
     engine: 'gemini',
     baseModel: 'NanoBanana',
     ecosystem: 'NanoBanana',
@@ -104,7 +103,7 @@ export const PRESET_MODEL_CONFIG: Record<string, PresetModelConfig> = {
   },
   OpenAI2: {
     // gpt-image-2 — different API shape than v1/v1.5. Resolved by the openai
-    // graph (`openai-graph.ts` maps versionId 2880272 to the `gpt2` variant)
+    // graph (`image/openai.graph.ts` maps versionId 2880272 to the `gpt2` variant)
     // and built by `openai.handler.ts`.
     engine: 'openai',
     baseModel: 'OpenAI',
@@ -205,7 +204,7 @@ export function capReferenceImages<T>(images: T[], max: number): T[] {
  * aspect ratio, and quantity.
  *
  * `aspectRatio` is passed as a plain ratio string (e.g. `'3:4'`); the graph's
- * `aspectRatioNode` snaps it to the ecosystem's canonical dimensions, so width
+ * `aspectRatioDef` snaps it to the ecosystem's canonical dimensions, so width
  * and height are derived by the graph rather than supplied here.
  */
 export function buildPresetGraphInput({

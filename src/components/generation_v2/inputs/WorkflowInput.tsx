@@ -28,8 +28,8 @@ import {
   workflowOptionById,
   workflowConfigByKey,
   getWorkflowLabelForEcosystem,
-} from '~/shared/data-graph/generation/config/workflows';
-import type { GateItemState } from '~/shared/data-graph/generation/gates';
+} from '~/shared/generation/config/workflows';
+import type { GateItemState } from '~/shared/generation/gates';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 import {
   useAvailableWorkflowGroups,

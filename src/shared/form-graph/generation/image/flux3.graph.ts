@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { aspectRatioDef, boolDef, img2imgImages } from '../defs';
+import { optionFallback, aspectRatioDef, boolDef, img2imgImages } from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /** FLUX 3 Image (fal). No LoRA/cfg/steps/seed fields: Flux3FalImageGenInput takes none of them. */
@@ -50,6 +50,7 @@ export const flux3 = defineGraph<FamilyExt>({ scope: familyScope })
     input: z.enum(flux3ResolutionOptions).optional(),
     output: z.enum(flux3ResolutionOptions),
     default: '1k' as Flux3Resolution,
+    correct: optionFallback(flux3ResolutionOptions, '1k' as Flux3Resolution),
     meta: {
       options: flux3ResolutionOptions.map((value) => ({ label: value.toUpperCase(), value })),
     },

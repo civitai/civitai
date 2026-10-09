@@ -4,6 +4,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
 import { parseForm, userIdSchema } from '$lib/server/query';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
+import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
   addUserNote,
@@ -131,15 +132,19 @@ export const actions: Actions = {
         userRestrictionId: z.coerce.number().int().positive(),
         status: z.enum(['Overturned', 'Upheld']),
         resolvedMessage: z.string().trim().max(1000).optional(),
+        ...resolutionReasonFields,
       }),
       await request.formData()
     );
     if (typeof input === 'string') return accountFail(input);
+    const reason = checkedResolutionReason('restriction', input.status, input);
+    if (typeof reason === 'string') return accountFail(reason);
 
     const result = await resolveRestriction({
       userRestrictionId: input.userRestrictionId,
       status: input.status,
       resolvedMessage: input.resolvedMessage || undefined,
+      ...reason,
       userId: input.userId,
       moderatorId: locals.user.id,
     });

@@ -34,6 +34,13 @@
   overflow: hidden;
   gap: 0;
   margin: -8px;
+  // Room above and left of the edge cards for a worn event hat (ITEM_BLEED) without moving them.
+  margin-top: -36px;
+  margin-left: -36px;
+  padding-top: 28px;
+  padding-left: 28px;
+  // The overflow above crops a hat that grows on hover, so here it stays at rest size.
+  --event-decoration-grow: 1;
 
   @container (max-width: theme('screens.md')) {
     grid-auto-flow: column;
@@ -52,8 +59,10 @@
     margin-right: calc(var(--mantine-spacing-md) * -1);
     margin-left: calc(var(--mantine-spacing-md) * -1);
     padding-left: var(--mantine-spacing-md);
+    // The scroller's own padding plus the cards' `p-2` is all the room a hat has on the left.
+    --event-decoration-allowance: calc(var(--mantine-spacing-md) + 8px);
 
-    &>* {
+    & > * {
       scroll-snap-align: center;
     }
   }
@@ -72,7 +81,7 @@
   display: flex;
   flex-direction: column;
 
-  &>* {
+  & > * {
     flex: 1;
   }
 
@@ -91,7 +100,7 @@
   margin-left: calc(var(--mantine-spacing-md) * -1);
   padding-left: var(--mantine-spacing-md);
 
-  &>* {
+  & > * {
     scroll-snap-align: center;
   }
 }

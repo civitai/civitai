@@ -12,10 +12,11 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
-async function getManualAssignments(event: string) {
+async function getManualAssignments(event: string, { strict = false } = {}) {
   // if (manualAssignments[event]) return manualAssignments[event];
   // Fail open: called via getUserTeam → getUserCosmeticId on every
   // user-cosmetic resolution during active events. A sysRedis outage
@@ -33,6 +34,9 @@ async function getManualAssignments(event: string) {
     // manualAssignments[event] = assignments;
     return assignments;
   } catch (err) {
+    // Strict callers decide something that must not use a guessed team (selling
+    // a team-coloured item), so they get the failure instead of the fallback.
+    if (strict) throw err;
     logSysRedisFailOpen('read-degraded', 'getManualAssignments', err, { event });
     return {} as Record<string, string>;
   }
@@ -76,17 +80,34 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     await redis.del(name);
     await redis.del(`${REDIS_KEYS.EVENT.CACHE}:${name}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`);
   }
-  async function getUserTeam(userId: number) {
-    const manualAssignment = await getManualAssignments(name);
+  async function getUserTeam(userId: number, opts?: { strict?: boolean }) {
+    const manualAssignment = await getManualAssignments(name, opts);
     if (manualAssignment[userId.toString()]) return manualAssignment[userId.toString()];
     const random = new Rand(name + userId.toString(), PRNG.sfc32);
     const number = random.next();
     const index = Math.floor(number * definition.teams.length);
     return definition.teams[index];
   }
-  function getTeamCosmetic(team: string) {
-    const name = `${definition.cosmeticName} - ${team}`;
-    return getCosmetic(name);
+  // A join event finds its team cosmetic by data (event, team, design), so cosmetic names stay
+  // display-only. Older events find it by the name "<cosmeticName> - <team>".
+  async function getTeamCosmetic(team: string) {
+    if (!definition.join) return getCosmetic(`${definition.cosmeticName} - ${team}`);
+
+    const field = `${name}:${definition.join.design}:${team}`;
+    const cached = await redis.hGet(REDIS_KEYS.COSMETICS.IDS, field);
+    if (cached) return Number(cached);
+    const [cosmetic] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Cosmetic"
+      WHERE type = 'ContentDecoration'
+        AND data->>'event' = ${name}
+        AND data->>'team' = ${team}
+        AND data->>'design' = ${definition.join.design}
+      ORDER BY id
+      LIMIT 1
+    `;
+    if (!cosmetic) return;
+    await redis.hSet(REDIS_KEYS.COSMETICS.IDS, field, cosmetic.id.toString());
+    return cosmetic.id;
   }
   async function getUserCosmeticId(userId: number) {
     return getTeamCosmetic(await getUserTeam(userId));
@@ -205,12 +226,58 @@ export type BuzzEventContext = {
   db: PrismaClient;
 };
 
+// Scores a team by the impressions and reactions on content wearing that team's event cosmetics.
+// See src/server/events/scoring/cosmetic-placement.sql.ts for how each parameter is applied.
+export type CosmeticPlacementScoring = {
+  reactionWeight: number;
+  // Signed-out viewers per day are capped at max(anonFloor, signed viewers x anonRatio), per entity
+  // and again per cosmetic owner.
+  anonFloor: number;
+  anonRatio: number;
+  // A signed-out session that saw more distinct entities than this in a day is treated as a bot.
+  botSessionEntityLimit: number;
+  // Accounts registered less than this many days before the event starts do not count as viewers.
+  newAccountDays: number;
+  // Most entities one viewer can credit to one cosmetic owner per day.
+  viewerOwnerDailyCap: number;
+  // Scoring keeps running this long past endDate for late data; the winner is decided after it.
+  finalizeAfterMs: number;
+};
+
+// The words a scored event's page shows. The numbers on it (reaction weight, caps, cooldown, what can
+// wear a decoration) are read from `scoring` and the event's decoration definition, never restated
+// here, so the page cannot drift from the rules the scoring job applies.
+export type EventPageCopy = {
+  headline: string;
+  // A second headline line, drawn in the team-colour gradient.
+  headlineAccent?: string;
+  // CDN image id for the hero art. Keep its subject on the right: the left side sits under the copy.
+  heroImage?: string;
+  // Shown verbatim on the hero's date badge, e.g. "Nov 11 to Nov 25"; without it the badge formats
+  // startDate and endDate in the viewer's timezone.
+  dates?: string;
+  summary: string;
+  steps: { title: string; body: string }[];
+  prize: { title: string; body: string; imageUrl?: string };
+  faq?: { question: string; answer: string }[];
+};
+
 type HolidayEventDefinition = {
   title: string;
+  page?: EventPageCopy;
   startDate: Date;
   endDate: Date;
-  teams: string[];
-  bankIndex: number;
+  teams: readonly string[];
+  // Gates the event behind this flag, with an early window for flagged users. See event-access.ts.
+  featureFlag?: FeatureFlagKey;
+  previewFrom?: Date;
+  // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
+  bankIndex?: number;
+  scoring?: CosmeticPlacementScoring;
+  // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
+  // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
+  // behaviour.
+  join?: { claimKey: string; design: string };
   cosmeticName: string;
   badgePrefix: string;
   coverImage?: string;

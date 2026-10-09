@@ -2,7 +2,21 @@ import dayjs from '~/shared/utils/dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
+import type { EventAccess, EventViewer } from '~/server/events/event-access';
+import {
+  canPlayEvent,
+  canReadEvent,
+  getEventAccess,
+  getEventScoringPhase,
+} from '~/server/events/event-access';
+import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
+import {
+  getEventStandings,
+  getTeamScoreHistory as getScoredTeamScoreHistory,
+  runCosmeticPlacementScoring,
+  unequipEventCosmetics,
+} from '~/server/events/scoring/cosmetic-placement.service';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -23,69 +37,135 @@ import {
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
+import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
+import { cosmeticCache } from '~/server/redis/caches';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 
-// Only include events that aren't completed
-export const events = [holiday2024];
-export const activeEvents = events.filter((x) => x.endDate >= new Date());
+export const events = [holiday2024, birthday2026];
+
+// How long after its end an event still gets its end-of-event cleanup. Evaluated per call, never at
+// module load: a list frozen at boot drops the event on the first deploy after it ends, and cleanup
+// silently never runs. Bounded so a deploy can never reach back to a long-finished event.
+export const EVENT_CLEANUP_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+// Cleanup markers must outlive the grace window, so a finished cleanup never runs again.
+const CLEANUP_MARKER_TTL_S = 30 * 24 * 60 * 60;
+// Events the hourly scoring may have work for: started, or inside a preview window.
+function getScorableEvents(now: Date) {
+  return events.filter(
+    (x) =>
+      (x.startDate <= now || (!!x.previewFrom && x.previewFrom <= now)) &&
+      x.endDate.getTime() + EVENT_CLEANUP_GRACE_MS >= now.getTime()
+  );
+}
+export function getActiveEvents(now = new Date()) {
+  return events.filter(
+    (x) => x.startDate <= now && x.endDate.getTime() + EVENT_CLEANUP_GRACE_MS >= now.getTime()
+  );
+}
+
+type EventDef = (typeof events)[number];
+function getEventDef(event: string) {
+  const eventDef = events.find((x) => x.name === event);
+  if (!eventDef) throw new Error("That event doesn't exist");
+  return eventDef;
+}
+function scoredEvent(eventDef: EventDef) {
+  const { scoring } = eventDef;
+  return scoring ? { ...eventDef, scoring } : undefined;
+}
+// Scores are read from the start of the window the viewer is in: the preview's for a previewer,
+// the event's for everyone else, so test-run scores never reach the public standings.
+function scoredEventFor(eventDef: EventDef, access: EventAccess) {
+  const scored = scoredEvent(eventDef);
+  if (!scored) return undefined;
+  const scoreFrom =
+    access === 'preview' && eventDef.previewFrom ? eventDef.previewFrom : eventDef.startDate;
+  return { ...scored, scoreFrom };
+}
+// The art of each team's join cosmetic. A team whose cosmetic is not found gets no url.
+async function getJoinHats(eventDef: EventDef) {
+  const ids = await Promise.all(eventDef.teams.map((team) => eventDef.getTeamCosmetic(team)));
+  const cosmetics = await cosmeticCache.fetch(ids.filter((id): id is number => !!id));
+  return eventDef.teams.map((team, i) => {
+    const id = ids[i];
+    const data = id ? (cosmetics[id]?.data as { url?: unknown } | undefined) : undefined;
+    return { team, url: typeof data?.url === 'string' ? data.url : null };
+  });
+}
+function findEventDef(event: string) {
+  return events.find((x) => x.name === event);
+}
 
 export const eventEngine = {
   async processEngagement(event: EngagementEvent) {
     const ctx = { ...event, db: dbWrite };
-    for (const eventDef of activeEvents) {
+    for (const eventDef of getActiveEvents()) {
       if (eventDef.startDate <= new Date() && eventDef.endDate >= new Date()) {
         await eventDef.onEngagement?.(ctx);
       }
     }
   },
-  async dailyReset() {
-    for (const eventDef of activeEvents) {
+  async dailyReset(now = new Date()) {
+    for (const eventDef of getActiveEvents(now)) {
       // Ignore events that aren't active yet
-      if (eventDef.startDate > new Date()) continue;
+      if (eventDef.startDate > now) continue;
 
       const scores = await this.getTeamScores(eventDef.name);
 
       // If the event is over, unequip the event cosmetics from all users
-      if (eventDef.endDate < new Date()) {
+      if (eventDef.endDate < now) {
         // Check to see if we've already cleaned up this event
-        const alreadyCleanedUp = await redis.get(
-          `${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}`
-        );
+        const cleanupKey = `${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}` as const;
+        const alreadyCleanedUp = await redis.get(cleanupKey);
         if (alreadyCleanedUp) continue;
+
+        if (eventDef.scoring) {
+          // Phase 1, at the first reset after the end: take the cosmetics off content. Clears the
+          // placement itself, not only the equip timestamp, or the decoration stays rendered.
+          const unequipKey = `${cleanupKey}:unequip` as const;
+          if (!(await redis.get(unequipKey))) {
+            const entities = await unequipEventCosmetics(eventDef.name);
+            await refreshEventDecorations(entities);
+            await redis.set(unequipKey, 'true', { EX: CLEANUP_MARKER_TTL_S });
+          }
+          // Phase 2 waits until scoring has finished taking late data, so the winner is decided on
+          // the final standings.
+          if (now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs)
+            continue;
+        }
 
         // Get 1st place team
         const winner = scores.find(({ rank }) => rank === 1)?.team;
-        if (!winner) return;
+        if (!winner) continue;
 
         // Update first place cosmetic and set to winner
         const winnerCosmeticId = await eventDef.getTeamCosmetic(winner);
         if (winnerCosmeticId) {
           await dbWrite.$executeRaw`
             UPDATE "Cosmetic"
-            SET data = jsonb_set(data, '{winner}', true)
+            SET data = jsonb_set(data, '{winner}', 'true'::jsonb)
             WHERE id = ${winnerCosmeticId}
           `;
         }
 
-        // Unequip all event cosmetics
-        const cosmeticIds = [];
-        const cosmeticNames = eventDef.teams.map((x) => `${eventDef.cosmeticName} - ${x}`);
-        for (const name in cosmeticNames) {
-          const cosmeticId = await eventDef.getCosmetic(name);
-          if (!cosmeticId) continue;
-          cosmeticIds.push(cosmeticId);
+        if (!eventDef.scoring) {
+          // Unequip all event cosmetics
+          const cosmeticIds = [];
+          for (const team of eventDef.teams) {
+            const cosmeticId = await eventDef.getTeamCosmetic(team);
+            if (!cosmeticId) continue;
+            cosmeticIds.push(cosmeticId);
+          }
+          await dbWrite.userCosmetic.updateMany({
+            where: { cosmeticId: { in: cosmeticIds } },
+            data: { equippedAt: null },
+          });
         }
-        await dbWrite.userCosmetic.updateMany({
-          where: { cosmeticId: { in: cosmeticIds } },
-          data: { equippedAt: null },
-        });
 
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
 
-        // Mark cleanup as complete
-        // Only need 7 days, because next deploy should make this event be ignored
-        await redis.set(`${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}`, `true`, {
-          EX: 60 * 60 * 24 * 7,
-        });
+        // Mark cleanup as complete, only after every step succeeded so a failure retries tomorrow.
+        await redis.set(cleanupKey, `true`, { EX: CLEANUP_MARKER_TTL_S });
       } else {
         // If the event isn't over, run the daily reset
         if (eventDef.onDailyReset) {
@@ -98,14 +178,35 @@ export const eventEngine = {
       await eventDef.clearKeys();
     }
   },
-  async updateLeaderboard() {
+  async updateLeaderboard(now = new Date()) {
     let updated = false;
-    for (const eventDef of activeEvents) {
+    for (const eventDef of getScorableEvents(now)) {
+      const scored = scoredEvent(eventDef);
+      if (scored) {
+        // Keeps running past the end so the last hours and late data are scored; the score query
+        // clips every window to endDate.
+        if (eventDef.endDate.getTime() + scored.scoring.finalizeAfterMs < now.getTime()) continue;
+        // Before launch this is the preview window, and only flagged users' cosmetics score.
+        const phase = await getEventScoringPhase(eventDef, now);
+        if (!phase) continue;
+        await runCosmeticPlacementScoring(
+          {
+            ...scored,
+            startDate: phase.from,
+            endDate: phase.to,
+            scoreFrom: phase.from,
+            audienceFlag: phase.fliptKey,
+          },
+          now
+        );
+        continue;
+      }
+
       // Ignore events that aren't active yet
-      if (eventDef.startDate > new Date()) continue;
+      if (eventDef.startDate > now) continue;
 
       // If the event is over, don't update the leaderboard
-      if (eventDef.endDate < new Date()) continue;
+      if (eventDef.endDate < now) continue;
 
       const teamAccounts = this.getTeamAccounts(eventDef.name);
       const accountTeams = Object.fromEntries(Object.entries(teamAccounts).map((x) => x.reverse()));
@@ -224,9 +325,15 @@ export const eventEngine = {
     // Purge leaderboard positions cache
     if (updated) await redis.purgeTags('leaderboard-positions');
   },
-  async getEventData(event: string) {
-    const eventDef = events.find((x) => x.name === event);
-    if (!eventDef) throw new Error("That event doesn't exist");
+  // Each team's join hat art, for the page to show what joining gets you. Ungated: callers check
+  // access first.
+  async getJoinHats(event: string) {
+    const eventDef = getEventDef(event);
+    return eventDef.join ? getJoinHats(eventDef) : [];
+  },
+  async getEventData(event: string, viewer: EventViewer, now = new Date()) {
+    const eventDef = getEventDef(event);
+    const access = await this.assertReadable(event, viewer, now);
 
     let coverImage = eventDef.coverImage;
     let coverImageUser;
@@ -246,38 +353,62 @@ export const eventEngine = {
       coverImage = banner?.url;
       coverImageUser = banner?.username;
     }
+    const decoration = getEventDecorationDefinition(event);
 
     return {
       title: eventDef.title,
       startDate: eventDef.startDate,
       endDate: eventDef.endDate,
+      // Scores keep taking late data until then; the winner is decided on the standings after it.
+      finalAt: eventDef.scoring
+        ? new Date(eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs)
+        : undefined,
       teams: eventDef.teams,
       cosmeticName: eventDef.cosmeticName,
       coverImage,
       coverImageUser,
+      scored: !!eventDef.scoring,
+      reactionWeight: eventDef.scoring?.reactionWeight,
+      joinable: !!eventDef.join,
+      preview: access === 'preview',
+      previewFrom: eventDef.previewFrom,
+      page: eventDef.page,
+      // The fair-play rules the page explains, read from what the scoring job applies.
+      rules: eventDef.scoring && {
+        reactionWeight: eventDef.scoring.reactionWeight,
+        viewerOwnerDailyCap: eventDef.scoring.viewerOwnerDailyCap,
+        newAccountDays: eventDef.scoring.newAccountDays,
+      },
+      decoration: decoration && {
+        label: decoration.label,
+        entityTypes: decoration.entityTypes,
+        moveCooldownMs: decoration.moveCooldownMs,
+      },
     };
   },
   getTeamAccounts(event: string) {
-    const eventDef = events.find((x) => x.name === event);
-    if (!eventDef) throw new Error("That event doesn't exist");
+    const { bankIndex, teams } = getEventDef(event);
+    if (bankIndex === undefined) return {} as Record<string, number>;
 
     // Get team accounts from buzz accounts
     const teamAccounts: Record<string, number> = {};
-    for (const [index, team] of eventDef.teams.entries()) {
-      const accountId = eventDef.bankIndex - index;
+    for (const [index, team] of teams.entries()) {
+      const accountId = bankIndex - index;
       teamAccounts[team] = accountId;
     }
 
     return teamAccounts;
   },
-  async getTeamScores(event: string) {
-    const eventDef = events.find((x) => x.name === event);
-    if (!eventDef) throw new Error("That event doesn't exist");
+  // Ungated: the jobs read this after the start, and routes check access before calling it.
+  async getTeamScores(event: string, access: EventAccess = 'open') {
+    const eventDef = getEventDef(event);
+    const scored = scoredEventFor(eventDef, access);
+    if (scored) return (await getEventStandings(scored)).teams;
 
     // Get team scores from buzz accounts
     const teamScores: TeamScore[] = [];
     for (const [index, team] of eventDef.teams.entries()) {
-      const accountId = eventDef.bankIndex - index;
+      const accountId = (eventDef.bankIndex ?? 0) - index;
       const buzzAccount = await getUserBuzzAccount({ accountId });
       teamScores.push({
         team,
@@ -291,9 +422,14 @@ export const eventEngine = {
     teamScores.forEach((x, i) => (x.rank = i + 1));
     return teamScores;
   },
-  async getTeamScoreHistory({ event, window, start }: TeamScoreHistoryInput) {
-    const eventDef = events.find((x) => x.name === event);
-    if (!eventDef) throw new Error("That event doesn't exist");
+  // Ungated like getTeamScores.
+  async getTeamScoreHistory(
+    { event, window, start }: TeamScoreHistoryInput,
+    access: EventAccess = 'open'
+  ) {
+    const eventDef = getEventDef(event);
+    const scored = scoredEventFor(eventDef, access);
+    if (scored) return getScoredTeamScoreHistory(scored);
 
     // Get team scores from buzz accounts
     const accounts = this.getTeamAccounts(event);
@@ -327,6 +463,79 @@ export const eventEngine = {
 
     return { cosmeticId, team, accountId };
   },
+  // Scored-event reads. Like getEventData, an event this viewer cannot read reads as nonexistent.
+  async getReadableScoredEvent(event: string, viewer: EventViewer, now = new Date()) {
+    const access = await this.assertReadable(event, viewer, now);
+    const scored = scoredEventFor(getEventDef(event), access);
+    if (!scored) throw new Error("That event doesn't exist");
+    return scored;
+  },
+  isJoinEvent(event: string) {
+    return !!getEventDef(event).join;
+  },
+  // Grants the user's team cosmetic once, inside the event window. Idempotent: a double click or a
+  // second tab inserts nothing, and so does a user whose team was reassigned after joining (they
+  // keep the cosmetic they got).
+  async join(event: string, user: { id: number; isModerator?: boolean }, now = new Date()) {
+    const eventDef = getEventDef(event);
+    const claimKey = eventDef.join?.claimKey;
+    if (!claimKey) throw new Error('This event has no join');
+    await this.assertPlayable(event, user, now);
+    const userId = user.id;
+
+    // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
+    // team's colour to someone assigned by hand.
+    const team = await eventDef.getUserTeam(userId, { strict: true });
+    const cosmeticId = await eventDef.getTeamCosmetic(team);
+    if (!cosmeticId) throw new Error("This event's cosmetics are not set up yet");
+
+    const teamByCosmetic = new Map<number, string>();
+    for (const t of eventDef.teams) {
+      const id = await eventDef.getTeamCosmetic(t);
+      if (id) teamByCosmetic.set(id, t);
+    }
+    const teamCosmeticIds = [...teamByCosmetic.keys()];
+
+    const inserted = await dbWrite.$executeRaw`
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt")
+      SELECT ${userId}, ${cosmeticId}, ${claimKey}, now()
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "UserCosmetic"
+        WHERE "userId" = ${userId} AND "claimKey" = ${claimKey}
+          AND "cosmeticId" = ANY(${teamCosmeticIds}::int[])
+      )
+      ON CONFLICT DO NOTHING
+    `;
+
+    if (inserted > 0) return { team, cosmeticId, joined: true };
+
+    // Already joined. Report the cosmetic actually held, which differs from `team` when the user was
+    // reassigned after joining.
+    const [held] = await dbWrite.$queryRaw<{ cosmeticId: number }[]>`
+      SELECT "cosmeticId" FROM "UserCosmetic"
+      WHERE "userId" = ${userId} AND "claimKey" = ${claimKey}
+        AND "cosmeticId" = ANY(${teamCosmeticIds}::int[])
+      LIMIT 1
+    `;
+    const heldId = held?.cosmeticId ?? cosmeticId;
+    return { team: teamByCosmetic.get(heldId) ?? team, cosmeticId: heldId, joined: false };
+  },
+  // What this viewer may do with the event; see event-access.ts. An unknown event is closed.
+  async getAccess(event: string, viewer: EventViewer, now = new Date()): Promise<EventAccess> {
+    const eventDef = findEventDef(event);
+    return eventDef ? getEventAccess(eventDef, viewer, now) : 'closed';
+  },
+  // Unannounced until this viewer may see it: every route reads such an event like an unknown slug.
+  async assertReadable(event: string, viewer: EventViewer, now = new Date()) {
+    const access = await this.getAccess(event, viewer, now);
+    if (!canReadEvent(access)) throw new Error("That event doesn't exist");
+    return access;
+  },
+  async assertPlayable(event: string, viewer: EventViewer, now = new Date()) {
+    const access = await this.assertReadable(event, viewer, now);
+    if (!canPlayEvent(access)) throw new Error('This event is not running');
+    return access;
+  },
   async getRewards(event: string) {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
@@ -334,13 +543,13 @@ export const eventEngine = {
     return eventDef.getRewards();
   },
   async donate(event: string, { userId, amount }: { userId: number; amount: number }) {
-    const eventDef = events.find((x) => x.name === event);
-    if (!eventDef) throw new Error("That event doesn't exist");
+    const eventDef = getEventDef(event);
+    if (eventDef.bankIndex === undefined) throw new Error('This event does not take donations');
 
     const { team, accountId } = await this.getUserData({ event, userId });
     if (!team || !accountId) throw new Error("You don't have a team for this event");
 
-    const { title, startDate, endDate } = await this.getEventData(event);
+    const { title, startDate, endDate } = await this.getEventData(event, { id: userId });
 
     await createBuzzTransaction({
       toAccountId: accountId,
@@ -445,6 +654,7 @@ export const eventEngine = {
 
     const teamAccounts = this.getTeamAccounts(event);
     const accountIds = Object.values(teamAccounts);
+    if (!accountIds.length) return { allTime: [], day: [], teams: {} } as TopContributors;
     const accountTeams = Object.fromEntries(Object.entries(teamAccounts).map((x) => x.reverse()));
 
     // Determine top contributors across all teams all time
@@ -547,7 +757,7 @@ export const eventEngine = {
     }
   },
   async processAddRoleQueue() {
-    for (const eventDef of activeEvents) {
+    for (const eventDef of getActiveEvents()) {
       const queueKey =
         `${REDIS_SYS_KEYS.EVENT}:${eventDef.name}:${REDIS_SUB_KEYS.EVENT.ADD_ROLE}` as const;
 

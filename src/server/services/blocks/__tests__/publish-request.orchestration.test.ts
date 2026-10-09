@@ -89,8 +89,12 @@ const {
       // `pending` with an `AppListingPublishRequest` and no block request. Null → no
       // listing-side review, i.e. the mod-reset case this suite's assertions describe.
       appListingPublishRequest: { findFirst: vi.fn<DelegateMock>(async () => null) },
+      // listApprovedRequests reads each failed row's latest build attempt.
+      appBlockBuildAttempt: { findMany: vi.fn<DelegateMock>(async () => []) },
     },
     mockDbWrite: {
+      // approveRequest records the run its trigger started (the stale-run guard's key).
+      appBlockBuildAttempt: { create: vi.fn<DelegateMock>(async () => ({ id: 1 })) },
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
       // any stray pending review request the git-push webhook may have parked for
       // the slug while racing the approve commit.
@@ -1211,6 +1215,52 @@ describe('listPendingRequests', () => {
 
 // ---- listApprovedRequests --------------------------------------------------
 
+describe('listApprovedRequests — build signals on failed rows', () => {
+  it('attaches the latest attempt’s step + class to a FAILED row only, never the excerpt', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    const updated = new Date('2026-10-08T19:00:00Z');
+    const base = {
+      appBlockId: 'apb_1',
+      slug: 'hello',
+      version: '0.1.0',
+      submittedAt: new Date('2026-05-27T10:00:00Z'),
+      reviewedAt: new Date('2026-05-28T12:00:00Z'),
+      approvalNotes: null,
+      bundleSizeBytes: 1n,
+      bundleSha256: 'abc',
+      manifest: {},
+      fileSummary: {},
+      manifestDiffSummary: {},
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
+      reviewedBy: { id: 999, username: 'mod', deletedAt: null, image: null },
+      deployUpdatedAt: updated,
+    };
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      { ...base, id: 'pubreq_failed', deployState: 'failed' },
+      { ...base, id: 'pubreq_live', deployState: 'live' },
+    ]);
+    mockDbRead.appBlockBuildAttempt.findMany.mockResolvedValueOnce([
+      {
+        publishRequestId: 'pubreq_failed',
+        failedStep: 'scan',
+        failureClass: 'unknown',
+        createdAt: new Date(updated.getTime() + 5),
+      },
+    ]);
+    const result = await listApprovedRequests({});
+    expect(
+      result.items.map((r: { id: string; buildSignals: unknown }) => [r.id, r.buildSignals])
+    ).toEqual([
+      ['pubreq_failed', { failedStep: 'scan', failureClass: 'unknown' }],
+      ['pubreq_live', null],
+    ]);
+    expect(
+      mockDbRead.appBlockBuildAttempt.findMany.mock.calls.at(-1)?.[0].where.publishRequestId
+    ).toEqual({ in: ['pubreq_failed'] });
+    for (const item of result.items) expect(item).not.toHaveProperty('deployDetail');
+  });
+});
+
 describe('listApprovedRequests', () => {
   function row(over: Record<string, unknown> = {}) {
     return {
@@ -1269,6 +1319,18 @@ describe('listApprovedRequests', () => {
       deletedAt: null,
       image: null,
     });
+  });
+
+  it('🔴 does NOT select deployDetail — moderators get the structured state, never the excerpt', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    await listApprovedRequests({});
+    const select = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0].select;
+    expect(select.deployDetail).toBeUndefined();
+    // Positive control: the lifecycle fields the Approved tab DOES render are still selected,
+    // so the assertion above is about deployDetail rather than an empty select.
+    expect(select.deployState).toBe(true);
+    expect(select.deployUpdatedAt).toBe(true);
   });
 
   it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {
@@ -1476,6 +1538,27 @@ describe('approveRequest', () => {
         where: expect.objectContaining({ slug: 'hello', status: 'pending' }),
         data: { status: 'withdrawn' },
       })
+    );
+
+    // The run the trigger started is recorded (the stale-run guard's key) BEFORE the
+    // 'building' write, under the run name the trigger returned.
+    expect(mockDbWrite.appBlockBuildAttempt.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        publishRequestId: 'pubreq_1',
+        slug: 'hello',
+        sha: 'commit_sha_abc',
+        runId: 'pipelinerun-mock',
+        mode: 'build',
+        status: 'triggered',
+      }),
+      select: { id: true },
+    });
+    const buildingWrite = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.findIndex(
+      (c: unknown[]) =>
+        (c[0] as { data?: { deployState?: string } }).data?.deployState === 'building'
+    );
+    expect(mockDbWrite.appBlockBuildAttempt.create.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.appBlockPublishRequest.updateMany.mock.invocationCallOrder[buildingWrite]
     );
 
     // Phase 2: after triggerBuild succeeds, the approved request is marked

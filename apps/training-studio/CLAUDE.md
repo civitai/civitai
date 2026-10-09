@@ -1,13 +1,5 @@
 # apps/training-studio
 
-> 🔴 **No commit or push without BOTH gates passed, in order:**
-> 1. **Adversarial review** — run the review agents (`/svelte-review`: correctness + idiom + abstraction)
->    over the segment and resolve the findings.
-> 2. **The maintainer's personal review + explicit OK** — a human reads the diff and says commit. This is
->    a separate, required step; passing tests, a green build, or "go on"/"continue" is **not** it.
->
-> Until both are done, leave changes in the working tree and ask. Applies to every commit, on any branch.
-
 **Follow [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md)** — the shared conventions
 for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actions, `@civitai/ui`,
 `text-dark-2`, placement, comments, the three review agents).
@@ -51,7 +43,7 @@ enters the flow.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
 - **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
-  video models can't train it — confirm per-model with Atif before enforcing).
+  video models can't train it — check per model before enforcing).
 
 ## Model catalog
 

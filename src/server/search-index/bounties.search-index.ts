@@ -149,7 +149,7 @@ type BountyForSearchIndex = {
 const WHERE = [
   Prisma.sql`b."userId" != -1`,
   Prisma.sql`(b."startsAt" <= NOW() OR b."expiresAt" >= NOW())`,
-  Prisma.sql`b."availability" != 'Unsearchable'::"Availability"`,
+  Prisma.sql`b."availability" NOT IN ('Unsearchable'::"Availability", 'Private'::"Availability")`,
 ];
 
 const transformData = async ({

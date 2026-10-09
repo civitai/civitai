@@ -13,6 +13,7 @@ import { FilterChip } from '~/components/Filters/FilterChip';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
 import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
 import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import {
@@ -86,6 +87,7 @@ export function StickerPlacementTray({
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
   // Bound to this bar's own image, not merely to "a session exists". The
@@ -255,6 +257,9 @@ export function StickerPlacementTray({
     <div
       ref={trayRef}
       className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      // Hidden, not unmounted: the buy button keeps measuring this box, so its
+      // side does not flip while the controls are hidden.
+      style={previewing ? { visibility: 'hidden' } : undefined}
     >
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
@@ -400,6 +405,7 @@ export function StickerPlacementTray({
                 )}
               </div>
             )}
+            <StickerPreviewToggle imageId={imageId} className="order-2 shrink-0 sm:order-3" />
             <CloseButton
               className="order-2 sm:order-3"
               onClick={closeTray}

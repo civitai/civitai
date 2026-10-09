@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest';
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), 'utf8');
 
+const OWNER_FLAGGED = 'isMilestoneShareable';
+
 describe('Creator Journey flag gates', () => {
   it('refuses every journey procedure without the flag', () => {
     const router = read('src/server/routers/creator-journey.router.ts').replace(
@@ -19,12 +21,26 @@ describe('Creator Journey flag gates', () => {
     );
     // One chunk per procedure, whatever kind of procedure it is or how it is written.
     const procedures = router.split(/^ {2}(?=\w+: \w+Procedure(?!\w))/m).slice(1);
-    expect(procedures).toHaveLength(3);
-    for (const procedure of procedures) {
+    expect(procedures).toHaveLength(7);
+    const gated = procedures.filter((procedure) => !procedure.startsWith(`${OWNER_FLAGGED}:`));
+    expect(gated).toHaveLength(6);
+    for (const procedure of gated) {
       expect(procedure, procedure.split(':')[0]).toContain(
         ".use(isFlagProtected('creatorJourney'))"
       );
     }
+  });
+
+  // Its caller is a link-preview crawler, which has no flag of its own, so the card's OWNER must have
+  // the flag instead. Do not put it behind the viewer's flag: every share link would preview nothing.
+  it(`checks the owner's flag, not the viewer's, in ${OWNER_FLAGGED}`, () => {
+    const router = read('src/server/routers/creator-journey.router.ts');
+    const procedure = router.slice(router.indexOf(`${OWNER_FLAGGED}:`)).split(/\n {2}\w+: /)[0];
+    expect(procedure).toContain('isMilestoneShareable(input)');
+    expect(procedure).not.toContain('isFlagProtected');
+    expect(read('src/server/services/creator-milestone-share.service.ts')).toMatch(
+      /if \(!\(await isCreatorJourneyOnFor\(\{ id: userId, isModerator: row\.isModerator \}\)\)\) return \[\];/
+    );
   });
 
   it('keeps getLadder out of the edge cache, which would serve it past the flag', () => {

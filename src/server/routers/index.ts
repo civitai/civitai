@@ -10,6 +10,9 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  appFeedback: lazy(() =>
+    import('~/server/routers/app-feedback.router').then((m) => m.appFeedbackRouter)
+  ),
   appCollaborators: lazy(() =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter)
   ),
@@ -51,6 +54,7 @@ export const appRouter = router({
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
+  ratingReview: lazy(() => import('./rating-review.router').then((m) => m.ratingReviewRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),

@@ -30,6 +30,7 @@ const EXPECTED: Record<PromptTriggerCategory, boolean> = {
   inappropriate_poi: false,
   harmful_combo: false,
   external: false,
+  over_length: false,
 };
 
 describe('isSoftBlock — the overridable boundary', () => {
@@ -54,10 +55,22 @@ describe('isSoftBlock — the overridable boundary', () => {
     }
   );
 
-  it('an empty trigger set is hard — the over-length block reports no triggers', () => {
+  it('an empty trigger set is hard', () => {
     expect(isSoftBlock([])).toBe(false);
+  });
+
+  // The trigger itself is the fix: `auditPromptServer` raises a regex block only when
+  // `triggers.length > 0`, so an over-length refusal with no trigger skipped the regex layer.
+  // Pinned as a literal so neither the category nor the user-facing text can drift unseen.
+  it('the over-length refusal carries exactly one hard over_length trigger', () => {
     const overLength = auditPromptEnriched('a'.repeat(20001));
     expect(overLength.success).toBe(false);
+    expect(overLength.triggers).toEqual([
+      {
+        category: 'over_length',
+        message: 'Prompt exceeds the maximum allowed length (20,000 characters)',
+      },
+    ]);
     expect(isSoftBlock(overLength.triggers)).toBe(false);
   });
 });

@@ -8,6 +8,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   cosmeticCache,
   cosmeticEntityCaches,
+  eventDecorationEntityCaches,
   refreshOwnedStickerCache,
   userCosmeticCache,
   userOwnedStickerCache,
@@ -17,7 +18,8 @@ import type {
   EquipCosmeticInput,
   GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
-  SetCosmeticFlagInput,
+  SetStickerPlacementRatingInput,
+  UpdateEventHatFitInput,
 } from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
@@ -25,9 +27,29 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import {
+  getEventDecorationDefinition,
+  isEventDecorationData,
+} from '~/shared/constants/event-decoration.constants';
+import type { EventViewer } from '~/server/events/event-access';
+import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
+import {
+  getVisibleDecorationEvents,
+  isEventDecorationPlayable,
+} from '~/server/events/event-decoration-access';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
-import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
+import {
+  STICKER_PLACEMENT_RATING_MASK,
+  stickerPlacementRatingFlags,
+} from '~/shared/constants/cosmetic-flags.constants';
+import type {
+  EventDecorationCosmetic,
+  StickerCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
@@ -119,17 +141,17 @@ export async function getStickerAttribution({ ids }: GetStickerCosmeticsInput) {
 }
 
 /**
- * Sets or clears one moderator flag in a single statement, so two moderators
- * flipping different bits cannot overwrite each other's.
+ * Writes both placement-rating bits in one statement, so the two can never be
+ * set together and a moderator flipping some other bit is not overwritten.
  */
-export async function setCosmeticFlag({ id, flag, enabled }: SetCosmeticFlagInput) {
+export async function setStickerPlacementRating({ id, rating }: SetStickerPlacementRatingInput) {
   const [row] = await dbWrite.$queryRaw<{ flags: number }[]>`
     UPDATE "Cosmetic"
-    SET flags = CASE WHEN ${enabled} THEN flags | ${flag} ELSE flags & ~${flag}::int END
-    WHERE id = ${id}
+    SET flags = (flags & ~${STICKER_PLACEMENT_RATING_MASK}::int) | ${stickerPlacementRatingFlags[rating]}
+    WHERE id = ${id} AND type = 'Sticker'::"CosmeticType"
     RETURNING flags
   `;
-  if (!row) throw throwBadRequestError("That cosmetic doesn't exist");
+  if (!row) throw throwBadRequestError("That sticker doesn't exist");
 
   await cosmeticCache.refresh(id);
   return { id, flags: row.flags };
@@ -197,7 +219,8 @@ export async function equipCosmeticToEntity({
   equippedToType,
   equippedToId,
   userId,
-}: EquipCosmeticInput & { userId: number }) {
+  isModerator,
+}: EquipCosmeticInput & { userId: number; isModerator?: boolean }) {
   const userCosmetic = await dbWrite.userCosmetic.findFirst({
     where: { userId, cosmeticId, claimKey },
     select: {
@@ -206,11 +229,15 @@ export async function equipCosmeticToEntity({
       equippedToType: true,
       forId: true,
       forType: true,
-      cosmetic: { select: { type: true } },
+      data: true,
+      cosmetic: { select: { type: true, data: true } },
     },
   });
 
   if (!userCosmetic) throw new Error("You don't have that cosmetic");
+  const eventDecoration = isEventDecorationData(userCosmetic.cosmetic.data)
+    ? userCosmetic.cosmetic.data
+    : undefined;
   // Same rule as equipCosmetic: stickers are owned, not equipped. This is the
   // other door into that state — it would hand the decoration renderer a `data`
   // shape with no cssFrame or offset, on an entity nobody chose it for.
@@ -219,24 +246,66 @@ export async function equipCosmeticToEntity({
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&
-    userCosmetic.forId !== equippedToId &&
-    userCosmetic.forType !== equippedToType
+    (userCosmetic.forId !== equippedToId || userCosmetic.forType !== equippedToType)
   ) {
     throw new Error('You cannot equip this cosmetic to this entity');
   }
+  if ((await getEntityOwnerId(equippedToType, equippedToId, dbWrite)) !== userId)
+    throw throwAuthorizationError('You can only decorate your own content');
+  const now = new Date();
+  let updated: { count: number } | undefined;
+  if (eventDecoration) {
+    const { moveCooldownMs } = await assertCanPlaceEventDecoration({
+      decoration: eventDecoration,
+      placedAt: getPlacedAt(userCosmetic.data),
+      equippedToType,
+      now,
+      user: { id: userId, isModerator },
+    });
+    // The cooldown is enforced by the write itself, not only by the read above: concurrent equips
+    // of one decoration all read the same placedAt, and each placement counts toward a score.
+    // Placed before the displacement below so a refused move leaves the target entity untouched.
+    // placedAt lives in `data` because equippedAt is cleared on unequip.
+    const count = await dbWrite.$executeRaw`
+      UPDATE "UserCosmetic"
+      SET "equippedToId" = ${equippedToId},
+          "equippedToType" = ${equippedToType}::"CosmeticEntity",
+          "equippedAt" = ${now},
+          "data" = (CASE WHEN jsonb_typeof("data") = 'object' THEN "data" ELSE '{}'::jsonb END)
+            || jsonb_build_object('placedAt', ${now.toISOString()}::text)
+      WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId} AND "claimKey" = ${claimKey}
+        AND ("data"->>'placedAt' IS NULL
+          OR ("data"->>'placedAt')::timestamptz <= ${new Date(now.getTime() - moveCooldownMs)})
+    `;
+    if (!count) throw throwBadRequestError('This was moved recently. Try again in a few minutes');
+    updated = { count };
+  }
 
-  // Unequip any cosmetic equipped on that entity
-  await dbWrite.userCosmetic.updateMany({
+  // An entity wears one frame and one event decoration: equipping either displaces only its own kind.
+  const onEntity = await dbWrite.userCosmetic.findMany({
     where: { userId, equippedToId, equippedToType },
-    data: { equippedToId: null, equippedToType: null, equippedAt: null },
+    select: { cosmeticId: true, claimKey: true, cosmetic: { select: { data: true } } },
   });
+  const displaced = onEntity.filter(
+    (x) =>
+      isEventDecorationData(x.cosmetic.data) === !!eventDecoration &&
+      !(x.cosmeticId === cosmeticId && x.claimKey === claimKey)
+  );
+  if (displaced.length)
+    await dbWrite.userCosmetic.updateMany({
+      where: {
+        userId,
+        OR: displaced.map((x) => ({ cosmeticId: x.cosmeticId, claimKey: x.claimKey })),
+      },
+      data: { equippedToId: null, equippedToType: null, equippedAt: null },
+    });
 
-  const updated = await dbWrite.userCosmetic.updateMany({
+  updated ??= await dbWrite.userCosmetic.updateMany({
     where: { userId, cosmeticId, claimKey },
-    data: { equippedToId, equippedToType, equippedAt: new Date() },
+    data: { equippedToId, equippedToType, equippedAt: now },
   });
 
-  await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
+  await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
@@ -254,7 +323,7 @@ export async function equipCosmeticToEntity({
 
   // Clear cache for previous entity if it was equipped
   if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
-    await cosmeticEntityCaches[userCosmetic.equippedToType].refresh(userCosmetic.equippedToId);
+    await refreshEntityDecorationCaches(userCosmetic.equippedToType, [userCosmetic.equippedToId]);
   }
 
   return updated;
@@ -272,7 +341,7 @@ export async function unequipCosmetic({
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
 
-  await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
+  await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
@@ -300,6 +369,85 @@ export async function getCosmeticsForEntity({
 }) {
   if (ids.length === 0) return {};
   return await cosmeticEntityCaches[entity].fetch(ids);
+}
+
+/**
+ * The event decoration each entity wears, for events this viewer may see (event-access.ts). Skips
+ * the read while none lets this type wear one.
+ */
+export async function getEventDecorationsForEntity({
+  ids,
+  entity,
+  writeBack,
+  viewer,
+}: {
+  ids: number[];
+  entity: CosmeticEntity;
+  /** false on pages nobody revisits, so a walk does not fill Redis with misses. */
+  writeBack?: boolean;
+  /**
+   * Who is looking. Before launch only flagged users see decorations, so pass one only where the
+   * response is never cached for someone else; omitted, the viewer is treated as signed out.
+   */
+  viewer?: EventViewer;
+}): Promise<Record<number, WithClaimKey<EventDecorationCosmetic>>> {
+  if (ids.length === 0) return {};
+  const events = await getVisibleDecorationEvents(entity, viewer);
+  if (!events.size) return {};
+  const decorations = await eventDecorationEntityCaches[entity].fetch(ids, { writeBack });
+  const visible: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
+  for (const [id, decoration] of Object.entries(decorations))
+    if (isEventDecorationData(decoration.data) && events.has(decoration.data.event))
+      visible[Number(id)] = decoration;
+  return visible;
+}
+
+async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
+  await cosmeticEntityCaches[type].refresh(ids);
+  await eventDecorationEntityCaches[type].refresh(ids);
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function getPlacedAt(userData: unknown) {
+  const placedAt = asObject(userData).placedAt;
+  return typeof placedAt === 'string' ? new Date(placedAt) : undefined;
+}
+
+/**
+ * An event decoration counts toward its owner's team score, so it may only go on a type its event
+ * allows, while that event runs, and not again within the event's cooldown.
+ */
+async function assertCanPlaceEventDecoration({
+  decoration,
+  placedAt,
+  equippedToType,
+  now,
+  user,
+}: {
+  decoration: EventDecorationData;
+  placedAt: Date | undefined;
+  equippedToType: CosmeticEntity;
+  now: Date;
+  user: EventViewer;
+}) {
+  const definition = getEventDecorationDefinition(decoration.event);
+  if (!definition || !(await isEventDecorationPlayable(definition, user, now)))
+    throw throwBadRequestError('This can only be used while its event is running');
+  if (!definition.entityTypes.includes(equippedToType))
+    throw throwBadRequestError('This cannot be put on that kind of content');
+
+  const readyAt = placedAt && new Date(placedAt.getTime() + definition.moveCooldownMs);
+  if (readyAt && readyAt > now)
+    throw throwBadRequestError(
+      `This was moved recently. You can move it again at ${readyAt.toISOString()}`
+    );
+
+  return definition;
 }
 
 export const grantCosmetics = async ({
@@ -387,7 +535,7 @@ export async function revokeCosmeticsFromUsers({
     ]);
   }
   for (const [type, ids] of equippedByType) {
-    await cosmeticEntityCaches[type].refresh(ids);
+    await refreshEntityDecorationCaches(type, ids);
     if (type === 'Model')
       await modelsSearchIndex.queueUpdate(
         ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
@@ -577,6 +725,45 @@ export async function updateCosmetic({
   }
 
   return cosmetic;
+}
+
+/**
+ * Sets one event hat's placement for everyone wearing it. The fit is merged in SQL, field by field,
+ * so a save can never drop the art's measured shape, nor a field another moderator just set.
+ */
+export async function updateEventHatFit({ id, fit }: UpdateEventHatFitInput) {
+  const fields = Object.entries(fit).filter(([, value]) => value !== undefined);
+  const set = Object.fromEntries(fields.filter(([, value]) => value !== null));
+  const unset = fields.filter(([, value]) => value === null).map(([key]) => key);
+  const [updated] = await dbWrite.$queryRaw<{ data: Prisma.JsonValue }[]>`
+    UPDATE "Cosmetic"
+    SET data = jsonb_set(
+          data,
+          '{fit}',
+          (CASE WHEN jsonb_typeof(data->'fit') = 'object' THEN data->'fit' ELSE '{}'::jsonb END
+            - ${unset}::text[]) || ${JSON.stringify(set)}::jsonb
+        ),
+        "updatedAt" = now()
+    WHERE id = ${id} AND jsonb_typeof(data->'event') = 'string' AND data->>'type' = 'hat'
+    RETURNING data
+  `;
+  if (!updated) throw throwBadRequestError('Only an event hat has a fit to edit');
+
+  const worn = await dbWrite.userCosmetic.findMany({
+    where: { cosmeticId: id, equippedToId: { not: null } },
+    select: { equippedToId: true, equippedToType: true },
+  });
+  // First: the event decoration caches copy the hat's data out of this one. The frame caches
+  // (cosmeticEntityCaches) never hold an event hat, so they need nothing.
+  await cosmeticCache.refresh([id]);
+  await refreshEventDecorations(
+    worn.flatMap(({ equippedToId, equippedToType }) =>
+      equippedToId !== null && equippedToType !== null
+        ? [{ entityType: equippedToType, entityId: equippedToId }]
+        : []
+    )
+  );
+  return { id, data: updated.data };
 }
 
 export async function deleteCosmetic({ id }: { id: number }) {

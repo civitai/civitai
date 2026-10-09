@@ -20,7 +20,11 @@
     "./training-audio": "./src/training-audio.ts",
     "./training-custom-model": "./src/training-custom-model.ts",
     "./job-queue": "./src/job-queue.ts",
-    "./json-ld": "./src/json-ld.ts"
+    "./rated-entity-sql": "./src/rated-entity-sql.ts",
+    "./rating-review": "./src/rating-review.ts",
+    "./crucible": "./src/crucible.ts",
+    "./json-ld": "./src/json-ld.ts",
+    "./resolution-reasons": "./src/resolution-reasons.ts"
   },
   "scripts": {
     "test": "vitest run",

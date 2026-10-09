@@ -812,6 +812,15 @@ describe('evictable', () => {
     expect(byDefault.body.evictable).toBe(false);
     expect(byFileId.body.evictable).toBe(false);
   });
+
+  // Promotion pins a version WITHOUT writing NotEvictable, so the pin lifts when the auction job
+  // drops the version from CoveredCheckpoint. Setting the flag instead would outlive the promotion.
+  it('a promoted version is not evictable, and becomes evictable again once not promoted', async () => {
+    const promoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: true });
+    const demoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: false });
+    expect(promoted.body.evictable).toBe(false);
+    expect(demoted.body.evictable).toBe(true);
+  });
 });
 
 describe('additionalResourceCharge', () => {
@@ -839,5 +848,42 @@ describe('additionalResourceCharge', () => {
     expect((body as Body & { additionalResourceCharge?: boolean }).additionalResourceCharge).toBe(
       charge
     );
+  });
+});
+
+describe('payoutEnabled and tipsEnabled', () => {
+  const payouts = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { payoutEnabled, tipsEnabled } = body as Body & {
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { payoutEnabled, tipsEnabled };
+  };
+
+  it('an ordinary version gets both', async () => {
+    expect(await payouts({})).toEqual({ payoutEnabled: true, tipsEnabled: true });
+  });
+
+  it('a licensing fee turns off compensation but NOT tips', async () => {
+    expect(await payouts({ licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('an owner with DisablePayout gets neither', async () => {
+    expect(await payouts({ userFlags: 1 })).toEqual({ payoutEnabled: false, tipsEnabled: false });
+  });
+
+  it('DisablePayout wins over a licensing fee', async () => {
+    expect(await payouts({ userFlags: 1, licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  it('a system-owned (-1) version gets no tips', async () => {
+    expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
   });
 });

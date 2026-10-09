@@ -25,9 +25,57 @@ describe('sticker placement draft store', () => {
       selectedDraftId: null,
       targetImageId: null,
       trayOpen: false,
+      previewing: false,
       surface: null,
       tray: null,
       interaction: null,
+    });
+  });
+
+  describe('previewing without the controls', () => {
+    it('turns on while there is a draft to look at', () => {
+      withDrafts(1);
+      state().setPreviewing(true);
+      expect(state().previewing).toBe(true);
+
+      state().setPreviewing(false);
+      expect(state().previewing).toBe(false);
+    });
+
+    // With nothing drafted the toggle is not drawn, and a stuck flag would hide
+    // the chrome of the next sticker dragged out.
+    it('refuses to turn on with no drafts', () => {
+      state().open(IMAGE);
+      state().setPreviewing(true);
+      expect(state().previewing).toBe(false);
+    });
+
+    it('ends when the panel is reopened on the same image', () => {
+      withDrafts(1);
+      state().setPreviewing(true);
+      state().open(IMAGE);
+      expect(state().previewing).toBe(false);
+      expect(state().drafts).toHaveLength(1);
+    });
+
+    it('ends with the session', () => {
+      withDrafts(1);
+      state().setPreviewing(true);
+      state().open(OTHER_IMAGE);
+      expect(state().previewing).toBe(false);
+
+      withDrafts(1);
+      state().setPreviewing(true);
+      state().close();
+      expect(state().previewing).toBe(false);
+    });
+
+    it('ends when the last draft is removed with the panel still open', () => {
+      withDrafts(1);
+      state().setPreviewing(true);
+      state().cancelDraft();
+      expect(state().trayOpen).toBe(true);
+      expect(state().previewing).toBe(false);
     });
   });
 

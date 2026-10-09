@@ -68,6 +68,15 @@ describe('backfill-creator-milestones while Creator Journey is not public', () =
     expect(mocks.grantMilestoneCosmeticsBatch).toHaveBeenCalled();
   });
 
+  // The write path below this guard is the score-tier backfill, so falling through would run that.
+  it('refuses to write activity grants itself, even with the flag public', async () => {
+    mocks.isFlipt.mockResolvedValue(true);
+    const { status } = await call({ action: 'activity', dryRun: 'false' });
+    expect(status).toBe(400);
+    expect(mocks.backfillScoreTierBatch).not.toHaveBeenCalled();
+    expect(mocks.grantMilestoneCosmeticsBatch).not.toHaveBeenCalled();
+  });
+
   it('writes tier grants once the flag is public', async () => {
     mocks.isFlipt.mockResolvedValue(true);
     const { status } = await call({ dryRun: 'false' });
