@@ -138,6 +138,13 @@ describe('getListingDetail — restrictedAudience, viewer × level on an APPROVE
   // owner arm of the derivation is reached on the moderator preview and by any future
   // owner bypass of the gate; see the pure matrix in `app-listing-visibility.restricted-
   // audience.test.ts`.
+  //
+  // ⚠️ CONSEQUENCE, STATED SO THIS MATRIX IS NOT READ AS MORE THAN IT IS: every cell that
+  // serves a detail is one the viewer's COHORT already admits, so this matrix cannot tell
+  // whether `getListingDetail` threads `opts.viewer` into the derivation at all — a mutant
+  // passing the anonymous viewer instead stays green here. That identity wiring is pinned
+  // only by the grid suite below (same `restrictedAudienceForRow` helper) and the router
+  // test that asserts the viewer handed to both procs.
   const LEVELS = ['private', 'moderators', 'testers', 'public', null] as const;
   const EXPECTED: Record<Viewer, ReadonlyArray<string | null>> = {
     owner: ['NOT_FOUND', 'NOT_FOUND', 'NOT_FOUND', null, null],
@@ -160,12 +167,6 @@ describe('getListingDetail — restrictedAudience, viewer × level on an APPROVE
     seededVisibility = 'public';
     const detail = await getListingDetail({ slug: 'ra-app' }, { scope: 'full', floor: 'public' });
     expect(detail?.slug).toBe('ra-app');
-  });
-
-  it('an OMITTED viewer is anonymous: a `testers` floor without identity still learns only what its cohort admits', async () => {
-    seededVisibility = 'testers';
-    const detail = await getListingDetail({ slug: 'ra-app' }, { scope: 'full', floor: 'testers' });
-    expect(detail?.restrictedAudience).toBe('testers');
   });
 });
 
@@ -221,6 +222,30 @@ describe('listAvailableListings — restrictedAudience on the GRID card', () => 
   it('a MISSING visibility column (manual migration outstanding) renders no badge, not a crash', async () => {
     seededVisibility = 'THROW_P2022';
     expect(await cardFor('moderator')).toBeNull();
+  });
+
+  it('🔴 an OMITTED viewer is ANONYMOUS: a stale `moderators` row on the `public` floor gets no badge', async () => {
+    // Pins the fail-closed default. A default of "moderator" (or any identity) would return
+    // `moderators` here; anonymous on the `public` floor can be told nothing.
+    seededVisibility = 'moderators';
+    const { items } = await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 10 } as never,
+      { scope: 'full', floor: 'public' }
+    );
+    expect(items).toHaveLength(1);
+    expect((items[0] as { restrictedAudience: unknown }).restrictedAudience).toBeNull();
+  });
+
+  it('an anonymous `public`-floor page issues NO level read (nothing it could disclose)', async () => {
+    seededVisibility = 'moderators';
+    await cardFor('anonymous');
+    const levelReads = dbMock.dbRead.$queryRaw.mock.calls.filter((c) => isVisibilityRead(c[0]));
+    expect(levelReads).toHaveLength(0);
+    // Positive control: a signed-in viewer on the SAME floor does read it (they may own a row).
+    await cardFor('regular');
+    expect(dbMock.dbRead.$queryRaw.mock.calls.filter((c) => isVisibilityRead(c[0]))).toHaveLength(
+      1
+    );
   });
 
   it('ANY other level-read fault renders no badge rather than failing the grid', async () => {

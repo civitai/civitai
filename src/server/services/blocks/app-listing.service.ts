@@ -1552,6 +1552,13 @@ export async function listAvailableListings(
   // column — or any other read fault — degrades to an empty map ⇒ every card `null`; a
   // cosmetic badge never fails the grid.
   // `status` is spread in for that check only; it is never projected.
+  //
+  // SKIPPED for an anonymous `public`-floor viewer: no owner, no moderator, and the `public`
+  // floor admits no restricted level, so `restrictedAudienceForViewer` can only answer `null`
+  // and the read could never reach the response (the anonymous `/apps` grid and every public
+  // REST page). A signed-in viewer on the same floor still needs it — they may OWN a row.
+  const viewer = opts.viewer ?? ANONYMOUS_LISTING_VIEWER;
+  const levelCanDisclose = viewer.userId !== null || viewer.isModerator || floor !== 'public';
   const [hydrated, betaById, subListingById, visibilityById] = await Promise.all([
     listingIds.length
       ? dbRead.appListing.findMany({
@@ -1566,9 +1573,10 @@ export async function listAvailableListings(
       browsingLevel: opts.viewerBrowsingLevel,
       redCapable,
     }),
-    readListingVisibilityManyForRender(listingIds, dbRead),
+    levelCanDisclose
+      ? readListingVisibilityManyForRender(listingIds, dbRead)
+      : Promise.resolve(new Map<string, { visibility: AppListingVisibility | null }>()),
   ]);
-  const viewer = opts.viewer ?? ANONYMOUS_LISTING_VIEWER;
   const byId = new Map(hydrated.map((r) => [r.id, r] as const));
   const items: StoreGridItem[] = [];
   for (const id of pageIds) {

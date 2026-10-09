@@ -919,10 +919,10 @@ describe('listAvailableListings — query building + pagination', () => {
       limit: 20,
     });
     expect(items).toHaveLength(1);
-    // Exactly TWO $queryRaw: the id page, then the live per-page visibility-level read for
-    // the restricted-audience badge (which runs only once the page has rows). A mean
-    // re-read would be a third — and would come FIRST, consuming the queued id page.
-    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped. (The
+    // restricted-audience level read is also a `$queryRaw`, but it is skipped for this
+    // anonymous, `public`-floor call because it could disclose nothing.)
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
     const idPage = mockDbRead.$queryRaw.mock.calls[0]?.[0] as { sql: string; values: unknown[] };
     expect(idPage.sql).toContain('sort_key');
     // The pinned mean 0.25 is bound into the Bayesian key (C*m term).

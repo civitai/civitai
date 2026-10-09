@@ -72,6 +72,8 @@ import {
 } from '~/server/prom/store-scope.metrics';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+// TYPE-only: the service itself stays a lazy `await import()` in every proc below.
+import type { ListingViewer } from '~/server/services/blocks/app-listing.service';
 import {
   isListingAudienceFloor,
   type ListingAudienceFloor,
@@ -397,10 +399,9 @@ function applyStoreGates(
  * from the server-stamped session only — `isModerator` is the same flag
  * `resolveViewerAudienceFloor` trusts.
  */
-function listingViewerFromCtx(ctx: { user?: { id: number; isModerator?: boolean | null } }): {
-  userId: number | null;
-  isModerator: boolean;
-} {
+function listingViewerFromCtx(ctx: {
+  user?: { id: number; isModerator?: boolean | null };
+}): ListingViewer {
   return { userId: ctx.user?.id ?? null, isModerator: ctx.user?.isModerator === true };
 }
 
