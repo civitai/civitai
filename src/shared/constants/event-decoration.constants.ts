@@ -60,7 +60,7 @@ export type EventDecorationData = {
   fit?: EventDecorationFit;
 };
 
-/** The SQL twin of this test is `(data->>'event') IS NOT NULL`; keep the two in step. */
+/** The SQL twin of this test is `jsonb_typeof(data->'event') = 'string'`; keep the two in step. */
 export function isEventDecorationData(data: unknown): data is EventDecorationData {
   return (
     !!data && typeof data === 'object' && typeof (data as { event?: unknown }).event === 'string'

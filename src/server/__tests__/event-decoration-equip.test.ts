@@ -35,9 +35,12 @@ vi.mock('~/server/search-index', () => ({
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
 
-const { equipCosmeticToEntity, getEventDecorationsForEntity } = await import(
-  '~/server/services/cosmetic.service'
-);
+const {
+  equipCosmeticToEntity,
+  getEventDecorationsForEntity,
+  revokeCosmeticsFromUsers,
+  unequipCosmetic,
+} = await import('~/server/services/cosmetic.service');
 
 const OWNER = 7;
 const IMAGE = 501;
@@ -66,6 +69,12 @@ const equipHat = () =>
     equippedToType: 'Image',
   });
 
+const COOLDOWN_MS = 10 * 60 * 1000;
+const minutesAgo = (n: number) => new Date(DURING.getTime() - n * 60 * 1000);
+
+/** The values bound into the placement UPDATE, in template order. */
+const placementValues = () => db.$executeRaw.mock.calls.at(-1)!.slice(1);
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -77,6 +86,7 @@ beforeEach(() => {
   db.image.findUnique.mockResolvedValue({ userId: OWNER });
   db.userCosmetic.findMany.mockResolvedValue([]);
   db.userCosmetic.updateMany.mockResolvedValue({ count: 1 });
+  db.$executeRaw.mockResolvedValue(1);
 });
 afterEach(() => vi.useRealTimers());
 
@@ -88,6 +98,16 @@ describe('a frame and an event decoration coexist on one entity', () => {
     { cosmeticId: 10, claimKey: 'claimed', cosmetic: { data: FRAME } },
     { cosmeticId: 20, claimKey: 'tx-old', cosmetic: { data: HAT } },
   ];
+
+  it('looks only at what this user has on the target entity', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(db.userCosmetic.findMany.mock.calls[0][0].where).toEqual({
+      userId: OWNER,
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+  });
 
   it('equipping a hat displaces only the previous hat, never the frame', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
@@ -110,17 +130,20 @@ describe('a frame and an event decoration coexist on one entity', () => {
     expect(unequip.where).toEqual({ userId: OWNER, OR: [{ cosmeticId: 10, claimKey: 'claimed' }] });
   });
 
-  it('refreshes both decoration caches for the entity', async () => {
+  it('putting a hat back on the entity it is already on does not take it off again', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    db.userCosmetic.findMany.mockResolvedValue([
+      { cosmeticId: 1, claimKey: 'tx-1', cosmetic: { data: HAT } },
+    ]);
     await equipHat();
-    expect(caches.frame.Image.refresh).toHaveBeenCalledWith([IMAGE]);
-    expect(caches.event.Image.refresh).toHaveBeenCalledWith([IMAGE]);
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
   });
 });
 
 describe('placing an event decoration', () => {
   const expectRefused = async (message: RegExp) => {
     await expect(equipHat()).rejects.toThrow(message);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
     expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
   };
 
@@ -155,29 +178,56 @@ describe('placing an event decoration', () => {
         equippedToType: 'Post',
       })
     ).rejects.toThrow(/that kind of content/);
-    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+    expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('is refused within the cooldown, even after being taken off in between', async () => {
-    const fiveMinutesAgo = new Date(DURING.getTime() - 5 * 60 * 1000).toISOString();
-    db.userCosmetic.findFirst.mockResolvedValue(hatRow({ placedAt: fiveMinutesAgo }));
-    await expectRefused(/move it again at 2026-11-12T08:05:00.000Z/);
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow({ placedAt: minutesAgo(5).toISOString() }));
+    const readyAt = new Date(minutesAgo(5).getTime() + COOLDOWN_MS).toISOString();
+    await expectRefused(new RegExp(`move it again at ${readyAt.replace(/\./g, '\\.')}`));
   });
 
-  it('is allowed once the cooldown has passed, and records when it was placed', async () => {
-    const elevenMinutesAgo = new Date(DURING.getTime() - 11 * 60 * 1000).toISOString();
-    db.userCosmetic.findFirst.mockResolvedValue(hatRow({ placedAt: elevenMinutesAgo, lights: 3 }));
+  it('is allowed exactly when the cooldown ends', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow({ placedAt: minutesAgo(10).toISOString() }));
+    await equipHat();
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  // The read above cannot stop concurrent equips that all saw the same placedAt; the write must.
+  it('is refused when the write finds the cooldown already restarted, and moves nothing', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow({ placedAt: minutesAgo(30).toISOString() }));
+    db.userCosmetic.findMany.mockResolvedValue([
+      { cosmeticId: 20, claimKey: 'tx-old', cosmetic: { data: HAT } },
+    ]);
+    db.$executeRaw.mockResolvedValue(0);
+
+    await expect(equipHat()).rejects.toThrow(/moved recently/);
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+    expect(caches.event.Image.refresh).not.toHaveBeenCalled();
+  });
+
+  it('moves it in one write that records when it was placed and re-checks the cooldown', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow({ placedAt: minutesAgo(30).toISOString() }));
 
     await equipHat();
 
-    const place = db.userCosmetic.updateMany.mock.calls.at(-1)![0];
-    expect(place.where).toEqual({ userId: OWNER, cosmeticId: 1, claimKey: 'tx-1' });
-    expect(place.data).toEqual({
-      equippedToId: IMAGE,
-      equippedToType: 'Image',
-      equippedAt: DURING,
-      data: { placedAt: DURING.toISOString(), lights: 3 },
-    });
+    const sql = (db.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+    expect(sql).toMatch(/jsonb_build_object\('placedAt', \?::text\)/);
+    // Anchored on the whole condition: a weakened clause beside it would leave a fragment match.
+    expect(sql).toMatch(
+      /AND \("data"->>'placedAt' IS NULL\s+OR \("data"->>'placedAt'\)::timestamptz <= \?\)\s*$/
+    );
+    expect(placementValues()).toEqual([
+      IMAGE,
+      'Image',
+      DURING,
+      DURING.toISOString(),
+      OWNER,
+      1,
+      'tx-1',
+      minutesAgo(10),
+    ]);
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
   });
 
   it('leaves frames out of the event window and the cooldown record', async () => {
@@ -186,12 +236,43 @@ describe('placing an event decoration', () => {
 
     await equipHat();
 
-    const place = db.userCosmetic.updateMany.mock.calls.at(-1)![0];
-    expect(place.data).toEqual({
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.userCosmetic.updateMany.mock.calls.at(-1)![0].data).toEqual({
       equippedToId: IMAGE,
       equippedToType: 'Image',
       equippedAt: BIRTHDAY_2026_ENDS_AT,
     });
+  });
+});
+
+describe('taking a decoration off refreshes the event decoration cache too', () => {
+  it('on unequip', async () => {
+    await unequipCosmetic({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+    expect(caches.event.Image.refresh).toHaveBeenCalledWith([IMAGE]);
+    expect(caches.frame.Image.refresh).toHaveBeenCalledWith([IMAGE]);
+  });
+
+  it('on revoke', async () => {
+    db.userCosmetic.findMany.mockResolvedValue([{ equippedToId: IMAGE, equippedToType: 'Image' }]);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 1 });
+    await revokeCosmeticsFromUsers({ userIds: [OWNER], cosmeticIds: [1] });
+    expect(caches.event.Image.refresh).toHaveBeenCalledWith([IMAGE]);
+  });
+
+  it('when equipping moves a decoration off its previous entity', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue({
+      ...hatRow(),
+      equippedToId: 777,
+      equippedToType: 'Image',
+    });
+    await equipHat();
+    expect(caches.event.Image.refresh).toHaveBeenCalledWith([777]);
   });
 });
 

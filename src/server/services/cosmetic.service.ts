@@ -245,8 +245,9 @@ export async function equipCosmeticToEntity({
     throw new Error('You cannot equip this cosmetic to this entity');
   }
   const now = new Date();
-  if (eventDecoration)
-    await assertCanPlaceEventDecoration({
+  let updated: { count: number } | undefined;
+  if (eventDecoration) {
+    const { moveCooldownMs } = await assertCanPlaceEventDecoration({
       decoration: eventDecoration,
       placedAt: getPlacedAt(userCosmetic.data),
       userId,
@@ -254,6 +255,24 @@ export async function equipCosmeticToEntity({
       equippedToType,
       now,
     });
+    // The cooldown is enforced by the write itself, not only by the read above: concurrent equips
+    // of one decoration all read the same placedAt, and each placement counts toward a score.
+    // Placed before the displacement below so a refused move leaves the target entity untouched.
+    // placedAt lives in `data` because equippedAt is cleared on unequip.
+    const count = await dbWrite.$executeRaw`
+      UPDATE "UserCosmetic"
+      SET "equippedToId" = ${equippedToId},
+          "equippedToType" = ${equippedToType}::"CosmeticEntity",
+          "equippedAt" = ${now},
+          "data" = (CASE WHEN jsonb_typeof("data") = 'object' THEN "data" ELSE '{}'::jsonb END)
+            || jsonb_build_object('placedAt', ${now.toISOString()}::text)
+      WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId} AND "claimKey" = ${claimKey}
+        AND ("data"->>'placedAt' IS NULL
+          OR ("data"->>'placedAt')::timestamptz <= ${new Date(now.getTime() - moveCooldownMs)})
+    `;
+    if (!count) throw throwBadRequestError('This was moved recently. Try again in a few minutes');
+    updated = { count };
+  }
 
   // An entity wears one frame and one event decoration: equipping either displaces only its own kind.
   const onEntity = await dbWrite.userCosmetic.findMany({
@@ -261,7 +280,9 @@ export async function equipCosmeticToEntity({
     select: { cosmeticId: true, claimKey: true, cosmetic: { select: { data: true } } },
   });
   const displaced = onEntity.filter(
-    (x) => isEventDecorationData(x.cosmetic.data) === !!eventDecoration
+    (x) =>
+      isEventDecorationData(x.cosmetic.data) === !!eventDecoration &&
+      !(x.cosmeticId === cosmeticId && x.claimKey === claimKey)
   );
   if (displaced.length)
     await dbWrite.userCosmetic.updateMany({
@@ -272,17 +293,9 @@ export async function equipCosmeticToEntity({
       data: { equippedToId: null, equippedToType: null, equippedAt: null },
     });
 
-  const updated = await dbWrite.userCosmetic.updateMany({
+  updated ??= await dbWrite.userCosmetic.updateMany({
     where: { userId, cosmeticId, claimKey },
-    data: {
-      equippedToId,
-      equippedToType,
-      equippedAt: now,
-      // equippedAt is cleared on unequip, so the cooldown keeps its own record of the last placement.
-      ...(eventDecoration && {
-        data: { ...asObject(userCosmetic.data), placedAt: now.toISOString() },
-      }),
-    },
+    data: { equippedToId, equippedToType, equippedAt: now },
   });
 
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
@@ -425,6 +438,7 @@ async function assertCanPlaceEventDecoration({
       : null; // No owner lookup for this type yet: refuse rather than guess.
   if (!owner || owner.userId !== userId)
     throw throwAuthorizationError('You can only decorate your own content');
+  return definition;
 }
 
 export const grantCosmetics = async ({

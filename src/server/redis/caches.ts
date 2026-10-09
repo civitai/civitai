@@ -300,7 +300,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
             AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
-            AND (c.data->>'event') IS NULL;
+            AND jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string';
         `;
         return Object.fromEntries(
           entityCosmetics.map((x) => [
@@ -350,7 +350,9 @@ export const eventDecorationEntityCaches = Object.fromEntries(
     createCachedObject<WithClaimKey<EventDecorationCosmetic>>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:event:${entity}`,
       idKey: 'equippedToId',
-      cacheNotFound: false,
+      // Read on every image feed page while an event runs, and almost no entity wears one, so
+      // misses are cached too. Equip, unequip and revoke refresh, which overwrites a cached miss.
+      notFoundTtl: CacheTTL.hour,
       staleWhileRevalidate: false,
       lookupFn: async (ids) => {
         const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
@@ -359,7 +361,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
             AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
-            AND (c.data->>'event') IS NOT NULL;
+            AND jsonb_typeof(c.data->'event') = 'string';
         `;
         const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
         const result: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
