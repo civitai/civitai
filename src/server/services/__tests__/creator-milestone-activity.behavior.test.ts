@@ -1065,12 +1065,17 @@ describe('compete-win detector', () => {
     await addPlace(1, CREATOR, 4);
     await addCrucible(2, { status: 'Active' });
     await addPlace(2, CREATOR, 1);
+    // Three creators above QUIET take the three prize places.
     await addCrucible(3);
+    for (const [position, userId] of [2101, 2102, 2103].entries())
+      await addPlace(3, userId, position + 1);
     await addPlace(3, QUIET, 4);
 
     await q(`UPDATE "CreatorMilestone" SET threshold = 2 WHERE key = 'compete:wins-5'`);
     try {
-      const rows = await candidatesOf(competeGroup().group);
+      const rows = (await candidatesOf(competeGroup().group)).filter((row) =>
+        [CREATOR, QUIET].includes(row.userId)
+      );
       expect(rows.map(({ userId, milestoneKey }) => ({ userId, milestoneKey }))).toEqual([
         { userId: CREATOR, milestoneKey: 'compete:wins-1' },
       ]);
@@ -1170,6 +1175,32 @@ describe('compete-win detector', () => {
     await addPlace(1, QUIET, 1);
     const rows = await candidatesOf(competeGroup().group);
     expect(rows.map((row) => row.userId)).toEqual([QUIET]);
+  });
+
+  // A Crucible pays one prize per creator, for their best entry, so the next creator moves up a
+  // prize place. The winner's stored position is not their prize place.
+  it('counts a Crucible win by the prize place paid, after each creator keeps only their best entry', async () => {
+    await addCrucible(1, { prizes: { 1: 50, 2: 0, 3: 50 } });
+    await addPlace(1, QUIET, 1);
+    await addPlace(1, QUIET, 2);
+    // Ranked 3rd, paid 2nd: the 0% place.
+    await addPlace(1, CREATOR, 3);
+    await addCrucible(2, { prizes: { 1: 50, 2: 30, 3: 20 } });
+    await addPlace(2, QUIET, 1);
+    await addPlace(2, QUIET, 2);
+    await addPlace(2, QUIET, 3);
+    // Ranked 4th, paid 2nd.
+    await addPlace(2, BANNED, 4);
+    await addPlace(2, TESTER + 100, 5);
+
+    const rows = await candidatesOf(competeGroup().group);
+    const won = rows.map((row) => row.userId).sort((a, b) => a - b);
+    // BANNED is a candidate (the grant step filters standing) and is ranked like anyone else.
+    expect(won).toEqual([QUIET, BANNED, TESTER + 100].sort((a, b) => a - b));
+    const [paid2nd] = await q<{ wins: number }>(activityValuesSql, [BANNED]);
+    expect(paid2nd.wins).toBe(1);
+    const [creator] = await q<{ wins: number }>(activityValuesSql, [CREATOR]);
+    expect(creator.wins).toBe(0);
   });
 
   // An undated grant is announced whenever anything is, so a Crucible missing its end would
