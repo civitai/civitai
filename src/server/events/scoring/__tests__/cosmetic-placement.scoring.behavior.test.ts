@@ -30,7 +30,7 @@ const {
 
 const MIGRATION = path.resolve(
   __dirname,
-  '../../../../../packages/civitai-db-schema/prisma/migrations/20261012120000_event_cosmetic_placement/migration.sql'
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261012130000_event_cosmetic_placement/migration.sql'
 );
 const db = { pg: null as unknown as PGlite };
 
