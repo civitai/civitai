@@ -446,9 +446,11 @@ export async function getFeedbackList(input: {
  *
  * Cheap enough to sit in `sidebar-counts.service.ts`' single `Promise.all` without `bounded()`: the
  * table is small, the producer is rate-limited to five submissions per user per hour, and the whole
- * map is behind a 60-second cache. Not index-only: `Feedback_status_createdAt_idx` narrows to `new`
- * but does not carry `area`, so the area filter reads the heap (PGlite EXPLAIN at 5,000 rows: a
- * bitmap heap scan; at tens of rows the planner seq-scans with or without the area filter).
+ * map is behind a 60-second cache. The plan depends on table size and vacuum state, so no plan shape
+ * is claimed here: at tens of rows the planner seq-scans; on PGlite at 5,000+ rows it chose a
+ * bitmap heap scan before VACUUM and an index-only scan on `Feedback_area_status_createdAt_idx`
+ * after `VACUUM ANALYZE`. The no-`bounded()` decision rests on the size and cache above, not on
+ * any particular plan.
  */
 export async function countNewFeedback(): Promise<number> {
   const row = await dbRead

@@ -318,7 +318,7 @@
     render above the table while an orphaned bulk refusal rendered below it — two DIFFERENT
     messages at once, not one refusal twice.
 
-    The hint is last for the reason it always was: "clear the filters" is the wrong advice when
+    The hint is last for the reason it always was: "change the filters" is the wrong advice when
     there is a refusal to show, and `refusalTarget === 'none'` is what says there is not.
   -->
   {#if pageError}
@@ -332,13 +332,16 @@
          region — a design change, not a move. The bar-gone gap is narrowed, not closed. -->
     <ErrorAlert message={orphanedBulkFailure} class="mb-4" />
   {:else if refusalTarget === 'none' && data.open !== null && !data.openVisible}
-    <!-- 🔴 THE LINK IS THE ANSWER, "clear the filters" IS THE WORKAROUND. `?open=` resolves against
+    <!-- 🔴 THE LINK IS THE ANSWER, changing the filters IS THE WORKAROUND. `?open=` resolves against
          the rows this view holds, so it can name a report the queue genuinely cannot show;
-         `/feedback/<id>` resolves whatever the filters say. Offer the thing that works first. -->
+         `/feedback/<id>` resolves whatever the filters say. Offer the thing that works first.
+         Not "clear the filters": with no area picked the view leaves out
+         `FEEDBACK_AREAS_EXCLUDED_BY_DEFAULT`, so for an app-feedback report clearing them can never
+         bring it into view, and this page does not load the missing row's area to say which. -->
     <p class="mb-4 text-sm text-dark-2">
       Report #{data.open} is not in this view —
       <a href={feedbackReportHref(data.open)} class={LINK_CLASS}>open it on its own page</a>, or
-      clear the filters.
+      change the filters to include it.
     </p>
   {/if}
 
