@@ -256,14 +256,15 @@ export function ScoredEventHero({
   );
 }
 
+// Label over value, as "You're on" sits over the team name, so both rows share baselines.
 function Figure({ label, value }: { label: string; value: ReactNode }) {
   return (
     <Stack gap={0} className="shrink-0">
+      <Text size="xs" c="dimmed" tt="uppercase" fw={700} lts={0.5}>
+        {label}
+      </Text>
       <Text fw={800} size="xl" className="tabular-nums">
         {value}
-      </Text>
-      <Text size="xs" c="dimmed">
-        {label}
       </Text>
     </Stack>
   );
