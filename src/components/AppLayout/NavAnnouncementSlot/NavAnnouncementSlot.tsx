@@ -1,4 +1,5 @@
 import { IconX } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -58,18 +59,16 @@ export function NavBannerStrip({
     >
       {banner.image && (
         <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+          {/* Sits just left of the CTA and dismiss button, fading in from the strip's colour. */}
           <EdgeImage
             src={banner.image}
             options={{ width: 450 }}
             hiDpi
             alt=""
-            className="absolute right-0 top-1/2 h-[260%] w-auto max-w-none translate-y-[-54%] sm:right-[4%]"
-          />
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage: `linear-gradient(90deg, ${background} 0%, ${background} 45%, transparent 90%)`,
-            }}
+            className={clsx(
+              'absolute right-8 top-1/2 h-[260%] w-auto max-w-none translate-y-[-54%] [mask-image:linear-gradient(to_right,transparent,black_70%)] sm:[mask-image:linear-gradient(to_right,transparent,black_45%)]',
+              banner.cta && 'sm:right-36'
+            )}
           />
         </div>
       )}
