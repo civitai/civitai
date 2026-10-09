@@ -774,9 +774,20 @@ export const getImageResourcesHandler = async ({
   }
 };
 
-export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
+export const getEntitiesCoverImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetEntitiesCoverImage;
+  ctx: Context;
+}) => {
   try {
-    return await getEntityCoverImage({ ...input, include: ['tags'] });
+    return await getEntityCoverImage({
+      ...input,
+      include: ['tags'],
+      // image.getEntitiesCoverImage is never cached, so its viewer's decorations are theirs alone.
+      eventDecorationViewer: ctx.user,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

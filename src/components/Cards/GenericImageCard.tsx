@@ -12,6 +12,11 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { getModelUrl } from '~/utils/string-helpers';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import { isImpressionEntityType } from '~/server/schema/track.schema';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
+
+const isCosmeticEntity = (value?: string): value is CosmeticEntity =>
+  !!value && (Object.values(CosmeticEntity) as string[]).includes(value);
 
 export function GenericImageCard({
   image,
@@ -70,6 +75,12 @@ export function GenericImageCard({
   const impressions: ImpressionTarget[] = [{ entityType: 'Image', entityId: image.id }];
   if (entityId && isImpressionEntityType(entityType)) impressions.push({ entityType, entityId });
 
+  // The server sends the hat of the entity this card stands for (getEntityCoverImage), not its cover's.
+  const wornOn: EventDecorationEntity =
+    entityId && isCosmeticEntity(entityType)
+      ? { entityType, entityId }
+      : { entityType: CosmeticEntity.Image, entityId: image.id };
+
   const cardContent = (
     <FeedCard
       impressions={impressions}
@@ -79,7 +90,7 @@ export function GenericImageCard({
       href={disabled ? undefined : url}
       frameDecoration={image.cosmetic}
       eventDecoration={image.eventDecoration?.data}
-      eventDecorationOn={{ entityType: 'Image', entityId: image.id }}
+      eventDecorationOn={wornOn}
       aspectRatio="portrait"
       useCSSAspectRatio
     >
