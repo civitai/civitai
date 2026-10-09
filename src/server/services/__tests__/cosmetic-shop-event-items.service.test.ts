@@ -344,6 +344,22 @@ describe('buying an event-gated item (team hat)', () => {
       mocks.shopItemFindUnique.mockResolvedValue(hatRow({ event: UNREGISTERED_EVENT }));
       await expectUnknown(retry());
     });
+
+    // Teamless, so nothing after the event lookup would refuse it either.
+    it('a teamless item of an event no longer registered is still unknown, and not charged', async () => {
+      const row = hatRow({ event: UNREGISTERED_EVENT });
+      mocks.shopItemFindUnique.mockResolvedValue({
+        ...row,
+        cosmetic: { ...row.cosmetic, data: hatData(undefined, UNREGISTERED_EVENT) },
+      });
+      await expectUnknown(retry());
+    });
+
+    // The flag is the kill switch: a retry does not outlive it.
+    it('with the flag off for the buyer, still unknown, and not charged', async () => {
+      testerFlag.reset({ testers: [] });
+      await expectUnknown(retry());
+    });
   });
 
   it('sells in the last instant before the end', async () => {
