@@ -272,7 +272,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     // Bounded: the client's own retry is off and each attempt has a deadline.
     expect(mocks.refundMultiTx.mock.calls[0][1]).toMatchObject({
       retries: 0,
-      timeoutMs: expect.any(Number),
+      timeoutMs: 10_000,
     });
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
     expect(mocks.refundMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toContain(KEY);
@@ -299,6 +299,14 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     mocks.createMultiTx.mockResolvedValue(legs(false));
     mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
     mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE - 1 });
+
+    await expectStateUnknown(purchase());
+  });
+
+  it('a refund response with no total is reported as unknown, not as covered', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+    mocks.refundMultiTx.mockResolvedValue({});
 
     await expectStateUnknown(purchase());
   });

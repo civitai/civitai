@@ -114,6 +114,8 @@ export async function refundShopCharge(
     throw purchaseStateUnknown({ ...context, refundError }, 'refund failed');
   }
   if (refunded === 'already-refunded') return;
-  if (refunded.totalRefunded < context.amount)
+  // Not `<`: the response is schema-checked upstream, but a missing total must
+  // still never read as covered here.
+  if (!(refunded.totalRefunded >= context.amount))
     throw purchaseStateUnknown(context, 'refund did not cover the charge');
 }

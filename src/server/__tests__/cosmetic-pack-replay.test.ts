@@ -213,7 +213,7 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     refund.mockResolvedValue({ totalRefunded: 0 });
 
     await expectStateUnknown(buy(KEY));
-    expect(refund.mock.calls[0][1]).toMatchObject({ retries: 0, timeoutMs: expect.any(Number) });
+    expect(refund.mock.calls[0][1]).toMatchObject({ retries: 0, timeoutMs: 10_000 });
   });
 
   it('a refund the ledger already holds (409) counts as refunded: a refusal', async () => {
@@ -231,6 +231,8 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     refund.mockRejectedValue(new Error('ledger down'));
 
     await expectStateUnknown(buy(KEY));
+    // Three attempts, then "state unknown".
+    expect(refund).toHaveBeenCalledTimes(3);
   });
 
   it('without a key, still charges under a fresh random id (control)', async () => {
