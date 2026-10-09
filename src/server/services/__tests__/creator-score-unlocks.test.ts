@@ -104,7 +104,7 @@ describe('creator score unlock registry', () => {
       'daily-posts': 'total',
       'comment-rate-limit': 'total',
       'reaction-rate-limit': 'total',
-      'daily-articles': 'articles',
+      'daily-articles': 'total',
       'challenge-create': 'total',
       'monetize-pricing': 'total',
       'monetize-sales': 'total',
@@ -205,14 +205,20 @@ describe('creator score unlock registry', () => {
     }
   });
 
-  it('each daily article tier takes effect at its registry threshold, on the articles score', () => {
+  // A product decision, not an oversight: article limits were keyed on the articles category score and
+  // were moved onto the total so every Creator Score gate compares the number the user can see.
+  it('each daily article tier takes effect at its registry threshold, on the total, not the articles score', () => {
     for (const { key, minScore, label } of withPrefix('daily-articles:')) {
       const limit = labelNumber(label, /up to (\d+) articles/);
       const day = (user: SessionUser) => effectiveLimit(articleRateLimits, CacheTTL.day, user);
-      expect(day(sessionUser({ total: 10_000_000, articles: minScore - 1 })), key).toBeLessThan(
+      expect(day(sessionUser({ total: minScore - 1, articles: 10_000_000 })), key).toBeLessThan(
         limit
       );
-      expect(day(sessionUser({ articles: minScore })), key).toBe(limit);
+      expect(day(sessionUser({ total: minScore })), key).toBe(limit);
+      expect(
+        day(sessionUser({ total: String(minScore * 10) as unknown as number })),
+        `${key} string total`
+      ).toBeLessThan(limit);
     }
   });
 
@@ -277,17 +283,16 @@ describe('nextCreatorScoreUnlocks', () => {
     expect(pending()).toEqual(['creator-program', 'placement-price-cap:sticker:100000']);
   });
 
-  it('leaves the articles tiers out unless an articles score is passed', () => {
-    const top = Math.max(...compiled.map((u) => u.minScore));
-    expect(nextCreatorScoreUnlocks(compiled, { total: top })).toEqual([]);
-    expect(nextCreatorScoreUnlocks(compiled, { total: top, articles: 0 })).toEqual([
-      withPrefix('daily-articles:')[0],
-    ]);
+  it('points a total just short of a daily article tier at that tier', () => {
+    for (const { key, minScore } of withPrefix('daily-articles:')) {
+      const next = nextCreatorScoreUnlocks(compiled, { total: minScore - 1 }).map((u) => u.key);
+      expect(next, key).toContain(key);
+    }
   });
 
   it('is empty when everything is reached', () => {
     const top = Math.max(...compiled.map((u) => u.minScore));
-    expect(nextCreatorScoreUnlocks(compiled, { total: top, articles: top })).toEqual([]);
+    expect(nextCreatorScoreUnlocks(compiled, { total: top })).toEqual([]);
   });
 });
 

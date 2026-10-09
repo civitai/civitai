@@ -82,12 +82,12 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       source: 'compiled',
     },
     ...dailyArticleTiers.map(
-      ({ minArticlesScore, limit }): CreatorScoreUnlock => ({
-        key: `daily-articles:${minArticlesScore}`,
-        minScore: minArticlesScore,
+      ({ minScore, limit }): CreatorScoreUnlock => ({
+        key: `daily-articles:${minScore}`,
+        minScore,
         label: `Publish up to ${limit} articles a day`,
         surface: 'articles',
-        scoreKind: 'articles',
+        scoreKind: 'total',
         source: 'compiled',
       })
     ),

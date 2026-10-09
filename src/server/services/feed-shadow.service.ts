@@ -8,6 +8,7 @@ import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/cl
 import { traceContextHeaders } from '~/server/utils/otel-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import { encodeFeedCursor, parseFeedCursor } from '~/server/common/feed-cursor';
+import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 import {
   buildFeedRequestRow,
   type CapturableSearchInput,
@@ -76,6 +77,14 @@ const LEVELS = [1, 2, 4, 8, 16, 32];
 // The feed service's own ceiling on userIds.
 const MAX_USER_IDS = 10_000;
 const MAX_FOLLOWED = MAX_USER_IDS;
+// The feed service's ceilings on a hub's sources and keep-out lists.
+const MAX_HUB = {
+  users: 50,
+  versions: 750,
+  tagGroups: 50,
+  tagsPerGroup: 50,
+  excludedTagGroups: 20,
+};
 // Filters the candidate has no dimension for; the app resolves the server-side lists
 // (hidden) inside the search functions, out of this hook's reach.
 const UNSUPPORTED_KEYS = [
@@ -83,7 +92,6 @@ const UNSUPPORTED_KEYS = [
   'postIds',
   'collectionId',
   'collectionTagId',
-  'hubId',
   'reviewId',
   'prioritizedUserIds',
   'imageId',
@@ -149,6 +157,9 @@ export function mapSearchInputToFeedQuery(
     if (present(input.userId) || input.followed === true) return skip('flag:newCreators:userId');
   }
 
+  const hub = present(input.hubId) ? mapHubSources(input) : undefined;
+  if (hub && !hub.ok) return skip(hub.reason);
+
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);
   const period = String(input.period ?? 'AllTime');
@@ -200,8 +211,13 @@ export function mapSearchInputToFeedQuery(
   if (input.useCombinedNsfwLevel) params.set('combinedLevels', '1');
   if (tags.length) params.set('tags', tags.join(','));
   if (excludedTags.length) params.set('excludedTags', excludedTags.join(','));
-  const excludedUsers = ints(input.excludedUserIds);
+  // The hub's own refusals first: the list is cut at the feed's limit, and a hub exclusion lost
+  // to the cut is content its owner said to keep out.
+  const excludedUsers = [
+    ...new Set([...(hub?.excludedUserIds ?? []), ...ints(input.excludedUserIds)]),
+  ];
   if (excludedUsers.length) params.set('excludedUserIds', excludedUsers.slice(0, 1000).join(','));
+  if (hub) for (const [key, value] of hub.params) params.set(key, value);
   if (versionIds) params.set('versionIds', versionIds.join(','));
   if (userId) params.set('userIds', String(userId));
   const followedIds = ints(followed);
@@ -240,6 +256,73 @@ export function mapSearchInputToFeedQuery(
   // sorts page a live set, so a cut there would compare different sets.
   if (before && sort === 'newest') params.set('before', String(before));
   return { ok: true, query: params.toString() };
+}
+
+type HubMapping =
+  | { ok: true; params: [string, string][]; excludedUserIds: number[] }
+  | { ok: false; reason: string };
+
+const tagGroupsParam = (groups: number[][]) => groups.map((g) => g.join(',')).join(';');
+
+/**
+ * A hub as the feed's any-of sources and keep-out lists. Anything that would send the request
+ * without a source, or with fewer exclusions than the hub holds, is refused instead: the first
+ * is the open feed served as someone's hub, the second is content the owner kept out.
+ */
+function mapHubSources(input: CapturableSearchInput): HubMapping {
+  const skip = (reason: string): HubMapping => ({ ok: false, reason });
+  const sources = input.hubSources;
+  if (!sources) return skip('input:hubId');
+  // The feed takes one driver: a hub's sources, or a creator, an id list or a gallery.
+  if (
+    present(input.userId) ||
+    input.followed === true ||
+    input.newCreators === true ||
+    present(input.ids) ||
+    present(input.model3dId)
+  )
+    return skip('hub:driver');
+  if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
+    return skip('hub:collections');
+
+  const whole = (list: number[]) => ints(list).length === list.length;
+  const groupsWhole = (groups: number[][]) => groups.every((g) => g.length > 0 && whole(g));
+  const { userIds, modelVersionIds, tagGroups, excluded } = sources;
+  if (
+    !whole(userIds) ||
+    !whole(modelVersionIds) ||
+    !groupsWhole(tagGroups) ||
+    !whole(excluded.userIds) ||
+    !whole(excluded.modelVersionIds) ||
+    !groupsWhole(excluded.tagGroups)
+  )
+    return skip('hub:ids');
+  if (!userIds.length && !modelVersionIds.length && !tagGroups.length) return skip('hub:none');
+
+  // The feed keeps a version's three attributions as one list, so it cannot leave one out.
+  if (modelVersionIds.length)
+    for (const flag of ['hideAutoResources', 'hideManualResources'] as const)
+      if (input[flag] === true) return skip(`flag:${flag}`);
+
+  if (userIds.length > MAX_HUB.users) return skip(`hub:users>${MAX_HUB.users}`);
+  if (modelVersionIds.length > MAX_HUB.versions) return skip(`hub:versions>${MAX_HUB.versions}`);
+  if (tagGroups.length > MAX_HUB.tagGroups) return skip(`hub:tagGroups>${MAX_HUB.tagGroups}`);
+  if (excluded.modelVersionIds.length > MAX_HUB.versions)
+    return skip(`hub:excludedVersions>${MAX_HUB.versions}`);
+  if (excluded.tagGroups.length > MAX_HUB.excludedTagGroups)
+    return skip(`hub:excludedTagGroups>${MAX_HUB.excludedTagGroups}`);
+  if ([...tagGroups, ...excluded.tagGroups].some((g) => g.length > MAX_HUB.tagsPerGroup))
+    return skip(`hub:tagsPerGroup>${MAX_HUB.tagsPerGroup}`);
+
+  const params: [string, string][] = [];
+  if (userIds.length) params.push(['anyUserIds', userIds.join(',')]);
+  if (modelVersionIds.length) params.push(['anyVersionIds', modelVersionIds.join(',')]);
+  if (tagGroups.length) params.push(['anyTagGroups', tagGroupsParam(tagGroups)]);
+  if (excluded.modelVersionIds.length)
+    params.push(['excludedVersionIds', excluded.modelVersionIds.join(',')]);
+  if (excluded.tagGroups.length)
+    params.push(['excludedTagGroups', tagGroupsParam(excluded.tagGroups)]);
+  return { ok: true, params, excludedUserIds: excluded.userIds };
 }
 
 export type FeedAnswer = {

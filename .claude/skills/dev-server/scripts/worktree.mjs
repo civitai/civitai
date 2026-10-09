@@ -13,6 +13,8 @@
 import { execFileSync } from 'child_process';
 import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
 import { isInside, samePath } from './paths.mjs';
+import { syncSkillEnv } from './skill-env.mjs';
+import { syncAppEnv } from './app-env.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -99,11 +101,11 @@ function unlinkReparsePoint(link) {
 }
 
 /**
- * `--is-ancestor` is useless here: the repo squash-merges, so a merged branch's tip is never an
+ * `--is-ancestor` against origin/main is useless here: the repo squash-merges, so a merged branch's tip is never an
  * ancestor of origin/main. It reported "not merged" for 24 of 26 branches on one run.
  */
-function prStatus(branch, cwd) {
-  const raw = spawnGh(
+export function prStatus(branch, cwd, gh = spawnGh) {
+  const raw = gh(
     [
       'pr',
       'list',
@@ -112,39 +114,61 @@ function prStatus(branch, cwd) {
       '--head',
       branch,
       '--json',
-      'number,state,isDraft',
+      'number,state,isDraft,isCrossRepository,headRefOid',
       '--limit',
-      '5',
+      '20',
     ],
     cwd
   );
   if (!raw) return { merged: null, label: 'PR state unknown (gh failed)' };
   try {
-    return describePrRows(JSON.parse(raw));
+    return describePrRows(JSON.parse(raw), tipIsIn(branch, cwd));
   } catch {
     return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
   }
 }
 
+/** A sha that is not in the local object store answers false, so an unknown PR head keeps the tree. */
+export function tipIsIn(branch, cwd) {
+  const tip = gitQuiet(['rev-parse', '--verify', `refs/heads/${branch}`], cwd);
+  return (sha) =>
+    Boolean(tip) &&
+    typeof sha === 'string' &&
+    (sha === tip || gitQuiet(['merge-base', '--is-ancestor', tip, sha], cwd) !== null);
+}
+
 /**
- * Everything below the merged/not-merged split was already in hand and thrown away, so an open PR, a
- * draft, a closed-unmerged PR and a branch with no PR at all all printed `no merged PR` — the four
- * cases a person deciding whether to delete a tree most needs told apart.
+ * `gh pr list --head` matches the branch NAME only, so a fork's PR or an old merged PR whose name was
+ * reused comes back too. Only a same-repo merge whose head holds the local tip clears the branch.
  */
-export function describePrRows(rows) {
+export function describePrRows(rows, holdsTip = () => false) {
   if (!Array.isArray(rows))
     return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
   const num = (r) => (typeof r.number === 'number' ? `#${r.number}` : 'of unknown number');
-  const merged = rows.find((r) => r.state === 'MERGED');
-  if (merged) return { merged: merged.number ?? null, label: `PR ${num(merged)} merged` };
-  // Deliberately not "no PR exists": `gh` here has been seen switching itself to an account with no
-  // visibility of this repo, which returns an empty list and exit 0. Saying none was FOUND keeps the
-  // four states apart without inviting anyone to delete a tree on the strength of an empty answer.
-  if (!rows.length) return { merged: null, label: 'gh found no PR for this branch' };
+  const forks = rows.filter((r) => r.isCrossRepository !== false);
+  rows = rows.filter((r) => r.isCrossRepository === false);
+  const merged = rows.filter((r) => r.state === 'MERGED');
+  const covering = merged.find((r) => holdsTip(r.headRefOid));
+  if (covering) return { merged: covering.number ?? null, label: `PR ${num(covering)} merged` };
   const open = rows.find((r) => r.state === 'OPEN');
   if (open) {
     return { merged: null, label: `PR ${num(open)} still OPEN${open.isDraft ? ' (draft)' : ''}` };
   }
+  if (merged.length) {
+    return {
+      merged: null,
+      label: `PR ${num(merged[0])} merged, but this branch's tip is not in what merged`,
+    };
+  }
+  if (!rows.length && forks.length) {
+    return {
+      merged: null,
+      label: `gh found no PR for this branch (only a fork's PR ${num(forks[0])} shares its name)`,
+    };
+  }
+  // Not "no PR exists": `gh` has been seen switching to an account that can't see this repo, which
+  // returns [] and exit 0. A tree must not be deleted on the strength of that.
+  if (!rows.length) return { merged: null, label: 'gh found no PR for this branch' };
   return { merged: null, label: `PR ${num(rows[0])} closed WITHOUT merging` };
 }
 
@@ -595,7 +619,50 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
     }
   }
 
-  if (!opts.noInstall) execFileSync('pnpm', ['install'], { cwd: target, stdio: 'inherit', windowsHide: true });
+  // Skill credentials are gitignored or untracked, so a fresh tree has none and every skill
+  // then fails as though IT were broken. Non-fatal: a missing credential must never cost you a
+  // worktree.
+  try {
+    const env = syncSkillEnv(primary, target);
+    if (env.copied) console.log(`skill credentials: copied ${env.copied} (${env.names.join(', ')})`);
+    if (env.absent.length)
+    // A COUNT, not the names: 10 of 16 credential-taking skills have none configured in a
+    // typical environment, and a ten-name warning on every creation is one people learn to
+    // skip. `wt env` is where the list belongs, on demand.
+    if (env.absent.length)
+      console.log(
+        `skill credentials: ${env.absent.length} skill(s) have none anywhere; ` +
+          `list them with: node .claude/skills/dev-server/cli.mjs wt env`
+      );
+  } catch (error) {
+    console.warn(`warning: could not copy skill credentials -- ${error.message}`);
+  }
+
+  // Every app .env, root and per-app, as full copies — the tree must also run outside the
+  // daemon's env chain. Non-fatal for the same reason as the credentials above.
+  try {
+    const appEnv = syncAppEnv(primary, target);
+    if (appEnv.copied.length) console.log(`env files: copied ${appEnv.copied.length} (${appEnv.copied.join(', ')})`);
+    if (appEnv.noDir.length) console.log(`env files: skipped ${appEnv.noDir.length} whose app is not on this branch (${appEnv.noDir.join(', ')})`);
+  } catch (error) {
+    console.warn(`warning: could not copy env files -- ${error.message}`);
+  }
+
+  if (!opts.noInstall) {
+    try {
+      // pnpm is a .cmd/.ps1 shim on Windows, which only a shell can launch (ENOENT otherwise).
+      // No popped console: this runs from a terminal and inherits its console, unlike the
+      // daemon's detached children.
+      execFileSync('pnpm', ['install'], {
+        cwd: target,
+        stdio: 'inherit',
+        windowsHide: true,
+        shell: process.platform === 'win32',
+      });
+    } catch (error) {
+      fail(`pnpm install failed in ${target} -- the worktree and its env files are in place; rerun it there.\n${error.message}`);
+    }
+  }
 
   const head = git(['status', '-sb'], target).split(/\r?\n/)[0];
   if (head !== `## ${branch}`) fail(`expected "## ${branch}" with no upstream, got "${head}" — fix with: git -C "${target}" branch --unset-upstream`);

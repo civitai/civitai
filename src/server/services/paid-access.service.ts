@@ -37,6 +37,7 @@ import {
   type TierInput,
 } from '~/server/services/pricing-slot.service';
 import { increaseDate } from '~/utils/date-helpers';
+import { isViewerOrModerator } from '~/utils/is-viewer';
 
 // A gated version must actually charge for something: `download` always carries a price, and a
 // `generation` grant only "charges" when it's the paid tier (not `{ free: true }`). Structural rules
@@ -437,9 +438,6 @@ export async function getPaidAccess(
 
 export type PaidAccessViewer = { id?: number | null; isModerator?: boolean | null };
 
-const isOwnerOrModView = (viewer: PaidAccessViewer, ownerId: number) =>
-  (!!viewer.id && viewer.id === ownerId) || !!viewer.isModerator;
-
 export type ViewerMonetization = {
   paidAccess: PaidAccessRow | undefined;
   /**
@@ -507,7 +505,7 @@ export async function getViewerMonetization({
         : null;
 
     const ownerId = ownerOf(v);
-    const isOwnerOrMod = ownerId != null && isOwnerOrModView(viewer, ownerId);
+    const isOwnerOrMod = ownerId != null && isViewerOrModerator(viewer, ownerId);
     out[v.id] = {
       // The owner keeps the stored terms — their editors resubmit them, and a discounted price written
       // back would make the sale permanent.
@@ -609,14 +607,24 @@ export async function assertMonetizationWrite({
     licensingFee: storedLicensingFee,
     hasPermanentGate: hadPermanentGate,
   });
+  const willHavePermanentGate =
+    paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent;
   const willBePriced = isAlreadyPriced({
     // Collapsing absent and null reads a gate removal as a version that still charges.
     licensingFee: licensingFee !== undefined ? licensingFee : storedLicensingFee,
-    hasPermanentGate:
-      paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent,
+    hasPermanentGate: willHavePermanentGate,
   });
 
-  return assertPricingAllowed({ userId: ownerId, wasPriced, willBePriced, tier, userMeta });
+  return assertPricingAllowed({
+    userId: ownerId,
+    wasPriced,
+    willBePriced,
+    addsGate: willHavePermanentGate,
+    hadGate: hadPermanentGate,
+    entity: versionId ? { entityType: 'ModelVersion', entityId: versionId } : undefined,
+    tier,
+    userMeta,
+  });
 }
 
 /**

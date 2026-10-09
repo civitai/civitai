@@ -2,7 +2,7 @@
 
 import type { Imagen4ImageGenInput, ImageGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type Imagen4AspectRatio = '16:9' | '4:3' | '1:1' | '3:4' | '9:16';

@@ -70,6 +70,8 @@ export const CosmeticPackPreviewModal = ({
         shopItemId: pack.id,
         viaShopUserId,
         payWith: acceptsBlue ? payWith : undefined,
+        // The amount on the button: a pack whose amount due changed since is refused.
+        expectedUnitAmount: pack.amountDue,
       });
       dialog.onClose();
       // A pack buyer spent more Buzz on more things than a single purchase and

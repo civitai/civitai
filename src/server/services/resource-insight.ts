@@ -189,7 +189,7 @@ export type ModelInsightProjection = Omit<ResourceIntentInsight, 'confidence'> &
  * an explicit null sort identically. They do; sorting was simply the wrong property to
  * check. Every live write is a MERGE (`PUT /indexes/<uid>/documents`), so on a document
  * that already carries a score, omitting the key leaves the OLD value in place — a
- * retracted label would keep its top-of-pool seeding permanently. Measured both arms on
+ * retracted label would stay visible to any filter or sort on it permanently. Measured both arms on
  * v1.15.0: a PUT of the null cleared a stored 0.9, and the control PUT with no key at all
  * left a stored 0.1 intact.
  *

@@ -28,6 +28,7 @@ import clsx from 'clsx';
 import type { DragEvent } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { isOrchestratorUrl, maxVideoFileSize } from '~/server/common/constants';
 import { VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { TimeSpan } from '@civitai/client';
@@ -93,6 +94,7 @@ export function VideoInput({
   const videoUrl = value?.url;
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const { requireSignIn } = useSignInToUpload();
   const [videoLoadError, setVideoLoadError] = useState<string | null>(null);
   const [videoDimensions, setVideoDimensions] = useState<{
     width: number;
@@ -168,6 +170,7 @@ export function VideoInput({
     async (files: File[]) => {
       if (files.length === 0) return;
 
+      if (requireSignIn()) return;
       const file = files[0];
 
       // Check file size
@@ -198,7 +201,7 @@ export function VideoInput({
         setIsUploading(false);
       }
     },
-    [onChange]
+    [onChange, requireSignIn]
   );
 
   // Handle remove video

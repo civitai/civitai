@@ -316,8 +316,7 @@ so the CLI is faithful and the **server** chose the dimensions.
 **Why, established since from the code rather than another paid run:** the
 server snaps the string to the **nearest ratio the ecosystem offers** — it is
 neither ignored nor rejected. The aspect-ratio input transform
-(`aspectRatioDef` in `src/shared/form-graph/generation/defs.ts`, and
-`aspectRatioNode` in the data-graph's `common.ts`) takes an exact match from the
+(`aspectRatioDef` in `src/shared/form-graph/generation/defs.ts`) takes an exact match from the
 ecosystem's option list if there is one, and otherwise `findClosestAspectRatio`.
 In September the ~1M-pixel ecosystems offered only 2:3 / 1:1 / 3:2, so 21:9
 landed on 3:2 = 1216×832, which is exactly what was measured.

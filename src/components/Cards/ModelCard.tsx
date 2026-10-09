@@ -216,6 +216,7 @@ function ModelCardContent({ data }: Props) {
       impression={{ entityType: 'Model', entityId: data.id }}
       href={href}
       cosmetic={data.cosmetic?.data}
+      eventDecoration={data.eventDecoration?.data}
       contentType="model"
       contentId={data.id}
       image={image}

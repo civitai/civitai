@@ -30,8 +30,12 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
  *   - C3 (illegal content): `includesMinor` / `includesPoi` are a HARD legal fail
  *     (minor/POI/CSAM signals) — reject + the caller files a Report. Then
  *     `auditPromptServer` runs the full platform audit (regex + external
- *     moderation) and routes repeat abuse into the EXISTING auto-mute machinery,
- *     closing the loop with the trust gate.
+ *     moderation) and REJECTS on a block. It does NOT feed auto-mute from here:
+ *     with `isGreen: true` a hard block takes the green redirect branch, which
+ *     records nothing (no blocked-prompt counter, no prohibited-request report),
+ *     and a soft block reports with `count: 0` and no `track`, which writes nothing
+ *     and can never cross the mute threshold. Repeat abuse on this path is
+ *     therefore rejected, not accumulated.
  *   - M1 (link abuse): `throwOnBlockedUserContent` rejects blocked link domains and the
  *     blocked-pattern list; no server-side unfurl is ever performed.
  *   - M3 (size): tight caps (title ≤ 200 chars, body ≤ a few KB) — enforced by the
@@ -67,9 +71,15 @@ export class SharedContentBlockedError extends Error {
 export interface SharedTextSafetyInput {
   title: string;
   body?: string;
-  /** Token subject — the abuse principal for auto-mute accounting. */
+  /**
+   * Token subject. Passed to the audit as the abuse principal, though no block on this path is
+   * counted toward auto-mute today (see the C3 note above).
+   */
   userId: number;
-  /** From the hydrated subject; moderators skip the auto-mute side effect. */
+  /**
+   * From the hydrated subject. Exempts moderators from the blocked-PATTERN list only (never the
+   * link list); the audit's moderator auto-mute skip is moot here since nothing is counted.
+   */
   isModerator?: boolean;
 }
 
@@ -118,7 +128,7 @@ export async function assertSharedTextSafe(
     // exactly the false positive that separation exists to prevent.
     await throwOnBlockedUserContent([title, body], {
       isModerator,
-      surface: 'appListing',
+      surface: 'appSharedStorage',
       onBlocked: (kind) => {
         throw kind === 'link'
           ? new SharedContentBlockedError('link', 'Content contains a blocked link')
@@ -130,10 +140,15 @@ export async function assertSharedTextSafe(
     throw new SharedContentBlockedError('link', 'Content contains a blocked link');
   }
 
-  // C3 — full platform audit (regex + external moderation) + the EXISTING
-  // auto-mute machinery (repeat blocked-prompt accounting → mute). isGreen:true
-  // forces the SFW + profanity ceiling for community text. `track` omitted (the
+  // C3 — full platform audit (regex + external moderation). isGreen:true forces
+  // the SFW + profanity ceiling for community text. `track` omitted (the
   // block-token path has no request Tracker); auditPromptServer guards on it.
+  //
+  // 🔴 This call REJECTS; it does not count. With isGreen:true a hard block takes
+  // auditPromptServer's green branch, which skips addBlockedPrompt and
+  // reportProhibitedRequest entirely; a soft block calls reportProhibitedRequest
+  // with count 0 and no `track`, so nothing is written and the mute threshold is
+  // never reached. No block on this path contributes to auto-mute today.
   try {
     await auditPromptServer({
       prompt: combined,

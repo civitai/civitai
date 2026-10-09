@@ -4,11 +4,15 @@ import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
 import { baseModelByName } from '~/shared/constants/basemodel.constants';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
+  CRUCIBLE_ENTRY_CUTOFF_PERCENT,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_PRIZE_POSITIONS,
@@ -124,12 +128,20 @@ const prizePositionsSchema = z
     'Prize percentages must add up to exactly 100%'
   );
 
+// Blank stores NULL; an absent key leaves the stored description unchanged on update.
+const crucibleDescriptionSchema = z
+  .string()
+  .trim()
+  .max(CRUCIBLE_DESCRIPTION_MAX_LENGTH)
+  .nullish()
+  .transform((value) => (value === undefined ? undefined : value || null));
+
 export const createCrucibleInputBaseSchema = z.object({
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema,
   heroImage: crucibleImageSchema.optional(),
-  nsfwLevel: z.number().int().positive(),
+  nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),
@@ -141,6 +153,18 @@ export const createCrucibleInputBaseSchema = z.object({
     .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
     .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
     .optional(),
+  entryWarningPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_WARNING_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_WARNING_PERCENT.max)
+    .default(CRUCIBLE_ENTRY_WARNING_PERCENT.default),
+  entryCutoffPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_CUTOFF_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_CUTOFF_PERCENT.max)
+    .default(CRUCIBLE_ENTRY_CUTOFF_PERCENT.default),
   prizePositions: prizePositionsSchema,
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
   allowedBaseModels: allowedBaseModelsSchema.optional(),
@@ -176,6 +200,8 @@ type CrucibleSettings = {
   entryLimit: number;
   freeEntriesPerUser?: number;
   maxTotalEntries?: number | null;
+  entryWarningPercent?: number;
+  entryCutoffPercent?: number;
   prizePositions: Record<string, number>;
 };
 
@@ -202,6 +228,15 @@ export function checkCrucibleSettings(settings: CrucibleSettings) {
     return {
       message: 'Entries per user cannot exceed the maximum total entries',
       path: 'entryLimit',
+    };
+  if (
+    settings.entryWarningPercent != null &&
+    settings.entryCutoffPercent != null &&
+    settings.entryCutoffPercent >= settings.entryWarningPercent
+  )
+    return {
+      message: CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
+      path: 'entryCutoffPercent',
     };
   if (maxTotalEntries != null && Object.keys(settings.prizePositions).length > maxTotalEntries)
     return {
@@ -283,11 +318,29 @@ export const getJudgingProgressSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export type CrucibleJudgingStatus = {
+  crucibleId: number;
+  judged: boolean;
+  available: boolean;
+  votesUsedUp: boolean;
+};
+
+export type GetJudgingStatusesSchema = z.infer<typeof getJudgingStatusesSchema>;
+export const getJudgingStatusesSchema = z.object({
+  crucibleIds: z.array(z.number().int()).min(1).max(100),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getJudgingPairSchema = z.object({
   crucibleId: z.number(),
-  // Entry IDs to exclude from pair selection (e.g., recently skipped entries)
-  // These entries won't appear in the returned pair
+  // Superseded by `skippedPairs`; still read from clients loaded before it shipped.
   excludeEntryIds: z.array(z.number()).max(50).optional(),
+  // Recently skipped pairs, oldest first. Their entries are avoided while anything else is left,
+  // and the pairs themselves for as long as another pair is left.
+  skippedPairs: z
+    .array(z.tuple([z.number().int(), z.number().int()]))
+    .max(25)
+    .optional(),
   browsingLevel: z.number().int().min(0).optional(),
   judgingSessionId: judgingSessionIdSchema,
 });
@@ -298,10 +351,10 @@ export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
 export const updateCrucibleSchema = z.object({
   id: z.number(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH).optional(),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema.optional(),
   heroImage: crucibleImageSchema.nullish(),
-  nsfwLevel: z.number().int().positive().optional(),
+  nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag).optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE).optional(),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).optional(),
@@ -313,6 +366,18 @@ export const updateCrucibleSchema = z.object({
     .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
     .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
     .nullish(),
+  entryWarningPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_WARNING_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_WARNING_PERCENT.max)
+    .optional(),
+  entryCutoffPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_CUTOFF_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_CUTOFF_PERCENT.max)
+    .optional(),
   prizePositions: prizePositionsSchema.optional(),
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
   allowedBaseModels: allowedBaseModelsSchema.optional(),
@@ -348,6 +413,9 @@ export type RemoveCrucibleEntrySchema = z.infer<typeof removeCrucibleEntrySchema
 export const removeCrucibleEntrySchema = z.object({
   entryId: z.number(),
 });
+
+export type WithdrawCrucibleEntrySchema = z.infer<typeof withdrawCrucibleEntrySchema>;
+export const withdrawCrucibleEntrySchema = removeCrucibleEntrySchema;
 
 // Schema for user crucible stats (no input needed - uses authenticated user)
 export type GetUserCrucibleStatsSchema = z.infer<typeof getUserCrucibleStatsSchema>;

@@ -12,12 +12,10 @@ import {
 } from '../shared';
 
 /**
- * Anima (base + turbo), ported from `anima-graph.ts`. Comfy engine —
+ * Anima (base + turbo). Comfy engine —
  * sampler/scheduler use comfy names. Negative prompt supported; controlNets on
  * txt2img behind the `animaControlnet` kill-switch (fail-open).
  */
-
-// ---- copied from anima-graph.ts, which dies with the data-graph engine ------
 
 export const animaVersionIds = {
   anima: 2945208,
@@ -43,8 +41,6 @@ const animaSamplerPresets = [
 
 const animaSchedules = ['simple', 'sgm_uniform'];
 
-// ---- end of anima-graph.ts copies -------------------------------------------
-
 type AnimaModeExt = FamilyExt & { model?: unknown };
 
 const variantOf = (ext: AnimaModeExt): AnimaVariant => {
@@ -60,7 +56,7 @@ const turbo = defineGraph<AnimaModeExt>()
   .field('cfgScale', perModelSlider({ min: 1, max: 2, step: 0.1, default: 1 }))
   .field('steps', perModelSlider({ min: 1, max: 15, default: 8 }));
 
-/** Tagged: v1's `animaVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `animaVariant`. */
 const variants = branch('animaVariant', variantOf, { base, turbo });
 
 export const anima = defineGraph<FamilyExt>({ scope: familyScope })

@@ -27,6 +27,7 @@ import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { assertBountyVisible } from '~/server/services/bounty-visibility';
 
 export const getBountyEntryHandler = async ({
   input,
@@ -36,6 +37,7 @@ export const getBountyEntryHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ entryId: input.id }, ctx.user);
     const entry = await getEntryById({
       input,
       select: {
@@ -113,12 +115,20 @@ export const upsertBountyEntryHandler = async ({
 }) => {
   const { id: userId } = ctx.user;
   try {
+    await assertBountyVisible({ bountyId: input.bountyId }, ctx.user);
     const bounty = await getBountyById({
       id: input.bountyId,
-      select: { complete: true, entryLimit: true, entries: { select: { userId: true } } },
+      select: {
+        userId: true,
+        complete: true,
+        entryLimit: true,
+        entries: { select: { userId: true } },
+      },
     });
     if (!bounty) throw throwNotFoundError('Bounty not found');
     if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
+    if (!input.id && bounty.userId === userId)
+      throw throwBadRequestError('You cannot submit entries to your own bounty.');
 
     // if the current user has more entries than allowed, throw an error
     if (
@@ -223,6 +233,7 @@ export const getBountyEntryFilteredFilesHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ entryId: input.id }, ctx.user);
     const files = await getBountyEntryFilteredFiles({
       ...input,
       userId: ctx.user?.id,

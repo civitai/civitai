@@ -210,7 +210,6 @@ export function ImagesInfiniteContent({
       maxAttempts={SEARCH_RETRY_MAX_ATTEMPTS}
       onRetry={handleRetry}
       debugMode={debugRetryActive}
-      browsingLevel={browsingLevel}
       countdownActive={countdownActive}
       isInitialLoad={imagesCount === 0}
       slow={isSlow}

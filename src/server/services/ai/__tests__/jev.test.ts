@@ -1116,8 +1116,8 @@ describe('askJev — fail-closed on the response', () => {
   });
 
   it('🔴 rejects an argmax that is absent from its own distribution', async () => {
-    // Passes every other check, and then `reorderShortlistByDistribution` — which
-    // reads `distribution[key] ?? 0` — ranks the vendor's own pick LAST.
+    // Passes every other check, and then `combineStage3Answers` (resource-intent-stage3.ts)
+    // — which reads `distribution[key] ?? 0` — scores the vendor's own pick 0 for that call.
     respondAnswers({
       role: { type: 'choice', choice: 'character', probabilities: { style: 0.5, none: 0.5 } },
     });

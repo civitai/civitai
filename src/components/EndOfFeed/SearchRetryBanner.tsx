@@ -1,9 +1,7 @@
 import { Badge, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react';
 import type { CSSProperties } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { NsfwLevel } from '~/server/common/enums';
-import { Flags } from '~/shared/utils/flags';
+import { useEffect, useRef, useState } from 'react';
 
 // Minimum time to show the "retrying now" state before flipping back to the
 // countdown. Real failures can resolve in milliseconds; without a floor the
@@ -25,7 +23,6 @@ type SearchRetryBannerProps = {
   onRetry: () => void;
   onGiveUp?: () => void;
   debugMode?: boolean;
-  browsingLevel?: number;
   // When false, the countdown pauses and the UI shows a "retrying now" state.
   // Parent sets this to !isFetching so we don't fire the next retry until the
   // current request has actually resolved (prevents concurrent duplicate calls
@@ -34,78 +31,11 @@ type SearchRetryBannerProps = {
   // True when zero pages have loaded yet — copy changes to "loading images"
   // instead of "loading more images".
   isInitialLoad?: boolean;
-  // True when the current request has exceeded the slow threshold. Swaps copy
-  // to "taking longer than usual" and reframes the countdown as time until
-  // abort instead of time until retry.
+  // True when the current request has exceeded the slow threshold: swaps to the
+  // slow copy and reframes the countdown as time until abort instead of time
+  // until retry.
   slow?: boolean;
 };
-
-// Phrase pools gated by feed browsing level flags. "minLevel" is the NsfwLevel
-// flag that must be present in the feed's browsingLevel for this phrase to be
-// eligible. PG is always included; R adds edgier jokes; X/XXX unlock innuendo.
-// Green-site feeds force a PG-only browsingLevel, so those users will never see
-// anything above the PG pool regardless of their personal settings.
-const PHRASES: Array<{ text: string; minLevel: number }> = [
-  { text: 'Waking up the hamsters in the server room…', minLevel: NsfwLevel.PG },
-  { text: 'Polishing the pixels…', minLevel: NsfwLevel.PG },
-  { text: 'Convincing the GPUs to cooperate…', minLevel: NsfwLevel.PG },
-  { text: 'Arguing with the database…', minLevel: NsfwLevel.PG },
-  { text: 'Bribing the load balancer with cookies…', minLevel: NsfwLevel.PG },
-  { text: 'Teaching robots to appreciate art…', minLevel: NsfwLevel.PG },
-  { text: 'Consulting the all-knowing cache…', minLevel: NsfwLevel.PG },
-  { text: 'Petting the algorithm…', minLevel: NsfwLevel.PG },
-  { text: 'Rerouting through the backup dimension…', minLevel: NsfwLevel.PG },
-  { text: 'Asking Meilisearch nicely…', minLevel: NsfwLevel.PG },
-  { text: 'Herding electrons…', minLevel: NsfwLevel.PG },
-  { text: 'Untangling the tensors…', minLevel: NsfwLevel.PG },
-  { text: 'Rebooting the vibes…', minLevel: NsfwLevel.PG },
-  { text: 'Counting the bits, twice…', minLevel: NsfwLevel.PG },
-  { text: 'Feeding snacks to the index…', minLevel: NsfwLevel.PG },
-
-  { text: 'Flirting with the search index…', minLevel: NsfwLevel.R },
-  { text: 'Whispering sweet nothings to the server…', minLevel: NsfwLevel.R },
-  { text: 'Buying the database a drink…', minLevel: NsfwLevel.R },
-  { text: 'Lighting candles for a faster response…', minLevel: NsfwLevel.R },
-  { text: 'The servers are blushing, one moment…', minLevel: NsfwLevel.R },
-
-  { text: 'The GPUs have been at it all night…', minLevel: NsfwLevel.X },
-  { text: 'Meilisearch stripped its cache for you…', minLevel: NsfwLevel.X },
-  { text: 'The index is lubed up and loading…', minLevel: NsfwLevel.X },
-  { text: 'Servers are panting, give them a second…', minLevel: NsfwLevel.X },
-  { text: 'Undressing the query plan, one clause at a time…', minLevel: NsfwLevel.X },
-  { text: 'The load balancer finished first, waiting on the rest…', minLevel: NsfwLevel.X },
-  { text: 'Our servers are working hard, so hard…', minLevel: NsfwLevel.X },
-  { text: 'Watching Postgres get tied up in a transaction…', minLevel: NsfwLevel.X },
-
-  { text: 'Meilisearch is between requests — if you know what we mean…', minLevel: NsfwLevel.XXX },
-  {
-    text: 'Three-way between Redis, Postgres, and Meilisearch is running long…',
-    minLevel: NsfwLevel.XXX,
-  },
-  { text: 'The load balancer pulled out early, Postgres is recovering…', minLevel: NsfwLevel.XXX },
-  { text: 'The database is safewording, easing off the load…', minLevel: NsfwLevel.XXX },
-  { text: 'Meilisearch is edging — almost there…', minLevel: NsfwLevel.XXX },
-  { text: 'The cache is cumming right up…', minLevel: NsfwLevel.XXX },
-  { text: 'Our servers need aftercare, bear with us…', minLevel: NsfwLevel.XXX },
-  { text: 'The index is balls-deep in documents right now…', minLevel: NsfwLevel.XXX },
-];
-
-function pickPhrases(browsingLevel: number) {
-  // Always include PG. Layer in higher tiers only when the feed's flag is set.
-  return PHRASES.filter((p) => {
-    if (p.minLevel === NsfwLevel.PG) return true;
-    return Flags.hasFlag(browsingLevel, p.minLevel);
-  });
-}
-
-function shuffle<T>(arr: T[]): T[] {
-  const out = arr.slice();
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
 
 export function SearchRetryBanner({
   delayMs,
@@ -114,7 +44,6 @@ export function SearchRetryBanner({
   onRetry,
   onGiveUp,
   debugMode = false,
-  browsingLevel = NsfwLevel.PG,
   countdownActive = true,
   isInitialLoad = false,
   slow = false,
@@ -146,19 +75,6 @@ export function SearchRetryBanner({
     );
     return () => clearTimeout(t);
   }, [countdownActive]);
-
-  // Freeze a shuffled phrase pool per mount so a single banner session gets a
-  // stable sequence; regenerating every render would flicker.
-  const phrasePool = useMemo(() => shuffle(pickPhrases(browsingLevel)), [browsingLevel]);
-  const [phraseIndex, setPhraseIndex] = useState(0);
-
-  useEffect(() => {
-    if (exhausted || phrasePool.length <= 1) return;
-    const id = setInterval(() => {
-      setPhraseIndex((i) => (i + 1) % phrasePool.length);
-    }, 2500);
-    return () => clearInterval(id);
-  }, [exhausted, phrasePool.length]);
 
   // Reset countdown whenever a new retry cycle starts. Skipped while a request
   // is in flight (countdownActive=false) so we don't pile up concurrent retries
@@ -204,7 +120,7 @@ export function SearchRetryBanner({
               )}
             </Group>
             <Text size="xs" c="dimmed" ta="center">
-              Our search service is having trouble. Try again in a moment.
+              Something went wrong on our end. Try again in a moment.
             </Text>
             <Button
               size="xs"
@@ -224,7 +140,6 @@ export function SearchRetryBanner({
   }
 
   const seconds = Math.ceil(remainingMs / 1000);
-  const phrase = phrasePool[phraseIndex]?.text ?? 'Working on it…';
   return (
     <Center py="md">
       <Paper
@@ -249,9 +164,9 @@ export function SearchRetryBanner({
           <Group gap={8}>
             <Text size="sm" fw={600}>
               {slow
-                ? `Taking longer than usual`
+                ? `${isInitialLoad ? 'Images' : 'More images'} are taking longer than usual`
                 : effectiveCountdownActive
-                ? `Having trouble loading ${noun}`
+                ? `Couldn't load ${noun} yet`
                 : 'Retrying now — hang tight'}
             </Text>
             {debugMode && (
@@ -260,8 +175,8 @@ export function SearchRetryBanner({
               </Badge>
             )}
           </Group>
-          <Text size="sm" ta="center" fs="italic" c="dimmed">
-            {phrase}
+          <Text size="sm" ta="center" c="dimmed">
+            We&apos;ll keep trying automatically.
           </Text>
           <Text size="xs" c="dimmed">
             {slow || effectiveCountdownActive

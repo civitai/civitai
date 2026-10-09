@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as SubmitModule from '~/server/services/text-scan/submit';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -14,6 +16,15 @@ vi.mock('~/server/games/daily-challenge/challenge-nsfw-escalation', () => ({
   applyChallengeNsfwEscalation: vi.fn(),
 }));
 vi.mock('~/server/prom/challenge.metrics', () => ({ recordChallengeScanResult: vi.fn() }));
+// Pinned off so this suite stays about the XGuard path.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
+}));
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubmitModule>()),
+  scanEntity: vi.fn(),
+}));
 
 const { challengeModerationAdapter } = await import(
   '~/server/services/challenge-moderation.adapter'
@@ -22,6 +33,8 @@ const { applyChallengeNsfwEscalation } = await import(
   '~/server/games/daily-challenge/challenge-nsfw-escalation'
 );
 const { recordChallengeScanResult } = await import('~/server/prom/challenge.metrics');
+const { getTextScanMode } = await import('~/server/services/text-scan/mode');
+const { scanEntity } = await import('~/server/services/text-scan/submit');
 
 describe('challengeModerationAdapter.applyFailure', () => {
   beforeEach(() => {
@@ -91,5 +104,33 @@ describe('challengeModerationAdapter.applyResult telemetry-read safety', () => {
       source: undefined,
       result: 'scanned',
     });
+  });
+});
+
+describe('challengeModerationAdapter.submit under text-scan', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTextScanMode).mockResolvedValueOnce('active');
+    mockDbWrite.challenge.findUnique.mockResolvedValue({ source: 'User' });
+  });
+
+  // Only the retry cron calls submit, and it has already bumped the Pending row.
+  it('submits as a retry, past the in-flight dedupe', async () => {
+    vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'submitted', workflowId: 'ts-1' });
+
+    const result = await challengeModerationAdapter.submit({ entityId: 42, content: 'Theme' });
+
+    expect(scanEntity).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'Challenge', entityId: 42, fromRetry: true })
+    );
+    expect(result).toEqual({ id: 'ts-1' });
+  });
+
+  it('settles a retry the scan skips, so the challenge does not stay Pending', async () => {
+    vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'skipped', reason: 'too-short' });
+
+    expect(await challengeModerationAdapter.submit({ entityId: 42, content: 'T' })).toBeNull();
+
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 42, isNsfw: false });
   });
 });

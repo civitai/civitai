@@ -347,6 +347,18 @@ const GATE_LEDGER: Record<string, string> = {
     'AppListing or a kind at all. Branch 1 (no listing at all → app.userId) is ' +
     'load-bearing and must not be dropped — most blocks predating W13 would otherwise go ' +
     'UNrevoked, which for a security control is worse than over-revoking.',
+  'src/server/services/blocks/app-feedback.service.ts':
+    'Private per-app feedback, TWO gates in opposite directions. (1) The owner INBOX ' +
+    '(resolveInboxListingId: list, set owner status, flag as abusive) admits owner | ' +
+    'ACCEPTED collaborator via resolveListingAccess, keyed on the SEAT listing, so an ' +
+    'editor reads and triages the inbox exactly as the owner does (product decision) and ' +
+    'a pending/rejected invitee does not. NO mod bypass: moderators read every row through ' +
+    'the separate moderatorProcedure list, and an owner-path write by a mod would stamp ' +
+    'the mod as the developer. The writes resolve through dbWrite so a seat revoked a ' +
+    'moment ago cannot still write off a lagging replica. (2) The SUBMIT gate ' +
+    '(resolveAppFeedbackTarget) REFUSES anyone with a role — owner AND editor — because ' +
+    'people who read the inbox do not write to it. Both halves take the canonical, ' +
+    'kind-aware owner from resolveListingAccess, never the denormalized column (D5).',
   'src/server/services/blocks/user-app-surface.service.ts':
     'NOT an access gate at all — an owner SUPPRESSION on a read of the viewer’s OWN data. ' +
     'listMyScopeGrants’ activity leg skips a row when AppBlock.app.userId === the viewer, ' +

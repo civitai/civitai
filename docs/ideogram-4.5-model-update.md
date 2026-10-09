@@ -45,8 +45,7 @@ COMMIT;
 ```
 
 Applied to prod as `3375798`. Generation support hardcodes that id (`ideogramVersionIds['v4.5']`
-in `src/shared/data-graph/generation/ideogram-graph.ts` and
-`src/shared/form-graph/generation/image/ideogram.graph.ts`); in another environment, change both
+in `src/shared/form-graph/generation/image/ideogram.graph.ts`); in another environment, change it
 to the returned `id`. Coverage and the gate rule take the same id.
 
 ## 2. Model description

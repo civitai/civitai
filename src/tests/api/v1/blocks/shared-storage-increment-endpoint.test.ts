@@ -155,6 +155,16 @@ describe('POST /api/v1/blocks/shared-storage/increment', () => {
     expect(res._status()).toBe(403);
   });
 
+  it('maps a counter-key moderation BAD_REQUEST → 400 with the generic message only', async () => {
+    mockIncrement.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Content flagged for review' })
+    );
+    const { req, res } = createMocks({ body: { key: 'playcount:7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(400);
+    expect(res._json()).toEqual({ error: 'Content flagged for review' });
+  });
+
   it('maps a rate-limit TOO_MANY_REQUESTS → 429', async () => {
     mockIncrement.mockRejectedValueOnce(
       new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'slow down' })

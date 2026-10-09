@@ -265,6 +265,8 @@ vi.mock('~/server/prom/client', () => ({
   imagesFeedWithoutIndexCounter: promMetricStub(),
   creatorCompCreatorsPaidCounter: promMetricStub(),
   creatorCompAmountPaidCounter: promMetricStub(),
+  generationTipCreatorsPaidCounter: promMetricStub(),
+  generationTipAmountPaidCounter: promMetricStub(),
   licenseFeeCreatorsPaidCounter: promMetricStub(),
   licenseFeeAmountPaidCounter: promMetricStub(),
   userUpdateCounter: promMetricStub(),

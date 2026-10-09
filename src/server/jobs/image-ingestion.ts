@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -9,6 +10,7 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import { CSAM_HOLD_MAX_DAYS } from '~/server/services/image-appeal-flag';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 
@@ -501,12 +503,6 @@ export async function sendImagesForScanBulk(
   return { sent, failed };
 }
 
-// Ceiling on the CSAM hold below, measured from the REPORT, not from the block: the
-// send/archive pipeline has no retry limit and no dead-letter, so a report nobody finishes
-// would otherwise hold a user's blocked media forever. Clocking it from the block instead
-// would silently shrink each report's budget by however old the block already was.
-const CSAM_HOLD_MAX_DAYS = 30;
-
 /**
  * 🔴 The POSITIVE signal that a human moderator took THIS ONE IMAGE down. It is the only thing
  * that unlocks blob retraction in `remove-blocked-images` — see the long note at the split for why
@@ -551,6 +547,28 @@ const CSAM_HOLD_MAX_DAYS = 30;
  */
 export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
 
+/**
+ * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
+ * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it.
+ * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
+ * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
+ */
+export function purgeHoldGuard(reportHoldExpiredUserIds: number[]) {
+  return Prisma.sql`
+    "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    AND "Image"."needsReview" IS DISTINCT FROM 'csam'
+    AND (
+      "Image"."userId" = ANY(${reportHoldExpiredUserIds}::int[])
+      OR NOT EXISTS (
+        SELECT 1 FROM "CsamReport" c
+        WHERE c."userId" = "Image"."userId"
+          AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+      )
+    )
+  `;
+}
+
 export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
@@ -583,18 +601,19 @@ export const removeBlockedImages = createJob(
         ).map((x) => x.id)
       : [];
 
-    // The appeal decides this image's fate: approval unblocks it, rejection clears needsReview
-    // and the next run deletes it. Purging it first strands the Appeal as Pending forever.
+    // A pending review decides this image's fate, so it is held until a moderator resolves it.
+    // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
+    // strands the Appeal as Pending forever.
     // dbWrite for the same replica-lag reason as the CSAM lookup above.
-    const appealHeld = (
-      await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "Image"
-        WHERE "needsReview" = 'appeal'
-          AND ingestion = 'Blocked'::"ImageIngestionStatus"
-      `
-    ).map((x) => x.id);
+    const reviewHeldRows = await dbWrite.$queryRaw<{ id: number; needsReview: string }[]>`
+      SELECT id, "needsReview" FROM "Image"
+      WHERE "needsReview" IN ('appeal', 'csam')
+        AND ingestion = 'Blocked'::"ImageIngestionStatus"
+    `;
+    const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
+    const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
 
-    const held = [...heldActive, ...appealHeld];
+    const held = [...heldActive, ...appealHeld, ...csamReviewHeld];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
@@ -609,8 +628,14 @@ export const removeBlockedImages = createJob(
       console.log('No blocked images in queue', {
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
+        csamReviewHeld: csamReviewHeld.length,
       });
-      return { processed: 0, csamHeld: heldActive.length, appealHeld: appealHeld.length };
+      return {
+        processed: 0,
+        csamHeld: heldActive.length,
+        appealHeld: appealHeld.length,
+        csamReviewHeld: csamReviewHeld.length,
+      };
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -655,8 +680,9 @@ export const removeBlockedImages = createJob(
       return true;
     });
 
-    // Only the images actually being destroyed this run, so the alert can't over-report an
-    // expired hold whose images fell outside the batch or turned out to be stale.
+    // Only the images this run is about to delete, so the alert can't list an expired hold whose
+    // images fell outside the batch or turned out to be stale. The DELETE's own guard may still keep
+    // one; the returned count is of what was actually deleted.
     const expiredUserIdSet = new Set(expiredUserIds);
     const holdExpiredDeletions = imagesToDelete.filter((img) => expiredUserIdSet.has(img.userId));
 
@@ -666,6 +692,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       csamHoldExpired: holdExpiredDeletions.length,
       appealHeld: appealHeld.length,
+      csamReviewHeld: csamReviewHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -821,15 +848,21 @@ export const removeBlockedImages = createJob(
     };
     const takedowns = takedownCandidateIds.filter(isTakedown);
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
+    const onlyWhere = purgeHoldGuard(expiredUserIds);
+    const deleted: number[] = [];
     if (takedowns.length > 0) {
-      await deleteImages(takedowns, true, { retractPublicBlobs: true });
+      const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
+      deleted.push(...rows.map((x) => x.id));
     }
     if (deletedWithoutRetraction.length > 0) {
-      await deleteImages(deletedWithoutRetraction, true);
+      const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
+      deleted.push(...rows.map((x) => x.id));
     }
+    const deletedSet = new Set(deleted);
+    const heldAtDelete = takedownCandidateIds.filter((id) => !deletedSet.has(id));
 
-    // Remove processed and stale entries from queue
-    const idsToRemove = [...imagesToDelete.map((x) => x.id), ...staleIds];
+    // Remove processed and stale entries from queue. Anything the guard kept stays queued.
+    const idsToRemove = [...deleted, ...staleIds];
     if (idsToRemove.length > 0) {
       await dbWrite.$executeRaw`
       DELETE FROM "JobQueue"
@@ -840,18 +873,20 @@ export const removeBlockedImages = createJob(
     }
 
     return {
-      deleted: imagesToDelete.length,
+      deleted: deleted.length,
+      heldAtDelete: heldAtDelete.length,
       // Reported separately so the two populations are legible in the job's own output: the
       // second number is deletions that deliberately left the shared stored object alone. It is
       // NOT "account deletions" — it is everything with no moderator takedown on record, which is
       // account deletions plus every automated block plus every whole-library block.
-      retracted: takedowns.length,
-      deletedWithoutRetraction: deletedWithoutRetraction.length,
+      retracted: takedowns.filter((id) => deletedSet.has(id)).length,
+      deletedWithoutRetraction: deletedWithoutRetraction.filter((id) => deletedSet.has(id)).length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
-      csamHoldExpired: holdExpiredDeletions.length,
+      csamHoldExpired: holdExpiredDeletions.filter((x) => deletedSet.has(x.id)).length,
       appealHeld: appealHeld.length,
+      csamReviewHeld: csamReviewHeld.length,
     };
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod

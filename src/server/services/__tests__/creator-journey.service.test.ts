@@ -1,12 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const chQuery = vi.hoisted(() => vi.fn());
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  clickhouse: { query: chQuery },
+}));
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import {
+  buildActivityProgress,
+  buildSecretMilestones,
   getCreatorJourney,
   getCreatorScoreLadder,
   getFirstPublishCard,
   maskUnearnedMilestone,
 } from '~/server/services/creator-journey.service';
 import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
+import {
+  judgeVoteCountSql,
+  ledgerWinCountSql,
+} from '~/server/services/creator-milestone-detectors';
 
 const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[0]> = {}) => ({
   key: 'hidden:remix',
@@ -21,8 +36,8 @@ const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[
 
 describe('maskUnearnedMilestone', () => {
   it('masks a hidden milestone the viewer has not earned, keeping only its hint', () => {
-    expect(maskUnearnedMilestone(definition(), false)).toMatchObject({
-      key: 'hidden:unranked',
+    expect(maskUnearnedMilestone(definition(), false, 'slot-3')).toMatchObject({
+      key: 'hidden:slot-3',
       name: '???',
       description: null,
       hint: 'Someone builds on your work',
@@ -30,18 +45,20 @@ describe('maskUnearnedMilestone', () => {
   });
 
   it('reveals it once earned', () => {
-    expect(maskUnearnedMilestone(definition(), true).name).toBe('Remixed');
+    expect(maskUnearnedMilestone(definition(), true, 'slot').name).toBe('Remixed');
   });
 
   // The `hidden` TRACK is a grouping label; only the per-row flag masks.
   it('does not mask a row in the hidden track whose flag is off', () => {
-    expect(maskUnearnedMilestone(definition({ hidden: false }), false).name).toBe('Remixed');
+    expect(maskUnearnedMilestone(definition({ hidden: false }), false, 'slot').name).toBe(
+      'Remixed'
+    );
   });
 
   it('masks a flagged row in any track', () => {
-    expect(maskUnearnedMilestone(definition({ track: 'score', threshold: 500 }), false).name).toBe(
-      '???'
-    );
+    expect(
+      maskUnearnedMilestone(definition({ track: 'score', threshold: 500 }), false, 'slot').name
+    ).toBe('???');
   });
 });
 
@@ -75,7 +92,7 @@ describe('getCreatorJourney', () => {
 
     const { scores } = await getCreatorJourney(1);
 
-    expect(scores).toMatchObject({ total: 100, aggregate: 330, articles: 0 });
+    expect(scores).toMatchObject({ total: 100, aggregate: 330 });
   });
 
   it('keeps the total when the categories sum to less', async () => {
@@ -91,8 +108,10 @@ describe('getCreatorJourney', () => {
     await getCreatorJourney(1);
     await getCreatorScoreLadder();
 
-    expect(dbMock.dbRead.creatorMilestone.findMany).toHaveBeenCalledTimes(2);
-    for (const [args] of dbMock.dbRead.creatorMilestone.findMany.mock.calls)
+    const calls = dbMock.dbRead.creatorMilestone.findMany.mock.calls.map(([args]) => args);
+    const tierCalls = calls.filter((args) => !('key' in (args?.where ?? {})));
+    expect(tierCalls).toHaveLength(2);
+    for (const args of tierCalls)
       expect(args).toMatchObject({ where: { track: 'score', threshold: { not: null } } });
   });
 
@@ -114,6 +133,44 @@ describe('getCreatorJourney', () => {
   });
 });
 
+describe('earned dates', () => {
+  // A silent grant with no moment of its own stamps achievedAt and seenAt together.
+  it('withholds the date of a grant whose moment was never observed', async () => {
+    const at = new Date('2026-10-07T01:20:00Z');
+    const followers = definition({
+      key: 'reach:followers-100',
+      track: 'reach',
+      threshold: 100,
+      hidden: false,
+    });
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? [followers] : [])) as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockClear();
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: at, seenAt: at, milestone: followers },
+      {
+        achievedAt: new Date('2026-01-05'),
+        seenAt: at,
+        milestone: definition({ key: 'create:models-5' }),
+      },
+    ] as never);
+
+    const { earned, activity } = await getCreatorJourney(1);
+    expect(earned.map((badge) => [badge.key, badge.achievedAt])).toEqual([
+      ['reach:followers-100', null],
+      ['create:models-5', new Date('2026-01-05')],
+    ]);
+    expect(activity.milestones).toEqual([
+      expect.objectContaining({ key: 'reach:followers-100', earned: true, achievedAt: null }),
+    ]);
+    // The mock returns seenAt whatever is selected; without it every row reads as observed.
+    expect(dbMock.dbRead.userCreatorMilestone.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ seenAt: true }) })
+    );
+  });
+});
+
 describe('getCreatorScoreLadder', () => {
   it('masks every hidden tier, since nobody has earned anything here', async () => {
     dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([
@@ -122,8 +179,188 @@ describe('getCreatorScoreLadder', () => {
 
     // The key carries the name by convention (`score:spark` is Spark), so it is masked too.
     expect((await getCreatorScoreLadder()).tiers).toEqual([
-      { key: 'hidden:777', name: '???', threshold: 777, hint: 'Someone builds on your work' },
+      {
+        key: 'hidden:tier-0',
+        name: '???',
+        threshold: 777,
+        hint: 'Someone builds on your work',
+        badgeUrl: null,
+      },
     ]);
+  });
+});
+
+describe('tier badge art', () => {
+  const spark = {
+    ...definition({ key: 'score:spark', track: 'score', threshold: 500, hidden: false }),
+    name: 'Spark',
+    cosmetic: { data: { url: 'spark-image-id' } },
+  };
+
+  // The achievements query selects no cosmetic, so the earned row carries none: its art has to
+  // come from the tier query.
+  const { cosmetic: _, ...sparkAsAchievement } = spark;
+
+  it('carries the cosmetic image onto the tier and onto the earned badge', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([spark] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: new Date('2026-10-01'), milestone: sparkAsAchievement },
+    ] as never);
+
+    const journey = await getCreatorJourney(1);
+
+    expect(journey.tiers[0].badgeUrl).toBe('spark-image-id');
+    expect(journey.earned[0]).toMatchObject({ badgeUrl: 'spark-image-id', threshold: 500 });
+  });
+
+  it('reads the art through the tier query, not a separate cosmetic lookup', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockClear();
+    dbMock.dbRead.cosmetic.findMany.mockClear();
+    await getCreatorJourney(1);
+
+    expect(dbMock.dbRead.cosmetic.findMany).not.toHaveBeenCalled();
+    const tierCalls = dbMock.dbRead.creatorMilestone.findMany.mock.calls.filter(
+      ([args]) => args?.where?.track === 'score'
+    );
+    expect(tierCalls).toHaveLength(1);
+    expect(tierCalls[0][0]).toMatchObject({ select: { cosmetic: { select: { data: true } } } });
+  });
+
+  // The art identifies the tier as surely as its name does, so an unearned hidden tier shows neither.
+  it('withholds the art of a hidden tier the viewer has not earned', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([
+      { ...spark, hidden: true },
+    ] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+
+    expect((await getCreatorJourney(1)).tiers[0]).toMatchObject({ name: '???', badgeUrl: null });
+  });
+
+  it('shows the art of a hidden tier once the viewer has earned it', async () => {
+    const hiddenSpark = { ...spark, hidden: true };
+    const { cosmetic: _, ...hiddenSparkAsAchievement } = hiddenSpark;
+    dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([hiddenSpark] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: new Date('2026-10-01'), milestone: hiddenSparkAsAchievement },
+    ] as never);
+
+    const journey = await getCreatorJourney(1);
+    expect(journey.tiers[0]).toMatchObject({ name: 'Spark', badgeUrl: 'spark-image-id' });
+    expect(journey.earned[0].badgeUrl).toBe('spark-image-id');
+  });
+
+  it('is null when the tier has no cosmetic attached', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([
+      { ...spark, cosmetic: null },
+    ] as never);
+
+    expect((await getCreatorJourney(1)).tiers[0].badgeUrl).toBeNull();
+  });
+});
+
+// Badge art is attached later by setting cosmeticId; the page must pick it up with no code change.
+describe('activity badge art', () => {
+  const firstModel = {
+    ...definition({ key: 'create:models-1', track: 'create', threshold: 1, hidden: false }),
+    name: 'First Model',
+    cosmetic: { data: { url: 'first-model-art' } },
+  };
+  const { cosmetic: _, ...firstModelAsAchievement } = firstModel;
+
+  const serveDefinitions = (activity: unknown[]) =>
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? activity : [])) as never);
+
+  it('carries a milestone cosmetic onto its tile and onto the earned badge', async () => {
+    serveDefinitions([firstModel]);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      {
+        achievedAt: new Date('2026-01-01'),
+        seenAt: null,
+        milestone: firstModelAsAchievement,
+      },
+    ] as never);
+
+    const journey = await getCreatorJourney(1);
+    expect(journey.activity.milestones[0]).toMatchObject({ badgeUrl: 'first-model-art' });
+    expect(journey.earned[0]).toMatchObject({
+      key: 'create:models-1',
+      badgeUrl: 'first-model-art',
+    });
+  });
+
+  it('withholds the art of a hidden milestone the viewer has not earned', async () => {
+    serveDefinitions([{ ...firstModel, hidden: true, hint: 'Ship something' }]);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+
+    const [tile] = (await getCreatorJourney(1)).activity.milestones;
+    expect(tile).toMatchObject({ name: '???', badgeUrl: null });
+  });
+
+  it('selects the art through the definitions query', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockClear();
+    serveDefinitions([]);
+    await getCreatorJourney(1);
+    const activityCall = dbMock.dbRead.creatorMilestone.findMany.mock.calls.find(
+      ([args]) => args?.where?.key
+    );
+    expect(activityCall?.[0]).toMatchObject({ select: { cosmetic: { select: { data: true } } } });
+  });
+});
+
+describe('hidden milestones', () => {
+  const secret = {
+    ...definition({ key: 'test:opaque1', threshold: 42, hint: 'Look up' }),
+    name: 'Stargazer',
+    cosmetic: { data: { url: 'stargazer-art' } },
+    // Whatever a read hands back, the masked shape is built field by field.
+    detector: { type: 'query', sql: 'SELECT 1' },
+  };
+
+  it('shows an unearned one as its hint and nothing that tells it apart', () => {
+    expect(buildSecretMilestones([secret, secret], new Map())).toEqual([
+      {
+        key: 'hidden:secret-0',
+        name: '???',
+        description: null,
+        hint: 'Look up',
+        badgeUrl: null,
+        earned: false,
+        achievedAt: null,
+      },
+      expect.objectContaining({ key: 'hidden:secret-1', name: '???' }),
+    ]);
+  });
+
+  it('reveals an earned one', () => {
+    const at = new Date('2026-10-01');
+    expect(buildSecretMilestones([secret], new Map([['test:opaque1', at]]))).toEqual([
+      {
+        key: 'test:opaque1',
+        name: 'Stargazer',
+        description: 'Someone remixed your model.',
+        hint: 'Look up',
+        badgeUrl: 'stargazer-art',
+        earned: true,
+        achievedAt: at,
+      },
+    ]);
+  });
+
+  it('reads hidden rows outside the score and activity sections, with the shared select', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockClear();
+    await getCreatorJourney(1);
+    const secretCall = dbMock.dbRead.creatorMilestone.findMany.mock.calls.find(
+      ([args]) => args?.where?.hidden === true
+    )?.[0];
+    expect(secretCall?.where).toMatchObject({
+      track: { not: 'score' },
+      key: { notIn: expect.arrayContaining(['create:models-1', 'reach:followers-100']) },
+    });
+    expect(Object.keys(secretCall?.select ?? {}).sort()).toEqual(
+      ['cosmetic', 'description', 'hidden', 'hint', 'key', 'name', 'threshold', 'track'].sort()
+    );
   });
 });
 
@@ -265,5 +502,206 @@ describe('getFirstPublishCard', () => {
     seed('article', [row()]);
     await card('article', 1);
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildActivityProgress', () => {
+  const activity = (key: string, threshold: number) =>
+    definition({ key, track: key.split(':')[0], threshold, hidden: false, name: key, hint: null });
+  // Out of threshold order: the definitions query has no orderBy.
+  const definitions = [
+    activity('create:models-5', 5),
+    activity('create:models-1', 1),
+    activity('create:articles-1', 1),
+    activity('reach:followers-1000', 1000),
+    activity('reach:followers-100', 100),
+    activity('reach:reactions-1000', 1000),
+    activity('score:spark', 500),
+  ];
+  const values = { models: 3, articles: 0, downloads: 0, followers: 87, reactions: 400 };
+
+  it('picks the unearned milestone nearest to done, one per measure', () => {
+    const held = new Map([['create:models-1', new Date('2026-01-01')]]);
+    const { milestones, closestNext } = buildActivityProgress(definitions, held, values);
+
+    expect(closestNext).toMatchObject({ key: 'reach:followers-100', current: 87, threshold: 100 });
+    expect(milestones.map((m) => m.key)).not.toContain('score:spark');
+    expect(milestones.find((m) => m.key === 'create:models-1')).toMatchObject({
+      earned: true,
+      achievedAt: new Date('2026-01-01'),
+    });
+  });
+
+  // The nightly job grants it; until then the next one up is the real target.
+  it('skips a milestone already reached but not yet granted', () => {
+    const { closestNext } = buildActivityProgress(definitions, new Map(), {
+      ...values,
+      followers: 150,
+    });
+    expect(closestNext).toMatchObject({ key: 'create:models-5', current: 3 });
+  });
+
+  it('leaves an undated grant undated', () => {
+    const held = new Map<string, Date | null>([['create:models-1', null]]);
+    const { milestones } = buildActivityProgress(definitions, held, values);
+    expect(milestones.find((m) => m.key === 'create:models-1')).toMatchObject({
+      earned: true,
+      achievedAt: null,
+    });
+  });
+
+  it('has no closest next once everything is earned', () => {
+    const held = new Map(definitions.map((d) => [d.key, null]));
+    expect(buildActivityProgress(definitions, held, values).closestNext).toBeNull();
+  });
+});
+
+describe('judge votes', () => {
+  const judgeRank = (threshold: number) => ({
+    ...definition({
+      key: `community:crucible-votes-${threshold}`,
+      track: 'community',
+      threshold,
+      hidden: false,
+      hint: null,
+    }),
+    name: `${threshold} Votes`,
+    cosmetic: null,
+  });
+
+  beforeEach(() => {
+    chQuery.mockReset();
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? [judgeRank(5000), judgeRank(500), judgeRank(1000)] : [])) as never);
+  });
+
+  it("shows the viewer's own Crucible vote count against every judge rank", async () => {
+    chQuery.mockImplementation(async ({ query }: { query: string }) => ({
+      json: async () => (query === judgeVoteCountSql ? [{ votes: '640' }] : [{ wins: '0' }]),
+    }));
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(chQuery).toHaveBeenCalledTimes(2);
+    expect(chQuery).toHaveBeenCalledWith({
+      query: judgeVoteCountSql,
+      query_params: { userId: 42 },
+      format: 'JSONEachRow',
+      abort_signal: expect.any(AbortSignal),
+      clickhouse_settings: { max_execution_time: 5 },
+    });
+    expect(
+      activity.milestones.map(({ key, measure, current }) => ({ key, measure, current }))
+    ).toEqual([
+      { key: 'community:crucible-votes-500', measure: 'votes', current: 640 },
+      { key: 'community:crucible-votes-1000', measure: 'votes', current: 640 },
+      { key: 'community:crucible-votes-5000', measure: 'votes', current: 640 },
+    ]);
+    // 640 has passed 500, which the nightly job has not granted yet, so 1k is the target.
+    expect(activity.closestNext).toMatchObject({ key: 'community:crucible-votes-1000' });
+  });
+
+  // The mock answers any SQL, and a failed query reads as zero votes, so the text is what pins it.
+  it("counts only the viewer's own attributed votes, bound by the parameter it sends", () => {
+    expect(judgeVoteCountSql).toBe(`SELECT count() AS votes FROM crucible_votes
+  WHERE userId = {userId:UInt32}`);
+  });
+
+  // ClickHouse is a second store behind one page; its outage must not take the page down.
+  it('still loads, at zero votes, when ClickHouse fails', async () => {
+    chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
+    loggingMock.logToAxiom.mockClear();
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-journey-judge-votes' })
+    );
+  });
+
+  // The shared client would otherwise wait minutes on a stalled connection, holding the page.
+  it('gives up on a stalled ClickHouse after six seconds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      chQuery.mockImplementation(
+        ({ abort_signal }: { abort_signal: AbortSignal }) =>
+          new Promise((_, reject) =>
+            abort_signal.addEventListener('abort', () => reject(new Error('aborted')))
+          )
+      );
+      const journey = getCreatorJourney(42);
+      await vi.advanceTimersByTimeAsync(5_999);
+      expect(chQuery.mock.calls[0][0].abort_signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      // Asserted before awaiting, so a longer deadline fails here instead of hanging the test.
+      expect(chQuery.mock.calls[0][0].abort_signal.aborted).toBe(true);
+      const { activity } = await journey;
+      expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('compete wins', () => {
+  const winRung = (threshold: number) => ({
+    ...definition({
+      key: `compete:wins-${threshold}`,
+      track: 'compete',
+      threshold,
+      hidden: false,
+      hint: null,
+    }),
+    name: `${threshold} Wins`,
+    cosmetic: null,
+  });
+
+  beforeEach(() => {
+    chQuery.mockReset();
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([{ wins: 3 }] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? [winRung(1), winRung(5), winRung(10)] : [])) as never);
+  });
+
+  // Wins before the winners table exist only in the ledger; without them a veteran reads as new.
+  it("adds the viewer's ledger wins to the wins in Postgres", async () => {
+    chQuery.mockImplementation(async ({ query }: { query: string }) => ({
+      json: async () => (query === ledgerWinCountSql ? [{ wins: '4' }] : [{ votes: '0' }]),
+    }));
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(chQuery).toHaveBeenCalledWith({
+      query: ledgerWinCountSql,
+      query_params: { userId: 42 },
+      format: 'JSONEachRow',
+      abort_signal: expect.any(AbortSignal),
+      clickhouse_settings: { max_execution_time: 5 },
+    });
+    expect(
+      activity.milestones.map(({ key, measure, current }) => ({ key, measure, current }))
+    ).toEqual([
+      { key: 'compete:wins-1', measure: 'wins', current: 7 },
+      { key: 'compete:wins-5', measure: 'wins', current: 7 },
+      { key: 'compete:wins-10', measure: 'wins', current: 7 },
+    ]);
+  });
+
+  it('still loads, counting the Postgres wins, when the ledger read fails', async () => {
+    chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
+    loggingMock.logToAxiom.mockClear();
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(activity.milestones.map((m) => m.current)).toEqual([3, 3, 3]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-journey-ledger-wins' })
+    );
   });
 });

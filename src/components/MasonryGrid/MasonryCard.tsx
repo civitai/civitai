@@ -4,12 +4,14 @@ import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.sele
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type MasonryCardProps = CardProps &
   Partial<React.HTMLAttributes<HTMLDivElement>> & {
     height?: number;
     uniform?: boolean;
     frameDecoration?: ContentDecorationCosmetic | null;
+    eventDecoration?: EventDecorationData | null;
     onClick?: () => void;
   };
 
@@ -22,6 +24,7 @@ export const MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
       style,
       uniform,
       frameDecoration,
+      eventDecoration,
       className,
       onClick,
       withBorder,
@@ -31,7 +34,7 @@ export const MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
     ref
   ) => {
     return (
-      <TwCosmeticWrapper cosmetic={frameDecoration?.data}>
+      <TwCosmeticWrapper cosmetic={frameDecoration?.data} eventDecoration={eventDecoration}>
         {/* <CosmeticLights frameDecoration={frameDecoration} /> */}
         <TwCard
           ref={ref as any}

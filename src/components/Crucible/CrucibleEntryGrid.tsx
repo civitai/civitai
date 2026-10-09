@@ -15,6 +15,8 @@ import clsx from 'clsx';
 import { useState, type MouseEvent } from 'react';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import {
   CrucibleEntryMediaViewer,
   type CrucibleEntryMedia,
@@ -51,6 +53,7 @@ export type CrucibleEntryData = {
     nsfwLevel: number;
     width: number | null;
     height: number | null;
+    hash?: string | null;
   };
 };
 
@@ -81,6 +84,8 @@ export type CrucibleEntryGridProps = {
   status: CrucibleStatus;
   /** Moderators only, while the crucible runs. */
   onRemoveEntry?: (entry: CrucibleEntryData) => void;
+  /** The viewer taking back one of their own entries, while the crucible runs. */
+  onWithdrawEntry?: (entry: CrucibleEntryData) => void;
 };
 
 /**
@@ -110,6 +115,7 @@ export function CrucibleEntryGrid({
   emptyMessage = 'No entries yet',
   onEntryClick,
   onRemoveEntry,
+  onWithdrawEntry,
   status,
 }: CrucibleEntryGridProps) {
   const currentUser = useCurrentUser();
@@ -180,7 +186,7 @@ export function CrucibleEntryGrid({
                 isUserEntry
                 showDetails={canSeeDetails(entry)}
                 onClick={() => openEntry(entry)}
-                onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
+                onRemove={onWithdrawEntry && (() => onWithdrawEntry(entry))}
               />
             ))}
           </SimpleGrid>
@@ -262,17 +268,25 @@ function EntryCard({ entry, rank, isUserEntry, showDetails, onClick, onRemove }:
       {/* Image container with 4:5 aspect ratio */}
       <div className="relative" style={{ aspectRatio: '4 / 5' }}>
         <div className="absolute inset-0 bg-[#373a40]">
-          <EdgeMedia2
-            src={entry.image.url}
-            name={entry.image.name}
-            type={entry.image.type}
-            metadata={entry.image.metadata}
-            skip={getSkipValue({ type: entry.image.type, metadata: entry.image.metadata })}
-            className="transition-transform duration-300 group-hover:scale-105"
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-            wrapperProps={{ className: 'size-full' }}
-            width={320}
-          />
+          <ImageGuard2 image={{ ...entry.image, userId: entry.userId }}>
+            {(safe) =>
+              safe ? (
+                <EdgeMedia2
+                  src={entry.image.url}
+                  name={entry.image.name}
+                  type={entry.image.type}
+                  metadata={entry.image.metadata}
+                  skip={getSkipValue({ type: entry.image.type, metadata: entry.image.metadata })}
+                  className="transition-transform duration-300 group-hover:scale-105"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  wrapperProps={{ className: 'size-full' }}
+                  width={320}
+                />
+              ) : (
+                <MediaHash {...entry.image} />
+              )
+            }
+          </ImageGuard2>
         </div>
 
         {rank !== null && (

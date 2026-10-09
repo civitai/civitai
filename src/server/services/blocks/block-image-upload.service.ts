@@ -121,50 +121,15 @@ function sniffSupportedImage(b: Buffer): string | null {
 }
 
 /**
- * App Blocks (Phase-1 seam) — SERVER-SIDE sibling of {@link persistBlockUploadImage}
- * whose byte source is a BLOCK-OWNED WORKFLOW OUTPUT (a raw, never-scanned
- * orchestrator URL) instead of a user file upload. Used by
- * `blocks.publishGenerationOutputs` to turn a benchmark grid's own generation
- * outputs into bare, REAL-SCANNED public `Image` rows.
- *
- * SECURITY — the whole fetch→upload→persist happens SERVER-SIDE, so neither the
- * sandboxed iframe NOR the host chrome ever handles the bytes or supplies the
- * URL: the caller (the router) resolves `imageUrl` from the ownership-verified
- * workflow (`blockWorkflowOwnedByAppUser` + the orchestrator app-tag re-read)
- * and passes it here. The iframe only ever sent a `workflowId` + `imageIndexes`,
- * so it can never inject an arbitrary blob. The fetch is HARDENED: host-
- * allowlisted ({@link isAllowedOutputHost}), redirects FOLLOWED MANUALLY up to
- * {@link MAX_OUTPUT_REDIRECTS} hops with the host re-validated against
- * {@link isAllowedOutputHost} BEFORE each hop's socket opens (a real output blob
- * 301s to a same-host content url, so we must follow it, but a redirect can never
- * reach an off-allowlist host), byte-capped ({@link BLOCK_IMAGE_MAX_BYTES}), and
- * magic-byte-validated ({@link sniffSupportedImage} — a spoofed content-type can't
- * smuggle a non-image).
- *
- * The store re-upload uses {@link uploadImageBufferToStore} (the B2 image bucket
- * the edge URL + scanner resolve, with the uuid→backend registration awaited) —
- * NOT Cloudflare Images (whose key 404s at scan time → terminal `NotFound`). The
- * row is created with `createImage` DEFAULT ingestion (NO `skipIngestion`, NEVER
- * `createStoredImage`) so it goes through the genuine NSFW scan, with NO `postId`
- * / NO `modelVersionId` — a BARE Image row, no Post / gallery / feed / reward /
- * notification — and stamped with the {@link BLOCK_PUBLISHED_APP_ID_META_KEY}
- * provenance marker so the cross-user read can scope to THIS app's images.
- * `createImage` is dynamically imported to keep the heavy `image.service` module
- * out of this service's static graph (mirrors {@link persistBlockUploadImage}).
+ * Hardened fetch of a generation output blob: host-allowlisted ({@link isAllowedOutputHost}),
+ * redirects followed manually up to {@link MAX_OUTPUT_REDIRECTS} hops with the host re-validated
+ * before each socket opens, byte-capped ({@link BLOCK_IMAGE_MAX_BYTES}), and magic-byte-validated
+ * ({@link sniffSupportedImage}). A rejected host / failed fetch / oversize / non-image is a
+ * client-correctable upstream problem — BAD_REQUEST.
  */
-export async function persistBlockWorkflowOutputImage(opts: {
-  imageUrl: string;
-  width: number | null;
-  height: number | null;
-  userId: number;
-  /** OauthClient id of the publishing app (the token's appId) — provenance marker. */
-  appId: string;
-}): Promise<{ imageId: number }> {
-  const { imageUrl, width, height, userId, appId } = opts;
-
-  // HARDENED fetch of the orchestrator blob. A rejected host / failed fetch /
-  // oversize / non-image is a client-correctable upstream problem — BAD_REQUEST.
-  //
+export async function fetchGenerationOutputImage(
+  imageUrl: string
+): Promise<{ bytes: Buffer; contentType: string }> {
   // The real output blob url 301s to a SAME-host content url, so we FOLLOW
   // redirects manually (up to MAX_OUTPUT_REDIRECTS hops) instead of the browser
   // `redirect:'error'`/`'follow'`. `redirect:'manual'` in Node/undici exposes the
@@ -251,6 +216,53 @@ export async function persistBlockWorkflowOutputImage(opts: {
       message: 'generation output is not a supported image',
     });
   }
+
+  return { bytes, contentType };
+}
+
+/**
+ * App Blocks (Phase-1 seam) — SERVER-SIDE sibling of {@link persistBlockUploadImage}
+ * whose byte source is a BLOCK-OWNED WORKFLOW OUTPUT (a raw, never-scanned
+ * orchestrator URL) instead of a user file upload. Used by
+ * `blocks.publishGenerationOutputs` to turn a benchmark grid's own generation
+ * outputs into bare, REAL-SCANNED public `Image` rows.
+ *
+ * SECURITY — the whole fetch→upload→persist happens SERVER-SIDE, so neither the
+ * sandboxed iframe NOR the host chrome ever handles the bytes or supplies the
+ * URL: the caller (the router) resolves `imageUrl` from the ownership-verified
+ * workflow (`blockWorkflowOwnedByAppUser` + the orchestrator app-tag re-read)
+ * and passes it here. The iframe only ever sent a `workflowId` + `imageIndexes`,
+ * so it can never inject an arbitrary blob. The fetch is HARDENED: host-
+ * allowlisted ({@link isAllowedOutputHost}), redirects FOLLOWED MANUALLY up to
+ * {@link MAX_OUTPUT_REDIRECTS} hops with the host re-validated against
+ * {@link isAllowedOutputHost} BEFORE each hop's socket opens (a real output blob
+ * 301s to a same-host content url, so we must follow it, but a redirect can never
+ * reach an off-allowlist host), byte-capped ({@link BLOCK_IMAGE_MAX_BYTES}), and
+ * magic-byte-validated ({@link sniffSupportedImage} — a spoofed content-type can't
+ * smuggle a non-image).
+ *
+ * The store re-upload uses {@link uploadImageBufferToStore} (the B2 image bucket
+ * the edge URL + scanner resolve, with the uuid→backend registration awaited) —
+ * NOT Cloudflare Images (whose key 404s at scan time → terminal `NotFound`). The
+ * row is created with `createImage` DEFAULT ingestion (NO `skipIngestion`, NEVER
+ * `createStoredImage`) so it goes through the genuine NSFW scan, with NO `postId`
+ * / NO `modelVersionId` — a BARE Image row, no Post / gallery / feed / reward /
+ * notification — and stamped with the {@link BLOCK_PUBLISHED_APP_ID_META_KEY}
+ * provenance marker so the cross-user read can scope to THIS app's images.
+ * `createImage` is dynamically imported to keep the heavy `image.service` module
+ * out of this service's static graph (mirrors {@link persistBlockUploadImage}).
+ */
+export async function persistBlockWorkflowOutputImage(opts: {
+  imageUrl: string;
+  width: number | null;
+  height: number | null;
+  userId: number;
+  /** OauthClient id of the publishing app (the token's appId) — provenance marker. */
+  appId: string;
+}): Promise<{ imageId: number }> {
+  const { imageUrl, width, height, userId, appId } = opts;
+
+  const { bytes, contentType } = await fetchGenerationOutputImage(imageUrl);
 
   // Land the bytes in the SAME store the browser-direct upload path uses so the
   // scanner can read them; `key` is a fresh uuid (satisfies `imageSchema.url`).

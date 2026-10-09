@@ -8,6 +8,7 @@ import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import dayjs from '~/shared/utils/dayjs';
 import { getModelUrl } from '~/utils/string-helpers';
 import clsx from 'clsx';
@@ -34,10 +35,18 @@ export function ModelShopCard({
     modelName: data.name,
     modelVersionId: data.version.id,
   });
+  const impressionRef = useTrackImpression([
+    { entityType: 'Model', entityId: data.id },
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
 
   return (
-    <TwCosmeticWrapper cosmetic={data.cosmetic?.data} className="h-full">
-      <Paper className={classes.card}>
+    <TwCosmeticWrapper
+      cosmetic={data.cosmetic?.data}
+      eventDecoration={data.eventDecoration?.data}
+      className="h-full"
+    >
+      <Paper ref={impressionRef} className={classes.card}>
         <Stack h="100%" gap="md">
           <div className={classes.cardHeader}>
             {image && (

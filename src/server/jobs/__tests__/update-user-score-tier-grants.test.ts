@@ -17,6 +17,8 @@ import type * as NotificationService from '~/server/services/notification.servic
 import type * as FliptClient from '~/server/flipt/client';
 import { persistScoreBatch, settleTierGrants } from '~/server/jobs/update-user-score';
 import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { creatorMilestoneNotifications } from '~/server/notifications/creator-milestone.notifications';
 
 const updatedRow = { userId: 7, oldTotal: '400', newTotal: '600' };
 const crossing = { userId: 7, milestoneKey: 'score:spark', name: 'Spark', threshold: 500 };
@@ -172,6 +174,94 @@ describe('persistScoreBatch before a definition launches', () => {
     await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(ctx.tierGrantErrors).toEqual([failure]);
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('persistScoreBatch alerts staff to a new Legend', () => {
+  const legendCrossing = {
+    userId: 7,
+    milestoneKey: 'score:legend',
+    name: 'Legend',
+    threshold: 1_000_000,
+  };
+  const staffAlerts = () =>
+    (mocks.createNotification.mock.calls as unknown as [{ type: string }][])
+      .map(([n]) => n)
+      .filter((n) => n.type === 'creator-legend-reached-staff');
+
+  beforeEach(() => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: { legendAlertUserIds: [1, 2] } });
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 7, username: 'newlegend' }]);
+  });
+
+  it('notifies the configured staff with who crossed', async () => {
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([
+      expect.objectContaining({
+        key: 'creator-legend-reached-staff:7',
+        userIds: [1, 2],
+        details: { userId: 7, username: 'newlegend' },
+      }),
+    ]);
+  });
+
+  // Staff want every new Legend; the user-facing announcement schedule is a different decision.
+  it('still alerts when the crossing is silenced for the user', async () => {
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: new Date(0) });
+    expect(staffAlerts()).toHaveLength(1);
+  });
+
+  // A silent grant (a tier already passed, the launch backfill) is a Founding Legend, not a new one.
+  it('does not alert on a silent grant', async () => {
+    const { ctx } = batchCtx({ grant: async () => [{ ...legendCrossing, silent: true }] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([]);
+  });
+
+  it('does not alert on a lower tier', async () => {
+    const { ctx } = batchCtx({ grant: async () => [crossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([]);
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  // The grants are committed by the time the alert runs, so its failure must not fail the batch.
+  it('keeps the batch whole when the alert cannot read its config', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockRejectedValue(new Error('replica unreachable'));
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await expect(
+      persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch })
+    ).resolves.toBeUndefined();
+    expect(ctx.tierGrantErrors).toEqual([]);
+  });
+
+  it('renders a message that names the Legend and links to their profile', () => {
+    const prepare = creatorMilestoneNotifications['creator-legend-reached-staff'].prepareMessage;
+    expect(prepare({ details: { userId: 7, username: 'newlegend' } } as never)).toEqual({
+      message: 'newlegend just became a Legend. Send them a note?',
+      url: '/user/newlegend',
+    });
+  });
+
+  it('renders nothing for an alert without a username', () => {
+    const prepare = creatorMilestoneNotifications['creator-legend-reached-staff'].prepareMessage;
+    expect(prepare({ details: { userId: 7, username: null } } as never)).toBeUndefined();
+  });
+
+  it('skips a Legend with no username, whose profile cannot be linked', async () => {
+    dbMock.dbRead.user.findMany.mockResolvedValue([{ id: 7, username: null }]);
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([]);
+  });
+
+  it('sends nothing when no recipient is configured', async () => {
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null);
+    const { ctx } = batchCtx({ grant: async () => [legendCrossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(staffAlerts()).toEqual([]);
   });
 });
 

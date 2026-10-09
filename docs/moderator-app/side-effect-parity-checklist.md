@@ -157,10 +157,20 @@ New gaps found:
   sessions" primitive) rather than porting the session/strike machinery into the spoke.
   The `generation-restrictions` "flag as suspicious" sysRedis write (see Bucket B) lands with this surface.
 
+## `/ratings` — rating disputes for every rated entity (text-scan plan 05)
+
+| Side effect | Status |
+|---|---|
+| Search-index sync for article / bounty / model | **equivalent** — existing `syncSearchIndex` |
+| Connected-entity `nsfwLevel` cascade | **equivalent** — `JobQueue(UpdateNsfwLevel)`, run by the main app's cron |
+| Model caches after an `nsfw` flip (`bustMvCache`: resource data, public model response, access, images) | **equivalent** — `/api/v1/model-versions/bust-cache`, first 500 versions |
+| ClickHouse resolved events for non-Article types | **deferred, COSMETIC** — no table exists for them |
+| Challenge raise (void/refund escalation) | **not offered** — moderator levels are lower-only |
+
 ## Already at full parity (no action)
 
 Reports set-status + reporter reward · cosmetics grant · blocklists · scanner verdict upsert · image
-block/accept/appeal · article rating-review resolve.
+block/accept/appeal · rating-review resolve (`/ratings`).
 
 ## Infra availability (what unblocks what)
 

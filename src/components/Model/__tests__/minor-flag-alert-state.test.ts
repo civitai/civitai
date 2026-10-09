@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getMinorFlagAlertState } from '~/components/Model/minor-flag-alert-state';
+import {
+  FLAG_ALERT_MESSAGES,
+  getMinorFlagAlertState,
+  selectModelFlagAlertMessage,
+} from '~/components/Model/minor-flag-alert-state';
 
 describe('getMinorFlagAlertState', () => {
   it('offers the button when no appeal exists', () => {
@@ -26,5 +30,19 @@ describe('getMinorFlagAlertState', () => {
       upheldAt: resolvedAt,
       copyVariant: 'rejected',
     });
+  });
+});
+
+describe('selectModelFlagAlertMessage', () => {
+  it('names the minor restriction when both flags are set — it is the stricter one', () => {
+    expect(selectModelFlagAlertMessage({ minorFlagged: true, poiFlagged: true })).toBe(
+      FLAG_ALERT_MESSAGES.modelMinor
+    );
+  });
+
+  it('names the real-person restriction for a poi-only flag', () => {
+    expect(selectModelFlagAlertMessage({ minorFlagged: false, poiFlagged: true })).toBe(
+      FLAG_ALERT_MESSAGES.modelPoi
+    );
   });
 });

@@ -78,6 +78,7 @@ export function GenericImageCard({
       }}
       href={disabled ? undefined : url}
       frameDecoration={image.cosmetic}
+      eventDecoration={image.eventDecoration?.data}
       aspectRatio="portrait"
       useCSSAspectRatio
     >

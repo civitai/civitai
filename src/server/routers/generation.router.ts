@@ -1,4 +1,4 @@
-import { gateRuleSchema } from '~/shared/data-graph/generation/gates';
+import { gateRuleSchema } from '~/shared/generation/gates';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,

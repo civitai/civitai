@@ -4,12 +4,10 @@ import { SEED, aspectRatioDef, img2imgImages } from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * MAI-Image-2.5, ported from `mai-graph.ts`. Locked single version; no LoRAs,
+ * MAI-Image-2.5. Locked single version; no LoRAs,
  * sampler, cfg, steps, or CLIP skip. txt2img picks an aspect ratio; edit takes
  * one reference image cropped to a supported ratio.
  */
-
-// ---- copied from mai-graph.ts, which dies with the data-graph engine --------
 
 export const maiVersionId = 3002140;
 
@@ -31,8 +29,6 @@ const maiPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
 /** Edit uploads must crop to a supported output ratio. */
 export const maiCropAspectRatios = maiAspectRatios.map((r) => r.value as `${number}:${number}`);
-
-// ---- end of mai-graph.ts copies ---------------------------------------------
 
 export const mai = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>

@@ -391,7 +391,15 @@ describe('createModelFileScanRequest', () => {
       await createModelFileScanRequest(baseInput);
 
       expect(mockResolveDownloadUrl).toHaveBeenCalledTimes(1);
-      expect(mockResolveDownloadUrl).toHaveBeenCalledWith(1, 's3://bucket/key.safetensors');
+      expect(mockResolveDownloadUrl).toHaveBeenCalledWith(
+        1,
+        's3://bucket/key.safetensors',
+        undefined,
+        {
+          caller: 'orchestrator-preflight',
+          actor: 'internal',
+        }
+      );
       expect(mockSubmitWorkflow).toHaveBeenCalled();
     });
 

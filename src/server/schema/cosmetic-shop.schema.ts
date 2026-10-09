@@ -243,7 +243,8 @@ export const purchaseCosmeticShopItemInput = z.object({
   //
   // The expected price is checked with it: the buyer pressed a button showing a
   // number, and a listing re-priced since that render must refuse rather than
-  // charge something they never agreed to.
+  // charge something they never agreed to. For a pack it is the amount due, which
+  // also moves with what the buyer owns.
   idempotencyKey: z.string().uuid().optional(),
   expectedUnitAmount: z.number().int().nonnegative().optional(),
 });
@@ -269,4 +270,6 @@ export const getShopInput = z.object({
   // but a shopper filtering the shelf thinks of it as one more kind of thing.
   cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal('Pack')])).optional(),
   sectionId: z.number().optional(),
+  // Only this event's items (Cosmetic.data.event), for the event's own page.
+  event: z.string().max(64).optional(),
 });

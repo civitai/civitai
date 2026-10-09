@@ -29,6 +29,7 @@ export function ImageCard({ data }: Props) {
       image={data}
       // The owner's own cosmetic wins; the remix frame is only a fallback.
       cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
+      eventDecoration={data.eventDecoration?.data}
       routedDialog={{
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },

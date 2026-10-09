@@ -4,7 +4,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import {
   bustCompensationPoolCache,
-  getBanked,
+  getBankedBalance,
   getCompensationPool,
   getMonthAccount,
 } from '~/server/services/creator-program.service';
@@ -57,7 +57,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     if (userId) {
       // Get user's current balance across all types
-      const userBanked = await getBanked(userId);
+      const userBanked = await getBankedBalance(userId, { fresh: true });
       const totalToExtract = userBanked.total;
 
       if (totalToExtract > 0) {

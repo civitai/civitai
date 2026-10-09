@@ -13,8 +13,8 @@ import {
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildControlNetSteps } from '../handlers/controlnets.helper';
 import type { EcosystemData } from './types';
 
 type FluxData = EcosystemData<'Flux1' | 'FluxKrea'>;

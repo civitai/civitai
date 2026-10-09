@@ -16,9 +16,9 @@ export type CreatorScoreUnlockSurface =
 /**
  * Which number the gate compares. They are not interchangeable: `total` is `User.meta.scores.total`, the
  * figure the account page shows; `aggregate` is `GREATEST(sum of the categories, total)`, which can be
- * higher; `articles` is the articles category alone.
+ * higher.
  */
-export type CreatorScoreKind = 'total' | 'aggregate' | 'articles';
+export type CreatorScoreKind = 'total' | 'aggregate';
 
 export type CreatorScoreUnlock = {
   key: string;
@@ -30,36 +30,27 @@ export type CreatorScoreUnlock = {
   source: 'compiled' | 'keyValue';
 };
 
-export type CreatorScoreKinds = { total: number; aggregate?: number; articles?: number };
+export type CreatorScoreKinds = { total: number; aggregate?: number };
 
-/** `aggregate` falls back to `total`; `articles` is undefined unless passed, so its gates are skipped. */
+/** `aggregate` falls back to `total`. */
 export function creatorScoreForKind(scores: CreatorScoreKinds, kind: CreatorScoreKind) {
-  return kind === 'articles'
-    ? scores.articles
-    : kind === 'aggregate'
-    ? scores.aggregate ?? scores.total
-    : scores.total;
+  return kind === 'aggregate' ? scores.aggregate ?? scores.total : scores.total;
 }
 
 export function isCreatorScoreUnlockReached(unlock: CreatorScoreUnlock, scores: CreatorScoreKinds) {
-  const score = creatorScoreForKind(scores, unlock.scoreKind);
-  return score != null && score >= unlock.minScore;
+  return creatorScoreForKind(scores, unlock.scoreKind) >= unlock.minScore;
 }
 
 /**
  * The unlocks not yet reached that have the lowest threshold, which is what a refusal or a progress bar
- * points at next. Each gate is judged against its own kind of score: `aggregate` falls back to `total`
- * when absent, and the articles tiers are left out unless an articles score is passed. Empty when every
- * comparable unlock is reached.
+ * points at next. Each gate is judged against its own kind of score, `aggregate` falling back to `total`
+ * when absent. Empty when every unlock is reached.
  */
 export function nextCreatorScoreUnlocks(
   unlocks: CreatorScoreUnlock[],
   scores: CreatorScoreKinds
 ): CreatorScoreUnlock[] {
-  const pending = unlocks.filter((u) => {
-    const score = creatorScoreForKind(scores, u.scoreKind);
-    return score != null && score < u.minScore;
-  });
+  const pending = unlocks.filter((u) => !isCreatorScoreUnlockReached(u, scores));
   if (pending.length === 0) return [];
   const next = Math.min(...pending.map((u) => u.minScore));
   return pending.filter((u) => u.minScore === next);
@@ -70,6 +61,7 @@ export type CreatorScoreTier = {
   name: string;
   threshold: number;
   hint: string | null;
+  badgeUrl?: string | null;
 };
 
 export type CreatorScoreRung = {
@@ -83,15 +75,12 @@ export type CreatorScoreRung = {
  * The ladder on the `total` score: one rung per tier, carrying every unlock above the previous tier up to
  * and including its own threshold, so a tier names the privileges reaching it brings. Unlocks above the
  * top tier, and every unlock when there are no tiers, become unnamed rungs at their own threshold.
- * Articles-score unlocks are left out: they are not reached by climbing this ladder.
  */
 export function buildCreatorScoreLadder(
   unlocks: CreatorScoreUnlock[],
   tiers: CreatorScoreTier[]
 ): CreatorScoreRung[] {
-  const ladderUnlocks = unlocks
-    .filter((u) => u.scoreKind !== 'articles')
-    .sort((a, b) => a.minScore - b.minScore);
+  const ladderUnlocks = [...unlocks].sort((a, b) => a.minScore - b.minScore);
   const sortedTiers = [...tiers].sort((a, b) => a.threshold - b.threshold);
 
   const rungs: CreatorScoreRung[] = [];

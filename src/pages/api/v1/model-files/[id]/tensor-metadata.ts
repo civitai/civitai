@@ -6,6 +6,7 @@ import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
@@ -74,6 +75,7 @@ export default MixedAuthEndpoint(async function handler(
     modelVersionId: file.modelVersionId,
     fileId: id,
     user,
+    attribution: { caller: 'other', actor: resolveActorFor(user) },
   });
 
   if (fileResult.status !== 'success') {

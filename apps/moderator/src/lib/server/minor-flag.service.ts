@@ -22,13 +22,24 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
-export const resolveMinorFlagAppeal = (modelId: number, uphold: boolean): Promise<ActionResult> =>
-  toResult(
+/** `rescanQueued`: the owner edited the text while the appeal was open, so it is scanned again. */
+export type AppealResult = { ok: true; rescanQueued: boolean } | { ok: false; error: string };
+
+export const resolveMinorFlagAppeal = (modelId: number, uphold: boolean): Promise<AppealResult> =>
+  toAppealResult(
     callModEndpoint(
       'minor-flag/resolve-appeal',
       { modelId, uphold },
       uphold ? 'Uphold flag' : 'Overturn flag'
     )
+  );
+
+export const resolveMinorFlagAppealPerLabel = (
+  modelId: number,
+  labels: { minor: 'uphold' | 'overturn'; poi: 'uphold' | 'overturn' }
+): Promise<AppealResult> =>
+  toAppealResult(
+    callModEndpoint('minor-flag/resolve-appeal', { modelId, uphold: false, ...labels }, 'Rule per label')
   );
 
 /**
@@ -54,6 +65,13 @@ export async function revertMinorFlag(modelId: number): Promise<ActionResult> {
         : 'Nothing was reverted: this model has no flag snapshot to restore, so its pre-flag state is unknown. Clear it by hand.',
   };
 }
+
+const toAppealResult = async (call: Promise<JsonResult>): Promise<AppealResult> => {
+  const result = await call;
+  if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  return { ok: true, rescanQueued: result.body.rescanQueued === true };
+};
 
 const toResult = async (call: Promise<JsonResult>): Promise<ActionResult> => {
   const result = await call;

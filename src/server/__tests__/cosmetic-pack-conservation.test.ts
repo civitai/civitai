@@ -1,21 +1,32 @@
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
+
+let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    $executeRaw: (...a: unknown[]) => executeRaw(...a),
-    userCosmetic: {
-      findMany: (...a: unknown[]) => ownedFindMany(...a),
-      createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
-    },
-    userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
-    userCosmeticShopPurchaseCosmetic: {
-      createMany: (...a: unknown[]) => createManyComponents(...a),
-    },
-    cosmeticShopItem: { update: vi.fn() },
-  })
+  claims.rollbackOnThrow(() =>
+    fn({
+      cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: (...a: unknown[]) => executeRaw(...a),
+      userCosmetic: {
+        findMany: (...a: unknown[]) => ownedFindMany(...a),
+        createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
+      },
+      userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
+      userCosmeticShopPurchaseCosmetic: {
+        createMany: (...a: unknown[]) => createManyComponents(...a),
+      },
+      cosmeticShopItem: { update: vi.fn() },
+    })
+  )
 );
 
 /**
@@ -56,6 +67,7 @@ const PACK_CREATOR = 902;
 const OTHER_CREATOR = 903;
 const RESELLER = 904;
 const THIRD_CREATOR = 905;
+const LISTER = 906;
 const PLATFORM_KEEPS = 0.3;
 
 type Member = Parameters<typeof purchaseCosmeticPack>[0]['members'][number];
@@ -203,6 +215,25 @@ const SHAPES: Shape[] = [
     ],
   },
   {
+    // Official AND stale: the official member has to take part in scaling, or
+    // the foreign creator is paid as if it were not there.
+    // Priced between the foreign snapshot alone and foreign + official, so the
+    // official member is what tips it into scaling — and what left a remainder
+    // for the lister before.
+    name: 'an official member in a pack whose snapshots exceed the price',
+    price: 4000,
+    members: [
+      mkMember({ floorAmount: 100 }),
+      mkMember({
+        cosmeticId: 1002,
+        createdById: OTHER_CREATOR,
+        addedById: OTHER_CREATOR,
+        floorAmount: 3000,
+      }),
+      mkMember({ cosmeticId: 1003, createdById: null, addedById: LISTER, floorAmount: 2000 }),
+    ],
+  },
+  {
     // The buyer resells someone else's work. The seller share would be a
     // discount they fund for themselves, which the single purchase refuses.
     name: 'the buyer is a members reseller',
@@ -315,6 +346,7 @@ const SHAPES: Shape[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  claims = installShopPurchaseClaimFake();
   ownedFindMany.mockResolvedValue([]);
   // Distinct per call, as the real service returns: a takedown reverses payouts
   // by refunding each recorded transaction id, so a regression recording one id
@@ -394,6 +426,13 @@ describe.each(SHAPES)(
     const membersPaidFor = () =>
       members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
 
+    // Hand-written for the same reason, and shared for the same reason.
+    const isPayable = (m: Member) =>
+      m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId;
+    // Priced as foreign (not the lister's own), so the bank keeps their share.
+    const officialMembers = () =>
+      members.filter((m) => m.createdById == null && packCreatorId != null);
+
     // Computed from the shape, not by calling the code under test: every other
     // property bounds outflow by inflow, so a defect that charged everyone zero
     // would satisfy all of them while giving the shop away.
@@ -434,10 +473,11 @@ describe.each(SHAPES)(
 
     it('pays every foreign creator something attributable to their member', async () => {
       const { charged, payouts } = await setup();
-      const owedTo = members.filter(
-        (m) => m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId
+      const owedTo = members.filter(isPayable);
+      const snapshotTotal = [...owedTo, ...officialMembers()].reduce(
+        (sum, m) => sum + m.floorAmount,
+        0
       );
-      const snapshotTotal = owedTo.reduce((sum, m) => sum + m.floorAmount, 0);
       const scale = snapshotTotal > charged && snapshotTotal > 0 ? charged / snapshotTotal : 1;
       for (const member of owedTo) {
         const attributable = payouts.filter((p) =>
@@ -454,14 +494,28 @@ describe.each(SHAPES)(
       }
     });
 
+    // Justin, 2026-10-07: "Official item sales should go to the bank." The pack
+    // lister was paid on the whole remainder, official members' value included,
+    // and every other property here held while it happened.
+    it('pays the pack lister nothing for an official member', async () => {
+      const { charged, payouts } = await setup();
+      const covered = [...members.filter(isPayable), ...officialMembers()];
+      const snapshotTotal = covered.reduce((sum, m) => sum + m.floorAmount, 0);
+      const scale = snapshotTotal > charged && snapshotTotal > 0 ? charged / snapshotTotal : 1;
+      const coveredBasis = covered.reduce((sum, m) => sum + Math.floor(m.floorAmount * scale), 0);
+      const listerPaid = payouts
+        .filter((p) => p.externalTransactionId.endsWith(':pack'))
+        .reduce((sum, p) => sum + p.amount, 0);
+      expect(listerPaid).toBeLessThanOrEqual(
+        Math.floor(Math.max(0, charged - coveredBasis) * (1 - PLATFORM_KEEPS))
+      );
+    });
+
     it('pays nobody outside the expected recipient set', async () => {
       const { payouts } = await setup();
       const expected = new Set<number>(
         members
-          .filter(
-            (m) =>
-              m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId
-          )
+          .filter(isPayable)
           .flatMap((m) => [
             m.createdById as number,
             ...(m.addedById && m.addedById !== m.createdById && m.addedById !== buyerId
@@ -632,6 +686,16 @@ describe.each(SHAPES)(
       expect(rows).toHaveLength(membersPaidFor().length);
     });
 
+    // Gross-sales milestones credit each creator these rows and the lister the
+    // price minus them, so a row recorded at its unscaled snapshot over-credits
+    // one creator and silently debits the other.
+    it('records attributions that never sum past what the buyer was charged', async () => {
+      const { charged } = await setup();
+      const rows: { unitAmount: number }[] = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
+      for (const row of rows) expect(row.unitAmount).toBeGreaterThanOrEqual(0);
+      expect(rows.reduce((sum, r) => sum + r.unitAmount, 0)).toBeLessThanOrEqual(charged);
+    });
+
     // Identity, where the assertion above is only a count: a write that keeps the
     // row count and records the wrong cosmetic passes the count on every shape
     // and fails this on 13.
@@ -727,9 +791,17 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
     }),
   ];
 
-  it('refunds, retries the refund, and logs when the write transaction throws', async () => {
+  // A refund is sent once; a failed one is not retried from here but left to
+  // reconciliation, reported as "state unknown" with nothing paid out.
+  it('refunds once and reports state unknown when the refund fails, paying nobody', async () => {
     purchaseCreate.mockRejectedValue(new Error('write failed'));
-    refund.mockRejectedValueOnce(new Error('buzz down')).mockResolvedValue({});
+    refund.mockRejectedValue(
+      new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'buzz down',
+        cause: new BuzzApiError(503, 'Service Unavailable'),
+      })
+    );
     await expect(
       purchaseCosmeticPack({
         userId: BUYER,
@@ -737,8 +809,23 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
         members,
         stickersEnabled: true,
       })
-    ).rejects.toThrow();
-    expect(refund.mock.calls.length).toBeGreaterThan(1);
+    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(refund).toHaveBeenCalledTimes(1);
+    expect(pay).not.toHaveBeenCalled();
+  });
+
+  it('refunds the whole charge and refuses when the write transaction throws', async () => {
+    purchaseCreate.mockRejectedValue(new Error('write failed'));
+    refund.mockResolvedValue({ totalRefunded: 6300 });
+    await expect(
+      purchaseCosmeticPack({
+        userId: BUYER,
+        shopItem: shopItem(6300, members.length),
+        members,
+        stickersEnabled: true,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(refund).toHaveBeenCalledTimes(1);
     expect(pay).not.toHaveBeenCalled();
   });
 

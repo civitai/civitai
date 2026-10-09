@@ -17,6 +17,8 @@
     action = '?/ban',
     enhancer,
     busy = false,
+    canConfirm = true,
+    noteRequired = false,
     onCancel,
     prompt,
     hidden,
@@ -26,6 +28,9 @@
     action?: string;
     enhancer: SubmitFunction;
     busy?: boolean;
+    /** False while a field the page added through `prompt` is still unfilled. */
+    canConfirm?: boolean;
+    noteRequired?: boolean;
     onCancel: () => void;
     /** What the ban does on THIS page, beyond the shared consequences. */
     prompt?: Snippet;
@@ -34,6 +39,7 @@
   } = $props();
 
   let reasonCode = $state('');
+  let internalNote = $state('');
   let removeModels = $state(true);
   let removeMedia = $state(false);
   let removeComments = $state(false);
@@ -104,7 +110,13 @@
       </Select.Content>
     </Select.Root>
 
-    <Textarea name="detailsInternal" rows={2} placeholder="Internal notes (optional)" />
+    <Textarea
+      name="detailsInternal"
+      rows={2}
+      required={noteRequired}
+      placeholder={noteRequired ? 'Internal notes (required)' : 'Internal notes (optional)'}
+      bind:value={internalNote}
+    />
     <!-- Stored on the ban and read back by the appeal flow. Not emailed to the user. -->
     <Textarea
       name="detailsExternal"
@@ -172,7 +184,7 @@
     <!-- The single-account ban path. Floored for the same reason as the bulk one on
          `routes/retool/bulk-ban/+page.svelte`, which renders this form on the same page. -->
     <div class="mt-2 flex gap-2">
-      <Button type="submit" size="sm" variant="destructive" disabled={busy} data-touch-target>
+      <Button type="submit" size="sm" variant="destructive" disabled={busy || !canConfirm || (noteRequired && !internalNote.trim())} data-touch-target>
         {busy ? 'Working…' : 'Confirm ban'}
       </Button>
       <Button type="button" size="sm" variant="outline" onclick={onCancel} data-touch-target>

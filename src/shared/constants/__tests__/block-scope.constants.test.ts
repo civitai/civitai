@@ -191,9 +191,11 @@ describe('block-scope.constants', () => {
       'apps:storage:shared:write',
       'posts:write:self',
       'goods:purchase:self',
+      // Publishes store cards every visitor sees, under the viewer's name.
+      'apps:store:items:write',
     ];
 
-    it('flags exactly the 7 designated sensitive scopes', () => {
+    it('flags exactly the designated sensitive scopes', () => {
       expect([...SENSITIVE_BLOCK_SCOPES].sort()).toEqual([...EXPECTED_SENSITIVE].sort());
       for (const scope of EXPECTED_SENSITIVE) {
         expect(isSensitiveBlockScope(scope)).toBe(true);

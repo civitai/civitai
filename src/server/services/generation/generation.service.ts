@@ -13,7 +13,7 @@ import { uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
-import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
+import { wanBaseModelGroupIdMap } from '~/shared/generation/version-ids';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -60,7 +60,7 @@ import {
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
-} from '~/shared/data-graph/generation/gates';
+} from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
   generatorMessageSchema,
@@ -76,6 +76,7 @@ import {
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
 import { pickPreviewImage } from '~/shared/utils/resource-preview';
+import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
@@ -1369,9 +1370,10 @@ export async function getResourceData(
     // handed us — and on the cache's fail-open path one origin lookup is single-flighted and its
     // record shared by every caller that joined that window. `canGenerate` is a PER-USER decision,
     // so mutating in place applies this user's gate outcome to a concurrent user's payload.
-    let model = item.model;
+    const { userFlags: ownerFlags, ...ownerlessModel } = item.model;
+    let model = ownerlessModel;
     if (!canGenerate) {
-      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = item.model;
+      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = ownerlessModel;
       model = rest;
     }
 
@@ -1389,6 +1391,7 @@ export async function getResourceData(
       epochNumber,
       isOwnedByUser,
       isPrivate,
+      tipsEnabled: isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
     };
   }
 

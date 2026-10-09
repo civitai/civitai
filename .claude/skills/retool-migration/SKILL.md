@@ -405,13 +405,8 @@ the repo precisely so the next session doesn't need the previous one's context.
 ## 7. Feedback loop
 
 Moderators report bugs and request features in the **Mod Studio Feedback** Discord group chat —
-channel `1534637921829912777`.
-
-```bash
-QB=~/.claude/skills/discord-bridge/query.mjs
-node $QB messages 1534637921829912777          # recent feedback
-node $QB search "retool" --guild <guildId>     # older context
-```
+channel `1534637921829912777`. The repo's `discord` skill goes through a bot,
+which may not see a group chat; read it with your own Discord access.
 
 Check it **before** starting a page (someone may have already described what they need) and
 **after** shipping one. It carries screenshots, real SQL moderators want surfaced, and bug

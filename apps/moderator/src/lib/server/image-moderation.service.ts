@@ -13,6 +13,11 @@ import {
 } from './image-moderation-effects';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
+import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
+
+// The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
+// not true, for every row with no flag, and would refuse every ordinary accept.
+const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
 
 const BLOCKED_REASON_MODERATED = 'moderated';
 
@@ -35,16 +40,27 @@ const recompute = async (imageId: number) => {
   await invalidateThumbnails(imageId);
 };
 
+/** An accept refused because the image is removed with only the review flag left. */
+export class FlagOnlyRemovedError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} is removed with only its review flag left`);
+  }
+}
+
 export async function acceptImage({
   imageId,
   removeMinorFlag = false,
   userId,
   deferAppealEmail = false,
+  restoreRemoved = false,
 }: {
   imageId: number;
   removeMinorFlag?: boolean;
   userId: number;
   deferAppealEmail?: boolean;
+  /** An explicit unblock. Review queues leave it off, so an image removed with only the review flag
+   *  left cannot come back live from one; they throw `FlagOnlyRemovedError` instead. */
+  restoreRemoved?: boolean;
 }): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
     .selectFrom('Image')
@@ -61,7 +77,8 @@ export async function acceptImage({
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
       : sql`"metadata" - 'ruleId' - 'ruleReason'`;
 
-  await dbWrite
+  // Refused in the statement itself, not off the replica read above.
+  const { numUpdatedRows } = await dbWrite
     .updateTable('Image')
     .set({
       needsReview: null,
@@ -81,7 +98,12 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
-    .execute();
+    .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    .executeTakeFirst();
+  if (!numUpdatedRows) {
+    if (restoreRemoved) return;
+    throw new FlagOnlyRemovedError(imageId);
+  }
 
   // update_nsfw_levels_new skips nsfwLevelLocked rows, so without this a rating-locked Blocked image would
   // stay hidden after unblock. Clear the lock + zero the level so the recompute below restores the real one.
@@ -158,10 +180,14 @@ export async function blockImage({
     .executeTakeFirst();
   if (!img) return;
 
-  await dbWrite
+  const { numUpdatedRows } = await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: null,
+      // The moderator-only review flag survives a block: only its own queue, a filed report or an
+      // explicit unblock clears it.
+      needsReview: sql<
+        string | null
+      >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,
@@ -177,7 +203,12 @@ export async function blockImage({
           : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text`,
     })
     .where('id', '=', imageId)
-    .execute();
+    // Already removed with only the review flag left: blocking again would only notify the uploader a
+    // second time. Decided here, not off the replica read above.
+    .where(NOT_FLAG_ONLY_REMAINING)
+    .executeTakeFirst();
+  if (!numUpdatedRows) return;
+  await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
@@ -194,6 +225,62 @@ export async function blockImage({
   });
 }
 
+/**
+ * Clears the moderator-only review flag from an image that stays Blocked: no unblock, no notice to
+ * the uploader. False when there was nothing to clear, e.g. another moderator got there first.
+ */
+export async function dismissReviewFlag({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}): Promise<boolean> {
+  const { numUpdatedRows } = await dbWrite
+    .updateTable('Image')
+    .set({ needsReview: null })
+    .where('id', '=', imageId)
+    .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+    .where('ingestion', '=', 'Blocked')
+    .executeTakeFirst();
+  if (!numUpdatedRows) return false;
+
+  // Never one of the main app's MODERATOR_TAKEDOWN_ACTIVITIES: clearing a flag is not a decision to
+  // destroy the image, and those values license exactly that.
+  await recordModActivity({
+    userId,
+    entityType: 'image',
+    entityId: imageId,
+    activity: 'dismissReviewFlag',
+  });
+  return true;
+}
+
+/**
+ * The appeals queue reads `needsReview = 'appeal'` and the blocked-image purge spares only flagged
+ * rows, so a block must leave the flag on while the appeal is Pending. A separate statement, not a
+ * CASE in the block's own SET: that one re-checks under the row lock with its start-of-statement
+ * snapshot, so it misses an appeal committed while it waited.
+ */
+async function keepPendingAppealFlag(imageId: number) {
+  await dbWrite
+    .updateTable('Image')
+    .set({ needsReview: 'appeal' })
+    .where('id', '=', imageId)
+    .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
+    .where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('Appeal')
+          .select('Appeal.id')
+          .where('Appeal.entityType', '=', 'Image')
+          .whereRef('Appeal.entityId', '=', 'Image.id')
+          .where('Appeal.status', '=', 'Pending')
+      )
+    )
+    .execute();
+}
+
 export type AppealDecision = 'Approved' | 'Rejected';
 
 /**
@@ -207,6 +294,8 @@ function closePendingAppeal(
     resolvedBy: number;
     resolvedAt: Date;
     resolvedMessage?: string | null;
+    resolvedReason?: string;
+    internalNotes?: string;
   }
 ) {
   return dbWrite
@@ -300,12 +389,16 @@ export async function resolveImageAppeal({
   imageId,
   status,
   resolvedMessage,
+  resolvedReason,
+  internalNotes,
   userId,
   deferAppealEmail = false,
 }: {
   imageId: number;
   status: AppealDecision;
   resolvedMessage?: string;
+  resolvedReason: string;
+  internalNotes?: string;
   userId: number;
   deferAppealEmail?: boolean;
 }): Promise<ClosedAppeal | undefined> {
@@ -315,6 +408,8 @@ export async function resolveImageAppeal({
     status,
     resolvedBy: userId,
     resolvedMessage: resolvedMessage ?? null,
+    resolvedReason,
+    ...(internalNotes ? { internalNotes } : {}),
     resolvedAt: new Date(),
   });
   if (!appeal) {
@@ -335,11 +430,14 @@ export async function resolveImageAppeal({
     .where('id', '=', imageId)
     .executeTakeFirst();
 
+  // An appeal verdict never reaches an image under the moderator-only review flag; that flag's own
+  // queue decides it.
   if (status === 'Approved') {
     await dbWrite
       .updateTable('Image')
       .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
       .where('id', '=', imageId)
+      .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .execute();
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
@@ -348,6 +446,7 @@ export async function resolveImageAppeal({
       .updateTable('Image')
       .set({ needsReview: null })
       .where('id', '=', imageId)
+      .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .execute();
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }

@@ -39,6 +39,10 @@ describe('unlocksAtTier', () => {
     expect(unlocksAtTier(unlocks, 40000)).toContain('Join the Creator Program');
   });
 
+  it('names the daily article limit on the tier its threshold sits on', () => {
+    expect(unlocksAtTier(unlocks, 1000)).toContain('Publish up to 5 articles a day');
+  });
+
   it('names nothing for a prestige tier with no gate on it', () => {
     expect(unlocksAtTier(unlocks, 1_000_000)).toEqual([]);
   });
@@ -62,6 +66,15 @@ describe('creator-score-tier-reached notification', () => {
     expect(message?.message).toMatch(/^You reached Spark, a Creator Score of 500\. Unlocked: /);
     expect(message?.message).toContain('Judge crucibles');
     expect(message?.url).toBe('/user/account#creator-score');
+  });
+
+  // Each named slot is spent in registry order, so another gate at 5,000 can crowd this one out.
+  it('still names challenge creation within the capped unlocks at 5,000', () => {
+    const details = getScoreTierNotificationDetails(
+      { userId: 1, milestoneKey: 'score:flame', name: 'Flame', threshold: 5000 },
+      unlocks
+    );
+    expect(details.unlocks).toContain('Create challenges and crucibles');
   });
 
   it('caps the named unlocks and counts the rest', () => {

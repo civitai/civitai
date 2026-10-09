@@ -36,8 +36,8 @@ const parseFeedbackId = (raw: string): number | null => {
  *
  * 🔴 THAT INDEPENDENCE IS THE ROUTE'S ENTIRE REASON TO EXIST. `/feedback?open=<id>` resolves the id
  * against the rows the CURRENT view holds, so a link to anything outside the active status filter or
- * past the first keyset page lands on "Report #N is not in this view — clear the filters to open
- * it". A link that leaves this app cannot carry the view it was made in.
+ * past the first keyset page lands on the "Report #N is not in this view" notice. A link that leaves
+ * this app cannot carry the view it was made in.
  */
 export const load: PageServerLoad = async ({ params, locals }) => {
   const id = parseFeedbackId(params.id);

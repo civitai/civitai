@@ -21,7 +21,7 @@ Crucible is separate from the Challenges platform and its judging engine.
 
 ### Removing an entry
 
-A moderator can remove an entry while the crucible runs. The entry fee is refunded and the entrant is told. An entry whose image is deleted is not removed: it can no longer be seen or place, but its fee stays in the pool.
+A moderator can remove an entry while the crucible runs. The entry fee is refunded and the entrant is told. An entrant can remove their own entry from the crucible page while it runs; there is no refund. That entry, like one whose image is deleted, can no longer be seen or place, but its fee stays in the pool. Its slot opens again under the per-user limit and the total cap, and an entry made in it pays the fee even if the gone entry was free.
 
 ## Setup options
 

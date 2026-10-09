@@ -3,6 +3,7 @@ import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import {
   SDXL_FULL_AR_4MP,
+  optionFallback,
   SEED,
   aspectRatioDef,
   boolDef,
@@ -19,11 +20,9 @@ import {
 } from '../shared';
 
 /**
- * Ideogram family, ported from `ideogram-graph.ts`. 4.0 and 4.5 share one ecosystem;
+ * Ideogram family. 4.0 and 4.5 share one ecosystem;
  * the model version id picks the branch. 4.0 has no negative prompt, sampler or scheduler.
  */
-
-// ---- copied from ideogram-graph.ts, which dies with the data-graph engine ---
 
 export type IdeogramVersion = 'v4.0' | 'v4.5';
 
@@ -59,8 +58,6 @@ const ideogram45PriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 const ideogram45QualityOptions = ['high', 'medium', 'low'] as const;
 type Ideogram45Quality = (typeof ideogram45QualityOptions)[number];
 
-// ---- end of ideogram-graph.ts copies ----------------------------------------
-
 const ideogramVersionOf = versionModeOf<IdeogramVersion>(ideogramVersionIds, 'v4.0');
 
 type IdeogramVersionExt = FamilyExt & { model?: ResourceData | number };
@@ -86,6 +83,7 @@ const ideogram45 = defineGraph<IdeogramVersionExt>()
     input: z.enum(ideogram45QualityOptions).optional(),
     output: z.enum(ideogram45QualityOptions),
     default: 'medium' as Ideogram45Quality,
+    correct: optionFallback(ideogram45QualityOptions, 'medium' as Ideogram45Quality),
     meta: {
       options: ideogram45QualityOptions.map((q) => ({
         label: q.charAt(0).toUpperCase() + q.slice(1),
@@ -98,7 +96,7 @@ const ideogram45 = defineGraph<IdeogramVersionExt>()
     _ext.workflow.startsWith('txt') ? boolDef(false) : null
   );
 
-/** Tagged: v1's `ideogramVersion` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `ideogramVersion`. */
 const versions = branch(
   'ideogramVersion',
   (ext: IdeogramVersionExt) => ideogramVersionOf(ext.model),

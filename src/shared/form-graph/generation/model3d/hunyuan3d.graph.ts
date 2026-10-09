@@ -3,13 +3,11 @@ import { SEED, boolDef, enumDef, imagesDef, sliderDef, textDef } from '../defs';
 import { familyScope, type FamilyExt } from '../shared';
 
 /**
- * Hunyuan3D (via Comfy), ported from `hunyuan3d-graph.ts`. Image-to-3D only.
- * Field names keep v1's `hunyuan*` prefixes — they exist so the fields don't
+ * Hunyuan3D (via Comfy). Image-to-3D only.
+ * The `hunyuan*` field-name prefixes exist so the fields don't
  * collide with the standard image Controllers, and the handler maps them back
  * to schema names.
  */
-
-// ---- copied from hunyuan3d-graph.ts, which dies with the data-graph engine --
 
 export const hunyuan3dModelVersionOptions = [
   { label: 'v2.1', value: 'v2.1' as const },
@@ -32,8 +30,6 @@ const HUNYUAN3D_MAX_CFG_SCALE = 20;
 const HUNYUAN3D_DEFAULT_CFG_SCALE = 5;
 
 const HUNYUAN3D_MAX_PROMPT_LENGTH = 600;
-
-// ---- end of hunyuan3d-graph.ts copies ---------------------------------------
 
 export const hunyuan3d = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', imagesDef({ min: 1, max: 1 }))

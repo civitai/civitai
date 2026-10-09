@@ -51,6 +51,7 @@ import {
 } from '~/server/services/collection-media-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   canViewModelVersion,
   MODEL_VERSION_NOT_FOUND,
@@ -871,6 +872,7 @@ export const createPost = async ({
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(userId);
+  if (data.title || data.detail) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -980,6 +982,8 @@ export const updatePost = async ({
   await preventReplicationLag('post', post.id);
   if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
   else await userPostCountCache.refresh(post.userId);
+  if (data.title !== undefined || data.detail !== undefined)
+    scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   return post;
 };

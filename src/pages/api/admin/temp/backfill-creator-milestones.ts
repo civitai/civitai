@@ -12,6 +12,8 @@ import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
   isCreatorJourneyPublic,
 } from '~/server/services/creator-journey-flag.service';
+import { previewActivityGrants } from '~/server/services/creator-milestone-activity.service';
+import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
@@ -23,6 +25,8 @@ import { booleanString } from '~/utils/zod-helpers';
  *              seen and nothing is notified. Safe to re-run; it also reconciles anyone a failed
  *              nightly grant missed. Refuses to write while the creator-journey flag is not public
  *              (see CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG); the dry run always works.
+ *   activity   Dry run only: users and rows per activity detector group that an ungated
+ *              grant-creator-milestones run would grant now. That job does the writing.
  *   cosmetics  After a cosmetic is attached to a milestone definition, grant it to that milestone's
  *              existing holders. Optional `&milestoneKey=score:flame` limits it to one definition.
  *
@@ -40,7 +44,7 @@ import { booleanString } from '~/utils/zod-helpers';
  */
 
 const schema = z.object({
-  action: z.enum(['tiers', 'cosmetics']).default('tiers'),
+  action: z.enum(['tiers', 'cosmetics', 'activity']).default('tiers'),
   dryRun: booleanString().default(true),
   batchSize: z.coerce.number().int().min(1).max(5000).default(4000),
   start: z.coerce.number().int().min(0).default(0),
@@ -50,6 +54,13 @@ const schema = z.object({
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const params = schema.parse(req.query);
+
+  if (params.action === 'activity') {
+    if (!params.dryRun)
+      return res.status(400).json({ error: 'The grant-creator-milestones job grants these' });
+    const wouldGrant = await previewActivityGrants(pgDbReadLong, activityDetectorGroups());
+    return res.status(200).json({ ...params, wouldGrant });
+  }
 
   if (params.dryRun) {
     const wouldGrant = await previewBackfill(params);

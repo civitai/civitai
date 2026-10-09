@@ -6,6 +6,8 @@ where it loads on demand:
 - applies to some files only → a `.claude/rules/*.md` with `paths:` frontmatter
 - setup and how-to → `docs/dev/`; feature behaviour → `docs/features/`; a procedure → a skill
 - why a rule exists, incident history → the commit message or PR body
+- a personal preference (whether you use worktrees, review habits, voice) → your `CLAUDE.local.md` or
+  `~/.claude/CLAUDE.md`, never a committed file
 
 `no-claude-md-bloat` caps this file at 150 lines; move content out rather than raising the cap.
 
@@ -47,8 +49,9 @@ where it loads on demand:
   runs those from the current worktree with the auth hub; other `apps/*` use their own `pnpm dev:<name>`.
 - **Local env misbehaving** (override ignored, sign-in fails, onboarding wizard everywhere)? Read
   `docs/dev/local-setup.md` first.
-- **Worktrees: create with `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>`**, remove with
-  `wt stale` / `wt rm`. Never the `EnterWorktree` tool or a hand-rolled `git worktree add`.
+- **Worktrees are optional.** If you use one, create it with
+  `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>` and remove it with `wt stale` / `wt rm`,
+  not the `EnterWorktree` tool or a hand-rolled `git worktree add`.
 - `pnpm run typecheck` (authoritative; `typecheck:fast` is edit-loop only), `pnpm run lint`.
   In SvelteKit apps use `typecheck`, never `check` or a manual `svelte-kit sync`
   (details: `.claude/rules/sveltekit.md`).
@@ -112,14 +115,17 @@ anything committed counts as disclosed and must be fixed and rotated.
 ## Before committing
 1. `pnpm run prettier:write`
 2. Lint what you changed: `pnpm exec eslint <changed .ts/.tsx files>`. Skip the full `pnpm run typecheck`
-   and `pnpm run lint` on feature/fix/chore/docs branches — PR CI runs both on every PR to `main`.
-   Run them in full only when committing directly to `main`. (Typecheck can't be scoped to files.)
+   and `pnpm run lint` locally — PR CI runs both on every PR to `main`. (Typecheck can't be scoped to files.)
 3. The unit suite (`pnpm run test:unit:run`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
 5. Before merging, check the PR's CI — `main` has no required checks, so a red run doesn't block.
 6. Run `comment-review` over the diff and `docs-drift-review` over the commits — the two lanes with no
    automated gate. Required when you moved a file, renamed a script or command, retired an env var, or
    completed a tracked item.
+
+**Every change to `main` goes through a PR** — never push to `main` directly. The one exception is the
+version-bump commit a release script (`release[:minor|:major]`, `release:<app>`) pushes, run only with
+explicit user approval.
 
 **Never stack PRs.** Base every PR on the integration branch (`main` or a `feat/...` branch), never on
 another open PR's branch — a squash-merged parent doesn't retarget the child, and its changes go missing.

@@ -7,6 +7,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
+import { CRUCIBLE_NO_DESCRIPTION } from '~/utils/crucible-helpers';
 
 /**
  * FeaturedCrucibleHero - Large hero card for featured/promoted crucible
@@ -110,8 +111,14 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
             </Text>
 
             {/* Description */}
-            <Text c="dimmed" size="sm" lineClamp={3} className="leading-relaxed">
-              {featured.description}
+            <Text
+              c="dimmed"
+              size="sm"
+              lineClamp={3}
+              fs={featured.description ? undefined : 'italic'}
+              className="leading-relaxed"
+            >
+              {featured.description || CRUCIBLE_NO_DESCRIPTION}
             </Text>
           </div>
 

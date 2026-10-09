@@ -59,7 +59,7 @@ describe('/api/metrics registers + seeds the substitution counter at module load
     const { values } = await metric!.get();
     // Derived from the unions, not hardcoded: a 5th surface must be seeded too.
     const { GENERATION_SURFACES, MODEL_SUBSTITUTION_REASONS } = await import(
-      '~/shared/data-graph/generation/model-substitution'
+      '~/shared/generation/model-substitution'
     );
     expect(values).toHaveLength(GENERATION_SURFACES.length * MODEL_SUBSTITUTION_REASONS.length);
     expect(values.every((v) => v.value === 0)).toBe(true);

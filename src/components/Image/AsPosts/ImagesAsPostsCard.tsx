@@ -56,6 +56,8 @@ import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ImagesAsPostsContextMenu } from '~/components/Image/ContextMenu/ImagesAsPostsContextMenu';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 type ImagesAsPostsCardProps = {
   data: ImagesAsPostModel;
@@ -86,6 +88,10 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
     () => data.images.find((i) => isDefined(i.cosmetic))?.cosmetic,
     [data.images]
   );
+  const eventDecoration = useMemo(
+    () => data.images.find((i) => isDefined(i.eventDecoration))?.eventDecoration?.data,
+    [data.images]
+  );
   const cosmeticData = useMemo(() => {
     if (!cosmetic?.data && !pinned) return undefined;
     return {
@@ -98,11 +104,17 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         : undefined),
     };
   }, [cosmetic?.data, pinned, theme, colorScheme]);
+  // The cover only: further images are recorded per slide as they are swiped to.
+  const impressionRef = useTrackImpression<HTMLElement>([
+    ...(data.postId ? [{ entityType: 'Post' as const, entityId: data.postId }] : []),
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
 
   return (
     <TwCosmeticWrapper
       className="w-full"
       cosmetic={cosmeticData}
+      eventDecoration={eventDecoration}
       style={cosmeticData ? { height } : undefined}
     >
       <>
@@ -110,6 +122,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           <PinnedIndicator radius="xl" color="orange" size="md" iconProps={pinnedIconProps} />
         )}
         <TwCard
+          ref={impressionRef}
           style={!cosmeticData ? { height } : undefined}
           className={clsx({ ['border']: !pinned })}
         >
@@ -186,7 +199,12 @@ function ImagesAsPostsCardHeader({
 
   return (
     <Paper
-      p="xs"
+      py="xs"
+      pr="xs"
+      // Steps the avatar clear of an event decoration sitting on the corner.
+      style={{
+        paddingLeft: 'max(var(--mantine-spacing-xs), var(--event-decoration-clear-left, 0px))',
+      }}
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',
@@ -409,6 +427,7 @@ function PostCarouselSlide({
     <ImageGuard2 image={image} connectType="post" connectId={postId}>
       {(safe) => (
         <>
+          <ImpressionSentinel impressions={[{ entityType: 'Image', entityId: image.id }]} />
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
           <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
           {safe && (

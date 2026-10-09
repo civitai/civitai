@@ -11,7 +11,7 @@ Before deleting any flag, grep for **all** of these patterns. The destructure pa
 | `features.X`           | `if (features.clubs) ...`                                    |
 | Destructure            | `const { apiKeys, oauthApps } = useFeatureFlags();`          |
 | `ctx.features.X`       | server-side tRPC handlers                                    |
-| `ext.flags?.X`         | DataGraph node extensions (e.g. wan-graph.ts)                |
+| `ext.flags?.X`         | DataGraph node extensions (e.g. image/anima.graph.ts)                |
 | `isFlagProtected('X')` | tRPC router middleware                                       |
 | `'X'` literal          | component-config maps (e.g. AppFooter footer items)          |
 | Flipt key (`X-name`)   | direct `isFlipt(...)` / `evaluateBoolean(FLIPT_FEATURE_FLAGS.X)` calls |

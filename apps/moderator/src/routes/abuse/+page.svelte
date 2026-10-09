@@ -63,11 +63,11 @@
     <code>SELECT, INSERT, UPDATE, DELETE</code> on both tables and their sequences.
   </p>
 {:else if data.status === 'not-configured'}
-  <!-- Names the variable the CLIENT reads (`getModeratorDb()` → RETOOL_DATABASE_URL), not the one
-       the DDL comment names. They resolve to the same instance today, so an operator told to check
-       the wrong one would find it set and conclude the message was lying. -->
+  <!-- Names the variable the CLIENT reads: `getModeratorDb()` reads MODERATOR_DATABASE_URL alone
+       (RETOOL_DATABASE_URL is retired), so naming any other would send an operator to check a
+       variable that is set and conclude the message was lying. -->
   <p class="text-dark-2 mb-4">
-    <code>RETOOL_DATABASE_URL</code> is not configured for this environment.
+    <code>MODERATOR_DATABASE_URL</code> is not configured for this environment.
   </p>
 {:else if data.status === 'unreachable'}
   <p class="text-dark-2 mb-4">

@@ -114,3 +114,82 @@ describe('feed baseModels filter', () => {
     }
   );
 });
+
+// The "New & Upcoming" shelves (Justin, 2026-10-07, ClickUp 868meb641). Sorted by reactions,
+// the 42-item pool went to a few of the board's biggest accounts and the client's per-view cap
+// only rotated which two of theirs showed, so these blocks cap followers and each creator's
+// share of the POOL. The pool reaches the client at the configured size: #3980 cut a 3x
+// multiplier because it shipped 126 items to render 14, and over-fetching here must not undo
+// that.
+describe('new & upcoming pool caps', () => {
+  // Creator 1 holds the top 20 ranked items, as one creator held 14 of 42 on 2026-10-07.
+  const rankedPool = () => [
+    ...Array.from({ length: 20 }, (_, i) => ({ id: 1000 + i, user: { id: 1 } })),
+    ...Array.from({ length: 100 }, (_, i) => ({ id: 2000 + i, user: { id: 10 + i } })),
+  ];
+  const imagesArg = () =>
+    getAllImagesIndexMock.mock.calls[0]?.[0] as unknown as {
+      limit: number;
+      newCreatorsMaxFollowers?: number;
+    };
+  const modelsArg = () =>
+    getModelsWithImagesAndModelVersionsMock.mock.calls[0]?.[0] as unknown as {
+      input: { limit: number };
+    };
+  const shipped = async (feed: Record<string, unknown>) => {
+    const block = await getHomeBlockData({ input: {}, homeBlock: feedBlock(feed) });
+    return (block as { feedItems: { items: { id: number; user: { id: number } }[] } }).feedItems
+      .items;
+  };
+
+  it('caps the images pool at maxPerUser per creator, in rank order, at the configured size', async () => {
+    getAllImagesIndexMock.mockResolvedValueOnce({
+      items: rankedPool(),
+      nextCursor: undefined,
+    } as never);
+
+    const items = await shipped({ entity: 'images', newCreators: true, limit: 42, maxPerUser: 2 });
+
+    expect(items).toHaveLength(42);
+    expect(items.filter((item) => item.user.id === 1).map((item) => item.id)).toEqual([1000, 1001]);
+    expect(items[2]?.id).toBe(2000);
+    expect(imagesArg().limit).toBe(126);
+  });
+
+  it('caps the models pool the same way', async () => {
+    getModelsWithImagesAndModelVersionsMock.mockResolvedValueOnce({ items: rankedPool() } as never);
+
+    const items = await shipped({ entity: 'models', newCreators: true, limit: 42, maxPerUser: 2 });
+
+    expect(items).toHaveLength(42);
+    expect(items.filter((item) => item.user.id === 1)).toHaveLength(2);
+    expect(modelsArg().input.limit).toBe(126);
+  });
+
+  it('asks the images feed for creators under 1,000 followers', async () => {
+    await shipped({ entity: 'images', newCreators: true, limit: 42, maxPerUser: 2 });
+
+    expect(imagesArg().newCreatorsMaxFollowers).toBe(1000);
+  });
+
+  // The video block (478512) also sets maxPerUser. It is not a new-creators shelf, so its pool,
+  // fetch size and creator list must not change.
+  it('leaves a non-new-creators block with maxPerUser untouched', async () => {
+    getAllImagesIndexMock.mockResolvedValueOnce({
+      items: rankedPool(),
+      nextCursor: undefined,
+    } as never);
+
+    const items = await shipped({ entity: 'images', limit: 42, maxPerUser: 2 });
+
+    expect(imagesArg().limit).toBe(42);
+    expect(imagesArg().newCreatorsMaxFollowers).toBeUndefined();
+    expect(items.filter((item) => item.user.id === 1)).toHaveLength(20);
+  });
+
+  it('does not over-fetch a new-creators block that sets no maxPerUser', async () => {
+    await shipped({ entity: 'images', newCreators: true, limit: 42 });
+
+    expect(imagesArg().limit).toBe(42);
+  });
+});

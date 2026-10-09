@@ -7,7 +7,7 @@ import {
   createModelSubstitutionCollector,
   type GenerationSurface,
   type ModelSubstitutionReason,
-} from '~/shared/data-graph/generation/model-substitution';
+} from '~/shared/generation/model-substitution';
 import { emitModelSubstitutions } from '../emit-model-substitutions';
 import {
   ensureRegisterGenerationModelSubstitutionMetrics,

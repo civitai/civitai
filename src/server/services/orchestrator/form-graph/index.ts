@@ -1,9 +1,7 @@
 /**
- * Step-input router for the form-graph lane: `generationHub.parse().data` in,
- * @civitai/client steps out. Mirrors the data-graph dispatcher
- * (`../ecosystems/index.ts`) for the ported families; an unported ecosystem is
- * a loud error rather than a silent fallthrough, because reaching here with
- * one means the caller routed a family this lane cannot serve yet.
+ * Step-input router: `generationHub.parse().data` in, @civitai/client steps out.
+ * An unrouted ecosystem is a loud error rather than a silent fallthrough —
+ * reaching here with one means the caller routed a family this has no handler for.
  *
  * `data.ecosystem` is the WIRE value — for wan that is the derived backend
  * key, which is exactly what the version lookup wants.
@@ -11,7 +9,7 @@
 
 import { maxRandomSeed } from '~/server/common/constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
-import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
+import type { GenerationHandlerCtx, StepInput } from '../handlers';
 import { createChromaInput } from './chroma.handler';
 import { createFluxInput } from './flux.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
@@ -134,7 +132,7 @@ export async function createFormGraphStepInput(
  * Fill the seed preserving the arm type. Constrained to `object`, not
  * `{ seed?: ... }` — that is a weak type, and an arm with no seed field at
  * all (Flux3Video) fails the no-common-properties rule. The extra key on such
- * an arm is inert: v1's dispatcher seeds unconditionally the same way.
+ * an arm is inert.
  */
 function withSeed<T extends object>(data: T): T {
   const seed = (data as { seed?: number }).seed;

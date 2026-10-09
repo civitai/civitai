@@ -46,7 +46,7 @@ export function SignalsDebugIndicator() {
         cursor: 'default',
         userSelect: 'none',
       }}
-      title="Enable detailed output: signalsDump() / signalsStatus() / signalsVerbose()"
+      title="Console: __signals.diagnose() / __signals.watch() / __signals.help()"
     >
       <div
         style={{

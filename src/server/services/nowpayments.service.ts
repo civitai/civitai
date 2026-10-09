@@ -55,6 +55,23 @@ const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
 
+/**
+ * Key for Buzz credited by hand for an on-chain deposit NowPayments never turned into a payment.
+ * If NP later backfills that deposit, the backfill gets a fresh payment id, so `np-deposit-<id>`
+ * cannot collide with the manual grant; the deposit's tx hash is the only identity both share.
+ */
+export const manualPayinCreditExternalId = (payinHash: string) =>
+  `np-payin-${payinHash.toLowerCase()}`;
+
+// The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
+// the event is not trusted as "no hash": the status response is the authority.
+const resolvePayinHash = async (paymentId: number, event: NOWPayments.WebhookEvent) => {
+  if (event.payin_hash) return event.payin_hash;
+  const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
+  if (!payment) throw new Error(`Could not resolve payin_hash for payment ${paymentId}`);
+  return payment.payin_hash ?? null;
+};
+
 /** Max number of concurrent requests when fetching min amounts for currencies */
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 
@@ -192,13 +209,32 @@ export const processDeposit = async (
       }
 
       try {
-        transactionId = await grantBuzzPurchase({
-          userId,
-          amount: buzzAmount,
-          externalTransactionId: `np-deposit-${paymentId}`,
-          provider: 'nowpayments',
-          paymentId: event.payment_id,
-        });
+        // Throwing here lands the deposit in buzz_failed, which the retry sweep picks up.
+        const payinHash = await resolvePayinHash(paymentId, event);
+        const manualCredit = payinHash
+          ? await getTransactionByExternalId(manualPayinCreditExternalId(payinHash))
+          : null;
+
+        if (manualCredit) {
+          transactionId = 'already_granted';
+          bonusBuzz = null;
+          multiplierInt = null;
+          await log({
+            type: 'info',
+            message: 'Deposit already credited manually by payin hash; skipping grant',
+            paymentId,
+            userId,
+            payinHash,
+          });
+        } else {
+          transactionId = await grantBuzzPurchase({
+            userId,
+            amount: buzzAmount,
+            externalTransactionId: `np-deposit-${paymentId}`,
+            provider: 'nowpayments',
+            paymentId: event.payment_id,
+          });
+        }
 
         if (!transactionId) {
           buzzGrantFailed = true;
@@ -426,6 +462,7 @@ export const reprocessDeposit = async (paymentId: number) => {
     pay_currency: payment.pay_currency,
     pay_address: payment.pay_address,
     parent_payment_id: payment.parent_payment_id,
+    payin_hash: payment.payin_hash,
   };
 
   return processDeposit(paymentId, payment.payment_status, event);
@@ -588,6 +625,7 @@ async function reconcileSinglePayment(
       pay_currency: payment.pay_currency,
       pay_address: payment.pay_address,
       parent_payment_id: payment.parent_payment_id,
+      payin_hash: payment.payin_hash,
     };
 
     const depositResult = await processDeposit(
@@ -659,6 +697,7 @@ export const retryFailedDeposits = async () => {
         pay_currency: payment.pay_currency,
         pay_address: payment.pay_address,
         parent_payment_id: payment.parent_payment_id,
+        payin_hash: payment.payin_hash,
       };
 
       await processDeposit(numericId, payment.payment_status, event);
@@ -990,6 +1029,7 @@ export const reconcileUserDeposits = async (userId: number) => {
           pay_currency: payment.pay_currency,
           pay_address: payment.pay_address,
           parent_payment_id: payment.parent_payment_id,
+          payin_hash: payment.payin_hash,
         };
 
         await processDeposit(numericId, payment.payment_status, event);

@@ -8,7 +8,8 @@
  * read at runtime, and the inputs nothing else records (lockfile, configs, node, platform, vitest,
  * and this cache's own code). Anything under node_modules is left to the lockfile.
  *
- * Node builtins only: the queue runs the reporter from the primary checkout against any worktree.
+ * Node builtins only: the queue points every worktree at its own checkout's copy (load-core.mjs), and
+ * that copy must not resolve another checkout's packages.
  */
 
 import { createHash } from 'node:crypto';
@@ -24,29 +25,38 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const CACHE_FORMAT = 2;
 export const MODES = ['off', 'shadow', 'on'];
 export const RECORDS_PER_TEST = 8;
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+// Read once, at load: the daemon's checkout can pull mid-run, and a record must be salted with the
+// code that made it, not with whatever is on disk when the run ends.
+const LOADED_CORE = (() => {
+  try {
+    return createHash('sha256')
+      .update(readFileSync(fileURLToPath(import.meta.url)))
+      .digest('hex');
+  } catch {
+    return 'missing';
+  }
+})();
 
 // Inputs every test depends on that no import edge or file read records. This cache's own code is
 // among them: a fix to how reads are captured must invalidate everything recorded without it.
 // `node_modules/.pnpm/lock.yaml` is what pnpm actually INSTALLED, which a rebased tree that skipped
-// `pnpm install` does not share with its lockfile. The package.json files carry `exports` maps, and a
-// symlinked workspace package resolves through them — the lockfile does not record `exports`.
+// `pnpm install` does not share with its lockfile.
 const GLOBAL_INPUTS = [
   'pnpm-lock.yaml',
   'node_modules/.pnpm/lock.yaml',
-  'package.json',
   'vitest.config.mts',
   'tsconfig.json',
 ];
 const WORKSPACE_DIRS = ['packages', 'apps'];
-const OWN_CODE = ['core.mjs', 'fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs'];
+// core.mjs may come from the daemon's checkout (load-core.mjs); these always run from the tree.
+const OWN_CODE = ['fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs', 'load-core.mjs'];
 
 // Named once because TWO rules need the same list, and a second copy is how the bare-specifier
 // exclusion below silently stopped agreeing with the pattern it is supposed to defer to.
@@ -249,8 +259,33 @@ function listTree(abs) {
   return out.sort();
 }
 
+// The package.json files carry `exports` maps, and a symlinked workspace package resolves through
+// them — the lockfile does not record `exports`. Their `version` and `scripts` are left out: releases and
+// new convention guards edit them most days, and keying on them threw away every record in every
+// worktree each time. A test that reads a manifest itself is still keyed on its whole content, through
+// keyFor.
+export function manifestFingerprint(root, rel) {
+  let text;
+  try {
+    text = readFileSync(join(root, rel), 'utf8');
+  } catch {
+    return 'missing';
+  }
+  let pkg;
+  try {
+    pkg = JSON.parse(text);
+  } catch {
+    return `file:${sha(text)}`;
+  }
+  if (pkg && typeof pkg === 'object' && !Array.isArray(pkg)) {
+    delete pkg.version;
+    delete pkg.scripts;
+  }
+  return `manifest:${sha(JSON.stringify(pkg))}`;
+}
+
 function workspaceManifests(root) {
-  const out = [];
+  const out = ['package.json'];
   for (const ws of WORKSPACE_DIRS) {
     let names = [];
     try {
@@ -264,13 +299,17 @@ function workspaceManifests(root) {
 }
 
 export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(root)) {
-  const own = OWN_CODE.map((f) => {
+  const hash = (f, abs) => {
     try {
-      return `${f}:${sha(readFileSync(join(HERE, f)))}`;
+      return `${f}:${sha(readFileSync(abs))}`;
     } catch {
       return `${f}:missing`;
     }
-  });
+  };
+  const own = [
+    `core.mjs:${LOADED_CORE}`,
+    ...OWN_CODE.map((f) => hash(f, join(root, 'scripts', 'test-cache', f))),
+  ];
   return sha(
     JSON.stringify([
       CACHE_FORMAT,
@@ -278,7 +317,7 @@ export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(
       process.platform,
       vitestVersion,
       GLOBAL_INPUTS.map((f) => [f, fingerprint(f)]),
-      workspaceManifests(root).map((f) => [f, fingerprint(f)]),
+      workspaceManifests(root).map((f) => [f, manifestFingerprint(root, f)]),
       own,
     ])
   );

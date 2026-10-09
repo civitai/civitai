@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
-import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
+import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 
 /**
  * 🔴 POPULATION + WIRING GUARD for the `source` label of

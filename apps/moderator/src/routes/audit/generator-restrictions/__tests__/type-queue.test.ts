@@ -133,11 +133,9 @@ describe('generator-restrictions load — type', () => {
 
 describe('generator-restrictions actions — ruling scope', () => {
   /**
-   * 🔴 A verdict is still generation-shaped. `resolveUserRestriction` in the main app hardcodes the
-   * `generation-restriction-upheld` / `-overturned` notification types, a `moderator:generationRestriction*`
-   * update source and a generation-worded email, and on an overturn it resets the PROMPT violation
-   * counter. Ruling on a bot-account row through it would tell the user their generation access was
-   * restored over something that has nothing to do with generation.
+   * 🔴 Only some types have a verdict path. `resolveUserRestriction` in the main app takes each type's
+   * notices, update sources and overturn effect from a per-type table and refuses a type without one;
+   * bot-account has none, so ruling on it would fail after the moderator had already acted.
    *
    * Enforced server-side rather than by hiding a button, because the check has to hold against a posted
    * id and not merely against what the page chose to render.
@@ -149,7 +147,7 @@ describe('generator-restrictions actions — ruling scope', () => {
     });
 
     const result = (await actions.resolve(
-      formEvent({ userRestrictionId: '5', status: 'Upheld' })
+      formEvent({ userRestrictionId: '5', status: 'Upheld', resolvedReason: 'clear-intent' })
     )) as { status: number; data: { error: string } };
 
     expect(result.status).toBe(400);
@@ -157,10 +155,37 @@ describe('generator-restrictions actions — ruling scope', () => {
     expect(resolveRestriction).not.toHaveBeenCalled();
   });
 
+  // Pages are granted separately, so the other queue's ids must not be reachable by posting one.
+  it('refuses a scam restriction id on every action', async () => {
+    getGenerationRestrictions.mockResolvedValue({
+      items: [row({ type: 'scam', triggers: [{ key: '5-1', category: 'prohibited' }] })],
+      totalCount: 1,
+    });
+    const flag = new FormData();
+    flag.append('userRestrictionId', '5');
+    flag.append('key', '5-1');
+
+    const results = (await Promise.all([
+      actions.resolve(formEvent({ userRestrictionId: '5', status: 'Overturned' })),
+      actions.ban(formEvent({ userRestrictionId: '5' })),
+      actions.flagSuspicious({
+        request: { formData: async () => flag },
+        locals: { user: { id: 7 } },
+      } as unknown as Parameters<(typeof actions)['flagSuspicious']>[0]),
+    ])) as { status: number }[];
+
+    expect(results.map((r) => r.status)).toEqual([404, 404, 404]);
+    expect(resolveRestriction).not.toHaveBeenCalled();
+    expect(setBanned).not.toHaveBeenCalled();
+    expect(saveSuspiciousMatches).not.toHaveBeenCalled();
+  });
+
   it('still resolves a generation restriction', async () => {
     getGenerationRestrictions.mockResolvedValue({ items: [row()], totalCount: 1 });
 
-    const result = await actions.resolve(formEvent({ userRestrictionId: '5', status: 'Upheld' }));
+    const result = await actions.resolve(
+      formEvent({ userRestrictionId: '5', status: 'Upheld', resolvedReason: 'clear-intent' })
+    );
 
     expect(result).toEqual({ success: true });
     expect(resolveRestriction).toHaveBeenCalledWith(
@@ -181,7 +206,9 @@ describe('generator-restrictions actions — ruling scope', () => {
     // is also answered `400` with `setBanned` untouched, which made an earlier version of this test
     // pass against pre-change code for a reason that had nothing to do with the type. The message is
     // asserted for the same reason: `400` alone cannot tell the two refusals apart.
-    const result = (await actions.ban(formEvent({ userRestrictionId: '5' }))) as {
+    const result = (await actions.ban(
+      formEvent({ userRestrictionId: '5', resolvedReason: 'repeat-evasion' })
+    )) as {
       status: number;
       data: { error: string };
     };
@@ -197,7 +224,9 @@ describe('generator-restrictions actions — ruling scope', () => {
     // must go all the way through. Without it the refusal could be rejecting every ban.
     getGenerationRestrictions.mockResolvedValue({ items: [row()], totalCount: 1 });
 
-    const result = await actions.ban(formEvent({ userRestrictionId: '5' }));
+    const result = await actions.ban(
+      formEvent({ userRestrictionId: '5', resolvedReason: 'repeat-evasion' })
+    );
 
     expect(result).toEqual({ success: true });
     expect(setBanned).toHaveBeenCalledWith(expect.objectContaining({ userId: 42, ban: true }));
@@ -240,5 +269,152 @@ describe('generator-restrictions actions — ruling scope', () => {
     expect(getGenerationRestrictions).toHaveBeenCalledWith(
       expect.objectContaining({ restrictionId: 5, type: 'any' })
     );
+  });
+});
+
+describe('generator-restrictions actions — flagSuspicious', () => {
+  const triggersRow = () =>
+    row({
+      triggers: [
+        { key: '5-0', category: 'scam', reason: 'Fake support', text: 'claim your prize' },
+        { key: '5-1', category: 'prohibited', prompt: 'a prompt', matchedWord: 'x' },
+      ],
+    });
+
+  it('never copies a scam trigger into the prompt list, even when its key is posted', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [triggersRow()], totalCount: 1 });
+    saveSuspiciousMatches.mockResolvedValue(1);
+
+    const data = new FormData();
+    data.append('userRestrictionId', '5');
+    data.append('key', '5-0');
+    data.append('key', '5-1');
+    await actions.flagSuspicious({
+      request: { formData: async () => data },
+      locals: { user: { id: 7 } },
+    } as unknown as Parameters<(typeof actions)['flagSuspicious']>[0]);
+
+    const [matches] = saveSuspiciousMatches.mock.calls[0];
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ prompt: 'a prompt', check: 'prohibited' });
+  });
+
+  it('refuses a selection of only scam triggers', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [triggersRow()], totalCount: 1 });
+
+    const data = new FormData();
+    data.append('userRestrictionId', '5');
+    data.append('key', '5-0');
+    const result = (await actions.flagSuspicious({
+      request: { formData: async () => data },
+      locals: { user: { id: 7 } },
+    } as unknown as Parameters<(typeof actions)['flagSuspicious']>[0])) as { status: number };
+
+    expect(result.status).toBe(400);
+    expect(saveSuspiciousMatches).not.toHaveBeenCalled();
+  });
+});
+
+describe('generator-restrictions — scam is not a list type here', () => {
+  it('offers only the remaining types', async () => {
+    const { GENERATOR_RESTRICTION_TYPES } = await import('$lib/restriction-types');
+    expect([...GENERATOR_RESTRICTION_TYPES]).toEqual(['generation', 'bot-account']);
+  });
+});
+
+describe('generator-restrictions actions — ruling reason', () => {
+  beforeEach(() => {
+    getGenerationRestrictions.mockResolvedValue({ items: [row()], totalCount: 1 });
+  });
+
+  const resolve = (fields: Record<string, string>) =>
+    actions.resolve(formEvent({ userRestrictionId: '5', ...fields })) as Promise<
+      { status: number; data: { error: string } } | { success: true }
+    >;
+
+  it('forwards the reason and the note to the ruling', async () => {
+    await resolve({
+      status: 'Overturned',
+      resolvedReason: 'other',
+      internalNotes: 'shared account',
+    });
+
+    expect(resolveRestriction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'Overturned',
+        resolvedReason: 'other',
+        internalNotes: 'shared account',
+      })
+    );
+  });
+
+  it.each([
+    ['no reason', { status: 'Upheld' }, /Pick a reason/],
+    [
+      'an uphold reason on an overturn',
+      { status: 'Overturned', resolvedReason: 'clear-intent' },
+      /not a reason for Overturned/,
+    ],
+    [
+      'Other with no note',
+      { status: 'Upheld', resolvedReason: 'other', internalNotes: '  ' },
+      /note when the reason is Other/,
+    ],
+  ])('refuses %s without ruling', async (_label, fields, message) => {
+    const result = (await resolve(fields)) as { status: number; data: { error: string } };
+
+    expect(result.status).toBe(400);
+    expect(result.data.error).toMatch(message);
+    expect(resolveRestriction).not.toHaveBeenCalled();
+  });
+
+  // The ban form has one internal-note box; it is the ban's note and the ruling's.
+  it('records the ban note as the ruling note', async () => {
+    await actions.ban(
+      formEvent({
+        userRestrictionId: '5',
+        resolvedReason: 'other',
+        detailsInternal: 'alt of a banned account',
+      })
+    );
+
+    expect(resolveRestriction).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedReason: 'other', internalNotes: 'alt of a banned account' })
+    );
+  });
+
+  // The ban form allows a 2000-character internal note. Capping the ruling note any lower would
+  // refuse bans that every other ban form accepts.
+  it('accepts a ban note as long as the ban form allows', async () => {
+    const result = await actions.ban(
+      formEvent({
+        userRestrictionId: '5',
+        resolvedReason: 'other',
+        detailsInternal: 'x'.repeat(2000),
+      })
+    );
+
+    expect(result).toEqual({ success: true });
+  });
+
+  it('refuses a ban for Other with no note before banning', async () => {
+    const result = (await actions.ban(
+      formEvent({ userRestrictionId: '5', resolvedReason: 'other' })
+    )) as { status: number; data: { error: string } };
+
+    expect(result.status).toBe(400);
+    expect(result.data.error).toMatch(/note when the reason is Other/);
+    expect(setBanned).not.toHaveBeenCalled();
+  });
+
+  it('refuses a ban with no reason before banning', async () => {
+    const result = (await actions.ban(formEvent({ userRestrictionId: '5' }))) as {
+      status: number;
+      data: { error: string };
+    };
+
+    expect(result.status).toBe(400);
+    expect(result.data.error).toMatch(/Pick a reason/);
+    expect(setBanned).not.toHaveBeenCalled();
   });
 });

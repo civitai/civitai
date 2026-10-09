@@ -250,6 +250,18 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'SPEND',
     why: 'Debits the viewer’s Buzz for a manifest-declared good and pays the app owner 70% immediately. The third SPEND route this table carries, and the only one whose counterparty is the app’s own owner: a suspended app left reachable here would keep selling its catalog to signed-in users and keep paying its own owner out of their balances, which is precisely the revenue a takedown exists to stop. The charge is bounded per purchase and per viewer per day, but neither bound is a substitute for refusing a suspended app.',
   },
+  'src/pages/api/v1/blocks/sub-listings/upsert.ts': {
+    exposure: 'WRITE',
+    why: 'Publishes or edits the viewer’s own app item as an App Store card. The card is public, so a suspended app left reachable here could keep putting new store entries — titles, taglines and images under its users’ names — in front of every store visitor after the takedown. Moderator approval bounds what appears, but refusing a suspended app is the gate.',
+  },
+  'src/pages/api/v1/blocks/sub-listings/withdraw.ts': {
+    exposure: 'WRITE',
+    why: 'Takes the viewer’s own store item out of the App Store. Bounded to the caller’s own rows, but a suspended app left reachable here could still pull its users’ approved cards in a loop, and an approved card cannot come back without another moderator review.',
+  },
+  'src/pages/api/v1/blocks/sub-listings/mine.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Lists the viewer’s own store items for this app with their review status and any moderator reason. Scoped to the calling app and the token subject, but the reasons are moderator-written text about that user, which a suspended app should not keep reading.',
+  },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'A read, but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
@@ -1357,6 +1369,10 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/shared-storage/update.ts',
     'src/pages/api/v1/blocks/shared-storage/vote.ts',
     'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
+    // App Store items: two writes of public store cards and the author's own status read.
+    'src/pages/api/v1/blocks/sub-listings/mine.ts',
+    'src/pages/api/v1/blocks/sub-listings/upsert.ts',
+    'src/pages/api/v1/blocks/sub-listings/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
     // The per-viewer checkpoint override write. WRITE, so it may not opt out: a

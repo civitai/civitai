@@ -1,13 +1,13 @@
 # Generator header redesign — form-graph lane only
 
 Implements the ["Above the Prompt"](https://claude.ai/code/artifact/01a73589-85d1-4e87-bdc2-b389579d1294)
-proposal, scoped to the **form-graph** generation forms. `GenerationFormV2` (the data-graph lane) and
-every other `ResourceSelectModal` consumer keep today's behaviour.
+proposal, scoped to the generation forms. Every other `ResourceSelectModal` consumer keeps today's
+behaviour.
 
 > **Header fully reverted (2026-09-23).** Decisions 2 and 3 and phases 01 and 04 are undone — the
 > form-graph header is now `generation_v2`'s `WorkflowInput` beside `BaseModelInput`, with
-> `SelectedWorkflowDisplay` and the `getWorkflowModes` mode strip beneath, the same as the data-graph
-> lane. `WorkflowPicker` and its browser test are deleted; `workflow-visibility.ts` stays, since
+> `SelectedWorkflowDisplay` and the `getWorkflowModes` mode strip beneath, the same as the retired
+> data-graph lane's. `WorkflowPicker` and its browser test are deleted; `workflow-visibility.ts` stays, since
 > `WorkflowInput` was moved onto it.
 >
 > The flat list was the reason: it showed every workflow regardless of ecosystem, so `img2img`
@@ -19,12 +19,6 @@ every other `ResourceSelectModal` consumer keep today's behaviour.
 > version dropdown again, alongside `VersionGroupSelector` (decision 1 now only half holds).
 > `role: 'checkpoint'`, the modal's `rail`/`footer` slots, `PickerRail` and `setOptionsOverride` were
 > removed with it. Phases 02–03 stand.
-
-## Why this scope is safe
-
-`GenerationTabs` mounts `FormGraphGenerator` when `formGraphGenerator` is on and `GenerationFormV2`
-otherwise. That flag is `availability: ['mod']`, so the redesigned header ships to moderators only
-until it is widened — the rollout gate already exists and needs nothing new.
 
 ## The seam
 
@@ -88,7 +82,7 @@ history before that date.
 
 Phases 02 and 03 — the picker's `resource` role (compatibility badging, multi-select, the staging
 tray) and the catalog-or-roster branch — plus the shared modal chrome those landed with. The header
-itself is back to the data-graph lane's.
+itself is back to the retired data-graph lane's.
 
 ## Not in scope
 

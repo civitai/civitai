@@ -1,5 +1,4 @@
 import { types } from 'pg';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { getClient } from '~/server/db/db-helpers';
@@ -27,13 +26,9 @@ types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
  */
 export let appsDb: AugmentedPool | null = null;
 
+// Process-global in every environment, like the pgDb pools (see the note there).
 if (!env.IS_BUILD && env.APPS_DATABASE_URL) {
-  if (isProd) {
-    appsDb = getClient({ instance: 'apps' });
-  } else {
-    if (!global.globalAppsDb) global.globalAppsDb = getClient({ instance: 'apps' });
-    appsDb = global.globalAppsDb;
-  }
+  appsDb = globalThis.globalAppsDb ??= getClient({ instance: 'apps' });
 }
 
 export function requireAppsDb(): AugmentedPool {

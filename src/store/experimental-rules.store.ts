@@ -14,7 +14,7 @@
  */
 
 import { create } from 'zustand';
-import type { GateRule } from '~/shared/data-graph/generation/gates';
+import type { GateRule } from '~/shared/generation/gates';
 
 type ExperimentalRulesState = { rules: GateRule[] };
 

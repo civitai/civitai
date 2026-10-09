@@ -3,6 +3,7 @@ import { useMergedRef } from '@mantine/hooks';
 import React, { forwardRef } from 'react';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 
@@ -40,7 +41,16 @@ const aspectRatioValues: Record<
 
 export const FeedCard = forwardRef<HTMLElement, Props>(
   (
-    { href, children, aspectRatio = 'portrait', className, frameDecoration, onClick, impressions },
+    {
+      href,
+      children,
+      aspectRatio = 'portrait',
+      className,
+      frameDecoration,
+      eventDecoration,
+      onClick,
+      impressions,
+    },
     ref
   ) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
@@ -51,6 +61,7 @@ export const FeedCard = forwardRef<HTMLElement, Props>(
     return (
       <CosmeticCard
         cosmetic={frameDecoration?.data}
+        eventDecoration={eventDecoration}
         cosmeticStyle={frameDecoration?.data ? wrapperStyle : undefined}
         ref={mergedRef}
         style={!frameDecoration?.data ? { aspectRatio: stringRatio } : undefined}
@@ -73,6 +84,7 @@ type Props = CardProps & {
   onClick?: React.MouseEventHandler;
   useCSSAspectRatio?: boolean;
   frameDecoration?: ContentDecorationCosmetic | null;
+  eventDecoration?: EventDecorationData | null;
   /** Entities this card presents, reported once it has been half visible for a second. */
   impressions?: ImpressionTarget[];
 };

@@ -295,15 +295,10 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       component: 'OffsiteReviewQueue',
       why: 'dead — superseded by the unified queue; nothing renders it (the LIVE table in this file is OffsiteReportsQueue, which does carry a ledger)',
     },
-    'src/components/Apps/MySubmissionsList.tsx#0': {
-      kind: 'unrendered',
-      component: 'MySubmissionsList',
-      why: 'dead — /apps/my-submissions merged into /apps/mine and 301s there',
-    },
     'src/components/Apps/OffsiteSubmissionsList.tsx#0': {
       kind: 'unrendered',
       component: 'OffsiteSubmissionsList',
-      why: 'dead — same merge as MySubmissionsList',
+      why: 'dead — /apps/my-submissions merged into /apps/mine and 301s there',
     },
     'src/components/Apps/OffsiteReviewQueue.tsx#1': {
       kind: 'no-surplus',
@@ -483,7 +478,6 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       'src/components/Apps/AppActivityPanel.tsx#0',
       'src/components/Apps/AppListingsModerationTable.tsx#0',
       'src/components/Apps/MyAppsBody.tsx#0',
-      'src/components/Apps/MySubmissionsList.tsx#0',
       // 🔴 TWO ENTRIES FOR ONE FILE, and this is the row that proves the walk is
       // per-TABLE rather than per-file: `#0` is the dead `OffsiteReviewQueue` and `#1` is
       // the live `OffsiteReportsQueue`. A per-file guard cannot express "one of these
@@ -493,6 +487,7 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       'src/components/Apps/OffsiteReviewQueue.tsx#1',
       'src/components/Apps/OffsiteSubmissionsList.tsx#0',
       'src/components/Apps/ReportTabs.tsx#0',
+      'src/components/Apps/SubListingReviewQueue.tsx#0',
       'src/components/Apps/UnifiedReviewList.tsx#0',
     ]);
   });

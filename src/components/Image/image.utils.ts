@@ -23,7 +23,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { isViewer } from '~/utils/is-viewer';
+import { isViewer, isViewerUsername } from '~/utils/is-viewer';
 
 const imageSections = ['images', 'reactions'] as const;
 export type ImageSections = (typeof imageSections)[number];
@@ -210,12 +210,7 @@ export function isViewingOwnImages(
   currentUser: { id: number; username?: string | null } | null | undefined,
   filters: { username?: string; userId?: number }
 ) {
-  return (
-    (!!currentUser &&
-      !!filters.username &&
-      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
-    isViewer(currentUser, filters.userId)
-  );
+  return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
 }
 
 export const useQueryImages = (

@@ -69,16 +69,26 @@ export enum TransactionType {
    * match `Fee` + `description LIKE 'App author fee%'`, which is how the rail was
    * disambiguated while it shared 25 with the placement-escrow legs.
    *
-   * 🔴 IN CLICKHOUSE THESE ROWS READ AS THE STRING `'28'`, NOT `'appAuthorFee'`.
-   * The ingest MV's int→string map stops at 26, so anything above it is stored as
-   * its digits. `fromClickhouseTransactionType` in `buzz.service.ts` is the one
-   * place that resolves both spellings.
+   * 🔴 IN CLICKHOUSE THESE ROWS READ AS `'unknown_28'`, NOT `'appAuthorFee'`.
+   * The ingest MV has no name for this member. `fromClickhouseTransactionType` and
+   * `clickhouseTransactionTypePredicate` in `buzz.service.ts` resolve every
+   * spelling; a hand-written `type = …` against this rail matches nothing.
    *
    * 🔴 REVERSALS ARE `Refund` + `'App author fee refund'`, not this member, so a
    * query that sums this type alone overstates net by every reversal.
    */
   AppAuthorFee = 28,
 }
+
+/** Ledger queries prefix-match stored rows on this, so changing it orphans every existing author-fee row. */
+export const APP_AUTHOR_FEE_DESCRIPTION = 'App author fee';
+
+/**
+ * Generation tips are paid as `Compensation`; this externalTransactionId prefix is the only thing that
+ * tells them apart from generation compensation. Creator Studio's earnings read matches it literally,
+ * and the bankable predicate counts tips by it, so renaming it makes tips already paid unbankable.
+ */
+export const GENERATION_TIP_TRANSACTION_PREFIX = 'generation-tip-';
 
 type BuzzTypeConfig =
   | {

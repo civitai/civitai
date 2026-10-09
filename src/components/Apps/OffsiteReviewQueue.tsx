@@ -157,8 +157,7 @@ function formatDate(d: string | Date | null | undefined): string {
  * review SUBMITTED timestamps — the modal's submitted line + the review queue's
  * "Submitted" column. A mod deciding on a submission cares about the calendar day,
  * not the minute. Audit-trail timestamps (report "Reported", moderation history)
- * keep the full local formatter above where time-of-day matters. Matches
- * `MySubmissionsList.formatSubmissionDate`.
+ * keep the full local formatter above where time-of-day matters.
  */
 function formatSubmittedDate(d: string | Date | null | undefined): string {
   if (!d) return '—';

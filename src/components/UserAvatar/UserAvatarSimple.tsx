@@ -3,6 +3,7 @@ import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { NamePlateText } from '~/components/User/NamePlateText';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
@@ -66,7 +67,6 @@ export function UserAvatarSimple({
   const decoration = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'ProfileDecoration' : undefined
   )?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt'>;
-  const additionalTextProps = nameplate?.data;
 
   const anim = !autoplayGifs || autoplayAnimations === false ? false : undefined;
 
@@ -116,16 +116,17 @@ export function UserAvatarSimple({
           <Text size="sm">{currentUser?.isModerator ? `[deleted] #${id}` : '[deleted]'}</Text>
         ) : (
           <>
-            <Text
+            <NamePlateText
               size="sm"
               fw={500}
               lineClamp={1}
               color="white"
               className={classes.username}
-              {...additionalTextProps}
+              nameplate={nameplate?.data}
+              autoplay={autoplayAnimations !== false}
             >
               {username}
-            </Text>
+            </NamePlateText>
             {badge?.data.url && (
               <Tooltip label={badge.name} withArrow withinPortal>
                 <div style={{ display: 'flex', width: 28 }}>

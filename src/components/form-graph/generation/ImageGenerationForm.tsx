@@ -30,6 +30,7 @@ import {
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
+import { FieldCorrectionNote } from './FieldCorrectionNote';
 import {
   ControllerLabel,
   PromptLabel,
@@ -291,7 +292,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={imageHub}
         name="resolution"
-        render={({ value, meta, onChange }) => (
+        render={({ value, meta, onChange, note }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Resolution</Input.Label>
             <SegmentedControlWrapper
@@ -302,6 +303,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                 value: o.value,
               }))}
             />
+            <FieldCorrectionNote note={note} />
           </div>
         )}
       />
@@ -446,8 +448,11 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={imageHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
         <Controller
@@ -546,8 +551,16 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={imageHub}
           name="quality"
-          render={({ value, meta, onChange }) => (
-            <SelectInput value={value} onChange={onChange} label="Quality" options={meta.options} />
+          render={({ value, meta, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SelectInput
+                value={value}
+                onChange={onChange}
+                label="Quality"
+                options={meta.options}
+              />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
         <Controller
