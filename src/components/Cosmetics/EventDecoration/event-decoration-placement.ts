@@ -16,6 +16,12 @@ export const DEFAULT_HAT_PLACEMENT: HatPlacement = 'corner';
 export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
 
 /**
+ * How much further up and left a hat sits on a card without a frame, in CSS px. A frame's 6px
+ * padding already carries a framed card's hat out past the picture; this matches that look.
+ */
+export const HAT_PLAIN_CARD_NUDGE = 4;
+
+/**
  * How far past the card's top and left edges the hat may reach at rest. Containers crop whatever
  * a card paints further out (virtual masonry's paint containment, home blocks' overflow), so a
  * hat that would reach further is moved into the card until it fits. A container with less room
@@ -41,7 +47,8 @@ const isNumbers = (value: unknown, length: number): value is number[] =>
 export function getHatLayout(
   placement: HatPlacement,
   fit?: EventDecorationFit,
-  allowance = HAT_ALLOWANCE[placement]
+  allowance = HAT_ALLOWANCE[placement],
+  nudge = 0
 ) {
   const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
   const [left, top, right, bottom] =
@@ -84,8 +91,8 @@ export function getHatLayout(
   const maxX = Math.max(...points.map((p) => p.x));
   const maxY = Math.max(...points.map((p) => p.y));
 
-  const pivotX = Math.max(-sin * inset, -allowance - minX);
-  const pivotY = Math.max(cos * inset, -allowance - minY);
+  const pivotX = Math.max(-sin * inset - nudge, -allowance - minX);
+  const pivotY = Math.max(cos * inset - nudge, -allowance - minY);
 
   return {
     width: canvasW * scale,
@@ -130,19 +137,21 @@ export const hatShiftCss = (reach: number) =>
 export function getEventDecorationClearLeft(
   decoration: { type: string; fit?: EventDecorationFit },
   placement = DEFAULT_HAT_PLACEMENT,
-  allowance?: number
+  allowance?: number,
+  nudge = 0
 ) {
   if (decoration.type !== 'hat') return 0;
-  return Math.ceil(getHatLayout(placement, decoration.fit, allowance).reach.right) + 4;
+  return Math.ceil(getHatLayout(placement, decoration.fit, allowance, nudge).reach.right) + 4;
 }
 
 /** `--event-decoration-clear-left` for a card: follows a corner hat its container moves in. */
 export function getEventDecorationClearLeftCss(
   decoration: { type: string; fit?: EventDecorationFit },
-  placement = DEFAULT_HAT_PLACEMENT
+  placement = DEFAULT_HAT_PLACEMENT,
+  nudge = 0
 ) {
   if (decoration.type !== 'hat' || placement !== 'corner')
     return `${getEventDecorationClearLeft(decoration, placement)}px`;
-  const { reach } = getHatLayout('corner', decoration.fit, Infinity);
+  const { reach } = getHatLayout('corner', decoration.fit, Infinity, nudge);
   return `calc(${Math.ceil(reach.right) + 4}px + ${hatShiftCss(reach.left)})`;
 }

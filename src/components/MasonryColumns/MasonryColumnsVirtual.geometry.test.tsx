@@ -11,6 +11,7 @@ import {
   getEventDecorationClearLeft,
   getHatLayout,
   HAT_LOOK,
+  HAT_PLAIN_CARD_NUDGE,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 import type * as AdsProvider from '~/components/Ads/AdsProvider';
@@ -59,7 +60,7 @@ const HAT = { type: 'hat', event: 'birthday2026', url: 'hat.png', fit: FIT };
 type Item = { id: number };
 const items: Item[] = Array.from({ length: 8 }, (_, i) => ({ id: i }));
 
-/** Card 1 (the right column's first card) wears a hat; the rest are plain. */
+/** Card 1 (the right column's first card) wears a hat; card 3 a hat and a frame; the rest are plain. */
 function Card({ data }: { data: Item }) {
   const card = (
     <div data-testid="card" data-id={data.id} style={{ height: 200, background: '#888' }}>
@@ -69,13 +70,22 @@ function Card({ data }: { data: Item }) {
       />
     </div>
   );
-  return data.id === 1 ? (
-    <TwCosmeticWrapper eventDecoration={HAT} data-testid="hat-wearer">
-      {card}
-    </TwCosmeticWrapper>
-  ) : (
-    card
-  );
+  if (data.id === 1)
+    return (
+      <TwCosmeticWrapper eventDecoration={HAT} data-testid="hat-wearer">
+        {card}
+      </TwCosmeticWrapper>
+    );
+  if (data.id === 3)
+    return (
+      <TwCosmeticWrapper
+        cosmetic={{ cssFrame: 'linear-gradient(red, blue)' }}
+        eventDecoration={HAT}
+      >
+        {card}
+      </TwCosmeticWrapper>
+    );
+  return card;
 }
 
 function Gallery({ style }: { style?: React.CSSProperties }) {
@@ -99,6 +109,8 @@ function Gallery({ style }: { style?: React.CSSProperties }) {
 
 const card = (id: number) => document.querySelector(`[data-testid="card"][data-id="${id}"]`)!;
 const hat = () => document.querySelector('button[data-event-decoration="hat"]') as HTMLElement;
+const hatOf = (id: number) =>
+  card(id).closest('[data-event-decoration]')!.querySelector('button') as HTMLElement;
 const itemOf = (el: Element) => el.closest('[data-masonry-item]') as HTMLElement;
 const GROW_WAIT = { timeout: 5000 };
 
@@ -183,7 +195,12 @@ describe('MasonryColumnsVirtual with worn hats', () => {
       await renderAtViewport(<Gallery style={style} />, VIEWPORT);
       await vi.waitFor(() => expect(hat()).toBeTruthy());
       const chip = document.querySelector('[data-testid="chip"]')!;
-      const expected = getEventDecorationClearLeft({ type: 'hat', fit: FIT }, 'corner', allowance);
+      const expected = getEventDecorationClearLeft(
+        { type: 'hat', fit: FIT },
+        'corner',
+        allowance,
+        HAT_PLAIN_CARD_NUDGE
+      );
       expect(Math.abs(parseFloat(getComputedStyle(chip).paddingLeft) - expected)).toBeLessThan(1);
     }
   );
@@ -197,11 +214,27 @@ describe('MasonryColumnsVirtual with worn hats', () => {
           : ({ '--event-decoration-allowance': `${allowance}px` } as React.CSSProperties);
       await renderAtViewport(<Gallery style={style} />, VIEWPORT);
       await vi.waitFor(() => expect(hat()).toBeTruthy());
-      const expected = getHatLayout('corner', FIT, allowance);
+      const expected = getHatLayout('corner', FIT, allowance, HAT_PLAIN_CARD_NUDGE);
       expect(parseFloat(getComputedStyle(hat()).left)).toBeCloseTo(expected.left, 1);
       expect(parseFloat(getComputedStyle(hat()).top)).toBeCloseTo(expected.top, 1);
     }
   );
+
+  // A frame's padding already carries the hat out past the picture, so only plain cards are nudged.
+  test('a plain card wears its hat further up and left than a framed one', async () => {
+    await renderAtViewport(<Gallery />, VIEWPORT);
+    await vi.waitFor(() => expect(card(3)).toBeTruthy());
+    const at = (el: HTMLElement) => [
+      parseFloat(getComputedStyle(el).left),
+      parseFloat(getComputedStyle(el).top),
+    ];
+    const plain = getHatLayout('corner', FIT, undefined, HAT_PLAIN_CARD_NUDGE);
+    const framed = getHatLayout('corner', FIT);
+    expect(at(hatOf(1))[0]).toBeCloseTo(plain.left, 1);
+    expect(at(hatOf(1))[1]).toBeCloseTo(plain.top, 1);
+    expect(at(hatOf(3))[0]).toBeCloseTo(framed.left, 1);
+    expect(at(hatOf(3))[1]).toBeCloseTo(framed.top, 1);
+  });
 
   // The canvas is a rectangle that lies over the neighbouring cards; only the art takes clicks.
   test('a click beside the art, inside its canvas, does not hit the hat', async () => {

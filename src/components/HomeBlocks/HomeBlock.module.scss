@@ -35,10 +35,10 @@
   gap: 0;
   margin: -8px;
   // Room above and left of the edge cards for a worn event hat (ITEM_BLEED) without moving them.
-  margin-top: -32px;
-  margin-left: -32px;
-  padding-top: 24px;
-  padding-left: 24px;
+  margin-top: -36px;
+  margin-left: -36px;
+  padding-top: 28px;
+  padding-left: 28px;
   // The overflow above crops a hat that grows on hover, so here it stays at rest size.
   --event-decoration-grow: 1;
 
