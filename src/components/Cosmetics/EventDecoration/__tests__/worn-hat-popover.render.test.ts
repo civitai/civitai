@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { MantineProvider } from '@mantine/core';
+import { MantineProvider, Modal } from '@mantine/core';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
@@ -222,6 +222,36 @@ describe('a hatted feed card', () => {
     expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBe('true');
     clickHat();
     expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
+  });
+
+  // A real Modal: it closes on Escape from a window listener that runs before any element's.
+  it('closes only the popover, then the Modal it sits in, on two Escapes', () => {
+    const closeModal = vi.fn();
+    render(
+      React.createElement(
+        Modal,
+        { opened: true, onClose: closeModal, title: 'Picker' },
+        React.createElement(
+          FeedCard,
+          {
+            href: '/images/5',
+            eventDecoration: HAT,
+            eventDecorationOn: { entityType: 'Image', entityId: 5 },
+          } as React.ComponentProps<typeof FeedCard>,
+          React.createElement('span', null, 'card body')
+        )
+      )
+    );
+    clickHat();
+    const escape = () =>
+      act(() => {
+        hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+    escape();
+    expect(popover()).toBeNull();
+    expect(closeModal).not.toHaveBeenCalled();
+    escape();
+    expect(closeModal).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the popover open, and the key moving, for any other key on the hat', () => {
