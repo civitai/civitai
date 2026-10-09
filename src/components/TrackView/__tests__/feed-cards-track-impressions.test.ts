@@ -18,6 +18,9 @@ import { join, relative, resolve, dirname } from 'node:path';
  * AspectRatioCard, AspectRatioImageCard, FeedCard) never counts on its own: the
  * card has to pass `impressions`/`impression`.
  *
+ * It checks that a card tracks, not WHICH entity it reports; that choice is
+ * reviewed with the card.
+ *
  * Its reach is the grids' `render` prop. A feed built some other way (a `.map()`
  * into a plain grid) is not seen here, which is what the named list at the
  * bottom is for.
@@ -45,8 +48,9 @@ function callsTrackingHook(body: string): boolean {
     body.matchAll(/\bconst\s+([\w$]+)\s*=\s*useTrackImpression\b/g),
     (m) => m[1]
   );
+  // Attached as a ref, or merged into one; a bare mention elsewhere is not use.
   const usedAgain = (ref: string) =>
-    (body.match(new RegExp(String.raw`\b${ref}\b`, 'g')) ?? []).length > 1;
+    new RegExp(String.raw`ref=\{\s*${ref}\s*\}|useMergedRef\([^)]*\b${ref}\b`).test(body);
   return assigned.some(usedAgain) || /ref=\{\s*useTrackImpression\b/.test(body);
 }
 
@@ -323,6 +327,19 @@ describe('feed cards report impressions', () => {
   ])('%s still hands its cover image to AspectRatioImageCard', (path, name) => {
     const body = componentBody({ file: join(SRC, path), name }, new Map()) ?? '';
     expect(body).toMatch(/<AspectRatioImageCard\b[^>]*?\bimage=\{(?!\s*(undefined|null)\s*\})/);
+  });
+
+  test('AspectRatioImageCard turns the image it renders into an Image impression', () => {
+    // The cover-image exemptions above rest on this.
+    const body =
+      componentBody(
+        {
+          file: join(SRC, 'components/CardTemplates/AspectRatioImageCard.tsx'),
+          name: 'AspectRatioImageCard',
+        },
+        new Map()
+      ) ?? '';
+    expect(body).toMatch(/image\s*\?\s*\[\s*\{\s*entityType:\s*'Image'[^}]*entityId:\s*image\.id/);
   });
 
   test('ElementInView forwards `impressions` to useTrackImpression', () => {
