@@ -230,6 +230,10 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await expectStateUnknown(purchase());
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
+    // Answered from the claim's own status, which is what reconciliation reads.
+    expect(stateUnknownLogs()).toEqual([
+      expect.objectContaining({ reason: 'retry of a refunding claim' }),
+    ]);
   });
 
   // The lost-response recovery: an earlier attempt charged and its reply never
@@ -294,6 +298,45 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.createMultiTx.mock.calls[0][0].amount).toBe(PRICE - 500);
     expect(mocks.purchasesCreate.mock.calls[0][0].data.unitAmount).toBe(PRICE - 500);
     expect(mocks.createBuzzTransaction.mock.calls[0][0].amount).toBe(PRICE - 500);
+    expect(mocks.createBuzzTransaction.mock.calls[0][0].details.originalAmount).toBe(PRICE - 500);
+    expect(mocks.purchasesUpdate.mock.calls[0][0].data.meta.platformCut).toBe(0);
+  });
+
+  // The duplicate legs and the refund are both measured against the claim, not
+  // against today's price.
+  const singleLeg = (amount: number, duplicate: boolean) => ({
+    transactionIds: [{ transactionId: 'tx-0', accountType: 'yellow', amount, duplicate }],
+    totalAmount: amount,
+    transactionCount: 1,
+  });
+
+  it('a retry grants when the earlier charge covers the claimed amount, below today’s price', async () => {
+    seedClaim('pending', { amount: PRICE - 500 });
+    mocks.createMultiTx.mockResolvedValue(singleLeg(PRICE - 500, true));
+
+    await purchase();
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a retry is unknown when the earlier charge falls short of the claimed amount, above today’s price', async () => {
+    seedClaim('pending', { amount: PRICE + 500 });
+    mocks.createMultiTx.mockResolvedValue(singleLeg(PRICE, true));
+
+    await expectStateUnknown(purchase());
+    nothingGrantedPaidOrRefunded();
+  });
+
+  it('a refund of exactly the claimed amount is a refusal', async () => {
+    seedClaim('pending', { amount: PRICE - 500 });
+    mocks.createMultiTx.mockResolvedValue(singleLeg(PRICE - 500, false));
+    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+    mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE - 500 });
+
+    await expect(purchase()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Failed to purchase cosmetic',
+    });
+    expect(claims.rows.get(TX)?.status).toBe('refunded');
   });
 
   it('a retry of a pending claim with mixed legs is unknown', async () => {
@@ -388,16 +431,43 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   });
 
   // These may have charged: the claim must stay for the retry to resume.
-  for (const [what, error] of [
+  for (const [what, failure] of [
     ['an error with no ledger status', () => new TypeError('fetch failed')],
     ['a ledger 408', () => ledgerError(408, 'INTERNAL_SERVER_ERROR')],
     ['a ledger 503', () => ledgerError(503, 'INTERNAL_SERVER_ERROR')],
   ] as const) {
     it(`a charge failing with ${what} keeps the claim pending`, async () => {
-      mocks.createMultiTx.mockRejectedValue(error());
+      mocks.createMultiTx.mockRejectedValue(failure());
 
-      await expect(purchase()).rejects.toBeDefined();
+      const rejection = await purchase().then(
+        () => null,
+        (e: unknown) => e
+      );
+      // Never a refusal: that tells the client nothing was charged.
+      expect(rejection).not.toBeNull();
+      expect(rejection instanceof TRPCError && rejection.code === 'BAD_REQUEST').toBe(false);
       expect(claims.rows.get(TX)?.status).toBe('pending');
+    });
+  }
+
+  it('a late decline never deletes a claim that is no longer pending', async () => {
+    mocks.createMultiTx.mockImplementation(async () => {
+      claims.rows.get(TX)!.status = 'paid';
+      throw ledgerError(400, 'BAD_REQUEST');
+    });
+
+    await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(claims.rows.get(TX)?.status).toBe('paid');
+  });
+
+  // buzz.service maps these to a 500, so the client keeps its key; the claim is
+  // freed anyway because nothing reached the ledger.
+  for (const status of [402, 422]) {
+    it(`a ledger ${status} decline frees the key`, async () => {
+      mocks.createMultiTx.mockRejectedValue(ledgerError(status, 'INTERNAL_SERVER_ERROR'));
+
+      await expect(purchase()).rejects.toMatchObject({ cause: { status } });
+      expect(claims.rows.has(TX)).toBe(false);
     });
   }
 

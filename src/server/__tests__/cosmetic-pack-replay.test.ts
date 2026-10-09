@@ -19,6 +19,7 @@ const pay = vi.fn();
 const refund = vi.fn();
 const purchaseCreate = vi.fn();
 const createManyUserCosmetic = vi.fn();
+const createManyComponents = vi.fn();
 let claims = shopPurchaseClaimFake();
 
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
@@ -30,7 +31,9 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
         createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
       },
       userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
-      userCosmeticShopPurchaseCosmetic: { createMany: vi.fn() },
+      userCosmeticShopPurchaseCosmetic: {
+        createMany: (...a: unknown[]) => createManyComponents(...a),
+      },
       cosmeticShopItem: { update: vi.fn() },
       cosmeticShopPurchaseClaim: claims.txDelegate,
     })
@@ -136,7 +139,15 @@ const expectStateUnknown = async (p: Promise<unknown>) => {
 
 describe('purchaseCosmeticPack with an idempotency key', () => {
   beforeEach(() => {
-    for (const fn of [spend, pay, refund, purchaseCreate, createManyUserCosmetic]) fn.mockReset();
+    for (const fn of [
+      spend,
+      pay,
+      refund,
+      purchaseCreate,
+      createManyUserCosmetic,
+      createManyComponents,
+    ])
+      fn.mockReset();
     loggingMock.logToAxiom.mockReset();
     claims = installShopPurchaseClaimFake();
     dbMock.dbWrite.userCosmetic.findMany.mockResolvedValue([]);
@@ -184,6 +195,9 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
 
     await expectStateUnknown(buy(KEY));
     expect(spend).not.toHaveBeenCalled();
+    expect(stateUnknownLogs()).toEqual([
+      expect.objectContaining({ reason: 'retry of a refunding claim' }),
+    ]);
   });
 
   // The lost-response recovery: an earlier attempt charged and its reply never
@@ -207,6 +221,36 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     await buy(KEY);
 
     expect(spend.mock.calls[0][0].amount).toBe(PRICE - 500);
+  });
+
+  it('a retry of a pending claim records and pays out of the claimed amount', async () => {
+    // Far below today's price, so a payout computed from today's price cannot fit in it.
+    const claimed = 1000;
+    seedClaim('pending', { amount: claimed });
+    spend.mockResolvedValue(legs(false, claimed));
+
+    await buy(KEY);
+
+    expect(purchaseCreate.mock.calls[0][0].data.unitAmount).toBe(claimed);
+    const paidOut = pay.mock.calls.reduce((sum, [p]) => sum + (p as { amount: number }).amount, 0);
+    expect(paidOut).toBeGreaterThan(0);
+    expect(paidOut).toBeLessThanOrEqual(claimed);
+    // What each member is credited with, which a takedown reverses.
+    const attributed = (
+      createManyComponents.mock.calls[0][0] as { data: { unitAmount: number }[] }
+    ).data.reduce((sum, c) => sum + c.unitAmount, 0);
+    expect(attributed).toBeGreaterThan(0);
+    expect(attributed).toBeLessThanOrEqual(claimed);
+  });
+
+  it('marks the claim paid before writing the purchase', async () => {
+    spend.mockResolvedValue(legs(false));
+    purchaseCreate.mockImplementation(async () => {
+      expect(claims.rows.get(TX)?.status).toBe('paid');
+    });
+
+    await buy(KEY);
+    expect(purchaseCreate).toHaveBeenCalledTimes(1);
   });
 
   it('a retry of a pending claim whose duplicate legs fall short of it is unknown', async () => {
