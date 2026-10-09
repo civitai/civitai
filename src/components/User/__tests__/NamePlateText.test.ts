@@ -35,6 +35,27 @@ describe('getNamePlateTextProps', () => {
     });
   });
 
+  it('does not sweep, or throw, for an animated gradient plate missing its colours', () => {
+    expect(
+      getNamePlateTextProps({ variant: 'gradient', animated: true }, { animate: true })
+    ).toEqual({ variant: 'gradient' });
+  });
+
+  // The class is only a string here; without these keys Tailwind emits no CSS for it.
+  it('names an animation the Tailwind config defines', async () => {
+    const { theme } = (await import('../../../../tailwind.config.js')).default as {
+      theme: { extend: { animation: Record<string, string>; keyframes: Record<string, unknown> } };
+    };
+    expect(NAMEPLATE_SWEEP_CLASS.split(' ')).toContain('animate-nameplate-sweep');
+    expect(theme.extend.animation['nameplate-sweep']).toMatch(
+      /^nameplate-sweep 3s linear infinite$/
+    );
+    expect(theme.extend.keyframes['nameplate-sweep']).toEqual({
+      '0%': { backgroundPosition: '0% 50%' },
+      '100%': { backgroundPosition: '200% 50%' },
+    });
+  });
+
   it('returns nothing to spread for a user without a plate', () => {
     expect(getNamePlateTextProps(undefined, { animate: true })).toEqual({});
   });
