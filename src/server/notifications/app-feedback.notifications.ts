@@ -85,9 +85,15 @@ export function appFeedbackDigestMessage(details: Partial<AppFeedbackDigestDetai
  * `app_listings.user_id` alone, and never a shadow revision's frozen copy. Editors are not
  * recipients.
  *
- * `key` is per listing per batch, the batch named by its highest feedback id. Runs read disjoint
- * rows (each reads `createdAt` past the previous run's cursor), so two runs never produce the same
- * key, while a run repeated before its cursor advanced reproduces its own. There is no `dedupeKey`:
+ * `key` is per listing per batch, the batch named by its highest feedback id. Runs read ALMOST
+ * disjoint rows, not strictly: the job runner takes the next cursor (`getJobDate`) BEFORE this query
+ * runs, and the query has no upper bound, so a row created in that gap and already on the replica
+ * is counted by this run AND the next. When the next run holds only such rows it reproduces this
+ * run's key, and the notifications worker does not deliver a key twice; when newer rows arrived too,
+ * its "N new feedback messages" includes rows already announced. The gap is milliseconds wide and
+ * the only cost is an occasionally inflated count, so it is accepted rather than bounded (the
+ * per-comment sibling `new-app-listing-comment` is immune only because it keys per comment). A run
+ * repeated before its cursor advanced reproduces its own key. There is no `dedupeKey`:
  * that column collapses one source event that several TYPES notify about (a comment that is both
  * a mention and a reply), and nothing else is ever sent about a feedback batch, so it would only
  * repeat `key`. A processor that sets one must also declare a batch `priority`
