@@ -25,6 +25,7 @@ import {
   appFeedbackHideErrorView,
   appFeedbackModFiltersToQuery,
   parseAppFeedbackModFilters,
+  patchHiddenInPages,
   toAppFeedbackModRowView,
   toModListInput,
   type AppFeedbackHiddenFilter,
@@ -233,7 +234,8 @@ export function AppFeedbackModQueue() {
   };
 
   const utils = trpc.useUtils();
-  const list = trpc.appFeedback.modList.useInfiniteQuery(toModListInput(filters), {
+  const listInput = toModListInput(filters);
+  const list = trpc.appFeedback.modList.useInfiniteQuery(listInput, {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     retry: false,
   });
@@ -251,7 +253,10 @@ export function AppFeedbackModQueue() {
         message: APP_FEEDBACK_HIDE_COPY[data.hidden ? 'hide' : 'unhide'].done,
       });
       setPending(null);
-      await refresh();
+      utils.appFeedback.modList.setInfiniteData(listInput, (prev) =>
+        patchHiddenInPages(prev, data.id, data.hidden, new Date())
+      );
+      await utils.appFeedback.modCountFlagged.invalidate();
     },
     onError: (error) => {
       const view = appFeedbackHideErrorView(error);

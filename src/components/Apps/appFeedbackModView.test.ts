@@ -7,6 +7,7 @@ import {
   appFeedbackModFiltersToQuery,
   canMonitorAppFeedback,
   parseAppFeedbackModFilters,
+  patchHiddenInPages,
   toAppFeedbackModRowView,
   toModListInput,
   type AppFeedbackModFilters,
@@ -126,6 +127,14 @@ describe('filter query string', () => {
     ).toStrictEqual(DEFAULT_APP_FEEDBACK_MOD_FILTERS);
   });
 
+  it('accepts a listing id at the schema maximum, and reads the first of a repeated param', () => {
+    expect(parseAppFeedbackModFilters({ app: 'x'.repeat(64) }).appListingId).toBe('x'.repeat(64));
+    expect(parseAppFeedbackModFilters({ flagged: ['1', '0'], hidden: ['visible'] })).toMatchObject({
+      flagged: true,
+      hidden: 'visible',
+    });
+  });
+
   it('"listing deleted" wins over a listing id', () => {
     const f = parseAppFeedbackModFilters({ app: 'apl_D', listingDeleted: '1' });
     expect(f.appListingId).toBeNull();
@@ -205,7 +214,7 @@ describe('toAppFeedbackModRowView', () => {
       hidden: false,
       // Only a hidden row names who hid it.
       hiddenBy: null,
-      triageStatus: 'reviewed',
+      triageStatus: 'Reviewed',
       triageNote: 'host bridge timeout',
       triageHref: 'https://mod.example/feedback/4101',
       action: 'hide',
@@ -255,6 +264,61 @@ describe('toAppFeedbackModRowView', () => {
       hiddenBy: 'mod-m',
       action: 'unhide',
     });
+  });
+
+  it('a deleted listing never links, even if a stale slug and name came back', () => {
+    const view = toAppFeedbackModRowView({ ...ROW, appListingId: null }, modUrl);
+    expect(view.appHref).toBeNull();
+    expect(view.appLabel).toBe('Listing deleted');
+  });
+
+  it('falls back for a nameless app, an owner without a username and an unknown status', () => {
+    const view = toAppFeedbackModRowView(
+      { ...ROW, appName: null, appOwnerUsername: null, status: 'escalated' },
+      modUrl
+    );
+    expect(view.appLabel).toBe('apl_live');
+    expect(view.ownerLabel).toBe('#12');
+    expect(view.triageStatus).toBe('escalated');
+  });
+});
+
+describe('patchHiddenInPages', () => {
+  const at = new Date('2026-10-09T12:00:00Z');
+  const item = (id: number, hiddenFromOwnerAt: Date | null) => ({
+    id,
+    hiddenFromOwnerAt,
+    hiddenByModeratorUsername: hiddenFromOwnerAt ? 'mod-m' : null,
+    message: `m${id}`,
+  });
+  const data = {
+    pages: [{ items: [item(1, null)], nextCursor: 1 }, { items: [item(2, null), item(3, at)] }],
+    pageParams: [null, 1],
+  };
+
+  it('hides only the written row, on whichever page it is', () => {
+    const next = patchHiddenInPages(data, 2, true, at)!;
+    expect(next.pages[1].items[0]).toStrictEqual({
+      id: 2,
+      hiddenFromOwnerAt: at,
+      hiddenByModeratorUsername: null,
+      message: 'm2',
+    });
+    expect(next.pages[0].items[0]).toBe(data.pages[0].items[0]);
+    expect(next.pages[1].items[1]).toBe(data.pages[1].items[1]);
+    expect(next.pageParams).toBe(data.pageParams);
+  });
+
+  it('unhides, clearing who hid it', () => {
+    const next = patchHiddenInPages(data, 3, false, at)!;
+    expect(next.pages[1].items[1]).toMatchObject({
+      hiddenFromOwnerAt: null,
+      hiddenByModeratorUsername: null,
+    });
+  });
+
+  it('leaves an unloaded list alone', () => {
+    expect(patchHiddenInPages(undefined, 1, true, at)).toBeUndefined();
   });
 });
 

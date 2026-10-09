@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
   fail: null as null | { message: string; data: { code: string } },
   errors: [] as string[],
   successes: [] as string[],
+  patched: [] as { input: unknown; updater: (prev: unknown) => unknown }[],
 }));
 
 vi.mock('~/utils/notifications', async (importOriginal) => ({
@@ -69,7 +70,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       {
         useUtils: () => ({
           appFeedback: {
-            modList: invalidator('modList'),
+            modList: {
+              ...invalidator('modList'),
+              setInfiniteData: (input: unknown, updater: (prev: unknown) => unknown) => {
+                m.patched.push({ input, updater });
+              },
+            },
             modCountFlagged: invalidator('modCountFlagged'),
           },
         }),
@@ -130,6 +136,7 @@ beforeEach(() => {
   m.fail = null;
   m.errors = [];
   m.successes = [];
+  m.patched = [];
   router.query = { tab: 'app-feedback' };
   router.replace.mockClear();
 });
@@ -155,12 +162,14 @@ describe('AppFeedbackModQueue', () => {
   });
 
   test('a deleted listing and a banned reporter are marked', async () => {
-    m.rows = [row({ appListingId: null, appName: null, appSlug: null, reporterBanned: true })];
+    // Slug and name kept: the link must be withheld because the listing is gone, not because
+    // the join happened to return nothing.
+    m.rows = [row({ appListingId: null, reporterBanned: true })];
     renderWithProviders(<AppFeedbackModQueue />);
     const r = page.getByTestId('app-feedback-row');
     await expect.element(r.getByText('Listing deleted').first()).toBeVisible();
     await expect.element(page.getByTestId('app-feedback-reporter-banned')).toBeVisible();
-    expect(r.getByRole('link', { name: 'Pose Studio' }).elements()).toHaveLength(0);
+    expect(r.getByRole('link', { name: /Listing deleted|Pose Studio/ }).elements()).toHaveLength(0);
   });
 
   test('deep-linked filters reach the query input; flagged/deleted only as true', async () => {
@@ -184,16 +193,32 @@ describe('AppFeedbackModQueue', () => {
     });
   });
 
-  test('Hide asks first, then sends hidden=true and refreshes list + badge', async () => {
-    m.rows = [row()];
+  test('unticking a filter removes its param', async () => {
+    router.query = { tab: 'app-feedback', flagged: '1' };
     renderWithProviders(<AppFeedbackModQueue />);
-    await userEvent.click(page.getByRole('button', { name: 'Hide from developer' }));
+    await userEvent.click(page.getByLabelText('Flagged by developer'));
+    expect(router.replace.mock.calls[0][0].query).toStrictEqual({ tab: 'app-feedback' });
+  });
+
+  test('Hide asks first, then sends hidden=true, patches the row and refreshes only the badge', async () => {
+    m.rows = [row(), row({ id: 502 })];
+    renderWithProviders(<AppFeedbackModQueue />);
+    await userEvent.click(page.getByRole('button', { name: 'Hide from developer' }).first());
     expect(m.calls).toHaveLength(0);
     await userEvent.click(page.getByTestId('app-feedback-confirm'));
     expect(m.calls).toStrictEqual([{ id: 501, hidden: true }]);
-    await vi.waitFor(() =>
-      expect([...m.invalidated].sort()).toStrictEqual(['modCountFlagged', 'modList'])
-    );
+    expect(m.successes).toStrictEqual(['Hidden from the developer']);
+    // The list is patched, not refetched: a replica read could still serve the unhidden row.
+    expect(m.patched).toHaveLength(1);
+    expect(m.patched[0].input).toStrictEqual(m.listInputs.at(-1));
+    const next = m.patched[0].updater({ pages: [{ items: m.rows }], pageParams: [null] }) as {
+      pages: { items: { id: number; hiddenFromOwnerAt: Date | null }[] }[];
+    };
+    expect(next.pages[0].items.map((i) => [i.id, i.hiddenFromOwnerAt !== null])).toStrictEqual([
+      [501, true],
+      [502, false],
+    ]);
+    await vi.waitFor(() => expect(m.invalidated).toStrictEqual(['modCountFlagged']));
   });
 
   test('a hidden row offers Unhide and says who hid it', async () => {
@@ -205,6 +230,7 @@ describe('AppFeedbackModQueue', () => {
     await userEvent.click(page.getByRole('button', { name: 'Unhide' }));
     await userEvent.click(page.getByTestId('app-feedback-confirm'));
     expect(m.calls).toStrictEqual([{ id: 501, hidden: false }]);
+    expect(m.successes).toStrictEqual(['Visible to the developer again']);
   });
 
   test('a conflict shows the conflict copy and refetches', async () => {
@@ -214,6 +240,19 @@ describe('AppFeedbackModQueue', () => {
     await userEvent.click(page.getByRole('button', { name: 'Hide from developer' }));
     await userEvent.click(page.getByTestId('app-feedback-confirm'));
     expect(m.errors).toStrictEqual([APP_FEEDBACK_HIDE_CONFLICT_MESSAGE]);
-    await vi.waitFor(() => expect(m.invalidated).toContain('modList'));
+    await vi.waitFor(() =>
+      expect([...m.invalidated].sort()).toStrictEqual(['modCountFlagged', 'modList'])
+    );
+    expect(m.patched).toHaveLength(0);
+  });
+
+  test('any other failure shows the server message and does not refetch', async () => {
+    m.rows = [row()];
+    m.fail = { message: 'nope', data: { code: 'FORBIDDEN' } };
+    renderWithProviders(<AppFeedbackModQueue />);
+    await userEvent.click(page.getByRole('button', { name: 'Hide from developer' }));
+    await userEvent.click(page.getByTestId('app-feedback-confirm'));
+    expect(m.errors).toStrictEqual(['nope']);
+    expect(m.invalidated).toStrictEqual([]);
   });
 });

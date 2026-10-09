@@ -206,12 +206,19 @@ describe('ReviewQueuePage — App feedback tab', () => {
     await expect.element(page.getByTestId('app-feedback-flagged-count')).toHaveTextContent('3');
   });
 
+  test('no badge when nothing flagged is waiting', async () => {
+    renderWithProviders(<ReviewQueuePage canMonitorAppFeedback />);
+    await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-feedback-flagged-count').elements()).toHaveLength(0);
+  });
+
   test('?tab=app-feedback opens it for a moderator', async () => {
     routerState().query = { tab: 'app-feedback' };
     renderWithProviders(<ReviewQueuePage canMonitorAppFeedback />);
     await expect
       .element(page.getByRole('tab', { name: /App feedback/ }))
       .toHaveAttribute('aria-selected', 'true');
+    await expect.element(page.getByTestId('app-feedback-mod-queue')).toBeInTheDocument();
   });
 
   test('without it: no tab, and ?tab=app-feedback lands on Pending', async () => {
@@ -221,6 +228,7 @@ describe('ReviewQueuePage — App feedback tab', () => {
       .element(page.getByRole('tab', { name: /Pending/ }))
       .toHaveAttribute('aria-selected', 'true');
     expect(page.getByRole('tab', { name: /App feedback/ }).elements()).toHaveLength(0);
+    expect(page.getByTestId('app-feedback-mod-queue').elements()).toHaveLength(0);
   });
 });
 

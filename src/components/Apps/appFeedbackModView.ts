@@ -10,12 +10,8 @@ import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants'
 import { moderatorFeedbackReportPath } from '~/shared/constants/moderator-app';
 
 /**
- * Whether the viewer may see the "App feedback" tab on `/apps/review`.
- *
- * Mirrors `moderatorProcedure` (`user.isModerator`), which every `appFeedback.mod*` procedure
- * requires — NOT `isAppReviewer`, the page gate. The two agree today, but `isAppReviewer` is the
- * predicate that is expected to change, and a reviewer who is not a moderator would get a tab whose
- * every query is FORBIDDEN.
+ * Mirrors `moderatorProcedure`, which every `appFeedback.mod*` procedure requires — deliberately
+ * not the page gate `isAppReviewer`, so the tab can never be shown to someone the server refuses.
  */
 export function canMonitorAppFeedback(
   user: { isModerator?: boolean | null } | null | undefined
@@ -41,7 +37,7 @@ export const DEFAULT_APP_FEEDBACK_MOD_FILTERS: AppFeedbackModFilters = {
   hidden: 'all',
 };
 
-/** Query-string keys, beside the page's own `?tab=`. */
+/** Must not collide with the page's own `?tab=`. */
 export const APP_FEEDBACK_FILTER_PARAMS = {
   appListingId: 'app',
   listingDeleted: 'listingDeleted',
@@ -81,10 +77,7 @@ export function parseAppFeedbackModFilters(query: Record<string, unknown>): AppF
   };
 }
 
-/**
- * The query-string entries for these filters. Every key is present: a filter at its default maps
- * to `undefined`, which the caller's router drops, so clearing a filter removes its param.
- */
+/** Every key is present (`undefined` at its default) so merging into a query clears a removed filter. */
 export function appFeedbackModFiltersToQuery(
   filters: AppFeedbackModFilters
 ): Record<string, string | undefined> {
@@ -120,6 +113,8 @@ export function toModListInput(
   };
 }
 
+const OWNER_STATUS_NEW_LABEL = 'New';
+
 export const APP_FEEDBACK_OWNER_STATUS_LABELS: Readonly<Record<FeedbackOwnerStatus, string>> = {
   acknowledged: 'Acknowledged',
   resolved: 'Resolved',
@@ -129,7 +124,7 @@ export const APP_FEEDBACK_OWNER_STATUS_LABELS: Readonly<Record<FeedbackOwnerStat
 export const APP_FEEDBACK_OWNER_STATUS_FILTER_OPTIONS: { value: string; label: string }[] =
   APP_FEEDBACK_OWNER_STATUS_FILTERS.map((value) => ({
     value,
-    label: value === 'new' ? 'New' : APP_FEEDBACK_OWNER_STATUS_LABELS[value],
+    label: value === 'new' ? OWNER_STATUS_NEW_LABEL : APP_FEEDBACK_OWNER_STATUS_LABELS[value],
   }));
 
 export const APP_FEEDBACK_HIDDEN_FILTER_OPTIONS: {
@@ -194,13 +189,19 @@ export type AppFeedbackModRowView = {
 
 const SHA_DISPLAY_LENGTH = 7;
 const SURFACE_LABELS = { slot: 'Model page slot', page: 'App page' } as const;
+const TRIAGE_STATUS_LABELS: Record<string, string> = {
+  new: 'New',
+  reviewed: 'Reviewed',
+  actioned: 'Actioned',
+  dismissed: 'Dismissed',
+};
 
 function userLabel(id: number, username: string | null): string {
   return username ?? `#${id}`;
 }
 
 function ownerStatusLabel(status: string | null): string {
-  if (status === null) return 'New';
+  if (status === null) return OWNER_STATUS_NEW_LABEL;
   return APP_FEEDBACK_OWNER_STATUS_LABELS[status as FeedbackOwnerStatus] ?? status;
 }
 
@@ -233,7 +234,7 @@ export function toAppFeedbackModRowView(
     flagged: row.ownerFlaggedAt !== null,
     hidden: row.hiddenFromOwnerAt !== null,
     hiddenBy: row.hiddenFromOwnerAt !== null ? row.hiddenByModeratorUsername : null,
-    triageStatus: row.status,
+    triageStatus: TRIAGE_STATUS_LABELS[row.status] ?? row.status,
     triageNote: row.triageNote,
     triageHref: moderatorAppUrl(moderatorFeedbackReportPath(row.id)),
     action: row.hiddenFromOwnerAt === null ? 'hide' : 'unhide',
@@ -254,6 +255,37 @@ export const APP_FEEDBACK_HIDE_COPY = {
     done: 'Visible to the developer again',
   },
 } as const;
+
+/**
+ * The loaded pages with one row's hidden state set from a successful write. Used instead of a
+ * refetch: `modList` reads a replica, which can still serve the pre-write row and flip the button
+ * back. Who hid it is unknown until the next real read.
+ */
+type HideableRow = {
+  id: number;
+  hiddenFromOwnerAt: Date | null;
+  hiddenByModeratorUsername: string | null;
+};
+
+export function patchHiddenInPages<D extends { pages: { items: HideableRow[] }[] }>(
+  data: D | undefined,
+  id: number,
+  hidden: boolean,
+  now: Date
+): D | undefined {
+  if (!data) return data;
+  return {
+    ...data,
+    pages: data.pages.map((page) => ({
+      ...page,
+      items: page.items.map((item) =>
+        item.id === id
+          ? { ...item, hiddenFromOwnerAt: hidden ? now : null, hiddenByModeratorUsername: null }
+          : item
+      ),
+    })),
+  };
+}
 
 export const APP_FEEDBACK_HIDE_CONFLICT_MESSAGE =
   'Another moderator already changed this report. The list has been refreshed.';

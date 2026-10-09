@@ -71,7 +71,8 @@ import { trpc } from '~/utils/trpc';
  *  - Reports  — off-site listing report queue + mod takedown actions (unchanged).
  *  - Manage listings — the full all-status lifecycle table (reset/relist/claim/purge).
  *  - Sub-listings — store items inside apps, and staged edits to them.
- *  - App feedback — users' private feedback to app developers, with hide/unhide. Moderators only.
+ *  - App feedback — users' private feedback to app developers, with hide/unhide (gated on
+ *               `isModerator`, not the page gate).
  *
  * Both review modals are PAGE-OWNED (lifted here): the on-site `OnsiteReviewModal`
  * and the off-site `OffsiteReviewModal`. The unified list + the management table
