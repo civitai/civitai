@@ -6,16 +6,16 @@ import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
 import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 
-const CardDecorationModal = dynamic(() => import('~/components/Modals/CardDecorationModal'), {
+const EventHatPickerModal = dynamic(() => import('~/components/Decorations/EventHatPickerModal'), {
   ssr: false,
 });
-const openCardDecorationModal = createDialogTrigger(CardDecorationModal);
+const openEventHatPicker = createDialogTrigger(EventHatPickerModal);
 
 /**
  * Puts on or takes off this entity's event decoration (a party hat during the birthday event).
  * Renders nothing unless an event lets this viewer put one on this kind of content now.
  */
-export function AddEventDecorationMenuItem(props: Omit<CardDecorationModalProps, 'kind'>) {
+export function AddEventDecorationMenuItem(props: CardDecorationModalProps) {
   const { unequip } = useEquipContentDecoration();
   const definition = usePlayableEventDecoration(props.entityType);
   if (!definition) return null;
@@ -30,7 +30,8 @@ export function AddEventDecorationMenuItem(props: Omit<CardDecorationModalProps,
         claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
     } else {
-      openCardDecorationModal({ props: { ...props, kind: 'event' } });
+      const { entityType, entityId, image } = props;
+      openEventHatPicker({ props: { entityType, entityId, image, event: definition.event } });
     }
   };
 

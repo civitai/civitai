@@ -252,12 +252,15 @@ it.each([
 
 // Measured in a real Mantine modal: the sticky header sits flush on the body, so the preview card
 // had no room above it and the hat was hidden behind the header.
-it('the decoration modal makes room above its preview card, declares it, and stops growth', () => {
-  const source = readFileSync('src/components/Modals/CardDecorationModal.tsx', 'utf8');
-  const wrapper = source.match(/<div className="([^"]*)">\s*<PreviewCard /);
-  expect(wrapper?.[1].split(/\s+/).sort()).toEqual(
-    ['pt-4', '[--event-decoration-allowance:16px]', '[--event-decoration-grow:1]'].sort()
-  );
+it('the hat picker makes room above each preview card, declares it, and stops growth', () => {
+  const source = readFileSync('src/components/Decorations/EventHatPickerModal.tsx', 'utf8');
+  const wrappers = [...source.matchAll(/<div className="([^"]*)">\s*<PreviewCard\s/g)];
+  // The try-on and the no-hats state each draw one.
+  expect(wrappers).toHaveLength(2);
+  for (const wrapper of wrappers)
+    expect(wrapper[1].split(/\s+/).sort()).toEqual(
+      ['pt-4', '[--event-decoration-allowance:16px]', '[--event-decoration-grow:1]'].sort()
+    );
 });
 
 it('masonry carousels give hats no room and no growth', () => {
