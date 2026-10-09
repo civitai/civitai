@@ -13,7 +13,7 @@ type ShopEvent = {
   name: string;
   startDate: Date;
   endDate: Date;
-  teams: string[];
+  teams: readonly string[];
   getUserTeam: (userId: number, opts?: { strict?: boolean }) => Promise<string>;
 };
 
