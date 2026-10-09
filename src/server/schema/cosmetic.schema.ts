@@ -61,7 +61,7 @@ export const cosmeticInputSchema = z.object({
   // data: z.object({}).passthrough().nullable(),
 });
 
-const within = ([lo, hi]: readonly [number, number]) => z.number().min(lo).max(hi);
+const inRange = ([lo, hi]: readonly [number, number]) => z.number().min(lo).max(hi);
 
 /**
  * A moderator's change to one event hat's placement. Only these fields can be set, so the art's
@@ -73,12 +73,16 @@ export const updateEventHatFitSchema = z.object({
   id: z.number().int().positive(),
   fit: z
     .object({
-      size: within(HAT_FIT_LIMITS.size).nullable(),
-      tilt: within(HAT_FIT_LIMITS.tilt).nullable(),
-      depth: within(HAT_FIT_LIMITS.depth).nullable(),
-      grow: within(HAT_FIT_LIMITS.grow).nullable(),
-      offset: z.tuple([within(HAT_FIT_LIMITS.offset), within(HAT_FIT_LIMITS.offset)]).nullable(),
+      size: inRange(HAT_FIT_LIMITS.size).nullable(),
+      tilt: inRange(HAT_FIT_LIMITS.tilt).nullable(),
+      depth: inRange(HAT_FIT_LIMITS.depth).nullable(),
+      grow: inRange(HAT_FIT_LIMITS.grow).nullable(),
+      offset: z.tuple([inRange(HAT_FIT_LIMITS.offset), inRange(HAT_FIT_LIMITS.offset)]).nullable(),
     })
     .partial()
-    .strict(),
+    .strict()
+    // An empty edit would still refresh every card wearing the hat, for nothing.
+    .refine((fit) => Object.values(fit).some((value) => value !== undefined), {
+      message: 'Change at least one setting',
+    }),
 });

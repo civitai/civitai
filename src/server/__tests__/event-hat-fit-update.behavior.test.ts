@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { updateEventHatFitSchema } from '~/server/schema/cosmetic.schema';
+import type { HatFitChanges } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import { applyHatFitChanges } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 
 // A moderator's hat edit is one hand-written UPDATE that merges the new fields into the stored
@@ -71,6 +73,13 @@ async function seed(id: number, data: unknown) {
     JSON.stringify(data),
   ]);
 }
+async function updatedAt(id: number) {
+  const { rows } = await holder.db.query<{ updatedAt: Date | null }>(
+    `SELECT "updatedAt" FROM "Cosmetic" WHERE id = $1`,
+    [id]
+  );
+  return rows[0].updatedAt;
+}
 async function stored(id: number) {
   const { rows } = await holder.db.query<{ data: Record<string, unknown> }>(
     `SELECT data FROM "Cosmetic" WHERE id = $1`,
@@ -85,14 +94,38 @@ beforeEach(async () => {
   db.userCosmetic.findMany.mockResolvedValue([]);
 });
 
-// 🔴 To whoever simplifies this to a read, a spread and a Prisma update: the stored fit carries the
-// art's measured outline, which the editor never sends. A whole-object write from the editor's
-// view would wipe it, and the hat would be sized and clipped by its bounding box instead.
+// 🔴 To whoever writes the fit from the editor's view of it: the stored fit carries the art's
+// measured outline, which the editor never sends. A whole-object write would wipe it, and the hat
+// would be sized and clipped by its bounding box instead. The merge is one statement so that two
+// moderators saving different settings at once both keep theirs; nothing here races two saves.
 describe('saving a hat edit in Postgres', () => {
   it('a tilt save keeps the outline and every other field', async () => {
     await seed(HAT_ID, HAT);
     await updateEventHatFit({ id: HAT_ID, fit: { tilt: -30 } });
     expect(await stored(HAT_ID)).toEqual({ ...HAT, fit: { ...SHAPE, tilt: -30 } });
+  });
+
+  // The editor shows what this returns, so it must be what was stored.
+  it('returns the stored data and stamps the row', async () => {
+    await seed(HAT_ID, HAT);
+    expect(await updatedAt(HAT_ID)).toBeNull();
+    const result = await updateEventHatFit({ id: HAT_ID, fit: { grow: 1.1 } });
+    expect(result).toEqual({ id: HAT_ID, data: await stored(HAT_ID) });
+    expect((result.data as typeof HAT).fit).toEqual({ ...SHAPE, grow: 1.1 });
+    expect(await updatedAt(HAT_ID)).not.toBeNull();
+  });
+
+  // The editor previews an edit with applyHatFitChanges; a save must store exactly that.
+  it.each<[string, Record<string, unknown>, HatFitChanges]>([
+    ['a new setting', { ...SHAPE, grow: 1.2 }, { tilt: -30 }],
+    ['a changed setting', { ...SHAPE, tilt: -20 }, { tilt: -60, size: 30 }],
+    ['a cleared setting', { ...SHAPE, depth: 0.3, size: 50 }, { depth: null }],
+    ['a cleared setting it never had', { ...SHAPE }, { grow: null, offset: [2, 2] }],
+    ['an offset replaced whole', { ...SHAPE, offset: [5, 5] }, { offset: [-1, 0] }],
+  ])('stores what the editor previewed for %s', async (_, fit, changes) => {
+    await seed(HAT_ID, { ...HAT, fit });
+    await updateEventHatFit({ id: HAT_ID, fit: changes });
+    expect((await stored(HAT_ID)).fit).toStrictEqual(applyHatFitChanges(fit, changes));
   });
 
   it('keeps fields set by an earlier save', async () => {
@@ -124,6 +157,8 @@ describe('saving a hat edit in Postgres', () => {
       /Only an event hat/
     );
     expect(await stored(HAT_ID)).toEqual(data);
+    expect(caches.cosmeticCache.refresh).not.toHaveBeenCalled();
+    expect(db.userCosmetic.findMany).not.toHaveBeenCalled();
   });
 
   it('refreshes the hat and every card wearing it, in batches', async () => {
@@ -135,20 +170,37 @@ describe('saving a hat edit in Postgres', () => {
     db.userCosmetic.findMany.mockResolvedValue([
       ...images,
       { equippedToId: 9, equippedToType: 'Article' },
+      { equippedToId: 99999, equippedToType: null },
     ]);
+    // Each refresh must see the saved row, or it caches the old look for a day.
+    const seen: unknown[] = [];
+    caches.cosmeticCache.refresh.mockImplementation(async () => {
+      seen.push((await stored(HAT_ID)).fit);
+    });
 
     await updateEventHatFit({ id: HAT_ID, fit: { tilt: -30 } });
 
     expect(db.userCosmetic.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { cosmeticId: HAT_ID, equippedToId: { not: null } } })
     );
+    expect(caches.cosmeticCache.refresh).toHaveBeenCalledTimes(1);
     expect(caches.cosmeticCache.refresh).toHaveBeenCalledWith([HAT_ID]);
+    expect(seen).toEqual([{ ...SHAPE, tilt: -30 }]);
     const imageRefresh = caches.eventDecorationEntityCaches.Image.refresh;
+    // The entity caches copy the hat out of the cosmetic cache, so that one is refreshed first.
+    expect(caches.cosmeticCache.refresh.mock.invocationCallOrder[0]).toBeLessThan(
+      Math.min(...imageRefresh.mock.invocationCallOrder)
+    );
     expect(imageRefresh.mock.calls.map(([ids]) => ids.length)).toEqual([1000, 1]);
     expect(imageRefresh.mock.calls.flatMap(([ids]) => ids)).toEqual(
       images.map((x) => x.equippedToId)
     );
     expect(caches.eventDecorationEntityCaches.Article.refresh).toHaveBeenCalledWith([9]);
+    // A wearer with no entity type is skipped rather than refreshed under the wrong one.
+    const refreshed = Object.values(caches.eventDecorationEntityCaches).flatMap((c) =>
+      c.refresh.mock.calls.flatMap(([ids]) => ids)
+    );
+    expect(refreshed).not.toContain(99999);
   });
 });
 
@@ -171,6 +223,16 @@ describe('what a hat edit may contain', () => {
       expect(parse({ [key]: at(hi + 0.01) }), `${key} above`).toBe(false);
     }
     expect(parse({ offset: [0, HAT_FIT_LIMITS.offset[1] + 1] }), 'offset y').toBe(false);
+  });
+
+  it('refuses a malformed offset or id, and an edit that changes nothing', () => {
+    expect(parse({ offset: [1] })).toBe(false);
+    expect(parse({ offset: [1, 2, 3] })).toBe(false);
+    expect(parse({ offset: [NaN, 0] })).toBe(false);
+    expect(parse({ size: '40' })).toBe(false);
+    expect(parse({})).toBe(false);
+    expect(updateEventHatFitSchema.safeParse({ id: 1.5, fit: { tilt: -30 } }).success).toBe(false);
+    expect(updateEventHatFitSchema.safeParse({ id: 0, fit: { tilt: -30 } }).success).toBe(false);
   });
 
   it("refuses anything that would rewrite the art's shape", () => {

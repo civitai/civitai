@@ -457,6 +457,12 @@ describe('an unsaved hat edit', () => {
     );
   });
 
+  it('skips a setting the edit leaves undefined', () => {
+    const result = applyHatFitChanges(stored, { size: undefined, tilt: -50 });
+    expect(result).toStrictEqual({ ...stored, tilt: -50 });
+    expect('size' in result).toBe(false);
+  });
+
   it('does not change the fit it was given', () => {
     const before = structuredClone(stored);
     applyHatFitChanges(stored, { tilt: null, size: 30 });

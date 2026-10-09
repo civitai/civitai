@@ -753,7 +753,8 @@ export async function updateEventHatFit({ id, fit }: UpdateEventHatFitInput) {
     where: { cosmeticId: id, equippedToId: { not: null } },
     select: { equippedToId: true, equippedToType: true },
   });
-  // The entity caches hold a copy of the hat's data, read through this one.
+  // First: the event decoration caches copy the hat's data out of this one. The frame caches
+  // (cosmeticEntityCaches) never hold an event hat, so they need nothing.
   await cosmeticCache.refresh([id]);
   await refreshEventDecorations(
     worn.flatMap(({ equippedToId, equippedToType }) =>
