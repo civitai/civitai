@@ -1,23 +1,42 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { PGlite } from '@electric-sql/pglite';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { appFeedbackDigestQuery } from '~/server/notifications/app-feedback.notifications';
+import type * as AppAccess from '~/server/services/blocks/app-access.service';
 
 /**
  * Runs the real `app-feedback-new` digest query against an in-process Postgres whose `Feedback`
- * table is built by the REAL migrations — the same three files a human applies by hand — so a
- * column the query names and the DDL does not fails here instead of in the job.
+ * table is built by the REAL migrations — the same files a human applies by hand — so a column the
+ * query names and the DDL does not fails here instead of in the job. The owner inbox's own raw
+ * reads (the list and the New counts) run against the SAME database, through the real service
+ * functions, so "the digest never counts a row the inbox would not show" is checked by executing
+ * both, not by comparing their text.
  *
- * 🔴 THE CLOCK IS PINNED. The query's window is about time (a bucket is sent once, in the run
- * whose window holds its due time), so a test reading the wall clock would pass or fail by the
- * hour it ran at. `public.now()` shadows `pg_catalog.now()` via `search_path`, and every timestamp
- * is written and read as a STRING: PGlite shifts a JS `Date` sent against a
- * `timestamp WITHOUT time zone` by the local offset (see the moderator app's
- * `feedback-pglite.harness.ts`), so no `Date` crosses the boundary here.
+ * The clock is pinned (`public.now()` shadows `pg_catalog.now()` via `search_path`) so the 7-day
+ * floor does not depend on when the test runs. Every timestamp is written and read as a STRING:
+ * PGlite shifts a JS `Date` sent against a `timestamp WITHOUT time zone` by the local offset (see
+ * the moderator app's `feedback-pglite.harness.ts`), so no `Date` crosses the boundary here.
  */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
+
+const access = vi.hoisted(() => ({
+  seatListingId: '',
+  allIds: [] as string[],
+}));
+
+vi.mock('~/server/services/blocks/app-access.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppAccess>()),
+  resolveListingAccess: async () => ({ role: 'owner', seatListingId: access.seatListingId }),
+  resolveAccessibleListingIds: async () => ({ allIds: access.allIds }),
+}));
+
+const { countNewAppFeedbackForMyListings, listAppFeedbackForListing } = await import(
+  '~/server/services/blocks/app-feedback.service'
+);
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -42,7 +61,7 @@ type Row = {
   details: { appListingId: string; appName: string; count: number };
 };
 
-// Users — pairwise distinct, and none equal to a count the assertions name.
+// Users — pairwise distinct, and none equal to a count or feedback id the assertions name.
 const OWNER = 101; // canonical owner of L_ONSITE, via OauthClient
 const STALE = 102; // L_ONSITE's stale denormalized user_id — must never be notified
 const OFFSITE_OWNER = 103;
@@ -62,10 +81,11 @@ const L_SHADOW = 'apl_shadow';
 const L_OPTED_OUT = 'apl_optout';
 const L_SYSTEM = 'apl_system';
 
-/** 2026-10-20 00:30 UTC. Yesterday's bucket (10-19) fell due at 00:05. */
 const NOW = '2026-10-20 00:30:00+00';
-/** The previous run: before 10-19's due time (00:05), after 10-18's. */
+/** The previous run's cursor. Rows after it are this run's batch. */
 const LAST_SENT = '2026-10-20T00:00:00.000Z';
+/** A time inside this run's batch. */
+const IN_BATCH = '2026-10-20 00:10';
 
 let db: PGlite;
 
@@ -87,12 +107,13 @@ async function feedback(
     ownerFlaggedAt: string;
   }> = {}
 ) {
+  const id = nextId++;
   await db.query(
     `INSERT INTO "Feedback" (id, area, "userId", message, "appListingId", "createdAt",
        "hiddenFromOwnerAt", "ownerStatus", "ownerFlaggedAt")
      VALUES ($1, 'app-block', $2, 'SECRET-MESSAGE-TEXT', $3, $4::timestamp, $5::timestamp, $6, $7::timestamp)`,
     [
-      nextId++,
+      id,
       userId,
       appListingId,
       createdAt,
@@ -101,6 +122,7 @@ async function feedback(
       extra.ownerFlaggedAt ?? null,
     ]
   );
+  return id;
 }
 
 beforeAll(async () => {
@@ -146,7 +168,9 @@ beforeEach(async () => {
       "UserEngagement", "UserNotificationSettings" CASCADE;
     UPDATE test_clock SET t = '${NOW}';
   `);
-  nextId = 1;
+  // Start ids well away from every count the assertions name, so a key built from the count (or
+  // from the row count) instead of the highest id cannot pass.
+  nextId = 11;
   for (const id of [
     OWNER,
     STALE,
@@ -185,21 +209,21 @@ beforeEach(async () => {
 });
 
 describe('app-feedback-new digest — who gets what, executed', () => {
-  it('one row per listing per bucket, to the canonical owner, with the count of NEW visible reports', async () => {
-    // Yesterday (2026-10-19): due at 2026-10-20 00:05, inside (LAST_SENT, NOW].
-    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
-    await feedback(R2, L_ONSITE, '2026-10-19 23:59:59');
-    await feedback(R3, L_OFFSITE, '2026-10-19 10:00');
+  it("one row per listing per run, to the canonical owner, keyed by the batch's highest id", async () => {
+    await feedback(R3, L_ONSITE, '2026-10-19 23:00'); // id 11: before the cursor, a previous run's
+    await feedback(R1, L_ONSITE, '2026-10-20 00:05'); // 12
+    await feedback(R2, L_ONSITE, '2026-10-20 00:10'); // 13
+    await feedback(R3, L_OFFSITE, '2026-10-20 00:20'); // 14
 
     expect(await run()).toEqual([
       {
-        key: 'app-feedback-new:apl_offsite:2026-10-19T00',
+        key: 'app-feedback-new:apl_offsite:14',
         userId: OFFSITE_OWNER,
         type: 'app-feedback-new',
         details: { appListingId: L_OFFSITE, appName: 'Far Away', count: 1 },
       },
       {
-        key: 'app-feedback-new:apl_onsite:2026-10-19T00',
+        key: 'app-feedback-new:apl_onsite:13',
         userId: OWNER,
         type: 'app-feedback-new',
         details: { appListingId: L_ONSITE, appName: 'Pixel Forge', count: 2 },
@@ -208,39 +232,32 @@ describe('app-feedback-new digest — who gets what, executed', () => {
   });
 
   it('🔴 excludes hidden, banned-reporter, already-handled and blocked rows', async () => {
-    await feedback(R1, L_ONSITE, '2026-10-19 01:00'); // the one that counts
-    await feedback(R2, L_ONSITE, '2026-10-19 02:00', { hiddenFromOwnerAt: '2026-10-19 05:00' });
-    await feedback(BANNED, L_ONSITE, '2026-10-19 03:00');
-    await feedback(R3, L_ONSITE, '2026-10-19 04:00', {
-      ownerStatus: 'acknowledged',
-    });
-    await feedback(BLOCKED_BY_OWNER, L_ONSITE, '2026-10-19 06:00');
-    await feedback(BLOCKS_OWNER, L_ONSITE, '2026-10-19 07:00');
-    await feedback(HIDDEN_BY_OWNER, L_ONSITE, '2026-10-19 08:00');
+    await feedback(R1, L_ONSITE, '2026-10-20 00:01'); // the one that counts
+    await feedback(R2, L_ONSITE, '2026-10-20 00:02', { hiddenFromOwnerAt: '2026-10-20 00:05' });
+    await feedback(BANNED, L_ONSITE, '2026-10-20 00:03');
+    await feedback(R3, L_ONSITE, '2026-10-20 00:04', { ownerStatus: 'acknowledged' });
+    await feedback(BLOCKED_BY_OWNER, L_ONSITE, '2026-10-20 00:06');
+    await feedback(BLOCKS_OWNER, L_ONSITE, '2026-10-20 00:07');
+    await feedback(HIDDEN_BY_OWNER, L_ONSITE, '2026-10-20 00:08');
 
     const rows = await run();
     expect(rows.map((r) => [r.userId, r.details.count])).toEqual([[OWNER, 1]]);
   });
 
   it('each exclusion alone drops its row (so none is masked by another)', async () => {
-    const cases: Array<[string, () => Promise<void>]> = [
-      [
-        'hidden',
-        () => feedback(R2, L_ONSITE, '2026-10-19 02:00', { hiddenFromOwnerAt: '2026-10-19 05:00' }),
-      ],
-      ['banned', () => feedback(BANNED, L_ONSITE, '2026-10-19 03:00')],
-      [
-        'acknowledged',
-        () => feedback(R3, L_ONSITE, '2026-10-19 04:00', { ownerStatus: 'acknowledged' }),
-      ],
-      ['resolved', () => feedback(R3, L_ONSITE, '2026-10-19 04:00', { ownerStatus: 'resolved' })],
-      ['owner blocked reporter', () => feedback(BLOCKED_BY_OWNER, L_ONSITE, '2026-10-19 06:00')],
-      ['reporter blocked owner', () => feedback(BLOCKS_OWNER, L_ONSITE, '2026-10-19 07:00')],
-      ['owner hid reporter', () => feedback(HIDDEN_BY_OWNER, L_ONSITE, '2026-10-19 08:00')],
-      ['owner is the reporter', () => feedback(OWNER, L_ONSITE, '2026-10-19 09:00')],
-      ['shadow revision', () => feedback(R1, L_SHADOW, '2026-10-19 10:00')],
-      ['system-owned listing', () => feedback(R1, L_SYSTEM, '2026-10-19 11:00')],
-      ['owner opted out', () => feedback(R1, L_OPTED_OUT, '2026-10-19 12:00')],
+    const cases: Array<[string, () => Promise<unknown>]> = [
+      ['hidden', () => feedback(R2, L_ONSITE, IN_BATCH, { hiddenFromOwnerAt: '2026-10-20 00:15' })],
+      ['banned', () => feedback(BANNED, L_ONSITE, IN_BATCH)],
+      ['acknowledged', () => feedback(R3, L_ONSITE, IN_BATCH, { ownerStatus: 'acknowledged' })],
+      ['resolved', () => feedback(R3, L_ONSITE, IN_BATCH, { ownerStatus: 'resolved' })],
+      ['owner blocked reporter', () => feedback(BLOCKED_BY_OWNER, L_ONSITE, IN_BATCH)],
+      ['reporter blocked owner', () => feedback(BLOCKS_OWNER, L_ONSITE, IN_BATCH)],
+      ['owner hid reporter', () => feedback(HIDDEN_BY_OWNER, L_ONSITE, IN_BATCH)],
+      ['owner is the reporter', () => feedback(OWNER, L_ONSITE, IN_BATCH)],
+      ['shadow revision', () => feedback(R1, L_SHADOW, IN_BATCH)],
+      ['system-owned listing', () => feedback(R1, L_SYSTEM, IN_BATCH)],
+      ['owner opted out', () => feedback(R1, L_OPTED_OUT, IN_BATCH)],
+      ['before the cursor', () => feedback(R1, L_ONSITE, '2026-10-19 23:59:59')],
     ];
     for (const [label, seed] of cases) {
       await db.exec(`TRUNCATE "Feedback"`);
@@ -249,19 +266,19 @@ describe('app-feedback-new digest — who gets what, executed', () => {
     }
     // Positive control: the same harness, an ordinary row, DOES produce a digest.
     await db.exec(`TRUNCATE "Feedback"`);
-    await feedback(R1, L_ONSITE, '2026-10-19 10:00');
+    await feedback(R1, L_ONSITE, IN_BATCH);
     expect((await run()).map((r) => r.userId)).toEqual([OWNER]);
   });
 
   it('a flagged report with no status still counts — the same "new" as the inbox', async () => {
     // The inbox's New filter is `ownerStatus IS NULL` alone, so a digest that also dropped flagged
     // rows would announce fewer than the New tab it links to shows.
-    await feedback(R3, L_ONSITE, '2026-10-19 05:00', { ownerFlaggedAt: '2026-10-19 06:00' });
+    await feedback(R3, L_ONSITE, IN_BATCH, { ownerFlaggedAt: '2026-10-20 00:15' });
     expect((await run()).map((r) => r.details.count)).toEqual([1]);
   });
 
   it('🔴 the owner only — never the stale denormalized owner, never an accepted editor', async () => {
-    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
+    await feedback(R1, L_ONSITE, IN_BATCH);
     const recipients = (await run()).map((r) => r.userId);
     expect(recipients).toEqual([OWNER]);
     expect(recipients).not.toContain(STALE);
@@ -269,7 +286,7 @@ describe('app-feedback-new digest — who gets what, executed', () => {
   });
 
   it('🔴 carries no message text', async () => {
-    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
+    await feedback(R1, L_ONSITE, IN_BATCH);
     const rows = await run();
     expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toContain('SECRET-MESSAGE-TEXT');
@@ -278,81 +295,109 @@ describe('app-feedback-new digest — who gets what, executed', () => {
   });
 });
 
-describe('app-feedback-new digest — the window', () => {
-  it('a bucket is sent by the runs whose window holds its due time, and by no later one', async () => {
-    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
-    // Due 2026-10-20 00:05. NOW is 00:30. A window is (lastSent - 5 min clock slack, NOW].
-    expect(await run('2026-10-20T00:04:59.000Z')).toHaveLength(1);
-    expect(await run('2026-10-20T00:09:59.000Z')).toHaveLength(1); // still inside the slack
-    expect(await run('2026-10-20T00:10:00.000Z')).toHaveLength(0); // past it: already sent
-    expect(await run('2026-10-20T00:20:00.000Z')).toHaveLength(0);
-
-    // Not due yet: the same run, a minute before the due time.
-    await setNow('2026-10-20 00:04:00+00');
-    expect(await run()).toHaveLength(0);
-    // ...and due the moment it arrives.
-    await setNow('2026-10-20 00:05:00+00');
-    expect(await run('2026-10-20T00:04:00.000Z')).toHaveLength(1);
-  });
-
-  it("today's reports wait for today's bucket to close", async () => {
-    await feedback(R1, L_ONSITE, '2026-10-20 00:10');
-    expect(await run('2026-10-19T00:00:00.000Z')).toHaveLength(0);
-    await setNow('2026-10-21 00:06:00+00');
-    expect((await run('2026-10-21T00:00:00.000Z')).map((r) => r.key)).toEqual([
-      'app-feedback-new:apl_onsite:2026-10-20T00',
+describe('app-feedback-new digest — the cursor', () => {
+  it('counts only rows after the cursor; a row exactly at it belongs to the previous run', async () => {
+    await feedback(R1, L_ONSITE, '2026-10-20 00:00:00'); // 11: at the cursor
+    await feedback(R2, L_ONSITE, '2026-10-20 00:00:01'); // 12: just after it
+    expect((await run()).map((r) => [r.key, r.details.count])).toEqual([
+      ['app-feedback-new:apl_onsite:12', 1],
     ]);
   });
 
-  it('a report written in the grace period after midnight lands in its own (previous) bucket', async () => {
-    // Stamped 23:59:59 but not visible to the replica until 00:03. The runs at 00:01 and 00:02
-    // could not see it — and did not need to, because the bucket is not due until 00:05, so the
-    // first run after that (previous run 00:03) counts it.
-    await feedback(R1, L_ONSITE, '2026-10-19 23:59:59');
-    await setNow('2026-10-20 00:02:00+00');
-    expect(await run('2026-10-20T00:01:00.000Z')).toEqual([]);
-    await setNow('2026-10-20 00:05:30+00');
-    expect((await run('2026-10-20T00:03:00.000Z')).map((r) => r.details.count)).toEqual([1]);
+  it('consecutive runs count disjoint batches under distinct keys; a repeated run repeats its key', async () => {
+    await feedback(R1, L_ONSITE, '2026-10-20 00:01'); // 11
+    await feedback(R2, L_ONSITE, '2026-10-20 00:02'); // 12
+    const first = await run('2026-10-20T00:00:00.000Z');
+    await feedback(R3, L_ONSITE, '2026-10-20 00:04'); // 13, after the first run's cursor
+    const second = await run('2026-10-20T00:03:00.000Z');
+    expect(first.map((r) => [r.key, r.details.count])).toEqual([
+      ['app-feedback-new:apl_onsite:12', 2],
+    ]);
+    expect(second.map((r) => [r.key, r.details.count])).toEqual([
+      ['app-feedback-new:apl_onsite:13', 1],
+    ]);
   });
 
-  it('overlapping windows re-emit the SAME key (the notifications service delivers a key once)', async () => {
-    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
+  it('a run repeated before its cursor advanced, with nothing new, re-emits the same key', async () => {
+    // The notifications service delivers a key once, so a retry of the same batch is not a second
+    // notification.
+    await feedback(R1, L_ONSITE, '2026-10-20 00:01');
+    await feedback(R2, L_ONSITE, '2026-10-20 00:02');
     const a = await run();
-    const b = await run('2026-10-20T00:04:00.000Z');
-    expect(a.map((r) => r.key)).toEqual(['app-feedback-new:apl_onsite:2026-10-19T00']);
-    expect(b.map((r) => r.key)).toEqual(a.map((r) => r.key));
-  });
-
-  it('🔴 a database clock running behind the app clock does not skip a bucket', async () => {
-    // The cursor is the APP server's time taken before the query; the upper bound is the
-    // DATABASE's NOW(). With the database 3 s behind, run k reads up to 00:04:58 by its clock while
-    // the app stamps the cursor 00:05:01, so the due time 00:05:00 falls between the two windows.
-    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
-    await setNow('2026-10-20 00:04:58+00');
-    expect(await run('2026-10-20T00:04:00.000Z')).toEqual([]); // not due yet by the DB's clock
-    await setNow('2026-10-20 00:06:00+00');
-    expect((await run('2026-10-20T00:05:01.000Z')).map((r) => r.key)).toEqual([
-      'app-feedback-new:apl_onsite:2026-10-19T00',
-    ]);
+    expect(a.map((r) => r.key)).toEqual(['app-feedback-new:apl_onsite:12']);
+    expect((await run()).map((r) => r.key)).toEqual(a.map((r) => r.key));
   });
 
   it('a drifted cursor reaches back at most 7 days', async () => {
     await feedback(R1, L_ONSITE, '2026-10-12 23:00'); // 7d 1.5h before NOW — outside
-    await feedback(R2, L_ONSITE, '2026-10-13 01:00'); // inside
+    await feedback(R2, L_ONSITE, '2026-10-13 01:00'); // 12: inside
     const rows = await run('1970-01-01T00:00:00.000Z');
-    expect(rows.map((r) => r.key)).toEqual(['app-feedback-new:apl_onsite:2026-10-13T00']);
+    expect(rows.map((r) => [r.key, r.details.count])).toEqual([
+      ['app-feedback-new:apl_onsite:12', 1],
+    ]);
+    // The floor moves with the clock: a day later the same row has aged out too.
+    await setNow('2026-10-21 02:00:00+00');
+    expect(await run('1970-01-01T00:00:00.000Z')).toEqual([]);
+  });
+});
+
+describe('🔴 one visibility rule — the digest never counts a row the owner inbox would not show', () => {
+  // The inbox's raw reads go through the db mock's `$queryRaw`; here it runs them on this PGlite.
+  beforeEach(() => {
+    access.seatListingId = L_ONSITE;
+    access.allIds = [L_ONSITE];
+    dbMock.dbRead.$queryRaw.mockImplementation(async (query: Prisma.Sql) => {
+      const result = await db.query(query.text, query.values as unknown[]);
+      return result.rows;
+    });
   });
 
-  it('🔴 is independent of the session time zone', async () => {
-    // `createdAt` holds UTC in a zone-less column. Compared against a bare NOW(), its due time
-    // would be read in the session zone and land hours outside the cursor's window.
-    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
-    for (const zone of ['UTC', 'America/New_York', 'Asia/Tokyo']) {
-      await db.exec(`SET TIME ZONE '${zone}'`);
-      expect(
-        (await run()).map((r) => r.key),
-        zone
-      ).toEqual(['app-feedback-new:apl_onsite:2026-10-19T00']);
+  const inboxNewIds = async () =>
+    (
+      await listAppFeedbackForListing({
+        userId: OWNER,
+        input: { appListingId: L_ONSITE, limit: 50, ownerStatus: 'new' },
+      })
+    ).items.map((i) => i.id);
+  const inboxNewCount = async () => (await countNewAppFeedbackForMyListings(OWNER))[L_ONSITE] ?? 0;
+  const digestCount = async () =>
+    (await run()).find((r) => r.details.appListingId === L_ONSITE)?.details.count ?? 0;
+
+  it('positive control: a visible new row is in the inbox list, the inbox count and the digest', async () => {
+    const id = await feedback(R1, L_ONSITE, IN_BATCH);
+    expect(await inboxNewIds()).toEqual([id]);
+    expect(await inboxNewCount()).toBe(1);
+    expect(await digestCount()).toBe(1);
+  });
+
+  it('hidden, banned-reporter and already-handled rows are dropped by ALL THREE reads', async () => {
+    const cases: Array<[string, () => Promise<unknown>]> = [
+      [
+        'hidden from the owner',
+        () => feedback(R2, L_ONSITE, IN_BATCH, { hiddenFromOwnerAt: '2026-10-20 00:15' }),
+      ],
+      ['banned reporter', () => feedback(BANNED, L_ONSITE, IN_BATCH)],
+      ['not new', () => feedback(R3, L_ONSITE, IN_BATCH, { ownerStatus: 'wont_fix' })],
+      // No "another area" case: `Feedback_app_columns_check` refuses a listing id on any other
+      // area, so no row can reach the area clause through a listing join. It is pinned as text.
+    ];
+    for (const [label, seed] of cases) {
+      await db.exec(`TRUNCATE "Feedback"`);
+      await seed();
+      expect(await inboxNewIds(), `${label}: inbox list`).toEqual([]);
+      expect(await inboxNewCount(), `${label}: inbox count`).toBe(0);
+      expect(await digestCount(), `${label}: digest`).toBe(0);
+    }
+  });
+
+  it("the digest-only rules: blocked pairs and the owner's own row are in the inbox, not the digest", async () => {
+    // The inbox shows every visible report, including one from a user the owner blocked (the
+    // owner may want to read and act on it); the digest does not push a notification about it.
+    for (const reporter of [BLOCKED_BY_OWNER, BLOCKS_OWNER, HIDDEN_BY_OWNER, OWNER]) {
+      await db.exec(`TRUNCATE "Feedback"`);
+      const id = await feedback(reporter, L_ONSITE, IN_BATCH);
+      expect(await inboxNewIds(), String(reporter)).toEqual([id]);
+      expect(await digestCount(), String(reporter)).toBe(0);
     }
   });
 });

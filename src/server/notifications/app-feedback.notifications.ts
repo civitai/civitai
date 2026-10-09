@@ -7,15 +7,18 @@ import {
 } from '~/server/notifications/base.notifications';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { APP_LISTING_OWNER_SQL } from '~/server/notifications/comment.notifications';
+import {
+  OWNER_NEW_FEEDBACK_SQL,
+  OWNER_VISIBLE_FEEDBACK_SQL,
+} from '~/server/services/blocks/app-feedback-visibility';
 import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants';
-import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 
 /**
  * Private per-app feedback (`Feedback.area = 'app-block'`) — the two notifications it sends.
  *
- * 1. `app-feedback-new` — a DAILY DIGEST to the listing OWNER: "3 new feedback messages on
- *    "Pixel Forge"". One per listing per UTC day. Owner only: accepted editors read the inbox but
- *    get no digest.
+ * 1. `app-feedback-new` — a DIGEST to the listing OWNER: "3 new feedback messages on
+ *    "Pixel Forge"". At most one per listing per run of the notifications job, counting what
+ *    arrived since the previous run. Owner only: accepted editors read the inbox but get no digest.
  * 2. `app-feedback-status` — to the REPORTER, when the developer marks their feedback `resolved`
  *    or `wont_fix`. Never for `acknowledged`.
  *
@@ -52,41 +55,6 @@ export function appFeedbackInboxHref(appListingId: string): string {
 // Owner digest
 // ---------------------------------------------------------------------------------------------
 
-/**
- * The digest's bucket: a Postgres `date_trunc` unit, also used as the bucket length. Changing it
- * also means changing the "(daily)" in the type's `displayName`, and it must stay under the
- * query's 7-day floor.
- */
-export const APP_FEEDBACK_DIGEST_BUCKET = 'day';
-
-/**
- * How long after a bucket closes before it is sent. The query reads a replica, and a row's
- * `createdAt` is stamped before its transaction commits, so a report written in the last moments
- * of a bucket can become visible a little after the bucket closes. Waiting this long means such a
- * row is counted in its own bucket instead of being skipped by every run.
- */
-export const APP_FEEDBACK_DIGEST_GRACE = '5 minutes';
-
-/**
- * How far each run's window reaches back before its cursor. The cursor is stamped with the APP
- * server's clock while `NOW()` is the DATABASE's, so if the database runs behind, consecutive
- * windows `(lastSent, now]` would leave a gap, and a bucket falling due inside it would never be
- * sent. Overlapping by this much absorbs that skew; a bucket re-emitted in the overlap carries the
- * same `key`, so it is not delivered twice.
- */
-export const APP_FEEDBACK_DIGEST_CLOCK_SLACK = '5 minutes';
-
-/** The SQL expression for the moment a row's bucket is sent, as a UTC `timestamp`. */
-const digestDueAt = `date_trunc('${APP_FEEDBACK_DIGEST_BUCKET}', f."createdAt") + INTERVAL '1 ${APP_FEEDBACK_DIGEST_BUCKET}' + INTERVAL '${APP_FEEDBACK_DIGEST_GRACE}'`;
-
-/**
- * `NOW()` as a UTC `timestamp`. `createdAt` is a `timestamp WITHOUT time zone` holding UTC, and
- * comparing one against a bare `NOW()` converts it through the SESSION time zone — so on a
- * non-UTC session every bucket's due time would shift by the offset, out of the window the cursor
- * reads. Pinned by the PGlite test running the query under a non-UTC session.
- */
-const NOW_UTC = `(NOW() AT TIME ZONE 'UTC')`;
-
 export type AppFeedbackDigestDetails = {
   appListingId: string;
   appName: string | null;
@@ -102,29 +70,28 @@ export function appFeedbackDigestMessage(details: Partial<AppFeedbackDigestDetai
 }
 
 /**
- * The digest query. One row per (listing, bucket) that CLOSED in this run's window.
+ * The digest query: one row per listing per job run that saw new feedback on it, modelled on
+ * `new-app-listing-comment` — the processor's standard cursor (`createdAt > lastSent`), the same
+ * kind-aware owner, the same shadow-revision exclusion and the same block check.
  *
- * 🔴 THE CURSOR IS COMPARED TO THE BUCKET'S DUE TIME, NOT TO `createdAt`. That is what makes this
- * a digest while the runner fires every minute: a bucket is emitted by every run whose window
- * (widened by APP_FEEDBACK_DIGEST_CLOCK_SLACK) contains its due time and delivered once by `key`,
- * and the per-type cursor still advances every minute. Do not gate the processor to run once a day
- * instead: its cursor would go stale and trip `notification-cursor-monitor`.
- *
- * What a row must be to count, judged when the digest is sent. The first three are the owner
- * inbox's own rules (`ownerVisibleWhere` and its `new` filter in `app-feedback.service.ts`),
- * restated as SQL text because the runner takes a raw string; the "agrees with the owner inbox"
- * test fails if `ownerVisibleWhere`'s rules or `ownerStatusSql('new')` change without this query:
- *   - still NEW to the developer (`ownerStatus` NULL), as the inbox's New filter counts it;
- *   - not hidden from the developer by a moderator;
- *   - not from a reporter who is now banned;
- *   - not from someone the owner blocked, or who blocked the owner;
+ * Which rows the developer may see, and what "new" is, are NOT written here: they are
+ * `OWNER_VISIBLE_FEEDBACK_SQL` and `OWNER_NEW_FEEDBACK_SQL`, the text the owner inbox's list and
+ * New counts run, so the digest cannot announce a row the inbox it links to would not show. On top
+ * of those, a row must be:
+ *   - not from someone the owner blocked or hid, or who blocked the owner;
  *   - not the owner's own (submission already refuses that; ownership can change afterwards).
  *
  * Recipient: the canonical, kind-aware owner via `APP_LISTING_OWNER_SQL`, never
  * `app_listings.user_id` alone, and never a shadow revision's frozen copy. Editors are not
- * recipients. `key` is per listing per bucket; there is no `dedupeKey`, because that mechanism
- * makes one source event produce one notification ACROSS types, and nothing else is ever sent for
- * a digest bucket.
+ * recipients.
+ *
+ * `key` is per listing per batch, the batch named by its highest feedback id. Runs read disjoint
+ * rows (each reads `createdAt` past the previous run's cursor), so two runs never produce the same
+ * key, while a run repeated before its cursor advanced reproduces its own. There is no `dedupeKey`:
+ * that column collapses one source event that several TYPES notify about (a comment that is both
+ * a mention and a reply), and nothing else is ever sent about a feedback batch, so it would only
+ * repeat `key`. A processor that sets one must also declare a batch `priority`
+ * (`comment.dedupe-key.test.ts`).
  */
 export function appFeedbackDigestQuery({ lastSent }: { lastSent: string }): string {
   return `
@@ -133,33 +100,33 @@ export function appFeedbackDigestQuery({ lastSent }: { lastSent: string }): stri
           ${APP_LISTING_OWNER_SQL} "ownerId",
           al.id "appListingId",
           al.name "appName",
-          date_trunc('${APP_FEEDBACK_DIGEST_BUCKET}', f."createdAt") "bucket",
-          COUNT(*)::int "count"
+          COUNT(*)::int "count",
+          MAX(f.id) "maxFeedbackId"
         FROM "Feedback" f
         JOIN "User" u ON u.id = f."userId"
         -- INNER: a report whose listing was deleted (appListingId SET NULL) has no owner to tell.
         JOIN "app_listings" al ON al.id = f."appListingId"
         LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
         LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
-        WHERE f.area = '${APP_BLOCK_FEEDBACK_AREA}'
-          AND f."hiddenFromOwnerAt" IS NULL
-          AND u."bannedAt" IS NULL
-          AND f."ownerStatus" IS NULL
+        WHERE ${OWNER_VISIBLE_FEEDBACK_SQL}
+          AND ${OWNER_NEW_FEEDBACK_SQL}
           AND al."revision_of_id" IS NULL
           AND ${APP_LISTING_OWNER_SQL} > 0
           AND f."userId" != ${APP_LISTING_OWNER_SQL}
           -- (recipient, actor): swapped, the owner's Hide of a reporter stops suppressing.
           AND ${notBlockedBetween(APP_LISTING_OWNER_SQL, 'f."userId"')}
-          -- The bucket became due inside this run's window.
-          AND ${digestDueAt} > '${lastSent}'::timestamp - INTERVAL '${APP_FEEDBACK_DIGEST_CLOCK_SLACK}'
-          AND ${digestDueAt} <= ${NOW_UTC}
-          -- A floor against cursor drift: a new type's cursor starts at the job's global last run,
-          -- which is the epoch on a fresh database and stale by the length of any outage.
-          AND f."createdAt" > ${NOW_UTC} - INTERVAL '7 days'
-        GROUP BY 1, 2, 3, 4
+          AND f."createdAt" > '${lastSent}'
+          -- The floor against cursor drift: this type's cursor starts at the job's global last run,
+          -- the epoch on a fresh database and stale by the length of any outage. It bounds that
+          -- first batch's scan, and keeps its count to the last week. There is no hard launch-date
+          -- floor (new-app-listing-comment has one, for comments older than it): an app-block row
+          -- still "new" is unread by the developer whenever it was written, so announcing it is
+          -- never wrong, and the rolling floor already bounds how many.
+          AND f."createdAt" > NOW() - INTERVAL '7 days'
+        GROUP BY 1, 2, 3
       )
       SELECT
-        concat('${APP_FEEDBACK_DIGEST_TYPE}:', "appListingId", ':', to_char("bucket", 'YYYY-MM-DD"T"HH24')) "key",
+        concat('${APP_FEEDBACK_DIGEST_TYPE}:', "appListingId", ':', "maxFeedbackId") "key",
         "ownerId" "userId",
         '${APP_FEEDBACK_DIGEST_TYPE}' "type",
         JSONB_BUILD_OBJECT(
@@ -220,7 +187,7 @@ export function appFeedbackStatusMessage(details: Partial<AppFeedbackStatusDetai
 
 export const appFeedbackNotifications = createNotificationProcessor({
   [APP_FEEDBACK_DIGEST_TYPE]: {
-    displayName: 'New private feedback on your apps (daily)',
+    displayName: 'New private feedback on your apps',
     category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       const d = details as Partial<AppFeedbackDigestDetails>;

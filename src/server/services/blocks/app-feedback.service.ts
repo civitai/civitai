@@ -29,6 +29,10 @@ import {
   resolveListingAccess,
 } from '~/server/services/blocks/app-access.service';
 import { notifyAppFeedbackReporter } from '~/server/services/blocks/app-feedback-notify';
+import {
+  OWNER_NEW_FEEDBACK_SQL,
+  OWNER_VISIBLE_FEEDBACK_SQL,
+} from '~/server/services/blocks/app-feedback-visibility';
 import { isFeedbackAreaEnabled } from '~/server/services/feedback.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { throwRateLimitError } from '~/server/utils/errorHandling';
@@ -285,7 +289,8 @@ async function resolveInboxListingId(
 /**
  * Which rows an owner may see or act on: this listing's app feedback, minus rows a moderator hid
  * and rows from a reporter who has since been banned. The write paths use the same predicate, so
- * an owner can never change a row they cannot see.
+ * an owner can never change a row they cannot see. Prisma's form of `OWNER_VISIBLE_FEEDBACK_SQL`
+ * (the raw reads' and the digest's); a test holds the two to the same rules.
  */
 export function ownerVisibleWhere(seatListingId: string): Prisma.FeedbackWhereInput {
   return {
@@ -296,13 +301,14 @@ export function ownerVisibleWhere(seatListingId: string): Prisma.FeedbackWhereIn
   };
 }
 
-/** The SQL twin of {@link ownerVisibleWhere} for the raw reads; `f` = Feedback, `u` = reporter. */
+/**
+ * {@link ownerVisibleWhere} for the raw reads, from the shared {@link OWNER_VISIBLE_FEEDBACK_SQL}
+ * that the owner digest also reads; `f` = Feedback, `u` = reporter.
+ */
 function ownerVisibleSql(seatListingIds: string[]): Prisma.Sql[] {
   return [
-    Prisma.sql`f.area = ${APP_BLOCK_FEEDBACK_AREA}`,
+    Prisma.raw(OWNER_VISIBLE_FEEDBACK_SQL),
     Prisma.sql`f."appListingId" IN (${Prisma.join(seatListingIds)})`,
-    Prisma.sql`f."hiddenFromOwnerAt" IS NULL`,
-    Prisma.sql`u."bannedAt" IS NULL`,
   ];
 }
 
@@ -321,13 +327,10 @@ function cursorSql(cursor: number | undefined, seatListingId?: string): Prisma.S
   ];
 }
 
-/**
- * The owner-status filter of the owner inbox and the moderator list. Its `new` is also what the
- * owner digest counts (`app-feedback.notifications.ts`), and a test holds the two together.
- */
-export function ownerStatusSql(filter: AppFeedbackOwnerStatusFilter | undefined): Prisma.Sql[] {
+/** The owner-status filter of the inbox and the moderator list; `new` is the digest's too. */
+function ownerStatusSql(filter: AppFeedbackOwnerStatusFilter | undefined): Prisma.Sql[] {
   if (!filter) return [];
-  if (filter === 'new') return [Prisma.sql`f."ownerStatus" IS NULL`];
+  if (filter === 'new') return [Prisma.raw(OWNER_NEW_FEEDBACK_SQL)];
   return [Prisma.sql`f."ownerStatus" = ${filter}`];
 }
 

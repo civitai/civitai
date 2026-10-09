@@ -15,7 +15,11 @@ import {
   notificationProcessors,
   notificationTypes,
 } from '~/server/notifications/utils.notifications';
-import { ownerStatusSql, ownerVisibleWhere } from '~/server/services/blocks/app-feedback.service';
+import { ownerVisibleWhere } from '~/server/services/blocks/app-feedback.service';
+import {
+  OWNER_NEW_FEEDBACK_SQL,
+  OWNER_VISIBLE_FEEDBACK_SQL,
+} from '~/server/services/blocks/app-feedback-visibility';
 import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
 
 /**
@@ -139,16 +143,14 @@ describe('owner digest — the query', () => {
       CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END "ownerId",
       al.id "appListingId",
       al.name "appName",
-      date_trunc('day', f."createdAt") "bucket",
-      COUNT(*)::int "count"
+      COUNT(*)::int "count",
+      MAX(f.id) "maxFeedbackId"
       FROM "Feedback" f
       JOIN "User" u ON u.id = f."userId"
       JOIN "app_listings" al ON al.id = f."appListingId"
       LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
       LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
-      WHERE f.area = 'app-block'
-      AND f."hiddenFromOwnerAt" IS NULL
-      AND u."bannedAt" IS NULL
+      WHERE f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL
       AND f."ownerStatus" IS NULL
       AND al."revision_of_id" IS NULL
       AND CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END > 0
@@ -158,13 +160,12 @@ describe('owner digest — the query', () => {
       WHERE (blk."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk."targetUserId" = f."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = f."userId" AND blk."targetUserId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk.type = 'Block')
       )
-      AND date_trunc('day', f."createdAt") + INTERVAL '1 day' + INTERVAL '5 minutes' > '2026-10-20T00:00:00.000Z'::timestamp - INTERVAL '5 minutes'
-      AND date_trunc('day', f."createdAt") + INTERVAL '1 day' + INTERVAL '5 minutes' <= (NOW() AT TIME ZONE 'UTC')
-      AND f."createdAt" > (NOW() AT TIME ZONE 'UTC') - INTERVAL '7 days'
-      GROUP BY 1, 2, 3, 4
+      AND f."createdAt" > '2026-10-20T00:00:00.000Z'
+      AND f."createdAt" > NOW() - INTERVAL '7 days'
+      GROUP BY 1, 2, 3
       )
       SELECT
-      concat('app-feedback-new:', "appListingId", ':', to_char("bucket", 'YYYY-MM-DD"T"HH24')) "key",
+      concat('app-feedback-new:', "appListingId", ':', "maxFeedbackId") "key",
       "ownerId" "userId",
       'app-feedback-new' "type",
       JSONB_BUILD_OBJECT(
@@ -187,38 +188,54 @@ describe('owner digest — the query', () => {
     expect(sql).not.toMatch(/'reporter|'userId'/);
   });
 
-  it('🔴 agrees with the owner inbox on which rows the owner may see, and what "new" is', () => {
-    // A LEDGER over `ownerVisibleWhere`, the inbox's rule set: each of its keys maps to the SQL that
-    // enforces it here. A rule added to the inbox fails the key-set check until it is mapped (and
-    // added to the digest); a rule removed fails it too. The digest is a copy nothing retracts, so
-    // a row the inbox hides must never be counted in it.
+  it('🔴 reads visibility and "new" from the SAME text the owner inbox runs', () => {
+    // No third copy: the digest's rules are the shared fragments, verbatim. Which rows that admits,
+    // in the digest AND the inbox, is asserted by executing both in the behavior test.
+    expect(OWNER_VISIBLE_FEEDBACK_SQL).toBe(
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL`
+    );
+    expect(OWNER_NEW_FEEDBACK_SQL).toBe(`f."ownerStatus" IS NULL`);
+    expect(sql).toContain(`WHERE ${OWNER_VISIBLE_FEEDBACK_SQL}\nAND ${OWNER_NEW_FEEDBACK_SQL}\n`);
+    expect(sql).not.toContain('ownerFlaggedAt');
+  });
+
+  it("keys per listing per batch, by the batch's highest feedback id; sets no dedupeKey", () => {
+    expect(sql).toContain(
+      `concat('app-feedback-new:', "appListingId", ':', "maxFeedbackId") "key",\n"ownerId" "userId",`
+    );
+    expect(sql).toContain('MAX(f.id) "maxFeedbackId"');
+    // dedupeKey collapses one event several TYPES notify about; nothing else is about a batch.
+    expect(sql).not.toContain('dedupeKey');
+  });
+});
+
+describe('ownerVisibleWhere — the Prisma form the write paths need', () => {
+  it('🔴 states the same rules as the shared SQL, rule for rule', () => {
+    // The two remaining forms of one rule (Prisma for updateMany/findFirst, SQL for the raw reads and
+    // the digest). A LEDGER over both sides: each Prisma key maps to the clause of the shared SQL that
+    // enforces it, and the shared SQL has no clause the ledger does not name. A rule added to or
+    // dropped from EITHER side fails here. Listing scope is the one key with no shared clause: each
+    // reader binds it itself (the inbox to the seat listing, the digest by joining every listing).
     const where = ownerVisibleWhere('apl_ledger');
-    const enforcedBy: Record<string, string> = {
-      area: `f.area = 'app-block'`,
-      appListingId: `JOIN "app_listings" al ON al.id = f."appListingId"`,
-      hiddenFromOwnerAt: `f."hiddenFromOwnerAt" IS NULL`,
-      user: `u."bannedAt" IS NULL`,
-    };
-    expect(Object.keys(where).sort()).toEqual(Object.keys(enforcedBy).sort());
     expect(where).toEqual({
       area: 'app-block',
       appListingId: 'apl_ledger',
       hiddenFromOwnerAt: null,
       user: { bannedAt: null },
     });
-    for (const [key, fragment] of Object.entries(enforcedBy)) expect(sql, key).toContain(fragment);
-    // "New" is read from the inbox's own filter. The literal pin below is deliberate: it keeps
-    // `toContain` from passing on an empty fragment, and makes a lockstep change a reviewed one.
-    const inboxNew = ownerStatusSql('new');
-    expect(inboxNew).toHaveLength(1);
-    expect(inboxNew[0].values).toEqual([]);
-    expect(sql).toContain(inboxNew[0].sql);
-    expect(inboxNew[0].sql).toBe(`f."ownerStatus" IS NULL`);
-    expect(sql).not.toContain('ownerFlaggedAt');
-  });
-
-  it('sets no dedupeKey — nothing else is sent for a digest bucket', () => {
-    expect(sql).not.toContain('dedupeKey');
+    const enforcedBy: Record<string, string | null> = {
+      area: `f.area = 'app-block'`,
+      appListingId: null,
+      hiddenFromOwnerAt: `f."hiddenFromOwnerAt" IS NULL`,
+      user: `u."bannedAt" IS NULL`,
+    };
+    expect(Object.keys(where).sort()).toEqual(Object.keys(enforcedBy).sort());
+    const clauses = OWNER_VISIBLE_FEEDBACK_SQL.split(' AND ');
+    expect(clauses.sort()).toEqual(
+      Object.values(enforcedBy)
+        .filter((c): c is string => c !== null)
+        .sort()
+    );
   });
 });
 

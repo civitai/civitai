@@ -714,10 +714,10 @@ describe('listAppFeedbackForListing', () => {
     const q = lastQuery();
     const where = norm(q.sql).match(/WHERE (.*?) ORDER BY/)![1];
     expect(where).toBe(
-      'f.area = ? AND f."appListingId" IN (?) AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL'
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?)`
     );
     expect(norm(q.sql)).toMatch(/ORDER BY f\."createdAt" DESC, f\.id DESC LIMIT \?$/);
-    expect(q.values.slice(0, 2)).toEqual(['app-block', PARENT]);
+    expect(q.values.slice(0, 1)).toEqual([PARENT]);
   });
 
   it('maps the owner-status filter, `new` meaning NULL', async () => {
@@ -730,15 +730,7 @@ describe('listAppFeedbackForListing', () => {
     expect(norm(lastQuery().sql)).toContain(
       'AND f."ownerStatus" = ? AND (f."createdAt", f.id) < (SELECT c."createdAt", c.id FROM "Feedback" c WHERE c.id = ? AND c.area = ? AND c."appListingId" = ?) ORDER BY'
     );
-    expect(lastQuery().values).toEqual([
-      'app-block',
-      PARENT,
-      'wont_fix',
-      77,
-      'app-block',
-      PARENT,
-      51,
-    ]);
+    expect(lastQuery().values).toEqual([PARENT, 'wont_fix', 77, 'app-block', PARENT, 51]);
   });
 
   it('pages with one look-ahead row', async () => {
@@ -958,9 +950,9 @@ describe('countNewAppFeedbackForMyListings', () => {
     expect(await countNewAppFeedbackForMyListings(OWNER)).toEqual({ [PARENT]: 4, [OFFSITE]: 1 });
     const q = lastQuery();
     expect(norm(q.sql).match(/WHERE (.*) GROUP BY/)![1]).toBe(
-      'f.area = ? AND f."appListingId" IN (?,?) AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."ownerStatus" IS NULL'
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?,?) AND f."ownerStatus" IS NULL`
     );
-    expect(q.values).toEqual(['app-block', PARENT, OFFSITE]);
+    expect(q.values).toEqual([PARENT, OFFSITE]);
   });
 });
 
