@@ -2607,7 +2607,7 @@ const getAllImagesUncaptured = async (
         : undefined,
       // Not behind `include: ['cosmetics']`: every surface that shows the image (the model page
       // carousel asks for no includes) must show the hat it is scored for. Empty between events.
-      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
+      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image', writeBack: cacheWriteBack }),
     ])
   );
 
