@@ -128,7 +128,8 @@ const hat = (over: Partial<MyHat> = {}) =>
   } as MyHat);
 
 describe('PlaceHatModal tiles', () => {
-  it('names an untitled image by its id, and a titled model by its title', () => {
+  // No id or type line: an untitled image is its picture alone, a titled model shows its title.
+  it('labels a candidate only with a real title', () => {
     placeable = [
       { entityType: 'Image', entityId: 500, title: null, image: null },
       { entityType: 'Model', entityId: 7, title: 'My LoRA', image: null },
@@ -139,10 +140,7 @@ describe('PlaceHatModal tiles', () => {
     const labels = [...modal.querySelectorAll('button')].map((b) =>
       [...b.querySelectorAll('p')].map((p) => p.textContent)
     );
-    expect(labels).toEqual([
-      ['Image #500', 'Image'],
-      ['My LoRA', 'Model'],
-    ]);
+    expect(labels).toEqual([[], ['My LoRA']]);
   });
 });
 
