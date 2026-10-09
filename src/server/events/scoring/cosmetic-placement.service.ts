@@ -4,6 +4,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { CosmeticPlacementScoring, TeamScore } from '~/server/events/base.event';
 import { cosmeticPlacementDailyScoreSql } from '~/server/events/scoring/cosmetic-placement.sql';
 import { logToAxiom } from '~/server/logging/client';
+import { flagAudienceAmong } from '~/server/events/event-access';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { toUtcTimestamp as chDate } from '~/server/services/creator-milestone-exclusions';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
@@ -14,6 +15,17 @@ export type ScoredEvent = {
   endDate: Date;
   teams: readonly string[];
   scoring: CosmeticPlacementScoring;
+  // Standings and score reads count only days from here; defaults to startDate. Keeps a test run's
+  // days out of the public standings even if they were never cleared.
+  scoreFrom?: Date;
+  // While set, only cosmetics owned by users this Flipt flag is on for score.
+  audienceFlag?: string;
+};
+
+type StandingsEvent = Pick<ScoredEvent, 'name' | 'teams' | 'startDate' | 'scoreFrom'>;
+const scoreFromDay = (event: Pick<ScoredEvent, 'startDate' | 'scoreFrom'>) => {
+  const from = event.scoreFrom ?? event.startDate;
+  return new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -70,7 +82,11 @@ export function daysToScore(event: Pick<ScoredEvent, 'startDate' | 'endDate'>, n
 
 const syncWatermarkKey = (event: string) =>
   `${REDIS_KEYS.EVENT.CACHE}:${event}:placement-sync` as const;
-const standingsKey = (event: string) => `${REDIS_KEYS.EVENT.CACHE}:${event}:standings` as const;
+// Keyed by the first counted day too, so a preview snapshot is never served as the event's.
+const standingsKey = (event: StandingsEvent) => {
+  const fromDay = scoreFromDay(event).toISOString().slice(0, 10);
+  return `${REDIS_KEYS.EVENT.CACHE}:${event.name}:standings:${fromDay}` as const;
+};
 
 // Mirror ledger rows changed since the last run into ClickHouse. ReplacingMergeTree keeps the latest
 // version of each id, so re-sending rows is harmless; the watermark is rewound a little to cover
@@ -144,7 +160,7 @@ async function scoreDay(event: ScoredEvent, window: { day: Date; start: Date; en
       anonRatio: scoring.anonRatio,
     },
   });
-  const rows = (await result.json<ScoreRow>()).map((r) => ({
+  let rows = (await result.json<ScoreRow>()).map((r) => ({
     userId: Number(r.userId),
     cosmeticId: Number(r.cosmeticId),
     claimKey: String(r.claimKey),
@@ -153,6 +169,13 @@ async function scoreDay(event: ScoredEvent, window: { day: Date; start: Date; en
     anonImpressions: Number(r.anonImpressions),
     reactions: Number(r.reactions),
   }));
+  // The placement ledger records every equip, whoever made it; the flag decides who scores.
+  if (event.audienceFlag) {
+    const audience = await flagAudienceAmong(event.audienceFlag, [
+      ...new Set(rows.map((r) => r.userId)),
+    ]);
+    rows = rows.filter((r) => audience.has(r.userId));
+  }
 
   // Recomputing a day replaces it, so a rerun can never double count.
   await dbWrite.$transaction([
@@ -199,15 +222,16 @@ export async function runCosmeticPlacementScoring(event: ScoredEvent, now = new 
 // rankings). Their rows stay in the table, so a reversal restores them; per-cosmetic reads below are
 // not filtered. The hourly job passes the primary: it builds this right after writing the day, and
 // a lagging replica would freeze stale numbers into the snapshot for an hour.
-async function computeStandings(
-  event: Pick<ScoredEvent, 'name' | 'teams'>,
-  db: typeof dbWrite | typeof dbRead
-) {
+async function computeStandings(event: StandingsEvent, db: typeof dbWrite | typeof dbRead) {
+  const fromDay = scoreFromDay(event);
   // The few hidden users, found once over the event's distinct users, so the three aggregates below
   // need no per-row join to "User".
   const hidden = await db.$queryRaw<{ id: number }[]>`
     SELECT u.id FROM "User" u
-    WHERE u.id IN (SELECT DISTINCT "userId" FROM "EventCosmeticScoreDaily" WHERE event = ${event.name})
+    WHERE u.id IN (
+      SELECT DISTINCT "userId" FROM "EventCosmeticScoreDaily"
+      WHERE event = ${event.name} AND day >= ${fromDay}::date
+    )
       AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR u."excludeFromLeaderboards")
   `;
   const hiddenIds = hidden.map((u) => u.id);
@@ -215,7 +239,7 @@ async function computeStandings(
   const teamDays = await db.$queryRaw<{ team: string; day: Date; points: number }[]>`
     SELECT team, day, sum(points)::int AS points
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND "userId" <> ALL(${hiddenIds}::int[])
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" <> ALL(${hiddenIds}::int[])
     GROUP BY team, day
     ORDER BY day
   `;
@@ -242,7 +266,7 @@ async function computeStandings(
       sum(points)::int AS points, sum(impressions)::int AS impressions,
       sum("anonImpressions")::int AS "anonImpressions", sum(reactions)::int AS reactions
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND "userId" <> ALL(${hiddenIds}::int[])
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" <> ALL(${hiddenIds}::int[])
     GROUP BY "userId", "cosmeticId", "claimKey", team
     ORDER BY points DESC
     LIMIT ${TOP_COSMETICS}
@@ -253,7 +277,8 @@ async function computeStandings(
       SELECT team, "userId", sum(points)::int AS points,
         row_number() OVER (PARTITION BY team ORDER BY sum(points) DESC) AS rn
       FROM "EventCosmeticScoreDaily"
-      WHERE event = ${event.name} AND "userId" <> ALL(${hiddenIds}::int[])
+      WHERE event = ${event.name} AND day >= ${fromDay}::date
+        AND "userId" <> ALL(${hiddenIds}::int[])
       GROUP BY team, "userId"
     ) ranked
     WHERE rn <= ${TOP_USERS_PER_TEAM}
@@ -265,39 +290,37 @@ async function computeStandings(
   return { teams, history, topCosmetics, topUsers, updatedAt: new Date() } satisfies EventStandings;
 }
 
-async function refreshStandings(
-  event: Pick<ScoredEvent, 'name' | 'teams'>,
-  db: typeof dbWrite | typeof dbRead
-) {
+async function refreshStandings(event: StandingsEvent, db: typeof dbWrite | typeof dbRead) {
   const standings = await computeStandings(event, db);
-  await redis.packed.set(standingsKey(event.name), standings, { EX: 2 * 60 * 60 });
+  await redis.packed.set(standingsKey(event), standings, { EX: 2 * 60 * 60 });
   return standings;
 }
 
 // Served from the snapshot the hourly job writes; a miss (no run for 2h) recomputes once here.
-export async function getEventStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
-  const cached = await redis.packed.get<EventStandings>(standingsKey(event.name));
+export async function getEventStandings(event: StandingsEvent) {
+  const cached = await redis.packed.get<EventStandings>(standingsKey(event));
   if (cached) return cached;
   // Request path: a cold snapshot is rebuilt from the replica, never the primary.
   return refreshStandings(event, dbRead);
 }
 
-export async function getTeamScoreHistory(event: Pick<ScoredEvent, 'name' | 'teams'>) {
+export async function getTeamScoreHistory(event: StandingsEvent) {
   return (await getEventStandings(event)).history;
 }
 
-export async function getUserCosmeticScores(event: string, userId: number) {
+export async function getUserCosmeticScores(event: StandingsEvent, userId: number) {
   return dbRead.$queryRaw<CosmeticScore[]>`
     SELECT "userId", "cosmeticId", "claimKey", team,
       sum(points)::int AS points, sum(impressions)::int AS impressions,
       sum("anonImpressions")::int AS "anonImpressions", sum(reactions)::int AS reactions
-    FROM "EventCosmeticScoreDaily" WHERE event = ${event} AND "userId" = ${userId}
+    FROM "EventCosmeticScoreDaily"
+    WHERE event = ${event.name} AND day >= ${scoreFromDay(event)}::date AND "userId" = ${userId}
     GROUP BY "userId", "cosmeticId", "claimKey", team
     ORDER BY points DESC
   `;
 }
 
-export async function getCosmeticScores(event: string, keys: CosmeticScoreKey[]) {
+export async function getCosmeticScores(event: StandingsEvent, keys: CosmeticScoreKey[]) {
   if (!keys.length) return {} as Record<string, CosmeticScore>;
   const rows = await dbRead.$queryRaw<CosmeticScore[]>`
     SELECT s."userId", s."cosmeticId", s."claimKey", s.team,
@@ -310,7 +333,7 @@ export async function getCosmeticScores(event: string, keys: CosmeticScoreKey[])
       ${keys.map((k) => k.claimKey)}::text[]
     ) AS k("userId", "cosmeticId", "claimKey")
       ON k."userId" = s."userId" AND k."cosmeticId" = s."cosmeticId" AND k."claimKey" = s."claimKey"
-    WHERE s.event = ${event}
+    WHERE s.event = ${event.name} AND s.day >= ${scoreFromDay(event)}::date
     GROUP BY s."userId", s."cosmeticId", s."claimKey", s.team
   `;
   return Object.fromEntries(rows.map((r) => [cosmeticScoreKey(r), r]));

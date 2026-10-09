@@ -93,7 +93,9 @@ export const cosmeticRouter = router({
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)
-    .mutation(({ input, ctx }) => equipCosmeticToEntity({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      equipCosmeticToEntity({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   unequipCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)

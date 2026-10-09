@@ -9,6 +9,7 @@ import {
   BIRTHDAY_2026_EVENT,
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -29,6 +30,9 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/buzz.service', () => ({}));
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 
 const { eventEngine } = await import('~/server/events/index');
 const { unequipEventCosmetics } = await import(
@@ -76,6 +80,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  testerFlag.reset({ public: true });
   await db.pg.exec(`
     TRUNCATE "UserCosmetic", "Cosmetic", "Image", "Model", "Article", "EventCosmeticPlacement";
     INSERT INTO "Cosmetic" VALUES
@@ -109,7 +114,7 @@ describe('join grant', () => {
   it('grants one unequipped team hat however many times it is called (sequentially)', async () => {
     const results = [];
     for (let i = 0; i < 3; i++)
-      results.push(await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT));
+      results.push(await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT));
 
     expect(await hats(7)).toEqual([[HATS.Blue, 'claimed']]);
     expect(results.map((r) => r.joined)).toEqual([true, false, false]);
@@ -118,9 +123,9 @@ describe('join grant', () => {
   });
 
   it('grants nothing more after a manual team reassignment', async () => {
-    await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
+    await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
     redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Pink' });
-    const again = await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
+    const again = await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
 
     expect(again).toEqual({ team: 'Blue', cosmeticId: HATS.Blue, joined: false });
     expect(await hats(7)).toEqual([[HATS.Blue, 'claimed']]);
@@ -130,7 +135,7 @@ describe('join grant', () => {
     await db.pg.exec(
       `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES (7, ${HATS.Blue}, 'txn-1')`
     );
-    const res = await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
+    const res = await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
 
     expect(res.joined).toBe(true);
     expect(await hats(7)).toEqual([

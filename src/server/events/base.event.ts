@@ -12,6 +12,7 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
@@ -248,6 +249,9 @@ type HolidayEventDefinition = {
   startDate: Date;
   endDate: Date;
   teams: readonly string[];
+  // Gates the event behind this flag, with an early window for flagged users. See event-access.ts.
+  featureFlag?: FeatureFlagKey;
+  previewFrom?: Date;
   // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
   bankIndex?: number;
   scoring?: CosmeticPlacementScoring;

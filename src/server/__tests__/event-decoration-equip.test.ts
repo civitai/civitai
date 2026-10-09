@@ -3,8 +3,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 const db = dbMock.dbWrite;
 const entityCache = () => ({ refresh: vi.fn(), fetch: vi.fn().mockResolvedValue({}) });
@@ -34,6 +36,9 @@ vi.mock('~/server/search-index', () => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 
 const {
   equipCosmeticToEntity,
@@ -79,6 +84,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(DURING);
+  // Launched: these pin the decoration rules, not who the flag lets in (event-access.test.ts).
+  testerFlag.reset({ public: true });
   for (const entity of ['Model', 'Image', 'Article', 'Post', 'Model3D']) {
     caches.frame[entity] = entityCache();
     caches.event[entity] = entityCache();
@@ -366,9 +373,9 @@ describe('taking a decoration off refreshes the event decoration cache too', () 
 
 describe('getEventDecorationsForEntity', () => {
   it('reads the cache while an event lets that type wear one', async () => {
-    caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1 } });
+    caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
     await expect(getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).resolves.toEqual({
-      [IMAGE]: { id: 1 },
+      [IMAGE]: { id: 1, data: HAT },
     });
   });
 
@@ -383,5 +390,59 @@ describe('getEventDecorationsForEntity', () => {
     await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' });
     expect(caches.event.Post.fetch).not.toHaveBeenCalled();
     expect(caches.event.Image.fetch).not.toHaveBeenCalled();
+  });
+});
+
+// Justin, 2026-10-09: the whole event runs for testers and moderators before launch, behind the
+// `birthday2026` flag, and nobody else sees any of it. See event-access.test.ts for the rule.
+describe('behind the flag before launch', () => {
+  const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000);
+  beforeEach(() => {
+    vi.setSystemTime(PREVIEW);
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+  });
+
+  it('lets a tester place a hat during the preview', async () => {
+    testerFlag.reset({ testers: [OWNER] });
+    await equipHat();
+    expect(db.$executeRaw).toHaveBeenCalled();
+  });
+
+  it('refuses everyone else during the preview, and the tester once it is armed', async () => {
+    testerFlag.reset({ testers: [] });
+    await expect(equipHat()).rejects.toThrow(/while its event is running/);
+    testerFlag.reset({ public: true, testers: [OWNER] });
+    await expect(equipHat()).rejects.toThrow(/while its event is running/);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('shows hats only to a viewer the flag is on for, and to nobody unnamed', async () => {
+    testerFlag.reset({ testers: [OWNER] });
+    caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
+
+    expect(await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).toEqual({});
+    expect(
+      await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image', viewer: { id: 99 } })
+    ).toEqual({});
+    expect(caches.event.Image.fetch).not.toHaveBeenCalled();
+
+    expect(
+      await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image', viewer: { id: OWNER } })
+    ).toEqual({ [IMAGE]: { id: 1, data: HAT } });
+  });
+
+  it('shows a decoration only for an event the viewer may see', async () => {
+    testerFlag.reset({ testers: [OWNER] });
+    caches.event.Image.fetch.mockResolvedValue({
+      [IMAGE]: { id: 1, data: HAT },
+      [IMAGE + 1]: { id: 2, data: { ...HAT, event: 'some-other-event' } },
+    });
+    expect(
+      await getEventDecorationsForEntity({
+        ids: [IMAGE, IMAGE + 1],
+        entity: 'Image',
+        viewer: { id: OWNER },
+      })
+    ).toEqual({ [IMAGE]: { id: 1, data: HAT } });
   });
 });

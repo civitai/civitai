@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
-import { getLiveEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
+import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 
 const CardDecorationModal = dynamic(() => import('~/components/Modals/CardDecorationModal'), {
   ssr: false,
@@ -13,11 +13,11 @@ const openCardDecorationModal = createDialogTrigger(CardDecorationModal);
 
 /**
  * Puts on or takes off this entity's event decoration (a party hat during the birthday event).
- * Renders nothing while no running event lets this kind of content wear one.
+ * Renders nothing unless an event lets this viewer put one on this kind of content now.
  */
 export function AddEventDecorationMenuItem(props: Omit<CardDecorationModalProps, 'kind'>) {
   const { unequip } = useEquipContentDecoration();
-  const definition = getLiveEventDecorationDefinition(props.entityType);
+  const definition = usePlayableEventDecoration(props.entityType);
   if (!definition) return null;
 
   const currentCosmetic = props.currentCosmetic;

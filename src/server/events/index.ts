@@ -2,6 +2,13 @@ import dayjs from '~/shared/utils/dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
+import type { EventAccess, EventViewer } from '~/server/events/event-access';
+import {
+  canPlayEvent,
+  canReadEvent,
+  getEventAccess,
+  getEventScoringPhase,
+} from '~/server/events/event-access';
 import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import {
@@ -41,6 +48,14 @@ export const events = [holiday2024, birthday2026];
 export const EVENT_CLEANUP_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 // Cleanup markers must outlive the grace window, so a finished cleanup never runs again.
 const CLEANUP_MARKER_TTL_S = 30 * 24 * 60 * 60;
+// Events the hourly scoring may have work for: started, or inside a preview window.
+function getScorableEvents(now: Date) {
+  return events.filter(
+    (x) =>
+      (x.startDate <= now || (!!x.previewFrom && x.previewFrom <= now)) &&
+      x.endDate.getTime() + EVENT_CLEANUP_GRACE_MS >= now.getTime()
+  );
+}
 export function getActiveEvents(now = new Date()) {
   return events.filter(
     (x) => x.startDate <= now && x.endDate.getTime() + EVENT_CLEANUP_GRACE_MS >= now.getTime()
@@ -56,6 +71,18 @@ function getEventDef(event: string) {
 function scoredEvent(eventDef: EventDef) {
   const { scoring } = eventDef;
   return scoring ? { ...eventDef, scoring } : undefined;
+}
+// Scores are read from the start of the window the viewer is in: the preview's for a previewer,
+// the event's for everyone else, so test-run scores never reach the public standings.
+function scoredEventFor(eventDef: EventDef, access: EventAccess) {
+  const scored = scoredEvent(eventDef);
+  if (!scored) return undefined;
+  const scoreFrom =
+    access === 'preview' && eventDef.previewFrom ? eventDef.previewFrom : eventDef.startDate;
+  return { ...scored, scoreFrom };
+}
+function findEventDef(event: string) {
+  return events.find((x) => x.name === event);
 }
 
 // Event cosmetics render from their own cache, which also caches misses for an hour, so every
@@ -89,7 +116,7 @@ export const eventEngine = {
       // Ignore events that aren't active yet
       if (eventDef.startDate > now) continue;
 
-      const scores = await this.getTeamScores(eventDef.name, now);
+      const scores = await this.getTeamScores(eventDef.name);
 
       // If the event is over, unequip the event cosmetics from all users
       if (eventDef.endDate < now) {
@@ -159,18 +186,30 @@ export const eventEngine = {
   },
   async updateLeaderboard(now = new Date()) {
     let updated = false;
-    for (const eventDef of getActiveEvents(now)) {
-      // Ignore events that aren't active yet
-      if (eventDef.startDate > now) continue;
-
+    for (const eventDef of getScorableEvents(now)) {
       const scored = scoredEvent(eventDef);
       if (scored) {
         // Keeps running past the end so the last hours and late data are scored; the score query
         // clips every window to endDate.
         if (eventDef.endDate.getTime() + scored.scoring.finalizeAfterMs < now.getTime()) continue;
-        await runCosmeticPlacementScoring(scored, now);
+        // Before launch this is the preview window, and only flagged users' cosmetics score.
+        const phase = await getEventScoringPhase(eventDef, now);
+        if (!phase) continue;
+        await runCosmeticPlacementScoring(
+          {
+            ...scored,
+            startDate: phase.from,
+            endDate: phase.to,
+            scoreFrom: phase.from,
+            audienceFlag: phase.fliptKey,
+          },
+          now
+        );
         continue;
       }
+
+      // Ignore events that aren't active yet
+      if (eventDef.startDate > now) continue;
 
       // If the event is over, don't update the leaderboard
       if (eventDef.endDate < now) continue;
@@ -292,9 +331,9 @@ export const eventEngine = {
     // Purge leaderboard positions cache
     if (updated) await redis.purgeTags('leaderboard-positions');
   },
-  async getEventData(event: string, now = new Date()) {
+  async getEventData(event: string, viewer: EventViewer, now = new Date()) {
     const eventDef = getEventDef(event);
-    this.assertStarted(event, now);
+    const access = await this.assertReadable(event, viewer, now);
 
     let coverImage = eventDef.coverImage;
     let coverImageUser;
@@ -326,6 +365,7 @@ export const eventEngine = {
       scored: !!eventDef.scoring,
       reactionWeight: eventDef.scoring?.reactionWeight,
       joinable: !!eventDef.join,
+      preview: access === 'preview',
     };
   },
   getTeamAccounts(event: string) {
@@ -341,10 +381,11 @@ export const eventEngine = {
 
     return teamAccounts;
   },
-  async getTeamScores(event: string, now = new Date()) {
+  // Ungated: the jobs read this after the start, and routes check access before calling it.
+  async getTeamScores(event: string, access: EventAccess = 'open') {
     const eventDef = getEventDef(event);
-    if (eventDef.scoring)
-      return (await getEventStandings(this.getStartedScoredEvent(event, now))).teams;
+    const scored = scoredEventFor(eventDef, access);
+    if (scored) return (await getEventStandings(scored)).teams;
 
     // Get team scores from buzz accounts
     const teamScores: TeamScore[] = [];
@@ -363,9 +404,14 @@ export const eventEngine = {
     teamScores.forEach((x, i) => (x.rank = i + 1));
     return teamScores;
   },
-  async getTeamScoreHistory({ event, window, start }: TeamScoreHistoryInput) {
+  // Ungated like getTeamScores.
+  async getTeamScoreHistory(
+    { event, window, start }: TeamScoreHistoryInput,
+    access: EventAccess = 'open'
+  ) {
     const eventDef = getEventDef(event);
-    if (eventDef.scoring) return getScoredTeamScoreHistory(this.getStartedScoredEvent(event));
+    const scored = scoredEventFor(eventDef, access);
+    if (scored) return getScoredTeamScoreHistory(scored);
 
     // Get team scores from buzz accounts
     const accounts = this.getTeamAccounts(event);
@@ -399,10 +445,10 @@ export const eventEngine = {
 
     return { cosmeticId, team, accountId };
   },
-  // Scored-event reads. Like getEventData, an event that has not started reads as nonexistent.
-  getStartedScoredEvent(event: string, now = new Date()) {
-    this.assertStarted(event, now);
-    const scored = scoredEvent(getEventDef(event));
+  // Scored-event reads. Like getEventData, an event this viewer cannot read reads as nonexistent.
+  async getReadableScoredEvent(event: string, viewer: EventViewer, now = new Date()) {
+    const access = await this.assertReadable(event, viewer, now);
+    const scored = scoredEventFor(getEventDef(event), access);
     if (!scored) throw new Error("That event doesn't exist");
     return scored;
   },
@@ -412,12 +458,12 @@ export const eventEngine = {
   // Grants the user's team cosmetic once, inside the event window. Idempotent: a double click or a
   // second tab inserts nothing, and so does a user whose team was reassigned after joining (they
   // keep the cosmetic they got).
-  async join(event: string, userId: number, now = new Date()) {
+  async join(event: string, user: { id: number; isModerator?: boolean }, now = new Date()) {
     const eventDef = getEventDef(event);
     const claimKey = eventDef.join?.claimKey;
     if (!claimKey) throw new Error('This event has no join');
-    this.assertStarted(event, now);
-    if (now >= eventDef.endDate) throw new Error('This event is not running');
+    await this.assertPlayable(event, user, now);
+    const userId = user.id;
 
     // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
     // team's colour to someone assigned by hand.
@@ -456,9 +502,21 @@ export const eventEngine = {
     const heldId = held?.cosmeticId ?? cosmeticId;
     return { team: teamByCosmetic.get(heldId) ?? team, cosmeticId: heldId, joined: false };
   },
-  // Unannounced until it starts: every route reads an event that has not started like an unknown slug.
-  assertStarted(event: string, now = new Date()) {
-    if (getEventDef(event).startDate > now) throw new Error("That event doesn't exist");
+  // What this viewer may do with the event; see event-access.ts. An unknown event is closed.
+  async getAccess(event: string, viewer: EventViewer, now = new Date()): Promise<EventAccess> {
+    const eventDef = findEventDef(event);
+    return eventDef ? getEventAccess(eventDef, viewer, now) : 'closed';
+  },
+  // Unannounced until this viewer may see it: every route reads such an event like an unknown slug.
+  async assertReadable(event: string, viewer: EventViewer, now = new Date()) {
+    const access = await this.getAccess(event, viewer, now);
+    if (!canReadEvent(access)) throw new Error("That event doesn't exist");
+    return access;
+  },
+  async assertPlayable(event: string, viewer: EventViewer, now = new Date()) {
+    const access = await this.assertReadable(event, viewer, now);
+    if (!canPlayEvent(access)) throw new Error('This event is not running');
+    return access;
   },
   async getRewards(event: string) {
     const eventDef = events.find((x) => x.name === event);
@@ -473,7 +531,7 @@ export const eventEngine = {
     const { team, accountId } = await this.getUserData({ event, userId });
     if (!team || !accountId) throw new Error("You don't have a team for this event");
 
-    const { title, startDate, endDate } = await this.getEventData(event);
+    const { title, startDate, endDate } = await this.getEventData(event, { id: userId });
 
     await createBuzzTransaction({
       toAccountId: accountId,
