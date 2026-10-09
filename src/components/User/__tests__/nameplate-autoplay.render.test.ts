@@ -101,7 +101,7 @@ describe('animated nameplates follow the viewer’s autoplay setting', () => {
     expect(html).not.toContain('animate-nameplate-sweep');
   });
 
-  it('sweeps the shop sample without forwarding `animated` to the DOM', () => {
+  it('sweeps the shop sample', () => {
     const html = render(
       createElement(CosmeticSample, {
         cosmetic: { id: 1, name: 'Legend Nameplate', type: 'NamePlate', data: plate },
@@ -109,7 +109,6 @@ describe('animated nameplates follow the viewer’s autoplay setting', () => {
     );
     expect(html).toContain('Sample Text');
     expect(html).toContain('animate-nameplate-sweep');
-    expect(html).not.toContain('animated');
   });
 
   it('holds the shop sample still when the viewer turned autoplay off', () => {

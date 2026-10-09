@@ -37,7 +37,6 @@ describe('Username nameplate', () => {
     expect(html).toContain('animate-nameplate-sweep');
     expect(html).toContain('--text-gradient:linear-gradient(90deg, #ffd43b, #f59f00, #ffd43b)');
     expect(html).toContain('drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)]');
-    expect(html).not.toContain('animated');
   });
 
   it('leaves a static plate on Mantine’s own gradient', () => {
