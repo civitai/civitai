@@ -36,8 +36,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     { useUtils: () => ({ event: { getMyHats: myHats } }) }
   ),
 }));
-vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: dialogs }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: notify }));
+vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  dialogStore: dialogs,
+}));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  showErrorNotification: notify,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => null,
@@ -168,6 +174,37 @@ describe('a hatted feed card', () => {
     clickHat();
     clickHat();
     expect(enabledFlags().at(-1)).toBe(false);
+  });
+
+  it('closes on Escape', () => {
+    renderCard();
+    clickHat();
+    act(() => {
+      popover()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(enabledFlags().at(-1)).toBe(false);
+    expect(popover()).toBeNull();
+  });
+
+  it('closes when the event link is followed', () => {
+    renderCard();
+    clickHat();
+    const link = [...popover()!.querySelectorAll('a')].find((a) =>
+      a.textContent?.includes('See the birthday event')
+    )!;
+    // happy-dom would navigate; only the close is under test.
+    link.addEventListener('click', (e) => e.preventDefault());
+    act(() => link.click());
+    expect(popover()).toBeNull();
+  });
+
+  it("calls someone else's hat theirs, for a signed-in viewer too", () => {
+    viewer.current = { id: 1 };
+    renderCard();
+    clickHat();
+    expect(popover()!.textContent).toContain('Worn by');
+    expect(popover()!.textContent).not.toContain('Your hat');
+    expect(popover()!.textContent).not.toContain('Move it');
   });
 
   it("calls the viewer's own hat theirs and offers to move it", () => {

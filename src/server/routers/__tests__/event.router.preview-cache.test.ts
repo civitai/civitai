@@ -171,6 +171,20 @@ describe.each(Object.entries(ROUTES))('event.%s gate', (name, serviceFn) => {
   });
 });
 
+// The gate's tests run every route through a mocked service, so pin what this one hands it.
+it('event.getWornHat asks the service about this content, for this viewer', async () => {
+  Object.assign(access, { viewer: 'preview', signedOut: 'closed' });
+  await runChain('getWornHat');
+  expect(service.getWornEventHat).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 1,
+      viewer: VIEWER,
+    })
+  );
+});
+
 describe('event.getDonors Redis cache', () => {
   it('never stores a response the public would not get, and stores one it would', async () => {
     Object.assign(access, { viewer: 'open', signedOut: 'closed' });

@@ -580,7 +580,7 @@ export async function getWornEventHat({
         AND CASE uc."equippedToType"
           WHEN 'Image' THEN EXISTS (
             SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId"
-            WHERE i.id = uc."equippedToId" AND p."publishedAt" IS NOT NULL
+            WHERE i.id = uc."equippedToId" AND p."publishedAt" <= now()
               AND p.availability <> 'Private' AND NOT p."tosViolation"
               AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation"
           )
@@ -590,7 +590,7 @@ export async function getWornEventHat({
           )
           WHEN 'Article' THEN EXISTS (
             SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published'
-              AND a.availability <> 'Private' AND NOT a."tosViolation"
+              AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation"
           )
           ELSE false
         END

@@ -54,9 +54,11 @@ const NO_CONTENT = [
   'src/components/Modals/CardDecorationModal.tsx',
   'src/components/Events/ScoredEvent/EventContentThumb.tsx',
 ];
-// Draw the hat for a card and pass its content through.
+// Draw the hat for a card. These pass the content on; MasonryCard has none to pass (its one hatted
+// caller is the try-on preview).
 const WRAPPERS = [
   'src/components/TwCosmeticWrapper/TwCosmeticWrapper.tsx',
+  'src/components/Cosmetics/EventDecoration/EventDecorationOverlay.tsx',
   'src/components/MasonryGrid/MasonryCard.tsx',
 ];
 
@@ -68,7 +70,9 @@ const TEMPLATES = [
   'src/components/Cards/FeedCard.tsx',
 ];
 
-const DRAWS_A_HAT = new RegExp(String.raw`\beventDecoration=\{|<EventDecorationOverlay\b`);
+const DRAWS_A_HAT = new RegExp(
+  String.raw`\beventDecoration=\{|<EventDecorationOverlay\b|<WornHatPopover\b`
+);
 
 const tsxFiles = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
@@ -102,8 +106,8 @@ describe('worn hat call sites', () => {
   // The popover names the event as its page does; the event's own definition is server-only.
   it("names the birthday event by its page's title", () => {
     const title = getEventDecorationDefinition('birthday2026')?.eventTitle;
-    expect(read('src/server/events/birthday2026.event.ts')).toContain(
-      `title: ${JSON.stringify(title)},`
+    expect(read('src/server/events/birthday2026.event.ts').replace(/\r\n/g, '\n')).toContain(
+      `createEvent(name, {\n  title: ${JSON.stringify(title)},`
     );
   });
 

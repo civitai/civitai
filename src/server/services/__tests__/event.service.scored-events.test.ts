@@ -564,15 +564,30 @@ describe('getWornEventHat', () => {
         `AND c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
         `AND CASE uc."equippedToType" ` +
         `WHEN 'Image' THEN EXISTS ( SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId" ` +
-        `WHERE i.id = uc."equippedToId" AND p."publishedAt" IS NOT NULL ` +
+        `WHERE i.id = uc."equippedToId" AND p."publishedAt" <= now() ` +
         `AND p.availability <> 'Private' AND NOT p."tosViolation" ` +
         `AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation" ) ` +
         `WHEN 'Model' THEN EXISTS ( SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published' ` +
         `AND m.availability <> 'Private' AND NOT m."tosViolation" ) ` +
         `WHEN 'Article' THEN EXISTS ( SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published' ` +
-        `AND a.availability <> 'Private' AND NOT a."tosViolation" ) ` +
+        `AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation" ) ` +
         `ELSE false END ORDER BY uc."equippedAt" DESC NULLS LAST LIMIT 1`
     );
     expect(values).toEqual(['Image', 5, 'birthday2026']);
+  });
+});
+
+describe('wornEventHatSchema', () => {
+  it('takes one piece of content by type and id', async () => {
+    const { wornEventHatSchema } = await import('~/server/schema/event.schema');
+    const ok = { event: 'birthday2026', entityType: 'Image', entityId: 5 };
+    expect(wornEventHatSchema.safeParse(ok).success).toBe(true);
+    for (const bad of [
+      { ...ok, entityType: 'Hat' },
+      { ...ok, entityId: 0 },
+      { ...ok, entityId: 1.5 },
+      { ...ok, entityId: '5' },
+    ])
+      expect(wornEventHatSchema.safeParse(bad).success).toBe(false);
   });
 });
