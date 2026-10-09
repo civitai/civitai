@@ -8,7 +8,7 @@ import type { RouterOutput } from '~/types/router';
 
 type Secret = RouterOutput['creatorJourney']['getMine']['secrets'][number];
 
-const SECRET_ACCENT = '#7950f2';
+export const SECRET_ACCENT = '#7950f2';
 
 export function CreatorSecrets({ secrets }: { secrets: Secret[] }) {
   if (secrets.length === 0) return null;
