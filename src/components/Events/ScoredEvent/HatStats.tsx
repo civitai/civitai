@@ -53,7 +53,7 @@ export function HatStats({
       className={clsx(
         'gap-1.5',
         compact
-          ? 'flex flex-col @[15rem]:grid @[15rem]:grid-cols-[auto_minmax(0,1fr)]'
+          ? 'flex flex-col @[13rem]:grid @[13rem]:grid-cols-[auto_minmax(0,1fr)]'
           : 'grid grid-cols-[auto_minmax(0,1fr)]'
       )}
       data-testid="hat-stats"
@@ -63,7 +63,7 @@ export function HatStats({
           'flex min-w-0 justify-center rounded-md bg-gray-1 px-2 dark:bg-dark-5',
           compact
             ? // Stacked: one row, the number beside its word. Side by side: a square tile.
-              'items-baseline gap-1.5 py-1 @[15rem]:min-w-[62px] @[15rem]:flex-col @[15rem]:items-center @[15rem]:gap-0'
+              'items-baseline gap-1.5 py-1 @[13rem]:min-w-[62px] @[13rem]:flex-col @[13rem]:items-center @[13rem]:gap-0'
             : 'min-w-[86px] flex-col items-center py-1.5'
         )}
         // A tint of the team colour over the tile's own grey, so it reads in both themes.

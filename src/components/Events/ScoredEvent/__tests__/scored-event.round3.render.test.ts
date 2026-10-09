@@ -145,7 +145,7 @@ describe('Your hats cards', () => {
   });
 
   // Justin, 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above
-  // the 2x2, side by side only from 15rem, and its cells show whole thousands.
+  // the 2x2, side by side only from 13rem, and its cells show whole thousands.
   it('stacks the points above the four ways on a narrow card, with whole thousands', () => {
     const card = cards([
       hat({ placedOn: placed, impressions: 123_456, reactions: 98_765 }),
@@ -153,7 +153,7 @@ describe('Your hats cards', () => {
     const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
     expect(stats.parentElement!.className).toBe('@container');
     expect(stats.className.split(' ')).toEqual(
-      expect.arrayContaining(['flex', 'flex-col', '@[15rem]:grid'])
+      expect.arrayContaining(['flex', 'flex-col', '@[13rem]:grid'])
     );
     expect(
       [...stats.querySelectorAll<HTMLElement>('[data-way]')].slice(0, 2).map((w) => w.textContent)
@@ -169,7 +169,7 @@ describe('Your hats cards', () => {
     const cells = [...stats.querySelectorAll<HTMLElement>('[data-way]')];
     // Two 28px cells and a 6px gap: 62px.
     expect(cells.every((c) => c.className.split(' ').includes('h-7'))).toBe(true);
-    expect(points.className.split(' ')).toContain('@[15rem]:min-w-[62px]');
+    expect(points.className.split(' ')).toContain('@[13rem]:min-w-[62px]');
   });
 
   it('puts Move on the picture of a worn hat, not under the card', () => {
