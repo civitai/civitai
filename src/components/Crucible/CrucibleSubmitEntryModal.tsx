@@ -82,6 +82,8 @@ export interface CrucibleSubmitEntryModalProps {
   nsfwLevel: number;
   contentType: MediaType;
   currentEntryCount: number;
+  /** Every entry made so far, withdrawn ones included, for the free-entry math. */
+  entriesSoFar?: number;
   /** Longest clip this crucible accepts, in seconds. Null or absent means no limit. */
   maxClipSeconds?: number | null;
   /** Whether entries must be made with one of the crucible's required models. */
@@ -345,6 +347,7 @@ export default function CrucibleSubmitEntryModal({
   nsfwLevel,
   contentType,
   currentEntryCount,
+  entriesSoFar = currentEntryCount,
   maxClipSeconds,
   requiresResources = false,
   allowedBaseModels = [],
@@ -723,7 +726,7 @@ export default function CrucibleSubmitEntryModal({
   }).length;
 
   const totalCost = getCrucibleEntriesCost({
-    entriesSoFar: currentEntryCount,
+    entriesSoFar,
     count: validSelectedCount,
     freeEntriesPerUser,
     entryFee,
@@ -733,7 +736,7 @@ export default function CrucibleSubmitEntryModal({
   const submitLabel = entriesLabel(validSelectedCount);
   const generatorEntryCount = Math.max(0, Math.min(generatorSelected.length, remainingEntries));
   const generatorCost = getCrucibleEntriesCost({
-    entriesSoFar: currentEntryCount,
+    entriesSoFar,
     count: generatorEntryCount,
     freeEntriesPerUser,
     entryFee,

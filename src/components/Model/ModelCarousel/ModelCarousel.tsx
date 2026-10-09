@@ -31,6 +31,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import classes from './ModelCarousel.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import clsx from 'clsx';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
 
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
@@ -112,6 +113,9 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                     className="relative w-full"
                     style={{ aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}` }}
                   >
+                    <ImpressionSentinel
+                      impressions={[{ entityType: 'Image', entityId: image.id }]}
+                    />
                     {inView && (
                       <ImageGuard2 image={image} connectType="model" connectId={modelId}>
                         {(safe) => (

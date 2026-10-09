@@ -8,19 +8,23 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const mocks = vi.hoisted(() => ({
   isFlipt: vi.fn(async () => false),
   isFliptSync: vi.fn((): boolean | null => null),
+  getFliptClientSync: vi.fn((): unknown => null),
+  ensureFliptInitialized: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: mocks.isFlipt,
   isFliptSync: mocks.isFliptSync,
-  ensureFliptInitialized: vi.fn(async () => undefined),
+  ensureFliptInitialized: mocks.ensureFliptInitialized,
+  getFliptClientSync: mocks.getFliptClientSync,
 }));
 
 import type * as FliptClient from '~/server/flipt/client';
 import type { SessionUser } from '~/types/session';
 import {
   creatorJourneyAudience,
+  isCreatorJourneyFlagReadable,
   isCreatorJourneyOnFor,
   isCreatorJourneyPublic,
 } from '~/server/services/creator-journey-flag.service';
@@ -128,5 +132,47 @@ describe('creatorJourney in the session registry while Flipt cannot answer', () 
     mocks.isFliptSync.mockReturnValue(true);
     const tester = { id: 9303, isModerator: false, tier: 'free' } as SessionUser;
     expect((await getFeatureFlagsAsync({ user: tester })).creatorJourney).toBe(true);
+  });
+});
+
+describe('isCreatorJourneyFlagReadable', () => {
+  const evaluating = (evaluateBoolean: () => unknown) => ({
+    evaluateBoolean: vi.fn(evaluateBoolean),
+  });
+
+  it('initialises the client before asking for it', async () => {
+    let initialised = false;
+    mocks.ensureFliptInitialized.mockImplementationOnce(async () => {
+      initialised = true;
+    });
+    mocks.getFliptClientSync.mockImplementation(() =>
+      initialised ? evaluating(() => ({ enabled: false })) : null
+    );
+    expect(await isCreatorJourneyFlagReadable()).toBe(true);
+  });
+
+  it('is false while the Flipt client has not initialised', async () => {
+    mocks.getFliptClientSync.mockReturnValue(null);
+    expect(await isCreatorJourneyFlagReadable()).toBe(false);
+  });
+
+  // isFlipt turns "flag not found" into false, which would read as the flag being off for everyone:
+  // deleting the flag before its readers would strip every tester's Discord roles.
+  it('is false when the flag is missing from an initialised client', async () => {
+    mocks.getFliptClientSync.mockReturnValue(
+      evaluating(() => {
+        throw new Error('flag not found');
+      })
+    );
+    expect(await isCreatorJourneyFlagReadable()).toBe(false);
+  });
+
+  it('is true when the flag evaluates, whatever it answers', async () => {
+    const client = evaluating(() => ({ enabled: false }));
+    mocks.getFliptClientSync.mockReturnValue(client);
+    expect(await isCreatorJourneyFlagReadable()).toBe(true);
+    expect(client.evaluateBoolean).toHaveBeenCalledWith(
+      expect.objectContaining({ flagKey: 'creator-journey' })
+    );
   });
 });

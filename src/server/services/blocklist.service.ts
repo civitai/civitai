@@ -477,13 +477,33 @@ export function scannableTextForms(content: string) {
   return [...new Set([...forms, ...forms.map(foldConfusables)])];
 }
 
+/** Which list rejected the text. Callers that classify a block read this rather than the message. */
+export type BlockedContentKind = 'link' | 'pattern';
+
 /**
- * Both blocklists over one or more pieces of user-authored text.
+ * One blocklist hit, attributed to the INPUT VALUE it came from. `index` is the position in the
+ * array the caller passed (absent/empty entries keep their slot), so a caller scanning
+ * `[title, body]` can tell which field tripped the list.
  *
- * The two exported wrappers below differ only in the message a pattern hit produces. Everything
- * that decides what is caught lives here, so a surface cannot end up with a weaker version of
- * the check by calling a different helper — which is the state this replaced, where comments got
- * both lists over every form and nine other surfaces got the link list over the raw string.
+ * At most one `link` and one `pattern` hit per value, each from the first scanned form that
+ * matched: the forms are spellings of the same text, so reporting each would count one write
+ * several times. A `link` hit carries every blocked URL that form contained.
+ */
+export type BlockedContentHit =
+  | { kind: 'link'; index: number; matched: string[] }
+  | { kind: 'pattern'; index: number; matched: string };
+
+type UserText = string | null | undefined;
+
+/**
+ * Both blocklists over one or more pieces of user-authored text — the DECISION only. It reads the
+ * lists and returns every hit; it does not throw, log, or read a flag. The enforcing wrappers
+ * below decide what a hit costs.
+ *
+ * Everything that decides what is caught lives here, so a surface cannot end up with a weaker
+ * version of the check by calling a different helper — which is the state this replaced, where
+ * comments got both lists over every form and nine other surfaces got the link list over the raw
+ * string.
  *
  * Each value is scanned SEPARATELY rather than joined. Joining is not merely untidy: a pattern
  * spanning the seam between two independent fields would match text no user ever wrote.
@@ -492,9 +512,84 @@ export function scannableTextForms(content: string) {
  * Empty and absent values are skipped, so a caller can hand over an optional field without
  * guarding the call. That removes the `if (x) await check(x)` shape, which is where a surface
  * loses its check by degrees — the guard follows the field rather than the call site.
+ *
+ * Hits are returned in value order, link before pattern within a value — the order the enforcing
+ * wrapper acts on them, which is what keeps its throw-vs-record sequence identical to the
+ * pre-split scan.
+ */
+async function findBlockedText(
+  values: UserText[],
+  { exemptFromLinks, exemptFromPatterns }: { exemptFromLinks: boolean; exemptFromPatterns: boolean }
+): Promise<BlockedContentHit[]> {
+  // 🔴 TWO exemptions, not one. A single `isModerator` short-circuit over both lists is wrong on
+  // the non-comment surfaces: the link-domain check there had NO exemption before this guard
+  // existed, so exempting moderators from it would silently switch off a control that is live in
+  // production. Comments are the case that exempts both, and that asymmetry is why these are two
+  // flags rather than one.
+  if (exemptFromLinks && exemptFromPatterns) return [];
+
+  const present = values.flatMap((value, index) => (value ? [{ value, index }] : []));
+  if (!present.length) return [];
+
+  const [blockedDomains, blockedPatterns] = await Promise.all([
+    getBlocklistData(BlocklistType.LinkDomain),
+    getBlocklistData(BlocklistType.MessagePattern),
+  ]);
+  const matchable = substringEntries(blockedPatterns);
+  const matchableDomains = exactEntries(blockedDomains);
+
+  const hits: BlockedContentHit[] = [];
+  for (const { value, index } of present) {
+    const forms = scannableTextForms(value);
+
+    for (const form of exemptFromLinks ? [] : forms) {
+      const blockedFor = findBlockedLinkDomains(form, matchableDomains);
+      if (blockedFor.length) {
+        hits.push({ kind: 'link', index, matched: blockedFor });
+        break;
+      }
+    }
+
+    for (const form of exemptFromPatterns ? [] : forms) {
+      const matched = findBlockedPattern(form, matchable);
+      if (matched !== undefined) {
+        hits.push({ kind: 'pattern', index, matched });
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * The pure classifier behind `throwOnBlockedUserContent`, for a caller that wants to know what the
+ * guard WOULD do without it doing it (shadow moderation). Same lists, same forms, same
+ * per-value scan; no Axiom event, no Flipt read, no throw.
+ *
+ * `exemptFromPatterns` is the moderator exemption `throwOnBlockedUserContent` applies via
+ * `isModerator`. There is deliberately no link exemption — see that function.
+ */
+export async function findBlockedUserContent(
+  values: UserText | UserText[],
+  { exemptFromPatterns = false }: { exemptFromPatterns?: boolean } = {}
+): Promise<BlockedContentHit[]> {
+  return findBlockedText(Array.isArray(values) ? values : [values], {
+    exemptFromLinks: false,
+    exemptFromPatterns,
+  });
+}
+
+/**
+ * Enforces `findBlockedText`'s hits, in order.
+ *
+ * A link hit calls `onLinkMatch` and STOPS: every caller's `onLinkMatch` throws, and returning
+ * rather than falling through means a future one that does not cannot silently turn the link half
+ * into a no-op that still reads as a scan. A pattern hit awaits `onPatternMatch`, which is allowed
+ * NOT to throw (record-only mode), and continues to the next value — so a recorded pattern hit on
+ * one value never shortens the link scan of a later one.
  */
 async function throwOnBlockedText(
-  values: Array<string | null | undefined>,
+  values: UserText[],
   {
     exemptFromLinks,
     exemptFromPatterns,
@@ -507,51 +602,13 @@ async function throwOnBlockedText(
     onPatternMatch: (matched: string) => Promise<void> | void;
   }
 ) {
-  // 🔴 TWO exemptions, not one. A single `isModerator` short-circuit over both lists is wrong on
-  // the non-comment surfaces: the link-domain check there had NO exemption before this guard
-  // existed, so exempting moderators from it would silently switch off a control that is live in
-  // production. Comments are the case that exempts both, and that asymmetry is why these are two
-  // flags rather than one.
-  if (exemptFromLinks && exemptFromPatterns) return;
-
-  const present = values.filter((value): value is string => !!value);
-  if (!present.length) return;
-
-  const [blockedDomains, blockedPatterns] = await Promise.all([
-    getBlocklistData(BlocklistType.LinkDomain),
-    getBlocklistData(BlocklistType.MessagePattern),
-  ]);
-  const matchable = substringEntries(blockedPatterns);
-  const matchableDomains = exactEntries(blockedDomains);
-
-  for (const value of present) {
-    const forms = scannableTextForms(value);
-
-    // The two lists are scanned in separate passes, not interleaved per form, because
-    // `onPatternMatch` is allowed NOT to throw. Interleaved, a caller in record-only mode would
-    // leave the remaining forms of this value unscanned for LINK hits, which do still throw —
-    // the weaker half would silently shorten the stronger one.
-    for (const form of exemptFromLinks ? [] : forms) {
-      const blockedFor = findBlockedLinkDomains(form, matchableDomains);
-      if (blockedFor.length) {
-        onLinkMatch(blockedFor);
-        // Every caller's `onLinkMatch` throws. Returning here rather than falling through means a
-        // future one that does not cannot silently turn the link half into a no-op that still
-        // reads as a scan.
-        return;
-      }
+  const hits = await findBlockedText(values, { exemptFromLinks, exemptFromPatterns });
+  for (const hit of hits) {
+    if (hit.kind === 'link') {
+      onLinkMatch(hit.matched);
+      return;
     }
-
-    for (const form of exemptFromPatterns ? [] : forms) {
-      const matched = findBlockedPattern(form, matchable);
-      if (matched !== undefined) {
-        await onPatternMatch(matched);
-        // One notification per value. The forms are spellings of the same text, so a caller that
-        // records rather than throws would otherwise count one write up to six times and read as
-        // a false-positive rate several times its real value.
-        break;
-      }
-    }
+    await onPatternMatch(hit.matched);
   }
 }
 
@@ -578,9 +635,6 @@ export async function throwOnBlockedCommentContent(
     onPatternMatch: () => throwBadRequestError('Comment blocked by content filter'),
   });
 }
-
-/** Which list rejected the text. Callers that classify a block read this rather than the message. */
-export type BlockedContentKind = 'link' | 'pattern';
 
 /**
  * The same check for the OTHER surfaces that carry user-authored text — descriptions, titles,

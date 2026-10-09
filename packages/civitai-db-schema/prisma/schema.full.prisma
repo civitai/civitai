@@ -1821,6 +1821,37 @@ model ResourceInsight {
   @@index([stale])
 }
 
+// One build of the resource-intent co-occurrence index (token -> model). Inserted when a build
+// starts ('building'), then set 'ready', 'failed' or 'duplicate' once; a DB trigger refuses any
+// change to a row that is no longer 'building' and sets `builtAt` itself. `contentHash` =
+// sha256(kind, NUL, payload) is the snapshot's identity (unique among ready rows) and is verified
+// on load. Pin rules are a DB CHECK. Written only through raw SQL in
+// src/server/services/resource-intent-cooc/store.ts. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentCoocSnapshot {
+  id                String    @id @default(uuid())
+  kind              String
+  status            String    @default("building")
+  contentHash       String?
+  specHash          String
+  trainStart        DateTime
+  trainEnd          DateTime
+  seed              Int
+  pinnedUntil       DateTime?
+  builtAt           DateTime  @default(now())
+  trainCreatedAtMin DateTime?
+  trainCreatedAtMax DateTime?
+  idsTried          Int?
+  trainRows         Int?
+  vocab             Int?
+  models            Int?
+  keptPairs         Int?
+  payload           Bytes?
+  trainImageIds     Bytes?
+
+  @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
+}
+
 enum ReviewReactions {
   Like
   Dislike

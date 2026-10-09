@@ -22,6 +22,7 @@ import {
 } from '~/server/services/buzz.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
 import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
+import { isEventShopItemData } from '~/server/events/event-shop-item';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -186,6 +187,11 @@ export const assertPackPurchasable = async ({
     throw throwBadRequestError('This pack contains an item that is no longer available');
 
   if (!stickersEnabled && members.some((m) => m.type === CosmeticType.Sticker))
+    throw throwBadRequestError('This pack is not available');
+
+  // Event items are gated per buyer (event window, team, paid Buzz only) at the
+  // single purchase; a pack would grant them past all three.
+  if (members.some((m) => isEventShopItemData(m.data)))
     throw throwBadRequestError('This pack is not available');
 
   const creatorIds = members

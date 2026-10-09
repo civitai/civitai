@@ -5,6 +5,7 @@ import type { Area } from 'react-easy-crop';
 
 /** A stage of preparing an image on the device before it is uploaded. */
 export type ImagePrepStage =
+  | 'pick-unreadable'
   | 'dims'
   | 'read-blob'
   | 'decode'

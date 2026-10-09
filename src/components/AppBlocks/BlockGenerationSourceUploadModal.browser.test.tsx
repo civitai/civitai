@@ -234,7 +234,7 @@ describe('BlockGenerationSourceUploadModal (generationSource — unscanned sourc
 
     await vi.waitFor(() => expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1));
     const here = window.location.pathname + window.location.search + window.location.hash;
-    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here, 'image-gen');
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here, 'image-upload');
     await new Promise((r) => setTimeout(r, 200));
     expect(mocks.resizeImage).not.toHaveBeenCalled();
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
