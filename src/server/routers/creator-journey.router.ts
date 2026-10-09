@@ -12,7 +12,10 @@ import {
   getProfileAchievements,
 } from '~/server/services/creator-journey.service';
 import { getCreatorShowcase } from '~/server/services/creator-showcase.service';
-import { isMilestoneShareable } from '~/server/services/creator-milestone-share.service';
+import {
+  getShareableTierSlugs,
+  isMilestoneShareable,
+} from '~/server/services/creator-milestone-share.service';
 import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -38,7 +41,14 @@ export const creatorJourneyRouter = router({
   getMine: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .use(isFlagProtected('creatorJourney'))
-    .query(({ ctx }) => getCreatorJourney(ctx.user.id)),
+    .query(async ({ ctx }) => {
+      const [journey, shareableTiers] = await Promise.all([
+        getCreatorJourney(ctx.user.id),
+        // Share buttons are extras: an unreadable share rule hides them, never the journey.
+        getShareableTierSlugs(ctx.user.id).catch(() => []),
+      ]);
+      return { ...journey, shareableTiers };
+    }),
   getFirstPublishCard: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .use(isFlagProtected('creatorJourney'))

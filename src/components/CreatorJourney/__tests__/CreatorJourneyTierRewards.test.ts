@@ -101,7 +101,8 @@ describe('tier rewards on the ladder', () => {
     const rendered = items({ total: 0, earnedKeys: [] });
     expect([...SUPERNOVA, ...LEGEND].filter((reward) => !rendered.has(reward))).toEqual([]);
     expect(SUPERNOVA).toHaveLength(3);
-    expect(LEGEND).toHaveLength(3);
+    expect(LEGEND).toHaveLength(4);
+    expect(rendered.has('An animated Legend name plate on your username')).toBe(true);
     expect(container?.textContent?.split('Recognition only').length).toBe(2);
   });
 

@@ -35,8 +35,16 @@ export function parseScoreTierSlug(value: unknown): ScoreTierSlug | null {
   return SCORE_TIERS.find((tier) => tier.slug === value)?.slug ?? null;
 }
 
+/** The tier slug of a milestone key, or null when the key is not a score tier. */
+export const scoreTierSlugFromKey = (key: string) =>
+  SCORE_TIERS.find((tier) => scoreTierKey(tier.slug) === key)?.slug ?? null;
+
 /** A milestone share card's id, `<userId>.<tierSlug>`, e.g. `42.supernova`. */
 export const milestoneShareId = (userId: number, slug: ScoreTierSlug) => `${userId}.${slug}`;
+
+/** The profile link whose preview swaps to this tier's card. */
+export const milestoneShareHref = (username: string, slug: ScoreTierSlug) =>
+  `/user/${encodeURIComponent(username)}?milestone=${slug}`;
 
 /** A profile's og:image endpoint for `?milestone=`. Undefined keeps the profile's own preview. */
 export function milestoneOgEndpoint(

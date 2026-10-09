@@ -3,6 +3,7 @@ import { Anchor, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
+import { TierShareButton } from '~/components/CreatorJourney/TierShareButton';
 import {
   accentVar,
   DEFAULT_ACCENT,
@@ -12,9 +13,13 @@ import {
 import { NextLink } from '~/components/NextLink/NextLink';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import {
+  CREATOR_JOURNEY_HREF,
+  scoreTierSlugFromKey,
+} from '~/shared/constants/creator-journey.constants';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 
 type ProfileAchievements = RouterOutput['creatorJourney']['getProfileAchievements'];
@@ -42,8 +47,14 @@ export function AchievementCard({ achievement }: { achievement: Achievement }) {
 /** The highest tier held, never the score: only the owner, who already has it, sees the number. */
 export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }) {
   const currentUser = useCurrentUser();
-  const ownScore = currentUser?.id === userId ? creatorScoreFromSession(currentUser) : undefined;
+  const isOwner = currentUser?.id === userId;
+  const ownScore = isOwner ? creatorScoreFromSession(currentUser) : undefined;
   const accent = tierAccents[tier.key] ?? DEFAULT_ACCENT;
+  const slug = scoreTierSlugFromKey(tier.key);
+  const { data: shareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
+    { userId, slug: slug ?? 'spark' },
+    { enabled: isOwner && !!slug }
+  );
 
   return (
     <SpotlightBorderCard
@@ -59,6 +70,11 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
           background: 'radial-gradient(60% 100% at 50% 0%, var(--cj-accent) 0%, transparent 100%)',
         }}
       />
+      {isOwner && shareable && slug && currentUser?.username && (
+        <div className="absolute right-2 top-2">
+          <TierShareButton username={currentUser.username} slug={slug} tierName={tier.name} />
+        </div>
+      )}
       <Text size="xs" tt="uppercase" fw={700} c="dimmed" className="tracking-wider">
         Creator Score tier
       </Text>

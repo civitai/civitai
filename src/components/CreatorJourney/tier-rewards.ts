@@ -11,6 +11,7 @@ export const tierRewards: Partial<Record<string, string[]>> = {
   ],
   'score:legend': [
     'Animated Legend badge',
+    'An animated Legend name plate on your username',
     '"Legend since" and the month you crossed on your profile, or "Founding Legend" if you were already there at launch',
     'A place in the Creator Showcase Hall of Fame',
   ],
