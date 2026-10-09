@@ -133,6 +133,21 @@ describe('EventContentThumb wears its hat as a feed card does', () => {
     expect(wrapperOf(thumb()).className).not.toContain('invisible');
   });
 
+  // A hat really worn on this content opens its stats on click, as a feed card's does; a picker's
+  // candidates pass nothing, so a click there only bursts.
+  it('hands the hat the content it is worn on, and nothing when it is not', () => {
+    measured = 171;
+    thumb({ wornOn: { entityType: 'Image', entityId: 9 } });
+    expect(overlay).toHaveBeenLastCalledWith(
+      expect.objectContaining({ wornOn: { entityType: 'Image', entityId: 9 } })
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    overlay.mockClear();
+    thumb();
+    expect(overlay.mock.lastCall?.[0].wornOn).toBeUndefined();
+  });
+
   it('is a plain card with no hat', () => {
     measured = 171;
     const card = wrapperOf(thumb({ hat: undefined }));

@@ -205,7 +205,12 @@ describe('Your hats card wears its hat', () => {
       if (/overflow-(hidden|clip|auto|scroll)/.test(node.className)) clipping.push(node.className);
     expect(clipping).toEqual([]);
     expect(thumbProps).toHaveBeenLastCalledWith(
-      expect.objectContaining({ hat: { url: 'u' }, allowance: 12, className: 'rounded-t-[7px]' })
+      expect.objectContaining({
+        hat: { url: 'u' },
+        allowance: 12,
+        className: 'rounded-t-[7px]',
+        wornOn: { entityType: 'Image', entityId: 9 },
+      })
     );
   });
 });

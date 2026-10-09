@@ -10,6 +10,7 @@ import {
   EVENT_CARD_SURFACE,
   minutesUntilMovable,
 } from '~/components/Events/ScoredEvent/scored-event.utils';
+import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
@@ -90,6 +91,10 @@ export function MyEventHats({
                     hat={hat.data}
                     className={PICTURE_RADIUS}
                     allowance={HAT_ROOM}
+                    wornOn={{
+                      entityType: hat.placedOn.entityType as CosmeticEntity,
+                      entityId: hat.placedOn.entityId,
+                    }}
                   />
                 ) : (
                   <div

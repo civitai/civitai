@@ -5,6 +5,7 @@ import type { CSSProperties } from 'react';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
@@ -23,6 +24,7 @@ export function EventContentThumb({
   hat,
   className,
   allowance = 4,
+  wornOn,
 }: {
   entityType: string;
   image: (ImageProps & { entityId: number; entityType: string }) | null;
@@ -34,6 +36,11 @@ export function EventContentThumb({
    * before something crops it. A feed card has 36; a tight grid or a padded button far less.
    */
   allowance?: number;
+  /**
+   * The content this card stands for, when the hat is really on it: a click on the hat then opens
+   * its stats, as on a feed card. Without it (a picker's candidates) a click only bursts.
+   */
+  wornOn?: EventDecorationEntity;
 }) {
   const Icon = TYPE_ICON[entityType as keyof typeof TYPE_ICON] ?? IconPhoto;
   // The hat is sized for a feed card; on this smaller card it shrinks by the card's width. Until
@@ -76,6 +83,7 @@ export function EventContentThumb({
   return (
     <TwCosmeticWrapper
       eventDecoration={hat}
+      eventDecorationOn={wornOn}
       cardWidth={width || undefined}
       className={clsx(!width && '[&>button]:invisible')}
       style={{ '--event-decoration-allowance': `${allowance}px` } as CSSProperties}
