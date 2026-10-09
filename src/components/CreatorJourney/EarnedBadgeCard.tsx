@@ -29,10 +29,13 @@ export function EarnedBadgeCard({
   badge,
   accent,
   action,
+  thresholdAsFloor,
 }: {
   badge: EarnedBadge;
   accent?: string;
   action?: ReactNode;
+  /** Show a tier's threshold as "10,000+": on a profile, which anyone can view, it must read as a floor, not a score. */
+  thresholdAsFloor?: boolean;
 }) {
   accent ??= tierAccents[badge.key] ?? DEFAULT_ACCENT;
 
@@ -60,6 +63,7 @@ export function EarnedBadgeCard({
             <IconTrendingUp size={16} className="shrink-0 text-[var(--cj-accent)]" />
             <Text fw={700} className="tabular-nums">
               {numberWithCommas(badge.threshold)}
+              {thresholdAsFloor && '+'}
             </Text>
           </div>
           <Text size="xs" c="dimmed" tt="uppercase" fw={600} className="tracking-wide">
