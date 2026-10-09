@@ -15,7 +15,7 @@ import {
   notificationProcessors,
   notificationTypes,
 } from '~/server/notifications/utils.notifications';
-import { ownerVisibleWhere } from '~/server/services/blocks/app-feedback.service';
+import { ownerStatusSql, ownerVisibleWhere } from '~/server/services/blocks/app-feedback.service';
 import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
 
 /**
@@ -207,8 +207,12 @@ describe('owner digest — the query', () => {
       user: { bannedAt: null },
     });
     for (const [key, fragment] of Object.entries(enforcedBy)) expect(sql, key).toContain(fragment);
-    // "New" is the inbox's `ownerStatus IS NULL` alone — not narrowed by the abuse flag.
-    expect(sql).toContain(`f."ownerStatus" IS NULL`);
+    // "New" is whatever the inbox's New filter renders to — read from the inbox, not restated.
+    const inboxNew = ownerStatusSql('new');
+    expect(inboxNew).toHaveLength(1);
+    expect(inboxNew[0].values).toEqual([]);
+    expect(sql).toContain(inboxNew[0].sql);
+    expect(inboxNew[0].sql).toBe(`f."ownerStatus" IS NULL`);
     expect(sql).not.toContain('ownerFlaggedAt');
   });
 

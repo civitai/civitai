@@ -321,7 +321,8 @@ function cursorSql(cursor: number | undefined, seatListingId?: string): Prisma.S
   ];
 }
 
-function ownerStatusSql(filter: AppFeedbackOwnerStatusFilter | undefined): Prisma.Sql[] {
+/** The inbox's owner-status filter; `new` is also what the owner digest counts. */
+export function ownerStatusSql(filter: AppFeedbackOwnerStatusFilter | undefined): Prisma.Sql[] {
   if (!filter) return [];
   if (filter === 'new') return [Prisma.sql`f."ownerStatus" IS NULL`];
   return [Prisma.sql`f."ownerStatus" = ${filter}`];

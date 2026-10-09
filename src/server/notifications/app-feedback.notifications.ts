@@ -67,7 +67,6 @@ export const APP_FEEDBACK_DIGEST_BUCKET = 'day';
  */
 export const APP_FEEDBACK_DIGEST_GRACE = '5 minutes';
 
-/** The SQL expression for the moment a row's bucket is sent, as a UTC `timestamp`. */
 /**
  * How far each run's window reaches back before its cursor. The cursor is stamped with the APP
  * server's clock while `NOW()` is the DATABASE's, so if the database runs behind, consecutive
@@ -77,6 +76,7 @@ export const APP_FEEDBACK_DIGEST_GRACE = '5 minutes';
  */
 export const APP_FEEDBACK_DIGEST_CLOCK_SLACK = '5 minutes';
 
+/** The SQL expression for the moment a row's bucket is sent, as a UTC `timestamp`. */
 const digestDueAt = `date_trunc('${APP_FEEDBACK_DIGEST_BUCKET}', f."createdAt") + INTERVAL '1 ${APP_FEEDBACK_DIGEST_BUCKET}' + INTERVAL '${APP_FEEDBACK_DIGEST_GRACE}'`;
 
 /**
@@ -105,15 +105,15 @@ export function appFeedbackDigestMessage(details: Partial<AppFeedbackDigestDetai
  * The digest query. One row per (listing, bucket) that CLOSED in this run's window.
  *
  * 🔴 THE CURSOR IS COMPARED TO THE BUCKET'S DUE TIME, NOT TO `createdAt`. That is what makes this
- * a digest while the runner fires every minute: a report is sent exactly once, in the run whose
- * window (widened by APP_FEEDBACK_DIGEST_CLOCK_SLACK) contains its bucket's due time, and the
- * per-type cursor still advances every minute. Do not gate the processor to run once a day
+ * a digest while the runner fires every minute: a bucket is emitted by every run whose window
+ * (widened by APP_FEEDBACK_DIGEST_CLOCK_SLACK) contains its due time and delivered once by `key`,
+ * and the per-type cursor still advances every minute. Do not gate the processor to run once a day
  * instead: its cursor would go stale and trip `notification-cursor-monitor`.
  *
  * What a row must be to count, judged when the digest is sent. The first three are the owner
  * inbox's own rules (`ownerVisibleWhere` and its `new` filter in `app-feedback.service.ts`),
  * restated as SQL text because the runner takes a raw string; the "agrees with the owner inbox"
- * test fails if the inbox's rule set changes without this one:
+ * test fails if either inbox rule changes without this query:
  *   - still NEW to the developer (`ownerStatus` NULL), as the inbox's New filter counts it;
  *   - not hidden from the developer by a moderator;
  *   - not from a reporter who is now banned;
