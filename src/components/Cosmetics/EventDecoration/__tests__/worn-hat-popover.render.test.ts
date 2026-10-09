@@ -176,6 +176,27 @@ describe('a hatted feed card', () => {
     expect(enabledFlags().at(-1)).toBe(false);
   });
 
+  it('closes on a click elsewhere on the page', () => {
+    renderCard();
+    clickHat();
+    act(() => {
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(popover()).toBeNull();
+  });
+
+  it('shows the stats without a wearer when the wearer is gone', () => {
+    wornHat.result = { data: { ...WORN, owner: null }, isLoading: false, isError: false };
+    viewer.current = { id: 9 };
+    renderCard();
+    clickHat();
+    expect(popover()!.textContent).not.toContain('Worn by');
+    expect(popover()!.textContent).not.toContain('Your hat');
+    expect(popover()!.textContent).toContain('1.2k');
+  });
+
   it('closes on Escape', () => {
     renderCard();
     clickHat();

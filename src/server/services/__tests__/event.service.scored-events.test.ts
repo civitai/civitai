@@ -528,6 +528,9 @@ describe('getWornEventHat', () => {
     expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
       { userId: 9, cosmeticId: 31, claimKey: 'claimed' },
     ]);
+    // The wearer, not the viewer (id 1).
+    expect(await userBasic()).toHaveBeenCalledWith([9]);
+    expect(await profilePictures()).toHaveBeenCalledWith([9]);
   });
 
   it('is null for a decoration whose data is not an event hat', async () => {
