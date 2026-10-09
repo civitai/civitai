@@ -265,7 +265,7 @@ describe('opening the modal', () => {
     await expect
       .element(page.getByTestId('app-feedback-private-notice'))
       .toHaveTextContent(
-        "Private. Only this app's developer and Civitai moderators can read this."
+        "Private. Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
       );
     await expect
       .element(page.getByTestId('app-feedback-sent-with'))

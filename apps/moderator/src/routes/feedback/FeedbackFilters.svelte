@@ -7,7 +7,7 @@
   import { num } from '$lib/format';
   import { clearPaging } from '$lib/paging';
   import { urlWith, urlWithMulti } from '$lib/url';
-  import { FEEDBACK_STATUSES } from '$lib/feedback';
+  import { FEEDBACK_ANY_AREA_LABEL, FEEDBACK_STATUSES, feedbackAreaLabel } from '$lib/feedback';
 
   let {
     statuses,
@@ -22,7 +22,7 @@
   } = $props();
 
   const statusOptions = FEEDBACK_STATUSES.map((s) => ({ value: s, label: s }));
-  const areaLabel = $derived(area || 'Area — any');
+  const areaLabel = $derived(area ? feedbackAreaLabel(area) : FEEDBACK_ANY_AREA_LABEL);
 
   /**
    * Any filter change invalidates the keyset AND closes the open row: the cursor points into a
@@ -60,11 +60,11 @@
   <div class="flex flex-col gap-1">
     <Label for="feedback-area" class="text-xs text-dark-2">Area</Label>
     <Select.Root type="single" bind:value={() => area, (v) => applyArea(v ?? '')}>
-      <Select.Trigger id="feedback-area" class="w-56">{areaLabel}</Select.Trigger>
+      <Select.Trigger id="feedback-area" class="w-72">{areaLabel}</Select.Trigger>
       <Select.Content>
-        <Select.Item value="">Area — any</Select.Item>
+        <Select.Item value="">{FEEDBACK_ANY_AREA_LABEL}</Select.Item>
         {#each areaOptions as option (option)}
-          <Select.Item value={option}>{option}</Select.Item>
+          <Select.Item value={option}>{feedbackAreaLabel(option)}</Select.Item>
         {/each}
       </Select.Content>
     </Select.Root>

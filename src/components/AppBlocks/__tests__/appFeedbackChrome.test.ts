@@ -4,6 +4,7 @@ import {
   APP_FEEDBACK_INVALID_MESSAGE,
   APP_FEEDBACK_NOT_AVAILABLE_MESSAGE,
   APP_FEEDBACK_SENT_MESSAGE,
+  APP_FEEDBACK_PRIVATE_NOTICE,
   APP_FEEDBACK_SIGNED_OUT_MESSAGE,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
@@ -259,6 +260,17 @@ describe('appFeedbackSubmitErrorMessage — every server refusal reads as a sent
     );
     expect(appFeedbackSubmitErrorMessage({ message: 'boom', data: null })).toBe(
       APP_FEEDBACK_GENERIC_ERROR_MESSAGE
+    );
+  });
+});
+
+describe('the privacy notice the sender reads, pinned literally', () => {
+  it('names the collaborators, who read the inbox alongside the developer', () => {
+    // The whole string, not a keyword: a reword that drops a reader (it said only "this app's
+    // developer and Civitai moderators" until accepted collaborators were shown to read the
+    // inbox) must fail here. The inbox's own note is pinned in `appFeedbackInbox.test.ts`.
+    expect(APP_FEEDBACK_PRIVATE_NOTICE).toBe(
+      "Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
     );
   });
 });

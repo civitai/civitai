@@ -272,6 +272,18 @@ export const creatorCompAmountPaidCounter = registerCounterWithLabels({
   labelNames: ['account_type'] as const,
 });
 
+export const generationTipCreatorsPaidCounter = registerCounterWithLabels({
+  name: 'generation_tip_creators_paid_total',
+  help: 'Total number of creators who received generation tips',
+  labelNames: ['account_type'] as const,
+});
+
+export const generationTipAmountPaidCounter = registerCounterWithLabels({
+  name: 'generation_tip_amount_paid_total',
+  help: 'Total buzz amount paid to creators as generation tips',
+  labelNames: ['account_type'] as const,
+});
+
 // License fee payout metrics
 export const licenseFeeCreatorsPaidCounter = registerCounterWithLabels({
   name: 'license_fee_creators_paid_total',

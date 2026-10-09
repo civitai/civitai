@@ -14,7 +14,7 @@ type Activity = RouterOutput['creatorJourney']['getMine']['activity'];
 type Milestone = Activity['milestones'][number];
 type Measure = Milestone['measure'];
 
-const tracks = [
+export const achievementTracks = [
   { key: 'create', title: 'Create', accent: '#12b886', measures: ['models', 'articles'] },
   {
     key: 'reach',
@@ -71,8 +71,8 @@ export function measureHref(measure: Measure, username?: string) {
 }
 
 const accentOf = (measure: Measure) =>
-  tracks.find((track) => (track.measures as readonly Measure[]).includes(measure))?.accent ??
-  tracks[0].accent;
+  achievementTracks.find((track) => (track.measures as readonly Measure[]).includes(measure))
+    ?.accent ?? achievementTracks[0].accent;
 
 export function earnedLabel(achievedAt: Date | null) {
   return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned';
@@ -94,7 +94,7 @@ export function CreatorAchievements({
         Achievements
       </Title>
       {closestNext && <ClosestNext milestone={closestNext} />}
-      {tracks.map((track, index) => (
+      {achievementTracks.map((track, index) => (
         <Stack key={track.key} gap="xs" style={accentVar(track.accent)}>
           {index > 0 && <SpotlightDivider className="my-1" />}
           <Text size="xs" tt="uppercase" c="dimmed" fw={700} className="tracking-wider">

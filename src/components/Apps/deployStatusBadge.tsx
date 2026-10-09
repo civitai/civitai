@@ -3,6 +3,7 @@ import { IconAlertTriangle, IconCheck, IconClock, IconX } from '@tabler/icons-re
 import type { ReactNode } from 'react';
 
 import { describeBuildFailure } from '~/components/Apps/buildFailure';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import {
   isStaleDeploy,
   isStrandedDeploy,
@@ -26,7 +27,10 @@ export const STRANDED_DEPLOY_MESSAGE =
 export const STALLED_DEPLOY_MESSAGE =
   "No progress for a while — the build may be stuck. This isn't something you need to fix in your app; contact us if it doesn't go live.";
 
-export type DeployStatusRow = DeployLifecycleRow & { deployDetail?: string | null };
+export type DeployStatusRow = DeployLifecycleRow & {
+  deployDetail?: string | null;
+  buildSignals?: BuildAttemptSignals | null;
+};
 
 /**
  * The build/deploy chip for an APPROVED version, or `null` when there is nothing to say
@@ -87,7 +91,7 @@ export function deployStatusBadge(
       // never say "deploy failed" for what was a build or scan failure.
       return (
         <Badge color="red" leftSection={<IconX size={12} />}>
-          {describeBuildFailure(row.deployDetail).badge}
+          {describeBuildFailure(row.deployDetail, row.buildSignals).badge}
         </Badge>
       );
     case 'live':

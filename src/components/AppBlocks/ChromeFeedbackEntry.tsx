@@ -11,6 +11,7 @@ import { trpc } from '~/utils/trpc';
 import type { AppFeedbackRequest } from './appFeedbackChrome';
 import {
   APP_FEEDBACK_SENT_MESSAGE,
+  APP_FEEDBACK_PRIVATE_NOTICE,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
   appFeedbackSentWithLine,
@@ -22,9 +23,10 @@ import { ChromeSurfaceItem } from './ChromeSurface';
 
 /**
  * "Send feedback to developer": private, text-only feedback from a running App Block to its
- * developer (and moderators). Mirrors the F4 review entry in `ChromeReviewEntry.tsx`: the ⋮ item
- * hands what it resolved UP to `AppBlockChrome`, which mounts the modal outside every floating
- * surface, because Mantine unmounts a closed dropdown or sheet together with anything inside it.
+ * developer (their collaborators and moderators read it too). Mirrors the F4 review entry in
+ * `ChromeReviewEntry.tsx`: the ⋮ item hands what it resolved UP to `AppBlockChrome`, which mounts
+ * the modal outside every floating surface, because Mantine unmounts a closed dropdown or sheet
+ * together with anything inside it.
  */
 
 /**
@@ -133,8 +135,7 @@ export function AppFeedbackModal({
               <Text span fw={700}>
                 Private.
               </Text>{' '}
-              Only this app&apos;s developer and Civitai moderators can read this. It won&apos;t
-              appear on the app&apos;s page. The developer will see your username.
+              {APP_FEEDBACK_PRIVATE_NOTICE}
             </Text>
           </Alert>
           <Textarea
