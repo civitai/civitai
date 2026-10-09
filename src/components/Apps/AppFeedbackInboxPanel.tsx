@@ -20,7 +20,7 @@ import {
   feedbackRowMeta,
   INBOX_STATUS_FILTERS,
   inboxActionError,
-  inboxEmptyMessages,
+  inboxEmptyMessage,
   INBOX_PRIVACY_NOTE,
   inboxStatusFilterInput,
   OWNER_STATUS_LABELS,
@@ -30,17 +30,10 @@ import {
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
 import type { OwnerFeedbackDto } from '~/server/services/blocks/app-feedback.service';
-import type { ListingKind } from '~/shared/constants/app-capabilities.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-export function AppFeedbackInboxPanel({
-  appListingId,
-  kind,
-}: {
-  appListingId: string;
-  kind: ListingKind;
-}) {
+export function AppFeedbackInboxPanel({ appListingId }: { appListingId: string }) {
   const [filter, setFilter] = useState<InboxStatusFilter>('all');
   const query = trpc.appFeedback.listForListing.useInfiniteQuery(
     { appListingId, ownerStatus: inboxStatusFilterInput(filter) },
@@ -79,13 +72,9 @@ export function AppFeedbackInboxPanel({
           {inboxActionError(query.error).message}
         </Alert>
       ) : items.length === 0 ? (
-        <Stack gap={4} data-testid="app-feedback-empty">
-          {inboxEmptyMessages(kind, filter).map((line) => (
-            <Text key={line} size="sm" c="dimmed">
-              {line}
-            </Text>
-          ))}
-        </Stack>
+        <Text size="sm" c="dimmed" data-testid="app-feedback-empty">
+          {inboxEmptyMessage(filter)}
+        </Text>
       ) : (
         <Stack gap="sm">
           {items.map((item) => (

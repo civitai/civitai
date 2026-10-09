@@ -131,6 +131,16 @@ export type EditorTabContext = {
    * it now reads as one.
    */
   lastModerationAction: string | null;
+  /**
+   * Does the listing have at least one feedback row its owner may see —
+   * `appFeedback.hasAnyForListing`, which applies the inbox list's own visibility predicate.
+   *
+   * Operator decision, 2026-10-09: the Feedback tab appears only once there is feedback to read,
+   * never as an empty inbox. REQUIRED for the same reason as `lastModerationAction`: an omitted
+   * field would type-check and silently withhold (or, if defaulted the other way, offer) the tab.
+   * Only `true` opens it, so a failed or pending read leaves the tab hidden.
+   */
+  hasFeedback: boolean;
 };
 
 /**
@@ -311,13 +321,15 @@ export function isOwnerUnpublishedTabContext(
  *                       `listingHistory` authorizes through `resolveListingAccess` (owner
  *                       OR accepted seat) and reads no status, so it refuses nothing this
  *                       page can reach. It is also what keeps the set non-empty: an editor
- *                       on a `removed` listing still gets `history` (and `feedback`), never
- *                       `[]`, so `resolveEditorTab`'s `allowed[0]` fallback always has an
- *                       answer.
+ *                       on a `removed` listing gets `['history']` at least, never `[]`, so
+ *                       `resolveEditorTab`'s `allowed[0]` fallback always has an answer.
  *
- *   - `feedback`      — ALWAYS, like `history`, and LAST so no narrowed set's landing tab moves.
- *                       The inbox procs gate on the seat alone, never status or kind, so
- *                       reports about a delisted app stay readable.
+ *   - `feedback`      — ONLY when `hasFeedback` (the listing has a row its owner may see), and
+ *                       then on every status, role and kind, LAST so it never becomes a
+ *                       narrowed set's landing tab. The inbox procs gate on the seat alone, never
+ *                       status or kind, so reports about a delisted app stay readable. Without a
+ *                       row there is no tab, so a `?tab=feedback` link falls back like any
+ *                       other unavailable tab.
  */
 export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const tabs: EditorTab[] = [];
@@ -362,7 +374,7 @@ export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const canSetLevel = isVisibilityEligibleListingStatus(ctx.status);
   if (ctx.role === 'owner' && (canPublish || canSetLevel)) tabs.push('publishing');
   tabs.push('history');
-  tabs.push('feedback');
+  if (ctx.hasFeedback === true) tabs.push('feedback');
   return tabs;
 }
 

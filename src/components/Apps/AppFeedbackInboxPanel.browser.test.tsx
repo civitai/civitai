@@ -8,7 +8,6 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcModule from '~/utils/trpc';
 import {
   INBOX_EMPTY_MESSAGE,
-  INBOX_EMPTY_OFFSITE_NOTE,
   INBOX_FILTER_EMPTY_MESSAGE,
   INBOX_NO_ACCESS_MESSAGE,
   INBOX_STALE_MESSAGE,
@@ -199,7 +198,7 @@ const byId = (part: string, id: number) => page.getByTestId(`app-feedback-${part
 
 describe('the inbox lists what the server returned, newest first', () => {
   test('rows render in server order with reporter, message, version, surface and date', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect.element(byId('row', NEWEST.id)).toBeInTheDocument();
     const ids = page
       .getByTestId(/^app-feedback-row-/)
@@ -219,13 +218,13 @@ describe('the inbox lists what the server returned, newest first', () => {
   });
 
   test('a deleted reporter is named as such and not linked', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect.element(byId('reporter', OLDER.id)).toHaveTextContent('Deleted account');
     expect(byId('reporter', OLDER.id).element().tagName).not.toBe('A');
   });
 
   test('queries THIS listing, unfiltered, keyed on the server cursor', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect.element(byId('row', NEWEST.id)).toBeInTheDocument();
     expect(mocks.listInputs.at(-1)).toEqual({ appListingId: 'apl_9', ownerStatus: undefined });
     expect(mocks.nextPageParam?.({ nextCursor: 288 })).toBe(288);
@@ -238,7 +237,7 @@ describe('paging', () => {
       { items: [NEWEST, OLDER], nextCursor: OLDER.id },
       { items: [SECOND_PAGE], nextCursor: undefined },
     ];
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect.element(byId('row', OLDER.id)).toBeInTheDocument();
     expect(byId('row', SECOND_PAGE.id).elements()).toHaveLength(0);
 
@@ -251,7 +250,7 @@ describe('paging', () => {
 
 describe('filter', () => {
   test('a status filter is sent to the server; All sends none', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await userEvent.click(filterOption("Won't fix"));
     await expect.poll(() => mocks.listInputs.at(-1)?.ownerStatus).toBe('wont_fix');
     await userEvent.click(filterOption('New'));
@@ -263,7 +262,7 @@ describe('filter', () => {
 
 describe('owner status', () => {
   test('a NEW row offers all three statuses and sends `expectedOwnerStatus: null`', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect.element(byId('set-acknowledged', NEWEST.id)).toBeInTheDocument();
     await expect.element(byId('set-wont_fix', NEWEST.id)).toBeInTheDocument();
     await userEvent.click(byId('set-resolved', NEWEST.id));
@@ -277,7 +276,7 @@ describe('owner status', () => {
   test('onSuccess settles only after the list refetch does, so React Query keeps the write pending', async () => {
     const gate = deferred();
     mocks.refreshGate = gate.promise;
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await userEvent.click(byId('set-resolved', NEWEST.id));
     expect(mocks.successReturns).toHaveLength(1);
     const settled = trackSettled(mocks.successReturns[0]);
@@ -289,7 +288,7 @@ describe('owner status', () => {
 
   test('a pending STATUS write disables the other statuses AND Flag', async () => {
     mocks.pendingFor = 'statusCalls';
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     for (const part of ['set-acknowledged', 'set-resolved', 'set-wont_fix', 'flag']) {
       await expect.element(byId(part, NEWEST.id)).toBeDisabled();
     }
@@ -297,14 +296,14 @@ describe('owner status', () => {
 
   test('a pending FLAG disables the status buttons', async () => {
     mocks.pendingFor = 'flagCalls';
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     for (const part of ['set-acknowledged', 'set-resolved', 'set-wont_fix', 'flag']) {
       await expect.element(byId(part, NEWEST.id)).toBeDisabled();
     }
   });
 
   test('a set row does not offer its own status and sends what the owner saw', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect.element(byId('set-resolved', OLDER.id)).toBeInTheDocument();
     expect(byId('set-acknowledged', OLDER.id).elements()).toHaveLength(0);
     await userEvent.click(byId('set-wont_fix', OLDER.id));
@@ -320,7 +319,7 @@ describe('owner status', () => {
 
   test('CONFLICT: "already changed — refresh", and Refresh refetches the list', async () => {
     mocks.failWith = 'CONFLICT';
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await userEvent.click(byId('set-resolved', NEWEST.id));
     await expect.element(byId('error', NEWEST.id)).toHaveTextContent(INBOX_STALE_MESSAGE);
     expect(byId('error', OLDER.id).elements()).toHaveLength(0);
@@ -334,7 +333,7 @@ describe('owner status', () => {
 
   test('FORBIDDEN reads as lost access, with no Refresh offered', async () => {
     mocks.failWith = 'FORBIDDEN';
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await userEvent.click(byId('set-acknowledged', NEWEST.id));
     await expect.element(byId('error', NEWEST.id)).toHaveTextContent(INBOX_NO_ACCESS_MESSAGE);
     expect(byId('refresh', NEWEST.id).elements()).toHaveLength(0);
@@ -343,7 +342,7 @@ describe('owner status', () => {
 
 describe('flag as abusive', () => {
   test('asks first; Cancel sends nothing; confirming flags THIS row', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await userEvent.click(byId('flag', NEWEST.id));
     await expect.element(byId('flag-confirm', NEWEST.id)).toBeInTheDocument();
     expect(mocks.flagCalls).toEqual([]);
@@ -367,14 +366,14 @@ describe('flag as abusive', () => {
 
   test('an already-flagged row shows the flag and offers no second one', async () => {
     mocks.pages = [{ items: [SECOND_PAGE], nextCursor: undefined }];
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect.element(byId('flagged', SECOND_PAGE.id)).toBeInTheDocument();
     expect(byId('flag', SECOND_PAGE.id).elements()).toHaveLength(0);
   });
 
   test('a CONFLICT on flag (already flagged elsewhere) offers Refresh', async () => {
     mocks.failWith = 'CONFLICT';
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await userEvent.click(byId('flag', NEWEST.id));
     await userEvent.click(byId('flag-confirm-yes', NEWEST.id));
     await expect.element(byId('error', NEWEST.id)).toHaveTextContent(INBOX_STALE_MESSAGE);
@@ -384,32 +383,25 @@ describe('flag as abusive', () => {
 
 describe('empty and error states', () => {
   test('the privacy note is always shown above the list', async () => {
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect
       .element(page.getByTestId('app-feedback-privacy'))
       .toHaveTextContent(
-        "Private feedback from people using this app. Only you, your collaborators and Civitai moderators can read it — it never appears on the app's page."
+        "Private feedback from people using this app. Only this app's developer, their collaborators and Civitai moderators can read it — it never appears on the app's page."
       );
   });
 
-  test('on-site, nothing yet: the inbox explanation only', async () => {
+  test("every row left the owner's view since the tab appeared: says nothing is left", async () => {
     mocks.pages = [{ items: [], nextCursor: undefined }];
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect
       .element(page.getByTestId('app-feedback-empty'))
       .toHaveTextContent(INBOX_EMPTY_MESSAGE);
-    expect(page.getByText(INBOX_EMPTY_OFFSITE_NOTE).elements()).toHaveLength(0);
-  });
-
-  test('off-site, nothing yet: also says why', async () => {
-    mocks.pages = [{ items: [], nextCursor: undefined }];
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="offsite" />);
-    await expect.element(page.getByText(INBOX_EMPTY_OFFSITE_NOTE)).toBeInTheDocument();
   });
 
   test('a filter with no matches says so instead of "no feedback yet"', async () => {
     mocks.pages = [{ items: [], nextCursor: undefined }];
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await userEvent.click(filterOption('Resolved'));
     await expect
       .element(page.getByTestId('app-feedback-empty'))
@@ -421,7 +413,7 @@ describe('empty and error states', () => {
 
   test('a failed read is an error, never the empty state', async () => {
     mocks.listError = { message: 'nope', data: { code: 'FORBIDDEN' } };
-    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" />);
     await expect
       .element(page.getByTestId('app-feedback-load-error'))
       .toHaveTextContent(INBOX_NO_ACCESS_MESSAGE);

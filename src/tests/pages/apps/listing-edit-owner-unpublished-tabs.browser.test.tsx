@@ -46,6 +46,11 @@ type AuthoringContext = {
 const state = vi.hoisted(() => ({
   /** The `getAuthoringContext` payload — THE ONLY THING ANY ARM VARIES. */
   context: null as unknown,
+  /** `appFeedback.hasAnyForListing` — `null` while the read is in flight. */
+  feedback: { hasAny: false } as { hasAny: boolean } | null,
+  feedbackError: null as unknown,
+  /** Every input the page asked `hasAnyForListing` about. */
+  feedbackInputs: [] as unknown[],
   flags: { appBlocks: true } as Record<string, boolean>,
 }));
 
@@ -119,10 +124,8 @@ vi.mock('~/components/Apps/ListingHistoryPanel', () => ({
   ListingHistoryPanel: () => <div data-testid="stub-history" />,
 }));
 vi.mock('~/components/Apps/AppFeedbackInboxPanel', () => ({
-  AppFeedbackInboxPanel: ({ appListingId, kind }: { appListingId: string; kind: string }) => (
-    <div data-testid="stub-feedback">
-      {appListingId}/{kind}
-    </div>
+  AppFeedbackInboxPanel: ({ appListingId }: { appListingId: string }) => (
+    <div data-testid="stub-feedback">{appListingId}</div>
   ),
 }));
 
@@ -140,6 +143,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           isLoading: state.context == null,
           error: null,
         }),
+      },
+      'appFeedback.hasAnyForListing': {
+        useQuery: (input: unknown) => {
+          state.feedbackInputs.push(input);
+          return {
+            data: state.feedbackError ? undefined : state.feedback ?? undefined,
+            isLoading: state.feedback == null && !state.feedbackError,
+            error: state.feedbackError,
+          };
+        },
       },
     }),
   };
@@ -183,6 +196,9 @@ function renderedTabs(): string[] {
 
 beforeEach(() => {
   state.context = null;
+  state.feedback = { hasAny: false };
+  state.feedbackError = null;
+  state.feedbackInputs = [];
   state.flags = { appBlocks: true };
   openListing();
 });
@@ -196,7 +212,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     await expect.element(page.getByTestId('apps-edit-tab-media')).toBeInTheDocument();
     // Order is asserted too — the strip is what the owner scans, and `details` must be the
     // landing tab (a bare `/edit` resolves to DEFAULT_EDITOR_TAB when it is allowed).
-    expect(renderedTabs()).toEqual(['details', 'media', 'publishing', 'history', 'feedback']);
+    expect(renderedTabs()).toEqual(['details', 'media', 'publishing', 'history']);
   });
 
   test('🔴 a MODERATOR-DELISTED listing renders NEITHER — same payload, one field apart', async () => {
@@ -211,7 +227,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     expect(page.getByTestId('apps-edit-tab-media').elements()).toHaveLength(0);
     // 🔴 The Forgejo-write surface, named. Accepting an invite still mints repo `write`.
     expect(page.getByTestId('apps-edit-tab-collaborators').elements()).toHaveLength(0);
-    expect(renderedTabs()).toEqual(['publishing', 'history', 'feedback']);
+    expect(renderedTabs()).toEqual(['publishing', 'history']);
   });
 
   test('🔴 a removed listing with NO moderation event fails closed', async () => {
@@ -219,7 +235,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     renderWithProviders(<AppListingEditPage />);
 
     await expect.element(page.getByTestId('apps-edit-tab-publishing')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['publishing', 'history', 'feedback']);
+    expect(renderedTabs()).toEqual(['publishing', 'history']);
   });
 
   test('🔴 the repair state does NOT open Collaborators, Manifest or Earnings', async () => {
@@ -263,26 +279,86 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
       'collaborators',
       'publishing',
       'history',
-      'feedback',
     ]);
   });
 });
 
-describe('the Feedback tab mounts the inbox for THIS listing', () => {
-  test('`?tab=feedback` for a seated EDITOR on a moderator-delisted app opens the inbox', async () => {
-    openListing('feedback');
-    state.context = contextFor({ role: 'editor', kind: 'offsite', lastModerationAction: 'other' });
+/**
+ * 🔴 THE FEEDBACK TAB EXISTS ONLY ONCE THE LISTING HAS FEEDBACK (operator decision, 2026-10-09).
+ * The page must ask `appFeedback.hasAnyForListing` about THIS listing and hand the answer to the
+ * tab derivation; every arm below varies only that answer.
+ */
+describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
+  const live = () => contextFor({ status: 'approved', lastModerationAction: null });
+
+  test('🔴 no feedback: no tab', async () => {
+    state.context = live();
     renderWithProviders(<AppListingEditPage />);
 
-    await expect.element(page.getByTestId('stub-feedback')).toHaveTextContent('apl_repair/offsite');
+    await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
+    expect(page.getByTestId('apps-edit-tab-feedback').elements()).toHaveLength(0);
+    expect(state.feedbackInputs.at(-1)).toEqual({ appListingId: LISTING_ID });
+  });
+
+  test('🔴 one row: the tab, LAST, and the rest of the strip unchanged', async () => {
+    state.context = live();
+    state.feedback = { hasAny: true };
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-tab-feedback')).toBeInTheDocument();
+    expect(renderedTabs()).toEqual([
+      'details',
+      'media',
+      'manifest',
+      'earnings',
+      'collaborators',
+      'publishing',
+      'history',
+      'feedback',
+    ]);
+  });
+
+  test('🔴 `?tab=feedback` with feedback opens the inbox for THIS listing (the /apps/build badge link)', async () => {
+    openListing('feedback');
+    state.context = contextFor({ role: 'editor', kind: 'offsite', lastModerationAction: 'other' });
+    state.feedback = { hasAny: true };
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('stub-feedback')).toHaveTextContent(LISTING_ID);
     expect(renderedTabs()).toEqual(['history', 'feedback']);
   });
 
-  test('a bare `/edit` does not mount it (control: the panel is tab-scoped)', async () => {
-    state.context = contextFor({ status: 'approved', lastModerationAction: null });
+  test('🔴 `?tab=feedback` with NO feedback falls back to the default tab, not an empty inbox', async () => {
+    openListing('feedback');
+    state.context = live();
     renderWithProviders(<AppListingEditPage />);
 
     await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
     expect(page.getByTestId('stub-feedback').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-edit-panel-feedback').elements()).toHaveLength(0);
+  });
+
+  test('a failed presence read hides the tab rather than blocking the page', async () => {
+    openListing('feedback');
+    state.context = live();
+    state.feedback = null;
+    state.feedbackError = { message: 'nope', data: { code: 'INTERNAL_SERVER_ERROR' } };
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
+    expect(page.getByTestId('apps-edit-tab-feedback').elements()).toHaveLength(0);
+  });
+
+  test('the strip waits for the presence read, so a deep link never mounts the default panel first', async () => {
+    openListing('feedback');
+    state.context = live();
+    state.feedback = null;
+    renderWithProviders(<AppListingEditPage />);
+
+    // Positive control: the page rendered its loading state (so the absences below are read off
+    // a rendered page, not an empty tree).
+    await expect.poll(() => document.querySelector('.mantine-Loader-root')).not.toBeNull();
+    expect(page.getByTestId(/^apps-edit-tab-/).elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-edit-panel-details').elements()).toHaveLength(0);
   });
 });

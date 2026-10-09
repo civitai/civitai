@@ -1,14 +1,15 @@
 import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
-import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import type {
   AppFeedbackOwnerStatusFilter,
   AppFeedbackSurface,
   SetAppFeedbackOwnerStatusInput,
 } from '~/server/schema/app-feedback.schema';
-import type { ListingKind } from '~/shared/constants/app-capabilities.constants';
 import { canOpenListingAuthoringPage } from '~/shared/constants/app-capabilities.constants';
 import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants';
-import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
+import {
+  APP_FEEDBACK_READERS,
+  FEEDBACK_OWNER_STATUSES,
+} from '~/shared/constants/feedback.constants';
 
 /**
  * Pure decisions behind the Feedback tab and the `/apps/build` badge, kept out of the components
@@ -97,18 +98,18 @@ export function feedbackRowMeta(row: {
   return [version, surface].filter((part): part is string => part !== null);
 }
 
-export const INBOX_PRIVACY_NOTE =
-  "Private feedback from people using this app. Only you, your collaborators and Civitai moderators can read it — it never appears on the app's page.";
-export const INBOX_EMPTY_MESSAGE =
-  'No feedback yet. When people using this app send it private feedback, it shows up here.';
-export const INBOX_EMPTY_OFFSITE_NOTE = `Feedback is sent from the menu of an app running on Civitai, so ${STANDALONE_KIND_LABEL} apps don't receive any yet.`;
+/** Names the same readers as the send dialog's notice, from the one shared phrase. */
+export const INBOX_PRIVACY_NOTE = `Private feedback from people using this app. Only ${APP_FEEDBACK_READERS} can read it — it never appears on the app's page.`;
+/**
+ * The tab only exists once the listing has a visible row, so the unfiltered empty state is
+ * reached only when every row left the owner's view after the tab appeared (a moderator hid it,
+ * or its reporter was banned).
+ */
+export const INBOX_EMPTY_MESSAGE = 'No feedback to show right now.';
 export const INBOX_FILTER_EMPTY_MESSAGE = 'No feedback with this status.';
 
-export function inboxEmptyMessages(kind: ListingKind, filter: InboxStatusFilter): string[] {
-  if (filter !== 'all') return [INBOX_FILTER_EMPTY_MESSAGE];
-  return kind === 'offsite'
-    ? [INBOX_EMPTY_MESSAGE, INBOX_EMPTY_OFFSITE_NOTE]
-    : [INBOX_EMPTY_MESSAGE];
+export function inboxEmptyMessage(filter: InboxStatusFilter): string {
+  return filter === 'all' ? INBOX_EMPTY_MESSAGE : INBOX_FILTER_EMPTY_MESSAGE;
 }
 
 export function reporterLabel(username: string | null): string {

@@ -52,7 +52,6 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
       'collaborators',
       'publishing',
       'history',
-      'feedback',
     ]);
   });
 
@@ -64,7 +63,7 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
       status: 'approved',
       capabilities: offsite,
     });
-    expect(tabs).toEqual(['details', 'collaborators', 'publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['details', 'collaborators', 'publishing', 'history']);
     // The two block-keyed surfaces are the ones that 404 without an AppBlock.
     expect(tabs).not.toContain('manifest');
     expect(tabs).not.toContain('media');
@@ -143,7 +142,7 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
     // `getAppEarnings` refuses it with `unsupportedKind`. Rendering the tab would be
     // rendering a guaranteed refusal.
     expect(tabs).not.toContain('earnings');
-    expect(tabs).toEqual(['details', 'collaborators', 'publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['details', 'collaborators', 'publishing', 'history']);
   });
 
   it('🔴 ON-SITE listing with NO block yet: BLOCK-PRESENCE withholds Manifest and Media', () => {
@@ -159,7 +158,7 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
       status: 'approved',
       capabilities: onsite,
     });
-    expect(tabs).toEqual(['details', 'collaborators', 'publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['details', 'collaborators', 'publishing', 'history']);
   });
 
   it('Details and Collaborators exist for every AUTHORABLE shape — both are listing-keyed', () => {
@@ -241,24 +240,24 @@ describe('🔴 a NON-AUTHORABLE listing gets the narrowed set — one case per w
     expect(editorTabsFor(removedOwner)).not.toContain('earnings');
   });
 
-  it('🔴 the OWNER set is EXACTLY Publishing, History, Feedback — nothing else may creep in', () => {
+  it('🔴 the OWNER set is EXACTLY Publishing + History — nothing else may creep in', () => {
     // The aggregate, AFTER the five named absences rather than instead of them. It is what
     // catches a tab added in future that none of the cases above happens to name.
-    expect(editorTabsFor(removedOwner)).toEqual(['publishing', 'history', 'feedback']);
+    expect(editorTabsFor(removedOwner)).toEqual(['publishing', 'history']);
   });
 
-  it('🔴 a seated EDITOR on a removed listing gets History + Feedback — never Publishing', () => {
+  it('🔴 a seated EDITOR on a removed listing gets History ALONE — never Publishing', () => {
     // Both takedown procs are owner-scoped server-side, so an editor offered Publishing gets
     // a guaranteed red toast. Same status as the owner case above, different role — so this
     // isolates the ROLE clause, which this change makes load-bearing for the first time.
-    expect(editorTabsFor({ ...removedOwner, role: 'editor' })).toEqual(['history', 'feedback']);
+    expect(editorTabsFor({ ...removedOwner, role: 'editor' })).toEqual(['history']);
   });
 
-  it('🔴 a REJECTED listing gets History + Feedback, even for the owner — nothing to publish', () => {
+  it('🔴 a REJECTED listing gets History ALONE, even for the owner — nothing to publish', () => {
     // A rejected app never reached the store, so neither control exists and
     // `isPublishableListingStatus` withholds the tab. A DIFFERENT answer from the removed
     // owner case, so a mutant that treats every non-authorable status alike fails here.
-    expect(editorTabsFor({ ...removedOwner, status: 'rejected' })).toEqual(['history', 'feedback']);
+    expect(editorTabsFor({ ...removedOwner, status: 'rejected' })).toEqual(['history']);
   });
 
   it('🔴 an UNKNOWN status falls into the narrowed branch, not the full one', () => {
@@ -268,7 +267,7 @@ describe('🔴 a NON-AUTHORABLE listing gets the narrowed set — one case per w
     const tabs = editorTabsFor({ ...removedOwner, status: 'quarantined' });
     expect(tabs).not.toContain('collaborators');
     expect(tabs).not.toContain('details');
-    expect(tabs).toEqual(['history', 'feedback']);
+    expect(tabs).toEqual(['history']);
   });
 });
 
@@ -374,7 +373,7 @@ describe('🔴 Publishing is offered only where a control exists, and only to th
     expect(tabs).not.toContain('publishing');
     // Control arm: the editor keeps every content tab on this status, so the absence is the
     // role clause and not a collapsed set.
-    expect(tabs).toEqual(['details', 'collaborators', 'history', 'feedback']);
+    expect(tabs).toEqual(['details', 'collaborators', 'history']);
   });
 });
 
@@ -451,43 +450,95 @@ describe('🔴 History is on EVERY shape the route opens — the set is never em
   });
 });
 
-describe('Feedback is on EVERY shape the route opens, and LAST', () => {
-  it('both roles, both kinds, every status — feedback about a delisted app stays readable', () => {
-    for (const status of ['draft', 'pending', 'approved', 'removed', 'rejected'] as const) {
-      for (const role of ['owner', 'editor'] as const) {
-        for (const kind of ['onsite', 'offsite'] as const) {
-          for (const lastModerationAction of [null, OWNER_UNPUBLISH_ACTION, 'other']) {
-            const tabs = editorTabsFor({
-              kind,
-              appBlockId: kind === 'onsite' ? 'ab_x' : null,
-              role,
-              status,
-              capabilities: capabilitiesForKind(kind),
-              lastModerationAction,
-            });
-            const where = `${kind}/${role}/${status}/${lastModerationAction}`;
-            expect(tabs.at(-1), where).toBe('feedback');
-            expect(
-              tabs.filter((t) => t === 'feedback'),
-              where
-            ).toHaveLength(1);
-          }
-        }
-      }
+/**
+ * 🔴 THE FEEDBACK TAB EXISTS ONLY ONCE THE LISTING HAS FEEDBACK (operator decision, 2026-10-09).
+ *
+ * `hasFeedback` is `appFeedback.hasAnyForListing`, which applies the inbox list's own visibility
+ * predicate — so "hidden from owner" and "banned reporter" rows are already excluded before the
+ * value gets here (that half is pinned against real rows in `app-feedback.service.test.ts`).
+ */
+describe('🔴 Feedback appears only when the listing has feedback — then on every shape, LAST', () => {
+  const shapes = () =>
+    (['draft', 'pending', 'approved', 'removed', 'rejected'] as const).flatMap((status) =>
+      (['owner', 'editor'] as const).flatMap((role) =>
+        (['onsite', 'offsite'] as const).flatMap((kind) =>
+          [null, OWNER_UNPUBLISH_ACTION, 'other'].map((lastModerationAction) => ({
+            kind,
+            appBlockId: kind === 'onsite' ? 'ab_x' : null,
+            role,
+            status,
+            capabilities: capabilitiesForKind(kind),
+            lastModerationAction,
+          }))
+        )
+      )
+    );
+
+  it('positive control: the sweep covers every status x role x kind x last-action', () => {
+    expect(shapes()).toHaveLength(5 * 2 * 2 * 3);
+  });
+
+  it('🔴 NO feedback: no tab, on any shape', () => {
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      expect(editorTabsFor({ ...ctx, hasFeedback: false }), where).not.toContain('feedback');
     }
   });
 
-  it('being last, it never becomes the landing tab of a narrowed set', () => {
-    const removedEditor = editorTabsFor({
+  it('🔴 WITH feedback: the tab, once, LAST, on every shape — reports on a delisted app stay readable', () => {
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      const tabs = editorTabsFor({ ...ctx, hasFeedback: true });
+      expect(tabs.at(-1), where).toBe('feedback');
+      expect(
+        tabs.filter((t) => t === 'feedback'),
+        where
+      ).toHaveLength(1);
+      // Adding it changes nothing else in the set.
+      expect(tabs.slice(0, -1), where).toEqual(editorTabsFor({ ...ctx, hasFeedback: false }));
+    }
+  });
+
+  it('🔴 an OMITTED field fails closed (a JS caller, or an `as` cast past the type)', () => {
+    const [ctx] = shapes();
+    expect(editorTabsFor(ctx as Parameters<typeof editorTabsFor>[0])).not.toContain('feedback');
+  });
+
+  it('🔴 INVARIANT: feedback never moves the landing tab — what lets `myAppListingHref` pass `false`', () => {
+    // INVARIANT GUARD, not regression coverage: it pins why the `/apps/build` row href may ignore
+    // feedback existence. That href reads only `tabs[0]`.
+    for (const ctx of shapes()) {
+      const where = `${ctx.kind}/${ctx.role}/${ctx.status}/${ctx.lastModerationAction}`;
+      const withIt = editorTabsFor({ ...ctx, hasFeedback: true });
+      const without = editorTabsFor({ ...ctx, hasFeedback: false });
+      expect(withIt[0], where).toBe(without[0]);
+      expect(resolveEditorTab(undefined, withIt), where).toBe(resolveEditorTab(undefined, without));
+    }
+  });
+
+  it('🔴 `?tab=feedback` with no feedback falls back like any unavailable tab', () => {
+    const live = {
       kind: 'onsite',
       appBlockId: 'ab_x',
-      role: 'editor',
-      status: 'removed',
+      role: 'owner',
+      status: 'approved',
       capabilities: onsite,
       lastModerationAction: null,
-    });
-    expect(resolveEditorTab(undefined, removedEditor)).toBe('history');
-    expect(resolveEditorTab('feedback', removedEditor)).toBe('feedback');
+    } as const;
+    expect(resolveEditorTab('feedback', editorTabsFor({ ...live, hasFeedback: false }))).toBe(
+      'details'
+    );
+    expect(resolveEditorTab('feedback', editorTabsFor({ ...live, hasFeedback: true }))).toBe(
+      'feedback'
+    );
+    // A narrowed set has no `details`, so the fallback is its FIRST tab — a different answer.
+    const removedEditor = { ...live, role: 'editor', status: 'removed' } as const;
+    expect(
+      resolveEditorTab('feedback', editorTabsFor({ ...removedEditor, hasFeedback: false }))
+    ).toBe('history');
+    expect(
+      resolveEditorTab('feedback', editorTabsFor({ ...removedEditor, hasFeedback: true }))
+    ).toBe('feedback');
   });
 
   it('has a label and a canonical deep link', () => {
@@ -613,16 +664,10 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
     expect(editorTabsFor(ownerUnpublished)).not.toContain('earnings');
   });
 
-  it('🔴 the OWNER set is EXACTLY Details, Media, Publishing, History, Feedback — in that order', () => {
+  it('🔴 the OWNER set is EXACTLY Details, Media, Publishing, History — in that order', () => {
     // The aggregate AFTER the named cases, so a tab that creeps in later is caught even if
     // no case above happens to name it. Order matters: the panel renders in this sequence.
-    expect(editorTabsFor(ownerUnpublished)).toEqual([
-      'details',
-      'media',
-      'publishing',
-      'history',
-      'feedback',
-    ]);
+    expect(editorTabsFor(ownerUnpublished)).toEqual(['details', 'media', 'publishing', 'history']);
   });
 
   it('🔴 a MODERATOR takedown gets NONE of it — the ACTION clause, isolated', () => {
@@ -632,7 +677,6 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
     expect(editorTabsFor({ ...ownerUnpublished, lastModerationAction: 'other' })).toEqual([
       'publishing',
       'history',
-      'feedback',
     ]);
   });
 
@@ -645,7 +689,6 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
       expect(editorTabsFor({ ...ownerUnpublished, lastModerationAction: verb }), verb).toEqual([
         'publishing',
         'history',
-        'feedback',
       ]);
     }
   });
@@ -658,21 +701,17 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
     expect(editorTabsFor({ ...ownerUnpublished, lastModerationAction: null })).toEqual([
       'publishing',
       'history',
-      'feedback',
     ]);
     const { lastModerationAction: _omitted, ...withoutTheField } = ownerUnpublished;
-    expect(editorTabsFor(withoutTheField)).toEqual(['publishing', 'history', 'feedback']);
+    expect(editorTabsFor(withoutTheField)).toEqual(['publishing', 'history']);
   });
 
   it('🔴 the ACTION alone is not enough — a REJECTED listing carrying it stays narrowed', () => {
     // The STATUS clause, isolated. `rejected` is non-authorable and is not the repair state,
     // and `isPublishableListingStatus` withholds Publishing too, so the answer is History
-    // + Feedback — a DIFFERENT answer from the removed cases above, which is what stops a mutant
+    // alone — a DIFFERENT answer from the removed cases above, which is what stops a mutant
     // treating every non-authorable status alike.
-    expect(editorTabsFor({ ...ownerUnpublished, status: 'rejected' })).toEqual([
-      'history',
-      'feedback',
-    ]);
+    expect(editorTabsFor({ ...ownerUnpublished, status: 'rejected' })).toEqual(['history']);
   });
 
   it('🔴 a STALE owner-unpublish on a RELISTED listing changes nothing — still the full set', () => {
@@ -690,7 +729,6 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
       'collaborators',
       'publishing',
       'history',
-      'feedback',
     ]);
   });
 
@@ -704,7 +742,7 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
       appBlockId: null,
       capabilities: offsite,
     });
-    expect(tabs).toEqual(['details', 'publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['details', 'publishing', 'history']);
     expect(tabs).not.toContain('media');
   });
 
@@ -717,7 +755,6 @@ describe('🔴 an OWNER-UNPUBLISHED listing regains Details + Media — and noth
       'details',
       'media',
       'history',
-      'feedback',
     ]);
   });
 

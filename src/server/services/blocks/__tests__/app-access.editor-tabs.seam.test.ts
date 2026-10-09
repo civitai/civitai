@@ -125,7 +125,7 @@ describe('🔴 the owner-repair bit survives the whole trip: DB row → normalis
     // The intermediate value is asserted as well as the end state, so a failure says WHICH
     // half broke instead of only that the seam did.
     expect(lastModerationAction).toBe('owner-unpublish');
-    expect(tabs).toEqual(['details', 'media', 'publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['details', 'media', 'publishing', 'history']);
   });
 
   it('🔴 a MODERATOR takedown ends with them withheld — the same trip, opposite answer', async () => {
@@ -135,7 +135,7 @@ describe('🔴 the owner-repair bit survives the whole trip: DB row → normalis
     ]);
     // Normalised on the way out, so the seated-editor disclosure boundary holds here too.
     expect(lastModerationAction).toBe('other');
-    expect(tabs).toEqual(['publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['publishing', 'history']);
   });
 
   it('🔴 a STATE-NEUTRAL event on top of the unpublish does NOT revoke the repair tabs', async () => {
@@ -149,7 +149,7 @@ describe('🔴 the owner-repair bit survives the whole trip: DB row → normalis
         { action: verb, createdAt: 300, id: 'ev_9' },
       ]);
       expect(lastModerationAction, verb).toBe('owner-unpublish');
-      expect(tabs, verb).toEqual(['details', 'media', 'publishing', 'history', 'feedback']);
+      expect(tabs, verb).toEqual(['details', 'media', 'publishing', 'history']);
     }
   });
 
@@ -163,13 +163,13 @@ describe('🔴 the owner-repair bit survives the whole trip: DB row → normalis
       { action: 'relist', createdAt: 300, id: 'ev_9' },
     ]);
     expect(lastModerationAction).toBe('other');
-    expect(tabs).toEqual(['publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['publishing', 'history']);
   });
 
   it('🔴 NO events at all fails closed all the way to the tab set', async () => {
     const { lastModerationAction, tabs } = await tabsForListing('removed', []);
     expect(lastModerationAction).toBeNull();
-    expect(tabs).toEqual(['publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['publishing', 'history']);
   });
 
   it('🔴 the tie-break decides a same-timestamp pair, and it reaches the tabs', async () => {
@@ -180,7 +180,7 @@ describe('🔴 the owner-repair bit survives the whole trip: DB row → normalis
       { action: 'owner-unpublish', createdAt: 100, id: 'ev_a' },
       { action: 'delist', createdAt: 100, id: 'ev_b' },
     ]);
-    expect(tabs).toEqual(['publishing', 'history', 'feedback']);
+    expect(tabs).toEqual(['publishing', 'history']);
   });
 
   it('🔴 an APPROVED listing never reads the event at all, and keeps the full set', async () => {
@@ -200,7 +200,6 @@ describe('🔴 the owner-repair bit survives the whole trip: DB row → normalis
       'collaborators',
       'publishing',
       'history',
-      'feedback',
     ]);
   });
 });

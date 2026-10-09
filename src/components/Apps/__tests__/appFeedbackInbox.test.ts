@@ -4,7 +4,6 @@ import {
   buildSetOwnerStatusInput,
   feedbackRowMeta,
   INBOX_EMPTY_MESSAGE,
-  INBOX_EMPTY_OFFSITE_NOTE,
   INBOX_FILTER_EMPTY_MESSAGE,
   INBOX_GENERIC_ERROR_MESSAGE,
   INBOX_NO_ACCESS_MESSAGE,
@@ -12,13 +11,14 @@ import {
   INBOX_STALE_MESSAGE,
   INBOX_STATUS_FILTERS,
   inboxActionError,
-  inboxEmptyMessages,
+  inboxEmptyMessage,
   inboxStatusFilterInput,
   newFeedbackBadge,
   ownerStatusChoices,
   ownerStatusLabel,
   reporterLabel,
 } from '~/components/Apps/appFeedbackInbox';
+import { APP_FEEDBACK_PRIVATE_NOTICE } from '~/components/AppBlocks/appFeedbackChrome';
 
 describe('ownerStatusChoices — the status control', () => {
   it('a NEW row offers all three developer statuses', () => {
@@ -188,14 +188,9 @@ describe('labels and filters', () => {
 describe('the copy owners read, pinned literally', () => {
   it('privacy, empty, stale and lost-access wording', () => {
     expect(INBOX_PRIVACY_NOTE).toBe(
-      "Private feedback from people using this app. Only you, your collaborators and Civitai moderators can read it — it never appears on the app's page."
+      "Private feedback from people using this app. Only this app's developer, their collaborators and Civitai moderators can read it — it never appears on the app's page."
     );
-    expect(INBOX_EMPTY_MESSAGE).toBe(
-      'No feedback yet. When people using this app send it private feedback, it shows up here.'
-    );
-    expect(INBOX_EMPTY_OFFSITE_NOTE).toBe(
-      "Feedback is sent from the menu of an app running on Civitai, so Standalone apps don't receive any yet."
-    );
+    expect(INBOX_EMPTY_MESSAGE).toBe('No feedback to show right now.');
     expect(INBOX_STALE_MESSAGE).toBe('Someone already changed this feedback. Refresh to see it.');
     expect(INBOX_NO_ACCESS_MESSAGE).toBe("You no longer have access to this app's feedback.");
     expect(INBOX_FILTER_EMPTY_MESSAGE).toBe('No feedback with this status.');
@@ -203,20 +198,25 @@ describe('the copy owners read, pinned literally', () => {
   });
 });
 
-describe('inboxEmptyMessages', () => {
-  it('on-site, unfiltered: the inbox explanation alone', () => {
-    expect(inboxEmptyMessages('onsite', 'all')).toEqual([INBOX_EMPTY_MESSAGE]);
+describe('inboxEmptyMessage', () => {
+  it('unfiltered: nothing left to show (the tab only exists once a row did)', () => {
+    expect(inboxEmptyMessage('all')).toBe(INBOX_EMPTY_MESSAGE);
   });
 
-  it('off-site, unfiltered: says why nothing arrives', () => {
-    expect(inboxEmptyMessages('offsite', 'all')).toEqual([
-      INBOX_EMPTY_MESSAGE,
-      INBOX_EMPTY_OFFSITE_NOTE,
-    ]);
+  it('a filter that matches nothing says so', () => {
+    expect(inboxEmptyMessage('resolved')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
+    expect(inboxEmptyMessage('new')).toBe(INBOX_FILTER_EMPTY_MESSAGE);
   });
+});
 
-  it('a filter that matches nothing says so, for either kind', () => {
-    expect(inboxEmptyMessages('onsite', 'resolved')).toEqual([INBOX_FILTER_EMPTY_MESSAGE]);
-    expect(inboxEmptyMessages('offsite', 'new')).toEqual([INBOX_FILTER_EMPTY_MESSAGE]);
+describe('the sender and the developer are told the same readers', () => {
+  it('the send dialog and the inbox name an identical audience', () => {
+    // Pinned as a RELATIONSHIP across the two surfaces: extract the "Only <readers> can read"
+    // clause from each and compare, so neither can be reworded to a different audience alone.
+    const readers = (s: string) => s.match(/Only (.*?) can read/)?.[1];
+    expect(readers(INBOX_PRIVACY_NOTE)).toBe(
+      "this app's developer, their collaborators and Civitai moderators"
+    );
+    expect(readers(APP_FEEDBACK_PRIVATE_NOTICE)).toBe(readers(INBOX_PRIVACY_NOTE));
   });
 });
