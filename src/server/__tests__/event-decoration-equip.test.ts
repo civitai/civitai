@@ -213,6 +213,9 @@ describe('placing an event decoration', () => {
 
     const sql = (db.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
     expect(sql).toMatch(/jsonb_build_object\('placedAt', \?::text\)/);
+    // Prisma binds strings as text, which Postgres will not assign to an enum column uncast. The
+    // PGlite behaviour test cannot see this: it infers untyped parameters from the column.
+    expect(sql).toMatch(/"equippedToType" = \?::"CosmeticEntity",/);
     // Anchored on the whole condition: a weakened clause beside it would leave a fragment match.
     expect(sql).toMatch(
       /AND \("data"->>'placedAt' IS NULL\s+OR \("data"->>'placedAt'\)::timestamptz <= \?\)\s*$/
