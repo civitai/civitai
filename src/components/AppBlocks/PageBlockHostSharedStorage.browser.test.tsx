@@ -4,7 +4,11 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { SAVE_IMAGE_MAX_CONCURRENT } from '~/components/AppBlocks/saveImageDownload';
+import {
+  SAVE_BYTES_MAX_PER_WINDOW,
+  SAVE_BYTES_WINDOW_MS,
+  SAVE_IMAGE_MAX_CONCURRENT,
+} from '~/components/AppBlocks/saveImageDownload';
 
 /**
  * App Blocks SHARED (cross-user / app-global) storage bridge — host side (Phase 2b).
@@ -1059,7 +1063,6 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       requestId: 'rq_save_bytes',
       bytes,
       filename: 'healed.html',
-      mimeType: 'text/html',
     });
 
     await vi.waitFor(() => {
@@ -1125,7 +1128,90 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
-  test('SAVE_IMAGE bytes variant shares the concurrency cap with the url variant', async () => {
+  /** Every SAVE_IMAGE_RESULT payload received so far, keyed by requestId. */
+  const saveResults = (replies: ReturnType<typeof listenForReply>) =>
+    Object.fromEntries(
+      replies.received
+        .filter((m) => m.type === 'SAVE_IMAGE_RESULT')
+        .map((m) => {
+          const p = m.payload as { requestId: string; ok: boolean; error?: string };
+          return [p.requestId, p.ok ? 'ok' : p.error];
+        })
+    );
+
+  /** A PNG of `size` bytes: real signature, zero padding (the classifier only sniffs the head). */
+  const pngOfSize = (size: number) => {
+    const u8 = new Uint8Array(size);
+    u8.set(new Uint8Array(PNG_BYTES()));
+    return u8.buffer;
+  };
+
+  test(`SAVE_IMAGE bytes rate limit: the ${
+    SAVE_BYTES_MAX_PER_WINDOW + 1
+  }th save inside the window is busy, and saves are accepted again after it`, async () => {
+    // Real time plus a movable offset, so nothing else in the host sees a frozen clock.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    try {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      for (let i = 0; i <= SAVE_BYTES_MAX_PER_WINDOW; i++) {
+        postFromBlock('SAVE_IMAGE', { requestId: `rq_rate${i}`, bytes: PNG_BYTES() });
+      }
+      await vi.waitFor(() => {
+        expect(saveResults(replies)).toEqual({
+          rq_rate0: 'ok',
+          rq_rate1: 'ok',
+          rq_rate2: 'ok',
+          rq_rate3: 'ok',
+          rq_rate4: 'ok',
+          rq_rate5: 'busy',
+        });
+      });
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(SAVE_BYTES_MAX_PER_WINDOW);
+
+      offset += SAVE_BYTES_WINDOW_MS;
+      postFromBlock('SAVE_IMAGE', { requestId: 'rq_rate_after', bytes: PNG_BYTES() });
+      await vi.waitFor(() => {
+        expect(saveResults(replies).rq_rate_after).toBe('ok');
+      });
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(SAVE_BYTES_MAX_PER_WINDOW + 1);
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('SAVE_IMAGE bytes rate limit: a save that would push the window over 100 MB is busy', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const MB = 1024 * 1024;
+
+    // 40 + 40 = 80 MB fits; a third 40 MB would make 120 MB. Each is under the 50 MB per-file cap,
+    // so only the window total can refuse the third.
+    for (let i = 0; i < 3; i++) {
+      postFromBlock('SAVE_IMAGE', { requestId: `rq_mb${i}`, bytes: pngOfSize(40 * MB) });
+    }
+    // …while a small one that still fits under 100 MB is accepted: it is the total, not a count.
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_mb_small', bytes: pngOfSize(20 * MB) });
+
+    await vi.waitFor(() => {
+      expect(saveResults(replies)).toEqual({
+        rq_mb0: 'ok',
+        rq_mb1: 'ok',
+        rq_mb2: 'busy',
+        rq_mb_small: 'ok',
+      });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(3);
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes is not held up by url saves filling the concurrency slots', async () => {
     mocks.saveDownload.mockReturnValue(new Promise(() => undefined));
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
@@ -1137,14 +1223,12 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
         url: 'https://image.civitai.com/xG/77/original.jpeg',
       });
     }
-    postFromBlock('SAVE_IMAGE', { requestId: 'rq_bytes_overflow', bytes: PNG_BYTES() });
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_bytes_free', bytes: PNG_BYTES() });
 
     await vi.waitFor(() => {
-      const r = replies.last('SAVE_IMAGE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_bytes_overflow', ok: false, error: 'busy' });
+      expect(saveResults(replies).rq_bytes_free).toBe('ok');
     });
-    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
     replies.stop();
   });
 

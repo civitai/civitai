@@ -94,6 +94,7 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  admitSaveBytes,
   downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
@@ -101,6 +102,7 @@ import {
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
+  type SaveBytesWindowEntry,
 } from './saveImageDownload';
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -3607,6 +3609,10 @@ export function PageBlockHost({
   // synchronously in the message handler (single-threaded ⇒ check→increment before
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
+  // `bytes` saves are limited separately, over a rolling window (admitSaveBytes):
+  // they never await, so the in-flight count above would be released before the
+  // next message and bound nothing. Same ref-not-state reasoning.
+  const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
@@ -3621,6 +3627,9 @@ export function PageBlockHost({
   //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
   //            is classified from the content (prepareSaveBytes) and only
   //            image/JSON/text can be saved, under the classified extension.
+  //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
@@ -3631,6 +3640,31 @@ export function PageBlockHost({
       const { requestId } = req;
       if (req.kind === 'invalid') {
         send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
+        return;
+      }
+      if (req.kind === 'bytes') {
+        try {
+          const prepared = prepareSaveBytes(req);
+          if (!prepared.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: prepared.error });
+            return;
+          }
+          // Only a save that would actually download counts against the window.
+          const admitted = admitSaveBytes(
+            saveBytesWindowRef.current,
+            Date.now(),
+            req.bytes.byteLength
+          );
+          saveBytesWindowRef.current = admitted.recent;
+          if (!admitted.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'busy' });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, prepared.type, prepared.filename);
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
         return;
       }
       // F2 concurrency cap (host-side backpressure): bound concurrent host-side
@@ -3644,16 +3678,6 @@ export function PageBlockHost({
       }
       saveImageInFlightRef.current += 1;
       try {
-        if (req.kind === 'bytes') {
-          const prepared = prepareSaveBytes(req);
-          if (!prepared.ok) {
-            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: prepared.error });
-            return;
-          }
-          downloadBytesAsBlob(req.bytes, prepared.type, prepared.filename);
-          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
-          return;
-        }
         if (req.kind === 'url') {
           if (!isAllowedSaveImageUrl(req.url, env.NEXT_PUBLIC_IMAGE_LOCATION)) {
             send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image url is not allowed' });

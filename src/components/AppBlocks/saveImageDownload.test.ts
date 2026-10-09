@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  admitSaveBytes,
   CIVITAI_IMAGE_HOSTS,
   classifySaveBytes,
   enforceImageExtension,
@@ -9,6 +10,10 @@ import {
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_BYTES_MAX_BYTES,
+  SAVE_BYTES_MAX_BYTES_PER_WINDOW,
+  SAVE_BYTES_MAX_PER_WINDOW,
+  SAVE_BYTES_WINDOW_MS,
+  type SaveBytesWindowEntry,
 } from './saveImageDownload';
 
 const CDN = 'https://image.civitai.com';
@@ -286,27 +291,18 @@ const WEBP = ab(0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42
 const GIF = ab(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00);
 
 describe('resolveSaveImageRequest — bytes variant', () => {
-  it('parses a bytes request, keeping the filename and mimeType hints', () => {
+  it('parses a bytes request, keeping the filename and dropping any mimeType', () => {
     const res = resolveSaveImageRequest({
       requestId: 'r',
       bytes: PNG,
       filename: 'healed.png',
       mimeType: 'image/png',
     });
-    expect(res).toEqual({
-      requestId: 'r',
-      kind: 'bytes',
-      bytes: PNG,
-      filename: 'healed.png',
-      mimeType: 'image/png',
-    });
+    // Exact key set: a `mimeType` sent by an older block is not carried into the request.
+    expect(res).toEqual({ requestId: 'r', kind: 'bytes', bytes: PNG, filename: 'healed.png' });
+    expect(Object.keys(res ?? {}).sort()).toEqual(['bytes', 'filename', 'kind', 'requestId']);
     // toEqual treats any two ArrayBuffers as equal, so pin identity separately.
     expect(res && 'bytes' in res ? res.bytes : null).toBe(PNG);
-  });
-
-  it('drops a non-string mimeType hint', () => {
-    const res = resolveSaveImageRequest({ requestId: 'r', bytes: PNG, mimeType: 5 });
-    expect(res && 'mimeType' in res ? res.mimeType : 'missing').toBeUndefined();
   });
 
   it('bytes together with url or imageId is invalid, even when that sibling is itself invalid', () => {
@@ -333,7 +329,7 @@ describe('resolveSaveImageRequest — bytes variant', () => {
     }
   });
 
-  it('refuses an empty buffer', () => {
+  it('refuses an empty buffer (the only empty-input guard: classifySaveBytes has none)', () => {
     expect(resolveSaveImageRequest({ requestId: 'r', bytes: new ArrayBuffer(0) })).toEqual({
       requestId: 'r',
       kind: 'invalid',
@@ -342,39 +338,29 @@ describe('resolveSaveImageRequest — bytes variant', () => {
 });
 
 describe('classifySaveBytes', () => {
-  it('classifies PNG, WebP and JPEG by magic bytes, ignoring the hints', () => {
-    expect(classifySaveBytes(PNG, { mimeType: 'text/html', filename: 'x.html' })).toBe('image/png');
+  it('classifies PNG, WebP and JPEG by magic bytes, whatever the filename says', () => {
+    expect(classifySaveBytes(PNG, 'x.html')).toBe('image/png');
     expect(classifySaveBytes(WEBP)).toBe('image/webp');
-    expect(classifySaveBytes(JPEG, { mimeType: 'application/json' })).toBe('image/jpeg');
+    expect(classifySaveBytes(JPEG, 'meta.json')).toBe('image/jpeg');
   });
 
-  it('JSON only with a hint: mimeType or a .json filename', () => {
+  it('JSON only when the text parses AND the filename ends .json (case-insensitive)', () => {
     const json = textAb('{"prompt":"a cat","steps":30}');
-    expect(classifySaveBytes(json, { mimeType: 'application/json' })).toBe('application/json');
-    expect(classifySaveBytes(json, { mimeType: 'Application/JSON; charset=utf-8' })).toBe(
-      'application/json'
-    );
-    expect(classifySaveBytes(json, { filename: 'meta.JSON' })).toBe('application/json');
+    expect(classifySaveBytes(json, 'meta.json')).toBe('application/json');
+    expect(classifySaveBytes(json, 'meta.JSON')).toBe('application/json');
     expect(classifySaveBytes(json)).toBe('text/plain');
-    expect(classifySaveBytes(json, { mimeType: 'text/plain', filename: 'meta.txt' })).toBe(
-      'text/plain'
-    );
+    expect(classifySaveBytes(json, 'meta.txt')).toBe('text/plain');
+    expect(classifySaveBytes(json, 'meta.json.txt')).toBe('text/plain');
   });
 
-  it('a JSON hint on text that does not parse yields plain text', () => {
-    expect(classifySaveBytes(textAb('{not json'), { mimeType: 'application/json' })).toBe(
-      'text/plain'
-    );
+  it('a .json filename on text that does not parse yields plain text', () => {
+    expect(classifySaveBytes(textAb('{not json'), 'meta.json')).toBe('text/plain');
   });
 
-  it('valid UTF-8 text is plain text, whatever type the caller claims', () => {
+  it('valid UTF-8 text is plain text, whatever the filename claims', () => {
     expect(classifySaveBytes(textAb('steps: 30\nsampler: Euler a\n'))).toBe('text/plain');
-    expect(
-      classifySaveBytes(textAb('<svg onload="alert(1)"/>'), { mimeType: 'image/svg+xml' })
-    ).toBe('text/plain');
-    expect(classifySaveBytes(textAb('<html><script>x()</script>'), { mimeType: 'text/html' })).toBe(
-      'text/plain'
-    );
+    expect(classifySaveBytes(textAb('<svg onload="alert(1)"/>'), 'x.svg')).toBe('text/plain');
+    expect(classifySaveBytes(textAb('<html><script>x()</script>'), 'x.html')).toBe('text/plain');
     expect(classifySaveBytes(textAb('naïve ✓ 日本'))).toBe('text/plain');
   });
 
@@ -387,12 +373,11 @@ describe('classifySaveBytes', () => {
     expect(classifySaveBytes(ab(0xff, 0xfe, 0x41))).toBeNull();
   });
 
-  it('refuses GIF, archives, executables and empty input', () => {
-    expect(classifySaveBytes(GIF, { mimeType: 'image/gif' })).toBeNull();
+  it('refuses GIF, archives and executables', () => {
+    expect(classifySaveBytes(GIF, 'a.gif')).toBeNull();
     expect(classifySaveBytes(ab(0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00))).toBeNull(); // zip
     expect(classifySaveBytes(ab(0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00))).toBeNull(); // PE
     expect(classifySaveBytes(ab(0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00))).toBeNull(); // ELF
-    expect(classifySaveBytes(new ArrayBuffer(0))).toBeNull();
   });
 
   it('a truncated PNG signature is not an image', () => {
@@ -435,12 +420,17 @@ describe('prepareSaveBytes', () => {
       type: 'image/png',
       filename: 'healed.png',
     });
-    expect(
-      prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'meta.json', mimeType: 'text/html' })
-    ).toEqual({ ok: true, type: 'application/json', filename: 'meta.json' });
-    expect(
-      prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'meta', mimeType: 'application/json' })
-    ).toEqual({ ok: true, type: 'application/json', filename: 'meta.json' });
+    expect(prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'meta.json' })).toEqual({
+      ok: true,
+      type: 'application/json',
+      filename: 'meta.json',
+    });
+    // No .json filename ⇒ plain text, even for valid JSON.
+    expect(prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'meta' })).toEqual({
+      ok: true,
+      type: 'text/plain',
+      filename: 'meta.txt',
+    });
     expect(prepareSaveBytes({ bytes: textAb('hello') })).toEqual({
       ok: true,
       type: 'text/plain',
@@ -481,5 +471,80 @@ describe('prepareSaveBytes', () => {
       ok: false,
       error: 'file exceeds the maximum save size',
     });
+  });
+});
+
+describe('admitSaveBytes (bytes rate limit over a rolling window)', () => {
+  const MB = 1024 * 1024;
+  const T0 = 1_000_000;
+
+  it('pins the limits', () => {
+    expect([
+      SAVE_BYTES_WINDOW_MS,
+      SAVE_BYTES_MAX_PER_WINDOW,
+      SAVE_BYTES_MAX_BYTES_PER_WINDOW,
+    ]).toEqual([10_000, 5, 100 * MB]);
+  });
+
+  /** Feed saves one at a time, carrying the returned list forward like the host's ref does. */
+  function run(saves: Array<[at: number, size: number]>, start: SaveBytesWindowEntry[] = []) {
+    let recent = start;
+    return saves.map(([at, size]) => {
+      const r = admitSaveBytes(recent, at, size);
+      recent = r.recent;
+      return r.ok;
+    });
+  }
+
+  it('admits 5 saves inside the window and refuses the 6th', () => {
+    expect(run([0, 1, 2, 3, 4, 5].map((i) => [T0 + i * 100, 1000] as [number, number]))).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+    ]);
+  });
+
+  it('refuses a save that would push the window total over 100 MB, admits one that lands on it', () => {
+    expect(
+      run([
+        [T0, 40 * MB],
+        [T0 + 1, 40 * MB],
+        [T0 + 2, 20 * MB + 1],
+      ])
+    ).toEqual([true, true, false]);
+    expect(
+      run([
+        [T0, 40 * MB],
+        [T0 + 1, 40 * MB],
+        [T0 + 2, 20 * MB],
+      ])
+    ).toEqual([true, true, true]);
+  });
+
+  it('a refused save is not recorded, so it does not use up the window', () => {
+    // 90 MB, then a refused 20 MB, then a 10 MB that fits only if the 20 MB was not counted.
+    expect(
+      run([
+        [T0, 90 * MB],
+        [T0 + 1, 20 * MB],
+        [T0 + 2, 10 * MB],
+      ])
+    ).toEqual([true, false, true]);
+  });
+
+  it('admits again once the earlier saves leave the window', () => {
+    const full = [0, 1, 2, 3, 4].map((i) => ({ at: T0 + i, size: 1000 }));
+    // 9,999 ms after the first save all five are still live; 10,000 ms after it, that one has left.
+    expect(admitSaveBytes(full, T0 + SAVE_BYTES_WINDOW_MS - 1, 1000).ok).toBe(false);
+    const later = admitSaveBytes(full, T0 + SAVE_BYTES_WINDOW_MS, 1000);
+    expect(later.ok).toBe(true);
+    expect(later.recent.map((e) => e.at)).toEqual([T0 + 1, T0 + 2, T0 + 3, T0 + 4, T0 + 10_000]);
+    // The byte budget expires the same way.
+    const big = [{ at: T0, size: 100 * MB }];
+    expect(admitSaveBytes(big, T0 + 9_999, 1).ok).toBe(false);
+    expect(admitSaveBytes(big, T0 + 10_000, 100 * MB).ok).toBe(true);
   });
 });

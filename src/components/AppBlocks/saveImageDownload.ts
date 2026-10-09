@@ -21,10 +21,13 @@
  *                 allowlist, so the download step is uniform.
  *   - `bytes`   — a file the block produced in its tab (an `ArrayBuffer`). Nothing
  *                 is fetched; the type is classified from the CONTENT
- *                 ({@link classifySaveBytes}) — never the caller's mimeType or
- *                 filename — so only PNG / WebP / JPEG / JSON / plain text can be
- *                 saved, always under that type's own extension.
+ *                 ({@link classifySaveBytes}) — the filename only picks JSON over
+ *                 plain text for text that parses as JSON — so only PNG / WebP /
+ *                 JPEG / JSON / plain text can be saved, always under that type's
+ *                 own extension. Rate-limited per host by {@link admitSaveBytes}.
  */
+
+import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
 
 /**
  * Civitai-owned image / orchestration-blob hostnames the download bridge may
@@ -76,8 +79,41 @@ export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
  * fetches on the block's behalf in the unsandboxed top frame; without a cap a
  * hostile block could fire a burst of SAVE_IMAGEs and download-bomb the viewer's
  * tab (memory / bandwidth). The host gates on this and replies `busy` past it.
+ * Covers the `url` / `imageId` variants only: a `bytes` save never awaits, so a
+ * concurrency slot would be released before the next message arrived and bound
+ * nothing — `bytes` has its own rolling-window limit ({@link admitSaveBytes}).
  */
 export const SAVE_IMAGE_MAX_CONCURRENT = 3;
+
+/** Rolling window for the `bytes` rate limit: long enough to span a burst, short enough that a real user never waits long. */
+export const SAVE_BYTES_WINDOW_MS = 10_000;
+/** A person saves a handful of files at a time; five per window still allows an image + its JSON + notes twice over. */
+export const SAVE_BYTES_MAX_PER_WINDOW = 5;
+/** Two max-size (50 MB) files per window, so a burst can't stack hundreds of MB of Blob copies in the viewer's tab. */
+export const SAVE_BYTES_MAX_BYTES_PER_WINDOW = 100 * 1024 * 1024; // 100 MB
+
+/** One accepted `bytes` save: when it was admitted and how large it was. */
+export type SaveBytesWindowEntry = { at: number; size: number };
+
+/**
+ * Sliding-window limiter for `bytes` saves, pure so it is testable without timers. Drops entries
+ * older than {@link SAVE_BYTES_WINDOW_MS}, then admits a save of `size` bytes only if fewer than
+ * {@link SAVE_BYTES_MAX_PER_WINDOW} saves remain in the window AND their total plus `size` stays
+ * within {@link SAVE_BYTES_MAX_BYTES_PER_WINDOW}. Returns the pruned list, with the new save
+ * appended when admitted; the caller stores it back. A refused save is not recorded.
+ */
+export function admitSaveBytes(
+  recent: readonly SaveBytesWindowEntry[],
+  now: number,
+  size: number
+): { ok: boolean; recent: SaveBytesWindowEntry[] } {
+  const live = recent.filter((e) => now - e.at < SAVE_BYTES_WINDOW_MS);
+  const total = live.reduce((sum, e) => sum + e.size, 0);
+  if (live.length >= SAVE_BYTES_MAX_PER_WINDOW || total + size > SAVE_BYTES_MAX_BYTES_PER_WINDOW) {
+    return { ok: false, recent: live };
+  }
+  return { ok: true, recent: [...live, { at: now, size }] };
+}
 
 /**
  * F2 — canonical download extension per resolved content type. Bytes fetched
@@ -207,13 +243,7 @@ export function enforceImageExtension(filename: string, contentType?: string | n
 export type SaveImageRequest =
   | { requestId: string; kind: 'url'; url: string; filename?: string }
   | { requestId: string; kind: 'id'; imageId: number; filename?: string }
-  | {
-      requestId: string;
-      kind: 'bytes';
-      bytes: ArrayBuffer;
-      filename?: string;
-      mimeType?: string;
-    };
+  | { requestId: string; kind: 'bytes'; bytes: ArrayBuffer; filename?: string };
 
 /**
  * Parse a raw inbound SAVE_IMAGE payload into a discriminated request, or `null`
@@ -233,7 +263,6 @@ export function resolveSaveImageRequest(
     imageId?: unknown;
     bytes?: unknown;
     filename?: unknown;
-    mimeType?: unknown;
   };
   if (typeof r.requestId !== 'string' || r.requestId.length === 0) return null;
   const filename = typeof r.filename === 'string' ? r.filename : undefined;
@@ -244,13 +273,7 @@ export function resolveSaveImageRequest(
     if (!(r.bytes instanceof ArrayBuffer) || r.bytes.byteLength === 0) {
       return { requestId: r.requestId, kind: 'invalid' };
     }
-    return {
-      requestId: r.requestId,
-      kind: 'bytes',
-      bytes: r.bytes,
-      filename,
-      mimeType: typeof r.mimeType === 'string' ? r.mimeType : undefined,
-    };
+    return { requestId: r.requestId, kind: 'bytes', bytes: r.bytes, filename };
   }
   const hasUrl = typeof r.url === 'string' && r.url.length > 0;
   const hasId = typeof r.imageId === 'number' && Number.isInteger(r.imageId) && r.imageId > 0;
@@ -347,33 +370,29 @@ export const SAVE_BYTES_TOO_LARGE_ERROR = 'file exceeds the maximum save size';
 export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
 
 /**
- * Client-side copy of the server-only sniffers `detectImageType` (publish-request.service.ts) and
- * `sniffSupportedImage` (block-image-upload.service.ts). Same set as `detectImageType`: no GIF,
- * full 8-byte PNG signature.
+ * PNG / WebP / JPEG by magic bytes, via the shared {@link sniffImageFormat} (the same module the
+ * server's `detectImageType` and `sniffSupportedImage` use). This caller's rules: full 8-byte PNG
+ * signature and no GIF, the same set `detectImageType` accepts.
  */
-function sniffSaveBytesImage(b: Uint8Array): SaveBytesType | null {
-  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
-  const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  if (b.length >= png.length && png.every((v, i) => b[i] === v)) return 'image/png';
-  const riff = [0x52, 0x49, 0x46, 0x46];
-  const webp = [0x57, 0x45, 0x42, 0x50];
-  if (b.length >= 12 && riff.every((v, i) => b[i] === v) && webp.every((v, i) => b[8 + i] === v)) {
-    return 'image/webp';
-  }
-  return null;
+export function sniffSaveBytesImage(b: Uint8Array): SaveBytesType | null {
+  const format = sniffImageFormat(b, { formats: ['png', 'webp', 'jpeg'], pngSignature: 'full' });
+  return format ? SAVE_BYTES_IMAGE_TYPE[format] : null;
 }
 
+const SAVE_BYTES_IMAGE_TYPE = {
+  png: 'image/png',
+  webp: 'image/webp',
+  jpeg: 'image/jpeg',
+} as const satisfies Partial<Record<ImageMagicFormat, SaveBytesType>>;
+
 /**
- * Classify block-supplied bytes by CONTENT. The caller's `mimeType` / `filename` only choose
- * between JSON and plain text for bytes that are already valid UTF-8 text; they can never make
- * anything else saveable. `null` = not a saveable type (GIF, archives, executables, binary).
+ * Classify block-supplied bytes by CONTENT. The `filename` only chooses JSON over plain text, and
+ * only for valid UTF-8 text that also parses as JSON; it can never make anything else saveable.
+ * `null` = not a saveable type (GIF, archives, executables, binary). An empty buffer never gets
+ * here: {@link resolveSaveImageRequest} refuses it.
  */
-export function classifySaveBytes(
-  bytes: ArrayBuffer,
-  hint: { mimeType?: string; filename?: string } = {}
-): SaveBytesType | null {
+export function classifySaveBytes(bytes: ArrayBuffer, filename = ''): SaveBytesType | null {
   const u8 = new Uint8Array(bytes);
-  if (u8.length === 0) return null;
   const image = sniffSaveBytesImage(u8);
   if (image) return image;
   if (u8.includes(0)) return null;
@@ -383,10 +402,7 @@ export function classifySaveBytes(
   } catch {
     return null;
   }
-  const hintedJson =
-    (hint.mimeType ?? '').split(';')[0].trim().toLowerCase() === 'application/json' ||
-    (hint.filename ?? '').toLowerCase().endsWith('.json');
-  if (hintedJson) {
+  if (filename.toLowerCase().endsWith('.json')) {
     try {
       JSON.parse(text);
       return 'application/json';
@@ -414,13 +430,12 @@ export function forceSaveBytesExtension(filename: string, type: SaveBytesType): 
 export function prepareSaveBytes(req: {
   bytes: ArrayBuffer;
   filename?: string;
-  mimeType?: string;
 }): { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string } {
   if (req.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
     return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
   }
   const filename = sanitizeDownloadFilename(req.filename, 'download');
-  const type = classifySaveBytes(req.bytes, { mimeType: req.mimeType, filename });
+  const type = classifySaveBytes(req.bytes, filename);
   if (!type) return { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
   return { ok: true, type, filename: forceSaveBytesExtension(filename, type) };
 }
