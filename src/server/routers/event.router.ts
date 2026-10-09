@@ -6,6 +6,7 @@ import {
   eventCosmeticScoresSchema,
   eventSchema,
   teamScoreHistorySchema,
+  wornEventHatSchema,
 } from '~/server/schema/event.schema';
 import {
   activateEventCosmetic,
@@ -25,6 +26,7 @@ import {
   getEventHatCatalog,
   getMyEventHats,
   getPlaceableEventContent,
+  getWornEventHat,
 } from '~/server/services/event.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -136,6 +138,13 @@ export const eventRouter = router({
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) => getEventCosmeticScores({ ...input, viewer: ctx.user })),
+  // The hat on one card, read when its popover opens. The same for every viewer who sees the event.
+  getWornHat: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(wornEventHatSchema)
+    .use(eventGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(({ ctx, input }) => getWornEventHat({ ...input, viewer: ctx.user })),
   // The caller's own hats and content: per user, so never cached.
   getMyHats: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

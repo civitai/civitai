@@ -40,7 +40,7 @@ vi.mock('~/server/events/scoring/cosmetic-placement.service', async (importOrigi
 }));
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { fetch: vi.fn(async () => ({ 21: { name: 'Party Cap - Yellow' } })) },
-  profilePictureCache: { fetch: vi.fn() },
+  profilePictureCache: { fetch: vi.fn(async () => ({})) },
   refreshOwnedStickerCache: vi.fn(),
   userBasicCache: { fetch: vi.fn(async () => ({})) },
 }));
@@ -92,6 +92,8 @@ describe('scored reads are gated on what the viewer may read', () => {
       service.getMyEventCosmeticScores({ event: 'birthday2026', user: viewer }),
     getEventCosmeticScores: () =>
       service.getEventCosmeticScores({ event: 'birthday2026', cosmetics: [], viewer }),
+    getWornEventHat: () =>
+      service.getWornEventHat({ event: 'birthday2026', entityType: 'Image', entityId: 5, viewer }),
   };
 
   for (const [name, read] of Object.entries(reads)) {
@@ -473,5 +475,122 @@ describe('getEventHatCatalog', () => {
         `AND (c.data->>'design' = ? OR c.id = ANY(?::int[])) ORDER BY c.id`
     );
     expect(values).toEqual(['birthday2026', 'basic', [7, 9]]);
+  });
+});
+
+describe('getWornEventHat', () => {
+  const viewer = { id: 1 };
+  const read = () =>
+    service.getWornEventHat({ event: 'birthday2026', entityType: 'Image', entityId: 5, viewer });
+  const row = {
+    userId: 9,
+    cosmeticId: 31,
+    claimKey: 'claimed',
+    name: 'Party Cap - Blue',
+    data: { type: 'hat', event: 'birthday2026', url: 'blue.png', team: 'Blue' },
+  };
+  const userBasic = async () =>
+    vi.mocked((await import('~/server/redis/caches')).userBasicCache.fetch);
+  const profilePictures = async () =>
+    vi.mocked((await import('~/server/redis/caches')).profilePictureCache.fetch);
+
+  it('refuses an event the viewer may not read, and reads nothing', async () => {
+    engine.getReadableScoredEvent.mockImplementation(notStarted);
+    await expect(read()).rejects.toThrow("That event doesn't exist");
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('is null when no hat of the event is on that content', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    expect(await read()).toBeNull();
+    expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
+  });
+
+  it('names the hat without its team, its wearer, and what it has earned', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+    (await userBasic()).mockResolvedValueOnce({
+      9: { id: 9, username: 'civ', image: 'a.png', deletedAt: null },
+    } as never);
+    (await profilePictures()).mockResolvedValueOnce({ 9: { id: 70, url: 'p.png' } } as never);
+    scoring.getCosmeticScores.mockResolvedValue({
+      '9:31:claimed': { points: 12, impressions: 300, anonImpressions: 40, reactions: 7 },
+    });
+    expect(await read()).toEqual({
+      cosmeticId: 31,
+      name: 'Party Cap',
+      team: 'Blue',
+      url: 'blue.png',
+      owner: { id: 9, username: 'civ', image: 'a.png', profilePicture: { id: 70, url: 'p.png' } },
+      points: 12,
+      impressions: 340,
+      reactions: 7,
+    });
+    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
+      { userId: 9, cosmeticId: 31, claimKey: 'claimed' },
+    ]);
+    // The wearer, not the viewer (id 1).
+    expect(await userBasic()).toHaveBeenCalledWith([9]);
+    expect(await profilePictures()).toHaveBeenCalledWith([9]);
+  });
+
+  it('is null for a decoration whose data is not an event hat', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ ...row, data: {} }]);
+    expect(await read()).toBeNull();
+    expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
+  });
+
+  it('keeps the whole name of a hat with no team', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { ...row, name: 'Party Cap - Blue', data: { type: 'hat', event: 'birthday2026', url: 'u' } },
+    ]);
+    expect(await read()).toMatchObject({ name: 'Party Cap - Blue', team: null });
+  });
+
+  it('hides a deleted wearer and reads an unscored hat as zero', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+    (await userBasic()).mockResolvedValueOnce({
+      9: { id: 9, username: 'civ', image: null, deletedAt: new Date() },
+    } as never);
+    expect(await read()).toMatchObject({ owner: null, points: 0, impressions: 0, reactions: 0 });
+  });
+
+  // The rows are the mock's, so pin the whole query: this content, this event's decorations, and
+  // only while the content is public, since the answer is edge-cached for everyone.
+  it('queries the hat on this content of this event, only while the content is public', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    await read();
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    expect(strings.join('?').replace(/\s+/g, ' ').trim()).toBe(
+      `SELECT uc."userId", uc."cosmeticId", uc."claimKey", c.name, c.data ` +
+        `FROM "UserCosmetic" uc JOIN "Cosmetic" c ON c.id = uc."cosmeticId" ` +
+        `WHERE uc."equippedToType" = ?::"CosmeticEntity" AND uc."equippedToId" = ? ` +
+        `AND c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
+        `AND CASE uc."equippedToType" ` +
+        `WHEN 'Image' THEN EXISTS ( SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId" ` +
+        `WHERE i.id = uc."equippedToId" AND p."publishedAt" <= now() ` +
+        `AND p.availability <> 'Private' AND NOT p."tosViolation" ` +
+        `AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation" ) ` +
+        `WHEN 'Model' THEN EXISTS ( SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published' ` +
+        `AND m.availability <> 'Private' AND NOT m."tosViolation" ) ` +
+        `WHEN 'Article' THEN EXISTS ( SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published' ` +
+        `AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation" ) ` +
+        `ELSE false END ORDER BY uc."equippedAt" DESC NULLS LAST LIMIT 1`
+    );
+    expect(values).toEqual(['Image', 5, 'birthday2026']);
+  });
+});
+
+describe('wornEventHatSchema', () => {
+  it('takes one piece of content by type and id', async () => {
+    const { wornEventHatSchema } = await import('~/server/schema/event.schema');
+    const ok = { event: 'birthday2026', entityType: 'Image', entityId: 5 };
+    expect(wornEventHatSchema.safeParse(ok).success).toBe(true);
+    for (const bad of [
+      { ...ok, entityType: 'Hat' },
+      { ...ok, entityId: 0 },
+      { ...ok, entityId: 1.5 },
+      { ...ok, entityId: '5' },
+    ])
+      expect(wornEventHatSchema.safeParse(bad).success).toBe(false);
   });
 });

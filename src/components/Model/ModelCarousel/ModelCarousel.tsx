@@ -133,6 +133,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                       <EventDecorationOverlay
                         decoration={image.eventDecoration.data}
                         placement="inside"
+                        wornOn={{ entityType: 'Image', entityId: image.id }}
                       />
                     )}
                     {inView && (

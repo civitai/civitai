@@ -4,7 +4,10 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getEntityCoverImage } from '~/server/services/image.service';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
-import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
+import {
+  getEventDecorationDefinition,
+  isEventDecorationData,
+} from '~/shared/constants/event-decoration.constants';
 import {
   ArticleStatus,
   CosmeticEntity,
@@ -21,7 +24,11 @@ import {
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
-import type { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
+import type {
+  EventInput,
+  TeamScoreHistoryInput,
+  WornEventHatInput,
+} from '~/server/schema/event.schema';
 import type { CosmeticScoreKey } from '~/server/events/scoring/cosmetic-placement.service';
 import {
   cosmeticScoreKey,
@@ -338,9 +345,7 @@ export async function getEventHatCatalog({ event, viewer }: EventInput & Viewer)
       if (!r.design || !r.team || !r.url) continue;
       let entry = designs.get(r.design);
       if (!entry) {
-        const suffix = ` - ${r.team}`;
-        const name = r.name.endsWith(suffix) ? r.name.slice(0, -suffix.length) : r.name;
-        entry = { design: r.design, name, hats: [] };
+        entry = { design: r.design, name: hatDesignName(r.name, r.team), hats: [] };
         designs.set(r.design, entry);
       }
       entry.hats.push({ team: r.team, url: r.url });
@@ -350,6 +355,12 @@ export async function getEventHatCatalog({ event, viewer }: EventInput & Viewer)
     throw getTRPCErrorFromUnknown(error);
   }
 }
+
+// "Party Cap - Blue" is "Party Cap" in Blue.
+const hatDesignName = (name: string, team: string) => {
+  const suffix = ` - ${team}`;
+  return name.endsWith(suffix) ? name.slice(0, -suffix.length) : name;
+};
 
 export async function getMyEventCosmeticScores({
   event,
@@ -534,6 +545,86 @@ export async function getEventCosmeticScores({
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
     return await getCosmeticScores(scored, cosmetics);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+type WornHatRow = {
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  name: string;
+  data: unknown;
+};
+
+// The hat of this event worn on one piece of content, who wears it and what it has earned there, for
+// the popover a click on a card's hat opens. Null when no hat of the event is on it, or when the
+// content is not public: the answer is the same for every viewer and is edge-cached as such.
+export async function getWornEventHat({
+  event,
+  entityType,
+  entityId,
+  viewer,
+}: WornEventHatInput & Viewer) {
+  try {
+    const scored = await eventEngine.getReadableScoredEvent(event, viewer);
+    const [row] = await dbRead.$queryRaw<WornHatRow[]>`
+      SELECT uc."userId", uc."cosmeticId", uc."claimKey", c.name, c.data
+      FROM "UserCosmetic" uc
+      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+      WHERE uc."equippedToType" = ${entityType}::"CosmeticEntity"
+        AND uc."equippedToId" = ${entityId}
+        AND c.type = 'ContentDecoration'
+        AND c.data->>'event' = ${event}
+        AND CASE uc."equippedToType"
+          WHEN 'Image' THEN EXISTS (
+            SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId"
+            WHERE i.id = uc."equippedToId" AND p."publishedAt" <= now()
+              AND p.availability <> 'Private' AND NOT p."tosViolation"
+              AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation"
+          )
+          WHEN 'Model' THEN EXISTS (
+            SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published'
+              AND m.availability <> 'Private' AND NOT m."tosViolation"
+          )
+          WHEN 'Article' THEN EXISTS (
+            SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published'
+              AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation"
+          )
+          ELSE false
+        END
+      ORDER BY uc."equippedAt" DESC NULLS LAST
+      LIMIT 1
+    `;
+    if (!row || !isEventDecorationData(row.data)) return null;
+    const team = row.data.team ?? null;
+    const key = { userId: row.userId, cosmeticId: row.cosmeticId, claimKey: row.claimKey };
+    const [users, profilePictures, scores] = await Promise.all([
+      userBasicCache.fetch([row.userId]),
+      profilePictureCache.fetch([row.userId]),
+      getCosmeticScores(scored, [key]),
+    ]);
+    const owner = users[row.userId];
+    const score = scores[cosmeticScoreKey(key)];
+    return {
+      cosmeticId: row.cosmeticId,
+      name: team ? hatDesignName(row.name, team) : row.name,
+      team,
+      url: row.data.url,
+      owner:
+        owner && !owner.deletedAt
+          ? {
+              id: owner.id,
+              username: owner.username,
+              image: owner.image,
+              profilePicture: profilePictures[owner.id] ?? null,
+            }
+          : null,
+      points: score?.points ?? 0,
+      impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
+      reactions: score?.reactions ?? 0,
+    };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

@@ -54,6 +54,7 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
       image={image}
       cosmetic={data.cosmetic?.data}
       eventDecoration={data.eventDecoration?.data}
+      eventDecorationOn={{ entityType: 'Article', entityId: id }}
       header={
         <div className="flex w-full justify-between">
           <div className="flex items-center gap-1">
