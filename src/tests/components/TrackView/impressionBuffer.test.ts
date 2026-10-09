@@ -7,7 +7,7 @@ import {
 } from '~/components/TrackView/impressionBuffer';
 import { __trackBufferTestHooks as trackHooks } from '~/components/TrackView/trackEventBuffer';
 import { __trackImpressionTestHooks as dwellHooks } from '~/components/TrackView/useTrackImpression';
-import { IMPRESSION_ENTITIES_MAX } from '~/server/schema/track.schema';
+import { IMPRESSION_ENTITIES_MAX, trackImpressionSchema } from '~/server/schema/track.schema';
 
 /**
  * Coverage for the impression coalescing layer.
@@ -238,6 +238,17 @@ describe('getImpressionSurface', () => {
     ['/challenges/5', 'challenges'],
   ])('maps %s to %s', (pathname, expected) => {
     expect(getImpressionSurface(pathname)).toBe(expected);
+  });
+
+  it('keeps a hub surface through the server parse rather than catching it to "other"', () => {
+    // The schema `.catch`es an unknown surface to 'other', so a surface the client
+    // emits but the server enum lacks is silently relabelled, not rejected.
+    const parsed = trackImpressionSchema.parse({
+      sessionKey: 'k',
+      surface: getImpressionSurface('/hubs/12'),
+      entities: [{ entityType: 'Image', entityId: 1 }],
+    });
+    expect(parsed.surface).toBe('hubs');
   });
 
   it('collapses anything unrecognised to "other" so the column cannot widen', () => {
