@@ -29,15 +29,15 @@ export const apiKeyRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .query(getApiKeySpendHandler),
   add: verifiedProcedure
-    .meta({ requiredScope: TokenScope.Full })
+    .meta({ requiredScope: TokenScope.Full, blockApiKeys: true })
     .input(addApiKeyInputSchema)
     .mutation(addApiKeyHandler),
   setBuzzLimit: protectedProcedure
-    .meta({ requiredScope: TokenScope.Full })
+    .meta({ requiredScope: TokenScope.Full, blockApiKeys: true })
     .input(setBuzzLimitInputSchema)
     .mutation(setBuzzLimitHandler),
   delete: protectedProcedure
-    .meta({ requiredScope: TokenScope.Full })
+    .meta({ requiredScope: TokenScope.Full, blockApiKeys: true })
     .input(deleteApiKeyInputSchema)
     .mutation(deleteApiKeyHandler),
 });
