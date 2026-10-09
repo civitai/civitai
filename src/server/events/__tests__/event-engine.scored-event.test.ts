@@ -10,7 +10,7 @@ import {
 
 const { mockCreateNotification, mockRefresh, mockScoring } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn(),
-  mockRefresh: vi.fn(async (_type: string, _ids: number[]) => undefined),
+  mockRefresh: vi.fn<(type: string, ids: number[]) => Promise<undefined>>(async () => undefined),
   mockScoring: {
     getEventStandings: vi.fn(),
     getTeamScoreHistory: vi.fn(),
