@@ -298,7 +298,9 @@ describe('submitting', () => {
     await typeAndSend('  the export button 404s  ');
     await expect
       .element(page.getByTestId('app-feedback-sent'))
-      .toHaveTextContent('Sent to the developer.');
+      .toHaveTextContent(
+        "Sent to the developer. You'll get a notification if they mark it resolved or won't fix."
+      );
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: SLUG }, message: 'the export button 404s', context: { surface: 'page' } },
     ]);

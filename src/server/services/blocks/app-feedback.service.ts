@@ -2,6 +2,11 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  appFeedbackStatusKey,
+  isReporterNotifiedOwnerStatus,
+} from '~/server/notifications/app-feedback.notifications';
 import { APP_LISTING_OWNER_SQL } from '~/server/notifications/comment.notifications';
 import type {
   AppFeedbackOwnerStatusFilter,
@@ -23,6 +28,7 @@ import {
   resolveAccessibleListingIds,
   resolveListingAccess,
 } from '~/server/services/blocks/app-access.service';
+import { notifyAppFeedbackReporter } from '~/server/services/blocks/app-feedback-notify';
 import { isFeedbackAreaEnabled } from '~/server/services/feedback.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { throwRateLimitError } from '~/server/utils/errorHandling';
@@ -429,7 +435,50 @@ export async function setAppFeedbackOwnerStatus({
     data: { ownerStatus: input.ownerStatus, ownerStatusAt: new Date(), ownerStatusById: userId },
   });
   if (count === 0) throw new TRPCError({ code: 'CONFLICT', message: APP_FEEDBACK_STALE_MESSAGE });
+  if (isReporterNotifiedOwnerStatus(input.ownerStatus))
+    await notifyReporterOfOwnerStatus(seatListingId, input.id, input.ownerStatus);
   return { id: input.id, ownerStatus: input.ownerStatus };
+}
+
+/**
+ * Tell the reporter the developer marked their feedback `resolved` / `wont_fix`. After the UPDATE,
+ * best-effort: a failure here is logged and never fails a status change that already committed.
+ *
+ * The row is re-read on the primary under the SAME owner-visibility predicate the write used, plus
+ * the status just written. So a row a moderator hid — before the write, which then refused, or
+ * between the write and this read — sends nothing, and neither does a status someone else has
+ * already moved on from.
+ */
+async function notifyReporterOfOwnerStatus(
+  seatListingId: string,
+  feedbackId: number,
+  ownerStatus: FeedbackOwnerStatus
+) {
+  try {
+    const row = await dbWrite.feedback.findFirst({
+      where: { ...ownerVisibleWhere(seatListingId), id: feedbackId, ownerStatus },
+      select: { userId: true, appListing: { select: { name: true, slug: true } } },
+    });
+    if (!row) return;
+    await notifyAppFeedbackReporter({
+      userId: row.userId,
+      key: appFeedbackStatusKey(feedbackId, ownerStatus),
+      details: {
+        feedbackId,
+        ownerStatus,
+        appName: row.appListing?.name ?? null,
+        appSlug: row.appListing?.slug ?? null,
+      },
+    });
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({
+      type: 'warning',
+      name: 'app-feedback-status-notify-failed',
+      details: { feedbackId, ownerStatus },
+      message: error.message,
+    }).catch(() => undefined);
+  }
 }
 
 export async function flagAppFeedbackAbusive({

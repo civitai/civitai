@@ -9,6 +9,7 @@ import type * as BlockCheck from '~/server/services/block-check.service';
 import type * as ListingVisibility from '~/server/services/blocks/app-listing-visibility.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as FeedbackService from '~/server/services/feedback.service';
+import type * as NotificationService from '~/server/services/notification.service';
 import type { SessionUser } from '~/types/session';
 
 /**
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   throwOnBlockedCommentContent: vi.fn(),
   readListingVisibility: vi.fn(),
   readListingVisibilityMany: vi.fn(),
+  createNotification: vi.fn(),
 }));
 
 vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
@@ -45,6 +47,10 @@ vi.mock('~/server/services/blocks/app-listing-visibility.service', async (import
   ...(await importOriginal<typeof ListingVisibility>()),
   readListingVisibility: mocks.readListingVisibility,
   readListingVisibilityMany: mocks.readListingVisibilityMany,
+}));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: mocks.createNotification,
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Blocklist>()),
@@ -222,6 +228,7 @@ beforeEach(() => {
   dbMock.dbWrite.feedback.count.mockResolvedValue(0);
   dbMock.dbWrite.feedback.create.mockResolvedValue({ id: 555 });
   dbMock.dbWrite.feedback.updateMany.mockResolvedValue({ count: 1 });
+  mocks.createNotification.mockResolvedValue(undefined);
 });
 
 const page = { slug: 'cool-app' };
@@ -835,6 +842,88 @@ describe('owner writes', () => {
     await expect(
       flagAppFeedbackAbusive({ userId: REPORTER, input: { id: 901, appListingId: PARENT } })
     ).rejects.toMatchObject({ message: APP_FEEDBACK_NO_ACCESS_MESSAGE });
+  });
+});
+
+describe('reporter notification on an owner status change', () => {
+  const REPORTER_ROW = { userId: REPORTER, appListing: { name: 'Cool App', slug: 'cool-app' } };
+  const set = (ownerStatus: 'acknowledged' | 'resolved' | 'wont_fix') =>
+    setAppFeedbackOwnerStatus({
+      userId: EDITOR,
+      input: { id: 901, appListingId: SHADOW, ownerStatus, expectedOwnerStatus: null },
+    });
+
+  beforeEach(() => {
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(REPORTER_ROW);
+  });
+
+  it('resolved → one notification to the reporter, keyed per (feedback, status) — literal', async () => {
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.createNotification).toHaveBeenCalledWith({
+      userId: REPORTER,
+      category: 'Update',
+      type: 'app-feedback-status',
+      key: 'app-feedback-status:901:resolved',
+      details: {
+        feedbackId: 901,
+        ownerStatus: 'resolved',
+        appName: 'Cool App',
+        appSlug: 'cool-app',
+      },
+    });
+  });
+
+  it("wont_fix → its own key, so it is not swallowed by an earlier 'resolved'", async () => {
+    await set('wont_fix');
+    expect(mocks.createNotification.mock.calls[0][0].key).toBe('app-feedback-status:901:wont_fix');
+  });
+
+  it('🔴 acknowledged sends nothing — and does not even look the reporter up', async () => {
+    await expect(set('acknowledged')).resolves.toEqual({ id: 901, ownerStatus: 'acknowledged' });
+    expect(dbMock.dbWrite.feedback.findFirst).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('🔴 re-reads the reporter on the primary under the owner-visibility predicate and the new status', async () => {
+    // The seat listing (the editor wrote via the SHADOW id), not hidden, reporter not banned, and
+    // still at the status just written. A moderator who hid the row since — or another writer who
+    // moved its status on — makes this read come back empty.
+    await set('resolved');
+    expect(dbMock.dbWrite.feedback.findFirst).toHaveBeenCalledWith({
+      where: {
+        area: 'app-block',
+        appListingId: PARENT,
+        hiddenFromOwnerAt: null,
+        user: { bannedAt: null },
+        id: 901,
+        ownerStatus: 'resolved',
+      },
+      select: { userId: true, appListing: { select: { name: true, slug: true } } },
+    });
+    expect(dbMock.dbRead.feedback.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a row hidden from the developer sends nothing', async () => {
+    // The visibility predicate is what hides it, so the re-read finds no row.
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(null);
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('a refused write (0 rows — e.g. already hidden) sends nothing', async () => {
+    dbMock.dbWrite.feedback.updateMany.mockResolvedValue({ count: 0 });
+    await expect(set('resolved')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(dbMock.dbWrite.feedback.findFirst).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('a failure to notify never fails the committed status change', async () => {
+    dbMock.dbWrite.feedback.findFirst.mockRejectedValue(new Error('primary blip'));
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(REPORTER_ROW);
+    mocks.createNotification.mockRejectedValue(new Error('notifications down'));
+    await expect(set('wont_fix')).resolves.toEqual({ id: 901, ownerStatus: 'wont_fix' });
   });
 });
 

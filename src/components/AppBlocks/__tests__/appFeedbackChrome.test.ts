@@ -3,6 +3,7 @@ import {
   APP_FEEDBACK_GENERIC_ERROR_MESSAGE,
   APP_FEEDBACK_INVALID_MESSAGE,
   APP_FEEDBACK_NOT_AVAILABLE_MESSAGE,
+  APP_FEEDBACK_SENT_MESSAGE,
   APP_FEEDBACK_SIGNED_OUT_MESSAGE,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
@@ -12,7 +13,12 @@ import {
   canSubmitAppFeedback,
   resolveAppFeedbackRequest,
 } from '~/components/AppBlocks/appFeedbackChrome';
+import {
+  appFeedbackStatusMessage,
+  isReporterNotifiedOwnerStatus,
+} from '~/server/notifications/app-feedback.notifications';
 import { createAppFeedbackSchema } from '~/server/schema/app-feedback.schema';
+import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
 
 describe('resolveAppFeedbackRequest — what each host sends', () => {
   it('page host (slug + app.page): targets the slug, surface page, no modelId', () => {
@@ -169,6 +175,31 @@ describe('modal copy', () => {
     expect(appFeedbackSentWithLine('1.4.2', { surface: 'slot' })).toBe(
       'Sent with: app version 1.4.2. Nothing else is collected.'
     );
+  });
+});
+
+describe('the confirmation after sending', () => {
+  it("promises a notification on resolved or won't fix (WHOLE string)", () => {
+    expect(APP_FEEDBACK_SENT_MESSAGE).toBe(
+      "Sent to the developer. You'll get a notification if they mark it resolved or won't fix."
+    );
+  });
+
+  it('🔴 promises exactly the statuses the server notifies on — no more, no fewer', () => {
+    // A RELATIONSHIP between the copy and `setAppFeedbackOwnerStatus`'s gate, checked in both
+    // directions: a status the server starts notifying on that the sentence does not name, or one
+    // the sentence names that the server stopped notifying on, fails here. Each status is looked for
+    // under the label the reporter's own notification uses for it.
+    const label = (status: (typeof FEEDBACK_OWNER_STATUSES)[number]) =>
+      appFeedbackStatusMessage({ ownerStatus: status, appName: 'X' })?.message.match(
+        /marked your feedback as (.+)\.$/
+      )?.[1];
+    const promised = FEEDBACK_OWNER_STATUSES.filter((status) =>
+      APP_FEEDBACK_SENT_MESSAGE.includes(label(status) ?? status)
+    );
+    expect(promised).toEqual(FEEDBACK_OWNER_STATUSES.filter(isReporterNotifiedOwnerStatus));
+    // Positive control: the comparison is not between two empty lists.
+    expect(promised).toEqual(['resolved', 'wont_fix']);
   });
 });
 
