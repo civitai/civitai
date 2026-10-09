@@ -78,7 +78,7 @@ export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean>
     }
     // Outcome rows are stamped by the app, on the SAME clock as the `deploy_updated_at`
     // the caller wrote just before (the freshness rule compares the two). Trigger rows
-    // keep the column default: they are only ordered against each other.
+    // take the schema's `@default(now())`: they are only ordered against each other.
     const stampedAt = row.status === 'triggered' ? undefined : new Date();
     const { count } = await dbWrite.appBlockBuildAttempt.createMany({
       data: [

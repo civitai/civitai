@@ -76,7 +76,7 @@ describe('recordBuildAttempt', () => {
     expect(db.updateMany).not.toHaveBeenCalled();
   });
 
-  it('an absorbed duplicate OUTCOME row is re-stamped; a trigger row uses the column default', async () => {
+  it('an absorbed duplicate OUTCOME row is re-stamped; a trigger row is not app-stamped', async () => {
     db.createMany.mockResolvedValue({ count: 0 });
     await recordBuildAttempt({
       mode: 'build',
