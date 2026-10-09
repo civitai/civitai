@@ -191,12 +191,13 @@ describe('a hatted feed card', () => {
   it('moves the viewer’s own hat with the place-a-hat picker', async () => {
     viewer.current = { id: 9 };
     const here = { cosmeticId: 31, claimKey: 'c', placedOn: { entityType: 'Image', entityId: 5 } };
-    const elsewhere = {
-      cosmeticId: 31,
-      claimKey: 'd',
-      placedOn: { entityType: 'Image', entityId: 6 },
-    };
-    myHats.fetch.mockResolvedValue([elsewhere, here]);
+    // Decoys ahead of it: the same id on another type, another image, another hat on this image.
+    const elsewhere = [
+      { cosmeticId: 31, claimKey: 'd', placedOn: { entityType: 'Model', entityId: 5 } },
+      { cosmeticId: 31, claimKey: 'e', placedOn: { entityType: 'Image', entityId: 6 } },
+      { cosmeticId: 32, claimKey: 'f', placedOn: { entityType: 'Image', entityId: 5 } },
+    ];
+    myHats.fetch.mockResolvedValue([...elsewhere, here]);
     renderCard();
     clickHat();
     await act(async () => {
@@ -207,7 +208,7 @@ describe('a hatted feed card', () => {
     expect(dialogs.trigger.mock.calls[0][0].props).toEqual({
       event: 'birthday2026',
       hat: here,
-      myHats: [elsewhere, here],
+      myHats: [...elsewhere, here],
     });
   });
 
