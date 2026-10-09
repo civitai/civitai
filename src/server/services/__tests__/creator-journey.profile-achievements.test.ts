@@ -151,6 +151,24 @@ describe('getProfileAchievements', () => {
     expect(dbMock.dbRead.userCreatorMilestone.findMany.mock.calls[0][0]?.where).toEqual({
       userId: OWNER,
     });
+    // The mock returns every fixture field whatever is selected, so the select itself is pinned:
+    // dropping `hidden` would unmask every secret, and `cosmeticId` would turn off badge privacy.
+    expect(dbMock.dbRead.userCreatorMilestone.findMany.mock.calls[0][0]?.select).toEqual({
+      achievedAt: true,
+      seenAt: true,
+      milestone: {
+        select: {
+          key: true,
+          track: true,
+          threshold: true,
+          hidden: true,
+          name: true,
+          description: true,
+          cosmeticId: true,
+          cosmetic: { select: { data: true } },
+        },
+      },
+    });
     expect(dbMock.dbRead.creatorMilestone.findMany).not.toHaveBeenCalled();
   });
 
