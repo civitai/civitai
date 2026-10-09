@@ -141,6 +141,10 @@ describe('MasonryColumnsVirtual with worn hats', () => {
     await userEvent.unhover(card(1));
     const leaving = getComputedStyle(wearer);
     expect(leaving.transitionProperty).toBe('content-visibility, z-index');
+    // content-visibility is discrete: without allow-discrete it is not held at all.
+    expect(new Set(leaving.transitionBehavior.split(',').map((b) => b.trim()))).toEqual(
+      new Set(['allow-discrete'])
+    );
     const settle = parseFloat(getComputedStyle(hat()).transitionDuration);
     for (const delay of leaving.transitionDelay.split(','))
       expect(parseFloat(delay)).toBeGreaterThan(settle);
@@ -164,7 +168,9 @@ describe('MasonryColumnsVirtual with worn hats', () => {
     expect(getComputedStyle(hat()).outlineStyle).toBe('none');
     for (let i = 0; i < 10 && document.activeElement !== hat(); i++) await userEvent.tab();
     expect(document.activeElement).toBe(hat());
-    expect(getComputedStyle(hat()).outlineStyle).not.toBe('none');
+    // The hat's own ring, not the browser's default one.
+    expect(getComputedStyle(hat()).outlineStyle).toBe('solid');
+    expect(getComputedStyle(hat()).outlineWidth).toBe('2px');
   });
 
   test.each([undefined, 8, 0])(
