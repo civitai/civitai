@@ -260,6 +260,20 @@ it.each(Object.entries(ART))('a plain card moves %s exactly that far up and left
   expect(plain.origin).toBe(framed.origin);
 });
 
+// The nudge only moves a hat out into room the container has; where the room is used up, the
+// plain card's hat is held at the same edge as the framed one.
+it.each(Object.entries(ART))('a container with no room absorbs the nudge for %s', (_, fit) => {
+  const framed = getHatLayout('corner', fit, 0);
+  const plain = getHatLayout('corner', fit, 0, HAT_PLAIN_CARD_NUDGE);
+  expect(plain.reach).toEqual(framed.reach);
+});
+
+it.each(Object.entries(ART))('a hat kept inside the card ignores the nudge: %s', (_, fit) => {
+  expect(getHatLayout('inside', fit, undefined, HAT_PLAIN_CARD_NUDGE)).toEqual(
+    getHatLayout('inside', fit)
+  );
+});
+
 describe('a hat too big for the bleed', () => {
   it('is moved right until it fits the left edge', () => {
     const { reach } = getHatLayout('corner', { ...ART.basic, size: 120, tilt: -80 });

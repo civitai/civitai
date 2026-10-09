@@ -48,6 +48,8 @@ export function TwCosmeticWrapper({
   if (!hasFrame && !eventDecoration) return children;
 
   const { cssFrame, texture, border, borderWidth, glow } = cosmetic ?? {};
+  // Only these frames are padded (CosmeticWrapper.module.scss); lights or a border alone are not.
+  const padded = !!(cssFrame || texture);
 
   if (true) {
     styleRef.current = {};
@@ -69,7 +71,7 @@ export function TwCosmeticWrapper({
           '--event-decoration-clear-left': getEventDecorationClearLeftCss(
             eventDecoration,
             undefined,
-            hasFrame ? 0 : HAT_PLAIN_CARD_NUDGE
+            padded ? 0 : HAT_PLAIN_CARD_NUDGE
           ),
         }),
         ...style,
@@ -91,7 +93,7 @@ export function TwCosmeticWrapper({
     >
       {hasFrame && <CosmeticLights cosmetic={cosmetic as any} />}
       {children}
-      {eventDecoration && <EventDecorationOverlay decoration={eventDecoration} framed={hasFrame} />}
+      {eventDecoration && <EventDecorationOverlay decoration={eventDecoration} framed={padded} />}
     </div>
   );
 }

@@ -60,12 +60,15 @@ const HAT = { type: 'hat', event: 'birthday2026', url: 'hat.png', fit: FIT };
 type Item = { id: number };
 const items: Item[] = Array.from({ length: 8 }, (_, i) => ({ id: i }));
 
-/** Card 1 (the right column's first card) wears a hat; card 3 a hat and a frame; the rest are plain. */
+/**
+ * Card 1 (the right column's first card) wears a hat; card 3 a hat and a padded frame; card 5 a hat
+ * and lights, a cosmetic with no padding. The rest are plain.
+ */
 function Card({ data }: { data: Item }) {
   const card = (
     <div data-testid="card" data-id={data.id} style={{ height: 200, background: '#888' }}>
       <div
-        data-testid={data.id === 1 ? 'chip' : undefined}
+        data-testid={`chip-${data.id}`}
         style={{ paddingLeft: 'var(--event-decoration-clear-left)' }}
       />
     </div>
@@ -82,6 +85,12 @@ function Card({ data }: { data: Item }) {
         cosmetic={{ cssFrame: 'linear-gradient(red, blue)' }}
         eventDecoration={HAT}
       >
+        {card}
+      </TwCosmeticWrapper>
+    );
+  if (data.id === 5)
+    return (
+      <TwCosmeticWrapper cosmetic={{ lights: 3, color: 'yellow' }} eventDecoration={HAT}>
         {card}
       </TwCosmeticWrapper>
     );
@@ -194,7 +203,7 @@ describe('MasonryColumnsVirtual with worn hats', () => {
           : ({ '--event-decoration-allowance': `${allowance}px` } as React.CSSProperties);
       await renderAtViewport(<Gallery style={style} />, VIEWPORT);
       await vi.waitFor(() => expect(hat()).toBeTruthy());
-      const chip = document.querySelector('[data-testid="chip"]')!;
+      const chip = document.querySelector('[data-testid="chip-1"]')!;
       const expected = getEventDecorationClearLeft(
         { type: 'hat', fit: FIT },
         'corner',
@@ -234,6 +243,23 @@ describe('MasonryColumnsVirtual with worn hats', () => {
     expect(at(hatOf(1))[1]).toBeCloseTo(plain.top, 1);
     expect(at(hatOf(3))[0]).toBeCloseTo(framed.left, 1);
     expect(at(hatOf(3))[1]).toBeCloseTo(framed.top, 1);
+  });
+
+  // Lights and borders are cosmetics too, but have no padding to carry the hat out.
+  test('a card with an unpadded cosmetic wears its hat like a plain card', async () => {
+    await renderAtViewport(<Gallery />, VIEWPORT);
+    await vi.waitFor(() => expect(card(5)).toBeTruthy());
+    const plain = getHatLayout('corner', FIT, undefined, HAT_PLAIN_CARD_NUDGE);
+    expect(parseFloat(getComputedStyle(hatOf(5)).left)).toBeCloseTo(plain.left, 1);
+    expect(parseFloat(getComputedStyle(hatOf(5)).top)).toBeCloseTo(plain.top, 1);
+  });
+
+  test('corner chips on a framed card step clear of its un-nudged hat', async () => {
+    await renderAtViewport(<Gallery />, VIEWPORT);
+    await vi.waitFor(() => expect(card(3)).toBeTruthy());
+    const chip = document.querySelector('[data-testid="chip-3"]')!;
+    const expected = getEventDecorationClearLeft({ type: 'hat', fit: FIT }, 'corner', undefined, 0);
+    expect(Math.abs(parseFloat(getComputedStyle(chip).paddingLeft) - expected)).toBeLessThan(1);
   });
 
   // The canvas is a rectangle that lies over the neighbouring cards; only the art takes clicks.

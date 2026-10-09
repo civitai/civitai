@@ -16,8 +16,9 @@ export const DEFAULT_HAT_PLACEMENT: HatPlacement = 'corner';
 export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
 
 /**
- * How much further up and left a hat sits on a card without a frame, in CSS px. A frame's 6px
- * padding already carries a framed card's hat out past the picture; this matches that look.
+ * How much further up and left a hat sits on a card without a padded frame, in CSS px. The 6px
+ * padding of a CSS or texture frame (TwCosmeticWrapper/CosmeticWrapper.module.scss) already
+ * carries that card's hat out past the picture; this matches that look.
  */
 export const HAT_PLAIN_CARD_NUDGE = 4;
 
