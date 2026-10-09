@@ -73,7 +73,6 @@ describe('isFullScopeSession', () => {
     expect(isFullScopeSession(request({ authorization: 'Bearer k' }))).toBe(false);
   });
 
-  // Each field on its own, without the header, must still mark the request as bearer-authenticated.
   it.each([
     ['apiKeyId', { apiKeyId: 3 }],
     ['subject', { subject: { type: 'oauth', id: 'c' } }],

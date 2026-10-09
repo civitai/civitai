@@ -9,9 +9,9 @@ type CredentialContext = {
 };
 
 /**
- * True when the request was authenticated by a browser session, or by a personal API key
- * holding the full scope. OAuth-issued tokens (at any scope), reduced-scope keys and
- * query-string tokens are refused.
+ * True when the request was authenticated by a browser session, or by an API key that was not
+ * issued to an OAuth client (a `User` or `System` key) and holds the full scope. OAuth-issued tokens (at any scope), reduced-scope keys and
+ * query-string tokens (any value) are refused.
  *
  * Reads `req.context`, so it must run after `getServerAuthSession` (which `AuthedEndpoint`
  * calls). Any sign of a bearer credential — the header or a context field — counts as one, so

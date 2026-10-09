@@ -20,7 +20,8 @@ import { Flags } from '~/shared/utils/flags';
  * getOrchestratorToken already keeps. The orchestrator URL is NOT part of the response — see the
  * note at the `res.json` below.
  *
- * The token spends Buzz orchestrator-side, so this mirrors `guardedProcedure`'s gates (trpc.ts:
+ * The token spends Buzz orchestrator-side, so this refuses OAuth, reduced-scope and `?token=`
+ * callers (`requireFullScopeSession`), then mirrors `guardedProcedure`'s gates (trpc.ts:
  * banned → onboarded → muted → email-verified) plus the page's feature flag — keep them in step.
  */
 export default AuthedEndpoint(async (req, res, user) => {

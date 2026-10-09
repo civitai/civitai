@@ -7,9 +7,8 @@ import type * as UserService from '~/server/services/user.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// Everything below the credential lookup is real: `AuthedEndpoint` and `getServerAuthSession`
-// populate `req.context` exactly as in production, so the routes see the context shape they
-// would really be handed.
+// `AuthedEndpoint` and `getServerAuthSession` are deliberately unmocked: the guard reads the
+// `req.context` they populate, so mocking them would make these tests vacuous.
 const { hubSession, bearerSession } = vi.hoisted(() => ({
   hubSession: { current: null as null | { user: Record<string, unknown> } },
   bearerSession: vi.fn(),

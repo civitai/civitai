@@ -498,8 +498,9 @@ export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
 }
 
 /**
- * `req.query` is Next's parse, and `getServerAuthSession` reads `req.url`
- * directly, so both are read or the predicate can silently narrow.
+ * Reads both `req.query` (Next's parse) and the raw `req.url`, because
+ * `getServerAuthSession` reads `req.url` directly; dropping either lets a
+ * `?token=` credential go unseen.
  */
 export function requestCarriesQueryToken(req: NextApiRequest): boolean {
   if (hasNonEmpty((req.query as Record<string, unknown> | undefined)?.token)) return true;
