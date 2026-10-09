@@ -1,6 +1,6 @@
 import type * as PromClient from '~/server/prom/client';
 import type * as RedisCaches from '~/server/redis/caches';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mocks } = vi.hoisted(() => {
   const mocks = {
@@ -32,7 +32,8 @@ vi.mock('~/server/events', async () => {
         startDate: c.BIRTHDAY_2026_STARTS_AT,
         endDate: c.BIRTHDAY_2026_ENDS_AT,
         teams: [...c.BIRTHDAY_2026_TEAMS],
-        getUserTeam: (userId: number) => mocks.getUserTeam(userId) as Promise<string>,
+        getUserTeam: (userId: number, opts?: { strict?: boolean }) =>
+          mocks.getUserTeam(userId, opts) as Promise<string>,
       },
     ],
   };
@@ -97,17 +98,18 @@ const DURING_EVENT = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * 60 * 60 *
 const AFTER_EVENT = BIRTHDAY_2026_ENDS_AT;
 const [, BLUE_TEAM, PINK_TEAM] = BIRTHDAY_2026_TEAMS;
 const UNREGISTERED_EVENT = 'not-a-registered-event';
+const MS = 1;
 
-const hatData = (team: string, event: string = BIRTHDAY_2026_EVENT) => ({
+const hatData = (team: unknown, event: string = BIRTHDAY_2026_EVENT) => ({
   type: 'hat',
   event,
-  team,
+  ...(team === undefined ? {} : { team }),
   design: 'cone',
   url: 'hat.png',
 });
 
 const hatRow = ({
-  team = PINK_TEAM as string,
+  team = PINK_TEAM as unknown,
   event = BIRTHDAY_2026_EVENT as string,
   meta = {} as object,
 } = {}) => ({
@@ -141,6 +143,10 @@ const purchase = (
     payWith: over.payWith,
     buzzType: over.buzzType ?? 'green',
   });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('buying an event-gated item (team hat)', () => {
   beforeEach(() => {
@@ -177,7 +183,41 @@ describe('buying an event-gated item (team hat)', () => {
     mocks.getUserTeam.mockResolvedValue(BLUE_TEAM);
 
     await expect(purchase()).rejects.toThrow("You can only buy this in your own team's colour");
-    expect(mocks.getUserTeam).toHaveBeenCalledWith(BUYER_ID);
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  // The default lookup falls back to the computed team when sysRedis is
+  // degraded, which is wrong for anyone assigned a team by hand. Purchase must
+  // ask for the strict lookup and refuse when it fails.
+  it('asks for the strict team lookup', async () => {
+    await purchase();
+    expect(mocks.getUserTeam).toHaveBeenCalledWith(BUYER_ID, { strict: true });
+  });
+
+  it('refuses, before any charge, when the team lookup fails', async () => {
+    mocks.getUserTeam.mockRejectedValue(new Error('sysRedis down'));
+
+    await expect(purchase()).rejects.toThrow("We couldn't confirm your team. Please try again.");
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('sells an event item without a team to any team', async () => {
+    // Built by hand: `hatRow({ team: undefined })` would take the default team.
+    const row = hatRow();
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...row,
+      cosmetic: { ...row.cosmetic, data: hatData(undefined) },
+    });
+    mocks.getUserTeam.mockResolvedValue(BLUE_TEAM);
+
+    await purchase();
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a team that is not a string', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(hatRow({ team: 5 }));
+
+    await expect(purchase()).rejects.toThrow('This item is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 
@@ -206,11 +246,32 @@ describe('buying an event-gated item (team hat)', () => {
     expect(second).not.toBe(first);
   });
 
-  it('refuses once the event has ended, whatever the listing window says', async () => {
+  it('refuses from the first instant of the end (end is exclusive)', async () => {
     vi.setSystemTime(AFTER_EVENT);
 
     await expect(purchase()).rejects.toThrow('This item is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('sells in the last instant before the end', async () => {
+    vi.setSystemTime(new Date(BIRTHDAY_2026_ENDS_AT.getTime() - MS));
+
+    await purchase();
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses before the event starts', async () => {
+    vi.setSystemTime(new Date(BIRTHDAY_2026_STARTS_AT.getTime() - MS));
+
+    await expect(purchase()).rejects.toThrow('This item is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('sells from the first instant of the start (start is inclusive)', async () => {
+    vi.setSystemTime(BIRTHDAY_2026_STARTS_AT);
+
+    await purchase();
+    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
   });
 
   it('refuses an item naming an event that is not registered', async () => {
@@ -256,6 +317,7 @@ const PINK = 1;
 const BLUE = 2;
 const UNKNOWN_EVENT = 3;
 const ORDINARY = 4;
+const TEAMLESS = 5;
 
 const listedIds = async (args: Parameters<typeof getShopSectionsWithItems>[0]) =>
   (await getShopSectionsWithItems(args)).map((s) => ({
@@ -265,6 +327,8 @@ const listedIds = async (args: Parameters<typeof getShopSectionsWithItems>[0]) =
 
 describe('the shop lists event-gated items per viewer', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(DURING_EVENT);
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.getBlockedPairIds.mockResolvedValue([]);
     mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
@@ -275,6 +339,7 @@ describe('the shop lists event-gated items per viewer', () => {
         listedItem(BLUE, hatData(BLUE_TEAM)),
         listedItem(UNKNOWN_EVENT, hatData(PINK_TEAM, UNREGISTERED_EVENT)),
         listedItem(ORDINARY, { url: 'frame.png' }),
+        listedItem(TEAMLESS, hatData(undefined)),
       ]),
       section(20, [listedItem(BLUE + 10, hatData(BLUE_TEAM))]),
     ]);
@@ -282,7 +347,7 @@ describe('the shop lists event-gated items per viewer', () => {
 
   it("a signed-in viewer sees only their own team's colour, and a section left empty disappears", async () => {
     expect(await listedIds({ userId: BUYER_ID })).toEqual([
-      { section: 10, items: [PINK, ORDINARY] },
+      { section: 10, items: [PINK, ORDINARY, TEAMLESS] },
     ]);
     // One team lookup per event per request, not one per item.
     expect(mocks.getUserTeam).toHaveBeenCalledTimes(1);
@@ -290,15 +355,21 @@ describe('the shop lists event-gated items per viewer', () => {
 
   it('an anonymous viewer sees every colour, but not items of an unregistered event', async () => {
     expect(await listedIds({})).toEqual([
-      { section: 10, items: [PINK, BLUE, ORDINARY] },
+      { section: 10, items: [PINK, BLUE, ORDINARY, TEAMLESS] },
       { section: 20, items: [BLUE + 10] },
     ]);
     expect(mocks.getUserTeam).not.toHaveBeenCalled();
   });
 
+  it('hides event items once the event has ended, and the sections they emptied', async () => {
+    vi.setSystemTime(AFTER_EVENT);
+
+    expect(await listedIds({})).toEqual([{ section: 10, items: [ORDINARY] }]);
+  });
+
   it('a moderator sees everything unfiltered', async () => {
     expect(await listedIds({ userId: BUYER_ID, isModerator: true })).toEqual([
-      { section: 10, items: [PINK, BLUE, UNKNOWN_EVENT, ORDINARY] },
+      { section: 10, items: [PINK, BLUE, UNKNOWN_EVENT, ORDINARY, TEAMLESS] },
       { section: 20, items: [BLUE + 10] },
     ]);
   });

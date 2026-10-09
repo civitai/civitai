@@ -15,7 +15,7 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
-async function getManualAssignments(event: string) {
+async function getManualAssignments(event: string, { strict = false } = {}) {
   // if (manualAssignments[event]) return manualAssignments[event];
   // Fail open: called via getUserTeam → getUserCosmeticId on every
   // user-cosmetic resolution during active events. A sysRedis outage
@@ -33,6 +33,9 @@ async function getManualAssignments(event: string) {
     // manualAssignments[event] = assignments;
     return assignments;
   } catch (err) {
+    // Strict callers decide something that must not use a guessed team (selling
+    // a team-coloured item), so they get the failure instead of the fallback.
+    if (strict) throw err;
     logSysRedisFailOpen('read-degraded', 'getManualAssignments', err, { event });
     return {} as Record<string, string>;
   }
@@ -76,8 +79,8 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     await redis.del(name);
     await redis.del(`${REDIS_KEYS.EVENT.CACHE}:${name}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`);
   }
-  async function getUserTeam(userId: number) {
-    const manualAssignment = await getManualAssignments(name);
+  async function getUserTeam(userId: number, opts?: { strict?: boolean }) {
+    const manualAssignment = await getManualAssignments(name, opts);
     if (manualAssignment[userId.toString()]) return manualAssignment[userId.toString()];
     const random = new Rand(name + userId.toString(), PRNG.sfc32);
     const number = random.next();
