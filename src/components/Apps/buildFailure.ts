@@ -40,9 +40,10 @@ import {
  * 🔴 THE FALLBACK IS `unknown`, AND IT NEVER BLAMES THE AUTHOR. A build step can fail for
  * reasons that have nothing to do with the app (a registry outage, a platform image
  * problem), and telling an author "fix your code" for those sends them chasing a bug they
- * don't have. Only a positive signal makes a failure the author's: a reported `validate`
- * step, or (text fallback) a first excerpt line starting `ERROR:`, which is how the
- * platform's build pre-checks print their author-facing messages.
+ * don't have. Only a positive signal makes a failure the author's: a stored `author`
+ * class (the server derives it only for a `validate` step that ran and failed), or (text
+ * fallback) a first excerpt line starting `ERROR:`, which is how the platform's build
+ * pre-checks print their author-facing messages.
  */
 
 export type BuildFailureClass = 'author' | 'security-scan' | 'platform' | 'transient' | 'unknown';

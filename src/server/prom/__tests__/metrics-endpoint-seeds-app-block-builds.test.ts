@@ -20,13 +20,13 @@ describe('/api/metrics publishes the App Block build-outcome series', () => {
     expect(client.register.getSingleMetric(NAME)).toBeUndefined();
   });
 
-  it('loading the page module seeds all 20 series at 0', async () => {
+  it('loading the page module seeds all 22 series at 0', async () => {
     await import('~/pages/api/metrics');
     const metric = client.register.getSingleMetric(NAME) as unknown as {
       get(): Promise<{ values: { value: number }[] }>;
     };
     const { values } = await metric.get();
-    expect(values).toHaveLength(20);
+    expect(values).toHaveLength(22);
     expect(values.every((v) => v.value === 0)).toBe(true);
   });
 });

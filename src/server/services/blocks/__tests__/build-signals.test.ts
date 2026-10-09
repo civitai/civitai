@@ -102,8 +102,13 @@ describe('deriveFailureClass — the whole table', () => {
   it.each([
     ['clone', undefined, 'platform'],
     ['clone', 'TaskRunTimeout', 'platform'],
-    ['validate', undefined, 'author'],
-    ['validate', 'TaskRunTimeout', 'author'],
+    // Author ONLY on positive evidence the step ran and failed (reason `Failed`).
+    ['validate', 'Failed', 'author'],
+    // A run stopped before validate executed reports validate with no reason.
+    ['validate', undefined, 'unknown'],
+    ['validate', '', 'unknown'],
+    ['validate', 'TaskRunTimeout', 'unknown'],
+    ['validate', 'TaskRunCancelled', 'unknown'],
     ['build', 'TaskRunTimeout', 'transient'],
     ['build', 'Failed', 'unknown'],
     ['build', undefined, 'unknown'],
@@ -115,6 +120,15 @@ describe('deriveFailureClass — the whole table', () => {
     ['none', undefined, 'unknown'],
   ] as const)('%s + reason %s → %s', (step, reason, expected) => {
     expect(deriveFailureClass(step, reason)).toBe(expected);
+  });
+
+  it('author is reached ONLY by validate + Failed — no other step or reason blames the author', () => {
+    const steps = ['clone', 'validate', 'build', 'scan', 'push', 'none', 'apply'] as const;
+    const reasons = [undefined, null, '', 'Failed', 'TaskRunTimeout', 'TaskRunCancelled'];
+    const authors = steps.flatMap((step) =>
+      reasons.filter((r) => deriveFailureClass(step, r) === 'author').map((r) => `${step}+${r}`)
+    );
+    expect(authors).toEqual(['validate+Failed']);
   });
 
   it('never classes a build-step failure as the author’s', () => {

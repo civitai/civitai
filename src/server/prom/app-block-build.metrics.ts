@@ -11,7 +11,7 @@
 // 🔴 CARDINALITY: four labels, each a closed set validated in code, with NO slug, sha,
 // run id or user. Correlation is "many failures with the same step and class", not
 // per-app; per-app attribution is in the build attempt rows. The reachable label sets
-// are enumerated in `REACHABLE_SERIES` and seeded at 0: 2 modes x 10 = 20 series per pod.
+// are enumerated in `REACHABLE_SERIES` and seeded at 0: 2 modes x 11 = 22 series per pod.
 //
 // HOW TO READ IT: prom-client counters live in the pod heap and reset on restart. Count
 // with `sum(increase(civitai_app_block_builds_total{...}[1h]))`, never a bare `sum()`.
@@ -54,7 +54,10 @@ type Series = {
 export const REACHABLE_SERIES: readonly Series[] = [
   { outcome: 'succeeded', failed_step: 'none', failure_class: 'none' },
   ...BUILD_FAILED_STEPS.flatMap((step) => {
-    const classes = new Set([deriveFailureClass(step), deriveFailureClass(step, 'TaskRunTimeout')]);
+    // Every reason the class table branches on, plus none.
+    const classes = new Set(
+      [undefined, 'TaskRunTimeout', 'Failed'].map((reason) => deriveFailureClass(step, reason))
+    );
     return [...classes].map((cls) => ({
       outcome: 'failed' as const,
       failed_step: step,

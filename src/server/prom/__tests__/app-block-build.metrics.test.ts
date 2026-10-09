@@ -32,6 +32,7 @@ describe('civitai_app_block_builds_total', () => {
       'succeeded/none/none',
       'failed/clone/platform',
       'failed/validate/author',
+      'failed/validate/unknown',
       'failed/build/unknown',
       'failed/build/transient',
       'failed/scan/unknown',

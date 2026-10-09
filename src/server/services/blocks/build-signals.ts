@@ -79,13 +79,17 @@ export function parseRunId(value: unknown): string | undefined {
 /** The Tekton reason a task carries when it ran past its timeout. */
 const TASK_TIMEOUT_REASON = 'TaskRunTimeout';
 
+/** The Tekton reason a task carries when it ran and its own steps failed. */
+const TASK_FAILED_REASON = 'Failed';
+
 /**
  * Whose problem a failure is, from WHICH STEP failed. No log text is read.
  *
  * | step     | condition                   | class       |
  * |----------|-----------------------------|-------------|
  * | clone    | any                         | `platform`  |
- * | validate | any                         | `author`    |
+ * | validate | reason `Failed`             | `author`    |
+ * | validate | anything else, or no reason | `unknown`   |
  * | build    | reason `TaskRunTimeout`     | `transient` |
  * | build    | anything else               | `unknown`   |
  * | scan     | any                         | `unknown`   |
@@ -95,7 +99,11 @@ const TASK_TIMEOUT_REASON = 'TaskRunTimeout';
  *
  * - clone: the repo it fetches is written by the platform at approve time, so a failure
  *   there is ours.
- * - validate: the step re-checks the app's own manifest.
+ * - validate: the step re-checks the app's own manifest, so its failure is the author's —
+ *   but ONLY with positive evidence that it ran and failed (reason `Failed`). A run stopped
+ *   before validate executed (cancelled, timed out upstream) still reports `validate` as
+ *   the first step that did not succeed, with no reason; that must not blame the author.
+ *   This is the only `author` row, and every author-class row must require that evidence.
  * - build: a timeout is transient. Any other build failure stays `unknown`: a
  *   registry or network blip lands there too, and blaming the author for one would send
  *   them chasing a bug they don't have.
@@ -113,7 +121,7 @@ export function deriveFailureClass(
     case 'clone':
       return 'platform';
     case 'validate':
-      return 'author';
+      return failedReason === TASK_FAILED_REASON ? 'author' : 'unknown';
     case 'build':
       return failedReason === TASK_TIMEOUT_REASON ? 'transient' : 'unknown';
     case 'scan':
