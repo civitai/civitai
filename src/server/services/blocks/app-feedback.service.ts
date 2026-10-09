@@ -441,13 +441,10 @@ export async function setAppFeedbackOwnerStatus({
 }
 
 /**
- * Tell the reporter the developer marked their feedback `resolved` / `wont_fix`. After the UPDATE,
- * best-effort: a failure here is logged and never fails a status change that already committed.
- *
- * The row is re-read on the primary under the SAME owner-visibility predicate the write used, plus
- * the status just written. So a row a moderator hid — before the write, which then refused, or
- * between the write and this read — sends nothing, and neither does a status someone else has
- * already moved on from.
+ * Tell the reporter the developer marked their feedback `resolved` / `wont_fix`. Best-effort, after
+ * the UPDATE commits: a failure is logged and never fails the status change. Re-read on the
+ * primary under `ownerVisibleWhere` plus the status just written, so a row hidden, or moved to
+ * another status, since the write sends nothing.
  */
 async function notifyReporterOfOwnerStatus(
   seatListingId: string,

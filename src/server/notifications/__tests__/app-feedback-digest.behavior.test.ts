@@ -207,14 +207,13 @@ describe('app-feedback-new digest — who gets what, executed', () => {
     ]);
   });
 
-  it('🔴 excludes hidden, banned-reporter, already-handled, flagged and blocked rows', async () => {
+  it('🔴 excludes hidden, banned-reporter, already-handled and blocked rows', async () => {
     await feedback(R1, L_ONSITE, '2026-10-19 01:00'); // the one that counts
     await feedback(R2, L_ONSITE, '2026-10-19 02:00', { hiddenFromOwnerAt: '2026-10-19 05:00' });
     await feedback(BANNED, L_ONSITE, '2026-10-19 03:00');
     await feedback(R3, L_ONSITE, '2026-10-19 04:00', {
       ownerStatus: 'acknowledged',
     });
-    await feedback(R3, L_ONSITE, '2026-10-19 05:00', { ownerFlaggedAt: '2026-10-19 06:00' });
     await feedback(BLOCKED_BY_OWNER, L_ONSITE, '2026-10-19 06:00');
     await feedback(BLOCKS_OWNER, L_ONSITE, '2026-10-19 07:00');
     await feedback(HIDDEN_BY_OWNER, L_ONSITE, '2026-10-19 08:00');
@@ -235,10 +234,6 @@ describe('app-feedback-new digest — who gets what, executed', () => {
         () => feedback(R3, L_ONSITE, '2026-10-19 04:00', { ownerStatus: 'acknowledged' }),
       ],
       ['resolved', () => feedback(R3, L_ONSITE, '2026-10-19 04:00', { ownerStatus: 'resolved' })],
-      [
-        'flagged',
-        () => feedback(R3, L_ONSITE, '2026-10-19 05:00', { ownerFlaggedAt: '2026-10-19 06:00' }),
-      ],
       ['owner blocked reporter', () => feedback(BLOCKED_BY_OWNER, L_ONSITE, '2026-10-19 06:00')],
       ['reporter blocked owner', () => feedback(BLOCKS_OWNER, L_ONSITE, '2026-10-19 07:00')],
       ['owner hid reporter', () => feedback(HIDDEN_BY_OWNER, L_ONSITE, '2026-10-19 08:00')],
@@ -256,6 +251,13 @@ describe('app-feedback-new digest — who gets what, executed', () => {
     await db.exec(`TRUNCATE "Feedback"`);
     await feedback(R1, L_ONSITE, '2026-10-19 10:00');
     expect((await run()).map((r) => r.userId)).toEqual([OWNER]);
+  });
+
+  it('a flagged report with no status still counts — the same "new" as the inbox', async () => {
+    // The inbox's New filter is `ownerStatus IS NULL` alone, so a digest that also dropped flagged
+    // rows would announce fewer than the New tab it links to shows.
+    await feedback(R3, L_ONSITE, '2026-10-19 05:00', { ownerFlaggedAt: '2026-10-19 06:00' });
+    expect((await run()).map((r) => r.details.count)).toEqual([1]);
   });
 
   it('🔴 the owner only — never the stale denormalized owner, never an accepted editor', async () => {
@@ -277,11 +279,12 @@ describe('app-feedback-new digest — who gets what, executed', () => {
 });
 
 describe('app-feedback-new digest — the window', () => {
-  it('a bucket is sent in the run whose window holds its due time, and in no other', async () => {
+  it('a bucket is sent by the runs whose window holds its due time, and by no later one', async () => {
     await feedback(R1, L_ONSITE, '2026-10-19 03:00');
-    // Due 2026-10-20 00:05. NOW is 00:30.
-    expect(await run('2026-10-20T00:04:59.000Z')).toHaveLength(1); // window holds 00:05
-    expect(await run('2026-10-20T00:05:00.000Z')).toHaveLength(0); // already sent by that run
+    // Due 2026-10-20 00:05. NOW is 00:30. A window is (lastSent - 5 min clock slack, NOW].
+    expect(await run('2026-10-20T00:04:59.000Z')).toHaveLength(1);
+    expect(await run('2026-10-20T00:09:59.000Z')).toHaveLength(1); // still inside the slack
+    expect(await run('2026-10-20T00:10:00.000Z')).toHaveLength(0); // past it: already sent
     expect(await run('2026-10-20T00:20:00.000Z')).toHaveLength(0);
 
     // Not due yet: the same run, a minute before the due time.
@@ -312,12 +315,25 @@ describe('app-feedback-new digest — the window', () => {
     expect((await run('2026-10-20T00:03:00.000Z')).map((r) => r.details.count)).toEqual([1]);
   });
 
-  it('overlapping windows re-emit the SAME key, which the service collapses', async () => {
+  it('overlapping windows re-emit the SAME key (the notifications service delivers a key once)', async () => {
     await feedback(R1, L_ONSITE, '2026-10-19 03:00');
     const a = await run();
     const b = await run('2026-10-20T00:04:00.000Z');
     expect(a.map((r) => r.key)).toEqual(['app-feedback-new:apl_onsite:2026-10-19T00']);
     expect(b.map((r) => r.key)).toEqual(a.map((r) => r.key));
+  });
+
+  it('🔴 a database clock running behind the app clock does not skip a bucket', async () => {
+    // The cursor is the APP server's time taken before the query; the upper bound is the
+    // DATABASE's NOW(). With the database 3 s behind, run k reads up to 00:04:58 by its clock while
+    // the app stamps the cursor 00:05:01, so the due time 00:05:00 falls between the two windows.
+    await feedback(R1, L_ONSITE, '2026-10-19 03:00');
+    await setNow('2026-10-20 00:04:58+00');
+    expect(await run('2026-10-20T00:04:00.000Z')).toEqual([]); // not due yet by the DB's clock
+    await setNow('2026-10-20 00:06:00+00');
+    expect((await run('2026-10-20T00:05:01.000Z')).map((r) => r.key)).toEqual([
+      'app-feedback-new:apl_onsite:2026-10-19T00',
+    ]);
   });
 
   it('a drifted cursor reaches back at most 7 days', async () => {

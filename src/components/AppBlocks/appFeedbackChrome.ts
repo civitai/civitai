@@ -103,12 +103,7 @@ export function appFeedbackSentWithLine(
     : 'Nothing else is collected with your message.';
 }
 
-/**
- * The modal's confirmation once the feedback is stored. The second sentence is a promise the
- * server keeps: `setAppFeedbackOwnerStatus` notifies the reporter on `resolved` and `wont_fix`
- * (never `acknowledged`), on by default and switchable off in notification settings. A report a
- * moderator hid from the developer cannot be marked at all, so the sentence holds for it too.
- */
+/** The second sentence is held to the server's notified statuses by appFeedbackChrome.test.ts. */
 export const APP_FEEDBACK_SENT_MESSAGE =
   "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
 

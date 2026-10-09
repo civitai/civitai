@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { BlocklistType } from '~/server/common/enums';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
@@ -918,12 +919,26 @@ describe('reporter notification on an owner status change', () => {
     expect(mocks.createNotification).not.toHaveBeenCalled();
   });
 
-  it('a failure to notify never fails the committed status change', async () => {
+  it('a failure to notify never fails the committed status change, and is logged', async () => {
+    loggingMock.logToAxiom.mockClear();
     dbMock.dbWrite.feedback.findFirst.mockRejectedValue(new Error('primary blip'));
     await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
     dbMock.dbWrite.feedback.findFirst.mockResolvedValue(REPORTER_ROW);
     mocks.createNotification.mockRejectedValue(new Error('notifications down'));
     await expect(set('wont_fix')).resolves.toEqual({ id: 901, ownerStatus: 'wont_fix' });
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { name?: string; details?: unknown; message?: string })
+      .filter((entry) => entry.name === 'app-feedback-status-notify-failed');
+    expect(logged).toEqual([
+      expect.objectContaining({
+        details: { feedbackId: 901, ownerStatus: 'resolved' },
+        message: 'primary blip',
+      }),
+      expect.objectContaining({
+        details: { feedbackId: 901, ownerStatus: 'wont_fix' },
+        message: 'notifications down',
+      }),
+    ]);
   });
 });
 

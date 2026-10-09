@@ -15,6 +15,7 @@ import {
   notificationProcessors,
   notificationTypes,
 } from '~/server/notifications/utils.notifications';
+import { ownerVisibleWhere } from '~/server/services/blocks/app-feedback.service';
 import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
 
 /**
@@ -149,7 +150,6 @@ describe('owner digest — the query', () => {
       AND f."hiddenFromOwnerAt" IS NULL
       AND u."bannedAt" IS NULL
       AND f."ownerStatus" IS NULL
-      AND f."ownerFlaggedAt" IS NULL
       AND al."revision_of_id" IS NULL
       AND CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END > 0
       AND f."userId" != CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
@@ -158,7 +158,7 @@ describe('owner digest — the query', () => {
       WHERE (blk."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk."targetUserId" = f."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = f."userId" AND blk."targetUserId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk.type = 'Block')
       )
-      AND date_trunc('day', f."createdAt") + INTERVAL '1 day' + INTERVAL '5 minutes' > '2026-10-20T00:00:00.000Z'
+      AND date_trunc('day', f."createdAt") + INTERVAL '1 day' + INTERVAL '5 minutes' > '2026-10-20T00:00:00.000Z'::timestamp - INTERVAL '5 minutes'
       AND date_trunc('day', f."createdAt") + INTERVAL '1 day' + INTERVAL '5 minutes' <= (NOW() AT TIME ZONE 'UTC')
       AND f."createdAt" > (NOW() AT TIME ZONE 'UTC') - INTERVAL '7 days'
       GROUP BY 1, 2, 3, 4
@@ -185,6 +185,31 @@ describe('owner digest — the query', () => {
     expect(sql).not.toContain('context');
     expect(sql).not.toContain('username');
     expect(sql).not.toMatch(/'reporter|'userId'/);
+  });
+
+  it('🔴 agrees with the owner inbox on which rows the owner may see, and what "new" is', () => {
+    // A LEDGER over `ownerVisibleWhere`, the inbox's rule set: each of its keys maps to the SQL that
+    // enforces it here. A rule added to the inbox fails the key-set check until it is mapped (and
+    // added to the digest); a rule removed fails it too. The digest is a copy nothing retracts, so
+    // a row the inbox hides must never be counted in it.
+    const where = ownerVisibleWhere('apl_ledger');
+    const enforcedBy: Record<string, string> = {
+      area: `f.area = 'app-block'`,
+      appListingId: `JOIN "app_listings" al ON al.id = f."appListingId"`,
+      hiddenFromOwnerAt: `f."hiddenFromOwnerAt" IS NULL`,
+      user: `u."bannedAt" IS NULL`,
+    };
+    expect(Object.keys(where).sort()).toEqual(Object.keys(enforcedBy).sort());
+    expect(where).toEqual({
+      area: 'app-block',
+      appListingId: 'apl_ledger',
+      hiddenFromOwnerAt: null,
+      user: { bannedAt: null },
+    });
+    for (const [key, fragment] of Object.entries(enforcedBy)) expect(sql, key).toContain(fragment);
+    // "New" is the inbox's `ownerStatus IS NULL` alone — not narrowed by the abuse flag.
+    expect(sql).toContain(`f."ownerStatus" IS NULL`);
+    expect(sql).not.toContain('ownerFlaggedAt');
   });
 
   it('sets no dedupeKey — nothing else is sent for a digest bucket', () => {

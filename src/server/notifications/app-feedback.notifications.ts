@@ -14,15 +14,14 @@ import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
  * Private per-app feedback (`Feedback.area = 'app-block'`) — the two notifications it sends.
  *
  * 1. `app-feedback-new` — a DAILY DIGEST to the listing OWNER: "3 new feedback messages on
- *    "Pixel Forge"". One per listing per UTC day, built by the scheduled `send-notifications`
- *    runner from `prepareQuery`. Owner only: accepted editors read the inbox but get no digest.
+ *    "Pixel Forge"". One per listing per UTC day. Owner only: accepted editors read the inbox but
+ *    get no digest.
  * 2. `app-feedback-status` — to the REPORTER, when the developer marks their feedback `resolved`
- *    or `wont_fix`. Imperative: emitted by `setAppFeedbackOwnerStatus` after its UPDATE (see
- *    `app-feedback-notify.ts`). Never for `acknowledged`.
+ *    or `wont_fix`. Never for `acknowledged`.
  *
- * Both are toggleable and default ON, so each renders a checkbox in the notification settings and
- * a row in `UserNotificationSettings` turns it off: the digest's own SQL filters on it, the
- * reporter path is filtered by the notifications service's single-row create.
+ * Both default ON and are opt-out. The bulk `prepareQuery` path does not filter
+ * `UserNotificationSettings`, so the digest SQL must; the single-row create the status
+ * notification goes through does. Moving that one to a bulk create would silently drop its opt-out.
  *
  * 🔴 NEITHER CARRIES ANY FEEDBACK TEXT, and that is a privacy decision, not an omission. A
  * notification is a copy: it is stored by the notifications service and may be pushed to a
@@ -31,26 +30,19 @@ import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
  * survive both. So the digest says how many and for which app, and the owner reads the text in
  * the inbox, where those filters apply. For the same reason it names no reporter. The reporter's
  * notification names the app and the new status, never the developer.
- *
- * The `type` strings are free-form (no notifications-DB enum), so these need no notifications-DB
- * migration. Registered in `utils.notifications.ts`. Nothing is sent until app feedback rows exist,
- * and those are gated by the `feedback-area-app-block` flag.
  */
 
 export const APP_FEEDBACK_DIGEST_TYPE = 'app-feedback-new';
 export const APP_FEEDBACK_STATUS_TYPE = 'app-feedback-status';
 
-/** The editor tab the owner's inbox lives on. */
 export const APP_FEEDBACK_EDITOR_TAB = 'feedback';
 
 /**
- * The owner inbox for a listing. Built from `listingEditHref` so the route has one owner.
+ * The owner inbox for a listing.
  *
- * The tab is appended here rather than passed to `listingEditHref` because the editor's
- * `EditorTab` union does not have `feedback` yet — the inbox tab is a separate change. Until it
- * lands, `resolveEditorTab` sends an unknown `?tab=` to the default tab, so the link still opens
- * the listing's editor. When it lands, this becomes `listingEditHref(id, 'feedback')`; the URL is
- * the same string, and the test pins it whole.
+ * @ai: switch to `listingEditHref(appListingId, 'feedback')` and drop APP_FEEDBACK_EDITOR_TAB once
+ * the owner inbox change adds `feedback` to `EditorTab`. Until then `resolveEditorTab` sends the
+ * unknown tab to the default one, so the link opens the listing's editor. The test pins the URL.
  */
 export function appFeedbackInboxHref(appListingId: string): string {
   return `${listingEditHref(appListingId)}?tab=${APP_FEEDBACK_EDITOR_TAB}`;
@@ -61,8 +53,9 @@ export function appFeedbackInboxHref(appListingId: string): string {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * The digest's bucket. A Postgres `date_trunc` unit, also used as the bucket LENGTH
- * (`INTERVAL '1 day'`), so changing the cadence is this one word (`'hour'` for hourly).
+ * The digest's bucket: a Postgres `date_trunc` unit, also used as the bucket length. Changing it
+ * also means changing the "(daily)" in the type's `displayName`, and it must stay under the
+ * query's 7-day floor.
  */
 export const APP_FEEDBACK_DIGEST_BUCKET = 'day';
 
@@ -75,6 +68,15 @@ export const APP_FEEDBACK_DIGEST_BUCKET = 'day';
 export const APP_FEEDBACK_DIGEST_GRACE = '5 minutes';
 
 /** The SQL expression for the moment a row's bucket is sent, as a UTC `timestamp`. */
+/**
+ * How far each run's window reaches back before its cursor. The cursor is stamped with the APP
+ * server's clock while `NOW()` is the DATABASE's, so if the database runs behind, consecutive
+ * windows `(lastSent, now]` would leave a gap, and a bucket falling due inside it would never be
+ * sent. Overlapping by this much absorbs that skew; a bucket re-emitted in the overlap carries the
+ * same `key`, so it is not delivered twice.
+ */
+export const APP_FEEDBACK_DIGEST_CLOCK_SLACK = '5 minutes';
+
 const digestDueAt = `date_trunc('${APP_FEEDBACK_DIGEST_BUCKET}', f."createdAt") + INTERVAL '1 ${APP_FEEDBACK_DIGEST_BUCKET}' + INTERVAL '${APP_FEEDBACK_DIGEST_GRACE}'`;
 
 /**
@@ -104,18 +106,17 @@ export function appFeedbackDigestMessage(details: Partial<AppFeedbackDigestDetai
  *
  * 🔴 THE CURSOR IS COMPARED TO THE BUCKET'S DUE TIME, NOT TO `createdAt`. That is what makes this
  * a digest while the runner fires every minute: a report is sent exactly once, in the run whose
- * window `(lastSent, now]` contains its bucket's due time, and the per-type cursor still advances
- * every minute, so `notification-cursor-monitor` never sees it as stale. (Skipping runs to make a
- * digest would leave that cursor up to a day old and page the monitor.) The runner stamps the
- * cursor with a time taken BEFORE the query, so consecutive windows overlap slightly and never
- * gap; a bucket that falls in the overlap is emitted twice with the same `key`, which the
- * notifications service collapses into one notification.
+ * window (widened by APP_FEEDBACK_DIGEST_CLOCK_SLACK) contains its bucket's due time, and the
+ * per-type cursor still advances every minute. Do not gate the processor to run once a day
+ * instead: its cursor would go stale and trip `notification-cursor-monitor`.
  *
- * What a row must be to count — each a filter here, because the digest is a copy the owner keeps:
- *   - still NEW to the developer (`ownerStatus` and `ownerFlaggedAt` NULL): something they already
- *     acknowledged, resolved or flagged in the inbox before the bucket closed is not news;
+ * What a row must be to count, judged when the digest is sent. The first three are the owner
+ * inbox's own rules (`ownerVisibleWhere` and its `new` filter in `app-feedback.service.ts`),
+ * restated as SQL text because the runner takes a raw string; the "agrees with the owner inbox"
+ * test fails if the inbox's rule set changes without this one:
+ *   - still NEW to the developer (`ownerStatus` NULL), as the inbox's New filter counts it;
  *   - not hidden from the developer by a moderator;
- *   - not from a reporter who is now banned (the owner inbox drops those too);
+ *   - not from a reporter who is now banned;
  *   - not from someone the owner blocked, or who blocked the owner;
  *   - not the owner's own (submission already refuses that; ownership can change afterwards).
  *
@@ -138,26 +139,22 @@ export function appFeedbackDigestQuery({ lastSent }: { lastSent: string }): stri
         JOIN "User" u ON u.id = f."userId"
         -- INNER: a report whose listing was deleted (appListingId SET NULL) has no owner to tell.
         JOIN "app_listings" al ON al.id = f."appListingId"
-        -- Ownership chain for the onsite kind — see APP_LISTING_OWNER_SQL.
         LEFT JOIN "app_blocks" ab ON ab.id = al."app_block_id"
         LEFT JOIN "OauthClient" oc ON oc.id = ab."app_id"
         WHERE f.area = '${APP_BLOCK_FEEDBACK_AREA}'
           AND f."hiddenFromOwnerAt" IS NULL
           AND u."bannedAt" IS NULL
           AND f."ownerStatus" IS NULL
-          AND f."ownerFlaggedAt" IS NULL
           AND al."revision_of_id" IS NULL
           AND ${APP_LISTING_OWNER_SQL} > 0
           AND f."userId" != ${APP_LISTING_OWNER_SQL}
-          -- Argument ORDER is load-bearing: (recipient, actor).
+          -- (recipient, actor): swapped, the owner's Hide of a reporter stops suppressing.
           AND ${notBlockedBetween(APP_LISTING_OWNER_SQL, 'f."userId"')}
           -- The bucket became due inside this run's window.
-          AND ${digestDueAt} > '${lastSent}'
+          AND ${digestDueAt} > '${lastSent}'::timestamp - INTERVAL '${APP_FEEDBACK_DIGEST_CLOCK_SLACK}'
           AND ${digestDueAt} <= ${NOW_UTC}
           -- A floor against cursor drift: a new type's cursor starts at the job's global last run,
-          -- which is the epoch on a fresh database and stale by the length of any outage. (No
-          -- hard launch-date floor like the comment types carry: no app-block row predates the
-          -- area itself, so there is nothing pre-launch to keep out.)
+          -- which is the epoch on a fresh database and stale by the length of any outage.
           AND f."createdAt" > ${NOW_UTC} - INTERVAL '7 days'
         GROUP BY 1, 2, 3, 4
       )
@@ -183,7 +180,8 @@ export function appFeedbackDigestQuery({ lastSent }: { lastSent: string }): stri
 /**
  * The owner statuses a reporter hears about, and how each reads. `acknowledged` is deliberately
  * absent: it means "seen", and telling the reporter that invites a reply channel this feature does
- * not have. A `Map`, so a status outside it has no label rather than an inherited property.
+ * not have. A Map, not an object: `details` is untrusted JSON, and an object literal would answer
+ * for inherited keys.
  */
 const NOTIFIED_STATUS_LABELS = new Map<FeedbackOwnerStatus, string>([
   ['resolved', 'resolved'],
@@ -196,8 +194,8 @@ export function isReporterNotifiedOwnerStatus(status: FeedbackOwnerStatus): bool
 
 /**
  * One notification per (feedback, status). Setting the same status again — directly, or after
- * flapping through another — reuses the key, and the notifications service does not deliver a key
- * twice to the same user.
+ * flapping through another — reuses the key, so it is not re-delivered while the earlier
+ * notification is still retained by the notifications service.
  */
 export function appFeedbackStatusKey(feedbackId: number, ownerStatus: FeedbackOwnerStatus): string {
   return `${APP_FEEDBACK_STATUS_TYPE}:${feedbackId}:${ownerStatus}`;
