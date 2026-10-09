@@ -1,17 +1,19 @@
 import { Badge, Button, Group, Stack, Text, Title } from '@mantine/core';
 import { IconCalendarEvent, IconConfetti, IconEye, IconTrophy } from '@tabler/icons-react';
+import type { ReactNode } from 'react';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useTeamColor } from '~/components/Events/events.utils';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
 
 type EventData = RouterOutput['event']['getData'];
 
-// Where each team's join hat floats in the hero, as [right %, top %, width px, tilt deg].
+// Where each team's join hat floats in a hero with no art, as [right %, top %, width px, tilt deg].
 const FLOAT = [
   [4, 10, 88, -14],
   [22, 52, 76, 10],
@@ -23,6 +25,7 @@ export function ScoredEventHero({
   data,
   team,
   rank,
+  teamPoints,
   points,
   ended,
   winner,
@@ -37,6 +40,8 @@ export function ScoredEventHero({
   /** The viewer's team once they have joined. */
   team?: string;
   rank?: number;
+  teamPoints?: number;
+  /** What the viewer's own hats earned. */
   points?: number;
   ended: boolean;
   onJoin: () => void;
@@ -46,31 +51,59 @@ export function ScoredEventHero({
   const now = new Date();
   const started = data.startDate <= now;
   const page = data.page;
+  const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
+  const winnerColor = winner ? teamColor(winner) : undefined;
+  const myHat = team ? teamHats?.find((h) => h.team === team)?.url : undefined;
+  const eyebrowColor = (team && teamColor(team)) ?? colors[2] ?? 'var(--mantine-color-dimmed)';
 
   return (
     <SpotlightSurface className="overflow-hidden rounded-xl border border-solid border-gray-3 bg-white dark:border-dark-4 dark:bg-dark-6">
+      {page?.heroImage ? (
+        <div
+          aria-hidden
+          className="relative aspect-[4/3] w-full @md:absolute @md:inset-0 @md:aspect-auto"
+          data-testid="hero-art"
+        >
+          <EdgeMedia
+            src={page.heroImage}
+            width={1600}
+            className="absolute inset-0 size-full object-cover object-right"
+            alt=""
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent from-50% to-white @md:bg-gradient-to-r @md:from-white @md:from-35% @md:via-white/80 @md:via-50% @md:to-transparent @md:to-70% dark:to-dark-6 dark:@md:from-dark-6 dark:@md:via-dark-6/80" />
+        </div>
+      ) : (
+        <div aria-hidden className="pointer-events-none absolute inset-0 hidden @md:block">
+          {teamHats?.map(
+            (hat, i) =>
+              hat.url && (
+                <div
+                  key={hat.team}
+                  className="absolute"
+                  style={{
+                    right: `${FLOAT[i % FLOAT.length][0]}%`,
+                    top: `${FLOAT[i % FLOAT.length][1]}%`,
+                    width: FLOAT[i % FLOAT.length][2],
+                    transform: `rotate(${FLOAT[i % FLOAT.length][3]}deg)`,
+                  }}
+                >
+                  <EdgeMedia src={hat.url} width={128} alt="" />
+                </div>
+              )
+          )}
+        </div>
+      )}
+      {winnerColor && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ background: `color-mix(in srgb, ${winnerColor} 14%, transparent)` }}
+        />
+      )}
+      <HeroBulbs colors={colors} />
       <SpotlightGlow color="light-dark(rgba(0,0,0,0.04), rgba(255,255,255,0.06))" size={600} />
-      <div aria-hidden className="pointer-events-none absolute inset-0 hidden @md:block">
-        {teamHats?.map(
-          (hat, i) =>
-            hat.url && (
-              <div
-                key={hat.team}
-                className="absolute"
-                style={{
-                  right: `${FLOAT[i % FLOAT.length][0]}%`,
-                  top: `${FLOAT[i % FLOAT.length][1]}%`,
-                  width: FLOAT[i % FLOAT.length][2],
-                  transform: `rotate(${FLOAT[i % FLOAT.length][3]}deg)`,
-                }}
-              >
-                <EdgeMedia src={hat.url} width={128} alt="" />
-              </div>
-            )
-        )}
-      </div>
 
-      <Stack gap="lg" p={{ base: 'lg', sm: 40 }} className="relative @md:max-w-[62%]">
+      <Stack gap="lg" p={{ base: 'lg', sm: 40 }} className="relative @md:max-w-[56%]">
         <Group gap="xs">
           {data.preview && (
             <Badge color="yellow" variant="light" leftSection={<IconEye size={14} />}>
@@ -87,66 +120,106 @@ export function ScoredEventHero({
         </Group>
 
         <Stack gap={8}>
-          <Text size="sm" fw={700} tt="uppercase" c="dimmed" lts={0.5}>
+          <Text size="sm" fw={700} tt="uppercase" lts={0.5} c={winnerColor ?? eyebrowColor}>
             {data.title}
           </Text>
-          <Title order={1} className="text-4xl leading-tight @sm:text-5xl">
-            {page?.headline ?? data.title}
+          <Title order={1} className="text-4xl leading-tight [text-wrap:balance] @sm:text-5xl">
+            {winner ? (
+              <>
+                Team {winner} wins
+                <span className="block" style={{ color: winnerColor }}>
+                  {data.title}
+                </span>
+              </>
+            ) : (
+              <>
+                {page?.headline ?? data.title}
+                {page?.headlineAccent && (
+                  <span
+                    className="block bg-clip-text text-transparent"
+                    style={{ backgroundImage: `linear-gradient(90deg, ${colors.join(', ')})` }}
+                  >
+                    {page.headlineAccent}
+                  </span>
+                )}
+              </>
+            )}
           </Title>
-          {page?.summary && (
-            <Text size="lg" c="dimmed" maw={560}>
+          {page?.summary && !ended && (
+            <Text size="lg" c="dimmed" maw={480}>
               {page.summary}
             </Text>
           )}
         </Stack>
 
-        <Text size="sm" c="dimmed">
-          {ended ? (
-            <>
-              {winner && (
-                <Text component="span" fw={700} c={teamColor(winner)}>
-                  Team {winner} leads the final standings.{' '}
+        {ended ? (
+          <Stack gap="xs">
+            <Text size="sm" c="dimmed">
+              {!winner && 'The final standings are a tie at the top. '}Ended{' '}
+              {formatDate(data.endDate, 'MMMM D')}.
+            </Text>
+            {winner && page?.prize && (
+              <Group gap="md" wrap="nowrap" data-testid="hero-prize">
+                {page.prize.imageUrl ? (
+                  <div className="w-16 shrink-0">
+                    <EdgeMedia src={page.prize.imageUrl} width={128} alt="" />
+                  </div>
+                ) : (
+                  <IconTrophy size={40} color={winnerColor} className="shrink-0" />
+                )}
+                <Stack gap={2}>
+                  <Text fw={700}>{page.prize.title}</Text>
+                  <Text size="sm" c="dimmed">
+                    {page.prize.body}
+                  </Text>
+                </Stack>
+              </Group>
+            )}
+          </Stack>
+        ) : (
+          <Text size="sm" c="dimmed">
+            {started ? (
+              <>
+                <Text component="span" fw={700} c="var(--mantine-color-text)">
+                  <Countdown endTime={data.endDate} />
+                </Text>{' '}
+                left to score
+              </>
+            ) : (
+              <>
+                Opens to everyone in{' '}
+                <Text component="span" fw={700} c="var(--mantine-color-text)">
+                  <Countdown endTime={data.startDate} />
                 </Text>
-              )}
-              Ended {formatDate(data.endDate, 'MMMM D')}.
-            </>
-          ) : started ? (
-            <>
-              <Text component="span" fw={700} c="var(--mantine-color-text)">
-                <Countdown endTime={data.endDate} />
-              </Text>{' '}
-              left to score
-            </>
-          ) : (
-            <>
-              Opens to everyone in{' '}
-              <Text component="span" fw={700} c="var(--mantine-color-text)">
-                <Countdown endTime={data.startDate} />
-              </Text>
-            </>
-          )}
-        </Text>
+              </>
+            )}
+          </Text>
+        )}
 
         {team ? (
-          <Group gap="sm">
-            <Badge
-              size="xl"
-              radius="xl"
-              variant="light"
-              color={team.toLowerCase()}
-              leftSection={<IconConfetti size={18} />}
-            >
-              You&apos;re on Team {team}
-            </Badge>
-            {!!rank && (
-              <Text size="sm" c="dimmed">
-                <IconTrophy size={14} className="inline align-[-2px]" /> #{rank} ·{' '}
-                <Text component="span" fw={700} c={teamColor(team)}>
-                  {numberWithCommas(points ?? 0)}
-                </Text>{' '}
-                points from your hats
-              </Text>
+          <Group
+            gap="lg"
+            wrap="nowrap"
+            className="w-fit rounded-lg border border-solid px-4 py-3"
+            style={{ borderColor: teamColor(team) }}
+            data-testid="hero-team"
+          >
+            {myHat && (
+              <div className="w-14 shrink-0">
+                <EdgeMedia src={myHat} width={112} alt="" />
+              </div>
             )}
+            <Stack gap={0}>
+              <Text size="xs" c="dimmed" tt="uppercase" fw={700} lts={0.5}>
+                You&apos;re on
+              </Text>
+              <Text fw={800} size="xl" c={teamColor(team)}>
+                Team {team}
+              </Text>
+            </Stack>
+            {!!rank && <Figure label="Rank" value={`#${rank}`} />}
+            <Figure label="Team points" value={<AnimatedCount value={teamPoints ?? 0} />} />
+            <Figure label="From your hats" value={<AnimatedCount value={points ?? 0} />} />
           </Group>
         ) : (
           !ended && (
@@ -170,5 +243,18 @@ export function ScoredEventHero({
         )}
       </Stack>
     </SpotlightSurface>
+  );
+}
+
+function Figure({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <Stack gap={0} className="shrink-0">
+      <Text fw={800} size="xl" className="tabular-nums">
+        {value}
+      </Text>
+      <Text size="xs" c="dimmed">
+        {label}
+      </Text>
+    </Stack>
   );
 }

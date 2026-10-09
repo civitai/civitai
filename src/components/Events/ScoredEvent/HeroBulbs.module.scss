@@ -1,0 +1,40 @@
+.bulbs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-around;
+  pointer-events: none;
+  z-index: 1;
+
+  span {
+    width: 8px;
+    height: 11px;
+    border-radius: 0 0 5px 5px;
+    background: var(--bulb);
+    box-shadow: 0 0 8px 1px var(--bulb);
+    opacity: 0.8;
+    animation: twinkle 2.4s ease-in-out infinite alternate;
+
+    &:nth-child(3n + 1) {
+      animation-delay: -0.8s;
+    }
+    &:nth-child(3n + 2) {
+      animation-delay: -1.6s;
+    }
+  }
+}
+
+@keyframes twinkle {
+  to {
+    opacity: 0.45;
+    box-shadow: 0 0 3px 0 var(--bulb);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bulbs span {
+    animation: none;
+  }
+}

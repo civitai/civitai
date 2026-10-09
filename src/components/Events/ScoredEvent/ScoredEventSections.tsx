@@ -11,6 +11,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import type { ReactNode } from 'react';
+import { Fragment } from 'react';
+import type { ScoredSection } from '~/components/Events/ScoredEvent/scored-event.utils';
+import { scoredSectionOrder } from '~/components/Events/ScoredEvent/scored-event.utils';
 
 type EventData = RouterOutput['event']['getData'];
 
@@ -57,15 +61,44 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
   };
 
   const color = (team && teamColor(team)) ?? 'var(--mantine-color-blue-5)';
-  const rank = team ? standings?.teams.find((t) => t.team === team)?.rank : undefined;
+  const myStanding = team ? standings?.teams.find((t) => t.team === team) : undefined;
   const points = hats.reduce((sum, h) => sum + h.points, 0);
+
+  const sections: Record<ScoredSection, ReactNode> = {
+    standings: standings && <TeamStandings standings={standings} myTeam={team} />,
+    hats: joined && hats.length > 0 && (
+      <MyEventHats
+        event={event}
+        hats={hats}
+        fetchedAt={hatsFetchedAt}
+        teamColor={color}
+        ended={ended}
+      />
+    ),
+    shop: team ? (
+      <TeamHatShelf event={event} team={team} />
+    ) : (
+      <SpotlightBorderCard color="var(--mantine-color-blue-5)">
+        <Stack gap={4} p="lg" align="center" ta="center">
+          <IconShoppingBag size={28} />
+          <Text fw={700}>Join to shop for hats</Text>
+          <Text c="dimmed" size="sm">
+            Hats come in your team&apos;s colour, so the shop opens once you have a team.
+          </Text>
+        </Stack>
+      </SpotlightBorderCard>
+    ),
+    topHats: standings && <TopHats standings={standings} />,
+    rules: <EventRules data={data} />,
+  };
 
   return (
     <Stack gap={56}>
       <ScoredEventHero
         data={data}
         team={team}
-        rank={rank}
+        rank={myStanding?.rank}
+        teamPoints={myStanding?.score}
         points={points}
         ended={ended}
         winner={ended ? leader(standings?.teams) : undefined}
@@ -73,37 +106,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         onJoin={handleJoin}
         joining={equipping}
       />
-
-      {standings && <TeamStandings standings={standings} myTeam={team} />}
-
-      {joined && hats.length > 0 && (
-        <MyEventHats
-          event={event}
-          hats={hats}
-          fetchedAt={hatsFetchedAt}
-          teamColor={color}
-          ended={ended}
-        />
-      )}
-
-      {!ended &&
-        (team ? (
-          <TeamHatShelf event={event} team={team} />
-        ) : (
-          <SpotlightBorderCard color="var(--mantine-color-blue-5)">
-            <Stack gap={4} p="lg" align="center" ta="center">
-              <IconShoppingBag size={28} />
-              <Text fw={700}>Join to shop for hats</Text>
-              <Text c="dimmed" size="sm">
-                Hats come in your team&apos;s colour, so the shop opens once you have a team.
-              </Text>
-            </Stack>
-          </SpotlightBorderCard>
-        ))}
-
-      {standings && <TopHats standings={standings} />}
-
-      <EventRules data={data} />
+      {scoredSectionOrder({ joined, ended }).map((key) => (
+        <Fragment key={key}>{sections[key]}</Fragment>
+      ))}
     </Stack>
   );
 }

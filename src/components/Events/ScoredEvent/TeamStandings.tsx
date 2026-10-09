@@ -1,5 +1,5 @@
-import { Group, Progress, SegmentedControl, Stack, Text, Title } from '@mantine/core';
-import { IconChartLine, IconTrophy } from '@tabler/icons-react';
+import { Group, Progress, SegmentedControl, Stack, Text } from '@mantine/core';
+import { IconChartLine, IconFlame, IconTrophy } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';
 import {
   Chart as ChartJS,
@@ -13,6 +13,7 @@ import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { teamPositionsOverTime } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -81,15 +82,17 @@ export function TeamStandings({ standings, myTeam }: { standings: Standings; myT
 
   return (
     <Stack gap="md">
-      <Group justify="space-between" align="flex-end">
-        <Stack gap={4}>
-          <Title order={2}>Team standings</Title>
-          <Text size="sm" c="dimmed">
+      <EventSectionHeading
+        icon={IconTrophy}
+        title="Team standings"
+        color={myTeam && teamColor(myTeam)}
+        subtitle={
+          <>
             Updated hourly · last update{' '}
             {standings.updatedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-          </Text>
-        </Stack>
-      </Group>
+          </>
+        }
+      />
 
       <div className="grid gap-4 @md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         <Stack gap="sm">
@@ -174,10 +177,12 @@ export function TopHats({ standings }: { standings: Standings }) {
 
   return (
     <Stack gap="md">
-      <Group gap={8}>
-        <IconTrophy size={24} />
-        <Title order={2}>Hardest-working hats</Title>
-      </Group>
+      <EventSectionHeading
+        icon={IconFlame}
+        title="Hardest-working hats"
+        color="orange"
+        subtitle="The hats that have earned the most points so far."
+      />
       <SpotlightBorderCard color="var(--mantine-color-yellow-5)" size={320}>
         <Stack gap={0}>
           {top.map((c, i) => {

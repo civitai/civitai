@@ -15,7 +15,9 @@ const name: (typeof REDIS_KEYS)['BIRTHDAY']['2026']['BASE'] = BIRTHDAY_2026_EVEN
 export const birthday2026 = createEvent(name, {
   title: "Civitai's 4th Birthday",
   page: {
-    headline: 'Civitai turns 4. Pick up a hat.',
+    headline: 'Civitai turns 4.',
+    headlineAccent: 'Pick up a hat.',
+    heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
     dates: 'Nov 11 to Nov 25',
     summary:
       'Four colour teams. Put party hats on your images, models and articles, and every view and reaction they get scores for your team.',

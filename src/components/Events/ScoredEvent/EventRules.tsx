@@ -1,4 +1,4 @@
-import { Accordion, Group, SimpleGrid, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Accordion, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   IconConfetti,
   IconEye,
@@ -10,12 +10,8 @@ import {
 } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { describeEntityTypes } from '~/components/Events/ScoredEvent/scored-event.utils';
-import {
-  SpotlightBorderCard,
-  SpotlightGlow,
-  SpotlightSurface,
-} from '~/components/SpotlightCard/SpotlightBorderCard';
 import type { RouterOutput } from '~/types/router';
 
 type EventData = RouterOutput['event']['getData'];
@@ -31,12 +27,16 @@ export function EventRules({ data }: { data: EventData }) {
   return (
     <Stack gap="xl">
       <Stack gap="md">
-        <Title order={2}>How it works</Title>
+        <EventSectionHeading
+          icon={IconConfetti}
+          title="How it works"
+          subtitle="Three steps, and the rules that keep it fair."
+        />
         <SimpleGrid cols={{ base: 1, sm: 3 }} spacing="md">
           {page.steps.map((step, i) => {
             const Icon = STEP_ICONS[i] ?? IconConfetti;
             return (
-              <SpotlightBorderCard key={step.title} color="var(--mantine-color-blue-5)" size={220}>
+              <Paper key={step.title} withBorder radius="md">
                 <Stack gap="xs" p="lg">
                   <ThemeIcon size={40} radius="xl" variant="light">
                     <Icon size={22} />
@@ -46,7 +46,7 @@ export function EventRules({ data }: { data: EventData }) {
                   </Text>
                   <Text c="dimmed">{step.body}</Text>
                 </Stack>
-              </SpotlightBorderCard>
+              </Paper>
             );
           })}
         </SimpleGrid>
@@ -102,9 +102,8 @@ export function EventRules({ data }: { data: EventData }) {
       )}
 
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-        <SpotlightSurface className="overflow-hidden rounded-md border border-solid border-yellow-6/40 bg-yellow-0 dark:bg-yellow-9/10">
-          <SpotlightGlow color="rgba(250,176,5,0.12)" />
-          <Group gap="lg" p="lg" wrap="nowrap" className="relative">
+        <div className="overflow-hidden rounded-md border border-solid border-yellow-6/40 bg-yellow-0 dark:bg-yellow-9/10">
+          <Group gap="lg" p="lg" wrap="nowrap">
             <div className="w-24 shrink-0">
               {page.prize.imageUrl ? (
                 <EdgeMedia src={page.prize.imageUrl} width={192} alt="" />
@@ -124,7 +123,7 @@ export function EventRules({ data }: { data: EventData }) {
               <Text c="dimmed">{page.prize.body}</Text>
             </Stack>
           </Group>
-        </SpotlightSurface>
+        </div>
 
         {!!page.faq?.length && (
           <Accordion variant="separated" radius="md">
@@ -155,7 +154,7 @@ function RuleCard({
   children: ReactNode;
 }) {
   return (
-    <SpotlightBorderCard color="var(--mantine-color-gray-5)" size={260}>
+    <Paper withBorder radius="md">
       <Stack gap="sm" p="lg">
         <Group gap={8}>
           {icon}
@@ -163,7 +162,7 @@ function RuleCard({
         </Group>
         {children}
       </Stack>
-    </SpotlightBorderCard>
+    </Paper>
   );
 }
 
