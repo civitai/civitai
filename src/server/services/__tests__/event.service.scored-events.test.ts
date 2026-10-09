@@ -40,7 +40,7 @@ vi.mock('~/server/events/scoring/cosmetic-placement.service', async (importOrigi
 }));
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { fetch: vi.fn(async () => ({ 21: { name: 'Party Cap - Yellow' } })) },
-  profilePictureCache: { fetch: vi.fn() },
+  profilePictureCache: { fetch: vi.fn(async () => ({})) },
   refreshOwnedStickerCache: vi.fn(),
   userBasicCache: { fetch: vi.fn(async () => ({})) },
 }));
@@ -491,6 +491,8 @@ describe('getWornEventHat', () => {
   };
   const userBasic = async () =>
     vi.mocked((await import('~/server/redis/caches')).userBasicCache.fetch);
+  const profilePictures = async () =>
+    vi.mocked((await import('~/server/redis/caches')).profilePictureCache.fetch);
 
   it('refuses an event the viewer may not read, and reads nothing', async () => {
     engine.getReadableScoredEvent.mockImplementation(notStarted);
@@ -509,6 +511,7 @@ describe('getWornEventHat', () => {
     (await userBasic()).mockResolvedValueOnce({
       9: { id: 9, username: 'civ', image: 'a.png', deletedAt: null },
     } as never);
+    (await profilePictures()).mockResolvedValueOnce({ 9: { id: 70, url: 'p.png' } } as never);
     scoring.getCosmeticScores.mockResolvedValue({
       '9:31:claimed': { points: 12, impressions: 300, anonImpressions: 40, reactions: 7 },
     });
@@ -517,7 +520,7 @@ describe('getWornEventHat', () => {
       name: 'Party Cap',
       team: 'Blue',
       url: 'blue.png',
-      owner: { id: 9, username: 'civ', image: 'a.png' },
+      owner: { id: 9, username: 'civ', image: 'a.png', profilePicture: { id: 70, url: 'p.png' } },
       points: 12,
       impressions: 340,
       reactions: 7,

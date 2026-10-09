@@ -596,8 +596,9 @@ export async function getWornEventHat({
     if (!row || !isEventDecorationData(row.data)) return null;
     const team = row.data.team ?? null;
     const key = { userId: row.userId, cosmeticId: row.cosmeticId, claimKey: row.claimKey };
-    const [users, scores] = await Promise.all([
+    const [users, profilePictures, scores] = await Promise.all([
       userBasicCache.fetch([row.userId]),
+      profilePictureCache.fetch([row.userId]),
       getCosmeticScores(scored, [key]),
     ]);
     const owner = users[row.userId];
@@ -609,7 +610,12 @@ export async function getWornEventHat({
       url: row.data.url,
       owner:
         owner && !owner.deletedAt
-          ? { id: owner.id, username: owner.username, image: owner.image }
+          ? {
+              id: owner.id,
+              username: owner.username,
+              image: owner.image,
+              profilePicture: profilePictures[owner.id] ?? null,
+            }
           : null,
       points: score?.points ?? 0,
       impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),

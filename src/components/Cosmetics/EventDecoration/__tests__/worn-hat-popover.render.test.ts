@@ -175,6 +175,15 @@ describe('a hatted feed card', () => {
     expect(popover()!.textContent).toContain('See the birthday event');
   });
 
+  it('says the hat has gone when the card outlived it', () => {
+    wornHat.result = { data: null, isLoading: false, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.textContent).toContain('This hat has moved on.');
+    expect(popover()!.textContent).not.toContain('Stats unavailable');
+    expect(popover()!.textContent).toContain('See the birthday event');
+  });
+
   it('shows a skeleton while the stats load', () => {
     wornHat.result = { data: undefined, isLoading: true, isError: false };
     renderCard();

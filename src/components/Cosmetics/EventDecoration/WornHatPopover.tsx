@@ -70,9 +70,14 @@ export function WornHatPopover({
               <Skeleton height={14} width="50%" />
               <Skeleton height={36} />
             </Stack>
-          ) : isError || !data ? (
+          ) : isError ? (
             <Text size="sm" c="dimmed">
               Stats unavailable
+            </Text>
+          ) : !data ? (
+            // The card was drawn before its hat moved or came off.
+            <Text size="sm" c="dimmed">
+              This hat has moved on.
             </Text>
           ) : (
             <WornHatDetails event={event} hat={data} wornOn={wornOn} />
