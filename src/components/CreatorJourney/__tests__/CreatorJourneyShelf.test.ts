@@ -77,6 +77,8 @@ describe('Badges Earned shelf', () => {
   it('holds score tiers and leaves activity milestones out', () => {
     const text = shelfText([badge({}), firstModel]);
     expect(text).toContain('Spark');
+    // The owner's own shelf shows the plain threshold; "500+" is for other people's profiles.
+    expect(text).toContain('500Creator Score');
     expect(text).not.toContain('First Model');
   });
 

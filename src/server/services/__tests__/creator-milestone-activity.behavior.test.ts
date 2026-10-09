@@ -793,6 +793,7 @@ describe('journey progress values', () => {
       reactions: 1000,
       revenue: 110000,
       wins: 0,
+      crucibleWins: 0,
     });
 
     for (const group of groups) await run(group);
@@ -819,6 +820,7 @@ describe('journey progress values', () => {
       reactions: 0,
       revenue: 0,
       wins: 0,
+      crucibleWins: 0,
     });
   });
 });
@@ -1020,6 +1022,12 @@ describe('compete-win detector', () => {
       { key: 'compete:wins-1', seen: true, at: '2025-01-05 00:00' },
       { key: 'compete:wins-5', seen: true, at: '2026-03-04 10:00' },
     ]);
+    // The journey page splits the same count: three challenges, one Crucible (the ledger win is added there).
+    const [values] = await q<{ wins: number; crucibleWins: number }>(activityValuesSql, [CREATOR]);
+    expect({ wins: values.wins, crucibleWins: values.crucibleWins }).toEqual({
+      wins: 4,
+      crucibleWins: 1,
+    });
     expect(group.timed).toBe(true);
     expect(calls).toEqual([
       {
