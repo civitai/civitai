@@ -152,6 +152,30 @@ describe('purchase intent keys', () => {
     expect(keySent(1)).not.toBe(keySent(0));
   });
 
+  // A late answer for an older intent must not end a newer one: the newer
+  // purchase may have charged, and its retry needs its own key.
+  it('a late answer under an old key leaves the newer intent its key', async () => {
+    const purchase = mountPurchaser();
+    let finishSecond: (v: unknown) => void = () => undefined;
+    send
+      .mockResolvedValueOnce({ claimKey: 'first' })
+      .mockImplementationOnce(() => new Promise((resolve) => (finishSecond = resolve)))
+      .mockRejectedValueOnce(httpError(503))
+      .mockResolvedValueOnce({ claimKey: 'retry' });
+
+    const first = buy(purchase);
+    const second = buy(purchase); // a double press: the same intent, still in flight
+    await first; // that intent ends
+    await expect(buy(purchase)).rejects.toThrow(); // a new intent, which may have charged
+    finishSecond({ claimKey: 'late' });
+    await second; // the old intent's late answer
+    await buy(purchase); // the retry of the new intent
+
+    expect(keySent(1)).toBe(keySent(0));
+    expect(keySent(2)).not.toBe(keySent(0));
+    expect(keySent(3)).toBe(keySent(2));
+  });
+
   it("uses the caller's own key untouched", async () => {
     send.mockResolvedValue({ claimKey: 'x' });
     const own = '11111111-1111-4111-8111-111111111111';
