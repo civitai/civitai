@@ -17,6 +17,7 @@ import { withdrawSuccessMessage } from '~/components/Apps/listingPublishingActio
 import { historyStatusColor } from '~/components/Apps/myAppsView';
 import { currentlyPublishedVersionId } from '~/components/Apps/submissionsTable';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -91,6 +92,11 @@ export type ListingHistoryEntry = {
    */
   deployDetail?: string | null;
   /**
+   * The latest build attempt's failed step and class, sent with `deployDetail` (same
+   * approved + failed rule). Structured values only.
+   */
+  buildSignals?: BuildAttemptSignals | null;
+  /**
    * The SERVER's verdict on whether this caller may withdraw this request. Both withdraw
    * procs are submitter-scoped, so a collaborator / transfer recipient / mod-claimed owner
    * offered the button gets a guaranteed red toast. Optional on the type only so a fixture
@@ -139,6 +145,7 @@ function asLifecycleRow(e: ListingHistoryEntry) {
     deployUpdatedAt: e.deployUpdatedAt ?? null,
     reviewedAt: e.reviewedAt,
     deployDetail: e.deployDetail ?? null,
+    buildSignals: e.buildSignals ?? null,
   };
 }
 
@@ -187,7 +194,11 @@ function versionBuildStatus(e: ListingHistoryEntry, isCurrentlyPublished: boolea
   let below: ReactNode = null;
   if (row.deployState === 'failed') {
     below = (
-      <DeployFailureDetail detail={row.deployDetail} testId={`apps-history-failure-${e.id}`} />
+      <DeployFailureDetail
+        detail={row.deployDetail}
+        signals={row.buildSignals}
+        testId={`apps-history-failure-${e.id}`}
+      />
     );
   } else if (isStrandedDeploy(row, now)) {
     below = (

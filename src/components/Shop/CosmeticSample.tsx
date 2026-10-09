@@ -1,8 +1,8 @@
 import type { MantineSize } from '@mantine/core';
-import { Text } from '@mantine/core';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { NamePlateText } from '~/components/User/NamePlateText';
 import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
@@ -90,9 +90,9 @@ export const CosmeticSample = ({
     case CosmeticType.NamePlate:
       const data = cosmetic.data as NamePlateCosmetic['data'];
       return (
-        <Text fw="bold" {...data} size={values.textSize}>
+        <NamePlateText fw="bold" nameplate={data} size={values.textSize}>
           Sample Text
-        </Text>
+        </NamePlateText>
       );
     case CosmeticType.ProfileBackground:
       const backgroundData = cosmetic.data as ProfileBackgroundCosmetic['data'];

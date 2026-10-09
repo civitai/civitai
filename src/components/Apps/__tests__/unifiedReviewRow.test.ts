@@ -115,6 +115,26 @@ describe('onsiteRequestToUnifiedRow', () => {
     expect(approved.submittedAt.toISOString()).toBe('2026-03-05T00:00:00.000Z');
   });
 
+  it('projects the approved row’s build signals onto deploy, and null when absent', () => {
+    const withSignals = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'f',
+        deployState: 'failed',
+        buildSignals: { failedStep: 'clone', failureClass: 'platform' },
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(withSignals.deploy?.buildSignals).toEqual({
+      failedStep: 'clone',
+      failureClass: 'platform',
+    });
+    const without = onsiteRequestToUnifiedRow(
+      onsite({ id: 'g', deployState: 'failed' } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(without.deploy?.buildSignals).toBeNull();
+  });
+
   it('wires onReview to the on-site opener with the ORIGINAL request', () => {
     const open = vi.fn();
     const req = onsite({ id: 'r1' });

@@ -26,7 +26,41 @@ const {
   mockSetCommitStatus,
   mockAppBlockUpdate,
   mockMarkDeploy,
+  attempts,
 } = vi.hoisted(() => {
+  /**
+   * An in-memory `app_block_build_attempts`: append-only rows and newest-first `findFirst`.
+   * `missing` makes every call throw the way Prisma does before the migration is applied.
+   */
+  const attempts = {
+    rows: [] as Array<Record<string, unknown> & { id: number }>,
+    missing: false,
+    reset() {
+      attempts.rows = [];
+      attempts.missing = false;
+    },
+    fail() {
+      throw Object.assign(
+        new Error(
+          'The table `public.app_block_build_attempts` does not exist in the current database.'
+        ),
+        { code: 'P2021' }
+      );
+    },
+    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      if (attempts.missing) attempts.fail();
+      const row = { ...data, id: attempts.rows.length + 1 };
+      attempts.rows.push(row);
+      return { id: row.id };
+    }),
+    findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      if (attempts.missing) attempts.fail();
+      const hits = attempts.rows
+        .filter((r) => Object.entries(where).every(([k, v]) => r[k] === v))
+        .sort((a, b) => b.id - a.id);
+      return hits[0] ?? null;
+    }),
+  };
   // nxResult: true = newly set (first time), false = key already present (replay).
   const mockRedis = { nxResult: true, nxThrows: false };
   const SECRET = 'test-build-callback-secret';
@@ -44,11 +78,14 @@ const {
       return mockRedis.nxResult;
     }),
     mockRedisDel: vi.fn(async () => 1),
-    mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({ name: 'apply-job-1' })),
+    mockTriggerApply: vi.fn<(...a: any[]) => Promise<{ name: string }>>(async () => ({
+      name: 'apply-job-1',
+    })),
     mockWaitApply: vi.fn<(...a: any[]) => Promise<string>>(async () => 'succeeded'),
     mockSetCommitStatus: vi.fn(async () => undefined),
     mockAppBlockUpdate: vi.fn(async () => undefined),
     mockMarkDeploy: vi.fn<(...a: any[]) => Promise<void>>(async () => undefined),
+    attempts,
   };
 });
 
@@ -64,7 +101,15 @@ vi.mock('~/env/server', () => ({
 }));
 vi.mock('~/server/db/client', () => ({
   dbRead: {},
-  dbWrite: { appBlock: { update: mockAppBlockUpdate } },
+  dbWrite: {
+    appBlock: { update: mockAppBlockUpdate },
+    appBlockBuildAttempt: {
+      create: attempts.create,
+      findFirst: attempts.findFirst,
+    },
+    // Resolves the build attempt's publish_request_id from (slug, sha).
+    appBlockPublishRequest: { findFirst: vi.fn(async () => ({ id: 'pubreq_RESOLVED' })) },
+  },
 }));
 // Per-key Flipt mock: the build-callback gate now reads the dedicated
 // `app-blocks-pipeline-enabled` PIPELINE flag (Decision 1), NOT the user-facing
@@ -121,16 +166,24 @@ describe('build-callback imageRef binding', () => {
     expect(expectedImageRef(slug, SHA)).toBe(`ghcr.io/civitai/app-block-${slug}:${SHA}`);
   });
   it('rejects another slug under the same prefix', () => {
-    expect(`ghcr.io/civitai/app-block-slug-b:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-b:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a mutable :latest tag for our own slug', () => {
-    expect(`ghcr.io/civitai/app-block-slug-a:latest` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-a:latest` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a different sha for our own slug', () => {
-    expect(expectedImageRef('slug-a', 'b'.repeat(40)) === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(expectedImageRef('slug-a', 'b'.repeat(40)) === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
   it('rejects a prefix-matching but unrelated repo', () => {
-    expect(`ghcr.io/civitai/app-block-slug-a-evil:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(false);
+    expect(`ghcr.io/civitai/app-block-slug-a-evil:${SHA}` === expectedImageRef('slug-a', SHA)).toBe(
+      false
+    );
   });
 });
 
@@ -348,7 +401,11 @@ describe('build-callback handler — flag gate + replay guard', () => {
       expect.objectContaining({ slug: SLUG, sha: SHA, appBlockId: APB })
     );
     // Lock the dedup contract: atomic NX-set on the (appBlockId, sha) key with the TTL.
-    expect(mockSetNx).toHaveBeenCalledWith(expect.stringContaining(`apply:${APB}:${SHA}`), '1', 600);
+    expect(mockSetNx).toHaveBeenCalledWith(
+      expect.stringContaining(`apply:${APB}:${SHA}`),
+      '1',
+      600
+    );
   });
 
   it('short-circuits a replayed success callback without re-triggering apply', async () => {
@@ -356,7 +413,10 @@ describe('build-callback handler — flag gate + replay guard', () => {
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     expect(res._status).toBe(200);
-    expect(res._body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
+    expect(res._body).toMatchObject({
+      applied: false,
+      reason: 'duplicate callback (replay-guarded)',
+    });
     expect(mockTriggerApply).not.toHaveBeenCalled();
   });
 
@@ -377,7 +437,12 @@ describe('build-callback handler — flag gate + replay guard', () => {
     expect(mockTriggerApply).not.toHaveBeenCalled();
     expect(mockSetNx).not.toHaveBeenCalled(); // dedup slot untouched by a failure callback
     // Phase 2: a build failure marks the request 'failed' so the dev sees it.
-    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', expect.stringMatching(/Build/));
+    expect(mockMarkDeploy).toHaveBeenCalledWith(
+      SLUG,
+      SHA,
+      'failed',
+      expect.stringMatching(/Build/)
+    );
   });
 
   it('clears the replay slot on a DEFINITIVE apply failure so a same-sha retry is not blocked', async () => {
@@ -406,7 +471,9 @@ describe('build-callback handler — flag gate + replay guard', () => {
     const res = makeRes();
     await invoke(signedReq(validSuccessBody()), res);
     await flush();
-    expect(mockAppBlockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { id: APB } }));
+    expect(mockAppBlockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: APB } })
+    );
     expect(mockRedisDel).not.toHaveBeenCalled();
     // Phase 2: the request transitions 'deploying' (apply trigger) → 'live' (watcher).
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
@@ -534,7 +601,9 @@ describe('build-callback handler — failureReason excerpt (A1/A2)', () => {
     const NUL = String.fromCharCode(0x00);
     const res = makeRes();
     await invoke(
-      signedReq(failBody({ failureReason: `${ESC}[1;31mERROR${ESC}[0m${NUL}: bad lockfile\r\nline2` })),
+      signedReq(
+        failBody({ failureReason: `${ESC}[1;31mERROR${ESC}[0m${NUL}: bad lockfile\r\nline2` })
+      ),
       res
     );
     const detail = mockMarkDeploy.mock.calls.at(-1)?.[3] as string;
@@ -629,5 +698,301 @@ describe('build-callback handler — failureReason excerpt (A1/A2)', () => {
     // newline-escaped at 2 bytes each, 2000 chars fits.
     const escapeHeavy = JSON.stringify(failBody({ failureReason: '"\n'.repeat(1000) }));
     expect(Buffer.byteLength(escapeHeavy, 'utf8')).toBeLessThan(8 * 1024);
+  });
+});
+
+// ---- OPTIONAL structured signals + build attempts + stale-run guard -----------
+//
+// `failedStep` / `pipelineStatus` / `failedReason` / `runId` are optional and additive.
+// Absent → the callback behaves exactly as before. Present and valid → stored on the
+// attempt row. Present and invalid → that field is dropped and the callback proceeds.
+// The attempts table may not exist yet (its migration is applied by hand), and the
+// deploy_state write must not depend on it.
+
+describe('build-callback handler — structured signals and build attempts', () => {
+  const RUN_OLD = 'app-blocks-generate-from-model-aaaaaaaa-111111';
+  const RUN_NEW = 'app-blocks-generate-from-model-aaaaaaaa-222222';
+  const failBody = (over: Record<string, unknown> = {}) => ({
+    ...validSuccessBody(),
+    status: 'None',
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    attempts.reset();
+    mockFlag.enabled = true;
+    mockRedis.nxResult = true;
+    mockRedis.nxThrows = false;
+    mockTriggerApply.mockResolvedValue({ name: 'apply-job-1' });
+    mockWaitApply.mockResolvedValue('succeeded');
+  });
+  afterEach(async () => {
+    await flush();
+  });
+
+  /** Record a trigger the way approve / retrigger do, through the real service. */
+  async function triggered(runName: string) {
+    const { recordBuildTriggered } = await import(
+      '~/server/services/blocks/build-attempts.service'
+    );
+    expect(
+      await recordBuildTriggered({
+        mode: 'build',
+        publishRequestId: 'pubreq_RESOLVED',
+        slug: SLUG,
+        sha: SHA,
+        runName,
+      })
+    ).toBe(true);
+  }
+
+  const callbackRows = () => attempts.rows.filter((r) => r.status !== 'triggered');
+
+  it('ABSENT signals: deploy_state, commit status and response exactly as before; the row carries nulls', async () => {
+    const res = makeRes();
+    await invoke(signedReq(failBody()), res);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'build failed' });
+    expect(mockMarkDeploy).toHaveBeenCalledTimes(1);
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build None');
+    expect(mockSetCommitStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'failure', description: 'Build None' })
+    );
+    expect(callbackRows()).toEqual([
+      {
+        id: 1,
+        publishRequestId: 'pubreq_RESOLVED',
+        slug: SLUG,
+        sha: SHA,
+        runId: null,
+        mode: 'build',
+        status: 'failed',
+        failedStep: null,
+        failedReason: null,
+        // No step reported → no class stored, so the UI keeps its text fallback.
+        failureClass: null,
+        createdAt: expect.any(Date),
+      },
+    ]);
+  });
+
+  it('VALID signals round-trip onto the attempt row with the derived class', async () => {
+    const res = makeRes();
+    await invoke(
+      signedReq(
+        failBody({
+          failedStep: 'build',
+          failedReason: 'TaskRunTimeout',
+          pipelineStatus: 'Failed',
+          runId: RUN_OLD,
+        })
+      ),
+      res
+    );
+    expect(res._status).toBe(200);
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build None');
+    expect(callbackRows()).toEqual([
+      expect.objectContaining({
+        runId: RUN_OLD,
+        status: 'failed',
+        failedStep: 'build',
+        failedReason: 'TaskRunTimeout',
+        failureClass: 'transient',
+      }),
+    ]);
+  });
+
+  it('a SUCCESS records a succeeded attempt with its run id and still applies', async () => {
+    const res = makeRes();
+    await invoke(
+      signedReq({
+        ...validSuccessBody(),
+        failedStep: 'none',
+        pipelineStatus: 'Succeeded',
+        runId: RUN_OLD,
+      }),
+      res
+    );
+    expect(res._body).toMatchObject({ ok: true, applied: true });
+    expect(callbackRows()).toEqual([
+      expect.objectContaining({
+        runId: RUN_OLD,
+        status: 'succeeded',
+        failedStep: 'none',
+        failureClass: null,
+      }),
+    ]);
+    // pipelineStatus is accepted and validated, but deliberately not persisted.
+    expect(callbackRows()[0]).not.toHaveProperty('pipelineStatus');
+  });
+
+  it('an INVALID field is dropped and logged; the callback and the valid fields go through', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const res = makeRes();
+    await invoke(
+      signedReq(failBody({ failedStep: 'scan', failedReason: 'Not A Reason!', runId: RUN_OLD })),
+      res
+    );
+    expect(res._status).toBe(200);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'build failed' });
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build None');
+    expect(callbackRows()).toEqual([
+      expect.objectContaining({
+        failedStep: 'scan',
+        failedReason: null,
+        runId: RUN_OLD,
+        failureClass: 'unknown',
+      }),
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('dropped invalid optional field(s) failedReason')
+    );
+    warn.mockRestore();
+  });
+
+  it('TABLE MISSING: the attempt write and the stale check both fail, deploy_state is still written', async () => {
+    attempts.missing = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const res = makeRes();
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'build failed' });
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build None');
+    // Both table calls were attempted and threw — this is the path under test, not a no-op.
+    expect(attempts.findFirst).toHaveBeenCalled();
+    expect(attempts.create).toHaveBeenCalled();
+    expect(attempts.rows).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it('TABLE MISSING on a success: the apply still runs', async () => {
+    attempts.missing = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const res = makeRes();
+    await invoke(signedReq({ ...validSuccessBody(), runId: RUN_OLD }), res);
+    expect(res._body).toMatchObject({ ok: true, applied: true });
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
+    expect(attempts.create).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('RUN-ID GUARD: a late failure from a SUPERSEDED run leaves the newer run’s state alone', async () => {
+    await triggered(RUN_OLD);
+    await triggered(RUN_NEW); // a moderator retrigger
+    const res = makeRes();
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), res);
+    expect(res._status).toBe(200);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'superseded run' });
+    expect(mockMarkDeploy).not.toHaveBeenCalled();
+    expect(mockSetCommitStatus).not.toHaveBeenCalled();
+    // An ignored failure writes no attempt row, so it can never become a version's
+    // "latest outcome" and relabel the newer run's result.
+    expect(callbackRows()).toEqual([]);
+  });
+
+  it('RUN-ID GUARD: the CURRENT run’s failure is applied', async () => {
+    await triggered(RUN_OLD);
+    await triggered(RUN_NEW);
+    const res = makeRes();
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_NEW })), res);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'build failed' });
+    expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build None');
+  });
+
+  it('RUN-ID GUARD is enforce-if-present: no runId, or a run with no recorded trigger, proceeds', async () => {
+    await triggered(RUN_OLD);
+    await triggered(RUN_NEW);
+    for (const body of [
+      failBody({ failedStep: 'scan' }),
+      failBody({ runId: 'app-blocks-unrecorded-run-1' }),
+    ]) {
+      vi.clearAllMocks();
+      const res = makeRes();
+      await invoke(signedReq(body), res);
+      expect(res._body).toEqual({ ok: true, applied: false, reason: 'build failed' });
+      expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build None');
+    }
+  });
+
+  it('a repeated delivery appends one row per delivery, each newer than the last', async () => {
+    await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
+    await new Promise((r) => setTimeout(r, 5));
+    await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
+    const rows = callbackRows();
+    expect(rows).toHaveLength(2);
+    // The newest row is what the freshness rule reads, and it is newer than the first.
+    expect((rows[1].createdAt as Date).getTime()).toBeGreaterThan(
+      (rows[0].createdAt as Date).getTime()
+    );
+  });
+
+  it('ORDER: the deploy_state write precedes the attempt row (the freshness rule depends on it)', async () => {
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), makeRes());
+    expect(mockMarkDeploy).toHaveBeenCalledTimes(1);
+    expect(attempts.create).toHaveBeenCalledTimes(1);
+    expect(mockMarkDeploy.mock.invocationCallOrder[0]).toBeLessThan(
+      attempts.create.mock.invocationCallOrder[0]
+    );
+  });
+
+  /** The current value of one series of the build-outcome counter. */
+  async function series(labels: string): Promise<number> {
+    const client = (await import('prom-client')).default;
+    const metric = client.register.getSingleMetric('civitai_app_block_builds_total') as unknown as
+      | { get(): Promise<{ values: { value: number; labels: Record<string, string> }[] }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    const [mode, outcome, step, cls] = labels.split('/');
+    return (
+      values.find(
+        (v) =>
+          v.labels.mode === mode &&
+          v.labels.outcome === outcome &&
+          v.labels.failed_step === step &&
+          v.labels.failure_class === cls
+      )?.value ?? 0
+    );
+  }
+
+  it.each([
+    ['a reported step', { failedStep: 'scan' }, 'build/failed/scan/unknown'],
+    [
+      'a build timeout',
+      { failedStep: 'build', failedReason: 'TaskRunTimeout' },
+      'build/failed/build/transient',
+    ],
+    ['no step (older pipeline)', {}, 'build/failed/unreported/unknown'],
+  ] as const)('counts a failure with %s on its series', async (_n, extra, labels) => {
+    const before = await series(labels);
+    await invoke(signedReq(failBody(extra)), makeRes());
+    expect((await series(labels)) - before).toBe(1);
+  });
+
+  it('counts a success, and an apply failure of the built image as platform', async () => {
+    mockWaitApply.mockResolvedValue('failed');
+    const ok = await series('build/succeeded/none/none');
+    const apply = await series('build/failed/apply/platform');
+    await invoke(signedReq(validSuccessBody()), makeRes());
+    await flush(); // the apply watcher is fire-and-forget
+    expect((await series('build/succeeded/none/none')) - ok).toBe(1);
+    expect((await series('build/failed/apply/platform')) - apply).toBe(1);
+  });
+
+  it('does NOT count a superseded run’s ignored failure', async () => {
+    const { ensureRegisterAppBlockBuildMetrics } = await import(
+      '~/server/prom/app-block-build.metrics'
+    );
+    ensureRegisterAppBlockBuildMetrics(); // the series exists, so "unchanged" is not 0 === 0 by absence
+    await triggered(RUN_OLD);
+    await triggered(RUN_NEW);
+    const before = await series('build/failed/scan/unknown');
+    const res = makeRes();
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), res);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'superseded run' });
+    expect(await series('build/failed/scan/unknown')).toBe(before);
+    // Positive control on the same series: the CURRENT run's failure does move it.
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_NEW })), makeRes());
+    expect((await series('build/failed/scan/unknown')) - before).toBe(1);
   });
 });

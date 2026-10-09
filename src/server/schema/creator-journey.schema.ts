@@ -5,6 +5,9 @@ import { SCORE_TIERS } from '~/shared/constants/creator-journey.constants';
 export type LegendStatusInput = z.infer<typeof legendStatusSchema>;
 export const legendStatusSchema = z.object({ userId: z.number().int().positive() });
 
+export type ProfileAchievementsInput = z.infer<typeof profileAchievementsSchema>;
+export const profileAchievementsSchema = z.object({ userId: z.number().int().positive() });
+
 export type MilestoneShareInput = z.infer<typeof milestoneShareSchema>;
 export const milestoneShareSchema = z.object({
   userId: z.number().int().positive(),

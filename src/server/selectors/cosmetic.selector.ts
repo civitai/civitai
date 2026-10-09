@@ -54,6 +54,8 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'> & {
       to: string;
       deg?: number;
     };
+    /** Sweeps a gradient plate's colours horizontally; `deg` is ignored. Rendered by NamePlateText. */
+    animated?: boolean;
   };
 };
 

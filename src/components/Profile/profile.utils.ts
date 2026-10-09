@@ -7,6 +7,7 @@ import { RecentReviewsSection } from '~/components/Profile/Sections/RecentReview
 import { OnSaleSection } from '~/components/Profile/Sections/OnSaleSection';
 import { ShopSection } from '~/components/Profile/Sections/ShopSection';
 import { ShowcaseSection } from '~/components/Profile/Sections/ShowcaseSection';
+import { CreatorJourneySection } from '~/components/Profile/Sections/CreatorJourneySection';
 import type {
   ProfileSectionSchema,
   ProfileSectionType,
@@ -27,6 +28,8 @@ export const defaultProfileSectionStatus: Record<ProfileSectionType, boolean> = 
   shop: false,
   // Off by default: a creator running no sales should not get an empty section they never asked for.
   onSale: false,
+  // Renders nothing until the creator has earned something, so it can be on for everyone.
+  creatorJourney: true,
 } as const;
 
 export const ProfileSectionComponent: Record<
@@ -41,6 +44,7 @@ export const ProfileSectionComponent: Record<
   recentReviews: RecentReviewsSection,
   shop: ShopSection,
   onSale: OnSaleSection,
+  creatorJourney: CreatorJourneySection,
 } as const;
 
 export const profileSectionLabels: Record<ProfileSectionType, string> = {
@@ -52,6 +56,7 @@ export const profileSectionLabels: Record<ProfileSectionType, string> = {
   recentReviews: 'Recent reviews',
   shop: 'Shop',
   onSale: 'On sale',
+  creatorJourney: 'Creator Journey',
 } as const;
 export const getAllAvailableProfileSections = (userSections: ProfileSectionSchema[] = []) => {
   const sections: ProfileSectionSchema[] = [
