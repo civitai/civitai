@@ -212,9 +212,10 @@ export async function readListingVisibilityManyForRender(
  *
  * ⚠️ TWO CALLERS, TWO RATES. The list path's catch fires at most once per catalog cache MISS
  * (one per cohort per TTL), which is a usable signal for the manual-apply window. The badge
- * reader logs only REAL faults (the missing column is swallowed before it), and can do so on
- * every grid request while such a fault lasts — fault rate, not page-view rate in steady
- * state. The DETAIL path's missing-column degrade stays deliberately silent: it would emit
+ * reader logs only REAL faults (the missing column is swallowed before it), on every grid
+ * request that performs the read while such a fault lasts — signed-in, moderator or
+ * non-`public`-floor traffic; an anonymous `public`-floor page skips the read entirely, so
+ * its faults are not logged here. The DETAIL path's missing-column degrade stays deliberately silent: it would emit
  * at page-view rate on a public page. So the window is observable, not fully audited.
  *
  * `type: 'error'` because the missing-column case is swallowed UPSTREAM and never reaches

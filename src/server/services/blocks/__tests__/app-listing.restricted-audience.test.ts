@@ -142,9 +142,11 @@ describe('getListingDetail — restrictedAudience, viewer × level on an APPROVE
   // ⚠️ CONSEQUENCE, STATED SO THIS MATRIX IS NOT READ AS MORE THAN IT IS: every cell that
   // serves a detail is one the viewer's COHORT already admits, so this matrix cannot tell
   // whether `getListingDetail` threads `opts.viewer` into the derivation at all — a mutant
-  // passing the anonymous viewer instead stays green here. That identity wiring is pinned
-  // only by the grid suite below (same `restrictedAudienceForRow` helper) and the router
-  // test that asserts the viewer handed to both procs.
+  // passing the anonymous viewer instead stays green here — and NOTHING else pins it: the
+  // grid suite drives a different function, and the router test mocks the service. That
+  // mutant is behaviour-identical in production today (the gate serves only cohort-admitted
+  // cells). If the detail gate is ever widened for owners, add a detail case reaching an
+  // owner through it — that is the moment this wiring becomes observable.
   const LEVELS = ['private', 'moderators', 'testers', 'public', null] as const;
   const EXPECTED: Record<Viewer, ReadonlyArray<string | null>> = {
     owner: ['NOT_FOUND', 'NOT_FOUND', 'NOT_FOUND', null, null],
