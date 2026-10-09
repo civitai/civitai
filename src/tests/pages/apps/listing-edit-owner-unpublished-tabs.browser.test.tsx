@@ -51,6 +51,8 @@ const state = vi.hoisted(() => ({
   feedbackError: null as unknown,
   /** Every input the page asked `hasAnyForListing` about. */
   feedbackInputs: [] as unknown[],
+  /** The query options the page passed alongside each of those inputs. */
+  feedbackOpts: [] as unknown[],
   flags: { appBlocks: true } as Record<string, boolean>,
 }));
 
@@ -145,8 +147,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         }),
       },
       'appFeedback.hasAnyForListing': {
-        useQuery: (input: unknown) => {
+        useQuery: (input: unknown, opts: unknown) => {
           state.feedbackInputs.push(input);
+          state.feedbackOpts.push(opts);
           return {
             data: state.feedbackError ? undefined : state.feedback ?? undefined,
             isLoading: state.feedback == null && !state.feedbackError,
@@ -199,6 +202,7 @@ beforeEach(() => {
   state.feedback = { hasAny: false };
   state.feedbackError = null;
   state.feedbackInputs = [];
+  state.feedbackOpts = [];
   state.flags = { appBlocks: true };
   openListing();
 });
@@ -360,5 +364,17 @@ describe('🔴 the Feedback tab follows `hasAnyForListing`', () => {
     await expect.poll(() => document.querySelector('.mantine-Loader-root')).not.toBeNull();
     expect(page.getByTestId(/^apps-edit-tab-/).elements()).toHaveLength(0);
     expect(page.getByTestId('apps-edit-panel-details').elements()).toHaveLength(0);
+  });
+
+  // The global query defaults are `staleTime: Infinity`, so without this a `false` cached on an
+  // earlier visit would outlive the first report, and the `/apps/build` badge (fetched fresh) would
+  // link to an editor whose `?tab=feedback` falls back. `useQuery` is stubbed in this suite, so the
+  // cache itself cannot be exercised here: this pins the option that makes every visit re-ask.
+  test('the presence read is never served from an earlier visit (gcTime: 0)', async () => {
+    state.context = live();
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-tab-details')).toBeInTheDocument();
+    expect(state.feedbackOpts.at(-1)).toMatchObject({ gcTime: 0 });
   });
 });

@@ -150,9 +150,13 @@ export default function AppListingEditPage() {
   // of the Feedback table; same seat authz as the inbox list. Awaited before the tab set is
   // derived so a `?tab=feedback` deep link resolves on the first render instead of mounting the
   // default panel first. An error (no access, or the column not migrated here) hides the tab.
+  // `gcTime: 0`: the global `staleTime: Infinity` would otherwise let a `false` cached on an earlier
+  // visit survive the first report arriving, so the `/apps/build` "N new feedback" badge (fetched
+  // fresh) would link here and `?tab=feedback` would fall back. Dropping the entry on unmount makes
+  // every visit wait for a fresh answer, exactly like the first load; the query is one EXISTS.
   const feedbackPresence = trpc.appFeedback.hasAnyForListing.useQuery(
     { appListingId },
-    { enabled: !!features.appBlocks && !!appListingId, retry: false }
+    { enabled: !!features.appBlocks && !!appListingId, retry: false, gcTime: 0 }
   );
 
   if (!features.appBlocks) return <NotFound />;
