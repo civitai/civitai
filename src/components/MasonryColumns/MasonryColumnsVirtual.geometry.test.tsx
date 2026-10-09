@@ -11,6 +11,7 @@ import {
   getEventDecorationClearLeft,
   getHatLayout,
   HAT_LOOK,
+  HAT_PLAIN_CARD_NUDGE,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 import type * as AdsProvider from '~/components/Ads/AdsProvider';
@@ -59,23 +60,51 @@ const HAT = { type: 'hat', event: 'birthday2026', url: 'hat.png', fit: FIT };
 type Item = { id: number };
 const items: Item[] = Array.from({ length: 8 }, (_, i) => ({ id: i }));
 
-/** Card 1 (the right column's first card) wears a hat; the rest are plain. */
+/**
+ * Card 1 (the right column's first card) wears a hat; card 3 a hat and a padded CSS frame; card 5 a
+ * hat and lights, a cosmetic with no padding; card 6 a hat and a padded texture frame. The rest are
+ * plain.
+ */
 function Card({ data }: { data: Item }) {
   const card = (
     <div data-testid="card" data-id={data.id} style={{ height: 200, background: '#888' }}>
       <div
-        data-testid={data.id === 1 ? 'chip' : undefined}
+        data-testid={`chip-${data.id}`}
         style={{ paddingLeft: 'var(--event-decoration-clear-left)' }}
       />
     </div>
   );
-  return data.id === 1 ? (
-    <TwCosmeticWrapper eventDecoration={HAT} data-testid="hat-wearer">
-      {card}
-    </TwCosmeticWrapper>
-  ) : (
-    card
-  );
+  if (data.id === 1)
+    return (
+      <TwCosmeticWrapper eventDecoration={HAT} data-testid="hat-wearer">
+        {card}
+      </TwCosmeticWrapper>
+    );
+  if (data.id === 3)
+    return (
+      <TwCosmeticWrapper
+        cosmetic={{ cssFrame: 'linear-gradient(red, blue)' }}
+        eventDecoration={HAT}
+      >
+        {card}
+      </TwCosmeticWrapper>
+    );
+  if (data.id === 5)
+    return (
+      <TwCosmeticWrapper cosmetic={{ lights: 3, color: 'yellow' }} eventDecoration={HAT}>
+        {card}
+      </TwCosmeticWrapper>
+    );
+  if (data.id === 6)
+    return (
+      <TwCosmeticWrapper
+        cosmetic={{ texture: { url: 'texture.png', size: { width: 64, height: 64 } } }}
+        eventDecoration={HAT}
+      >
+        {card}
+      </TwCosmeticWrapper>
+    );
+  return card;
 }
 
 function Gallery({ style }: { style?: React.CSSProperties }) {
@@ -98,7 +127,10 @@ function Gallery({ style }: { style?: React.CSSProperties }) {
 }
 
 const card = (id: number) => document.querySelector(`[data-testid="card"][data-id="${id}"]`)!;
-const hat = () => document.querySelector('button[data-event-decoration="hat"]') as HTMLElement;
+const hatOf = (id: number) =>
+  card(id)?.closest('[data-event-decoration]')?.querySelector('button') as HTMLElement;
+/** Card 1's hat: the plain card the hover and room tests are about. */
+const hat = () => hatOf(1);
 const itemOf = (el: Element) => el.closest('[data-masonry-item]') as HTMLElement;
 const GROW_WAIT = { timeout: 5000 };
 
@@ -182,8 +214,13 @@ describe('MasonryColumnsVirtual with worn hats', () => {
           : ({ '--event-decoration-allowance': `${allowance}px` } as React.CSSProperties);
       await renderAtViewport(<Gallery style={style} />, VIEWPORT);
       await vi.waitFor(() => expect(hat()).toBeTruthy());
-      const chip = document.querySelector('[data-testid="chip"]')!;
-      const expected = getEventDecorationClearLeft({ type: 'hat', fit: FIT }, 'corner', allowance);
+      const chip = document.querySelector('[data-testid="chip-1"]')!;
+      const expected = getEventDecorationClearLeft(
+        { type: 'hat', fit: FIT },
+        'corner',
+        allowance,
+        HAT_PLAIN_CARD_NUDGE
+      );
       expect(Math.abs(parseFloat(getComputedStyle(chip).paddingLeft) - expected)).toBeLessThan(1);
     }
   );
@@ -197,9 +234,40 @@ describe('MasonryColumnsVirtual with worn hats', () => {
           : ({ '--event-decoration-allowance': `${allowance}px` } as React.CSSProperties);
       await renderAtViewport(<Gallery style={style} />, VIEWPORT);
       await vi.waitFor(() => expect(hat()).toBeTruthy());
-      const expected = getHatLayout('corner', FIT, allowance);
+      const expected = getHatLayout('corner', FIT, allowance, HAT_PLAIN_CARD_NUDGE);
       expect(parseFloat(getComputedStyle(hat()).left)).toBeCloseTo(expected.left, 1);
       expect(parseFloat(getComputedStyle(hat()).top)).toBeCloseTo(expected.top, 1);
+    }
+  );
+
+  // A frame's padding already carries the hat out past the picture, so only cards without that
+  // padding are nudged. Lights and borders are cosmetics too, but add no padding.
+  test.each([
+    [1, 'nothing', false],
+    [3, 'a CSS frame', true],
+    [5, 'lights', false],
+    [6, 'a texture frame', true],
+  ])(
+    'card %i, wearing %s, places its hat and corner chips for its padding',
+    async (id, _, padded) => {
+      await renderAtViewport(<Gallery />, VIEWPORT);
+      await vi.waitFor(() => expect(card(id)).toBeTruthy());
+      const wrapper = card(id).closest('[data-event-decoration]')!;
+      expect(getComputedStyle(wrapper).paddingLeft).toBe(padded ? '6px' : '0px');
+      expect(getComputedStyle(wrapper).paddingTop).toBe(padded ? '6px' : '0px');
+
+      const nudge = padded ? 0 : HAT_PLAIN_CARD_NUDGE;
+      const layout = getHatLayout('corner', FIT, undefined, nudge);
+      expect(parseFloat(getComputedStyle(hatOf(id)).left)).toBeCloseTo(layout.left, 1);
+      expect(parseFloat(getComputedStyle(hatOf(id)).top)).toBeCloseTo(layout.top, 1);
+      const chip = document.querySelector(`[data-testid="chip-${id}"]`)!;
+      const clear = getEventDecorationClearLeft(
+        { type: 'hat', fit: FIT },
+        'corner',
+        undefined,
+        nudge
+      );
+      expect(Math.abs(parseFloat(getComputedStyle(chip).paddingLeft) - clear)).toBeLessThan(1);
     }
   );
 

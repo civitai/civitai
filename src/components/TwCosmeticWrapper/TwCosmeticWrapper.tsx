@@ -3,7 +3,10 @@ import clsx from 'clsx';
 import styles from './CosmeticWrapper.module.scss';
 import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
 import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
-import { getEventDecorationClearLeftCss } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import {
+  getEventDecorationClearLeftCss,
+  HAT_PLAIN_CARD_NUDGE,
+} from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
@@ -45,6 +48,8 @@ export function TwCosmeticWrapper({
   if (!hasFrame && !eventDecoration) return children;
 
   const { cssFrame, texture, border, borderWidth, glow } = cosmetic ?? {};
+  // Only these frames are padded (CosmeticWrapper.module.scss); lights or a border alone are not.
+  const padded = !!(cssFrame || texture);
 
   if (true) {
     styleRef.current = {};
@@ -63,7 +68,11 @@ export function TwCosmeticWrapper({
       style={{
         ...styleRef.current,
         ...(eventDecoration && {
-          '--event-decoration-clear-left': getEventDecorationClearLeftCss(eventDecoration),
+          '--event-decoration-clear-left': getEventDecorationClearLeftCss(
+            eventDecoration,
+            undefined,
+            padded ? 0 : HAT_PLAIN_CARD_NUDGE
+          ),
         }),
         ...style,
       }}
@@ -84,7 +93,7 @@ export function TwCosmeticWrapper({
     >
       {hasFrame && <CosmeticLights cosmetic={cosmetic as any} />}
       {children}
-      {eventDecoration && <EventDecorationOverlay decoration={eventDecoration} />}
+      {eventDecoration && <EventDecorationOverlay decoration={eventDecoration} framed={padded} />}
     </div>
   );
 }

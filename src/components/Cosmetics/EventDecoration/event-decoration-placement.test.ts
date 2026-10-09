@@ -4,6 +4,7 @@ import {
   getEventDecorationClearLeft,
   getHatLayout,
   HAT_LOOK,
+  HAT_PLAIN_CARD_NUDGE,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
@@ -198,8 +199,8 @@ describe.each(WORN)('the worn look on %s', (_, fit) => {
 
 // Justin accepted hats overlapping neighbouring cards so the tallest design is worn exactly as
 // chosen (2026-10-09). Lowering ITEM_BLEED below what civchan needs moves it into the card instead.
-it('the tallest design fits the bleed without being moved', () => {
-  const { reach } = getHatLayout('corner', ART.civchan);
+it('the tallest design fits the bleed without being moved, on a plain card too', () => {
+  const { reach } = getHatLayout('corner', ART.civchan, undefined, HAT_PLAIN_CARD_NUDGE);
   expect(Math.min(reach.left, reach.top)).toBeGreaterThan(-ITEM_BLEED);
 });
 
@@ -243,6 +244,34 @@ it.each([
 it('masonry carousels give hats no room and no growth', () => {
   const source = readFileSync('src/components/MasonryColumns/MasonryCarousel.tsx', 'utf8');
   expect(source).toMatch(/'\[--event-decoration-allowance:0px\] \[--event-decoration-grow:1\]'/);
+});
+
+// Chosen by Justin in the hat tuner on his phone (2026-10-09): 4px further up and left on cards
+// without a frame. Change it with him.
+it('nudges hats on plain cards by the chosen amount', () => {
+  expect(HAT_PLAIN_CARD_NUDGE).toBe(4);
+});
+
+it.each(Object.entries(ART))('a plain card moves %s exactly that far up and left', (_, fit) => {
+  const framed = getHatLayout('corner', fit, Infinity);
+  const plain = getHatLayout('corner', fit, Infinity, HAT_PLAIN_CARD_NUDGE);
+  expect(plain.reach.left).toBeCloseTo(framed.reach.left - HAT_PLAIN_CARD_NUDGE, 9);
+  expect(plain.reach.top).toBeCloseTo(framed.reach.top - HAT_PLAIN_CARD_NUDGE, 9);
+  expect(plain.origin).toBe(framed.origin);
+});
+
+// The nudge only moves a hat out into room the container has; where the room is used up, the
+// plain card's hat is held at the same edge as the framed one.
+it.each(Object.entries(ART))('a container with no room absorbs the nudge for %s', (_, fit) => {
+  const framed = getHatLayout('corner', fit, 0);
+  const plain = getHatLayout('corner', fit, 0, HAT_PLAIN_CARD_NUDGE);
+  expect(plain.reach).toEqual(framed.reach);
+});
+
+it.each(Object.entries(ART))('a hat kept inside the card ignores the nudge: %s', (_, fit) => {
+  expect(getHatLayout('inside', fit, undefined, HAT_PLAIN_CARD_NUDGE)).toEqual(
+    getHatLayout('inside', fit)
+  );
 });
 
 describe('a hat too big for the bleed', () => {
