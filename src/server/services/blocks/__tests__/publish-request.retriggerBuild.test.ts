@@ -35,6 +35,7 @@ const {
   mockSetCommitStatus,
   mockRedis,
   limiter,
+  mockAttemptCreateMany,
 } = vi.hoisted(() => {
   const mockRedis = { nxResult: true, nxThrows: false, quotaAllowed: true };
   return {
@@ -51,6 +52,8 @@ const {
       name: 'pipelinerun-1',
     })),
     mockSetCommitStatus: vi.fn(async () => undefined),
+    // The build-attempts table: the trigger-time row the stale-run guard keys on.
+    mockAttemptCreateMany: vi.fn(async () => ({ id: 1 })),
     limiter: {
       acquire: vi.fn(async () => mockRedis.nxResult),
       release: vi.fn(async () => undefined),
@@ -67,6 +70,7 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: {
     appBlockPublishRequest: { findUnique: mockDbWriteFindUnique, updateMany: mockUpdateMany },
+    appBlockBuildAttempt: { create: mockAttemptCreateMany },
   },
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
@@ -662,5 +666,48 @@ describe('retriggerBuild — the trigger failure must not leak internals to the 
       }),
       'app-blocks'
     );
+  });
+});
+
+describe('retriggerBuild — records the run it started, for the stale-run guard', () => {
+  it('writes a triggered row with the returned run name BEFORE the building write', async () => {
+    mockTriggerBuild.mockResolvedValue({ name: 'app-blocks-my-app-aaaaaaaa-222222' });
+    await callRetrigger({ deployState: 'failed', deployUpdatedAt: new Date() });
+    expect(mockAttemptCreateMany).toHaveBeenCalledTimes(1);
+    expect(mockAttemptCreateMany.mock.calls[0]).toEqual([
+      {
+        data: {
+          publishRequestId: REQ_ID,
+          slug: 'my-app',
+          sha: SHA,
+          runId: 'app-blocks-my-app-aaaaaaaa-222222',
+          mode: 'build',
+          status: 'triggered',
+          failedStep: null,
+          failedReason: null,
+          failureClass: null,
+        },
+        select: { id: true },
+      },
+    ]);
+    // Ordering: once the row reads 'building', the new run must already be the latest.
+    const buildingCall = mockUpdateMany.mock.calls.findIndex(
+      (c) => (c[0] as { data: { deployState: string } }).data.deployState === 'building'
+    );
+    expect(mockAttemptCreateMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUpdateMany.mock.invocationCallOrder[buildingCall]
+    );
+  });
+
+  it('a missing attempts table does not fail the retrigger', async () => {
+    mockAttemptCreateMany.mockRejectedValueOnce(new Error('relation does not exist'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await expect(
+      callRetrigger({ deployState: 'failed', deployUpdatedAt: new Date() })
+    ).resolves.toMatchObject({
+      publishRequestId: REQ_ID,
+    });
+    expect(deployWrites().map((w) => w.state)).toEqual(['building']);
+    warn.mockRestore();
   });
 });
