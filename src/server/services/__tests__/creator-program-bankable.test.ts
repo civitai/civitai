@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
 import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
+import { GENERATION_TIP_TRANSACTION_START } from '~/server/jobs/deliver-creator-compensation';
 import { PLACEMENT_LEDGER_TEXT } from '~/shared/utils/placement';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
@@ -260,13 +261,37 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
     expect(BANKABLE_EARNING_PREDICATE_SQL).toBe(`(
   type IN ('licenseFee', 'donation', 'sell', 'bounty')
   OR (type IN ('purchase', 'tip') AND fromAccountId != 0)
+  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))
   OR (type = 'fee' AND description IN (${placementLegs}))
   OR (type IN ('fee', 'unknown_28', 'appAuthorFee') AND description LIKE 'App author fee%')
 )`);
   });
 
-  it('leaves generation compensation out', () => {
-    expect(BANKABLE_EARNING_PREDICATE_SQL).not.toContain('compensation');
+  // Justin, 2026-10-09: generation tips are real money the generating user pays on top of the
+  // price, so Yellow and Green tips are bankable. Blue tips stay out through the bankable-account
+  // filter on the earned query, not through this predicate.
+  it('leaves generation compensation out, except the generation-tip transactions', () => {
+    const compensationClauses = BANKABLE_EARNING_PREDICATE_SQL.split('\n').filter((line) =>
+      line.includes('compensation')
+    );
+    expect(compensationClauses).toEqual([
+      "  OR (type = 'compensation' AND fromAccountId = 0 AND startsWith(externalTransactionId, 'generation-tip-'))",
+    ]);
+  });
+
+  // The generation-tip clause matches Blue tips too; only the bankable-account filter keeps them out.
+  // Making Blue bankable would make every Blue generation tip bankable with it.
+  it('keeps Blue out of the bankable accounts the earned query filters on', () => {
+    expect(buzzBankTypesSql).toBe("'green', 'yellow'");
+  });
+
+  // Tips paid before their own transaction existed sit inside compensation and cannot be counted
+  // here. That is only safe while every such date falls before the cutover, inside the snapshot.
+  // If the cutover moves earlier than the tip split, those tips silently become unbankable.
+  it('starts separate tip transactions no later than the bankable cutover', () => {
+    expect(GENERATION_TIP_TRANSACTION_START.getTime()).toBeLessThanOrEqual(
+      BANKABLE_CUTOVER.getTime()
+    );
   });
 
   it('counts licence fees, donations, shop sales and bounties from anyone', () => {
@@ -300,6 +325,7 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
 });
 
 describe('peak-earning predicates', () => {
+  // Justin, 2026-10-09: generation tips are bankable but do not set the peak, like user tips.
   it('counts licence fees and user-paid early access from the cutover', () => {
     expect(PEAK_EARNING_PREDICATE_SQL).toBe(`(
   type = 'licenseFee'
