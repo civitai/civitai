@@ -127,9 +127,9 @@ function FeedbackRow({
   const [actionError, setActionError] = useState<InboxActionError | null>(null);
   const [confirmingFlag, setConfirmingFlag] = useState(false);
 
-  // Returned to the mutation so it stays pending until the fresh row arrives: re-enabling the
-  // buttons over the stale row would send the old `expectedOwnerStatus` and CONFLICT on the
-  // owner's own change.
+  // Returned to the mutation so it stays pending until the list (and badge count) refetch:
+  // re-enabling the buttons over the stale row would send the old `expectedOwnerStatus` and
+  // CONFLICT on the owner's own change.
   const refreshAfterWrite = () => {
     setActionError(null);
     return Promise.all([

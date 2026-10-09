@@ -49,8 +49,10 @@ const mocks = vi.hoisted(() => ({
   failWith: null as null | string,
   listInvalidations: [] as unknown[],
   countInvalidations: 0,
-  /** Leave every mutation in flight: no callback fires and `isPending` stays true. */
-  pending: false,
+  /** Leave THIS mutation in flight: no callback fires and its `isPending` stays true. */
+  pendingFor: null as null | 'statusCalls' | 'flagCalls',
+  /** When set, `listForListing.invalidate` resolves only once this promise does. */
+  refreshGate: null as null | Promise<void>,
   /** What each `onSuccess` returned — React Query keeps the mutation pending on a promise. */
   successReturns: [] as unknown[],
 }));
@@ -61,12 +63,12 @@ function mutation(record: 'statusCalls' | 'flagCalls') {
   return (opts: MutationOpts) => ({
     mutate: (input: unknown) => {
       mocks[record].push(input);
-      if (mocks.pending) return;
+      if (mocks.pendingFor === record) return;
       if (mocks.failWith)
         opts.onError?.({ message: 'server text', data: { code: mocks.failWith } });
       else mocks.successReturns.push(opts.onSuccess?.());
     },
-    isPending: mocks.pending,
+    isPending: mocks.pendingFor === record,
     variables: undefined,
   });
 }
@@ -108,6 +110,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           listForListing: {
             invalidate: async (input: unknown) => {
               mocks.listInvalidations.push(input);
+              if (mocks.refreshGate) await mocks.refreshGate;
             },
           },
           countNewForMyListings: {
@@ -173,9 +176,22 @@ beforeEach(() => {
   mocks.failWith = null;
   mocks.listInvalidations = [];
   mocks.countInvalidations = 0;
-  mocks.pending = false;
+  mocks.pendingFor = null;
+  mocks.refreshGate = null;
   mocks.successReturns = [];
 });
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+}
+function trackSettled(value: unknown) {
+  let done = false;
+  void Promise.resolve(value).then(() => (done = true));
+  return () => done;
+}
+const flushMicrotasks = () => new Promise((r) => setTimeout(r, 0));
 
 const filterOption = (label: string) =>
   page.getByTestId('app-feedback-filter').getByText(label, { exact: true });
@@ -258,15 +274,29 @@ describe('owner status', () => {
     expect(mocks.countInvalidations).toBe(1);
   });
 
-  test('the write stays pending until the refreshed list lands (onSuccess returns the refetch)', async () => {
+  test('onSuccess settles only after the list refetch does, so React Query keeps the write pending', async () => {
+    const gate = deferred();
+    mocks.refreshGate = gate.promise;
     renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
     await userEvent.click(byId('set-resolved', NEWEST.id));
     expect(mocks.successReturns).toHaveLength(1);
-    expect(mocks.successReturns[0]).toBeInstanceOf(Promise);
+    const settled = trackSettled(mocks.successReturns[0]);
+    await flushMicrotasks();
+    expect(settled()).toBe(false);
+    gate.resolve();
+    await expect.poll(settled).toBe(true);
   });
 
-  test('while a write is in flight every action on the row is disabled', async () => {
-    mocks.pending = true;
+  test('a pending STATUS write disables the other statuses AND Flag', async () => {
+    mocks.pendingFor = 'statusCalls';
+    renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
+    for (const part of ['set-acknowledged', 'set-resolved', 'set-wont_fix', 'flag']) {
+      await expect.element(byId(part, NEWEST.id)).toBeDisabled();
+    }
+  });
+
+  test('a pending FLAG disables the status buttons', async () => {
+    mocks.pendingFor = 'flagCalls';
     renderWithProviders(<AppFeedbackInboxPanel appListingId="apl_9" kind="onsite" />);
     for (const part of ['set-acknowledged', 'set-resolved', 'set-wont_fix', 'flag']) {
       await expect.element(byId(part, NEWEST.id)).toBeDisabled();
@@ -322,9 +352,16 @@ describe('flag as abusive', () => {
     expect(byId('flag-confirm', NEWEST.id).elements()).toHaveLength(0);
     expect(mocks.flagCalls).toEqual([]);
 
+    const gate = deferred();
+    mocks.refreshGate = gate.promise;
     await userEvent.click(byId('flag', NEWEST.id));
     await userEvent.click(byId('flag-confirm-yes', NEWEST.id));
     expect(mocks.flagCalls).toEqual([{ id: 301, appListingId: 'apl_9' }]);
+    // The confirm stays up until the refreshed row arrives, then closes.
+    await flushMicrotasks();
+    expect(byId('flag-confirm', NEWEST.id).elements()).toHaveLength(1);
+    gate.resolve();
+    await expect.poll(() => byId('flag-confirm', NEWEST.id).elements().length).toBe(0);
     expect(mocks.listInvalidations).toEqual([{ appListingId: 'apl_9' }]);
   });
 

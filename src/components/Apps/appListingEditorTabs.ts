@@ -311,8 +311,9 @@ export function isOwnerUnpublishedTabContext(
  *                       `listingHistory` authorizes through `resolveListingAccess` (owner
  *                       OR accepted seat) and reads no status, so it refuses nothing this
  *                       page can reach. It is also what keeps the set non-empty: an editor
- *                       on a `removed` listing still gets `history` (and `feedback`), never `[]`, so
- *                       `resolveEditorTab`'s `allowed[0]` fallback always has an answer.
+ *                       on a `removed` listing still gets `history` (and `feedback`), never
+ *                       `[]`, so `resolveEditorTab`'s `allowed[0]` fallback always has an
+ *                       answer.
  *
  *   - `feedback`      — ALWAYS, like `history`, and LAST so no narrowed set's landing tab moves.
  *                       The inbox procs gate on the seat alone, never status or kind, so

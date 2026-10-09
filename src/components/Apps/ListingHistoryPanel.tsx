@@ -37,7 +37,7 @@ import { trpc } from '~/utils/trpc';
  *   - a REMOVED listing — its history used to be reachable only from the row, and
  *     `/apps/mine` deliberately did NOT link those rows to the editor because the authoring
  *     page refused the status. Both halves changed together: the route now opens on it in a
- *     narrowed mode whose tab set is at most Publishing + History, and the row links to it.
+ *     narrowed mode whose tab set is at most Publishing, History, Feedback, and the row links to it.
  *     Had only the panel moved, that population would have lost its history entirely —
  *     which is why the route change and this move are one PR.
  *

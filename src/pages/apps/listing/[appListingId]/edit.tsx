@@ -165,7 +165,7 @@ export default function AppListingEditPage() {
     appBlockId: context.appBlockId,
     role: context.role,
     // 🔴 THE SECURITY INPUT. A non-authorable listing (`removed`/`rejected`) collapses the
-    // set to at most Publishing + History — no Details, and above all no Collaborators.
+    // set to at most Publishing, History, Feedback — no Details, and above all no Collaborators.
     // See `editorTabsFor`; the page must never hardcode a tab past this derivation.
     status: context.status,
     // 🔴 THE SECOND HALF OF THAT INPUT, and without it `status` cannot answer the question.

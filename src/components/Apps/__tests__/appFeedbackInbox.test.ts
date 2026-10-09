@@ -198,6 +198,8 @@ describe('the copy owners read, pinned literally', () => {
     );
     expect(INBOX_STALE_MESSAGE).toBe('Someone already changed this feedback. Refresh to see it.');
     expect(INBOX_NO_ACCESS_MESSAGE).toBe("You no longer have access to this app's feedback.");
+    expect(INBOX_FILTER_EMPTY_MESSAGE).toBe('No feedback with this status.');
+    expect(INBOX_GENERIC_ERROR_MESSAGE).toBe('Something went wrong. Please try again.');
   });
 });
 

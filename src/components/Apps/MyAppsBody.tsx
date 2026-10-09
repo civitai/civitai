@@ -144,7 +144,7 @@ function ListingCover({
  * REJECTED ONE, and that reversal is load-bearing rather than cosmetic. It used to be plain
  * text on any non-authorable status because `getAppListingAuthoringContext` refused those
  * with FORBIDDEN — linking there offered a guaranteed 403. That route now opens on them in
- * a NARROWED mode (at most Publishing + History; no Details, no Collaborators), and this PR
+ * a NARROWED mode (at most Publishing, History, Feedback; no Details, no Collaborators), and this PR
  * moved BOTH the History disclosure and the Unpublish/Republish pair off this row and into
  * that page. So the link is the only way the author reaches either one, and leaving a
  * REMOVED row unlinked would strand exactly the population that most needs its history.

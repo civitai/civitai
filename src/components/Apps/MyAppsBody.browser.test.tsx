@@ -717,7 +717,7 @@ describe('🔴 per-row gating survives the merge, and now reads ROLE as well as 
    *
    * 🔴 THE RULE INVERTED FOR A REMOVED/REJECTED APP, and that inversion is this PR. Those
    * rows used to be dimmed text because the authoring route refused any non-authorable
-   * status. The route now opens on them in a NARROWED mode — at most Publishing + History,
+   * status. The route now opens on them in a NARROWED mode — at most Publishing, History, Feedback,
    * never Collaborators — and this PR moved BOTH the History disclosure and the
    * Unpublish/Republish pair off this row and onto that page. So an unlinked removed row
    * would now strand whoever is looking at it with no route to either.
