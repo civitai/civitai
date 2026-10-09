@@ -662,7 +662,7 @@ describe('compete wins', () => {
 
   beforeEach(() => {
     chQuery.mockReset();
-    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([{ wins: 3 }] as never);
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([{ wins: 3, crucibleWins: 1 }] as never);
     dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
     dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
       where?: { key?: unknown };
@@ -691,6 +691,8 @@ describe('compete wins', () => {
       { key: 'compete:wins-5', measure: 'wins', current: 7 },
       { key: 'compete:wins-10', measure: 'wins', current: 7 },
     ]);
+    // Every ledger win is a daily challenge: 2 challenge wins in Postgres plus 4 from the ledger.
+    expect(activity.winBreakdown).toEqual({ challenges: 6, crucibles: 1 });
   });
 
   it('still loads, counting the Postgres wins, when the ledger read fails', async () => {
@@ -700,6 +702,7 @@ describe('compete wins', () => {
     const { activity } = await getCreatorJourney(42);
 
     expect(activity.milestones.map((m) => m.current)).toEqual([3, 3, 3]);
+    expect(activity.winBreakdown).toEqual({ challenges: 2, crucibles: 1 });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'creator-journey-ledger-wins' })
     );
