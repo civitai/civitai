@@ -35,7 +35,7 @@ describe('getEntitiesCoverImageHandler', () => {
  * viewer's pre-launch hats. If you want this route cached, drop the viewer first.
  */
 describe('image.getEntitiesCoverImage stays per-viewer', () => {
-  it('has no edgeCacheIt or cacheIt', () => {
+  it('has no cache or other middleware', () => {
     const router = readFileSync(join(process.cwd(), 'src/server/routers/image.router.ts'), 'utf8');
     const start = router.indexOf('getEntitiesCoverImage: publicProcedure');
     expect(start, 'getEntitiesCoverImage procedure not found').toBeGreaterThan(-1);
@@ -43,6 +43,10 @@ describe('image.getEntitiesCoverImage stays per-viewer', () => {
     expect(end, 'getEntitiesCoverImage handler not found after the procedure').toBeGreaterThan(
       start
     );
-    expect(router.slice(start, end)).not.toMatch(/edgeCacheIt|cacheIt/);
+    const route = router.slice(start, end);
+    expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
+    // Any middleware here could set a shared cache under another name; add one only after
+    // checking it keeps responses per-viewer, then widen this.
+    expect(route).not.toMatch(/\.use\(/);
   });
 });
