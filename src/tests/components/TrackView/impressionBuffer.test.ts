@@ -6,6 +6,7 @@ import {
   __impressionBufferTestHooks as hooks,
 } from '~/components/TrackView/impressionBuffer';
 import { __trackBufferTestHooks as trackHooks } from '~/components/TrackView/trackEventBuffer';
+import { __trackImpressionTestHooks as dwellHooks } from '~/components/TrackView/useTrackImpression';
 import { IMPRESSION_ENTITIES_MAX } from '~/server/schema/track.schema';
 
 /**
@@ -233,6 +234,8 @@ describe('getImpressionSurface', () => {
     ['/models/123/some-model', 'models'],
     ['/search/images', 'search'],
     ['/user/someone', 'user'],
+    ['/hubs/12/some-hub', 'hubs'],
+    ['/challenges/5', 'challenges'],
   ])('maps %s to %s', (pathname, expected) => {
     expect(getImpressionSurface(pathname)).toBe(expected);
   });
@@ -240,5 +243,30 @@ describe('getImpressionSurface', () => {
   it('collapses anything unrecognised to "other" so the column cannot widen', () => {
     expect(getImpressionSurface('/some-new-page')).toBe('other');
     expect(getImpressionSurface('/' + 'x'.repeat(200))).toBe('other');
+  });
+});
+
+describe('dwell timer surface', () => {
+  it('labels an impression with the page the dwell STARTED on, not the one it ends on', () => {
+    // Opening the image-detail dialog rewrites the URL to /images/<id> while the
+    // feed underneath stays mounted and intersecting. A surface read when the
+    // timer fires would credit a hub's cards to the /images feed.
+    dom.win.location.pathname = '/hubs/12';
+    const element = {} as Element;
+    const state = { targets: [{ entityType: 'Image' as const, entityId: 9 }], timer: null };
+    const registry = {
+      observer: { unobserve: () => undefined } as unknown as IntersectionObserver,
+      elements: new Map([[element, state]]),
+      intersecting: new Set([element]),
+    };
+
+    dwellHooks.armDwell(registry, element, state);
+    dom.win.location.pathname = '/images/9';
+    vi.advanceTimersByTime(dwellHooks.DWELL_MS);
+    flushImpressions();
+
+    const [event] = sentEvents();
+    expect(event.data.surface).toBe('hubs');
+    expect(event.data.entities).toEqual([{ entityType: 'Image', entityId: 9 }]);
   });
 });

@@ -2,7 +2,6 @@ import clsx from 'clsx';
 import React from 'react';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
-import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import styles from './AspectRatioCard.module.scss';
@@ -49,11 +48,10 @@ export function AspectRatioCard({
   const wrapperStyle = {
     aspectRatio: typeof aspectRatio === 'number' ? aspectRatio : aspectRatioMap[aspectRatio],
   };
-  const impressionRef = useTrackImpression<HTMLDivElement>(impressions);
 
   return (
     <ElementInView
-      ref={impressionRef}
+      impressions={impressions}
       component={CosmeticCard}
       cosmetic={cosmetic}
       cosmeticStyle={cosmetic ? wrapperStyle : undefined}

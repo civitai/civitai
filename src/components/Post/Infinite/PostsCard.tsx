@@ -18,6 +18,7 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import classes from './PostsCard.module.css';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user, publishedAt },
@@ -30,9 +31,17 @@ export function PostsCard({
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
   const scheduledAt = publishedAt && new Date(publishedAt) > new Date() ? publishedAt : null;
+  const impressionRef = useTrackImpression<HTMLElement>([
+    { entityType: 'Post', entityId: id },
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
   return (
     <TwCosmeticWrapper cosmetic={cosmetic?.data} style={cosmetic?.data ? { height } : undefined}>
-      <TwCard className="border shadow" style={!cosmetic?.data ? { height } : undefined}>
+      <TwCard
+        ref={impressionRef}
+        className="border shadow"
+        style={!cosmetic?.data ? { height } : undefined}
+      >
         <ImageGuard2 image={image} connectType="post" connectId={id}>
           {(safe) => (
             <>

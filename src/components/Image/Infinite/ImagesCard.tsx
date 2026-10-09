@@ -99,7 +99,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
 
   return (
     <TwCosmeticWrapper cosmetic={cosmetic} style={cosmetic ? { height } : undefined}>
-      <ElementInView component={TwCard} style={twCardStyle} className="border">
+      <ElementInView
+        component={TwCard}
+        style={twCardStyle}
+        className="border"
+        impressions={[{ entityType: 'Image', entityId: image.id }]}
+      >
         <ImageGuard2 image={image}>
           {(safe) => (
             <>

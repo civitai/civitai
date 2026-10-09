@@ -1,7 +1,10 @@
 import { useContext, useEffect, useRef } from 'react';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { recordImpression } from '~/components/TrackView/impressionBuffer';
+import {
+  getCurrentImpressionSurface,
+  recordImpression,
+} from '~/components/TrackView/impressionBuffer';
 import type { ImpressionEntityType } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
@@ -39,9 +42,12 @@ let visibilityBound = false;
 
 function armDwell(registry: Registry, element: Element, state: ElementState) {
   if (state.timer !== null) return;
+  // Where the card was when the dwell began, not when it ends — see recordImpression.
+  const surface = getCurrentImpressionSurface();
   state.timer = setTimeout(() => {
     state.timer = null;
-    for (const target of state.targets) recordImpression(target.entityType, target.entityId);
+    for (const target of state.targets)
+      recordImpression(target.entityType, target.entityId, surface);
     // Recorded — stop watching. The session-level dedupe in the buffer would drop
     // a repeat anyway; this just avoids re-arming the timer on every scroll.
     registry.observer.unobserve(element);
@@ -185,3 +191,6 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
 
   return ref;
 }
+
+// Test-only, mirroring impressionBuffer's hooks. Not part of the runtime contract.
+export const __trackImpressionTestHooks = { armDwell, DWELL_MS };
