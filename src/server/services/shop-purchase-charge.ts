@@ -3,19 +3,18 @@ import { logToAxiom } from '~/server/logging/client';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 
 /**
- * Charging for a shop purchase when the external transaction id may have been
- * used before (a client resending its idempotency key, or two requests carrying
- * the same one).
+ * Charging for a shop purchase whose external transaction id may have been used
+ * before (a client resending its idempotency key).
  *
- * The ledger keys a charge on its external id prefix. A prefix it has already
- * seen comes back either as a 409 or as a 200 whose legs are marked `duplicate`
- * (which of the two is not settled), and in both cases THIS request moved no
- * Buzz. So neither may grant, pay anyone, or refund: a refund is prefix-wide and
- * would reverse the earlier request's charge.
+ * The ledger answers an external id it has already seen with a 200 whose legs
+ * are marked `duplicate` (see the measured note in block-goods.service.ts). Such
+ * a leg belongs to an earlier request, so this request neither grants, pays out
+ * nor refunds. A 409 is handled the same way in case the separately deployed
+ * ledger ever starts answering with one. Ordinary declines are 400s and pass
+ * through as refusals.
  *
- * The outcome is reported as unknown, never as a refusal. A 4xx tells the client
- * nothing was charged and to retry with a fresh key, which is wrong here: the
- * earlier request with this key may well have charged.
+ * The outcome is reported as unknown, never as a refusal: a 4xx tells the client
+ * nothing was charged and to retry with a fresh key.
  */
 
 export const PURCHASE_STATE_UNKNOWN_MESSAGE =
@@ -40,8 +39,7 @@ export async function chargeForShopPurchase<T extends Charge>(
       throw purchaseStateUnknown({ ...context, error }, 'ledger reported the id as taken');
     throw error;
   }
-  // Mixed responses count too: some legs of this charge belong to an earlier
-  // request, and nothing about the rest can be reversed without touching them.
+  // Any duplicate leg, not only all of them.
   if (result.transactionIds.some((leg) => leg.duplicate === true))
     throw purchaseStateUnknown(context, 'ledger returned duplicate legs');
   return result;

@@ -644,10 +644,10 @@ export const purchaseCosmeticPack = async ({
       });
     });
   } catch (error) {
-    // Another request with this key wrote the purchase first. The prefix is
-    // that request's charge, so refunding it here would reverse a completed
-    // purchase.
-    if (isPrismaUniqueViolation(error))
+    // With a client key, a unique violation here means a request with the same
+    // key recorded this purchase first; the prefix is shared with it, so it is
+    // not refunded from here.
+    if (idempotencyKey && isPrismaUniqueViolation(error))
       throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
 
     // The only path where the buyer is actually out of pocket, so it must leave

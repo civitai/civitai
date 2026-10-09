@@ -3,6 +3,7 @@ import type * as RedisCaches from '~/server/redis/caches';
 import type * as CosmeticPackService from '~/server/services/cosmetic-pack.service';
 import { Prisma } from '@prisma/client';
 import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // A shop purchase whose external transaction id the ledger has seen before
@@ -59,6 +60,7 @@ vi.mock('~/server/services/cosmetic-pack.service', async (importOriginal) => ({
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const fwd =
   (fn: (...a: unknown[]) => unknown) =>
@@ -77,6 +79,15 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
     userCosmetic: { create: mocks.userCosmeticCreate },
   })
 );
+
+// The shape the real buzz client hands back: buzz.service's mapError wraps the
+// ledger's status in a TRPCError and keeps the BuzzApiError as `cause`.
+const ledgerError = (status: number, code: 'BAD_REQUEST' | 'INTERNAL_SERVER_ERROR') =>
+  new TRPCError({ code, message: 'ledger', cause: new BuzzApiError(status, 'ledger') });
+const stateUnknownLogged = () =>
+  loggingMock.logToAxiom.mock.calls.some(([arg]) =>
+    String((arg as { message?: string }).message).startsWith('shop purchase state unknown')
+  );
 
 const BUYER_ID = 1;
 const SHOP_ITEM_ID = 42;
@@ -111,11 +122,12 @@ const legs = (...duplicate: (boolean | undefined)[]) => ({
   transactionCount: duplicate.length,
 });
 
-const purchase = () =>
+// An object, so "no key" can be said: a default parameter would replace undefined.
+const purchase = ({ idempotencyKey }: { idempotencyKey?: string } = { idempotencyKey: KEY }) =>
   purchaseCosmeticShopItem({
     userId: BUYER_ID,
     shopItemId: SHOP_ITEM_ID,
-    idempotencyKey: KEY,
+    idempotencyKey,
     buzzType: 'yellow',
   });
 
@@ -141,6 +153,7 @@ const expectStateUnknown = async (p: Promise<unknown>) => {
 describe('purchaseCosmeticShopItem with a previously used transaction id', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
+    loggingMock.logToAxiom.mockReset();
     mocks.shopItemFindUnique.mockResolvedValue(row);
     mocks.userCosmeticFindFirst.mockResolvedValue(null);
     mocks.purchasesFindUnique.mockResolvedValue(null);
@@ -175,9 +188,19 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   });
 
   it('a ledger 409 on the charge is reported as unknown, not as a refusal', async () => {
-    mocks.createMultiTx.mockRejectedValue(new BuzzApiError(409, 'Conflict'));
+    mocks.createMultiTx.mockRejectedValue(ledgerError(409, 'BAD_REQUEST'));
 
     await expectStateUnknown(purchase());
+    nothingGrantedPaidOrRefunded();
+  });
+
+  // Ordinary declines (insufficient funds, wrong account, limits) are ledger
+  // 400s. They must stay refusals: no "state unknown", no error log.
+  it('a ledger 400 decline stays a refusal', async () => {
+    mocks.createMultiTx.mockRejectedValue(ledgerError(400, 'BAD_REQUEST'));
+
+    await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(stateUnknownLogged()).toBe(false);
     nothingGrantedPaidOrRefunded();
   });
 
@@ -193,6 +216,19 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     await expectStateUnknown(purchase());
     expect(mocks.refundMultiTx).not.toHaveBeenCalled();
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('without a client key, a unique violation still refunds this charge', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.purchasesCreate.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+
+    await expect(purchase({})).rejects.toThrow('Failed to purchase cosmetic');
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
   });
 
   it('any other grant failure still refunds this charge (control)', async () => {
