@@ -83,6 +83,12 @@ export enum TransactionType {
 /** Ledger queries prefix-match stored rows on this, so changing it orphans every existing author-fee row. */
 export const APP_AUTHOR_FEE_DESCRIPTION = 'App author fee';
 
+/**
+ * Generation tips are paid as `Compensation`; this externalTransactionId prefix is the only thing that
+ * tells them apart from generation compensation. Creator Studio's earnings read matches it literally.
+ */
+export const GENERATION_TIP_TRANSACTION_PREFIX = 'generation-tip-';
+
 type BuzzTypeConfig =
   | {
       type: 'spend';
