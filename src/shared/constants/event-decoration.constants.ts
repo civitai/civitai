@@ -1,6 +1,5 @@
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import {
-  BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
   BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
@@ -22,8 +21,6 @@ export type EventDecorationDefinition = {
   /** The button from a worn decoration to its event's page. */
   eventLinkLabel: string;
   startsAt: Date;
-  /** Exclusive. */
-  endsAt: Date;
   /** Flagged users may wear it from here; whether a viewer may is the server's call. */
   previewFrom?: Date;
   /** What it can be worn on. */
@@ -39,7 +36,6 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
     eventTitle: "Civitai's 4th Birthday",
     eventLinkLabel: 'See the birthday event',
     startsAt: BIRTHDAY_2026_STARTS_AT,
-    endsAt: BIRTHDAY_2026_ENDS_AT,
     previewFrom: BIRTHDAY_2026_PREVIEW_FROM,
     entityTypes: [CosmeticEntity.Image, CosmeticEntity.Model, CosmeticEntity.Article],
     moveCooldownMs: 10 * 60 * 1000,
@@ -107,16 +103,27 @@ export function getEventDecorationDefinition(event: string) {
 }
 
 /**
- * Whether someone could wear this event's decorations now: its window, preview included. Who
- * actually may is the server's call (src/server/events/event-access.ts).
+ * Whether someone could wear this event's decorations now: from its preview or start, with no end,
+ * because decorations are kept after their event. Who actually may is the server's call
+ * (src/server/events/event-access.ts).
  */
-export function isEventDecorationInWindow(definition: EventDecorationDefinition, now = new Date()) {
-  return now >= (definition.previewFrom ?? definition.startsAt) && now < definition.endsAt;
+export function isEventDecorationReleased(definition: EventDecorationDefinition, now = new Date()) {
+  return now >= (definition.previewFrom ?? definition.startsAt);
 }
 
 /** The event, if any, whose decorations someone could wear on this entity type now. */
-export function getEventDecorationInWindow(entityType: CosmeticEntity, now = new Date()) {
+export function getReleasedEventDecoration(entityType: CosmeticEntity, now = new Date()) {
   return EVENT_DECORATION_DEFINITIONS.find(
-    (x) => isEventDecorationInWindow(x, now) && x.entityTypes.includes(entityType)
+    (x) => isEventDecorationReleased(x, now) && x.entityTypes.includes(entityType)
   );
+}
+
+/**
+ * Whether a viewer with this access to an event (see event-access.ts) may wear and see its
+ * decorations. Owned hats are kept after the event like any other cosmetic: they stay on content
+ * and can still be moved, they only stop scoring and stop being sold. Buying and scoring do not
+ * read this.
+ */
+export function canWearEventDecorations(access: string | undefined) {
+  return access === 'preview' || access === 'open' || access === 'ended';
 }

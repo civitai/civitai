@@ -7,7 +7,6 @@ import { logToAxiom } from '~/server/logging/client';
 import { flagAudienceAmong } from '~/server/events/event-access';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { toUtcTimestamp as chDate } from '~/server/services/creator-milestone-exclusions';
-import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
 export type ScoredEvent = {
   name: string;
@@ -337,26 +336,4 @@ export async function getCosmeticScores(event: StandingsEvent, keys: CosmeticSco
     GROUP BY s."userId", s."cosmeticId", s."claimKey", s.team
   `;
   return Object.fromEntries(rows.map((r) => [cosmeticScoreKey(r), r]));
-}
-
-// End of a scored event: take every one of its cosmetics off content. The placement trigger closes
-// each interval as the columns clear. Returns the entities that lost a cosmetic so their caches can
-// be refreshed.
-export async function unequipEventCosmetics(event: string) {
-  return dbWrite.$queryRaw<{ entityType: CosmeticEntity; entityId: number }[]>`
-    WITH targets AS (
-      SELECT uc."userId", uc."cosmeticId", uc."claimKey", uc."equippedToType", uc."equippedToId"
-      FROM "UserCosmetic" uc
-      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-      WHERE c.type = 'ContentDecoration'
-        AND c.data->>'event' = ${event}
-        AND uc."equippedToId" IS NOT NULL
-      FOR UPDATE OF uc
-    )
-    UPDATE "UserCosmetic" uc
-    SET "equippedToId" = NULL, "equippedToType" = NULL, "equippedAt" = NULL
-    FROM targets t
-    WHERE uc."userId" = t."userId" AND uc."cosmeticId" = t."cosmeticId" AND uc."claimKey" = t."claimKey"
-    RETURNING t."equippedToType" AS "entityType", t."equippedToId" AS "entityId"
-  `;
 }
