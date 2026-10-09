@@ -49,7 +49,7 @@ function AchievementsPage() {
 
   return (
     <div className="py-6">
-      <ProfileAchievementsList data={data} />
+      <ProfileAchievementsList data={data} userId={user.id} />
     </div>
   );
 }

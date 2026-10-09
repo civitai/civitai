@@ -1,7 +1,12 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
 import { LinkedText } from '~/components/CreatorJourney/journey-links';
-import { accentVar, HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
+import {
+  accentVar,
+  HEXAGON,
+  HEXAGON_ASPECT,
+  TierBadge,
+} from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
@@ -13,6 +18,7 @@ import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 type Activity = RouterOutput['creatorJourney']['getMine']['activity'];
 type Milestone = Activity['milestones'][number];
 type Measure = Milestone['measure'];
+type WinBreakdown = Activity['winBreakdown'];
 
 export const achievementTracks = [
   { key: 'create', title: 'Create', accent: '#12b886', measures: ['models', 'articles'] },
@@ -110,6 +116,7 @@ export function CreatorAchievements({
               milestones={activity.milestones.filter((m) => m.measure === measure)}
               next={nextOf(activity.milestones, measure)}
               href={measureHref(measure, username)}
+              winBreakdown={measure === 'wins' ? activity.winBreakdown : undefined}
             />
           ))}
         </Stack>
@@ -158,26 +165,29 @@ function MeasureRow({
   milestones,
   next,
   href,
+  winBreakdown,
 }: {
   measure: Measure;
   milestones: Milestone[];
   next: Milestone | undefined;
   href?: string;
+  winBreakdown?: WinBreakdown;
 }) {
   if (milestones.length === 0) return null;
   const copy = measureCopy[measure];
 
+  // The label sits above the tiles so a five-rung ladder fits on one row.
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[96px_1fr] sm:gap-3">
-      <div className="sm:pt-2">
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
         <Text size="sm" fw={600}>
           {href ? <LinkedText text={copy.label} links={[{ href }]} /> : copy.label}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
-          {copy.current(milestones[0].current)}
+          {winBreakdown ? describeWins(winBreakdown) : copy.current(milestones[0].current)}
         </Text>
       </div>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
         {milestones.map((milestone) => (
           <MilestoneTile
             key={milestone.key}
@@ -188,6 +198,12 @@ function MeasureRow({
       </div>
     </div>
   );
+}
+
+const plural = (n: number, word: string) => `${numberWithCommas(n)} ${word}${n === 1 ? '' : 's'}`;
+
+export function describeWins({ challenges, crucibles }: WinBreakdown) {
+  return `${plural(challenges, 'challenge win')} · ${plural(crucibles, 'Crucible win')}`;
 }
 
 type TileState = 'earned' | 'progress' | 'locked';
@@ -207,7 +223,8 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
     >
       <MilestoneBadge milestone={milestone} state={state} size={48} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <Text size="sm" fw={700} truncate>
+        {/* Five tiles share a row, so a long name wraps rather than losing its end. */}
+        <Text size="sm" fw={700} lineClamp={2}>
           {milestone.name}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
@@ -255,7 +272,8 @@ export function Hexagon({ label, state, size }: { label: string; state: TileStat
         state === 'locked' && 'bg-gray-3 text-gray-6 dark:bg-dark-4 dark:text-dark-2'
       )}
       style={{
-        width: size,
+        // A regular pointy-top hexagon is √3/2 as wide as it is tall, like the badge art.
+        width: Math.round(size * HEXAGON_ASPECT),
         height: size,
         clipPath: HEXAGON,
         fontSize: size * 0.32,
