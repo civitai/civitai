@@ -42,21 +42,24 @@ const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const HOUR = 60 * 60 * 1000;
 const DEPLOY_DAY = new Date('2026-10-09T12:00:00.000Z');
-// Cosmetic ids by name, as getCosmetic resolves them through the COSMETICS.IDS hash.
+// Cosmetic ids as the COSMETICS.IDS hash caches them: by name for the holiday events, by
+// event:design:team for join events (which look the cosmetic up by data, never by name).
 const cosmeticIds: Record<string, string> = {
   'Holiday Garland 2024 - Yellow': '11',
   'Holiday Garland 2024 - Red': '12',
   'Holiday Garland 2024 - Green': '13',
   'Holiday Garland 2024 - Blue': '14',
-  'Basic Party Hat - Yellow': '21',
-  'Basic Party Hat - Blue': '22',
-  'Basic Party Hat - Pink': '23',
-  'Basic Party Hat - Green': '24',
+  'birthday2026:basic:Yellow': '21',
+  'birthday2026:basic:Blue': '22',
+  'birthday2026:basic:Pink': '23',
+  'birthday2026:basic:Green': '24',
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.redis.hGet.mockImplementation(async (_key: string, name: string) => cosmeticIds[name] ?? null);
+  redisMock.redis.hGet.mockImplementation(
+    async (_key: string, name: string) => cosmeticIds[name] ?? null
+  );
   redisMock.redis.get.mockResolvedValue(null);
   mockScoring.getEventStandings.mockResolvedValue({
     teams: [
@@ -109,7 +112,9 @@ describe('event registration', () => {
     // launch, every participant changes team. Do not "update the expected values" to make it
     // pass: find out what moved the name, the seed or the array.
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
-    const teams = await Promise.all([1, 2, 3, 42, 1000, 123456].map((id) => birthday2026.getUserTeam(id)));
+    const teams = await Promise.all(
+      [1, 2, 3, 42, 1000, 123456].map((id) => birthday2026.getUserTeam(id))
+    );
     expect(teams).toEqual(GOLDEN_TEAMS);
   });
 });
@@ -131,6 +136,15 @@ describe('end-of-event cleanup', () => {
 
     expect(anyWrite()).toEqual([0, 0, 0, 0, 0, 0]);
     expect(redisMock.redis.set).not.toHaveBeenCalled();
+  });
+
+  it('keeps an ended event eligible for cleanup for exactly 7 days', () => {
+    // Pinned at the boundary, not just at deploy day: a widened grace window is how a later change
+    // would start reaching back into finished events.
+    const holiday = events.find((e) => e.name === 'holiday2024')!;
+    const edge = holiday.endDate.getTime() + 7 * 24 * HOUR;
+    expect(getActiveEvents(new Date(edge)).map((e) => e.name)).toContain('holiday2024');
+    expect(getActiveEvents(new Date(edge + 1)).map((e) => e.name)).not.toContain('holiday2024');
   });
 
   it('does nothing for holiday2024 on any day after its grace window, including birthday cleanup day', async () => {
@@ -197,9 +211,9 @@ describe('scored event is inert before it starts', () => {
     expect(() => eventEngine.getStartedScoredEvent(BIRTHDAY_2026_EVENT, justBefore)).toThrow(
       "That event doesn't exist"
     );
-    expect(eventEngine.getStartedScoredEvent(BIRTHDAY_2026_EVENT, BIRTHDAY_2026_STARTS_AT).name).toBe(
-      BIRTHDAY_2026_EVENT
-    );
+    expect(
+      eventEngine.getStartedScoredEvent(BIRTHDAY_2026_EVENT, BIRTHDAY_2026_STARTS_AT).name
+    ).toBe(BIRTHDAY_2026_EVENT);
   });
 
   it('scores from start until a day past the end, then stops', async () => {

@@ -87,9 +87,26 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     const index = Math.floor(number * definition.teams.length);
     return definition.teams[index];
   }
-  function getTeamCosmetic(team: string) {
-    const name = `${definition.cosmeticName} - ${team}`;
-    return getCosmetic(name);
+  // A join event finds its team cosmetic by data (event, team, design), so cosmetic names stay
+  // display-only. Older events find it by the name "<cosmeticName> - <team>".
+  async function getTeamCosmetic(team: string) {
+    if (!definition.join) return getCosmetic(`${definition.cosmeticName} - ${team}`);
+
+    const field = `${name}:${definition.join.design}:${team}`;
+    const cached = await redis.hGet(REDIS_KEYS.COSMETICS.IDS, field);
+    if (cached) return Number(cached);
+    const [cosmetic] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Cosmetic"
+      WHERE type = 'ContentDecoration'
+        AND data->>'event' = ${name}
+        AND data->>'team' = ${team}
+        AND data->>'design' = ${definition.join.design}
+      ORDER BY id
+      LIMIT 1
+    `;
+    if (!cosmetic) return;
+    await redis.hSet(REDIS_KEYS.COSMETICS.IDS, field, cosmetic.id.toString());
+    return cosmetic.id;
   }
   async function getUserCosmeticId(userId: number) {
     return getTeamCosmetic(await getUserTeam(userId));
@@ -231,9 +248,10 @@ type HolidayEventDefinition = {
   // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
   bankIndex?: number;
   scoring?: CosmeticPlacementScoring;
-  // Joining grants the team's `<cosmeticName> - <team>` cosmetic under this claimKey, once per user,
-  // only inside the event window. Without it, activateCosmetic keeps the bank-event behaviour.
-  joinClaimKey?: string;
+  // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
+  // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
+  // behaviour.
+  join?: { claimKey: string; design: string };
   cosmeticName: string;
   badgePrefix: string;
   coverImage?: string;

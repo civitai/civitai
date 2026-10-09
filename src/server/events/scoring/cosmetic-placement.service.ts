@@ -64,6 +64,9 @@ export function daysToScore(event: Pick<ScoredEvent, 'startDate' | 'endDate'>, n
   return days;
 }
 
+// ClickHouse DateTime64 literal in UTC (the server and the placement columns are UTC).
+const chDate = (d: Date) => d.toISOString().replace('T', ' ').replace('Z', '');
+
 const syncWatermarkKey = (event: string) =>
   `${REDIS_KEYS.EVENT.CACHE}:${event}:placement-sync` as const;
 const standingsKey = (event: string) => `${REDIS_KEYS.EVENT.CACHE}:${event}:standings` as const;
@@ -97,9 +100,9 @@ async function syncPlacements(event: string) {
       entityType: r.entityType,
       entityId: r.entityId,
       entityOwnerId: r.entityOwnerId ?? 0,
-      startedAt: r.startedAt.getTime(),
-      endedAt: r.endedAt?.getTime() ?? null,
-      updatedAt: r.updatedAt.getTime(),
+      startedAt: chDate(r.startedAt),
+      endedAt: r.endedAt ? chDate(r.endedAt) : null,
+      updatedAt: chDate(r.updatedAt),
     })),
   });
 
@@ -127,10 +130,10 @@ async function scoreDay(event: ScoredEvent, window: { day: Date; start: Date; en
     format: 'JSONEachRow',
     query_params: {
       event: event.name,
-      dayStart: window.start.getTime() / 1000,
-      dayEnd: window.end.getTime() / 1000,
-      eventStart: event.startDate.getTime() / 1000,
-      newAccountCutoff: newAccountCutoff.getTime() / 1000,
+      dayStart: chDate(window.start),
+      dayEnd: chDate(window.end),
+      eventStart: chDate(event.startDate),
+      newAccountCutoff: chDate(newAccountCutoff),
       botLimit: scoring.botSessionEntityLimit,
       viewerCap: scoring.viewerOwnerDailyCap,
       anonFloor: scoring.anonFloor,

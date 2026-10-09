@@ -923,6 +923,25 @@ clickhouse client -n <<-EOSQL
             TTL createdDate + INTERVAL 30 DAY
             SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
+    -- Mirror of Postgres "EventCosmeticPlacement", written by the event scoring job.
+    create table if not exists default.event_cosmetic_placements
+    (
+        id            UInt64,
+        event         LowCardinality(String),
+        userId        Int32,
+        cosmeticId    Int32,
+        claimKey      String,
+        team          LowCardinality(String),
+        entityType    LowCardinality(String),
+        entityId      Int32,
+        entityOwnerId Int32,
+        startedAt     DateTime64(3, 'UTC'),
+        endedAt       Nullable(DateTime64(3, 'UTC')),
+        updatedAt     DateTime64(3, 'UTC')
+    )
+        engine = ReplacingMergeTree(updatedAt)
+            ORDER BY (event, id);
+
     create table if not exists default.daily_impressions
     (
         entityType LowCardinality(String),

@@ -40,7 +40,9 @@ export const events = [holiday2024, birthday2026];
 // silently never runs. Bounded so a deploy can never reach back to a long-finished event.
 export const EVENT_CLEANUP_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 export function getActiveEvents(now = new Date()) {
-  return events.filter((x) => x.endDate.getTime() + EVENT_CLEANUP_GRACE_MS >= now.getTime());
+  return events.filter(
+    (x) => x.startDate <= now && x.endDate.getTime() + EVENT_CLEANUP_GRACE_MS >= now.getTime()
+  );
 }
 
 type EventDef = (typeof events)[number];
@@ -83,7 +85,7 @@ export const eventEngine = {
       // Ignore events that aren't active yet
       if (eventDef.startDate > now) continue;
 
-      const scores = await this.getTeamScores(eventDef.name);
+      const scores = await this.getTeamScores(eventDef.name, now);
 
       // If the event is over, unequip the event cosmetics from all users
       if (eventDef.endDate < now) {
@@ -313,7 +315,7 @@ export const eventEngine = {
       coverImageUser,
       scored: !!eventDef.scoring,
       reactionWeight: eventDef.scoring?.reactionWeight,
-      joinable: !!eventDef.joinClaimKey,
+      joinable: !!eventDef.join,
     };
   },
   getTeamAccounts(event: string) {
@@ -329,10 +331,10 @@ export const eventEngine = {
 
     return teamAccounts;
   },
-  async getTeamScores(event: string) {
+  async getTeamScores(event: string, now = new Date()) {
     const eventDef = getEventDef(event);
-    const scored = scoredEvent(eventDef);
-    if (scored) return (await getEventStandings(scored)).teams;
+    if (eventDef.scoring)
+      return (await getEventStandings(this.getStartedScoredEvent(event, now))).teams;
 
     // Get team scores from buzz accounts
     const teamScores: TeamScore[] = [];
@@ -353,8 +355,7 @@ export const eventEngine = {
   },
   async getTeamScoreHistory({ event, window, start }: TeamScoreHistoryInput) {
     const eventDef = getEventDef(event);
-    const scored = scoredEvent(eventDef);
-    if (scored) return getScoredTeamScoreHistory(scored);
+    if (eventDef.scoring) return getScoredTeamScoreHistory(this.getStartedScoredEvent(event));
 
     // Get team scores from buzz accounts
     const accounts = this.getTeamAccounts(event);
@@ -396,14 +397,14 @@ export const eventEngine = {
     return scored;
   },
   isJoinEvent(event: string) {
-    return !!getEventDef(event).joinClaimKey;
+    return !!getEventDef(event).join;
   },
   // Grants the user's team cosmetic once, inside the event window. Idempotent: a double click or a
   // second tab inserts nothing, and so does a user whose team was reassigned after joining (they
   // keep the cosmetic they got).
   async join(event: string, userId: number, now = new Date()) {
     const eventDef = getEventDef(event);
-    const claimKey = eventDef.joinClaimKey;
+    const claimKey = eventDef.join?.claimKey;
     if (!claimKey) throw new Error('This event has no join');
     if (now < eventDef.startDate || now >= eventDef.endDate)
       throw new Error('This event is not running');

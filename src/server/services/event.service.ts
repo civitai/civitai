@@ -247,7 +247,9 @@ export async function getEventStandings({ event }: EventInput) {
 export async function getMyEventCosmeticScores({ event, userId }: EventInput & { userId: number }) {
   try {
     const scored = eventEngine.getStartedScoredEvent(event);
-    const cosmetics = await getUserCosmeticScores(scored.name, userId);
+    const scores = await getUserCosmeticScores(scored.name, userId);
+    const details = await cosmeticCache.fetch([...new Set(scores.map((x) => x.cosmeticId))]);
+    const cosmetics = scores.map((x) => ({ ...x, name: details[x.cosmeticId]?.name ?? null }));
     const points = cosmetics.reduce((sum, x) => sum + x.points, 0);
     return { points, cosmetics };
   } catch (error) {

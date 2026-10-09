@@ -17,9 +17,9 @@ export const birthday2026 = createEvent(name, {
   startDate: new Date(BIRTHDAY_2026_STARTS_AT.getTime()),
   endDate: new Date(BIRTHDAY_2026_ENDS_AT.getTime()),
   teams: BIRTHDAY_2026_TEAMS,
-  // Team cosmetic granted on joining: "Basic Party Hat - <team>".
-  cosmeticName: 'Basic Party Hat',
-  joinClaimKey: 'claimed',
+  // Display name only; the join cosmetic is found by data (event, team, design).
+  cosmeticName: 'Party Cap',
+  join: { claimKey: 'claimed', design: 'basic' },
   badgePrefix: 'Birthday 2026',
   scoring: {
     reactionWeight: 10,

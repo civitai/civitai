@@ -47,6 +47,9 @@ function toQuery(strings: TemplateStringsArray, values: unknown[]) {
 const HATS = { Yellow: 21, Blue: 22, Pink: 23, Green: 24 } as const;
 const FRAME = 30;
 const OTHER_EVENT_HAT = 31;
+// Same event and team as a free hat but a shop design, with a LOWER id: a lookup that ignored
+// data.design would pick it.
+const SHOP_HAT_BLUE = 5;
 
 beforeAll(async () => {
   db.pg = new PGlite();
@@ -68,10 +71,13 @@ beforeAll(async () => {
 
   const run = async (strings: TemplateStringsArray, ...values: unknown[]) =>
     db.pg.query(toQuery(strings, values), values as unknown[]);
-  dbMock.dbWrite.$executeRaw.mockImplementation((async (s: TemplateStringsArray, ...v: unknown[]) =>
-    (await run(s, ...v)).affectedRows ?? 0) as never);
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (s: TemplateStringsArray, ...v: unknown[]) =>
-    (await run(s, ...v)).rows) as never);
+  dbMock.dbWrite.$executeRaw.mockImplementation(
+    (async (s: TemplateStringsArray, ...v: unknown[]) =>
+      (await run(s, ...v)).affectedRows ?? 0) as never
+  );
+  dbMock.dbWrite.$queryRaw.mockImplementation(
+    (async (s: TemplateStringsArray, ...v: unknown[]) => (await run(s, ...v)).rows) as never
+  );
 });
 
 afterAll(async () => {
@@ -82,19 +88,18 @@ beforeEach(async () => {
   await db.pg.exec(`
     TRUNCATE "UserCosmetic", "Cosmetic", "Image", "Model", "Article", "EventCosmeticPlacement";
     INSERT INTO "Cosmetic" VALUES
-      (${HATS.Yellow}, 'Basic Party Hat - Yellow', 'ContentDecoration', '{"event":"birthday2026","team":"Yellow"}'),
-      (${HATS.Blue}, 'Basic Party Hat - Blue', 'ContentDecoration', '{"event":"birthday2026","team":"Blue"}'),
-      (${HATS.Pink}, 'Basic Party Hat - Pink', 'ContentDecoration', '{"event":"birthday2026","team":"Pink"}'),
-      (${HATS.Green}, 'Basic Party Hat - Green', 'ContentDecoration', '{"event":"birthday2026","team":"Green"}'),
+      (${SHOP_HAT_BLUE}, 'Crown - Blue', 'ContentDecoration', '{"type":"hat","event":"birthday2026","team":"Blue","design":"crown"}'),
+      (${HATS.Yellow}, 'Party Cap - Yellow', 'ContentDecoration', '{"type":"hat","event":"birthday2026","team":"Yellow","design":"basic"}'),
+      (${HATS.Blue}, 'Renamed By Art', 'ContentDecoration', '{"type":"hat","event":"birthday2026","team":"Blue","design":"basic"}'),
+      (${HATS.Pink}, 'Party Cap - Pink', 'ContentDecoration', '{"type":"hat","event":"birthday2026","team":"Pink","design":"basic"}'),
+      (${HATS.Green}, 'Party Cap - Green', 'ContentDecoration', '{"type":"hat","event":"birthday2026","team":"Green","design":"basic"}'),
       (${FRAME}, 'Some Frame', 'ContentDecoration', '{"type":"holiday-lights"}'),
       (${OTHER_EVENT_HAT}, 'Other Hat', 'ContentDecoration', '{"event":"another","team":"Yellow"}');
     INSERT INTO "Image" VALUES (1, 7), (2, 7), (3, 8);
     INSERT INTO "Model" VALUES (4, 7);
   `);
-  redisMock.redis.hGet.mockImplementation(async (_key: string, name: string) => {
-    const team = name.replace('Basic Party Hat - ', '') as keyof typeof HATS;
-    return HATS[team]?.toString() ?? null;
-  });
+  // Cache miss, so the join cosmetic is resolved by the real data lookup against this database.
+  redisMock.redis.hGet.mockResolvedValue(null);
   redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Blue' });
 });
 
