@@ -6,7 +6,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { CreatorScoreExplainer } from '~/components/Account/CreatorScoreExplainer';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
-import { CreatorAchievements, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
+import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
 import { LinkedText, rewardLinks, unlockLinksFor } from '~/components/CreatorJourney/journey-links';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
@@ -19,7 +19,6 @@ import {
   TierBadge,
   tierAccents,
 } from '~/components/CreatorJourney/tier-badge';
-import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { CREATOR_SHOWCASE_HREF } from '~/shared/constants/creator-journey.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
