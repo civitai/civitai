@@ -3643,8 +3643,9 @@ export function PageBlockHost({
       }
       if (req.kind === 'bytes') {
         try {
-          // Window pre-check FIRST (on byteLength alone), then classify, then record: a save
-          // refused `busy` is never decoded/parsed on this main thread (processSaveBytes).
+          // Per-file cap, then window pre-check (both on byteLength alone), then classify, then
+          // record: a refused save is never decoded/parsed on this main thread, and an over-cap
+          // file is too-large rather than `busy` (processSaveBytes).
           const { result, recent } = processSaveBytes(req, saveBytesWindowRef.current, Date.now());
           saveBytesWindowRef.current = recent;
           if (!result.ok) {

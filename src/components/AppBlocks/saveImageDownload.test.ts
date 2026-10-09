@@ -693,4 +693,19 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
     expect(countFull.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
     expect(classify).not.toHaveBeenCalled();
   });
+
+  it('the 50 MB boundary on the path the handler calls: AT the cap is accepted, one byte over is not', () => {
+    // processSaveBytes is the only call PageBlockHost makes, so the boundary is pinned HERE —
+    // prepareSaveBytes' own cap check is unreachable from the handler.
+    const classify = vi.fn(() => 'text/plain' as const);
+    const atCap = new Uint8Array(SAVE_BYTES_MAX_BYTES).fill(0x61).buffer;
+    const accepted = processSaveBytes({ bytes: atCap, filename: 'a.txt' }, [], T0 + 30, classify);
+    expect(accepted.result).toEqual({ ok: true, type: 'text/plain', filename: 'a.txt' });
+    expect(accepted.recent).toEqual([{ at: T0 + 30, size: SAVE_BYTES_MAX_BYTES }]);
+
+    const oneOver = new Uint8Array(SAVE_BYTES_MAX_BYTES + 1).fill(0x61).buffer;
+    const refused = processSaveBytes({ bytes: oneOver, filename: 'a.txt' }, [], T0 + 31, classify);
+    expect(refused.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
+    expect(classify).toHaveBeenCalledTimes(1);
+  });
 });
