@@ -14,6 +14,7 @@ const { service } = vi.hoisted(() => ({
     getViewerEventAccess: vi.fn(async () => 'open'),
     getMyEventHats: vi.fn(async () => []),
     getPlaceableEventContent: vi.fn(async () => []),
+    getEventHatCatalog: vi.fn(async () => []),
   },
 }));
 
@@ -93,5 +94,22 @@ describe('scored-event route access', () => {
       callerFor(undefined).getCosmeticScores({ event: 'birthday2026', cosmetics })
     ).rejects.toThrow();
     expect(service.getEventCosmeticScores).not.toHaveBeenCalled();
+  });
+
+  // The catalogue shows a visitor what joining gets them, so it is public, behind the page's gate.
+  it('serves getHatCatalog to a signed-out caller as the anonymous viewer', async () => {
+    await callerFor(undefined).getHatCatalog({ event: 'birthday2026' });
+    expect(service.getEventHatCatalog).toHaveBeenCalledWith({
+      event: 'birthday2026',
+      viewer: undefined,
+    });
+  });
+
+  it('refuses getHatCatalog for an event the viewer cannot read', async () => {
+    service.getViewerEventAccess.mockResolvedValueOnce('closed');
+    await expect(callerFor(undefined).getHatCatalog({ event: 'birthday2026' })).rejects.toThrow(
+      "That event doesn't exist"
+    );
+    expect(service.getEventHatCatalog).not.toHaveBeenCalled();
   });
 });

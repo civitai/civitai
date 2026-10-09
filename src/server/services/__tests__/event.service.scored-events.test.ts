@@ -399,3 +399,56 @@ describe('getEventStandings decoration', () => {
     expect(res.teams).toEqual([]);
   });
 });
+
+describe('getEventHatCatalog', () => {
+  const row = (design: string | null, team: string | null, url: string | null) => ({
+    design,
+    team,
+    name: `${design} Cap - ${team}`,
+    url,
+  });
+
+  it('refuses an event the caller may not read, and reads nothing', async () => {
+    engine.assertReadable.mockImplementation(notStarted);
+    await expect(
+      service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined })
+    ).rejects.toThrow("That event doesn't exist");
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('groups the hats by design in catalogue order, named without the team', async () => {
+    engine.assertReadable.mockResolvedValue('open');
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      row('bolt', 'Yellow', 'y1'),
+      row('crown', 'Yellow', 'y2'),
+      row('bolt', 'Blue', 'b1'),
+      row(null, 'Blue', 'x'),
+      row('crown', 'Blue', null),
+    ]);
+    const designs = await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
+    expect(designs).toEqual([
+      {
+        design: 'bolt',
+        name: 'bolt Cap',
+        hats: [
+          { team: 'Yellow', url: 'y1' },
+          { team: 'Blue', url: 'b1' },
+        ],
+      },
+      { design: 'crown', name: 'crown Cap', hats: [{ team: 'Yellow', url: 'y2' }] },
+    ]);
+  });
+
+  // The rows are the mock's, so pin what the query asks for: this event's decorations only.
+  it("queries only this event's decorations", async () => {
+    engine.assertReadable.mockResolvedValue('open');
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
+    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    expect(strings.join('?')).toContain(
+      `WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ?
+`
+    );
+    expect(values).toEqual(['birthday2026']);
+  });
+});
