@@ -55,7 +55,8 @@ describe('useNavBannersDismissed', () => {
   it('adds to that reading on dismiss and writes a site-wide, long-lived cookie', () => {
     h.seeded = ['event:old'];
     const hook = mountHook();
-    act(() => hook.current!.dismiss('event:new'));
+    const { dismiss } = hook.current!;
+    act(() => dismiss('event:new'));
     expect(hook.current!.dismissed).toEqual(['event:old', 'event:new']);
     expect(h.setCookie.mock.calls).toStrictEqual([
       [
@@ -64,6 +65,9 @@ describe('useNavBannersDismissed', () => {
         { maxAge: 60 * 60 * 24 * 365, path: '/', sameSite: 'lax' },
       ],
     ]);
+    // The same handler again, a stale render's closure, still keeps the first dismissal.
+    act(() => dismiss('event:third'));
+    expect(hook.current!.dismissed).toEqual(['event:old', 'event:new', 'event:third']);
   });
 });
 

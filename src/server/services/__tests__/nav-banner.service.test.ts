@@ -49,10 +49,11 @@ describe('the birthday banner, through the real access rule', () => {
       expect(await birthdayIds(viewer, DURING)).toEqual(['event:birthday2026']);
   });
 
-  it('hides when Flipt cannot be read, even for a tester during the event', async () => {
+  // Moderators are on without asking Flipt, so in the preview only the readability check keeps the
+  // banner off for them when Flipt cannot be read (the flag could already be armed).
+  it('hides from a moderator in the preview when Flipt cannot be read', async () => {
     testerFlag.reset({ readable: false, testers: [TESTER.id] });
-    expect(await birthdayIds(TESTER, DURING)).toEqual([]);
-    expect(await birthdayIds(ANON, DURING)).toEqual([]);
+    expect(await birthdayIds(MOD, PREVIEW)).toEqual([]);
   });
 
   it('hides for everyone once the event ends (results are not advertised in v1)', async () => {
