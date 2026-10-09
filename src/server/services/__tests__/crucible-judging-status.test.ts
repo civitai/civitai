@@ -237,9 +237,24 @@ describe('getJudgingSuggestions', () => {
     vi.clearAllMocks();
     judgeState({});
     findMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) =>
-      where.id.in.map((id) => ({ id }))
+      where.id.in.map((id) => ({ id, _count: { entries: 4 } }))
     );
     dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
+  });
+
+  it('counts pairs left exactly where judged, and from every entry where not', async () => {
+    queryRaw
+      .mockResolvedValueOnce([{ id: 1 }, { id: 2 }])
+      .mockResolvedValueOnce(entries({ 1: [10, 11, 12] }));
+    judgeState({ 1: { voted: ['10:11'], votes: { 10: 1, 11: 1 } } });
+
+    const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 2 });
+
+    // 1: three entries, one pair voted. 2: four unjudged entries make six pairs.
+    expect(suggestions.map((c) => [c.id, c.remainingPairs])).toEqual([
+      [1, 2],
+      [2, 6],
+    ]);
   });
 
   it('skips crucibles the judge has no pairs left in', async () => {

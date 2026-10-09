@@ -54,6 +54,7 @@ import {
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   CRUCIBLE_ENTRY_CUTOFF_PERCENT,
   CRUCIBLE_ENTRY_WARNING_PERCENT,
+  CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
@@ -4148,7 +4149,14 @@ export const withdrawCrucibleEntry = async ({
 
   await revealCrucibleEntryPosts({ imageId });
 
-  logToAxiom({ type: 'info', name: 'crucible-entry-withdrawn', crucibleId, entryId, userId, imageId });
+  logToAxiom({
+    type: 'info',
+    name: 'crucible-entry-withdrawn',
+    crucibleId,
+    entryId,
+    userId,
+    imageId,
+  });
 
   return { entryId, crucibleId };
 };
@@ -4833,9 +4841,6 @@ export const getJudgeStats = async ({
   };
 };
 
-// Enough to cover every open crucible today; the caught-up filter runs after the SQL limit.
-const JUDGING_SUGGESTION_CANDIDATES = 50;
-
 /**
  * Still judgeable by this viewer, and inside their browsing level on both the crucible's rating and
  * its cover — the rule the landing feed applies client-side in useApplyHiddenPreferences.
@@ -4885,7 +4890,7 @@ export const getJudgingSuggestions = async ({
         ) judgeable
       ) = 2
     ORDER BY c."createdAt" DESC, c.id DESC
-    LIMIT ${JUDGING_SUGGESTION_CANDIDATES}
+    LIMIT ${CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES}
   `;
   if (!rows.length) return [];
 
@@ -4902,11 +4907,24 @@ export const getJudgingSuggestions = async ({
     .slice(0, limit);
   if (!ids.length) return [];
 
-  return withPaidEntryCount(
+  const suggestions = await withPaidEntryCount(
     await dbRead.crucible.findMany({
       where: { id: { in: ids } },
       select: crucibleListSelect,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })
   );
+  // A never-judged crucible's entries aren't counted (see judgedOnly), so its count is the
+  // no-votes figure over every entry: an overestimate, good enough to weight Start Judging.
+  return suggestions.map((crucible) => ({
+    ...crucible,
+    remainingPairs:
+      counts.get(crucible.id)?.remainingPairs ??
+      countRemainingPairs({
+        entryIds: Array.from({ length: crucible._count.entries }, (_, i) => i),
+        judgeEntryVotes: {},
+        votedPairKeys: [],
+        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+      }),
+  }));
 };

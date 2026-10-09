@@ -5,9 +5,13 @@ import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { filterPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { pickNextCrucible } from '~/components/Crucible/judging-next-crucible';
+import {
+  pickNextCrucible,
+  pickWeightedCrucible,
+} from '~/components/Crucible/judging-next-crucible';
 import type { CrucibleCyclePoint } from '~/components/Crucible/judging-next-crucible';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES } from '~/shared/constants/crucible.constants';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
@@ -16,7 +20,8 @@ import { trpc } from '~/utils/trpc';
 type Props = {
   /**
    * The crucible being judged. "Next" steps from it through the open crucibles in order, so
-   * repeated presses visit each one. Without it, the newest crucible with pairs is picked.
+   * repeated presses visit each one. Without it, the pick is random, weighted toward crucibles
+   * closing soon and with many pairs left.
    */
   cycleFrom?: CrucibleCyclePoint;
   /**
@@ -46,7 +51,7 @@ export function CrucibleJudgeNextButton({
     setLoading(true);
     try {
       const suggestions = await utils.crucible.getJudgingSuggestions.fetch(
-        { browsingLevel, limit: 12 },
+        { browsingLevel, limit: CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES },
         { staleTime: 0 }
       );
       // Hidden users, tags and words are client-side only; the server can't apply them.
@@ -61,7 +66,7 @@ export function CrucibleJudgeNextButton({
         poiDisabled: browsingSettingsAddons.settings.disablePoi,
         minorDisabled: browsingSettingsAddons.settings.disableMinor,
       }).items as typeof suggestions;
-      const next = cycleFrom ? pickNextCrucible(visible, cycleFrom) : visible[0];
+      const next = cycleFrom ? pickNextCrucible(visible, cycleFrom) : pickWeightedCrucible(visible);
       if (!next) {
         showInfoNotification({
           title: 'Nothing to judge right now',

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { pickNextCrucible } from '~/components/Crucible/judging-next-crucible';
+import {
+  judgingWeight,
+  pickNextCrucible,
+  pickWeightedCrucible,
+} from '~/components/Crucible/judging-next-crucible';
 
 // Server order: createdAt desc, id desc.
 const list = [
@@ -56,5 +60,49 @@ describe('pickNextCrucible', () => {
 
   it('returns null for an empty list', () => {
     expect(pickNextCrucible([], list[0])).toBeNull();
+  });
+});
+
+describe('pickWeightedCrucible', () => {
+  const now = new Date('2026-10-09T00:00:00Z').getTime();
+  const inDays = (days: number) => new Date(now + days * 24 * 60 * 60 * 1000);
+  // Newest first, as the server sends them.
+  const newer = { id: 2, endAt: inDays(6), remainingPairs: 40 };
+  const closingSoon = { id: 1, endAt: inDays(0.5), remainingPairs: 40 };
+
+  it('favours a crucible closing soon over a newer one with the same pairs left', () => {
+    expect(judgingWeight(closingSoon, now)).toBeGreaterThan(4 * judgingWeight(newer, now));
+    const picks = [0.1, 0.5, 0.8].map(
+      (roll) => pickWeightedCrucible([newer, closingSoon], { now, random: () => roll })?.id
+    );
+    expect(picks).toEqual([2, 1, 1]);
+  });
+
+  it('favours more pairs left when crucibles close together', () => {
+    const few = { id: 3, endAt: inDays(2), remainingPairs: 1 };
+    const many = { id: 4, endAt: inDays(2), remainingPairs: 100 };
+    expect(judgingWeight(many, now)).toBeCloseTo(10 * judgingWeight(few, now));
+  });
+
+  it('weighs an open-ended crucible as far from closing', () => {
+    const openEnded = { id: 5, endAt: null, remainingPairs: 40 };
+    expect(judgingWeight(openEnded, now)).toBeLessThan(judgingWeight(newer, now));
+    expect(judgingWeight(openEnded, now)).toBeGreaterThan(0);
+  });
+
+  it('never picks a crucible with no pairs left', () => {
+    const caughtUp = { id: 6, endAt: inDays(0.1), remainingPairs: 0 };
+    for (const roll of [0, 0.5, 0.999]) {
+      expect(pickWeightedCrucible([caughtUp, newer], { now, random: () => roll })?.id).toBe(2);
+    }
+  });
+
+  it('reads an endAt that arrives as a string', () => {
+    const asString = { ...closingSoon, endAt: inDays(0.5).toISOString() as unknown as Date };
+    expect(judgingWeight(asString, now)).toBe(judgingWeight(closingSoon, now));
+  });
+
+  it('returns null for an empty list', () => {
+    expect(pickWeightedCrucible([], { now })).toBeNull();
   });
 });
