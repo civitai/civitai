@@ -23,6 +23,7 @@ const { mocks } = vi.hoisted(() => ({
     createBuzzTransaction: vi.fn(),
     createMultiTx: vi.fn(),
     refundMultiTx: vi.fn(),
+    listMultiTx: vi.fn(),
     getBlockedPairIds: vi.fn(),
     purchaseCosmeticPack: vi.fn(),
   },
@@ -40,6 +41,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
   createMultiAccountBuzzTransaction: mocks.createMultiTx,
   refundMultiAccountTransaction: mocks.refundMultiTx,
+  getMultiAccountTransactionsByPrefix: mocks.listMultiTx,
   refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
@@ -57,7 +59,7 @@ vi.mock('~/server/services/cosmetic-pack.service', async (importOriginal) => ({
 }));
 
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
-import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
+import { PURCHASE_STATE_UNKNOWN_MESSAGE, runPurchaseChecks } from '../shop-purchase-charge';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -131,6 +133,14 @@ const legs = (...duplicate: (boolean | undefined)[]) => ({
 });
 
 const TX = `cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${KEY}`;
+// A leg the ledger lists under the prefix: an earlier attempt charged.
+const earlierLeg = {
+  transactionId: 'earlier',
+  externalTransactionId: `${TX}Yellow`,
+  accountType: 'yellow',
+  accountId: BUYER_ID,
+  amount: PRICE,
+};
 // A claim an earlier attempt with this key left behind.
 // An object, so a field can be overridden without a default parameter
 // swallowing an explicit undefined.
@@ -149,12 +159,30 @@ const seedClaim = (
   });
 
 // An object, so "no key" can be said: a default parameter would replace undefined.
-const purchase = ({ idempotencyKey }: { idempotencyKey?: string } = { idempotencyKey: KEY }) =>
+const purchase = (
+  {
+    idempotencyKey,
+    expectedUnitAmount,
+    payWith,
+    stickersEnabled,
+    packsEnabled = true,
+  }: {
+    idempotencyKey?: string;
+    expectedUnitAmount?: number;
+    payWith?: 'default' | 'blue-first';
+    stickersEnabled?: boolean;
+    packsEnabled?: boolean;
+  } = { idempotencyKey: KEY }
+) =>
   purchaseCosmeticShopItem({
     userId: BUYER_ID,
     shopItemId: SHOP_ITEM_ID,
     idempotencyKey,
+    expectedUnitAmount,
+    payWith,
+    stickersEnabled,
     buzzType: 'yellow',
+    packsEnabled,
   });
 
 const nothingGrantedPaidOrRefunded = () => {
@@ -187,6 +215,9 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     mocks.userCosmeticCreate.mockImplementation(async ({ data }) => data);
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'payout' });
     mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE });
+    // A seeded pending claim stands for an earlier attempt that charged, unless
+    // a test says the ledger has nothing under it.
+    mocks.listMultiTx.mockResolvedValue([earlierLeg]);
   });
 
   it('grants and pays out when the ledger reports every leg as new (control)', async () => {
@@ -256,7 +287,10 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
   it('a claim deleted between the insert and the read is refused, not charged', async () => {
     seedClaim('pending');
-    dbMock.dbWrite.cosmeticShopPurchaseClaim.findUnique.mockResolvedValueOnce(null);
+    // Absent when first looked up, present for the insert, gone again for the read.
+    dbMock.dbWrite.cosmeticShopPurchaseClaim.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
 
     await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
@@ -276,6 +310,20 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await expectStateUnknown(purchase());
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('a claim recreated at another amount between the read and the resume is not resumed', async () => {
+    seedClaim('pending');
+    dbMock.dbWrite.cosmeticShopPurchaseClaim.updateMany.mockImplementationOnce((async (
+      args: Parameters<typeof claims.delegate.updateMany>[0]
+    ) => {
+      claims.rows.get(TX)!.amount = PRICE - 1;
+      return claims.delegate.updateMany(args);
+    }) as never);
+
+    await expectStateUnknown(purchase());
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+    expect(claims.rows.get(TX)?.attempts).toBe(1);
   });
 
   it('a retry of a pending claim grants against the earlier charge', async () => {
@@ -411,15 +459,28 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(claims.rows.has(TX)).toBe(false);
   });
 
-  it('a decline after another request resumed the claim keeps it for that request', async () => {
+  // The other request may have charged, so this decline is not an answer for the
+  // key: a 4xx would have the client drop the key that finds that charge.
+  it('a decline after another request resumed the claim keeps it for that request, as unknown', async () => {
     mocks.createMultiTx.mockImplementation(async () => {
       // A second request with this key resumed the claim and may be charging.
       claims.rows.get(TX)!.attempts = 2;
       throw ledgerError(400, 'BAD_REQUEST');
     });
 
-    await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expectStateUnknown(purchase());
     expect(claims.rows.get(TX)?.status).toBe('pending');
+    expect(stateUnknownLogs()).toEqual([
+      expect.objectContaining({ reason: 'declined while the claim is pending' }),
+    ]);
+  });
+
+  it('a decline on a resumed claim is unknown: the earlier attempt may have charged', async () => {
+    seedClaim('pending');
+    mocks.createMultiTx.mockRejectedValue(ledgerError(400, 'BAD_REQUEST'));
+
+    await expectStateUnknown(purchase());
+    expect(claims.rows.get(TX)).toMatchObject({ status: 'pending', attempts: 2 });
   });
 
   it('a decline is still a refusal when the claim cannot be released', async () => {
@@ -457,7 +518,10 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       throw ledgerError(400, 'BAD_REQUEST');
     });
 
-    await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(purchase()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'This purchase has already been completed',
+    });
     expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
@@ -646,6 +710,14 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(opts.shouldRetry?.(connectionRefused())).toBe(true);
   });
 
+  it('a refund names the claim it reverses', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+
+    await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mocks.refundMultiTx.mock.calls[0][0].details).toEqual({ claim: TX });
+  });
+
   // Every refund outcome short of "the whole amount is back" is left to
   // reconciliation: one attempt, then "state unknown" and the event.
   for (const [outcome, settle] of [
@@ -672,4 +744,395 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       expect(claims.rows.get(TX)?.status).toBe('refunding');
     });
   }
+
+  // Claim first: a retry of a purchase that may already be charged is answered
+  // from its claim, not refused by what changed since the first attempt.
+  describe('a retry is answered from its claim before the purchase checks', () => {
+    const pastWindow = { availableTo: new Date('2020-01-01T00:00:00Z') };
+    const soldOut = { availableQuantity: 1, _count: { purchases: 1 } };
+
+    for (const [what, change, refusal] of [
+      ['after the sale window closed', pastWindow, 'This cosmetic is no longer available'],
+      ['after the item sold out', soldOut, 'This cosmetic is out of stock'],
+      [
+        'after a price change',
+        { unitAmount: PRICE + 100 },
+        `The price changed to ${PRICE + 100} Buzz. Check the new price and try again.`,
+      ],
+    ] as const) {
+      it(`resumes a pending claim ${what}, at the claimed amount`, async () => {
+        mocks.shopItemFindUnique.mockResolvedValue({ ...row, ...change });
+        seedClaim('pending', { amount: PRICE - 500 });
+        mocks.createMultiTx.mockResolvedValue(legs(false));
+
+        await purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE - 500 });
+
+        expect(mocks.createMultiTx.mock.calls[0][0].amount).toBe(PRICE - 500);
+        expect(claims.rows.get(TX)?.status).toBe('paid');
+      });
+
+      // Control: the same change still refuses a new purchase.
+      it(`refuses a new purchase ${what}, claiming nothing`, async () => {
+        mocks.shopItemFindUnique.mockResolvedValue({ ...row, ...change });
+
+        await expect(
+          purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: refusal });
+        expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).not.toHaveBeenCalled();
+        expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      });
+
+      // The parked claim: two requests with one key were both declined, so the
+      // claim stayed pending with nothing charged under it. It vouches for
+      // nothing, so it is held to today's state like a new purchase.
+      it(`a pending claim nothing was charged under is unknown ${what}, and not charged`, async () => {
+        mocks.shopItemFindUnique.mockResolvedValue({ ...row, ...change });
+        seedClaim('pending', { amount: PRICE });
+        mocks.listMultiTx.mockResolvedValue([]);
+
+        await expectStateUnknown(purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE }));
+        expect(mocks.listMultiTx).toHaveBeenCalledWith(TX);
+        nothingGrantedPaidOrRefunded();
+        expect(mocks.createMultiTx).not.toHaveBeenCalled();
+        expect(claims.rows.get(TX)).toMatchObject({ status: 'pending', attempts: 1 });
+        expect(stateUnknownLogs()).toEqual([
+          expect.objectContaining({ reason: 'refused while a claim is pending' }),
+        ]);
+      });
+    }
+
+    it('a claim parked by two declined requests is not redeemed after a price rise', async () => {
+      // Two requests with one key, both declined: the second resumed the claim
+      // while the first was charging, so neither may release it.
+      mocks.createMultiTx.mockImplementationOnce(async () => {
+        claims.rows.get(TX)!.attempts = 2;
+        throw ledgerError(400, 'BAD_REQUEST');
+      });
+      await expectStateUnknown(purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE }));
+      expect(claims.rows.get(TX)).toMatchObject({ status: 'pending', amount: PRICE });
+
+      // Later, at a higher price, with nothing charged under the claim.
+      mocks.shopItemFindUnique.mockResolvedValue({ ...row, unitAmount: PRICE + 100 });
+      mocks.listMultiTx.mockResolvedValue([]);
+      mocks.createMultiTx.mockClear();
+      await expectStateUnknown(purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE }));
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(mocks.userCosmeticCreate).not.toHaveBeenCalled();
+    });
+
+    // Two requests with one key in flight together: the second finds the claim
+    // before the first's charge lands. Nothing has changed, so it resumes.
+    it('a concurrent resume with nothing charged yet still completes', async () => {
+      seedClaim('pending');
+      mocks.listMultiTx.mockResolvedValue([]);
+      mocks.createMultiTx.mockResolvedValue(legs(false));
+
+      await purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE });
+      expect(mocks.createMultiTx.mock.calls[0][0].amount).toBe(PRICE);
+      expect(claims.rows.get(TX)).toMatchObject({ status: 'paid', attempts: 2 });
+    });
+
+    it('a retry whose ledger read fails is unknown, and not charged', async () => {
+      seedClaim('pending', { amount: PRICE - 500 });
+      mocks.listMultiTx.mockRejectedValue(new Error('ledger down'));
+
+      await expectStateUnknown(purchase());
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(claims.rows.get(TX)?.attempts).toBe(1);
+      // The reconciliation record names the claim, at its claimed amount.
+      expect(stateUnknownLogs()).toEqual([
+        expect.objectContaining({
+          reason: 'ledger read failed on resume',
+          transactionId: TX,
+          userId: BUYER_ID,
+          shopItemId: SHOP_ITEM_ID,
+          amount: PRICE - 500,
+          error: 'ledger down',
+        }),
+      ]);
+    });
+
+    it('a settled claim is answered without reading the ledger', async () => {
+      seedClaim('paid');
+      mocks.listMultiTx.mockRejectedValue(new Error('ledger down'));
+
+      await expect(purchase()).rejects.toThrow('This purchase has already been completed');
+      expect(mocks.listMultiTx).not.toHaveBeenCalled();
+    });
+
+    // The claim's own amount is held to today's price, so omitting the
+    // confirmed price does not let an uncharged claim keep an old one.
+    it('an uncharged claim at an old price is unknown with no confirmed price sent, and not charged', async () => {
+      seedClaim('pending', { amount: PRICE - 500 });
+      mocks.listMultiTx.mockResolvedValue([]);
+
+      await expectStateUnknown(purchase({ idempotencyKey: KEY }));
+      expect(mocks.listMultiTx).toHaveBeenCalledTimes(1);
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+    });
+
+    // The retry path relies on this: ANY failure of a check while a claim is
+    // pending (a refusal, or a bug that throws) answers state unknown, never a
+    // 4xx that would have the client drop its key.
+    it('runPurchaseChecks turns any throw into state unknown while a claim is pending', async () => {
+      const pending = {
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        transactionId: TX,
+        amount: PRICE,
+      };
+      const crash = new TypeError("Cannot read properties of undefined (reading 'teams')");
+
+      await expectStateUnknown(runPurchaseChecks(pending, async () => Promise.reject(crash)));
+      await expect(runPurchaseChecks(null, async () => Promise.reject(crash))).rejects.toBe(crash);
+    });
+
+    it('a new purchase does not read the ledger', async () => {
+      mocks.createMultiTx.mockResolvedValue(legs(false));
+
+      await purchase();
+      expect(mocks.listMultiTx).not.toHaveBeenCalled();
+    });
+
+    // Each check that still applies on a retry answers state unknown while a
+    // claim is pending, and refuses a new purchase outright.
+    for (const [what, setup, refusal] of [
+      [
+        'unpublished',
+        () => mocks.shopItemFindUnique.mockResolvedValue({ ...row, status: 'Draft' }),
+        'This cosmetic is not available',
+      ],
+      [
+        "the buyer's own cosmetic",
+        () =>
+          mocks.shopItemFindUnique.mockResolvedValue({
+            ...row,
+            cosmetic: { ...row.cosmetic, createdById: BUYER_ID },
+          }),
+        'You already own this cosmetic',
+      ],
+      [
+        'a block with the creator',
+        () => {
+          mocks.shopItemFindUnique.mockResolvedValue({
+            ...row,
+            cosmetic: { ...row.cosmetic, createdById: 77 },
+          });
+          mocks.getBlockedPairIds.mockResolvedValue([77]);
+        },
+        'This cosmetic is not available',
+      ],
+      [
+        'a sticker with stickers off',
+        () =>
+          mocks.shopItemFindUnique.mockResolvedValue({
+            ...row,
+            cosmetic: { ...row.cosmetic, type: 'Sticker' },
+          }),
+        'This cosmetic is not available',
+      ],
+      [
+        'unlimited uses of a sticker already held',
+        () => {
+          mocks.shopItemFindUnique.mockResolvedValue({
+            ...row,
+            cosmetic: { ...row.cosmetic, type: 'Sticker' },
+          });
+          mocks.userCosmeticFindFirst.mockResolvedValue({ claimKey: 'k' });
+        },
+        'You already have unlimited uses of this sticker',
+      ],
+    ] as const) {
+      const stickersEnabled = what !== 'a sticker with stickers off';
+      it(`${what}: unknown on a retry, not charged`, async () => {
+        setup();
+        seedClaim('pending');
+
+        await expectStateUnknown(purchase({ idempotencyKey: KEY, stickersEnabled }));
+        expect(mocks.createMultiTx).not.toHaveBeenCalled();
+        // The record keeps why the retry was refused.
+        expect(stateUnknownLogs()).toEqual([
+          expect.objectContaining({ reason: 'refused while a claim is pending', error: refusal }),
+        ]);
+      });
+
+      it(`${what}: refused as a new purchase (control)`, async () => {
+        setup();
+
+        await expect(purchase({ idempotencyKey: KEY, stickersEnabled })).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: refusal,
+        });
+      });
+    }
+
+    it('packs switched off: unknown on a pack retry, refused when new', async () => {
+      const PACK_TX = `cosmetic-pack-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${KEY}`;
+      mocks.shopItemFindUnique.mockResolvedValue({ ...row, cosmeticId: null, cosmetic: null });
+      claims.rows.set(PACK_TX, {
+        transactionId: PACK_TX,
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+      await expectStateUnknown(purchase({ idempotencyKey: KEY, packsEnabled: false }));
+      expect(mocks.purchaseCosmeticPack).not.toHaveBeenCalled();
+
+      claims.rows.clear();
+      await expect(purchase({ idempotencyKey: KEY, packsEnabled: false })).rejects.toThrow(
+        'This pack is not available'
+      );
+    });
+
+    it('Blue Buzz on an item that takes none: unknown on a retry, refused when new', async () => {
+      seedClaim('pending');
+      await expectStateUnknown(purchase({ idempotencyKey: KEY, payWith: 'blue-first' }));
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+
+      claims.rows.clear();
+      await expect(purchase({ idempotencyKey: KEY, payWith: 'blue-first' })).rejects.toThrow(
+        'This item does not accept Blue Buzz'
+      );
+    });
+
+    it('a paid claim of an item now sold out is answered as completed', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue({ ...row, ...soldOut });
+      seedClaim('paid');
+
+      await expect(purchase()).rejects.toThrow('This purchase has already been completed');
+    });
+
+    it('a paid claim of an item since delisted is answered as completed, not unknown', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue({ ...row, listed: false });
+      seedClaim('paid');
+
+      await expect(purchase()).rejects.toThrow('This purchase has already been completed');
+      expect(stateUnknownLogged()).toBe(false);
+    });
+
+    it('a retry confirming an amount other than its claim is unknown, and not charged', async () => {
+      seedClaim('pending', { amount: PRICE - 500 });
+
+      await expectStateUnknown(purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE }));
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      // Not counted as an attempt: it charged nothing.
+      expect(claims.rows.get(TX)?.attempts).toBe(1);
+      expect(stateUnknownLogs()).toEqual([
+        expect.objectContaining({
+          reason: 'expected amount differs from the claim',
+          transactionId: TX,
+          amount: PRICE - 500,
+        }),
+      ]);
+    });
+
+    // A kill switch or a block still wins, but a 4xx would have the client drop
+    // the key that finds a charge the earlier attempt may have made.
+    it('a refusal of a retry with a pending claim is unknown, and not charged', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue({ ...row, listed: false });
+      seedClaim('pending');
+
+      await expectStateUnknown(purchase());
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(claims.rows.get(TX)).toMatchObject({ status: 'pending', attempts: 1 });
+      expect(stateUnknownLogs()).toEqual([
+        expect.objectContaining({ reason: 'refused while a claim is pending' }),
+      ]);
+    });
+
+    it('the same refusal of a new purchase is a plain refusal (control)', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue({ ...row, listed: false });
+
+      await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(stateUnknownLogged()).toBe(false);
+    });
+
+    // Resuming could charge again for something a different purchase already
+    // granted, so that claim is settled by hand.
+    it('a retry for a single-purchase cosmetic the buyer now owns is unknown, and not charged', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue({
+        ...row,
+        cosmetic: { ...row.cosmetic, type: 'ProfileDecoration' },
+      });
+      mocks.userCosmeticFindFirst.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+      seedClaim('pending');
+
+      await expectStateUnknown(purchase());
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(stateUnknownLogs()).toEqual([
+        expect.objectContaining({ reason: 'refused while a claim is pending' }),
+      ]);
+    });
+
+    // Two requests with one key, the other inserting its claim between this
+    // one's lookup and its insert. Each charge must be at an amount the request
+    // making it confirmed.
+    const claimedConcurrentlyAt = (amount: number) =>
+      dbMock.dbWrite.cosmeticShopPurchaseClaim.create.mockImplementationOnce((async (
+        args: Parameters<typeof claims.delegate.create>[0]
+      ) => {
+        seedClaim('pending', { amount });
+        return claims.delegate.create(args);
+      }) as never);
+
+    it('a concurrent claim at another amount is unknown, and not charged by this request', async () => {
+      claimedConcurrentlyAt(PRICE - 500);
+
+      await expectStateUnknown(purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE }));
+      expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).toHaveBeenCalledTimes(1);
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(claims.rows.get(TX)).toMatchObject({ amount: PRICE - 500, attempts: 1 });
+    });
+
+    it('a concurrent claim at the confirmed amount is resumed (control)', async () => {
+      claimedConcurrentlyAt(PRICE);
+      mocks.createMultiTx.mockResolvedValue(legs(false));
+
+      await purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE });
+      expect(mocks.createMultiTx.mock.calls[0][0].amount).toBe(PRICE);
+      expect(claims.rows.get(TX)).toMatchObject({ status: 'paid', attempts: 2 });
+    });
+
+    const PACK_TX = `cosmetic-pack-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${KEY}`;
+    const pack = { ...row, cosmeticId: null, cosmetic: null };
+
+    it('a pack retry past the listing’s sale window reaches the pack purchase', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue({ ...pack, ...pastWindow });
+      claims.rows.set(PACK_TX, {
+        transactionId: PACK_TX,
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+      mocks.purchaseCosmeticPack.mockResolvedValue({});
+
+      // A discounted amount due, unlike the listing's price.
+      await purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE - 500 });
+      expect(mocks.purchaseCosmeticPack).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: KEY, expectedAmount: PRICE - 500 })
+      );
+      // The claim the listing was judged on is the one the pack is judged on:
+      // passed down, not read a second time.
+      expect(mocks.purchaseCosmeticPack.mock.calls[0][0].start).toMatchObject({
+        transactionId: PACK_TX,
+        chargedBefore: true,
+        existingClaim: expect.objectContaining({ status: 'pending' }),
+      });
+      expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.findUnique).toHaveBeenCalledTimes(1);
+    });
+
+    it('a new pack purchase past the listing’s sale window is refused (control)', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue({ ...pack, ...pastWindow });
+
+      await expect(purchase()).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'This pack is no longer available',
+      });
+      expect(mocks.purchaseCosmeticPack).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -14,6 +14,7 @@ const { mocks } = vi.hoisted(() => {
     createBuzzTransaction: vi.fn(),
     createMultiTx: vi.fn(),
     refundMultiTx: vi.fn(),
+    listMultiTx: vi.fn(),
     getBlockedPairIds: vi.fn(),
     sectionFindMany: vi.fn(),
     getUserTeam: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: mocks.createMultiTx,
   refundMultiAccountTransaction: mocks.refundMultiTx,
   refundTransaction: vi.fn(),
+  getMultiAccountTransactionsByPrefix: mocks.listMultiTx,
 }));
 vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(),
@@ -67,7 +69,9 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 });
 
 import { getShopSectionsWithItems, purchaseCosmeticShopItem } from '../cosmetic-shop.service';
+import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   installShopPurchaseClaimFake,
   shopPurchaseClaimFake,
@@ -180,6 +184,8 @@ describe('buying an event-gated item (team hat)', () => {
       chargeResponse(fromAccountTypes[0])
     );
     mocks.getBlockedPairIds.mockResolvedValue([]);
+    // Money under a seeded claim's prefix: an earlier attempt charged.
+    mocks.listMultiTx.mockResolvedValue([{ transactionId: 'earlier', amount: PRICE }]);
   });
 
   it("buying your own team's colour charges only the domain currency and grants the hat", async () => {
@@ -270,6 +276,90 @@ describe('buying an event-gated item (team hat)', () => {
 
     await expect(purchase()).rejects.toThrow('This item is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  // A retry of a purchase that charged before the end: the event's window is a
+  // sale window, checked when the claim was made. The team, paid-Buzz-only and
+  // registration rules still apply, and a claim nothing was charged under
+  // vouches for nothing.
+  describe('a retry of a pending claim after the end', () => {
+    const KEY = '55555555-5555-4555-8555-555555555555';
+    const TX = `cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${KEY}`;
+    const retry = (payWith?: 'default' | 'blue-first') =>
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        idempotencyKey: KEY,
+        payWith,
+        buzzType: 'green',
+      });
+    const expectUnknown = async (p: Promise<unknown>) => {
+      await expect(p).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PURCHASE_STATE_UNKNOWN_MESSAGE,
+      });
+      const reasons = loggingMock.logToAxiom.mock.calls
+        .map(([arg]) => arg as Record<string, unknown>)
+        .filter((arg) => arg.name === 'shop-purchase-state-unknown')
+        .map((arg) => arg.reason);
+      expect(reasons).toEqual(['refused while a claim is pending']);
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(claims.rows.get(TX)).toMatchObject({ status: 'pending', attempts: 1 });
+    };
+
+    beforeEach(() => {
+      loggingMock.logToAxiom.mockReset();
+      claims.rows.set(TX, {
+        transactionId: TX,
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+      vi.setSystemTime(AFTER_EVENT);
+    });
+
+    it('resumes a claim that was charged', async () => {
+      await retry();
+      expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toBe(TX);
+      expect(claims.rows.get(TX)?.status).toBe('paid');
+    });
+
+    it('a claim nothing was charged under is unknown, and not charged', async () => {
+      mocks.listMultiTx.mockResolvedValue([]);
+      await expectUnknown(retry());
+    });
+
+    it("another team's colour is still unknown, and not charged", async () => {
+      mocks.getUserTeam.mockResolvedValue(BLUE_TEAM);
+      await expectUnknown(retry());
+    });
+
+    it('Blue Buzz is still unknown, and not charged', async () => {
+      await expectUnknown(retry('blue-first'));
+    });
+
+    it('an event that is no longer registered is still unknown, and not charged', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue(hatRow({ event: UNREGISTERED_EVENT }));
+      await expectUnknown(retry());
+    });
+
+    // Teamless, so nothing after the event lookup would refuse it either.
+    it('a teamless item of an event no longer registered is still unknown, and not charged', async () => {
+      const row = hatRow({ event: UNREGISTERED_EVENT });
+      mocks.shopItemFindUnique.mockResolvedValue({
+        ...row,
+        cosmetic: { ...row.cosmetic, data: hatData(undefined, UNREGISTERED_EVENT) },
+      });
+      await expectUnknown(retry());
+    });
+
+    // The flag is the kill switch: a retry does not outlive it.
+    it('with the flag off for the buyer, still unknown, and not charged', async () => {
+      testerFlag.reset({ testers: [] });
+      await expectUnknown(retry());
+    });
   });
 
   it('sells in the last instant before the end', async () => {

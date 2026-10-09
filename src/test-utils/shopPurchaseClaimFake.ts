@@ -9,13 +9,14 @@ type ClaimRow = {
   status: string;
   attempts: number;
 };
-type Where = { transactionId: string; status?: string; attempts?: number };
+type Where = { transactionId: string; status?: string; attempts?: number; amount?: number };
 type Data = { status?: string; attempts?: { increment: number } };
 
 const matches = (row: ClaimRow | undefined, where: Where): row is ClaimRow =>
   !!row &&
   (where.status === undefined || row.status === where.status) &&
-  (where.attempts === undefined || row.attempts === where.attempts);
+  (where.attempts === undefined || row.attempts === where.attempts) &&
+  (where.amount === undefined || row.amount === where.amount);
 
 /**
  * An in-memory `cosmeticShopPurchaseClaim` delegate with the properties the

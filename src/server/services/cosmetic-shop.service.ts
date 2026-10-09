@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -70,6 +69,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import {
+  beginShopPurchase,
   chargeForShopPurchase,
   chargeRetryOptions,
   claimShopPurchase,
@@ -77,6 +77,8 @@ import {
   purchaseStateUnknown,
   refundCallOptions,
   refundClaimedCharge,
+  resumeShopPurchase,
+  runPurchaseChecks,
 } from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -964,95 +966,139 @@ export const purchaseCosmeticShopItem = async ({
     throw throwBadRequestError('Cosmetic not found');
   }
 
-  // Creator-submitted items share this table; only Published items are sellable.
-  // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
-  if (shopItem.status !== CosmeticShopItemStatus.Published) {
-    throw throwBadRequestError(`This ${noun} is not available`);
-  }
+  const isPack = shopItem.cosmeticId == null || !shopItem.cosmetic;
+  // Random, not a timestamp, without a key. This id is both the purchase row's
+  // primary key and the `UserCosmetic` claim key, so two purchases of one item by
+  // one user in the same millisecond used to be impossible — the single-ownership
+  // guard refused the second before it reached the money. Stickers are repeatable
+  // now, and the collision is worse than a failed purchase: the second request's
+  // grant throws on the primary key, and its catch refunds
+  // `externalTransactionIdPrefix` — which would be the FIRST request's charge,
+  // reversing it while the buyer keeps the sticker. Same reason
+  // `purchaseStickerUses` has always used a uuid.
+  //
+  // The claim is read before the checks below: a retry of a purchase that was
+  // charged resumes its claim rather than being refused by today's state.
+  const start = await beginShopPurchase({
+    kind: isPack ? 'pack' : 'item',
+    userId,
+    shopItemId,
+    idempotencyKey,
+    amount: shopItem.unitAmount,
+  });
+  const { transactionId, existingClaim, pendingClaim, chargedBefore } = start;
+  const claimContext = (amount: number) => ({ shopItemId, userId, transactionId, amount });
 
-  // Delisted: still Published so it stays bundlable, but off individual sale.
-  // Resale listings don't outlive this — withdrawing the item ends them.
-  if (!shopItem.listed) {
-    throw throwBadRequestError(`This ${noun} is not available`);
-  }
-
-  // A pack carries no cosmetic of its own; the guards below are answered per
-  // member instead, in assertPackPurchasable.
-  if (shopItem.cosmetic) {
-    // Every listing path filters stickers out when the flag is off, but filtered
-    // from a list is not the same as refused: with an item id in hand a buyer
-    // could otherwise pay for a sticker they can't place, since the picker is
-    // gated too. Refuse at the mutation, where the cosmetic is already loaded.
-    if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
+  // Whether this item may be sold to this buyer at all. Asked again on a retry:
+  // a kill switch or a block still wins, as state unknown.
+  await runPurchaseChecks(pendingClaim, async () => {
+    // Creator-submitted items share this table; only Published items are sellable.
+    // Guards against buying Draft/PendingReview/Rejected/Archived items by id.
+    if (shopItem.status !== CosmeticShopItemStatus.Published) {
       throw throwBadRequestError(`This ${noun} is not available`);
     }
 
-    // Creators can't buy their own cosmetic — they're granted it on approval.
-    if (shopItem.cosmetic.createdById === userId) {
-      throw throwBadRequestError('You already own this cosmetic');
+    // Delisted: still Published so it stays bundlable, but off individual sale.
+    // Resale listings don't outlive this — withdrawing the item ends them.
+    if (!shopItem.listed) {
+      throw throwBadRequestError(`This ${noun} is not available`);
     }
 
-    // A block between the buyer and the item's creator or lister (either
-    // direction) makes the item unpurchasable no matter where it surfaced — the
-    // generic error keeps the block from being revealed. Official items (no
-    // creator) are unaffected.
-    if (shopItem.cosmetic.createdById) {
-      const blockedPairIds = await getBlockedPairIds(userId);
-      const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
-        (id): id is number => id != null
-      );
-      if (sellerIds.some((id) => blockedPairIds.includes(id))) {
+    // Filtering a pack out of a list is not refusing it — with an id in hand a
+    // buyer could otherwise purchase one while the flag is off.
+    if (isPack && !packsEnabled) throw throwBadRequestError('This pack is not available');
+
+    // A pack carries no cosmetic of its own; the guards below are answered per
+    // member instead, in assertPackPurchasable.
+    if (shopItem.cosmetic) {
+      // Every listing path filters stickers out when the flag is off, but filtered
+      // from a list is not the same as refused: with an item id in hand a buyer
+      // could otherwise pay for a sticker they can't place, since the picker is
+      // gated too. Refuse at the mutation, where the cosmetic is already loaded.
+      if (shopItem.cosmetic.type === CosmeticType.Sticker && !stickersEnabled) {
         throw throwBadRequestError(`This ${noun} is not available`);
       }
+
+      // Creators can't buy their own cosmetic — they're granted it on approval.
+      if (shopItem.cosmetic.createdById === userId) {
+        throw throwBadRequestError('You already own this cosmetic');
+      }
+
+      // A block between the buyer and the item's creator or lister (either
+      // direction) makes the item unpurchasable no matter where it surfaced — the
+      // generic error keeps the block from being revealed. Official items (no
+      // creator) are unaffected.
+      if (shopItem.cosmetic.createdById) {
+        const blockedPairIds = await getBlockedPairIds(userId);
+        const sellerIds = [shopItem.cosmetic.createdById, shopItem.addedById].filter(
+          (id): id is number => id != null
+        );
+        if (sellerIds.some((id) => blockedPairIds.includes(id))) {
+          throw throwBadRequestError(`This ${noun} is not available`);
+        }
+      }
+
+      if (isEventShopItemData(shopItem.cosmetic.data))
+        await assertEventShopItemPurchasable({
+          userId,
+          data: shopItem.cosmetic.data,
+          payWith,
+          isModerator,
+          resumingClaim: chargedBefore,
+        });
+
+      // Blue payment is a per-item creator opt-in (meta.acceptsBlueBuzz).
+      if (payWith !== 'default' && !shopItemMeta.acceptsBlueBuzz) {
+        throw throwBadRequestError('This item does not accept Blue Buzz');
+      }
     }
+  });
 
-    if (isEventShopItemData(shopItem.cosmetic.data))
-      await assertEventShopItemPurchasable({
-        userId,
-        isModerator,
-        data: shopItem.cosmetic.data,
-        payWith,
-      });
-  }
-
-  if (
-    shopItem.availableQuantity !== null &&
-    shopItem._count.purchases >= shopItem.availableQuantity
-  ) {
-    if (shopItemMeta.purchases !== shopItem._count.purchases) {
-      // Update meta with new amount:
-      await dbWrite.cosmeticShopItem.update({
-        where: { id: shopItemId },
-        data: {
-          meta: {
-            ...shopItemMeta,
-            purchases: shopItem._count.purchases,
+  // Today's stock and sale window. A claim that was charged passed them when it
+  // was made; any other request is held to them, a retry of an uncharged claim
+  // included (as state unknown).
+  await runPurchaseChecks(pendingClaim, async () => {
+    if (chargedBefore) return;
+    if (
+      shopItem.availableQuantity !== null &&
+      shopItem._count.purchases >= shopItem.availableQuantity
+    ) {
+      if (shopItemMeta.purchases !== shopItem._count.purchases) {
+        // Update meta with new amount:
+        await dbWrite.cosmeticShopItem.update({
+          where: { id: shopItemId },
+          data: {
+            meta: {
+              ...shopItemMeta,
+              purchases: shopItem._count.purchases,
+            },
           },
-        },
-      });
+        });
+      }
+      throw throwBadRequestError(`This ${noun} is out of stock`);
     }
-    throw throwBadRequestError(`This ${noun} is out of stock`);
-  }
 
-  if (shopItem.availableFrom && shopItem.availableFrom > new Date()) {
-    throw throwBadRequestError(`This ${noun} is not available yet`);
-  }
+    if (shopItem.availableFrom && shopItem.availableFrom > new Date()) {
+      throw throwBadRequestError(`This ${noun} is not available yet`);
+    }
 
-  if (shopItem.availableTo && shopItem.availableTo < new Date()) {
-    throw throwBadRequestError(`This ${noun} is no longer available`);
-  }
+    if (shopItem.availableTo && shopItem.availableTo < new Date()) {
+      throw throwBadRequestError(`This ${noun} is no longer available`);
+    }
+  });
 
   // Packs diverge here: the money path, the grant and the payout are all
   // per-member. Everything above is a property of the listing itself and applies
   // to both.
   if (shopItem.cosmeticId == null || !shopItem.cosmetic) {
-    // Filtering a pack out of a list is not refusing it — with an id in hand a
-    // buyer could otherwise purchase one while the flag is off.
-    if (!packsEnabled) throw throwBadRequestError('This pack is not available');
     const members = await getPackMembers(shopItemId);
     return purchaseCosmeticPack({
       userId,
       idempotencyKey,
+      // The claim read above, so the pack is judged on the same one the listing was.
+      start,
+      // For a pack, the amount due the buyer was shown.
+      expectedAmount: expectedUnitAmount,
       shopItem: {
         id: shopItem.id,
         title: shopItem.title,
@@ -1072,57 +1118,64 @@ export const purchaseCosmeticShopItem = async ({
 
   const singleCosmeticId = shopItem.cosmeticId;
   const singleCosmetic = shopItem.cosmetic;
-  // Stickers are deliberately absent: they are spent rather than worn, so a
-  // repeat purchase is another batch of uses rather than a mistake.
-  const onlySupportsSinglePurchase =
-    shopItem.cosmetic.type == CosmeticType.Badge ||
-    shopItem.cosmetic.type == CosmeticType.NamePlate ||
-    shopItem.cosmetic.type == CosmeticType.ProfileBackground ||
-    shopItem.cosmetic.type == CosmeticType.ProfileDecoration;
 
-  if (onlySupportsSinglePurchase) {
-    // Confirm the user doesn't own it already:
-    const userCosmetic = await dbWrite.userCosmetic.findFirst({
-      where: {
-        userId,
-        cosmeticId: singleCosmeticId,
-      },
-    });
+  // Whether the buyer still needs what they are buying. Asked again on a retry,
+  // as state unknown: if a different purchase granted it meanwhile, resuming
+  // could charge again for something they already hold, so that claim is
+  // settled by hand instead.
+  await runPurchaseChecks(pendingClaim, async () => {
+    // Stickers are deliberately absent: they are spent rather than worn, so a
+    // repeat purchase is another batch of uses rather than a mistake.
+    const onlySupportsSinglePurchase =
+      singleCosmetic.type == CosmeticType.Badge ||
+      singleCosmetic.type == CosmeticType.NamePlate ||
+      singleCosmetic.type == CosmeticType.ProfileBackground ||
+      singleCosmetic.type == CosmeticType.ProfileDecoration;
 
-    if (userCosmetic) {
-      throw throwBadRequestError('You already own this cosmetic');
+    if (onlySupportsSinglePurchase) {
+      // Confirm the user doesn't own it already:
+      const userCosmetic = await dbWrite.userCosmetic.findFirst({
+        where: {
+          userId,
+          cosmeticId: singleCosmeticId,
+        },
+      });
+
+      if (userCosmetic) {
+        throw throwBadRequestError('You already own this cosmetic');
+      }
     }
-  }
 
-  // A repeat sticker purchase buys uses, so there has to be a balance for it to
-  // add to. An unlimited holding is inexhaustible — charging for more would sell
-  // a balance that can never be spent, the same refusal `purchaseStickerUses`
-  // makes for the same reason.
-  if (shopItem.cosmetic.type === CosmeticType.Sticker) {
-    const unlimited = await dbWrite.userCosmetic.findFirst({
-      where: { userId, cosmeticId: singleCosmeticId, remaining: null },
-      select: { claimKey: true },
-    });
-    if (unlimited) throw throwBadRequestError('You already have unlimited uses of this sticker');
-  }
+    // A repeat sticker purchase buys uses, so there has to be a balance for it to
+    // add to. An unlimited holding is inexhaustible — charging for more would sell
+    // a balance that can never be spent, the same refusal `purchaseStickerUses`
+    // makes for the same reason.
+    if (singleCosmetic.type === CosmeticType.Sticker) {
+      const unlimited = await dbWrite.userCosmetic.findFirst({
+        where: { userId, cosmeticId: singleCosmeticId, remaining: null },
+        select: { claimKey: true },
+      });
+      if (unlimited) throw throwBadRequestError('You already have unlimited uses of this sticker');
+    }
+  });
 
   // The buyer confirmed a number on a button. A listing re-priced between that
   // render and the press must refuse rather than charge a number they never
   // agreed to — the same guard `purchaseStickerUses` makes, and the one place a
   // stale price is most likely: a shop panel and a draft can sit open for as
-  // long as the image does.
-  if (expectedUnitAmount !== undefined && expectedUnitAmount !== shopItem.unitAmount) {
-    throw throwBadRequestError(
-      `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
-    );
-  }
+  // long as the image does. A charged claim is checked against its own amount
+  // instead; an uncharged one must also still be at today's price.
+  await runPurchaseChecks(pendingClaim, async () => {
+    if (chargedBefore) return;
+    const confirmed = existingClaim ? existingClaim.amount : expectedUnitAmount;
+    if (confirmed !== undefined && confirmed !== shopItem.unitAmount) {
+      throw throwBadRequestError(
+        `The price changed to ${shopItem.unitAmount} Buzz. Check the new price and try again.`
+      );
+    }
+  });
 
-  const meta = (shopItem.meta ?? {}) as CosmeticShopItemMeta;
-
-  // Blue payment is a per-item creator opt-in (meta.acceptsBlueBuzz).
-  if (payWith !== 'default' && !meta.acceptsBlueBuzz) {
-    throw throwBadRequestError('This item does not accept Blue Buzz');
-  }
+  const meta = shopItemMeta;
   // 'blue-first' drains blue before completing with the domain color.
   const fromAccountTypes: BuzzSpendType[] =
     payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
@@ -1147,32 +1200,19 @@ export const purchaseCosmeticShopItem = async ({
   // bank is the system ledger, not a balance-constrained account, so the
   // per-color payouts below don't depend on what the bank was credited in
   // (auction bids and green-domain purchases have always worked this way).
-  // Random, not a timestamp. This id is both the purchase row's primary key and
-  // the `UserCosmetic` claim key, so two purchases of one item by one user in
-  // the same millisecond used to be impossible — the single-ownership guard
-  // refused the second before it reached the money. Stickers are repeatable now,
-  // and the collision is worse than a failed purchase: the second request's
-  // grant throws on the primary key, and its catch refunds
-  // `externalTransactionIdPrefix` — which would be the FIRST request's charge,
-  // reversing it while the buyer keeps the sticker. Same reason
-  // `purchaseStickerUses` has always used a uuid.
-  // `v2`: claims (below) began with this prefix, so no key used under it has
-  // ledger history from before there was a claim to account for it.
-  const transactionId = `cosmetic-purchase-v2-${userId}-${shopItemId}-${
-    idempotencyKey ?? randomUUID()
-  }`;
-
+  //
   // The buyer's own intent, claimed before any money moves. A retry, a
   // double-click or a second tab replaying the same purchase arrives with the
   // key it already used and is answered from the claim rather than charged as a
   // new purchase — the ownership check used to be what made that impossible for
   // every type, and it no longer covers stickers.
-  const claim = await claimShopPurchase({
-    shopItemId,
-    userId,
-    transactionId,
-    amount: shopItem.unitAmount,
-  });
+  const claim = existingClaim
+    ? await resumeShopPurchase(
+        claimContext(existingClaim.amount),
+        existingClaim,
+        expectedUnitAmount
+      )
+    : await claimShopPurchase(claimContext(shopItem.unitAmount), expectedUnitAmount);
   const unitAmount = claim.amount;
   const chargeContext = { shopItemId, userId, transactionId, amount: unitAmount };
   const transaction = await chargeForShopPurchase(
@@ -1396,6 +1436,8 @@ export const purchaseCosmeticShopItem = async ({
           {
             externalTransactionIdPrefix: transactionId,
             description: `Failed to purchase cosmetic - ${shopItem.title}`,
+            // So the refund can be traced to its claim.
+            details: { claim: transactionId },
           },
           refundCallOptions
         ),

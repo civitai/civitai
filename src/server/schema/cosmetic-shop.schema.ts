@@ -243,7 +243,8 @@ export const purchaseCosmeticShopItemInput = z.object({
   //
   // The expected price is checked with it: the buyer pressed a button showing a
   // number, and a listing re-priced since that render must refuse rather than
-  // charge something they never agreed to.
+  // charge something they never agreed to. For a pack it is the amount due, which
+  // also moves with what the buyer owns.
   idempotencyKey: z.string().uuid().optional(),
   expectedUnitAmount: z.number().int().nonnegative().optional(),
 });
