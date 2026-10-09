@@ -394,6 +394,43 @@ describe('getEventStandings decoration', () => {
     expect(res.teamHats).toEqual([{ team: 'Yellow', url: 'cap-y' }]);
   });
 
+  // The biggest-hats rows draw their owner with UserAvatar, which reads both of these.
+  it("gives each top hat's owner their profile picture and cosmetics", async () => {
+    const { userBasicCache, profilePictureCache } = await import('~/server/redis/caches');
+    const { getCosmeticsForUsers } = await import('~/server/services/user.service');
+    scoring.getEventStandings.mockResolvedValueOnce({
+      teams: [],
+      topCosmetics: [{ userId: 7, cosmeticId: 21, claimKey: 'a', team: 'Yellow', points: 5 }],
+      topUsers: {},
+    });
+    const queued = [profilePictureCache.fetch, getCosmeticsForUsers].map((fn) => vi.mocked(fn));
+    const defaults = queued.map((fn) => fn.getMockImplementation());
+    vi.mocked(userBasicCache.fetch).mockResolvedValueOnce({ 7: { id: 7, username: 'hatter' } });
+    vi.mocked(profilePictureCache.fetch).mockResolvedValueOnce({ 7: { id: 70, url: 'pfp' } });
+    vi.mocked(getCosmeticsForUsers).mockResolvedValueOnce({ 7: [{ cosmeticId: 5 }] });
+
+    try {
+      const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+
+      expect(profilePictureCache.fetch).toHaveBeenCalledWith([7]);
+      expect(getCosmeticsForUsers).toHaveBeenCalledWith([7]);
+      expect(res.users[7]).toEqual({
+        id: 7,
+        username: 'hatter',
+        profilePicture: { id: 70, url: 'pfp' },
+        cosmetics: [{ cosmeticId: 5 }],
+      });
+    } finally {
+      // clearAllMocks keeps once-queues: if the service stops calling these, the unused values
+      // would otherwise answer the contributor tests below and redden them for the wrong reason.
+      queued.forEach((fn, i) => {
+        fn.mockReset();
+        const impl = defaults[i];
+        if (impl) fn.mockImplementation(impl);
+      });
+    }
+  });
+
   // The art is decoration: a failed lookup must cost the hats, never the standings.
   it('still answers when the join hat lookup fails', async () => {
     engine.getJoinHats.mockRejectedValueOnce(new Error('redis down'));
