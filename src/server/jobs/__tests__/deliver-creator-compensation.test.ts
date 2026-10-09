@@ -181,7 +181,7 @@ describe('buildPayoutTransactions: generation tips', () => {
       description: 'Generation compensation (Oct 12, 2026)',
       type: TransactionType.Compensation,
       externalTransactionId: `creator-tip-comp-2026-10-12-${CREATOR}-${acct}`,
-      source: 'compensation',
+      source: 'compensation' as const,
     }));
     const ledger = new Map(paidBeforeTheSplit.map((tx) => [tx.externalTransactionId, tx]));
 
