@@ -2495,6 +2495,24 @@ export type CosmeticShopItemCosmetic = {
   index: Generated<number>;
   floorAmount: number;
 };
+export type CosmeticShopPurchaseClaim = {
+  /**
+   * The charge's external transaction id prefix (UserCosmeticShopPurchases.buzzTransactionId once paid).
+   */
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  /**
+   * What this claim charges. A retry of a pending claim charges this, not the current price.
+   */
+  amount: number;
+  /**
+   * pending | refunding | refunded | paid (text + CHECK, not an enum).
+   */
+  status: string;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type CosmeticShopSection = {
   id: Generated<number>;
   addedById: number | null;
@@ -5132,6 +5150,7 @@ export type DB = {
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
   CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
+  CosmeticShopPurchaseClaim: CosmeticShopPurchaseClaim;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;

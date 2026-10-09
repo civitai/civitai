@@ -54,6 +54,10 @@ import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
@@ -76,12 +80,19 @@ dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockImplementation((...args:
 dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((...args: unknown[]) =>
   (mocks.purchasesUpdate as (...a: unknown[]) => unknown)(...args)
 );
+let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-    userCosmetic: { create: mocks.userCosmeticCreate },
-  })
+  claims.rollbackOnThrow(() =>
+    fn({
+      userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      userCosmetic: { create: mocks.userCosmeticCreate },
+      cosmeticShopPurchaseClaim: claims.delegate,
+    })
+  )
 );
+beforeEach(() => {
+  claims = installShopPurchaseClaimFake();
+});
 loggingMock.logToAxiom.mockImplementation((...args: unknown[]) =>
   (mocks.logToAxiom as (...a: unknown[]) => unknown)(...args)
 );
@@ -173,7 +184,7 @@ describe('purchaseCosmeticShopItem payouts', () => {
       type: TransactionType.Purchase,
     });
     expect(charge.externalTransactionIdPrefix).toMatch(
-      new RegExp(`^cosmetic-purchase-${BUYER_ID}-${SHOP_ITEM_ID}-`)
+      new RegExp(`^cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-`)
     );
   });
 
@@ -663,7 +674,15 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
   it('refuses a replay of the same buying intent instead of charging twice', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
     mocks.userCosmeticFindFirst.mockResolvedValue(null);
-    mocks.purchasesFindUnique.mockResolvedValue({ buzzTransactionId: 'seen-before' });
+    const key = '11111111-1111-4111-8111-111111111111';
+    const transactionId = `cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${key}`;
+    claims.rows.set(transactionId, {
+      transactionId,
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      amount: 1,
+      status: 'paid',
+    });
 
     await expect(
       purchaseCosmeticShopItem({

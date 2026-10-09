@@ -63,6 +63,10 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 
 import { getShopSectionsWithItems, purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
 import {
   BIRTHDAY_2026_ENDS_AT,
@@ -83,12 +87,19 @@ dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockImplementation(
   fwd(mocks.purchasesFindUnique)
 );
 dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation(fwd(mocks.purchasesUpdate));
+let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-    userCosmetic: { create: mocks.userCosmeticCreate },
-  })
+  claims.rollbackOnThrow(() =>
+    fn({
+      userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      userCosmetic: { create: mocks.userCosmeticCreate },
+      cosmeticShopPurchaseClaim: claims.delegate,
+    })
+  )
 );
+beforeEach(() => {
+  claims = installShopPurchaseClaimFake();
+});
 
 const BUYER_ID = 1;
 const SHOP_ITEM_ID = 42;
@@ -241,8 +252,8 @@ describe('buying an event-gated item (team hat)', () => {
     expect(mocks.createMultiTx).toHaveBeenCalledTimes(2);
     expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(2);
     const [first, second] = mocks.userCosmeticCreate.mock.calls.map(([arg]) => arg.data.claimKey);
-    expect(first).toMatch(/^cosmetic-purchase-1-42-/);
-    expect(second).toMatch(/^cosmetic-purchase-1-42-/);
+    expect(first).toMatch(/^cosmetic-purchase-v2-1-42-/);
+    expect(second).toMatch(/^cosmetic-purchase-v2-1-42-/);
     expect(second).not.toBe(first);
   });
 

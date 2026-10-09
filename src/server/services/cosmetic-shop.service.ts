@@ -72,9 +72,13 @@ import {
 import {
   chargeForShopPurchase,
   chargeRetryOptions,
+  claimSettledElsewhere,
+  claimShopPurchase,
+  markClaimPaid,
   purchaseStateUnknown,
   refundCallOptions,
-  refundShopCharge,
+  refundClaimedCharge,
+  ShopPurchaseClaimSettledError,
 } from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -1147,23 +1151,25 @@ export const purchaseCosmeticShopItem = async ({
   // `externalTransactionIdPrefix` — which would be the FIRST request's charge,
   // reversing it while the buyer keeps the sticker. Same reason
   // `purchaseStickerUses` has always used a uuid.
-  const transactionId = `cosmetic-purchase-${userId}-${shopItemId}-${
+  // `v2`: claims (below) began with this prefix, so no key used under it has
+  // ledger history from before there was a claim to account for it.
+  const transactionId = `cosmetic-purchase-v2-${userId}-${shopItemId}-${
     idempotencyKey ?? randomUUID()
   }`;
 
-  // The buyer's own intent, checked before any money moves. A retry, a
+  // The buyer's own intent, claimed before any money moves. A retry, a
   // double-click or a second tab replaying the same purchase arrives with the
-  // key it already used, and is refused here rather than charged again — the
-  // ownership check used to be what made that impossible for every type, and it
-  // no longer covers stickers.
-  if (idempotencyKey) {
-    const alreadyProcessed = await dbWrite.userCosmeticShopPurchases.findUnique({
-      where: { buzzTransactionId: transactionId },
-      select: { buzzTransactionId: true },
-    });
-    if (alreadyProcessed) throw throwBadRequestError('This purchase has already been completed');
-  }
-  const chargeContext = { shopItemId, userId, transactionId, amount: shopItem.unitAmount };
+  // key it already used and is answered from the claim rather than charged as a
+  // new purchase — the ownership check used to be what made that impossible for
+  // every type, and it no longer covers stickers.
+  const claim = await claimShopPurchase({
+    shopItemId,
+    userId,
+    transactionId,
+    amount: shopItem.unitAmount,
+  });
+  const unitAmount = claim.amount;
+  const chargeContext = { shopItemId, userId, transactionId, amount: unitAmount };
   const transaction = await chargeForShopPurchase(
     () =>
       createMultiAccountBuzzTransaction(
@@ -1171,14 +1177,15 @@ export const purchaseCosmeticShopItem = async ({
           fromAccountId: userId,
           fromAccountTypes,
           toAccountId: 0, // bank
-          amount: shopItem.unitAmount,
+          amount: unitAmount,
           type: TransactionType.Purchase,
           description: `Cosmetic purchase - ${shopItem.title}`,
           externalTransactionIdPrefix: transactionId,
         },
         chargeRetryOptions
       ),
-    chargeContext
+    chargeContext,
+    claim
   );
   if (!transaction.transactionCount) {
     throw new Error('There was an error creating the transaction');
@@ -1189,13 +1196,15 @@ export const purchaseCosmeticShopItem = async ({
 
   try {
     const data = await dbWrite.$transaction(async (tx) => {
+      await markClaimPaid(tx, transactionId);
+
       // Create purchase:
       await tx.userCosmeticShopPurchases.create({
         data: {
           userId,
           cosmeticId: shopItem.cosmeticId,
           shopItemId,
-          unitAmount: shopItem.unitAmount,
+          unitAmount,
           buzzTransactionId: transactionId,
           refunded: false,
         },
@@ -1239,7 +1248,7 @@ export const purchaseCosmeticShopItem = async ({
         // seller share that seller listed under (% of price they keep; creator
         // gets the rest). Official items keep the legacy meta.paidToUserIds
         // distribution.
-        const price = shopItem.unitAmount;
+        const price = unitAmount;
         const creatorId = singleCosmetic.createdById;
 
         // Cross-creator resale: when bought through another creator's shop
@@ -1330,7 +1339,7 @@ export const purchaseCosmeticShopItem = async ({
               // Unique per recipient and color so payouts never collide on the
               // same external id.
               externalTransactionId: `${transactionId}:sell:${p.userId}:${p.color}`,
-              details: { purchasedBy: userId, originalAmount: shopItem.unitAmount },
+              details: { purchasedBy: userId, originalAmount: unitAmount },
             });
             // The transaction id is what makes a takedown a true refund of this
             // payout rather than a fresh reversing charge.
@@ -1372,11 +1381,14 @@ export const purchaseCosmeticShopItem = async ({
     // not refunded from here.
     if (idempotencyKey && isPrismaUniqueViolation(error))
       throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
+    // Another attempt with this key granted (or is refunding) the claim.
+    if (error instanceof ShopPurchaseClaimSettledError)
+      throw await claimSettledElsewhere({ ...chargeContext, error });
 
     // Charged and not fully refunded is "state unknown", logged for
     // reconciliation; only a refund known to cover the charge reaches the
     // refusal below.
-    await refundShopCharge(
+    await refundClaimedCharge(
       () =>
         refundMultiAccountTransaction(
           {

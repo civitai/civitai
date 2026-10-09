@@ -5286,6 +5286,27 @@ model UserCosmeticShopPurchases {
   @@index([shopItemId])
 }
 
+// A shop or pack purchase's claim on its charge prefix, written BEFORE the
+// charge. Kept apart from UserCosmeticShopPurchases so that table keeps holding
+// only paid sales: every sold count, the takedown refund and the milestone
+// detectors read it without a status filter. See shop-purchase-charge.ts for the
+// state machine. No foreign keys: a claim is the reconciliation record for money
+// that may have moved, and must outlive the item or account it names.
+model CosmeticShopPurchaseClaim {
+  /// The charge's external transaction id prefix (UserCosmeticShopPurchases.buzzTransactionId once paid).
+  transactionId String   @id
+  userId        Int
+  shopItemId    Int
+  /// What this claim charges. A retry of a pending claim charges this, not the current price.
+  amount        Int
+  /// pending | refunding | refunded | paid (text + CHECK, not an enum).
+  status        String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  @@index([status, createdAt])
+}
+
 model UserCosmeticShopPurchaseCosmetic {
   buzzTransactionId String
   purchase          UserCosmeticShopPurchases @relation(fields: [buzzTransactionId], references: [buzzTransactionId], onDelete: Cascade)

@@ -3225,6 +3225,16 @@ export interface UserCosmeticShopPurchases {
   components?: UserCosmeticShopPurchaseCosmetic[];
 }
 
+export interface CosmeticShopPurchaseClaim {
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  amount: number;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface UserCosmeticShopPurchaseCosmetic {
   buzzTransactionId: string;
   purchase?: UserCosmeticShopPurchases;
