@@ -18,7 +18,7 @@
   import {
     CHANNEL_HEAD,
     CHANNEL_SORT_PREFIX,
-    PERFORMANCE_CHANNELS as CHANNELS,
+    PERFORMANCE_CHANNELS,
     shownChannels,
     type PerformanceChannel,
   } from '$lib/analytics/earning-channels';
@@ -88,7 +88,7 @@
           versionName: null,
           currencies: v.currencies.map((c) => ({ ...c })),
           channels: Object.fromEntries(
-            CHANNELS.map((c) => [
+            PERFORMANCE_CHANNELS.map((c) => [
               c,
               { ...v.channels[c], received: v.channels[c].received.map((r) => ({ ...r })) },
             ])
@@ -115,7 +115,7 @@
           hit.prev = (hit.prev ?? 0) + (c.prev ?? 0);
         } else existing.currencies.push({ ...c });
       }
-      for (const ch of CHANNELS) {
+      for (const ch of PERFORMANCE_CHANNELS) {
         const target = existing.channels[ch];
         const src = v.channels[ch];
         target.total += src.total;
@@ -192,9 +192,7 @@
   });
   const sortKey = $derived(sorting.key);
   const sortDir = $derived(sorting.dir);
-  const visibleChannels = $derived(
-shownChannels(data.modelPerformance ?? [], sortKey)
-  );
+  const visibleChannels = $derived(shownChannels(data.modelPerformance ?? [], sortKey));
   const pageNum = $derived(Math.max(1, Number(page.url.searchParams.get('page')) || 1));
 
   const sortValue = (m: Row, key: string): number =>
