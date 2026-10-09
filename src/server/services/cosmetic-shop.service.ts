@@ -64,7 +64,15 @@ import {
   getCosmeticArtworkUrl,
   queueCosmeticPerceptualHash,
 } from '~/server/services/cosmetic-phash.service';
-import { throwNotFoundError, withRetries } from '~/server/utils/errorHandling';
+import {
+  isPrismaUniqueViolation,
+  throwNotFoundError,
+  withRetries,
+} from '~/server/utils/errorHandling';
+import {
+  chargeForShopPurchase,
+  purchaseStateUnknown,
+} from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -1031,6 +1039,7 @@ export const purchaseCosmeticShopItem = async ({
     const members = await getPackMembers(shopItemId);
     return purchaseCosmeticPack({
       userId,
+      idempotencyKey,
       shopItem: {
         id: shopItem.id,
         title: shopItem.title,
@@ -1150,15 +1159,20 @@ export const purchaseCosmeticShopItem = async ({
     });
     if (alreadyProcessed) throw throwBadRequestError('This purchase has already been completed');
   }
-  const transaction = await createMultiAccountBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountTypes,
-    toAccountId: 0, // bank
-    amount: shopItem.unitAmount,
-    type: TransactionType.Purchase,
-    description: `Cosmetic purchase - ${shopItem.title}`,
-    externalTransactionIdPrefix: transactionId,
-  });
+  const chargeContext = { shopItemId, userId, transactionId };
+  const transaction = await chargeForShopPurchase(
+    () =>
+      createMultiAccountBuzzTransaction({
+        fromAccountId: userId,
+        fromAccountTypes,
+        toAccountId: 0, // bank
+        amount: shopItem.unitAmount,
+        type: TransactionType.Purchase,
+        description: `Cosmetic purchase - ${shopItem.title}`,
+        externalTransactionIdPrefix: transactionId,
+      }),
+    chargeContext
+  );
   if (!transaction.transactionCount) {
     throw new Error('There was an error creating the transaction');
   }
@@ -1346,10 +1360,22 @@ export const purchaseCosmeticShopItem = async ({
 
     return data;
   } catch (error) {
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: transactionId,
-      description: `Failed to purchase cosmetic - ${shopItem.title}`,
-    });
+    // Another request with this key wrote the purchase first. The prefix is
+    // that request's charge, so refunding it here would reverse a completed
+    // purchase.
+    if (isPrismaUniqueViolation(error))
+      throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
+
+    try {
+      await refundMultiAccountTransaction({
+        externalTransactionIdPrefix: transactionId,
+        description: `Failed to purchase cosmetic - ${shopItem.title}`,
+      });
+    } catch (refundError) {
+      // Charged and not refunded: the client must not read this as "nothing
+      // happened" and retry with a new key.
+      throw purchaseStateUnknown({ ...chargeContext, error, refundError }, 'refund failed');
+    }
 
     throw new Error('Failed to purchase cosmetic');
   }

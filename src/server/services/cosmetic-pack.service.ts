@@ -21,8 +21,16 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
-import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
+import {
+  isPrismaUniqueViolation,
+  throwBadRequestError,
+  withRetries,
+} from '~/server/utils/errorHandling';
 import { isEventShopItemData } from '~/server/events/event-shop-item';
+import {
+  chargeForShopPurchase,
+  purchaseStateUnknown,
+} from '~/server/services/shop-purchase-charge';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -462,6 +470,7 @@ export const packOwnerResaleShares = async (
 
 export const purchaseCosmeticPack = async ({
   userId,
+  idempotencyKey,
   shopItem,
   members,
   payWith = 'default',
@@ -469,6 +478,8 @@ export const purchaseCosmeticPack = async ({
   stickersEnabled,
 }: {
   userId: number;
+  /** The buyer's purchase intent. A replay of one already recorded is refused. */
+  idempotencyKey?: string;
   shopItem: {
     id: number;
     title: string;
@@ -544,19 +555,32 @@ export const purchaseCosmeticPack = async ({
 
   if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
 
-  // Random rather than a timestamp: a pack is repeatable (a consumable member
-  // tops up), so two calls in the same millisecond would share an external id —
-  // and a duplicate reads as "the money already moved".
-  const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${randomUUID()}`;
-  const transaction = await createMultiAccountBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountTypes,
-    toAccountId: 0,
-    amount: amountCharged,
-    type: TransactionType.Purchase,
-    description: `Cosmetic pack purchase - ${shopItem.title}`,
-    externalTransactionIdPrefix: transactionId,
-  });
+  // The buyer's key when they sent one, so a retry of the same intent is
+  // recognised; otherwise random rather than a timestamp: a pack is repeatable (a
+  // consumable member tops up), so two calls in the same millisecond would share
+  // an external id — and a duplicate reads as "the money already moved".
+  const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${idempotencyKey ?? randomUUID()}`;
+  if (idempotencyKey) {
+    const alreadyProcessed = await dbWrite.userCosmeticShopPurchases.findUnique({
+      where: { buzzTransactionId: transactionId },
+      select: { buzzTransactionId: true },
+    });
+    if (alreadyProcessed) throw throwBadRequestError('This purchase has already been completed');
+  }
+  const chargeContext = { shopItemId: shopItem.id, userId, transactionId };
+  const transaction = await chargeForShopPurchase(
+    () =>
+      createMultiAccountBuzzTransaction({
+        fromAccountId: userId,
+        fromAccountTypes,
+        toAccountId: 0,
+        amount: amountCharged,
+        type: TransactionType.Purchase,
+        description: `Cosmetic pack purchase - ${shopItem.title}`,
+        externalTransactionIdPrefix: transactionId,
+      }),
+    chargeContext
+  );
   // 🔴 NOT a 400, and that changed meaning recently. The Buzz service answered
   // and created nothing, which is AMBIGUOUS — the charge may have happened. The
   // sticker purchase flow now reads a 4xx as "nothing was charged, retry as a
@@ -620,6 +644,12 @@ export const purchaseCosmeticPack = async ({
       });
     });
   } catch (error) {
+    // Another request with this key wrote the purchase first. The prefix is
+    // that request's charge, so refunding it here would reverse a completed
+    // purchase.
+    if (isPrismaUniqueViolation(error))
+      throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
+
     // The only path where the buyer is actually out of pocket, so it must leave
     // a trace: a failing refund used to discard the grant error and surface its
     // own instead, recording nothing. Retried like the payout, and logged with
@@ -639,6 +669,8 @@ export const purchaseCosmeticPack = async ({
         message: 'Failed to refund a failed pack purchase',
         data: { shopItemId: shopItem.id, userId, transactionId, error: refundError },
       });
+      // Charged and not refunded: a 4xx would tell the client nothing happened.
+      throw purchaseStateUnknown({ ...chargeContext, error, refundError }, 'refund failed');
     }
     logToAxiom({
       level: 'error',
