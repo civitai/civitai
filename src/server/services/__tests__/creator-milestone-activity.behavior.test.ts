@@ -18,6 +18,7 @@ import {
   activityDetectorGroups,
   activityValuesSql,
   competeWinGroups,
+  competeWinsSource,
   judgeVoteGroups,
   judgeVoteTotalsSql,
   ledgerWinCountSql,
@@ -30,6 +31,7 @@ import {
   milestoneKeysFor,
 } from '~/server/services/creator-milestone-registry';
 import type { MilestoneGrant } from '~/server/services/creator-milestone-grant.service';
+import { getCruciblePrizeWinners } from '~/utils/crucible-helpers';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -212,7 +214,8 @@ beforeAll(async () => {
     CREATE TABLE "CollectionItem" (id serial PRIMARY KEY, "collectionId" int NOT NULL, "addedById" int);
     CREATE TABLE "Crucible" (
       id int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL,
-      "prizePositions" jsonb NOT NULL DEFAULT '[]', "endAt" timestamp(3), "updatedAt" timestamp(3)
+      "prizePositions" jsonb NOT NULL DEFAULT '[]', "prizePool" int NOT NULL DEFAULT 0,
+      "endAt" timestamp(3), "updatedAt" timestamp(3)
     );
     CREATE TABLE "CrucibleEntry" (
       id serial PRIMARY KEY, "crucibleId" int NOT NULL, "userId" int NOT NULL, position int
@@ -977,12 +980,13 @@ describe('compete-win detector', () => {
       updatedAt = '2026-03-01',
       status = 'Completed',
       prizes = { 1: 50, 2: 30, 3: 20 } as Record<number, number>,
+      pool = 1000,
     } = {}
   ) {
     await q(
-      `INSERT INTO "Crucible" (id, "userId", status, "prizePositions", "endAt", "updatedAt")
-       VALUES ($1, $2, $3, $4::jsonb, $5::timestamp, $6::timestamp)`,
-      [id, host, status, JSON.stringify(prizes), endAt, updatedAt]
+      `INSERT INTO "Crucible" (id, "userId", status, "prizePositions", "prizePool", "endAt", "updatedAt")
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamp, $7::timestamp)`,
+      [id, host, status, JSON.stringify(prizes), pool, endAt, updatedAt]
     );
     for (let i = 0; i < others; i++)
       await q(
@@ -1199,8 +1203,126 @@ describe('compete-win detector', () => {
     expect(won).toEqual([QUIET, BANNED, TESTER + 100].sort((a, b) => a - b));
     const [paid2nd] = await q<{ wins: number }>(activityValuesSql, [BANNED]);
     expect(paid2nd.wins).toBe(1);
+    // Ranked by their best entry: 1st in both, so two wins.
+    const [quiet] = await q<{ wins: number }>(activityValuesSql, [QUIET]);
+    expect(quiet.wins).toBe(2);
     const [creator] = await q<{ wins: number }>(activityValuesSql, [CREATOR]);
     expect(creator.wins).toBe(0);
+  });
+
+  // The host's entries rank like anyone's when prizes are paid; the host just cannot win.
+  it("ranks the host's own entries, so a host finishing first moves the next creator to 2nd", async () => {
+    await addCrucible(1, { host: TESTER, prizes: { 1: 100, 2: 0 } });
+    await addPlace(1, TESTER, 1);
+    await addPlace(1, CREATOR, 2);
+    await addCrucible(2, { host: TESTER, prizes: { 1: 0, 2: 100 } });
+    await addPlace(2, TESTER, 1);
+    await addPlace(2, QUIET, 2);
+    const rows = await candidatesOf(competeGroup().group);
+    expect(rows.map((row) => row.userId)).toEqual([QUIET]);
+  });
+
+  // A place pays its share of the pool, rounded down; a free Crucible with no seed pays nobody.
+  it('counts a Crucible place only when its share of the pool comes to at least 1 Buzz', async () => {
+    await addCrucible(1, { pool: 0 });
+    await addPlace(1, CREATOR, 1);
+    await addCrucible(2, { pool: 2 });
+    await addPlace(2, QUIET, 1);
+    await addPlace(2, BANNED, 2);
+    const rows = await candidatesOf(competeGroup().group);
+    // 50% of 2 is 1 Buzz; 30% of 2 rounds down to 0.
+    expect(rows.map((row) => row.userId)).toEqual([QUIET]);
+  });
+
+  // The detector's SQL restates the payout rule (one prize per creator, the next creator moves
+  // up). If either side changes alone, this disagrees.
+  it('agrees with getCruciblePrizeWinners on who a Crucible paid', async () => {
+    const cases: {
+      prizes: Record<number, number>;
+      pool: number;
+      placed: [userId: number, position: number][];
+    }[] = [
+      {
+        prizes: { 1: 50, 2: 30, 3: 20 },
+        pool: 1000,
+        placed: [
+          [3001, 1],
+          [3001, 2],
+          [3002, 3],
+          [3003, 4],
+          [3004, 5],
+        ],
+      },
+      {
+        prizes: { 1: 50, 2: 0, 3: 50 },
+        pool: 1000,
+        placed: [
+          [3001, 1],
+          [3002, 2],
+          [3002, 3],
+          [3003, 4],
+          [3004, 5],
+        ],
+      },
+      {
+        prizes: { 1: 50, 2: 30, 3: 20 },
+        pool: 3,
+        placed: [
+          [3001, 1],
+          [3002, 2],
+          [3003, 3],
+        ],
+      },
+      {
+        prizes: { 1: 60, 2: 40 },
+        pool: 500,
+        placed: [
+          [TESTER, 1],
+          [3001, 2],
+          [3001, 3],
+          [3002, 4],
+        ],
+      },
+      {
+        prizes: { 1: 100 },
+        pool: 0,
+        placed: [
+          [3001, 1],
+          [3002, 2],
+        ],
+      },
+    ];
+    for (const [index, { prizes, pool, placed }] of cases.entries()) {
+      const id = 100 + index;
+      await addCrucible(id, { prizes, pool });
+      for (const [userId, position] of placed) await addPlace(id, userId, position);
+    }
+
+    for (const [index, { prizes, pool, placed }] of cases.entries()) {
+      const paid = getCruciblePrizeWinners({
+        placed: placed.map(([userId, position], entryId) => ({ entryId, userId, position })),
+        prizePositions: Object.entries(prizes).map(([position, percentage]) => ({
+          position: Number(position),
+          percentage,
+        })),
+        totalPrizePool: pool,
+      })
+        .filter((winner) => winner.prizeAmount > 0 && winner.userId !== TESTER)
+        .map((winner) => winner.userId)
+        .sort((a, b) => a - b);
+      // Creators recur across cases, so read the win per Crucible rather than per milestone.
+      const won = [];
+      for (const userId of new Set(placed.map(([userId]) => userId))) {
+        if (userId === TESTER) continue;
+        const [{ hit }] = await q<{ hit: boolean }>(
+          `SELECT EXISTS (SELECT 1 FROM (${competeWinsSource}) s
+             WHERE s."userId" = $1 AND s.contest = $2) AS hit`,
+          [userId, `crucible:${100 + index}`]
+        );
+        if (hit) won.push(userId);
+      }
+      expect({ case: index, won: won.sort((a, b) => a - b) }).toEqual({ case: index, won: paid });
+    }
   });
 
   // An undated grant is announced whenever anything is, so a Crucible missing its end would
@@ -1235,7 +1357,7 @@ describe('compete-win detector', () => {
   // table carry the date format; the '#N: <title>' format is the table's own, and counting it again
   // would double every win since 2026-02-11.
   it('reads only old-format challenge prizes from the ledger, one per user and description', () => {
-    const filter = `date < '2026-03-01'
+    const filter = `date < '2026-03-01' AND fromAccountId = 0 AND type = 'reward'
     AND match(description, '^Challenge Winner Prize [0-9]+: [0-9]{4}-[0-9]{2}-[0-9]{2}$')`;
     expect(ledgerWinsSql).toBe(`SELECT toAccountId AS userId,
     formatDateTime(min(date), '%Y-%m-%d %H:%i:%S', 'UTC') AS at

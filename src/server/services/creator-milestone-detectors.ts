@@ -103,7 +103,8 @@ export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchased
  * challenge, or in a community challenge or completed Crucible with at least 10 distinct entrants
  * besides the host. A Crucible pays one prize per creator, for their best entry, so a creator's
  * prize place is one more than the number of creators who finished above them; it counts only if
- * that place's share of the pool is above zero.
+ * that place's share of the prize pool comes to at least 1 Buzz, as a free Crucible with no seed
+ * pays nobody.
  * Challenge wins are dated when the winner was recorded, which for community challenges can be days
  * after they close; a Crucible's places are written within a minute of its end.
  */
@@ -118,18 +119,23 @@ export const competeWinsSource = `SELECT cw."userId", cw."createdAt" AS at, 'cha
           WHERE ci."collectionId" = ch."collectionId"
             AND ci."addedById" IS DISTINCT FROM ch."createdById") >= ${COMPETE_MIN_ENTRANTS})
     UNION ALL
-    SELECT b."userId", coalesce(c."endAt", c."updatedAt"), 'crucible:' || c.id
+    SELECT p."userId", coalesce(c."endAt", c."updatedAt"), 'crucible:' || c.id
     FROM (
-      SELECT ce."crucibleId", ce."userId", min(ce.position) AS best
-      FROM "CrucibleEntry" ce WHERE ce.position IS NOT NULL
-      GROUP BY ce."crucibleId", ce."userId"
-    ) b
-    JOIN "Crucible" c ON c.id = b."crucibleId"
-    WHERE c.status = 'Completed' AND b."userId" <> c."userId"
-      AND (c."prizePositions" -> (1 + (
+      SELECT b."crucibleId", b."userId", (1 + (
         SELECT count(DISTINCT above."userId") FROM "CrucibleEntry" above
         WHERE above."crucibleId" = b."crucibleId" AND above.position < b.best
-      ))::text) > '0'::jsonb
+      ))::text AS place
+      FROM (
+        SELECT ce."crucibleId", ce."userId", min(ce.position) AS best
+        FROM "CrucibleEntry" ce WHERE ce.position IS NOT NULL
+        GROUP BY ce."crucibleId", ce."userId"
+      ) b
+    ) p
+    JOIN "Crucible" c ON c.id = p."crucibleId"
+    WHERE c.status = 'Completed' AND p."userId" <> c."userId"
+      AND CASE WHEN jsonb_typeof(c."prizePositions" -> p.place) = 'number'
+        THEN floor((c."prizePositions" ->> p.place)::numeric * c."prizePool" / 100) >= 1
+        ELSE false END
       AND (SELECT count(DISTINCT e."userId") FROM "CrucibleEntry" e
         WHERE e."crucibleId" = c.id AND e."userId" <> c."userId") >= ${COMPETE_MIN_ENTRANTS}`;
 
@@ -307,9 +313,10 @@ export function judgeVoteGroups(
 /**
  * Daily-challenge wins paid before the winners table existed (Nov 2024 to 2026-02-10) survive only as
  * Buzz ledger payments in this description format. The current format ('Challenge Winner Prize #N:
- * <title>') is left out: those wins are in the winners table. The date bound only prunes partitions.
+ * <title>') is left out: those wins are in the winners table. Only system rewards count, since a
+ * user transfer can carry any description.
  */
-const LEDGER_WIN_FILTER = `date < '2026-03-01'
+const LEDGER_WIN_FILTER = `date < '2026-03-01' AND fromAccountId = 0 AND type = 'reward'
     AND match(description, '^Challenge Winner Prize [0-9]+: [0-9]{4}-[0-9]{2}-[0-9]{2}$')`;
 
 export const ledgerWinsSql = `SELECT toAccountId AS userId,
