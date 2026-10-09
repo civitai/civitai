@@ -42,8 +42,10 @@
   import {
     blobAirFromUrl,
     captionTriggerHit,
+    compareFileNames,
     defaultStepsForRun,
     selectionFromTotal,
+    isFailed,
     isTrainable,
     isTriggerTag,
     labelOptions,
@@ -199,6 +201,8 @@
   const mixedStepBudgets = $derived(new Set(stepBudgets).size > 1);
   const busy = $derived(images.some((i) => i.status === 'uploading'));
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
+  const errorCount = $derived(images.filter((i) => i.status === 'error').length);
+  const failedTotal = $derived(blockedCount + errorCount);
   // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
   // Auto-labeling fills these for the whole set; an unlabeled dataset must not reach Review.
   const isLabeled = (i: Img) => i.tags.length > 0 || i.caption.trim().length > 0;
@@ -229,7 +233,9 @@
         ? images.filter((i) => !isLabeled(i))
         : filter === 'mature'
           ? images.filter(isMature)
-          : images
+          : filter === 'failed'
+            ? images.filter(isFailed)
+            : images
   );
   // Mirrors Review's `blueExcluded`: unknown membership is warned too.
   const matureChargesYellow = hostConfig().isPaidMember !== true;
@@ -435,7 +441,8 @@
       const captions = new Map<string, string>();
       const mediaFiles: { name: string; base: string; ext: string; entry: (typeof zip.files)[string] }[] =
         [];
-      for (const entry of Object.values(zip.files)) {
+      const ordered = Object.values(zip.files).sort((a, b) => compareFileNames(a.name, b.name));
+      for (const entry of ordered) {
         if (entry.dir) continue;
         const name = entry.name.split('/').pop() ?? entry.name;
         if (name.startsWith('.')) continue; // skip __MACOSX / dotfiles
@@ -451,6 +458,9 @@
             type: mimeOfExt(m.ext) ?? `${media}/${m.ext}`,
           }),
           caption: captions.get(m.base) ?? '',
+          // The tile shows the in-zip path: the grid is sorted by it, and two `img.png`s in different
+          // folders must be told apart.
+          path: m.entry.name,
         }))
       );
       await addImported(entries);
@@ -461,14 +471,14 @@
 
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
-  async function addImported(entries: { file: File; caption: string }[]) {
+  async function addImported(entries: { file: File; caption: string; path: string }[]) {
     if (entries.length === 0) return;
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
         id: nextImgId(),
         file: e.file,
-        name: e.file.name,
+        name: e.path,
         previewUrl: URL.createObjectURL(e.file),
         mediaType: fileMedia(e.file.type) ?? media,
         status: 'uploading' as const,
@@ -1012,6 +1022,7 @@
                 {labeledCount}/{uploadedCount} labeled
               </span>{/if}
             {#if blockedCount > 0}· <span class="text-red-400">{blockedCount} blocked</span>{/if}
+            {#if errorCount > 0}· <span class="text-buzz">{errorCount} failed</span>{/if}
           </b>
           <div class="flex items-center gap-2">
             {#if unlabeled.length > 0 || labelRun}
@@ -1030,7 +1041,8 @@
             type="single"
             value={filter}
             onValueChange={(v) => {
-              if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature') filter = v;
+              if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature' || v === 'failed')
+                filter = v;
             }}
             variant="outline"
             size="sm"
@@ -1048,6 +1060,11 @@
             {#if matureTotal > 0 || filter === 'mature'}
               <ToggleGroupItem value="mature" aria-label="Show images rated mature">
                 Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
+              </ToggleGroupItem>
+            {/if}
+            {#if failedTotal > 0 || filter === 'failed'}
+              <ToggleGroupItem value="failed" aria-label="Show files that failed to upload">
+                Failed <span class={failedTotal > 0 ? 'ml-1 font-semibold text-red-400' : 'ml-1'}>{failedTotal}</span>
               </ToggleGroupItem>
             {/if}
           </ToggleGroup>
@@ -1070,7 +1087,9 @@
                 ? 'No labeled images yet.'
                 : filter === 'mature'
                   ? 'No images rated mature.'
-                  : 'No images.'}
+                  : filter === 'failed'
+                    ? 'No failed uploads.'
+                    : 'No images.'}
           </div>
         {/if}
 
@@ -1166,9 +1185,11 @@
 
               <div class="min-h-[44px] p-2.5">
                 {#if img.status !== 'uploaded'}
+                  <!-- The failure overlay covers the preview, so the filename is how the user finds it. -->
                   <div class="font-mono text-xs text-dark-2">
                     {img.status === 'uploading' ? 'uploading…' : img.status === 'blocked' ? 'blocked' : 'failed'}
                   </div>
+                  <div class="truncate font-mono text-xs text-dark-0" title={img.name}>{img.name}</div>
                 {:else if img.labeling}
                   <div class="flex items-center justify-center gap-1 font-mono text-xs text-primary">
                     <IconSparkles size={12} stroke={2} /> labeling…

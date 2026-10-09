@@ -156,7 +156,15 @@ export function recommendedCardFor(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
-export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature';
+export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
+
+/** File-browser order — natural (`clip2` before `clip10`) and case-insensitive. A zip's entry order is
+ *  whatever the archiver wrote (a tester reported theirs arriving sorted by video duration; their zip
+ *  wasn't inspected), which made a failed upload impossible to place against the user's own folder. */
+export const compareFileNames: (a: string, b: string) => number = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+}).compare;
 
 let imgSeq = 0;
 /** Client id for a dataset tile. Module-level because the flow keeps `images` across Back/Continue
@@ -201,6 +209,10 @@ export interface Img {
 /** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
 export function isTrainable(img: Img): boolean {
   return img.status === 'uploaded';
+}
+
+export function isFailed(img: Img): boolean {
+  return img.status === 'blocked' || img.status === 'error';
 }
 
 /** The training-data `air` reference for a blob-backed item (a generation / reused dataset). The
