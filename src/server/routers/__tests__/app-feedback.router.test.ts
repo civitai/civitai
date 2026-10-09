@@ -139,6 +139,8 @@ describe('moderator procedures', () => {
       c.modSetHidden({ id: 9, hidden: true }),
   };
 
+  // The message is `moderatorProcedure`'s own, so this pins that the PROCEDURE refuses — there is
+  // no per-handler recheck behind it. Paired with the moderator cases below, which reach the service.
   it.each(Object.entries(calls))('%s refuses a non-moderator', async (_name, call) => {
     await expect(call(appFeedbackRouter.createCaller(ctx(reporter)))).rejects.toMatchObject({
       code: 'FORBIDDEN',
@@ -167,5 +169,20 @@ describe('moderator procedures', () => {
   it('modList applies the input defaults', async () => {
     await appFeedbackRouter.createCaller(ctx(moderator)).modList({});
     expect(svc.modListAppFeedback).toHaveBeenCalledWith({ limit: 50, hidden: 'all' });
+  });
+
+  it('modList accepts flagged: true and refuses flagged: false at the schema', async () => {
+    const c = appFeedbackRouter.createCaller(ctx(moderator));
+    await c.modList({ flagged: true });
+    expect(svc.modListAppFeedback).toHaveBeenCalledWith({
+      limit: 50,
+      hidden: 'all',
+      flagged: true,
+    });
+    svc.modListAppFeedback.mockClear();
+    await expect(c.modList({ flagged: false } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(svc.modListAppFeedback).not.toHaveBeenCalled();
   });
 });

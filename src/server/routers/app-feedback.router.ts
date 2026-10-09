@@ -1,4 +1,3 @@
-import { TRPCError } from '@trpc/server';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   createAppFeedbackSchema,
@@ -75,9 +74,5 @@ export const appFeedbackRouter = router({
 
   modSetHidden: moderatorProcedure
     .input(modSetAppFeedbackHiddenSchema)
-    .mutation(({ ctx, input }) => {
-      if (!ctx.user.isModerator)
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Moderators only' });
-      return modSetAppFeedbackHidden({ moderatorId: ctx.user.id, input });
-    }),
+    .mutation(({ ctx, input }) => modSetAppFeedbackHidden({ moderatorId: ctx.user.id, input })),
 });

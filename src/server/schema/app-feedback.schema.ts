@@ -84,7 +84,12 @@ export const modListAppFeedbackSchema = z.object({
   /** Rows whose listing was deleted (`appListingId` SET NULL by the FK). */
   listingDeleted: z.boolean().optional(),
   ownerStatus: appFeedbackOwnerStatusFilterSchema.optional(),
-  flagged: z.boolean().optional(),
+  /**
+   * `true` = only developer-flagged rows; absent = no filter. There is no "unflagged only" filter:
+   * the review tab has no use for one, so the schema refuses `false` rather than accept a value
+   * nothing branches on.
+   */
+  flagged: z.literal(true).optional(),
   hidden: z.enum(APP_FEEDBACK_HIDDEN_FILTERS).default('all'),
 });
 export type ModListAppFeedbackInput = z.infer<typeof modListAppFeedbackSchema>;

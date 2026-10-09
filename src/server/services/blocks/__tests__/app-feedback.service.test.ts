@@ -1,7 +1,9 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { BlocklistType } from '~/server/common/enums';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as BlockCheck from '~/server/services/block-check.service';
 import type * as ListingVisibility from '~/server/services/blocks/app-listing-visibility.service';
@@ -470,31 +472,81 @@ describe('createAppFeedback', () => {
     await createAppFeedback({ user: user(MODERATOR, { isModerator: true }), input });
     expect(mocks.throwOnBlockedCommentContent).toHaveBeenCalledWith(
       'the export button does nothing',
-      { isModerator: true }
+      expect.objectContaining({ isModerator: true })
     );
   });
 
-  // Both shapes the shared filter throws today: the pattern half and the link half.
-  it.each([
-    ['a pattern hit', 'Comment blocked by content filter'],
-    ['a link hit', 'invalid urls: bad.example'],
-  ])(
-    'refuses %s with feedback wording, never the comment wording, and writes nothing',
-    async (_label, filterMessage) => {
-      mocks.throwOnBlockedCommentContent.mockRejectedValue(
-        new TRPCError({ code: 'BAD_REQUEST', message: filterMessage })
+  /**
+   * The REAL shared filter, driven through its redis-backed lists, so the seam between it and
+   * feedback's `onBlocked` wording is exercised end to end — a stub here could pass while the
+   * filter never calls the hook. The domain, the pattern and the URLs are pairwise distinct, and
+   * none appears in either feedback message constant.
+   */
+  describe('content filter refusals (real filter)', () => {
+    const BLOCKED_DOMAIN = 'blocked-host.example';
+    const PATTERN = 'verify your wallet';
+
+    beforeEach(async () => {
+      const actual = await vi.importActual<typeof Blocklist>('~/server/services/blocklist.service');
+      mocks.throwOnBlockedCommentContent.mockImplementation(actual.throwOnBlockedCommentContent);
+      redisMock.redis.get.mockImplementation(async (key: string) => {
+        if (key.endsWith(`:${BlocklistType.LinkDomain}`))
+          return JSON.stringify({ type: BlocklistType.LinkDomain, data: [BLOCKED_DOMAIN] });
+        if (key.endsWith(`:${BlocklistType.MessagePattern}`))
+          return JSON.stringify({ type: BlocklistType.MessagePattern, data: [PATTERN] });
+        return null;
+      });
+    });
+    afterEach(() => {
+      redisMock.redis.get.mockImplementation(async () => null);
+    });
+
+    const submit = (message: string, extra: Partial<SessionUser> = {}) =>
+      createAppFeedback({ user: user(REPORTER, extra), input: { ...input, message } }).catch(
+        (e) => e
       );
-      const err = await createAppFeedback({ user: user(REPORTER), input }).catch((e) => e);
+
+    const expectNothingWritten = () => {
+      expect(dbMock.dbWrite.feedback.count).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
+    };
+
+    it('admits clean text (the control the refusals are measured against)', async () => {
+      expect(await submit('the export button does nothing')).toEqual({ id: 555 });
+    });
+
+    it('names every blocked URL on a link hit, in feedback wording', async () => {
+      const err = await submit(
+        'see https://blocked-host.example/a and //blocked-host.example/b but https://fine.example/c'
+      );
+      expect(err).toBeInstanceOf(TRPCError);
+      expect(err.code).toBe('BAD_REQUEST');
+      expect(err.message).toBe(
+        'Your feedback links to a site that is not allowed: https://blocked-host.example/a, //blocked-host.example/b. Remove the link and try again.'
+      );
+      expect(err.message).not.toMatch(/comment|invalid urls/i);
+      expect(err.message).not.toContain('fine.example');
+      expectNothingWritten();
+    });
+
+    it('gives a pattern hit the generic message and never echoes the matched term', async () => {
+      const err = await submit('please Verify Your Wallet now');
       expect(err).toBeInstanceOf(TRPCError);
       expect(err.code).toBe('BAD_REQUEST');
       expect(err.message).toBe(
         'Your feedback includes a link or wording that is not allowed. Remove it and try again.'
       );
+      expect(err.message.toLowerCase()).not.toContain(PATTERN);
       expect(err.message).not.toMatch(/comment|invalid urls/i);
-      expect(dbMock.dbWrite.feedback.count).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
-    }
-  );
+      expectNothingWritten();
+    });
+
+    it('exempts a moderator from both lists, as on comments', async () => {
+      expect(
+        await submit('verify your wallet at https://blocked-host.example/a', { isModerator: true })
+      ).toEqual({ id: 555 });
+    });
+  });
 
   it('lets a non-refusal failure inside the content check propagate untouched', async () => {
     const boom = new Error('pattern cache unavailable');
@@ -829,10 +881,6 @@ describe('moderator procedures', () => {
     expect(where({ hidden: 'all', flagged: true })).toEqual([
       'f.area = ?',
       'f."ownerFlaggedAt" IS NOT NULL',
-    ]);
-    expect(where({ hidden: 'all', flagged: false })).toEqual([
-      'f.area = ?',
-      'f."ownerFlaggedAt" IS NULL',
     ]);
     expect(where({ hidden: 'hidden' })).toEqual([
       'f.area = ?',

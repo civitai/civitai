@@ -185,22 +185,38 @@ function refusalError(reason: AppFeedbackRefusal): TRPCError {
 export const APP_FEEDBACK_BLOCKED_CONTENT_MESSAGE =
   'Your feedback includes a link or wording that is not allowed. Remove it and try again.';
 
+export function appFeedbackBlockedLinkMessage(urls: string[]) {
+  return `Your feedback links to a site that is not allowed: ${urls.join(
+    ', '
+  )}. Remove the link and try again.`;
+}
+
 /**
  * The comment content filter, with feedback's own refusal text. The shared filter words its
  * refusals for comments ("Comment blocked by content filter", "invalid urls: …"), which reads as a
- * bug inside an app's feedback modal. Every refusal it makes is a BAD_REQUEST (both of its match
- * callbacks go through `throwBadRequestError`), so the remap keys on the CODE, never on the
- * wording — a later rewording of the shared message cannot slip past it. Anything else (a DB or
- * cache failure inside the filter) propagates untouched. Moderators are exempt, as on comments.
+ * bug inside an app's feedback modal, so its `onBlocked` hook supplies the wording instead:
+ *
+ * - a LINK hit names the blocked URL(s), handed over as data — never parsed back out of prose — so
+ *   the writer can see which link to remove;
+ * - a PATTERN hit gets the generic message; the hook is not given the matched text, so there is
+ *   nothing to echo.
+ *
+ * Anything else (a DB or cache failure inside the filter) never reaches the hook and propagates
+ * untouched. Moderators are exempt, as on comments.
  */
 async function throwOnBlockedFeedbackContent(message: string, isModerator: boolean) {
-  try {
-    await throwOnBlockedCommentContent(message, { isModerator });
-  } catch (err) {
-    if (err instanceof TRPCError && err.code === 'BAD_REQUEST')
-      throw new TRPCError({ code: 'BAD_REQUEST', message: APP_FEEDBACK_BLOCKED_CONTENT_MESSAGE });
-    throw err;
-  }
+  await throwOnBlockedCommentContent(message, {
+    isModerator,
+    onBlocked: (block) => {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          block.kind === 'link'
+            ? appFeedbackBlockedLinkMessage(block.urls)
+            : APP_FEEDBACK_BLOCKED_CONTENT_MESSAGE,
+      });
+    },
+  });
 }
 
 export async function createAppFeedback({
@@ -456,8 +472,7 @@ export function modListConditions(
   if (input.listingDeleted) conditions.push(Prisma.sql`f."appListingId" IS NULL`);
   if (input.appListingId) conditions.push(Prisma.sql`f."appListingId" = ${input.appListingId}`);
   conditions.push(...ownerStatusSql(input.ownerStatus));
-  if (input.flagged === true) conditions.push(Prisma.sql`f."ownerFlaggedAt" IS NOT NULL`);
-  if (input.flagged === false) conditions.push(Prisma.sql`f."ownerFlaggedAt" IS NULL`);
+  if (input.flagged) conditions.push(Prisma.sql`f."ownerFlaggedAt" IS NOT NULL`);
   if (input.hidden === 'hidden') conditions.push(Prisma.sql`f."hiddenFromOwnerAt" IS NOT NULL`);
   if (input.hidden === 'visible') conditions.push(Prisma.sql`f."hiddenFromOwnerAt" IS NULL`);
   return conditions;
