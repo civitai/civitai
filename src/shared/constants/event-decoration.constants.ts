@@ -65,6 +65,21 @@ export type EventDecorationFit = {
   offset?: [number, number];
 };
 
+/**
+ * The range each hat's own fit may set. A value outside it is pulled to the nearest end when the
+ * hat is drawn, so a mistyped cosmetic cannot fling its hat across the card; whatever writes a fit
+ * should refuse it instead. The container's room still applies on top, so no setting here moves a
+ * hat past the room above or left of its card.
+ */
+export const HAT_FIT_LIMITS = {
+  size: [24, 64],
+  tilt: [-80, 0],
+  depth: [0.2, 0.8],
+  grow: [1, 1.6],
+  /** Each of x and y. */
+  offset: [-12, 12],
+} as const satisfies Record<string, readonly [number, number]>;
+
 export type EventDecorationData = {
   type: string;
   event: string;

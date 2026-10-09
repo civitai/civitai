@@ -1,4 +1,5 @@
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
 /**
@@ -15,21 +16,10 @@ export const DEFAULT_HAT_PLACEMENT: HatPlacement = 'corner';
  */
 export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
 
-/**
- * The range each hat's own fit may set, in the units of `EventDecorationFit`. A value outside it
- * is pulled to the nearest end, so a mistyped cosmetic cannot fling its hat across the card. The
- * container's room still applies on top: no setting here can push a hat into a crop.
- */
-export const HAT_FIT_LIMITS = {
-  size: [16, 120],
-  tilt: [-90, 90],
-  depth: [0.1, 0.9],
-  grow: [1, 2],
-  offset: [-24, 24],
-} satisfies Record<string, [number, number]>;
-
-const within = ([lo, hi]: [number, number], value: number) => Math.min(hi, Math.max(lo, value));
-const isNumber = (value: unknown): value is number =>
+const within = ([lo, hi]: readonly [number, number], value: number) =>
+  Math.min(hi, Math.max(lo, value));
+// Not `isNumber` from ~/utils/type-guards: that one accepts '5' and null.
+const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
 /**
@@ -88,10 +78,14 @@ export function getHatLayout(
     [right, bottom],
   ];
   const brimWidth =
-    isNumber(fit?.size) && fit.size > 0 ? within(HAT_FIT_LIMITS.size, fit.size) : HAT_LOOK.brim;
-  const tilt = isNumber(fit?.tilt) ? within(HAT_FIT_LIMITS.tilt, fit.tilt) : HAT_LOOK.tilt;
-  const depth = isNumber(fit?.depth) ? within(HAT_FIT_LIMITS.depth, fit.depth) : HAT_LOOK.onCard;
-  const grow = isNumber(fit?.grow) ? within(HAT_FIT_LIMITS.grow, fit.grow) : HAT_LOOK.grow;
+    isFiniteNumber(fit?.size) && fit.size > 0
+      ? within(HAT_FIT_LIMITS.size, fit.size)
+      : HAT_LOOK.brim;
+  const tilt = isFiniteNumber(fit?.tilt) ? within(HAT_FIT_LIMITS.tilt, fit.tilt) : HAT_LOOK.tilt;
+  const depth = isFiniteNumber(fit?.depth)
+    ? within(HAT_FIT_LIMITS.depth, fit.depth)
+    : HAT_LOOK.onCard;
+  const grow = isFiniteNumber(fit?.grow) ? within(HAT_FIT_LIMITS.grow, fit.grow) : HAT_LOOK.grow;
   const [offsetX, offsetY] = isNumbers(fit?.offset, 2)
     ? fit.offset.map((x) => within(HAT_FIT_LIMITS.offset, x))
     : [0, 0];
