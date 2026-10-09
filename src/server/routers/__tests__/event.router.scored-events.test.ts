@@ -99,9 +99,19 @@ describe('scored-event route access', () => {
   // The catalogue shows a visitor what joining gets them, so it is public, behind the page's gate.
   it('serves getHatCatalog to a signed-out caller as the anonymous viewer', async () => {
     await callerFor(undefined).getHatCatalog({ event: 'birthday2026' });
+    expect(service.getEventHatCatalog).toHaveBeenCalledTimes(1);
     expect(service.getEventHatCatalog).toHaveBeenCalledWith({
       event: 'birthday2026',
       viewer: undefined,
+    });
+  });
+
+  // The service's read gate decides on this viewer; a flagged tester must reach it as themselves.
+  it('reads getHatCatalog as the signed-in caller', async () => {
+    await callerFor({ id: 7 }).getHatCatalog({ event: 'birthday2026' });
+    expect(service.getEventHatCatalog).toHaveBeenCalledWith({
+      event: 'birthday2026',
+      viewer: { id: 7 },
     });
   });
 

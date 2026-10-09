@@ -6,10 +6,13 @@ export function HatArt({
   url,
   color,
   className,
+  width = 256,
 }: {
   url: string;
   color?: string;
   className?: string;
+  /** Source width in px; about twice the displayed size. */
+  width?: number;
 }) {
   return (
     <div
@@ -27,7 +30,7 @@ export function HatArt({
     >
       <EdgeMedia
         src={url}
-        width={256}
+        width={width}
         className="w-3/5 drop-shadow-[0_6px_10px_rgba(0,0,0,0.35)]"
         loading="lazy"
         alt=""

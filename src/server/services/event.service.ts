@@ -299,14 +299,25 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
 type CatalogRow = { design: string | null; team: string | null; name: string; url: string | null };
 
 // Every design of this event's decorations in every team colour, for visitors deciding whether to
-// join. Read access only: it shows art and names, never prices or the viewer's own team.
+// join: the free join design and what is on sale now. Read access only: it shows art and names,
+// never prices or the viewer's own team, and is edge-cached for anonymous visitors, so a design
+// staged for a later drop must not appear until its shop item is available.
 export async function getEventHatCatalog({ event, viewer }: EventInput & Viewer) {
   try {
     await eventEngine.assertReadable(event, viewer);
+    const joinDesign = eventEngine.getJoinDesign(event) ?? null;
     const rows = await dbRead.$queryRaw<CatalogRow[]>`
       SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url
       FROM "Cosmetic" c
       WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ${event}
+        AND (
+          c.data->>'design' = ${joinDesign}
+          OR EXISTS (
+            SELECT 1 FROM "CosmeticShopItem" si
+            WHERE si."cosmeticId" = c.id AND si.status = 'Published' AND si."archivedAt" IS NULL
+              AND (si."availableFrom" IS NULL OR si."availableFrom" <= now())
+          )
+        )
       ORDER BY c.id
     `;
     const designs = new Map<

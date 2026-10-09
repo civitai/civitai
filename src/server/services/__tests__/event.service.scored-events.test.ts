@@ -15,6 +15,7 @@ const { engine, scoring } = vi.hoisted(() => ({
     getReadableScoredEvent: vi.fn(),
     assertReadable: vi.fn(),
     isJoinEvent: vi.fn(),
+    getJoinDesign: vi.fn(() => 'basic'),
     join: vi.fn(),
     queueAddRole: vi.fn(),
     getUserData: vi.fn(),
@@ -424,6 +425,8 @@ describe('getEventHatCatalog', () => {
       row('bolt', 'Blue', 'b1'),
       row(null, 'Blue', 'x'),
       row('crown', 'Blue', null),
+      row('crown', null, 'z'),
+      { design: 'plain', team: 'Green', name: 'Plain Hat', url: 'g3' },
     ]);
     const designs = await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
     expect(designs).toEqual([
@@ -436,19 +439,24 @@ describe('getEventHatCatalog', () => {
         ],
       },
       { design: 'crown', name: 'crown Cap', hats: [{ team: 'Yellow', url: 'y2' }] },
+      { design: 'plain', name: 'Plain Hat', hats: [{ team: 'Green', url: 'g3' }] },
     ]);
   });
 
-  // The rows are the mock's, so pin what the query asks for: this event's decorations only.
-  it("queries only this event's decorations", async () => {
+  // The rows are the mock's, so pin the whole query: this event's decorations, only the free join
+  // design and what is on sale now (it is edge-cached for anonymous visitors), in id order.
+  it("queries only this event's join design and on-sale decorations, in id order", async () => {
     engine.assertReadable.mockResolvedValue('open');
     dbMock.dbRead.$queryRaw.mockResolvedValue([]);
     await service.getEventHatCatalog({ event: 'birthday2026', viewer: undefined });
     const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
-    expect(strings.join('?')).toContain(
-      `WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ?
-`
+    expect(strings.join('?').replace(/\s+/g, ' ').trim()).toBe(
+      `SELECT c.data->>'design' AS design, c.data->>'team' AS team, c.name, c.data->>'url' AS url ` +
+        `FROM "Cosmetic" c WHERE c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
+        `AND ( c.data->>'design' = ? OR EXISTS ( SELECT 1 FROM "CosmeticShopItem" si ` +
+        `WHERE si."cosmeticId" = c.id AND si.status = 'Published' AND si."archivedAt" IS NULL ` +
+        `AND (si."availableFrom" IS NULL OR si."availableFrom" <= now()) ) ) ORDER BY c.id`
     );
-    expect(values).toEqual(['birthday2026']);
+    expect(values).toEqual(['birthday2026', 'basic']);
   });
 });

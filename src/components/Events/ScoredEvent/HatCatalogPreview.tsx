@@ -38,7 +38,7 @@ export function HatCatalogPreview({
           const hat = d.hats[i % d.hats.length];
           return (
             <Stack key={d.design} gap={4}>
-              <HatArt url={hat.url} color={teamColor(hat.team)} />
+              <HatArt url={hat.url} color={teamColor(hat.team)} width={160} />
               <Text size="xs" fw={600} ta="center" lineClamp={1}>
                 {d.name}
               </Text>

@@ -218,6 +218,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'changelog.getLatest',
   'event.getCosmeticScores',
   'event.getDonors',
+  'event.getHatCatalog',
   'event.getPartners',
   'event.getRewards',
   'event.getStandings',

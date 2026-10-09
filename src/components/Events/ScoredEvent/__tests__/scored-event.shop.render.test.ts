@@ -47,11 +47,12 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => React.createElement('img', { 'data-src': src }),
 }));
 vi.mock('~/components/Currency/CurrencyBadge', () => ({
-  CurrencyBadge: ({ unitAmount }: { unitAmount: number }) =>
-    React.createElement('span', null, `${unitAmount} Buzz`),
+  CurrencyBadge: ({ currency, unitAmount }: { currency: string; unitAmount: number }) =>
+    React.createElement('span', null, `${unitAmount} ${currency}`),
 }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
-  LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
+  LoginRedirect: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('span', { 'data-login-redirect': true }, children),
 }));
 vi.mock('~/components/Events/ScoredEvent/EventContentThumb', () => ({
   EventContentThumb: () => null,
@@ -118,9 +119,9 @@ describe('team shelf (A3)', () => {
     const el = shelf();
     expect(el.querySelector('#team-hats')).not.toBeNull();
     expect(tiles(el).map((t) => [srcs(t)[0], t.textContent])).toEqual([
-      ['hat-1', 'Bolt Cap500 Buzz'],
-      ['hat-3', 'Sold Cap500 BuzzSold out'],
-      ['hat-2', 'Crown1500 Buzz'],
+      ['hat-1', 'Bolt Cap500 BUZZ'],
+      ['hat-3', 'Sold Cap500 BUZZSold out'],
+      ['hat-2', 'Crown1500 BUZZ'],
     ]);
   });
 
@@ -135,10 +136,20 @@ describe('team shelf (A3)', () => {
   it("opens the shop's own preview for the tile's item", () => {
     const el = shelf();
     act(() => tiles(el)[2].click());
+    expect(trigger).toHaveBeenCalledTimes(1);
     expect(trigger).toHaveBeenCalledWith({
       component: CosmeticShopItemPreviewModal,
       props: { shopItem: items[0] },
     });
+  });
+
+  it('does not open an item with no cosmetic', () => {
+    shopSections = [{ items: [{ shopItem: shopItem(9, 'Broken', 500, { cosmetic: null }) }] }];
+    const el = render(React.createElement(TeamHatShelf, { event: 'birthday2026', team: 'Blue' }));
+    const tile = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent?.startsWith('Broken')
+    )!;
+    expect(tile.disabled).toBe(true);
   });
 
   it('does not open a sold-out hat', () => {
@@ -152,11 +163,13 @@ describe('team shelf (A3)', () => {
 
 describe('catalogue before joining (A5)', () => {
   const teams = ['Yellow', 'Blue', 'Pink', 'Green'];
+  // Design 5 comes in two colours only, so the pick must cycle within each design's own hats.
   const designs = Array.from({ length: 14 }, (_, i) => ({
     design: `d${i}`,
     name: `Design ${i}`,
-    hats: teams.map((team) => ({ team, url: `d${i}-${team}` })),
+    hats: (i === 5 ? ['Yellow', 'Pink'] : teams).map((team) => ({ team, url: `d${i}-${team}` })),
   }));
+  const picked = (i: number) => (i === 5 ? 'Pink' : teams[i % 4]);
   const preview = (onJoin = vi.fn()) =>
     render(
       React.createElement(HatCatalogPreview, { event: 'birthday2026', onJoin, joining: false })
@@ -166,8 +179,14 @@ describe('catalogue before joining (A5)', () => {
     catalog = designs;
     const el = preview();
     const grid = el.querySelector('[data-testid="hat-catalog"]')!;
-    expect(srcs(grid)).toEqual(designs.slice(0, 12).map((d, i) => `d${i}-${teams[i % 4]}`));
+    expect(srcs(grid)).toEqual(designs.slice(0, 12).map((d, i) => `d${i}-${picked(i)}`));
+    // Each tile's glow is its own hat's team colour.
+    const glows = [...grid.children].map(
+      (tile) => (tile.firstElementChild as HTMLElement).style.backgroundImage
+    );
+    glows.forEach((g, i) => expect(g).toContain(COLORS[picked(i)]));
     expect(el.querySelector('h2')?.textContent).toBe('14 hats to collect');
+    expect(el.textContent).toContain('Every design comes in all 4 team colours.');
     expect(el.textContent).toContain('and 2 more designs');
     expect(el.textContent).not.toMatch(/Buzz|\d{3,} /);
   });
@@ -179,6 +198,8 @@ describe('catalogue before joining (A5)', () => {
     const button = [...el.querySelectorAll('button')].find((b) =>
       b.textContent?.includes('Join and get your free hat')
     )!;
+    // A signed-out visitor is sent to sign in rather than joining.
+    expect(button.closest('[data-login-redirect]')).not.toBeNull();
     act(() => button.click());
     expect(onJoin).toHaveBeenCalledTimes(1);
   });
@@ -206,7 +227,8 @@ describe('standings rows (A7)', () => {
       users: {},
       updatedAt: new Date(),
     } as unknown as React.ComponentProps<typeof TeamStandings>['standings']);
-  const later = new Date(Date.UTC(2099, 10, 11, 12));
+  // Local noon, so the formatted day is Nov 11 in every timezone.
+  const later = new Date(2099, 10, 11, 12);
 
   it("puts each team's hat on its row and lights only the viewer's row", () => {
     const el = render(
@@ -221,6 +243,31 @@ describe('standings rows (A7)', () => {
     expect(rows.map((r) => r.dataset.mine ?? null)).toEqual([null, 'true']);
     expect(rows[0].style.boxShadow).toBe('');
     expect(rows[1].style.boxShadow).toContain('#339af0');
+    expect(rows.map((r) => r.textContent)).toEqual(['1Team Yellow30', '2Team Blue · you20']);
+  });
+
+  // Real standings before scoring have an entry per team with no scores yet.
+  it('collapses the chart while every team has an empty history', () => {
+    const el = render(
+      React.createElement(TeamStandings, {
+        standings: standings([{ team: 'Yellow', scores: [] }]),
+        startDate: later,
+      })
+    );
+    expect(el.querySelector('[data-testid="chart"]')).toBeNull();
+    expect(el.querySelector('[data-testid="chart-pending"]')).not.toBeNull();
+  });
+
+  it('once scoring has started, says the chart fills in after the first hour', () => {
+    const el = render(
+      React.createElement(TeamStandings, {
+        standings: standings(),
+        startDate: new Date(Date.now() - 60_000),
+      })
+    );
+    expect(el.querySelector('[data-testid="chart-pending"]')?.textContent).toBe(
+      ' The chart starts after the first hour of scoring.'
+    );
   });
 
   it('before any scoring, shows one line saying when it starts instead of an empty chart', () => {
