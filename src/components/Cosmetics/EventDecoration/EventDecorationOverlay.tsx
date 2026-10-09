@@ -24,15 +24,24 @@ export function EventDecorationOverlay({
   decoration,
   placement = DEFAULT_HAT_PLACEMENT,
   framed = false,
+  cardWidth,
 }: {
   decoration: EventDecorationData;
   placement?: HatPlacement;
   /** Inside a frame, whose padding already carries the hat out past the picture. */
   framed?: boolean;
+  /** The card's width in px; on a card narrower than a feed card the hat shrinks to match. */
+  cardWidth?: number;
 }) {
   if (decoration.type === 'hat')
     return (
-      <CardHat url={decoration.url} fit={decoration.fit} placement={placement} framed={framed} />
+      <CardHat
+        url={decoration.url}
+        fit={decoration.fit}
+        placement={placement}
+        framed={framed}
+        cardWidth={cardWidth}
+      />
     );
   return null;
 }
@@ -45,17 +54,19 @@ function CardHat({
   fit,
   placement,
   framed,
+  cardWidth,
 }: {
   url: string;
   fit?: EventDecorationFit;
   placement: HatPlacement;
   framed: boolean;
+  cardWidth?: number;
 }) {
   const [burst, setBurst] = useState(0);
   const layout =
     placement === 'corner'
-      ? getHatLayout(placement, fit, Infinity, framed ? 0 : HAT_PLAIN_CARD_NUDGE)
-      : getHatLayout(placement, fit);
+      ? getHatLayout(placement, fit, Infinity, framed ? 0 : HAT_PLAIN_CARD_NUDGE, cardWidth)
+      : getHatLayout(placement, fit, undefined, 0, cardWidth);
   // Moved into the card only as far as its container's room requires, which only CSS knows.
   const fitInto = (at: number, reach: number) =>
     placement === 'corner' ? `calc(${at}px + ${hatShiftCss(reach)})` : at;
