@@ -14,7 +14,7 @@ import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import { reportApplicationError } from '~/utils/application-error';
-import { boundedFileFields, splitUnreadablePicks } from '~/utils/unreadable-pick';
+import { boundedFileFields, markInMemory, splitUnreadablePicks } from '~/utils/unreadable-pick';
 
 /** Bounded fields only: the picked file's type (from a short list), size bucket, and platform. */
 function reportUnreadablePick(file: File) {
@@ -33,6 +33,7 @@ export function MediaDropzone({
   onDrop,
   error,
   unreadablePicks = 0,
+  pickLimit,
   ...dropzoneProps
 }: Omit<DropzoneProps, 'children' | 'onDropCapture' | 'onDrop'> & {
   label?: string;
@@ -42,6 +43,11 @@ export function MediaDropzone({
   onDrop: (args: { file: File; meta?: Record<string, unknown> }[]) => void;
   /** Dropped files the consumer could not read later on; offered the same fallback. */
   unreadablePicks?: number;
+  /**
+   * How many files of a pick the consumer can take. The rest are dropped before they are read, so
+   * no in-memory copy is taken of a file the consumer would discard.
+   */
+  pickLimit?: number;
 }) {
   // #region [state]
   const settings = useMediaUploadSettingsContext();
@@ -63,7 +69,8 @@ export function MediaDropzone({
     const result = await mediaDropzoneData.getData(url);
     if (!result) return;
     const { file, data } = result;
-    onDrop([{ file, meta: data }]);
+    // Built in memory from the url, so a failed read of it is not the picker's doing.
+    onDrop([{ file: markInMemory(file), meta: data }]);
   };
   // #endregion
 
@@ -80,7 +87,8 @@ export function MediaDropzone({
       ? dayjs.duration(seconds, 'seconds').format(`mm [minutes (${seconds} seconds)]`)
       : `${seconds} seconds`;
 
-  async function handleDrop(files: File[]) {
+  async function handleDrop(picked: File[]) {
+    const files = pickLimit === undefined ? picked : picked.slice(0, Math.max(0, pickLimit));
     const { readable, unreadable } = await splitUnreadablePicks(files, {
       maxBytes: constants.mediaUpload.maxImageFileSize,
     });

@@ -77,7 +77,9 @@ export function PostImageDropzone({
   // picks: an import, or an in-memory copy taken at the pick, fails only on its own content.
   const pickedFilesRef = useRef(new WeakSet<File>());
   const [unreadablePicks, setUnreadablePicks] = useState(0);
-  const { files, canAdd, error, upload, progress, loading } = useMediaUpload<{ postId: number }>({
+  const { files, canAdd, remaining, error, upload, progress, loading } = useMediaUpload<{
+    postId: number;
+  }>({
     count: images.length,
     onUnreadable: (file) => {
       if (!pickedFilesRef.current.has(file)) return false;
@@ -229,6 +231,7 @@ export function PostImageDropzone({
           disabled={!canAdd}
           error={error}
           unreadablePicks={unreadablePicks}
+          pickLimit={remaining}
           loading={createPostMutation.isPending || loading}
           className="rounded-lg"
         />

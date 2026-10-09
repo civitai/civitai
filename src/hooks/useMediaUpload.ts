@@ -12,7 +12,7 @@ import { auditMetaData } from '~/utils/metadata/audit';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { isReadFailure } from '~/utils/unreadable-pick';
+import { isReadFailure, pickOriginal } from '~/utils/unreadable-pick';
 
 // Max number of images uploading concurrently to S3. Tune here if we hit
 // throttling from the bucket or want to let more through.
@@ -69,9 +69,10 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   });
   const fileUploadContext = useFileUploadContext();
   const uploadSettings = useMediaUploadSettingsContext();
+  // How many more files can be added: a pick past this is cut short.
+  const remaining = Math.max(0, uploadSettings.maxItems - count);
   const canAdd =
-    uploadSettings.maxItems - count > 0 &&
-    !files.some((x) => x.status === 'uploading' || x.status === 'pending');
+    remaining > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
   const onUnreadableRef = useRef(onUnreadable);
@@ -91,13 +92,19 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     try {
       while (jobQueueRef.current.length > 0) {
         const job = jobQueueRef.current.shift()!;
-        if (job.aborted) continue;
+        if (job.aborted) {
+          URL.revokeObjectURL(job.processing.objectUrl);
+          continue;
+        }
         const onComplete = onCompleteRef.current;
         const { file, ...data } = job.processing;
         try {
           const { key, url } = await upload(file, UploadType.Image);
           if (!url) throw new Error('Failed to upload image');
           onComplete({ status: 'added', ...data, url: key, index: job.index }, job.context);
+          // An added file is shown from its uploaded url, so its local preview is no longer needed,
+          // and releasing it lets the browser free an in-memory copy taken at the pick.
+          URL.revokeObjectURL(data.objectUrl);
         } catch (e) {
           console.error(e);
           onComplete(
@@ -117,18 +124,21 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     // Dedupe against anything currently queued or already uploading.
     // Guards against accidental double-enqueue (rapid re-drops, effect re-fires,
     // consumer bugs) that would otherwise result in the same File being uploaded
-    // twice and creating duplicate image records on the server.
+    // twice and creating duplicate image records on the server. Keyed on the picked
+    // File: each drop of it is handed on as a new in-memory copy taken at the pick.
     const inFlight = new Set<File>();
-    for (const queued of jobQueueRef.current) inFlight.add(queued.processing.file);
+    for (const queued of jobQueueRef.current) inFlight.add(pickOriginal(queued.processing.file));
     if (fileUploadContext) {
       const [existing] = fileUploadContext;
       for (const tracked of existing) {
         if (tracked.status === 'pending' || tracked.status === 'uploading') {
-          inFlight.add(tracked.file);
+          inFlight.add(pickOriginal(tracked.file));
         }
       }
     }
-    const uniqueJobs = jobs.filter((j) => !inFlight.has(j.processing.file));
+    const uniqueJobs = jobs.filter((j) => !inFlight.has(pickOriginal(j.processing.file)));
+    for (const job of jobs)
+      if (!uniqueJobs.includes(job)) URL.revokeObjectURL(job.processing.objectUrl);
     if (!uniqueJobs.length) return;
 
     // Pre-register pending entries so the UI reflects queued items.
@@ -194,7 +204,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       }
 
       // remove extra files that would exceed the max
-      const sliced = data.slice(0, uploadSettings.maxItems - count);
+      const sliced = data.slice(0, remaining);
 
       // process media metadata
       const mapped = (
@@ -316,5 +326,15 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   }, [files]); // eslint-disable-line
   // #endregion
 
-  return { canAdd, upload: processFiles, error, files, progress, reset, removeFile, loading };
+  return {
+    canAdd,
+    remaining,
+    upload: processFiles,
+    error,
+    files,
+    progress,
+    reset,
+    removeFile,
+    loading,
+  };
 }

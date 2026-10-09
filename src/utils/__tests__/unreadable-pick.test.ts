@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   boundedFileFields,
+  createPickUrls,
   isPickSnapshot,
+  markInMemory,
+  pickOriginal,
   isReadFailure,
   probeUnreadablePick,
   snapshotPick,
@@ -160,6 +163,151 @@ describe('splitUnreadablePicks concurrency', () => {
       files.map((_, i) => `photo ${i}`)
     );
   });
+
+  /** Image files whose full reads stay pending until `settleAll`, counting reads in flight. */
+  function stallingFiles(count: number) {
+    const reads = { inFlight: 0, peak: 0, started: 0 };
+    const pending: (() => void)[] = [];
+    const files = Array.from({ length: count }, (_, i) => {
+      const file = new File([`photo ${i}`], `p${i}.jpg`, { type: 'image/jpeg' });
+      file.arrayBuffer = () => {
+        reads.started++;
+        reads.peak = Math.max(reads.peak, ++reads.inFlight);
+        return new Promise<ArrayBuffer>((_, reject) =>
+          pending.push(() => {
+            reads.inFlight--;
+            reject(new DOMException('aborted', 'AbortError'));
+          })
+        );
+      };
+      return file;
+    });
+    const settleAll = async () => {
+      for (const settle of pending.splice(0)) settle();
+      await new Promise((r) => setTimeout(r, 20));
+    };
+    return { files, reads, settleAll };
+  }
+
+  it('keeps a timed-out read counted until it settles: twelve stalled picks never read more than four at once', async () => {
+    const { files, reads, settleAll } = stallingFiles(12);
+    const { readable, unreadable } = await splitUnreadablePicks(files, {
+      maxBytes: MAX_BYTES,
+      timeoutMs: 20,
+    });
+    // Every pick goes on as the device's own file; the ones never read are given up unread.
+    expect(unreadable).toEqual([]);
+    expect(readable).toHaveLength(12);
+    readable.forEach((file, i) => expect(file).toBe(files[i]));
+    expect(reads.peak).toBe(4);
+    expect(reads.started).toBe(4);
+
+    // The stalled reads settling starts none of the picks already given up.
+    await settleAll();
+    expect(reads.started).toBe(4);
+    expect(reads.inFlight).toBe(0);
+  });
+
+  it('a slot frees up once its stalled read settles, and the picks still waiting are read', async () => {
+    const stalled = stallingFiles(1);
+    const healthy = Array.from(
+      { length: 6 },
+      (_, i) => new File([`ok ${i}`], `ok${i}.jpg`, { type: 'image/jpeg' })
+    );
+    const split = splitUnreadablePicks([...stalled.files, ...healthy], {
+      maxBytes: MAX_BYTES,
+      timeoutMs: 20,
+    });
+    const { readable } = await split;
+    expect(readable[0]).toBe(stalled.files[0]);
+    // With one slot held, the other three still copy every healthy pick.
+    expect(readable.slice(1).every((f) => isPickSnapshot(f))).toBe(true);
+    expect(await Promise.all(readable.slice(1).map((f) => f.text()))).toEqual(
+      healthy.map((_, i) => `ok ${i}`)
+    );
+    await stalled.settleAll();
+  });
+
+  it('resolves at once for an empty pick', async () => {
+    expect(await splitUnreadablePicks([], { maxBytes: MAX_BYTES })).toEqual({
+      readable: [],
+      unreadable: [],
+      replacements: new Map(),
+    });
+  });
+});
+
+describe('pickOriginal / markInMemory', () => {
+  it('maps a pick-time copy to the File it was taken from, and any other file to itself', async () => {
+    const photo = new File(['photo'], 'p.jpg', { type: 'image/jpeg' });
+    const { file: copy } = await snapshotPick(photo, { maxBytes: MAX_BYTES });
+    expect(copy).not.toBe(photo);
+    expect(pickOriginal(copy!)).toBe(photo);
+    expect(pickOriginal(photo)).toBe(photo);
+  });
+
+  it('marks a file built in memory as one', () => {
+    const fetched = new File(['x'], 'x.jpg', { type: 'image/jpeg' });
+    expect(isPickSnapshot(fetched)).toBe(false);
+    expect(markInMemory(fetched)).toBe(fetched);
+    expect(isPickSnapshot(fetched)).toBe(true);
+  });
+});
+
+describe('createPickUrls', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('revokes a released url at once when nothing holds it', () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const urls = createPickUrls();
+    const url = urls.create(new Blob(['x']));
+    expect(revoke).not.toHaveBeenCalled();
+    urls.release(url);
+    expect(revoke).toHaveBeenCalledWith(url);
+  });
+
+  it('waits for every hold to settle, rejected or not, before revoking', async () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const urls = createPickUrls();
+    const url = urls.create(new Blob(['x']));
+    let finish!: () => void;
+    let fail!: (e: Error) => void;
+    urls.hold(url, new Promise<void>((r) => (finish = r)));
+    const failing = new Promise<void>((_, reject) => (fail = reject));
+    failing.catch(() => undefined);
+    urls.hold(url, failing);
+    urls.release(url);
+    await Promise.resolve();
+    expect(revoke).not.toHaveBeenCalled();
+    finish();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(revoke).not.toHaveBeenCalled();
+    fail(new Error('read failed'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(revoke).toHaveBeenCalledTimes(1);
+    expect(revoke).toHaveBeenCalledWith(url);
+  });
+
+  it('a settled hold on a url not yet released does not revoke it', async () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const urls = createPickUrls();
+    const url = urls.create(new Blob(['x']));
+    urls.hold(url, Promise.resolve());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
+  it('releaseAllBut releases only the urls not in use, and never one it did not make', () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    const urls = createPickUrls();
+    const kept = urls.create(new Blob(['a']));
+    const dropped = urls.create(new Blob(['b']));
+    urls.releaseAllBut(new Set([kept, 'https://example.test/x.jpg']));
+    expect(revoke.mock.calls).toEqual([[dropped]]);
+    urls.hold('blob:not-ours', Promise.resolve());
+    urls.release('blob:not-ours');
+    expect(revoke.mock.calls).toEqual([[dropped]]);
+  });
 });
 
 describe('snapshotPick', () => {
@@ -241,7 +389,18 @@ describe('snapshotPick', () => {
 describe('isReadFailure', () => {
   it.each([
     ['a NotReadableError', new DOMException('x', 'NotReadableError'), true],
-    ['a TypeError (a blob: fetch)', new TypeError('Failed to fetch'), true],
+    ['a TypeError (a blob: fetch, Chromium)', new TypeError('Failed to fetch'), true],
+    [
+      'a TypeError (a blob: fetch, Firefox)',
+      new TypeError('NetworkError when attempting to fetch resource.'),
+      true,
+    ],
+    ['a TypeError (a blob: fetch, WebKit)', new TypeError('Load failed'), true],
+    [
+      'any other TypeError (a bug in the reader)',
+      new TypeError("Cannot read properties of undefined (reading 'width')"),
+      false,
+    ],
     ['an <img> load error', new Error('Image failed to load', { cause: new Event('error') }), true],
     ['an Error without an Event cause', new Error('Image failed to load'), false],
     ['an EncodingError', new DOMException('x', 'EncodingError'), false],

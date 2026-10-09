@@ -59,6 +59,7 @@ import { isDefined } from '~/utils/type-guards';
 import { reportApplicationError } from '~/utils/application-error';
 import {
   boundedFileFields,
+  createPickUrls,
   isPickSnapshot,
   isReadFailure,
   splitUnreadablePicks,
@@ -396,6 +397,15 @@ export function SourceImageUploadMultiple({
   valueRef.current = value;
   const uploadsRef = useRef(uploads);
   uploadsRef.current = uploads;
+  // Blob urls of picked files. Each is revoked once no card or slot shows it and no read of it is in
+  // flight, so the in-memory copy taken at the pick is freed rather than kept for the page's life.
+  const [pickUrls] = useState(createPickUrls);
+  useEffect(() => {
+    pickUrls.releaseAllBut(
+      new Set([...uploads.map((x) => x.url), ...(value ?? []).map((x) => x?.url)])
+    );
+  }, [uploads, value, pickUrls]);
+  useEffect(() => () => pickUrls.releaseAllBut(new Set()), [pickUrls]);
 
   /** A picked file still backed by the device, so a failed read of it may be the picker's doing. */
   function isDeviceBacked(src: string | Blob | File) {
@@ -705,12 +715,10 @@ export function SourceImageUploadMultiple({
     const snapshot = value;
     const failures = new Map<string, ImagePrepError>();
     Promise.all(
-      unresolved.map((url) =>
-        prepStage(
-          'dims',
-          () => getImageDimensions(url, { loadRetries: 2 }),
-          IMAGE_PREP_STAGE_TIMEOUT_MS
-        )
+      unresolved.map((url) => {
+        const read = getImageDimensions(url, { loadRetries: 2 });
+        pickUrls.hold(url, read);
+        return prepStage('dims', () => read, IMAGE_PREP_STAGE_TIMEOUT_MS)
           .then(({ width, height }) => ({ url, width, height }))
           .catch((e: ImagePrepError) => {
             // Nothing is cached for a failed load, so it is retried on the next change; otherwise
@@ -721,8 +729,8 @@ export function SourceImageUploadMultiple({
           .finally(() => {
             setImageVerifying(url, false);
             trackedVerifyingUrlsRef.current.delete(url);
-          })
-      )
+          });
+      })
     ).then((results) => {
       const verified = results.filter(
         (r): r is { url: string; width: number; height: number } => r !== null
@@ -850,10 +858,15 @@ export function SourceImageUploadMultiple({
     );
     // uploadOrchestratorImage marks `id` itself; tracked so an unmount mid-upload clears it too.
     trackedUploadingIdsRef.current.add(id);
-    const response = await uploadOrchestratorImage(url, id, undefined, {
+    const upload = uploadOrchestratorImage(url, id, undefined, {
       file: pickedFilesRef.current.get(url),
       origin: 'card',
     });
+    pickUrls.hold(
+      url,
+      upload.then((r) => r.reads)
+    );
+    const response = await upload;
     trackedUploadingIdsRef.current.delete(id);
     if (response.pickReadFailure && isDeviceBacked(url)) {
       setUploads((items) => items.filter((x) => x.id !== id));
@@ -984,7 +997,12 @@ export function SourceImageUploadMultiple({
                 const origin = valueRef.current?.some((v) => v.url === originalUrl)
                   ? 'value'
                   : 'card';
-                const response = await uploadOrchestratorImage(src, id, originalUrl, { origin });
+                const upload = uploadOrchestratorImage(src, id, originalUrl, { origin });
+                pickUrls.hold(
+                  originalUrl,
+                  upload.then((r) => r.reads)
+                );
+                const response = await upload;
                 if (response.url && response.available) {
                   return {
                     originalUrl,
@@ -1125,7 +1143,7 @@ export function SourceImageUploadMultiple({
     setUploads((prev) => [
       ...prev,
       ...items.map((src) => {
-        const url = typeof src !== 'string' ? URL.createObjectURL(src) : src;
+        const url = typeof src !== 'string' ? pickUrls.create(src) : src;
         if (typeof src !== 'string')
           pickedFilesRef.current.set(url, {
             type: src.type,
@@ -1190,7 +1208,7 @@ export function SourceImageUploadMultiple({
     const items = entries.map(({ slotIndex, src }) => ({
       slotIndex,
       src,
-      previewUrl: typeof src === 'string' ? src : URL.createObjectURL(src),
+      previewUrl: typeof src === 'string' ? src : pickUrls.create(src),
       uploadId: getRandomId(),
     }));
     const itemIds = new Set(items.map((x) => x.uploadId));
@@ -1237,7 +1255,9 @@ export function SourceImageUploadMultiple({
               : undefined;
           if (!dims) {
             try {
-              dims = await prepStage('dims', () => getImageDimensions(item.previewUrl));
+              const read = getImageDimensions(item.previewUrl);
+              pickUrls.hold(item.previewUrl, read);
+              dims = await prepStage('dims', () => read);
             } catch (e) {
               if (isPickedFileReadFailure(e, item.src) && isDeviceBacked(item.src))
                 return { unreadable: item };
@@ -2200,6 +2220,10 @@ export async function uploadOrchestratorImage(
 ) {
   let originalSize = { width: 0, height: 0 };
   const timeoutMs = IMAGE_PREP_STAGE_TIMEOUT_MS;
+  // Reads of the source that can outlast the returned promise; `reads` on the result settles once
+  // they have, so a caller can release a blob: url only when nothing is reading it.
+  let sourceMetadata: ReturnType<typeof extractSourceMetadata> | undefined;
+  const reads = () => Promise.resolve(sourceMetadata).then(() => undefined);
   try {
     // Inside the try: callers render a failed upload from `blockedReason`, and a throw here
     // would leave their card loading forever.
@@ -2212,6 +2236,7 @@ export async function uploadOrchestratorImage(
         ...originalSize,
         available: true,
         pickReadFailure: false,
+        reads: reads(),
         type: 'image',
         id: '',
       };
@@ -2224,7 +2249,7 @@ export async function uploadOrchestratorImage(
     // back and the image-metadata modal comes up empty for local files.
     const metadataSrc =
       metadataSource ?? (typeof src === 'string' || src instanceof File ? src : undefined);
-    const sourceMetadata = metadataSrc
+    sourceMetadata = metadataSrc
       ? extractSourceMetadata(metadataSrc).catch(() => undefined)
       : undefined;
 
@@ -2275,13 +2300,13 @@ export async function uploadOrchestratorImage(
     if (uploadedUrl) sourceMetadataStore.setMetadata(uploadedUrl, resizedSize);
 
     if (sourceMetadata && uploadedUrl) {
-      sourceMetadata.then((metadata) => {
+      void sourceMetadata.then((metadata) => {
         if (metadata)
           sourceMetadataStore.setMetadata(uploadedUrl, { ...metadata, exifExtracted: true });
       });
     }
 
-    return { ...blob, ...resizedSize, pickReadFailure: false };
+    return { ...blob, ...resizedSize, pickReadFailure: false, reads: reads() };
   } catch (e) {
     setImageUploading(id, false);
     const error = e as Error;
@@ -2291,10 +2316,13 @@ export async function uploadOrchestratorImage(
       reportImagePrepFailure(error, src, report.file, report.origin);
 
     return {
-      url: typeof src === 'string' ? src : URL.createObjectURL(src),
+      // No url is made for a Blob src: every caller shows its own preview of a failed upload, and
+      // a url made here would hold the Blob (an in-memory copy of a pick, say) for the page's life.
+      url: typeof src === 'string' ? src : '',
       ...originalSize,
       available: false,
       pickReadFailure: isPickedFileReadFailure(error, src),
+      reads: reads(),
       // A local preparation failure shows fixed text; the upload's own failures and size
       // validation keep their messages.
       blockedReason:
