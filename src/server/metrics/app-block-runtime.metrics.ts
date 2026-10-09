@@ -474,9 +474,11 @@ export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevo
 }
 
 /**
- * The two post-from-app doors whose shared preamble can refuse an unhydratable
- * token subject: `blocks.createPostFromApp` (the write) and
- * `blocks.previewPostFromApp` (the read-only dry run).
+ * The post-from-app doors whose shared preamble can refuse an unhydratable
+ * token subject: `blocks.createPostFromApp` (the write),
+ * `blocks.previewPostFromApp` (the read-only dry run), and
+ * `blocks.persistAppUploadImage` (persisting an app's `bytes` upload so it can be
+ * posted).
  *
  * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Both procs run the identical
  * preamble, so a combined number would leave an operator unable to say whether a
@@ -485,7 +487,7 @@ export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevo
  * different urgency, and the label is the only thing that can tell them apart —
  * there is no per-request log to fall back on for this deployment.
  */
-export const APP_BLOCK_POST_SURFACES = ['preview', 'create'] as const;
+export const APP_BLOCK_POST_SURFACES = ['preview', 'create', 'upload'] as const;
 export type AppBlockPostSurface = (typeof APP_BLOCK_POST_SURFACES)[number];
 
 export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [

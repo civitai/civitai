@@ -12,6 +12,7 @@ import type { BlockProvenanceMetadataKey } from '~/shared/utils/block-provenance
 import type { PersistBlockUploadImageInput } from '~/server/schema/blocks/block-image-upload.schema';
 import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
 import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
+import { BLOCK_IMAGE_MAX_BYTES } from '~/shared/constants/block-image-upload.constants';
 import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
 import type { SessionUser } from '~/types/session';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
@@ -27,13 +28,6 @@ import { uploadImageBufferToStore } from '~/utils/s3-utils';
  * The scan-gate DECISION is the pure {@link classifyBlockImageUploadScan}
  * (node-unit-tested); this module is the thin dbRead/createImage wiring around it.
  */
-
-/**
- * Hard cap on the bytes of any image this module materialises — a fetched workflow
- * output, or a user upload read back out of the store to be measured. Bounds an
- * unexpected huge blob.
- */
-const BLOCK_IMAGE_MAX_BYTES = 40 * 1024 * 1024;
 
 /**
  * Materialise a CF-uploaded image into an `Image` row owned by the caller and
@@ -53,8 +47,13 @@ const BLOCK_IMAGE_MAX_BYTES = 40 * 1024 * 1024;
 export async function persistBlockUploadImage(opts: {
   input: PersistBlockUploadImageInput;
   userId: number;
+  /**
+   * The verified token appId of the app whose host-mediated `bytes` upload this is. Stamped as
+   * {@link BLOCK_UPLOADED_APP_ID_META_KEY}; absent for a viewer-picked upload, which stays unstamped.
+   */
+  uploadedByAppId?: string;
 }): Promise<{ imageId: number }> {
-  const { input, userId } = opts;
+  const { input, userId, uploadedByAppId } = opts;
   const measured = await measureUploadedImage(input.url, {
     maxBytes: BLOCK_IMAGE_MAX_BYTES,
     subject: 'block images',
@@ -71,7 +70,11 @@ export async function persistBlockUploadImage(opts: {
     // entity tag records which stored object they were measured from — a row from
     // here is attachable as listing media, so it must carry the same evidence the
     // listing attach gate re-checks.
-    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
+    metadata: {
+      size: measured.sizeBytes,
+      ...storedObjectEtagMetadata(measured.etag),
+      ...(uploadedByAppId ? { [BLOCK_UPLOADED_APP_ID_META_KEY]: uploadedByAppId } : {}),
+    },
     userId,
   });
   return { imageId: image.id };
@@ -88,6 +91,23 @@ export async function persistBlockUploadImage(opts: {
  */
 export const BLOCK_PUBLISHED_APP_ID_META_KEY =
   'blockPublishedAppId' as const satisfies BlockProvenanceMetadataKey;
+
+/**
+ * Provenance marker for an image an app UPLOADED from bytes it produced in the viewer's tab
+ * (`OPEN_IMAGE_UPLOAD { bytes }`), stamped by {@link persistBlockUploadImage}.
+ *
+ * 🔴 DELIBERATELY A SEPARATE KEY, NOT {@link BLOCK_PUBLISHED_APP_ID_META_KEY}. The published key
+ * also scopes the CROSS-USER gated read, so stamping it here would let an app read every viewer's
+ * uploads. This one is accepted only where the reader is already bound to the image's owner: the
+ * post-from-app `published` source ({@link BLOCK_POSTABLE_APP_ID_META_KEYS}).
+ */
+export const BLOCK_UPLOADED_APP_ID_META_KEY = 'blockUploadedAppId' as const;
+
+/** The provenance keys a post-from-app `published` source accepts. Never the gated read's set. */
+export const BLOCK_POSTABLE_APP_ID_META_KEYS = [
+  BLOCK_PUBLISHED_APP_ID_META_KEY,
+  BLOCK_UPLOADED_APP_ID_META_KEY,
+] as const;
 
 /**
  * Max redirect hops we follow when fetching a workflow output blob. The real

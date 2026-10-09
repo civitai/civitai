@@ -95,44 +95,60 @@ export const SAVE_BYTES_MAX_BYTES_PER_WINDOW = 100 * 1024 * 1024; // 100 MB
 /** One accepted `bytes` save: when it was admitted and how large it was. */
 export type SaveBytesWindowEntry = { at: number; size: number };
 
-/** The window's entries still inside {@link SAVE_BYTES_WINDOW_MS} of `now`. */
+/** A rolling-window budget: at most `maxPerWindow` entries and `maxBytesPerWindow` bytes per `windowMs`. */
+export type BytesWindowLimits = {
+  windowMs: number;
+  maxPerWindow: number;
+  maxBytesPerWindow: number;
+};
+
+const SAVE_BYTES_WINDOW_LIMITS: BytesWindowLimits = {
+  windowMs: SAVE_BYTES_WINDOW_MS,
+  maxPerWindow: SAVE_BYTES_MAX_PER_WINDOW,
+  maxBytesPerWindow: SAVE_BYTES_MAX_BYTES_PER_WINDOW,
+};
+
+/** The window's entries still inside `limits.windowMs` of `now`. */
 function liveSaveBytesWindow(
   recent: readonly SaveBytesWindowEntry[],
-  now: number
+  now: number,
+  limits: BytesWindowLimits
 ): SaveBytesWindowEntry[] {
-  return recent.filter((e) => now - e.at < SAVE_BYTES_WINDOW_MS);
+  return recent.filter((e) => now - e.at < limits.windowMs);
 }
 
 /**
  * NON-recording check: would a save of `size` bytes fit in the window right now? True only if fewer
- * than {@link SAVE_BYTES_MAX_PER_WINDOW} saves are live AND their total plus `size` stays within
- * {@link SAVE_BYTES_MAX_BYTES_PER_WINDOW}. `size` is the raw `byteLength`, known before any decoding,
- * so the host can refuse `busy` without classifying (which decodes + JSON-parses up to 50 MB on the
- * main thread).
+ * than `maxPerWindow` saves are live AND their total plus `size` stays within `maxBytesPerWindow`
+ * (the SAVE_BYTES_* constants by default). `size` is the raw `byteLength`, known before any
+ * decoding, so the host can refuse `busy` without classifying (which decodes + JSON-parses up to
+ * 50 MB on the main thread).
  */
 export function saveBytesWindowHasRoom(
   recent: readonly SaveBytesWindowEntry[],
   now: number,
-  size: number
+  size: number,
+  limits: BytesWindowLimits = SAVE_BYTES_WINDOW_LIMITS
 ): boolean {
-  const live = liveSaveBytesWindow(recent, now);
+  const live = liveSaveBytesWindow(recent, now, limits);
   const total = live.reduce((sum, e) => sum + e.size, 0);
-  return live.length < SAVE_BYTES_MAX_PER_WINDOW && total + size <= SAVE_BYTES_MAX_BYTES_PER_WINDOW;
+  return live.length < limits.maxPerWindow && total + size <= limits.maxBytesPerWindow;
 }
 
 /**
  * Sliding-window limiter for `bytes` saves, pure so it is testable without timers. Drops entries
- * older than {@link SAVE_BYTES_WINDOW_MS}, then admits (RECORDS) a save of `size` bytes only if
+ * older than the window, then admits (RECORDS) a save of `size` bytes only if
  * {@link saveBytesWindowHasRoom}. Returns the pruned list, with the new save appended when
  * admitted; the caller stores it back. A refused save is not recorded.
  */
 export function admitSaveBytes(
   recent: readonly SaveBytesWindowEntry[],
   now: number,
-  size: number
+  size: number,
+  limits: BytesWindowLimits = SAVE_BYTES_WINDOW_LIMITS
 ): { ok: boolean; recent: SaveBytesWindowEntry[] } {
-  const live = liveSaveBytesWindow(recent, now);
-  if (!saveBytesWindowHasRoom(live, now, size)) return { ok: false, recent: live };
+  const live = liveSaveBytesWindow(recent, now, limits);
+  if (!saveBytesWindowHasRoom(live, now, size, limits)) return { ok: false, recent: live };
   return { ok: true, recent: [...live, { at: now, size }] };
 }
 

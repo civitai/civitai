@@ -5323,6 +5323,64 @@ export const blocksRouter = router({
     }),
 
   /**
+   * `OPEN_IMAGE_UPLOAD { bytes }` — persist an image the page block PRODUCED in the viewer's tab,
+   * after the host uploaded those bytes through the same store upload a picked `display` image
+   * uses. The persistence and scan are `blockImageUpload.persist`'s, unchanged; the host then polls
+   * the same `blockImageUpload.gate`. The ONE difference is the row is stamped with the verified
+   * token appId under `blockUploadedAppId`, which is what lets this app name it as a
+   * `{ kind: 'published' }` post source.
+   *
+   * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
+   * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
+   * post-creation flag), page tokens only, and the per-instance publish bucket that already
+   * bounds how many scanned Image rows an app can create.
+   */
+  persistAppUploadImage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many image uploads — slow down.',
+      })
+    )
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        url: z.string().uuid(),
+        name: z.string().max(255).nullish(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'upload',
+        ctx.user.id
+      );
+      if (!isPageToken(claims)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'image byte uploads are available to page apps only',
+        });
+      }
+      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { persistBlockUploadImage } = await import(
+        '~/server/services/blocks/block-image-upload.service'
+      );
+      return persistBlockUploadImage({
+        input: { url: input.url, name: input.name },
+        userId,
+        uploadedByAppId: claims.appId,
+      });
+    }),
+
+  /**
    * ── CREATE_POST_FROM_APP, part 1 of 2: the READ-ONLY preview. ───────────────
    *
    * Resolves EVERYTHING the host-chrome consent dialog renders — the exact title

@@ -65,7 +65,15 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
+import { BlockImageBytesUploader } from './BlockImageBytesUploader';
 import type { BlockImageScanResult } from './blockImageScanLogic';
+import {
+  imageUploadResultFromScan,
+  processUploadBytes,
+  resolveImageUploadBytes,
+  UPLOAD_BYTES_INVALID_ERROR,
+  UPLOAD_BYTES_NO_TOKEN_ERROR,
+} from './imageUploadBytes';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import {
@@ -946,8 +954,21 @@ export function PageBlockHost({
   // BlockImageScanPoller (below) that survives the upload modal's close, polls
   // the authoritative scan gate, and on a verdict fires IMAGE_SCAN_RESOLVED then
   // removes itself. See the OPEN_IMAGE_UPLOAD handler + the render block.
+  // `replyOnScan` marks a BLOCKING `bytes` upload: its verdict is the IMAGE_UPLOAD_RESULT reply
+  // itself, not an IMAGE_SCAN_RESOLVED push after an early pending reply.
   const [imageScanPollers, setImageScanPollers] = useState<
-    Array<{ requestId: string; imageId: number }>
+    Array<{ requestId: string; imageId: number; replyOnScan?: boolean }>
+  >([]);
+  // In-flight OPEN_IMAGE_UPLOAD { bytes } uploads, one headless BlockImageBytesUploader each.
+  const [imageBytesUploads, setImageBytesUploads] = useState<
+    Array<{
+      requestId: string;
+      bytes: ArrayBuffer;
+      filename: string;
+      contentType: string;
+      blockToken: string;
+      asyncScan: boolean;
+    }>
   >([]);
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
@@ -3613,6 +3634,8 @@ export function PageBlockHost({
   // they never await, so the in-flight count above would be released before the
   // next message and bound nothing. Same ref-not-state reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // OPEN_IMAGE_UPLOAD { bytes } uploads, limited per host over their own window (processUploadBytes).
+  const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
@@ -3937,6 +3960,9 @@ export function PageBlockHost({
   //     url is an `orchestration…civitai.com` host that passes the img2img
   //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
   //
+  //   • `bytes` (an ArrayBuffer the block made — no picker, display only): see imageUploadBytes.ts.
+  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else.
+  //
   // Gate on status 'ready' (a pre-handshake block can't summon the modal) via the
   // same 'error'→'no_token' shim the consent/buzz handlers use. requestId threads
   // the reply so concurrent uploads never cross. A successful upload posts the
@@ -3985,6 +4011,49 @@ export function PageBlockHost({
       // never came from a promise anybody is awaiting.)
       if (!req) return;
       const { requestId, purpose, asyncScan } = req;
+
+      // bytes: an image the block made in this tab. No picker; the same upload → persist → scan
+      // pipeline as a `display` pick, persisted with the app's upload stamp so the app can post it.
+      // Every refusal replies `{ requestId, error }`.
+      const bytesReq = resolveImageUploadBytes(raw);
+      if (bytesReq.kind !== 'none') {
+        if (bytesReq.kind === 'invalid') {
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_INVALID_ERROR });
+          return;
+        }
+        if (!token) {
+          reportNoToken('OPEN_IMAGE_UPLOAD');
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_NO_TOKEN_ERROR });
+          return;
+        }
+        const { result, recent } = processUploadBytes(
+          bytesReq,
+          uploadBytesWindowRef.current,
+          Date.now()
+        );
+        uploadBytesWindowRef.current = recent;
+        if (!result.ok) {
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: result.error });
+          return;
+        }
+        const blockToken = token;
+        setImageBytesUploads((prev) =>
+          prev.some((u) => u.requestId === requestId)
+            ? prev
+            : [
+                ...prev,
+                {
+                  requestId,
+                  bytes: bytesReq.bytes,
+                  filename: result.filename,
+                  contentType: result.contentType,
+                  blockToken,
+                  asyncScan,
+                },
+              ]
+        );
+        return;
+      }
 
       // generationSource: UNSCANNED private img2img source (orchestrator scans
       // the OUTPUT). Reply carries the source shape { url, width, height }; the
@@ -4084,7 +4153,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //
@@ -4936,8 +5005,39 @@ export function PageBlockHost({
           key={p.requestId}
           imageId={p.imageId}
           onResult={(result: BlockImageScanResult) => {
-            send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
+            if (p.replyOnScan) {
+              send('IMAGE_UPLOAD_RESULT', imageUploadResultFromScan(p.requestId, result));
+            } else {
+              send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
+            }
             setImageScanPollers((prev) => prev.filter((x) => x.requestId !== p.requestId));
+          }}
+        />
+      ))}
+      {imageBytesUploads.map((u) => (
+        <BlockImageBytesUploader
+          key={u.requestId}
+          bytes={u.bytes}
+          filename={u.filename}
+          contentType={u.contentType}
+          blockToken={u.blockToken}
+          onPersisted={({ imageId, url }) => {
+            setImageBytesUploads((prev) => prev.filter((x) => x.requestId !== u.requestId));
+            if (u.asyncScan) {
+              send('IMAGE_UPLOAD_RESULT', {
+                requestId: u.requestId,
+                selected: { status: 'pending', imageId, url },
+              });
+            }
+            setImageScanPollers((prev) =>
+              prev.some((x) => x.requestId === u.requestId)
+                ? prev
+                : [...prev, { requestId: u.requestId, imageId, replyOnScan: !u.asyncScan }]
+            );
+          }}
+          onError={(error) => {
+            setImageBytesUploads((prev) => prev.filter((x) => x.requestId !== u.requestId));
+            send('IMAGE_UPLOAD_RESULT', { requestId: u.requestId, error });
           }}
         />
       ))}

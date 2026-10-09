@@ -240,6 +240,9 @@ const BRIDGE_INPUT_LEDGER = [
   // not the population.
   'createPostFromApp',
   'previewPostFromApp',
+  // `OPEN_IMAGE_UPLOAD { bytes }` — persists an app's own upload so it can be posted; reaches the
+  // guard via `authorizeBlockPostRequest`, like the two post halves.
+  'persistAppUploadImage',
   // The `kind:'training'` bridge procs: the dataset primitive reaches the guard
   // directly; the two consent halves reach it via
   // `authorizeBlockTrainingConsentRequest`, above.

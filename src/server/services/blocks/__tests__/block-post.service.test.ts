@@ -842,7 +842,10 @@ describe('writeBlockPost', () => {
       id: 101,
       userId: VIEWER_USER_ID,
       postId: null,
-      metadata: { path: [BLOCK_POST_APP_ID_META_KEY], equals: APP_ID },
+      OR: [
+        { metadata: { path: ['blockPublishedAppId'], equals: APP_ID } },
+        { metadata: { path: ['blockUploadedAppId'], equals: APP_ID } },
+      ],
     });
     expect(first.data).toEqual({ postId: 5150, index: 0 });
     expect(dbMock.dbWrite.image.updateMany.mock.calls[1][0].data).toEqual({
