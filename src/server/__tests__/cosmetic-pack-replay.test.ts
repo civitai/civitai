@@ -52,7 +52,6 @@ vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
 
 const { purchaseCosmeticPack } = await import('~/server/services/cosmetic-pack.service');
 const { PURCHASE_STATE_UNKNOWN_MESSAGE } = await import('~/server/services/shop-purchase-charge');
-const { computePackAmountDue } = await import('~/server/schema/creator-shop.schema');
 
 // The shape the real buzz client hands back: buzz.service's mapError wraps the
 // ledger's status in a TRPCError and keeps the BuzzApiError as `cause`.
@@ -86,20 +85,19 @@ const member = {
   floorAmount: 1700,
 };
 
-const buy = (idempotencyKey?: string, expectedAmount?: number, members = [member]) =>
+const buy = (idempotencyKey?: string) =>
   purchaseCosmeticPack({
     userId: BUYER,
     idempotencyKey,
-    expectedAmount,
     shopItem: {
       id: 7001,
       title: 'A pack',
       unitAmount: PRICE,
       addedById: PACK_CREATOR,
       meta: { purchases: 0 },
-      memberCount: members.length,
+      memberCount: 1,
     },
-    members,
+    members: [member],
     buzzType: 'yellow',
   });
 
@@ -176,106 +174,6 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     // Positive control for the "pays nothing" assertions below.
     expect(createManyUserCosmetic).toHaveBeenCalled();
     expect(pay).toHaveBeenCalled();
-  });
-
-  // The button showed a number; a pack re-priced or re-discounted since must
-  // refuse rather than charge another one.
-  // No claim is ever written with an amount the buyer did not confirm: a
-  // same-key request arriving later would resume it and charge that amount.
-  it('refuses when the amount due moved since the button rendered, writing no claim', async () => {
-    await expect(buy(KEY, PRICE - 1)).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-      message: `The price changed to ${PRICE} Buzz. Check the new price and try again.`,
-    });
-    expect(spend).not.toHaveBeenCalled();
-    expect(claims.rows.size).toBe(0);
-    expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).not.toHaveBeenCalled();
-  });
-
-  it('charges when the amount due matches the button (control)', async () => {
-    spend.mockResolvedValue(legs(false));
-
-    await buy(KEY, PRICE);
-    expect(spend).toHaveBeenCalledTimes(1);
-  });
-
-  // The button shows the discounted amount; that is what is compared.
-  describe('with a member the buyer already owns', () => {
-    const second = { ...member, cosmeticId: 1002, listingId: 5002 };
-    const members = [member, second];
-    const discounted = computePackAmountDue({
-      packPrice: PRICE,
-      members: members.map((m) => ({
-        cosmeticId: m.cosmeticId,
-        type: m.type,
-        listPrice: m.floorAmount,
-        isOwn: m.createdById === PACK_CREATOR,
-        createdById: m.createdById,
-      })),
-      ownedCosmeticIds: [member.cosmeticId],
-      buyerId: BUYER,
-      packCreatorId: PACK_CREATOR,
-    }).amountDue;
-
-    beforeEach(() => {
-      dbMock.dbWrite.userCosmetic.findMany.mockResolvedValue([{ cosmeticId: member.cosmeticId }]);
-    });
-
-    it('is a real discount (precondition)', () => {
-      expect(discounted).toBeGreaterThan(0);
-      expect(discounted).toBeLessThan(PRICE);
-    });
-
-    it('charges the discounted amount the button showed', async () => {
-      spend.mockResolvedValue(legs(false, discounted));
-
-      await buy(KEY, discounted, members);
-      expect(spend.mock.calls[0][0].amount).toBe(discounted);
-    });
-
-    it('refuses the undiscounted price', async () => {
-      await expect(buy(KEY, PRICE, members)).rejects.toMatchObject({
-        code: 'BAD_REQUEST',
-        message: `The price changed to ${discounted} Buzz. Check the new price and try again.`,
-      });
-      expect(spend).not.toHaveBeenCalled();
-      expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).not.toHaveBeenCalled();
-    });
-  });
-
-  // The purchase changes the discount (the buyer now owns its members), so a
-  // retry of the same key must be answered from its claim, not from the price.
-  // Request A checked its amount and wrote the claim; request B, same key, shows
-  // a different amount (the pack changed in between). B resumes A's checked claim.
-  it('a same-key request after a checked claim resumes it at the claimed amount', async () => {
-    spend.mockImplementationOnce(async () => {
-      // B arrives while A is charging.
-      const b = buy(KEY, PRICE - 1);
-      await expect(b).resolves.toBeDefined();
-      return legs(false);
-    });
-    spend.mockResolvedValue(legs(true));
-
-    await expect(buy(KEY, PRICE)).rejects.toThrow('already been completed');
-    expect(spend.mock.calls.map(([c]) => c.amount)).toEqual([PRICE, PRICE]);
-    expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).toHaveBeenCalledTimes(2);
-    expect(claims.rows.get(TX)).toMatchObject({ status: 'paid', amount: PRICE });
-  });
-
-  it('a retry of a completed purchase is completed, whatever amount it shows', async () => {
-    seedClaim('paid');
-
-    await expect(buy(KEY, PRICE - 1)).rejects.toThrow('This purchase has already been completed');
-    expect(spend).not.toHaveBeenCalled();
-  });
-
-  it('a retry of a pending claim charges the claimed amount, whatever the button shows', async () => {
-    seedClaim('pending');
-    spend.mockResolvedValue(legs(true));
-
-    await buy(KEY, PRICE - 1);
-    expect(spend.mock.calls[0][0].amount).toBe(PRICE);
-    expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
   it('refuses a replay of a key already paid, before any charge', async () => {

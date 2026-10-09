@@ -621,13 +621,12 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       userId: BUYER_ID,
       shopItemId: SHOP_ITEM_ID,
       idempotencyKey: KEY,
-      expectedUnitAmount: 1234,
       buzzType: 'yellow',
       packsEnabled: true,
     });
 
     expect(mocks.purchaseCosmeticPack).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: BUYER_ID, idempotencyKey: KEY, expectedAmount: 1234 })
+      expect.objectContaining({ userId: BUYER_ID, idempotencyKey: KEY })
     );
   });
 

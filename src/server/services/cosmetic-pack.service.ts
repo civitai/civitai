@@ -35,7 +35,6 @@ import {
   purchaseStateUnknown,
   refundCallOptions,
   refundClaimedCharge,
-  shopPurchaseClaimExists,
 } from '~/server/services/shop-purchase-charge';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -477,7 +476,6 @@ export const packOwnerResaleShares = async (
 export const purchaseCosmeticPack = async ({
   userId,
   idempotencyKey,
-  expectedAmount,
   shopItem,
   members,
   payWith = 'default',
@@ -487,8 +485,6 @@ export const purchaseCosmeticPack = async ({
   userId: number;
   /** The buyer's purchase intent. A retry under the same key is answered from its claim (shop-purchase-charge.ts). */
   idempotencyKey?: string;
-  /** The amount the buyer's button showed: the price after any discount. */
-  expectedAmount?: number;
   shopItem: {
     id: number;
     title: string;
@@ -573,22 +569,6 @@ export const purchaseCosmeticPack = async ({
   const transactionId = `cosmetic-pack-v2-${userId}-${shopItem.id}-${
     idempotencyKey ?? randomUUID()
   }`;
-  // The buyer confirmed a number on a button. A pack re-priced, or a discount
-  // that changed (a member bought or deleted since), must refuse rather than
-  // charge a number they never agreed to — and before a claim is written, so no
-  // claim ever holds an amount the buyer did not confirm. A key that already has
-  // a claim is answered from it instead (completed, or resumed at the amount it
-  // claimed): the purchase itself changes the discount, so today's price says
-  // nothing about it.
-  if (
-    expectedAmount !== undefined &&
-    expectedAmount !== amountDue &&
-    !(idempotencyKey && (await shopPurchaseClaimExists(transactionId)))
-  )
-    throw throwBadRequestError(
-      `The price changed to ${amountDue} Buzz. Check the new price and try again.`
-    );
-
   // A resumed claim charges what it claimed, not today's discount.
   const claim = await claimShopPurchase({
     shopItemId: shopItem.id,
@@ -598,7 +578,6 @@ export const purchaseCosmeticPack = async ({
   });
   const amountCharged = claim.amount;
   const chargeContext = { shopItemId: shopItem.id, userId, transactionId, amount: amountCharged };
-
   const transaction = await chargeForShopPurchase(
     () =>
       createMultiAccountBuzzTransaction(

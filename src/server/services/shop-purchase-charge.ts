@@ -43,6 +43,7 @@ export const PURCHASE_STATE_UNKNOWN_MESSAGE =
 /** The Axiom event name for a purchase that needs reconciling by hand. */
 export const PURCHASE_STATE_UNKNOWN_LOG_NAME = 'shop-purchase-state-unknown';
 
+
 export const SHOP_PURCHASE_CLAIM_STATUS = {
   pending: 'pending',
   refunding: 'refunding',
@@ -146,15 +147,6 @@ export async function claimShopPurchase(context: ShopChargeContext): Promise<Sho
         `retry of a ${existing.status} claim`
       );
   }
-}
-
-/** Whether a claim exists for this charge prefix, without writing one. */
-export async function shopPurchaseClaimExists(transactionId: string) {
-  const claim = await dbWrite.cosmeticShopPurchaseClaim.findUnique({
-    where: { transactionId },
-    select: { transactionId: true },
-  });
-  return !!claim;
 }
 
 // The buzz client retries every failure by default, including ones where the
