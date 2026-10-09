@@ -5,6 +5,7 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
   poi: 'Real person',
   minor: 'Minor',
   scam: 'Scam / phishing',
+  modelRules: 'Model rules',
 };
 
 export const promptKeyName = (key: PromptKey): string =>
@@ -25,6 +26,7 @@ export const describeBlankPrompts = (keys: readonly PromptKey[]): string =>
 
 export const ENTITY_TYPE_NAMES: Record<LabEntityType, string> = {
   Model: 'Model',
+  ModelRules: 'Model (rules)',
   Article: 'Article',
   Post: 'Post',
   Bounty: 'Bounty',
@@ -48,7 +50,10 @@ export const RATING_NAMES: Record<NsfwLevelName, string> = {
   xxx: 'XXX',
 };
 
-const FLAG_PHRASES: Record<Exclude<LabLabel, 'nsfw'>, { yes: string; no: string }> = {
+const FLAG_PHRASES: Record<
+  Exclude<LabLabel, 'nsfw' | 'modelRules'>,
+  { yes: string; no: string }
+> = {
   poi: { yes: 'Names a real person', no: 'No real person' },
   minor: { yes: 'Involves a minor', no: 'No minor' },
   scam: { yes: 'Scam', no: 'Not a scam' },
@@ -67,9 +72,30 @@ const couldNotJudge = (why: string): Verdict => ({
   tone: 'unknown',
 });
 
+type RuleMatch = { ruleId: number; reason?: string };
+
+function describeModelRules(raw: unknown): Verdict {
+  const matched = (raw as { matched?: unknown } | undefined)?.matched;
+  if (!Array.isArray(matched)) return couldNotJudge(`no ${LABEL_NAMES.modelRules} answer`);
+  const matches = matched.filter(
+    (m): m is RuleMatch => !!m && typeof m === 'object' && Number.isInteger((m as RuleMatch).ruleId)
+  );
+  if (!matches.length) return { headline: 'No rule matched', tone: 'clear' };
+  const reason = matches
+    .map((m) => (typeof m.reason === 'string' ? m.reason.trim() : ''))
+    .filter(Boolean)
+    .join('\n');
+  return {
+    headline: `Matched rule ${matches.map((m) => m.ruleId).join(', ')}`,
+    tone: 'flagged',
+    reason: reason || undefined,
+  };
+}
+
 export function describeVerdict(label: LabLabel, source: VerdictSource): Verdict {
   if (!source.ok) return couldNotJudge(source.error);
   if (!source.output) return couldNotJudge(source.parseError ?? 'no answer');
+  if (label === 'modelRules') return describeModelRules(source.output.modelRules);
   const v = source.output[label] as
     | { level?: unknown; detected?: unknown; names?: unknown; reason?: unknown }
     | undefined;
@@ -97,7 +123,7 @@ export function verdictsDiffer(label: LabLabel, a: VerdictSource, b: VerdictSour
   const verdictOf = (source: VerdictSource) => {
     const v = describeVerdict(label, source);
     if (v.tone === 'unknown') return null;
-    return label === 'nsfw' ? v.headline : v.tone;
+    return label === 'nsfw' || label === 'modelRules' ? v.headline : v.tone;
   };
   return verdictOf(a) !== verdictOf(b);
 }

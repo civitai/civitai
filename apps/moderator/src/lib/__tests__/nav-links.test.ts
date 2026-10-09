@@ -117,11 +117,15 @@ describe('the text-scan lab', () => {
   it('declares the text-scan lab permissions and pages', () => {
     const ids = PERMISSIONS.map((p) => p.id);
     expect(ids).toContain('textScan.prompt.publish');
-    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual(['textScan.prompt.publish']);
+    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual([
+      'textScan.prompt.publish',
+      'textScan.modelRules.edit',
+    ]);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
       ['/text-scan/check', 'Check'],
       ['/text-scan/prompts', 'Versions'],
+      ['/text-scan/model-rules', 'Model rules'],
     ]);
   });
 });

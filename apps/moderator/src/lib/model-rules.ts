@@ -1,0 +1,217 @@
+import { z } from 'zod';
+
+export type SemanticModelRule = {
+  type: 'semantic';
+  subject: string;
+  description: string;
+  aliases: string[];
+  legacyMatch?: unknown;
+  needsAttention?: boolean;
+  updatedById?: number;
+};
+
+export const DEFAULT_RULE_DESCRIPTION = 'Takedown request';
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+export const isSemanticDefinition = (definition: unknown): definition is SemanticModelRule =>
+  isRecord(definition) && definition.type === 'semantic';
+
+/** Comma- or newline-separated, trimmed, deduped case-insensitively, first spelling kept. */
+export function parseAliases(raw: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(/[,\n]/)) {
+    const alias = part.replace(/\s+/g, ' ').trim();
+    const key = alias.toLowerCase();
+    if (!alias || seen.has(key)) continue;
+    seen.add(key);
+    out.push(alias);
+  }
+  return out;
+}
+
+export const modelRuleFormSchema = z.object({
+  subject: z.string().trim().min(1, 'Subject is required.').max(200, 'Subject is too long.'),
+  description: z.string().trim().max(2000, 'Description is too long.').default(''),
+  aliases: z
+    .string()
+    .default('')
+    .transform(parseAliases)
+    .pipe(
+      z
+        .array(z.string().max(200, 'An alias is too long.'))
+        .max(100, 'At most 100 aliases per rule.')
+    ),
+  note: z.string().trim().max(2000, 'Note is too long.').default(''),
+});
+export type ModelRuleForm = z.infer<typeof modelRuleFormSchema>;
+
+const MAX_EXPANSIONS = 50;
+const METACHARACTERS = /[[\]{}()*+?^$\\|]/;
+
+class Unparseable extends Error {}
+
+/** Expands one regex body into the literal strings it matches. Throws `Unparseable` on anything else. */
+function expand(body: string): string[] {
+  let i = 0;
+
+  const cross = (left: string[], right: string[]) => {
+    if (left.length * right.length > MAX_EXPANSIONS) throw new Unparseable();
+    return left.flatMap((l) => right.map((r) => l + r));
+  };
+
+  function sequence(): string[] {
+    let result = [''];
+    while (i < body.length && body[i] !== '|' && body[i] !== ')') {
+      if (body.startsWith('(?:', i) || body[i] === '(') {
+        i += body.startsWith('(?:', i) ? 3 : 1;
+        const inner = alternation();
+        if (body[i] !== ')') throw new Unparseable();
+        i++;
+        result = cross(result, inner);
+      } else {
+        const ch = body[i++];
+        result = result.map((r) => r + ch);
+      }
+    }
+    return result;
+  }
+
+  function alternation(): string[] {
+    const all = [...sequence()];
+    while (body[i] === '|') {
+      i++;
+      all.push(...sequence());
+    }
+    if (all.length > MAX_EXPANSIONS) throw new Unparseable();
+    return all;
+  }
+
+  const result = alternation();
+  if (i < body.length) throw new Unparseable();
+  return result;
+}
+
+/** `/body/flags` or a bare string. */
+const matchBody = (match: string): string => {
+  if (match.startsWith('/')) {
+    const end = match.lastIndexOf('/');
+    if (end > 0) return match.slice(1, end);
+  }
+  return match;
+};
+
+function literalsOf(match: string): { body: string; literals: string[] | null } {
+  const body = matchBody(match);
+  const stripped = body
+    .replaceAll('(?:\\b|\\s)', '')
+    .replaceAll('\\b', '')
+    .replace(/\[\\s\\-_\][*+]/g, ' ');
+  try {
+    const literals = expand(stripped)
+      .map((s) => s.replace(/\s+/g, ' ').trim())
+      .filter((s) => s.length > 0);
+    if (!literals.length || literals.some((s) => METACHARACTERS.test(s)))
+      return { body, literals: null };
+    return { body, literals };
+  } catch (e) {
+    if (e instanceof Unparseable) return { body, literals: null };
+    throw e;
+  }
+}
+
+function collectMatches(definition: unknown, out: string[] = []): string[] {
+  if (!isRecord(definition)) return out;
+  if (definition.type === 'content' && typeof definition.match === 'string')
+    out.push(definition.match);
+  if (Array.isArray(definition.rules)) for (const r of definition.rules) collectMatches(r, out);
+  return out;
+}
+
+/**
+ * A regex Model rule as a semantic one, for the rule list and the LLM prompt. A pattern that does not
+ * reduce to plain text keeps its raw body as the subject and is flagged for a person to rewrite.
+ * A semantic definition comes back unchanged.
+ */
+export function convertLegacyModelRule(
+  definition: unknown,
+  reason: string | null | undefined
+): SemanticModelRule {
+  if (isSemanticDefinition(definition)) return definition;
+
+  const matches = collectMatches(definition);
+  const parsed = matches.map(literalsOf);
+  let needsAttention = parsed.some((p) => p.literals === null);
+
+  let subject: string;
+  const first = parsed[0];
+  if (first?.literals) subject = first.literals[0];
+  else {
+    subject = first?.body.trim() || JSON.stringify(definition).slice(0, 200);
+    needsAttention = true;
+  }
+
+  const seen = new Set([subject.toLowerCase()]);
+  const aliases: string[] = [];
+  parsed.forEach((p, index) => {
+    const literals = index === 0 && p.literals ? p.literals.slice(1) : p.literals ?? [];
+    for (const alias of literals) {
+      const key = alias.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      aliases.push(alias);
+    }
+  });
+
+  return {
+    type: 'semantic',
+    subject,
+    description: reason?.trim() || DEFAULT_RULE_DESCRIPTION,
+    aliases,
+    legacyMatch: definition,
+    ...(needsAttention ? { needsAttention: true } : {}),
+  };
+}
+
+/** Case-insensitive match over what a moderator searches by. */
+export function ruleMatchesText(
+  rule: { subject: string; description: string; aliases: readonly string[] },
+  query: string
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return [rule.subject, rule.description, ...rule.aliases].some((s) =>
+    s.toLowerCase().includes(needle)
+  );
+}
+
+export type RuleMatch = { ruleId: number; subject: string | null; reason: string | null };
+
+/** The matched rules of an `EntityModeration.result`, each with its subject from the snapshot. */
+export function parseRuleMatches(result: unknown): RuleMatch[] {
+  if (!isRecord(result)) return [];
+  const labels = result.labels;
+  const matched =
+    isRecord(labels) && isRecord(labels.modelRules) ? labels.modelRules.matched : null;
+  if (!Array.isArray(matched)) return [];
+  const snapshot = isRecord(result.modelRules) ? result.modelRules.snapshot : null;
+  const subjects = new Map<number, string>();
+  if (Array.isArray(snapshot))
+    for (const s of snapshot)
+      if (isRecord(s) && typeof s.id === 'number' && typeof s.subject === 'string')
+        subjects.set(s.id, s.subject);
+
+  return matched.flatMap((m) =>
+    isRecord(m) && typeof m.ruleId === 'number'
+      ? [
+          {
+            ruleId: m.ruleId,
+            subject: subjects.get(m.ruleId) ?? null,
+            reason: typeof m.reason === 'string' && m.reason.trim() ? m.reason.trim() : null,
+          },
+        ]
+      : []
+  );
+}
