@@ -364,7 +364,8 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  *
  *   available = innerHeight − 60 (header) − 57 (AppFooter 45 + its mt-3 12)
  *                           − AdhesiveAd (90 desktop / 50 mobile / 0 for paid)
- *                           − RewardsBonusBanner (~32 when active)
+ *                           − nav announcement slot (Buzz Bonus ~32 when active,
+ *                             plus 44 per event strip)
  *
  * 🔴 `innerHeight`, NOT the screen height — an earlier version of this comment
  * justified 400 with "a 768px laptop has 561px after chrome, so the floor never
@@ -768,7 +769,7 @@ export interface PageBlockHostProps {
    * 🔴 WHY THE DEFAULT IS WRONG FOR A FULL-PAGE APP, and why 'fill' exists.
    * `calc(100dvh - HEADER_HEIGHT_PX)` subtracts ONLY the site header. Inside the default
    * scrolling layout the actual space left to the page is
-   * `100dvh − header − subNav − its mb-3 − RewardsBonusBanner − AppFooter −
+   * `100dvh − header − subNav − its mb-3 − nav announcement strips − AppFooter −
    * AdhesiveAd`, every term of which is ≥ 0 and several of which are > 0 on a
    * normal render. So the host is UNCONDITIONALLY taller than its scroll
    * viewport: the layout's `ScrollArea` grows a vertical scrollbar it can only

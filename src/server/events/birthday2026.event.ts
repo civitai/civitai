@@ -74,6 +74,13 @@ export const birthday2026 = createEvent(name, {
       },
     ],
   },
+  banner: {
+    accent: 'Pick up a hat.',
+    text: 'Four colour teams, Nov 11 to Nov 25. Hat your best work and score for your team.',
+    cta: 'Join a team',
+    // The hero art's backdrop, so the strip runs on seamlessly to the left of the image.
+    background: '#1c1a30',
+  },
   // Copies: consumers must never be able to mutate the shared constants.
   startDate: new Date(BIRTHDAY_2026_STARTS_AT.getTime()),
   endDate: new Date(BIRTHDAY_2026_ENDS_AT.getTime()),

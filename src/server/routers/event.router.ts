@@ -26,6 +26,7 @@ import {
   getMyEventHats,
   getPlaceableEventContent,
 } from '~/server/services/event.service';
+import { getNavBanners } from '~/server/services/nav-banner.service';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -49,6 +50,11 @@ export const eventRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .query(({ ctx, input }) => getViewerEventAccess({ ...input, viewer: ctx.user })),
+  // The nav strips for events this viewer can play. Seeded by the settings bootstrap; see
+  // nav-banner.service.ts for why it never reads cookies.
+  getNavBanners: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .query(({ ctx }) => getNavBanners({ viewer: ctx.user })),
   getData: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)

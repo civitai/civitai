@@ -69,6 +69,11 @@ import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { TosMeta } from '~/server/services/content.service';
 import type { AnnouncementsSeed } from '~/providers/announcements-seed';
+import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import {
+  NAV_BANNERS_DISMISSED_COOKIE,
+  parseNavBannersDismissed,
+} from '~/shared/constants/nav-banner.constants';
 import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
 import {
   ANNOUNCEMENTS_DISMISSED_COOKIE,
@@ -122,6 +127,8 @@ type CustomAppProps = {
   tosMeta?: TosMeta;
   announcements?: AnnouncementsSeed;
   announcementsDismissed?: DismissedByType;
+  navBanners?: NavBanner[];
+  navBannersDismissed?: string[];
   following?: number[];
   seed: number;
   settings: UserContentSettings;
@@ -155,6 +162,8 @@ function MyApp(props: CustomAppProps) {
       tosMeta,
       announcements,
       announcementsDismissed,
+      navBanners,
+      navBannersDismissed,
       following,
       seed = Date.now(),
       canIndex,
@@ -219,6 +228,8 @@ function MyApp(props: CustomAppProps) {
       tosMeta={tosMeta}
       announcements={announcements}
       announcementsDismissed={announcementsDismissed}
+      navBanners={navBanners}
+      navBannersDismissed={navBannersDismissed}
       following={following}
       liveNow={liveNow}
       chatSettings={chatSettings}
@@ -433,6 +444,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ? (cookies[ANNOUNCEMENTS_DISMISSED_COOKIE] as string)
       : undefined
   );
+  // Same for the nav announcement slot's dismissed strips.
+  const navBannersDismissed = parseNavBannersDismissed(
+    typeof cookies[NAV_BANNERS_DISMISSED_COOKIE] === 'string'
+      ? (cookies[NAV_BANNERS_DISMISSED_COOKIE] as string)
+      : undefined
+  );
 
   // Match BOTH session cookie families: the new hub `civ-token` / `__Secure-civ-token` AND the legacy
   // next-auth `civitai-token` / `__Secure-civitai-token` (still honored during the cutover). Note the suffixes
@@ -484,6 +501,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // not a safe substitute.
     browsingSettingsAddons?: BrowsingSettingsAddon[];
     liveNow?: boolean;
+    navBanners?: NavBanner[];
     session: Session | null;
   };
   let settingsBootstrap: SettingsBootstrap;
@@ -534,6 +552,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       following: undefined,
       browsingSettingsAddons: undefined,
       liveNow: undefined,
+      navBanners: undefined,
       session: null,
     };
   }
@@ -549,6 +568,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // degraded read into `false`; this default covers the bootstrap fetch failing
     // outright. The client query self-heals on its 5-minute refetch.
     liveNow = false,
+    navBanners,
   } = settingsBootstrap;
   const { getFeatureFlagsAsync, computeUserFeatureFlagsOverlay, getFliptGatedEligibility } =
     await import('~/server/services/feature-flags.service');
@@ -652,6 +672,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       tosMeta,
       announcements,
       announcementsDismissed,
+      navBanners,
+      navBannersDismissed,
       following,
       seed: Date.now(),
       hasAuthCookie,

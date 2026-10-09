@@ -265,9 +265,23 @@ export type EventPageCopy = {
   faq?: { question: string; answer: string }[];
 };
 
+// The strip this event shows in the nav announcement slot while the viewer can play it (see
+// nav-banner.service.ts). Title and image default to the page's headline and hero.
+export type EventBannerCopy = {
+  title?: string;
+  accent?: string;
+  text?: string;
+  cta?: string;
+  image?: string;
+  background?: string;
+  dismissible?: boolean;
+  priority?: number;
+};
+
 type HolidayEventDefinition = {
   title: string;
   page?: EventPageCopy;
+  banner?: EventBannerCopy;
   startDate: Date;
   endDate: Date;
   teams: readonly string[];

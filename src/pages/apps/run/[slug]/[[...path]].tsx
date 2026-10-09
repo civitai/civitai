@@ -846,8 +846,8 @@ function AppPage(props: PageProps) {
  * over someone else's UI. The scrollbar fix does not depend on this, so
  * restoring the tabs is a safe one-word reversal.
  *
- * Note `RewardsBonusBanner` still renders regardless (`AppLayout` shows it in
- * the `{!subNav && …}` branch), so it is NOT removed by this.
+ * Note the nav announcement slot (Buzz Bonus, event strips) still renders regardless
+ * (`AppLayout` shows it in the `{!subNav && …}` branch), so it is NOT removed by this.
  */
 export default Page(AppPage, {
   scrollable: false,
