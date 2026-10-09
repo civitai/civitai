@@ -14,15 +14,16 @@ import type * as SignalsWrapper from '~/server/signals/wrapper';
 // node_modules dependency Vitest externalizes) stays ONE instance, as in production. The
 // PRECONDITION test asserts that sharing by object identity, so a harness change that gave
 // each copy its own registry fails loudly instead of silently changing what this models.
-// Mirrors src/server/meilisearch/__tests__/client-gauges.dual-graph.test.ts.
+// Same approach as the Meili wrapper's dual-graph test in civitai/civitai#5578.
 
 // The REAL registration helpers: `~/server/prom/client` re-exports them from
 // @civitai/telemetry/client, and they are what wrapper.ts calls. A stub would hide the
 // "already registered" path this suite exists to exercise.
 vi.mock('~/server/prom/client', async () => await vi.importActual('@civitai/telemetry/client'));
 
-vi.mock('~/env/server', () => ({
-  env: {
+// Mutable so a test can narrow a bound; restored in beforeEach.
+const ENV = vi.hoisted(() => ({
+  base: {
     SIGNALS_CALL_TIMEOUT_MS: 1000,
     // Small enough that 3 calls give active=2 and queued=1 — values distinct from each other
     // and from 0, so a gauge reporting a constant cannot satisfy them.
@@ -33,8 +34,10 @@ vi.mock('~/env/server', () => ({
     SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
     SIGNALS_CIRCUIT_WINDOW_SECONDS: 60,
     SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 30,
-  },
+  } as Record<string, number>,
+  live: {} as Record<string, number>,
 }));
+vi.mock('~/env/server', () => ({ env: ENV.live }));
 
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 
@@ -101,6 +104,8 @@ function clearSignalsGlobals() {
 }
 
 beforeEach(async () => {
+  for (const k of Object.keys(ENV.live)) delete ENV.live[k];
+  Object.assign(ENV.live, ENV.base);
   vi.useFakeTimers();
   clearSignalsGlobals();
   (await loadPromClient()).register.clear();
@@ -183,6 +188,24 @@ describe('signals wrapper with two module copies (the production load shape)', (
       expect(await gaugeValue('signals_call_queue_depth', lane)).toBe(0);
     }
   );
+
+  it('both copies share ONE queue bound: a full lane queue sheds calls made through the other copy', async () => {
+    ENV.live.SIGNALS_TOKEN_CALL_MAX_QUEUE = 1;
+    const { apiCopy, ssrCopy } = await loadTwoCopies();
+
+    // 2 running + 1 queued through the first copy fills the token lane (2 + 1).
+    const api = holdCalls(apiCopy, 3, 'token');
+    await vi.advanceTimersByTimeAsync(0);
+
+    // A per-copy bound would admit this; the per-process one sheds it at 0ms.
+    // Observed without awaiting, so a regression fails here instead of hanging.
+    let error: unknown;
+    ssrCopy.withSignals(async () => 'x', { lane: 'token' }).catch((e: unknown) => (error = e));
+    await vi.advanceTimersByTimeAsync(0);
+    expect((error as Error | undefined)?.message).toMatch(/queue full/);
+
+    await drain([api]);
+  });
 
   it('signals_circuit_state reports OPEN (2) after the FIRST copy trips the circuit', async () => {
     const { apiCopy } = await loadTwoCopies();

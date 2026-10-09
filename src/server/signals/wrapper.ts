@@ -186,7 +186,10 @@ type Lane = {
 // scripts/server-graph-watchlist.mjs so the build fails if an emitted copy
 // loses this pin. Vitest loads each module once and cannot see any of this
 // unless forced to (src/server/signals/__tests__/wrapper-gauges.dual-graph.test.ts).
-// Mirrors the Meili wrapper's `__civitaiMeiliWrapperState`.
+// Same pattern as `__civitaiBulkheadState` (src/server/utils/request-bulkhead.ts)
+// and the Meili wrapper fix in civitai/civitai#5578. Dev caveat: the state also
+// survives a dev-server module reload, so a changed lane default or env value
+// takes effect only after a restart (production env is fixed per process).
 declare global {
   // eslint-disable-next-line no-var
   var __civitaiSignalsWrapperState:
