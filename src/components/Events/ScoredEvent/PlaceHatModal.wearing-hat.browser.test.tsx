@@ -72,6 +72,7 @@ describe('PlaceHatModal: the tile already wearing the hat', () => {
     await userEvent.click(hat);
 
     await expect.poll(bursts).toBe(1);
+    // The hat stops its click either way; the tile not being pickable is the next test's.
     expect(equip).not.toHaveBeenCalled();
   });
 

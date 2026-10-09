@@ -87,7 +87,9 @@ export default function PlaceHatModal({
                   onClick={current ? undefined : () => place(c.entityType, c.entityId)}
                   className={clsx(
                     'flex flex-col gap-1 rounded-md p-1',
-                    !current && 'hover:bg-gray-1 disabled:opacity-50 dark:hover:bg-dark-5'
+                    current
+                      ? 'cursor-default'
+                      : 'hover:bg-gray-1 disabled:opacity-50 dark:hover:bg-dark-5'
                   )}
                 >
                   <EventContentThumb
