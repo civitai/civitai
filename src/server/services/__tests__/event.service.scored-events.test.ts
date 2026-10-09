@@ -530,6 +530,19 @@ describe('getWornEventHat', () => {
     ]);
   });
 
+  it('is null for a decoration whose data is not an event hat', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ ...row, data: {} }]);
+    expect(await read()).toBeNull();
+    expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
+  });
+
+  it('keeps the whole name of a hat with no team', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { ...row, name: 'Party Cap - Blue', data: { type: 'hat', event: 'birthday2026', url: 'u' } },
+    ]);
+    expect(await read()).toMatchObject({ name: 'Party Cap - Blue', team: null });
+  });
+
   it('hides a deleted wearer and reads an unscored hat as zero', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
     (await userBasic()).mockResolvedValueOnce({
@@ -552,10 +565,13 @@ describe('getWornEventHat', () => {
         `AND CASE uc."equippedToType" ` +
         `WHEN 'Image' THEN EXISTS ( SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId" ` +
         `WHERE i.id = uc."equippedToId" AND p."publishedAt" IS NOT NULL ` +
+        `AND p.availability <> 'Private' AND NOT p."tosViolation" ` +
         `AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation" ) ` +
-        `WHEN 'Model' THEN EXISTS ( SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published' ) ` +
-        `WHEN 'Article' THEN EXISTS ( SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published' ) ` +
-        `ELSE false END LIMIT 1`
+        `WHEN 'Model' THEN EXISTS ( SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published' ` +
+        `AND m.availability <> 'Private' AND NOT m."tosViolation" ) ` +
+        `WHEN 'Article' THEN EXISTS ( SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published' ` +
+        `AND a.availability <> 'Private' AND NOT a."tosViolation" ) ` +
+        `ELSE false END ORDER BY uc."equippedAt" DESC NULLS LAST LIMIT 1`
     );
     expect(values).toEqual(['Image', 5, 'birthday2026']);
   });

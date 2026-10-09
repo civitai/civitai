@@ -18,17 +18,26 @@ const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type WornHatQuery = { data: unknown; isLoading: boolean; isError: boolean };
-const { wornHat, viewer } = vi.hoisted(() => ({
+const { wornHat, viewer, myHats, dialogs, notify } = vi.hoisted(() => ({
   wornHat: {
     result: { data: undefined, isLoading: false, isError: false } as WornHatQuery,
     useQuery: vi.fn(),
   },
   viewer: { current: undefined as { id: number } | undefined },
+  // Stable spies: the proxy's own useUtils mints a fresh one per read.
+  myHats: { fetch: vi.fn() },
+  dialogs: { trigger: vi.fn() },
+  notify: vi.fn(),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: makeTrpcProxy({ 'event.getWornHat': { useQuery: wornHat.useQuery } }),
+  trpc: makeTrpcProxy(
+    { 'event.getWornHat': { useQuery: wornHat.useQuery } },
+    { useUtils: () => ({ event: { getMyHats: myHats } }) }
+  ),
 }));
+vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: dialogs }));
+vi.mock('~/utils/notifications', () => ({ showErrorNotification: notify }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => null,
@@ -64,6 +73,9 @@ beforeEach(() => {
   wornHat.result = { data: WORN, isLoading: false, isError: false };
   viewer.current = undefined;
   outerClick.mockReset();
+  myHats.fetch.mockReset();
+  dialogs.trigger.mockReset();
+  notify.mockReset();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -124,7 +136,7 @@ describe('a hatted feed card', () => {
     expect(opts).toEqual({ enabled: true });
 
     const dropdown = popover()!;
-    expect(dropdown.textContent).toContain('Civitai Birthday · Team hat');
+    expect(dropdown.textContent).toContain("Civitai's 4th Birthday · Team hat");
     expect(dropdown.textContent).toContain('Party Cap');
     expect(dropdown.textContent).toContain('Worn by');
     expect(dropdown.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
@@ -167,6 +179,52 @@ describe('a hatted feed card', () => {
     expect(popover()!.textContent).not.toContain('Worn by');
   });
 
+  it('keeps the card link from following the click', () => {
+    renderCard();
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    act(() => {
+      hatButton().dispatchEvent(click);
+    });
+    expect(click.defaultPrevented).toBe(true);
+  });
+
+  it('moves the viewer’s own hat with the place-a-hat picker', async () => {
+    viewer.current = { id: 9 };
+    const here = { cosmeticId: 31, claimKey: 'c', placedOn: { entityType: 'Image', entityId: 5 } };
+    const elsewhere = {
+      cosmeticId: 31,
+      claimKey: 'd',
+      placedOn: { entityType: 'Image', entityId: 6 },
+    };
+    myHats.fetch.mockResolvedValue([elsewhere, here]);
+    renderCard();
+    clickHat();
+    await act(async () => {
+      [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move it')!.click();
+    });
+    expect(myHats.fetch).toHaveBeenCalledWith({ event: 'birthday2026' });
+    expect(dialogs.trigger).toHaveBeenCalledTimes(1);
+    expect(dialogs.trigger.mock.calls[0][0].props).toEqual({
+      event: 'birthday2026',
+      hat: here,
+      myHats: [elsewhere, here],
+    });
+  });
+
+  it('says so instead when the viewer’s hat is no longer here', async () => {
+    viewer.current = { id: 9 };
+    myHats.fetch.mockResolvedValue([
+      { cosmeticId: 31, claimKey: 'd', placedOn: { entityType: 'Image', entityId: 6 } },
+    ]);
+    renderCard();
+    clickHat();
+    await act(async () => {
+      [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move it')!.click();
+    });
+    expect(dialogs.trigger).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+
   it('still links to the event when the stats fail', () => {
     wornHat.result = { data: undefined, isLoading: false, isError: true };
     renderCard();
@@ -175,11 +233,11 @@ describe('a hatted feed card', () => {
     expect(popover()!.textContent).toContain('See the birthday event');
   });
 
-  it('says the hat has gone when the card outlived it', () => {
+  it('says there is nothing to show when the hat is not there now', () => {
     wornHat.result = { data: null, isLoading: false, isError: false };
     renderCard();
     clickHat();
-    expect(popover()!.textContent).toContain('This hat has moved on.');
+    expect(popover()!.textContent).toContain('No stats to show here.');
     expect(popover()!.textContent).not.toContain('Stats unavailable');
     expect(popover()!.textContent).toContain('See the birthday event');
   });

@@ -75,9 +75,9 @@ export function WornHatPopover({
               Stats unavailable
             </Text>
           ) : !data ? (
-            // The card was drawn before its hat moved or came off.
+            // The card was drawn before its hat moved, or the content is not public.
             <Text size="sm" c="dimmed">
-              This hat has moved on.
+              No stats to show here.
             </Text>
           ) : (
             <WornHatDetails event={event} hat={data} wornOn={wornOn} />

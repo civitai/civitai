@@ -581,16 +581,20 @@ export async function getWornEventHat({
           WHEN 'Image' THEN EXISTS (
             SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId"
             WHERE i.id = uc."equippedToId" AND p."publishedAt" IS NOT NULL
+              AND p.availability <> 'Private' AND NOT p."tosViolation"
               AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation"
           )
           WHEN 'Model' THEN EXISTS (
             SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published'
+              AND m.availability <> 'Private' AND NOT m."tosViolation"
           )
           WHEN 'Article' THEN EXISTS (
             SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published'
+              AND a.availability <> 'Private' AND NOT a."tosViolation"
           )
           ELSE false
         END
+      ORDER BY uc."equippedAt" DESC NULLS LAST
       LIMIT 1
     `;
     if (!row || !isEventDecorationData(row.data)) return null;
