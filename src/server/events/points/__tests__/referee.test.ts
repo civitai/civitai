@@ -3,8 +3,11 @@ import type { EventScoring } from '~/server/events/base.event';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { changedHats, refereeTotals, refereeWindow } = await import(
+const { changedHats, refereeQueryParams, refereeTotals, refereeWindow } = await import(
   '~/server/events/points/referee'
+);
+const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
+  '~/server/events/points/referee.sql'
 );
 const { diffHats } = await import('~/server/events/points/sync');
 const { liveBucketRange } = await import('~/server/events/points/read');
@@ -37,6 +40,72 @@ describe('refereeWindow', () => {
     const { start, cut } = refereeWindow(EVENT, 'preview', new Date('2026-11-01T03:00:00.000Z'));
     expect(start.toISOString()).toBe('2026-10-09T00:00:00.000Z');
     expect(cut.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+  });
+
+  it('never settles past the end of the live season either', () => {
+    const { cut, recomputeFrom } = refereeWindow(
+      EVENT,
+      'live',
+      new Date('2026-12-01T12:07:00.000Z')
+    );
+    expect(cut.toISOString()).toBe('2026-12-01T00:00:00.000Z');
+    expect(recomputeFrom.toISOString()).toBe('2026-11-30T00:00:00.000Z');
+  });
+
+  it('recomputes from the day before the cut on an hourly run', () => {
+    const { recomputeFrom } = refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:30.000Z'));
+    expect(recomputeFrom.toISOString()).toBe('2026-11-04T00:00:00.000Z');
+  });
+
+  it('recomputes the whole season on the 03:00 UTC run, and only then', () => {
+    const at = (time: string) => refereeWindow(EVENT, 'live', new Date(time)).recomputeFrom;
+    expect(at('2026-11-05T03:07:00.000Z').toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(at('2026-11-05T02:59:00.000Z').toISOString()).toBe('2026-11-04T00:00:00.000Z');
+    expect(at('2026-11-05T04:00:00.000Z').toISOString()).toBe('2026-11-04T00:00:00.000Z');
+  });
+
+  it('never recomputes from before the season start', () => {
+    const { recomputeFrom } = refereeWindow(EVENT, 'live', new Date('2026-11-01T12:07:00.000Z'));
+    expect(recomputeFrom.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+  });
+});
+
+// The queries' placeholders are only checked by a real ClickHouse (scripts/check-event-points-sql.mjs),
+// so a param renamed on one side would otherwise surface only in production.
+describe('referee query params', () => {
+  const placeholders = (sql: string) =>
+    new Map([...sql.matchAll(/\{(\w+):([^}]+)\}/g)].map(([, name, type]) => [name, type]));
+  const params = refereeQueryParams(
+    {
+      ...EVENT,
+      scoring: { ...scoring, types: { view: { weight: 1, once: 'day', entities: ['Image'] } } },
+    },
+    refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:30.000Z')),
+    undefined,
+    { actors: [1], owners: [2] }
+  );
+
+  it('supplies every placeholder in both queries, and nothing neither uses', () => {
+    const used = new Map([
+      ...placeholders(eventPointsRefereeSql),
+      ...placeholders(eventPointsRefereeUsersSql),
+    ]);
+    expect(used.size).toBeGreaterThan(5);
+    for (const sql of [eventPointsRefereeSql, eventPointsRefereeUsersSql])
+      for (const name of placeholders(sql).keys()) expect(Object.keys(params)).toContain(name);
+    expect(Object.keys(params).sort()).toEqual([...used.keys()].sort());
+  });
+
+  it('passes an array for every Array placeholder and a scalar otherwise', () => {
+    const used = new Map([
+      ...placeholders(eventPointsRefereeSql),
+      ...placeholders(eventPointsRefereeUsersSql),
+    ]);
+    for (const [name, type] of used)
+      expect([name, Array.isArray(params[name as keyof typeof params])]).toEqual([
+        name,
+        type.startsWith('Array('),
+      ]);
   });
 });
 

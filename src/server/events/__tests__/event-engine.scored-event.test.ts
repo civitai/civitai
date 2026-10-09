@@ -429,6 +429,17 @@ describe('scoring behind the flag', () => {
     expect(standingsFrom()).toEqual([BIRTHDAY_2026_PREVIEW_FROM]);
   });
 
+  // Standings are rebuilt right after the referee writes the snapshot: a replica may not have it yet.
+  it('syncs hats before settling, then rebuilds standings from the primary', async () => {
+    await eventEngine.updateLeaderboard(DURING);
+    const [synced] = mockSync.syncEventHats.mock.invocationCallOrder;
+    const [refereed] = mockReferee.runEventPointsReferee.mock.invocationCallOrder;
+    const [refreshed] = mockScoring.refreshStandings.mock.invocationCallOrder;
+    expect(synced).toBeLessThan(refereed);
+    expect(refereed).toBeLessThan(refreshed);
+    expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
+  });
+
   it('scores everyone from the start, base on or off', async () => {
     for (const isPublic of [true, false]) {
       testerFlag.reset({ public: isPublic });
