@@ -176,7 +176,6 @@ describe('grant-creator-milestones', () => {
       'compete:wins-5',
       'compete:wins-10',
       'compete:wins-25',
-      'compete:wins-50',
       'compete:wins-100',
     ]);
     mocks.clickhouseQuery.mockResolvedValue({ json: async () => [] });
