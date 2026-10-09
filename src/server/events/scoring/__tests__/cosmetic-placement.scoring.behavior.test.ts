@@ -259,6 +259,13 @@ describe('standings', () => {
     expect(snapshot.teams.find((t) => t.team === 'Yellow')?.score).toBe(25);
   });
 
+  it('rebuilds a cold snapshot on a request from the replica, not the primary', async () => {
+    dbMock.dbWrite.$queryRaw.mockClear();
+    const { teams } = await getEventStandings(event);
+    expect(teams[0]).toEqual({ team: 'Blue', score: 25, rank: 1 });
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
   it('serves standings and history from the cached snapshot without querying', async () => {
     const cached = {
       teams: [{ team: 'Green', score: 7, rank: 1 }],

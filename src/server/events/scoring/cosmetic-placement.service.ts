@@ -188,7 +188,7 @@ export async function runCosmeticPlacementScoring(event: ScoredEvent, now = new 
   const scored: number[] = [];
   for (const window of days) scored.push(await scoreDay(event, window));
 
-  await refreshStandings(event);
+  await refreshStandings(event, dbWrite);
   logToAxiom({ type: 'info', name: 'event-scoring', event: event.name, synced, scored }).catch(
     () => undefined
   );
@@ -197,19 +197,22 @@ export async function runCosmeticPlacementScoring(event: ScoredEvent, now = new 
 
 // Banned, deleted and leaderboard-excluded users drop out of the standings (team totals, history and
 // rankings). Their rows stay in the table, so a reversal restores them; per-cosmetic reads below are
-// not filtered. Reads the primary: the hourly job builds this right after writing the day, and a
-// lagging replica would freeze stale numbers into the snapshot for an hour.
-async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
+// not filtered. The hourly job passes the primary: it builds this right after writing the day, and
+// a lagging replica would freeze stale numbers into the snapshot for an hour.
+async function computeStandings(
+  event: Pick<ScoredEvent, 'name' | 'teams'>,
+  db: typeof dbWrite | typeof dbRead
+) {
   // The few hidden users, found once over the event's distinct users, so the three aggregates below
   // need no per-row join to "User".
-  const hidden = await dbWrite.$queryRaw<{ id: number }[]>`
+  const hidden = await db.$queryRaw<{ id: number }[]>`
     SELECT u.id FROM "User" u
     WHERE u.id IN (SELECT DISTINCT "userId" FROM "EventCosmeticScoreDaily" WHERE event = ${event.name})
       AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR u."excludeFromLeaderboards")
   `;
   const hiddenIds = hidden.map((u) => u.id);
 
-  const teamDays = await dbWrite.$queryRaw<{ team: string; day: Date; points: number }[]>`
+  const teamDays = await db.$queryRaw<{ team: string; day: Date; points: number }[]>`
     SELECT team, day, sum(points)::int AS points
     FROM "EventCosmeticScoreDaily"
     WHERE event = ${event.name} AND "userId" <> ALL(${hiddenIds}::int[])
@@ -234,7 +237,7 @@ async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
   teams.sort((a, b) => b.score - a.score);
   teams.forEach((t, i) => (t.rank = i + 1));
 
-  const topCosmetics = await dbWrite.$queryRaw<CosmeticScore[]>`
+  const topCosmetics = await db.$queryRaw<CosmeticScore[]>`
     SELECT "userId", "cosmeticId", "claimKey", team,
       sum(points)::int AS points, sum(impressions)::int AS impressions,
       sum("anonImpressions")::int AS "anonImpressions", sum(reactions)::int AS reactions
@@ -245,7 +248,7 @@ async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
     LIMIT ${TOP_COSMETICS}
   `;
 
-  const userRows = await dbWrite.$queryRaw<{ team: string; userId: number; points: number }[]>`
+  const userRows = await db.$queryRaw<{ team: string; userId: number; points: number }[]>`
     SELECT team, "userId", points FROM (
       SELECT team, "userId", sum(points)::int AS points,
         row_number() OVER (PARTITION BY team ORDER BY sum(points) DESC) AS rn
@@ -262,8 +265,11 @@ async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
   return { teams, history, topCosmetics, topUsers, updatedAt: new Date() } satisfies EventStandings;
 }
 
-async function refreshStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
-  const standings = await computeStandings(event);
+async function refreshStandings(
+  event: Pick<ScoredEvent, 'name' | 'teams'>,
+  db: typeof dbWrite | typeof dbRead
+) {
+  const standings = await computeStandings(event, db);
   await redis.packed.set(standingsKey(event.name), standings, { EX: 2 * 60 * 60 });
   return standings;
 }
@@ -272,7 +278,8 @@ async function refreshStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
 export async function getEventStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
   const cached = await redis.packed.get<EventStandings>(standingsKey(event.name));
   if (cached) return cached;
-  return refreshStandings(event);
+  // Request path: a cold snapshot is rebuilt from the replica, never the primary.
+  return refreshStandings(event, dbRead);
 }
 
 export async function getTeamScoreHistory(event: Pick<ScoredEvent, 'name' | 'teams'>) {

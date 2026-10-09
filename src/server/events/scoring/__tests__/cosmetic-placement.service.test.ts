@@ -53,3 +53,12 @@ describe('scorePoints', () => {
     ).toBe(30);
   });
 });
+
+describe('birthday2026 finalizeAfterMs', () => {
+  it('is late enough that nothing is still being rescored when the winner is decided', async () => {
+    const { birthday2026 } = await import('~/server/events/birthday2026.event');
+    const finalize = birthday2026.scoring!.finalizeAfterMs;
+    const decidedAt = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize);
+    expect(daysToScore(event, decidedAt)).toEqual([]);
+  });
+});

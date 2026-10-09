@@ -284,17 +284,16 @@ describe('event_cosmetic_placement_log trigger', () => {
     expect(sql.match(/CREATE (OR REPLACE )?TRIGGER/g)).toHaveLength(3);
   });
 
-  it('lets a frame and a hat share an entity, logging only the hat', async () => {
-    await grant(OWNER, FRAME);
-    await grant(OWNER, HAT);
-    await equip(OWNER, FRAME, 'claimed', 'Image', 10);
-    await equip(OWNER, HAT, 'claimed', 'Image', 10);
-
-    const equipped = await db.pg.query<{ cosmeticId: number }>(
-      `SELECT "cosmeticId" FROM "UserCosmetic" WHERE "equippedToId" = 10 ORDER BY "cosmeticId"`
+  // The writer treats any cosmetic with data.event as an event decoration (isEventDecorationData),
+  // but only a cosmetic with BOTH event and team belongs to a team, so only that one is scored.
+  // Deliberate: an event decoration without a team is worn but never logged.
+  it('does not log an event decoration that has no team', async () => {
+    await db.pg.exec(
+      `INSERT INTO "Cosmetic" VALUES (9, 'ContentDecoration', '{"type":"hat","event":"birthday2026"}')`
     );
-    expect(equipped.rows.map((r) => r.cosmeticId)).toEqual([HAT, FRAME]);
-    expect((await placements()).map((r) => [r.cosmeticId, r.open])).toEqual([[HAT, true]]);
+    await grant(OWNER, 9);
+    await equip(OWNER, 9, 'claimed', 'Image', 10);
+    expect(await placements()).toEqual([]);
   });
 
   it('leaves no lock_timeout behind on the session that applied the migration', async () => {
