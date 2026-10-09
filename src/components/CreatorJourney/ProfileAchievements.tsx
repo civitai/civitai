@@ -3,7 +3,7 @@ import { Anchor, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
-import { scoreTierSlugOf, TierShareButton } from '~/components/CreatorJourney/TierShareButton';
+import { TierShareButton } from '~/components/CreatorJourney/TierShareButton';
 import {
   accentVar,
   DEFAULT_ACCENT,
@@ -13,7 +13,10 @@ import {
 import { NextLink } from '~/components/NextLink/NextLink';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import {
+  CREATOR_JOURNEY_HREF,
+  scoreTierSlugFromKey,
+} from '~/shared/constants/creator-journey.constants';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -47,7 +50,7 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
   const isOwner = currentUser?.id === userId;
   const ownScore = isOwner ? creatorScoreFromSession(currentUser) : undefined;
   const accent = tierAccents[tier.key] ?? DEFAULT_ACCENT;
-  const slug = scoreTierSlugOf(tier.key);
+  const slug = scoreTierSlugFromKey(tier.key);
   const { data: shareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
     { userId, slug: slug ?? 'spark' },
     { enabled: isOwner && !!slug }

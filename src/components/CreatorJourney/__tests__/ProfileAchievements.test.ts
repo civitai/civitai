@@ -25,7 +25,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'creatorJourney.isMilestoneShareable': {
       useQuery: (input: unknown, { enabled }: { enabled: boolean }) => {
         mocks.shareQueries.push({ input, enabled });
-        return { data: enabled ? mocks.shareable : undefined };
+        // Regardless of `enabled`: a disabled query still serves a cached answer, and the profile
+        // page prefetches this one for `?milestone=` links.
+        return { data: mocks.shareable };
       },
     },
   }),

@@ -10,7 +10,7 @@ import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievem
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
 import { LinkedText, rewardLinks, unlockLinksFor } from '~/components/CreatorJourney/journey-links';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
-import { scoreTierSlugOf, TierShareButton } from '~/components/CreatorJourney/TierShareButton';
+import { TierShareButton } from '~/components/CreatorJourney/TierShareButton';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
@@ -20,7 +20,10 @@ import {
   TierBadge,
   tierAccents,
 } from '~/components/CreatorJourney/tier-badge';
-import { CREATOR_SHOWCASE_HREF } from '~/shared/constants/creator-journey.constants';
+import {
+  CREATOR_SHOWCASE_HREF,
+  scoreTierSlugFromKey,
+} from '~/shared/constants/creator-journey.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   CreatorScoreKinds,
@@ -187,7 +190,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
         {shelf.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {shelf.map((badge) => {
-              const slug = scoreTierSlugOf(badge.key);
+              const slug = scoreTierSlugFromKey(badge.key);
               return (
                 <EarnedBadgeCard
                   key={badge.key}

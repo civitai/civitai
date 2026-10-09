@@ -304,18 +304,22 @@ describe('journey page share buttons', () => {
   it('offers exactly the tiers whose card renders', async () => {
     await addUser(CREATOR);
     const hidden = await attachBadge('star');
-    await grant(CREATOR, 'kindle', 'later');
-    await grant(CREATOR, 'nova', 'silent');
-    await grant(CREATOR, 'star');
+    // Out of ladder order, and both ends of it, so neither order nor an end can be lost unseen.
+    await grant(CREATOR, 'legend');
     await grant(CREATOR, 'supernova');
+    await grant(CREATOR, 'star');
+    await grant(CREATOR, 'nova', 'silent');
+    await grant(CREATOR, 'kindle', 'later');
+    await grant(CREATOR, 'spark');
     await setPrivacy(CREATOR, { hiddenBadgeIds: [hidden] });
 
-    expect(await tierSlugs()).toEqual(['kindle', 'supernova']);
+    const expected = ['spark', 'kindle', 'supernova', 'legend'];
+    expect(await tierSlugs()).toEqual(expected);
     const perTier = [];
     for (const { slug } of SCORE_TIERS)
       if (await isMilestoneShareable({ userId: CREATOR, slug }, { pg, now: NOW }))
         perTier.push(slug);
-    expect(perTier).toEqual(['kindle', 'supernova']);
+    expect(perTier).toEqual(expected);
   });
 
   it('offers nothing when the owner’s flag is off or the owner is muted', async () => {
