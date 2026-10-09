@@ -35,7 +35,7 @@ sources are already in `default.buzzTransactions`, already keyed by the creator.
 |---|---|
 | Tip | `type = 'tip'` |
 | Generation compensation | `type = 'compensation'` (minus generation tips, below) |
-| Generation tip | `type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%'` (payout dates from 2026-10-11) |
+| Generation tip | `type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%'` (payout dates from 2026-10-13) |
 | License fee | `type = 'licenseFee'` — ⚠️ **currently `'27'`, see the blocker below** |
 | Access sale (early access) | `type = 'purchase' AND externalTransactionId LIKE 'early-access-%'` |
 | Cosmetic sale | `type = 'sell'` |
@@ -185,7 +185,7 @@ exists.
   type/flag is needed and no schema change is required.** A distinct type would be *cleaner*, not *blocking*.
 - **`resourceCompensations` carries a `tip` source since 2026-10-08.** Before that the only `source` values were
   `compensation`, `compensation_recovered_20260507` and `licenseFee`. `deliver-creator-compensation` pays them inside its
-  `compensation` transaction until 2026-10-10, and from payout date 2026-10-11 as their own `compensation`
+  `compensation` transaction until 2026-10-12, and from payout date 2026-10-13 as their own `compensation`
   transaction keyed `generation-tip-` (`GENERATION_TIP_TRANSACTION_START`), which `/earnings` shows as Generation tips.
 
 ## Precision — resolved, and the earlier "must NOT FLOOR" note was wrong

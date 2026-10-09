@@ -99,7 +99,7 @@ export type PayoutTransaction = {
  * combined transaction exactly: a retried run of a day already paid that way must only resend keys
  * that already exist, because a new tip key would pay those tips a second time.
  */
-export const GENERATION_TIP_TRANSACTION_START = new Date('2026-10-11T00:00:00Z');
+export const GENERATION_TIP_TRANSACTION_START = new Date('2026-10-13T00:00:00Z');
 
 export function buildPayoutTransactions(
   date: Date,
