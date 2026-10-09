@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   CIVITAI_IMAGE_HOSTS,
+  classifySaveBytes,
   enforceImageExtension,
+  forceSaveBytesExtension,
   isAllowedSaveImageUrl,
+  prepareSaveBytes,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
+  SAVE_BYTES_MAX_BYTES,
 } from './saveImageDownload';
 
 const CDN = 'https://image.civitai.com';
@@ -270,5 +274,187 @@ describe('resolveSaveImageRequest', () => {
     ).toBeNull();
     expect(resolveSaveImageRequest(null)).toBeNull();
     expect(resolveSaveImageRequest('nope')).toBeNull();
+  });
+});
+
+const ab = (...bytes: number[]) => new Uint8Array(bytes).buffer;
+const textAb = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
+// Real signatures followed by payload bytes, so a sniffer that only checks length can't pass.
+const PNG = ab(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49);
+const JPEG = ab(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46);
+const WEBP = ab(0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56);
+const GIF = ab(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00);
+
+describe('resolveSaveImageRequest — bytes variant', () => {
+  it('parses a bytes request, keeping the filename and mimeType hints', () => {
+    expect(
+      resolveSaveImageRequest({
+        requestId: 'r',
+        bytes: PNG,
+        filename: 'healed.png',
+        mimeType: 'image/png',
+      })
+    ).toEqual({
+      requestId: 'r',
+      kind: 'bytes',
+      bytes: PNG,
+      filename: 'healed.png',
+      mimeType: 'image/png',
+    });
+  });
+
+  it('bytes together with url or imageId is invalid', () => {
+    expect(
+      resolveSaveImageRequest({ requestId: 'r', bytes: PNG, url: 'https://image.civitai.com/x' })
+    ).toEqual({ requestId: 'r', kind: 'invalid' });
+    expect(resolveSaveImageRequest({ requestId: 'r', bytes: PNG, imageId: 5 })).toEqual({
+      requestId: 'r',
+      kind: 'invalid',
+    });
+  });
+
+  it('refuses anything that is not an ArrayBuffer', () => {
+    for (const bytes of [new Uint8Array(PNG), new DataView(PNG), [0x89, 0x50], 'PNG', { 0: 1 }]) {
+      expect(resolveSaveImageRequest({ requestId: 'r', bytes })).toEqual({
+        requestId: 'r',
+        kind: 'invalid',
+      });
+    }
+  });
+
+  it('refuses an empty buffer', () => {
+    expect(resolveSaveImageRequest({ requestId: 'r', bytes: new ArrayBuffer(0) })).toEqual({
+      requestId: 'r',
+      kind: 'invalid',
+    });
+  });
+});
+
+describe('classifySaveBytes', () => {
+  it('classifies PNG, WebP and JPEG by magic bytes, ignoring the hints', () => {
+    expect(classifySaveBytes(PNG, { mimeType: 'text/html', filename: 'x.html' })).toBe('image/png');
+    expect(classifySaveBytes(WEBP)).toBe('image/webp');
+    expect(classifySaveBytes(JPEG, { mimeType: 'application/json' })).toBe('image/jpeg');
+  });
+
+  it('JSON only with a hint: mimeType or a .json filename', () => {
+    const json = textAb('{"prompt":"a cat","steps":30}');
+    expect(classifySaveBytes(json, { mimeType: 'application/json' })).toBe('application/json');
+    expect(classifySaveBytes(json, { mimeType: 'Application/JSON; charset=utf-8' })).toBe(
+      'application/json'
+    );
+    expect(classifySaveBytes(json, { filename: 'meta.JSON' })).toBe('application/json');
+    expect(classifySaveBytes(json)).toBe('text/plain');
+    expect(classifySaveBytes(json, { mimeType: 'text/plain', filename: 'meta.txt' })).toBe(
+      'text/plain'
+    );
+  });
+
+  it('a JSON hint on text that does not parse yields plain text', () => {
+    expect(classifySaveBytes(textAb('{not json'), { mimeType: 'application/json' })).toBe(
+      'text/plain'
+    );
+  });
+
+  it('valid UTF-8 text is plain text, whatever type the caller claims', () => {
+    expect(classifySaveBytes(textAb('steps: 30\nsampler: Euler a\n'))).toBe('text/plain');
+    expect(
+      classifySaveBytes(textAb('<svg onload="alert(1)"/>'), { mimeType: 'image/svg+xml' })
+    ).toBe('text/plain');
+    expect(classifySaveBytes(textAb('<html><script>x()</script>'), { mimeType: 'text/html' })).toBe(
+      'text/plain'
+    );
+    expect(classifySaveBytes(textAb('naïve ✓ 日本'))).toBe('text/plain');
+  });
+
+  it('refuses text containing a NUL byte', () => {
+    expect(classifySaveBytes(ab(0x68, 0x69, 0x00, 0x21))).toBeNull();
+  });
+
+  it('refuses invalid UTF-8', () => {
+    expect(classifySaveBytes(ab(0x68, 0x69, 0xc3, 0x28))).toBeNull();
+    expect(classifySaveBytes(ab(0xff, 0xfe, 0x41))).toBeNull();
+  });
+
+  it('refuses GIF, archives, executables and empty input', () => {
+    expect(classifySaveBytes(GIF, { mimeType: 'image/gif' })).toBeNull();
+    expect(classifySaveBytes(ab(0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00))).toBeNull(); // zip
+    expect(classifySaveBytes(ab(0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00))).toBeNull(); // PE
+    expect(classifySaveBytes(ab(0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00))).toBeNull(); // ELF
+    expect(classifySaveBytes(new ArrayBuffer(0))).toBeNull();
+  });
+
+  it('a truncated PNG signature is not an image', () => {
+    expect(classifySaveBytes(ab(0x89, 0x50, 0x4e, 0x47))).toBeNull();
+  });
+});
+
+describe('forceSaveBytesExtension', () => {
+  it('always replaces the extension with the classified type’s own', () => {
+    expect(forceSaveBytesExtension('x.html', 'text/plain')).toBe('x.txt');
+    expect(forceSaveBytesExtension('x.exe', 'image/png')).toBe('x.png');
+    expect(forceSaveBytesExtension('photo.jpeg', 'image/jpeg')).toBe('photo.jpg');
+    expect(forceSaveBytesExtension('meta.data.json', 'application/json')).toBe('meta.data.json');
+    expect(forceSaveBytesExtension('render.svg', 'image/webp')).toBe('render.webp');
+    expect(forceSaveBytesExtension('notes', 'text/plain')).toBe('notes.txt');
+    expect(forceSaveBytesExtension('', 'image/png')).toBe('download.png');
+  });
+
+  it('drops control and bidi-override characters', () => {
+    expect(forceSaveBytesExtension('inv\u202Egpj.exe', 'text/plain')).toBe('invgpj.txt');
+    expect(forceSaveBytesExtension('a\u0000b\n.png', 'image/png')).toBe('ab.png');
+  });
+});
+
+describe('prepareSaveBytes', () => {
+  it('names a classified file with the forced extension', () => {
+    expect(prepareSaveBytes({ bytes: PNG, filename: 'healed.png' })).toEqual({
+      ok: true,
+      type: 'image/png',
+      filename: 'healed.png',
+    });
+    expect(
+      prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'meta.json', mimeType: 'text/html' })
+    ).toEqual({ ok: true, type: 'application/json', filename: 'meta.json' });
+    expect(prepareSaveBytes({ bytes: textAb('hello') })).toEqual({
+      ok: true,
+      type: 'text/plain',
+      filename: 'download.txt',
+    });
+  });
+
+  it('a hostile filename cannot keep its path or its extension', () => {
+    expect(
+      prepareSaveBytes({ bytes: textAb('<script>x()</script>'), filename: '../../evil.html' })
+    ).toEqual({ ok: true, type: 'text/plain', filename: 'evil.txt' });
+    expect(prepareSaveBytes({ bytes: JPEG, filename: 'C:\\tmp\\setup.exe?x=1' })).toEqual({
+      ok: true,
+      type: 'image/jpeg',
+      filename: 'setup.jpg',
+    });
+    expect(prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'run.json.exe' })).toEqual({
+      ok: true,
+      type: 'text/plain',
+      filename: 'run.json.txt',
+    });
+  });
+
+  it('refuses an unclassifiable file', () => {
+    expect(prepareSaveBytes({ bytes: GIF, filename: 'a.gif' })).toEqual({
+      ok: false,
+      error: 'file type is not allowed',
+    });
+  });
+
+  it('enforces the 50 MB cap at the boundary', () => {
+    expect(SAVE_BYTES_MAX_BYTES).toBe(50 * 1024 * 1024);
+    // Text bytes, so the at-cap case is accepted by the classifier and only the cap can refuse.
+    const atCap = new Uint8Array(SAVE_BYTES_MAX_BYTES).fill(0x61).buffer;
+    expect(prepareSaveBytes({ bytes: atCap })).toMatchObject({ ok: true, type: 'text/plain' });
+    const overCap = new Uint8Array(SAVE_BYTES_MAX_BYTES + 1).fill(0x61).buffer;
+    expect(prepareSaveBytes({ bytes: overCap })).toEqual({
+      ok: false,
+      error: 'file exceeds the maximum save size',
+    });
   });
 });

@@ -57,6 +57,7 @@ const mocks = vi.hoisted(() => ({
   // the top-frame blob download (stubbed so no real network fetch in the test);
   // the origin allowlist + request parse stay REAL (see the partial mock below).
   saveDownload: vi.fn(),
+  saveBytesDownload: vi.fn(),
   // per-user storage reads/writes (also wired at render; inert here)
   storageGet: vi.fn(),
   storageSet: vi.fn(),
@@ -75,7 +76,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // download so the SAVE_IMAGE tests never hit the network.
 vi.mock('~/components/AppBlocks/saveImageDownload', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./saveImageDownload')>();
-  return { ...actual, downloadUrlAsBlob: mocks.saveDownload };
+  return {
+    ...actual,
+    downloadUrlAsBlob: mocks.saveDownload,
+    downloadBytesAsBlob: mocks.saveBytesDownload,
+  };
 });
 
 vi.mock('~/utils/trpc', () => ({
@@ -246,6 +251,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     mocks.invalidate.mockResolvedValue(undefined);
     mocks.getImagesByIds.mockReset();
     mocks.saveDownload.mockReset();
+    mocks.saveBytesDownload.mockReset();
     useDialogStore.getState().closeAll();
   });
 
@@ -1037,6 +1043,104 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     // Only the N that acquired a slot reached the downloader; the overflow
     // short-circuited to busy BEFORE fetching a byte.
     expect(mocks.saveDownload).toHaveBeenCalledTimes(SAVE_IMAGE_MAX_CONCURRENT);
+    replies.stop();
+  });
+
+  const PNG_BYTES = () =>
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]).buffer;
+
+  test('SAVE_IMAGE bytes variant: content-classified, saved under the forced extension, ok', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const bytes = PNG_BYTES();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bytes',
+      bytes,
+      filename: 'healed.html',
+      mimeType: 'text/html',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_bytes', ok: true });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledWith(bytes, 'image/png', 'healed.png');
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes variant: an unclassifiable file is refused (ok:false, no download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bin',
+      bytes: new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]).buffer,
+      filename: 'setup.exe',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_bin',
+        ok: false,
+        error: 'file type is not allowed',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE with BOTH bytes and url is an invalid request (no download of either)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bytes_url',
+      bytes: PNG_BYTES(),
+      url: 'https://image.civitai.com/x.jpeg',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_bytes_url',
+        ok: false,
+        error: 'invalid save-image request',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes variant shares the concurrency cap with the url variant', async () => {
+    mocks.saveDownload.mockReturnValue(new Promise(() => undefined));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    for (let i = 0; i < SAVE_IMAGE_MAX_CONCURRENT; i++) {
+      postFromBlock('SAVE_IMAGE', {
+        requestId: `rq_cb${i}`,
+        url: 'https://image.civitai.com/xG/77/original.jpeg',
+      });
+    }
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_bytes_overflow', bytes: PNG_BYTES() });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_bytes_overflow', ok: false, error: 'busy' });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
     replies.stop();
   });
 

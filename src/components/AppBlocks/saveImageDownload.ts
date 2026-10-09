@@ -7,7 +7,7 @@
  * that does the download in the UNSANDBOXED top frame on the block's behalf.
  *
  * SECURITY: the block never gets to name an arbitrary host to fetch. There are
- * two request variants and each has its own gate (see PageBlockHost's handler):
+ * three request variants and each has its own gate (see PageBlockHost's handler):
  *   - `url`     — the block's OWN output (an orchestration blob it has no image
  *                 id for). MUST pass {@link isAllowedSaveImageUrl} — an origin
  *                 allowlist over the civitai image/blob CDN. An arbitrary host,
@@ -19,6 +19,11 @@
  *                 withheld image can never be coerced into a download. The url it
  *                 yields is a civitai edge url — which ALSO satisfies the
  *                 allowlist, so the download step is uniform.
+ *   - `bytes`   — a file the block produced in its tab (an `ArrayBuffer`). Nothing
+ *                 is fetched; the type is classified from the CONTENT
+ *                 ({@link classifySaveBytes}) — never the caller's mimeType or
+ *                 filename — so only PNG / WebP / JPEG / JSON / plain text can be
+ *                 saved, always under that type's own extension.
  */
 
 /**
@@ -62,6 +67,9 @@ export const CIVITAI_IMAGE_HOSTS: readonly string[] = [
 
 /** Bound the host-side blob fetch so a hostile block can't pull an unbounded video. */
 export const SAVE_IMAGE_MAX_BYTES = 200 * 1024 * 1024; // 200 MB
+
+/** Lower than the url cap: `bytes` are copied across frames into the viewer's tab memory, not streamed. */
+export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
 /**
  * F2 — max concurrent host-side SAVE_IMAGE downloads per host frame. The host
@@ -195,15 +203,22 @@ export function enforceImageExtension(filename: string, contentType?: string | n
   return `${base}.${DEFAULT_SAFE_EXTENSION}`;
 }
 
-/** Parsed, validated SAVE_IMAGE request. Exactly one of url / imageId is set. */
+/** Parsed, validated SAVE_IMAGE request. Exactly one of url / imageId / bytes is set. */
 export type SaveImageRequest =
   | { requestId: string; kind: 'url'; url: string; filename?: string }
-  | { requestId: string; kind: 'id'; imageId: number; filename?: string };
+  | { requestId: string; kind: 'id'; imageId: number; filename?: string }
+  | {
+      requestId: string;
+      kind: 'bytes';
+      bytes: ArrayBuffer;
+      filename?: string;
+      mimeType?: string;
+    };
 
 /**
  * Parse a raw inbound SAVE_IMAGE payload into a discriminated request, or `null`
  * when it's unusable (missing/invalid requestId, or NOT exactly one of
- * url/imageId). Pure — no allowlist / no DOM — so the message-shape contract is
+ * url/imageId/bytes). Pure — no allowlist / no DOM — so the message-shape contract is
  * unit-testable independently of the origin gate + the download. A `null` return
  * means "drop, no reply" (a missing requestId can't be correlated); a shape that
  * HAS a requestId but is otherwise invalid returns a request the caller NACKs.
@@ -212,9 +227,31 @@ export function resolveSaveImageRequest(
   raw: unknown
 ): SaveImageRequest | { requestId: string; kind: 'invalid' } | null {
   if (!raw || typeof raw !== 'object') return null;
-  const r = raw as { requestId?: unknown; url?: unknown; imageId?: unknown; filename?: unknown };
+  const r = raw as {
+    requestId?: unknown;
+    url?: unknown;
+    imageId?: unknown;
+    bytes?: unknown;
+    filename?: unknown;
+    mimeType?: unknown;
+  };
   if (typeof r.requestId !== 'string' || r.requestId.length === 0) return null;
   const filename = typeof r.filename === 'string' ? r.filename : undefined;
+  if (r.bytes != null) {
+    // Any url/imageId alongside bytes is ambiguous, whether or not it would be valid on its own.
+    // A typed-array view is refused rather than unwrapped: its window into `.buffer` is not the file.
+    if (r.url != null || r.imageId != null) return { requestId: r.requestId, kind: 'invalid' };
+    if (!(r.bytes instanceof ArrayBuffer) || r.bytes.byteLength === 0) {
+      return { requestId: r.requestId, kind: 'invalid' };
+    }
+    return {
+      requestId: r.requestId,
+      kind: 'bytes',
+      bytes: r.bytes,
+      filename,
+      mimeType: typeof r.mimeType === 'string' ? r.mimeType : undefined,
+    };
+  }
   const hasUrl = typeof r.url === 'string' && r.url.length > 0;
   const hasId = typeof r.imageId === 'number' && Number.isInteger(r.imageId) && r.imageId > 0;
   // Exactly one variant. Both-or-neither is an invalid (NACK-able) request.
@@ -276,7 +313,11 @@ export async function downloadUrlAsBlob(
 
   // F2: constrain the saved name to a safe media extension keyed on the RESOLVED
   // content type of the fetched bytes (a block can't save a blob as render.html).
-  const safeFilename = enforceImageExtension(filename, blob?.type);
+  triggerBlobDownload(blob, enforceImageExtension(filename, blob?.type));
+}
+
+/** Object URL + `<a download>` in the top frame, revoked afterwards. */
+function triggerBlobDownload(blob: Blob, safeFilename: string): void {
   const href = URL.createObjectURL(blob);
   try {
     const a = document.createElement('a');
@@ -289,4 +330,101 @@ export async function downloadUrlAsBlob(
   } finally {
     URL.revokeObjectURL(href);
   }
+}
+
+/** The only types a `bytes` save can be classified as, each with the one extension it saves under. */
+const SAVE_BYTES_EXTENSION = {
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/jpeg': 'jpg',
+  'application/json': 'json',
+  'text/plain': 'txt',
+} as const;
+
+export type SaveBytesType = keyof typeof SAVE_BYTES_EXTENSION;
+
+export const SAVE_BYTES_TOO_LARGE_ERROR = 'file exceeds the maximum save size';
+export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
+
+/**
+ * Client-side copy of `sniffSupportedImage` (block-image-upload.service.ts), which is server-only.
+ * Deliberately narrower: no GIF, and the full 8-byte PNG signature.
+ */
+function sniffSaveBytesImage(b: Uint8Array): SaveBytesType | null {
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (b.length >= png.length && png.every((v, i) => b[i] === v)) return 'image/png';
+  const riff = [0x52, 0x49, 0x46, 0x46];
+  const webp = [0x57, 0x45, 0x42, 0x50];
+  if (b.length >= 12 && riff.every((v, i) => b[i] === v) && webp.every((v, i) => b[8 + i] === v)) {
+    return 'image/webp';
+  }
+  return null;
+}
+
+/**
+ * Classify block-supplied bytes by CONTENT. The caller's `mimeType` / `filename` only choose
+ * between JSON and plain text for bytes that are already valid UTF-8 text; they can never make
+ * anything else saveable. `null` = not a saveable type (GIF, archives, executables, binary).
+ */
+export function classifySaveBytes(
+  bytes: ArrayBuffer,
+  hint: { mimeType?: string; filename?: string } = {}
+): SaveBytesType | null {
+  const u8 = new Uint8Array(bytes);
+  if (u8.length === 0) return null;
+  const image = sniffSaveBytesImage(u8);
+  if (image) return image;
+  if (u8.includes(0)) return null;
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(u8);
+  } catch {
+    return null;
+  }
+  const hintedJson =
+    (hint.mimeType ?? '').split(';')[0].trim().toLowerCase() === 'application/json' ||
+    (hint.filename ?? '').toLowerCase().endsWith('.json');
+  if (hintedJson) {
+    try {
+      JSON.parse(text);
+      return 'application/json';
+    } catch {
+      // not JSON after all — falls through to plain text
+    }
+  }
+  return 'text/plain';
+}
+
+/**
+ * Replace whatever extension `filename` carries with the classified type's own, so a block can
+ * never save `x.html` / `x.exe` / `x.svg`. Also drops control and bidi-override characters, which
+ * can make a name display with a different extension than the one it has.
+ */
+export function forceSaveBytesExtension(filename: string, type: SaveBytesType): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = filename.replace(/[\u0000-\u001f\u007f‪-‮⁦-⁩]/g, '').trim();
+  const name = cleaned.length > 0 ? cleaned : 'download';
+  const m = name.match(/^(.+)\.([a-zA-Z0-9]{1,5})$/);
+  return `${m ? m[1] : name}.${SAVE_BYTES_EXTENSION[type]}`;
+}
+
+/** Size-cap, classify and name a `bytes` save — every refusal is the reply's error string. */
+export function prepareSaveBytes(req: {
+  bytes: ArrayBuffer;
+  filename?: string;
+  mimeType?: string;
+}): { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string } {
+  if (req.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
+    return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
+  }
+  const filename = sanitizeDownloadFilename(req.filename, 'download');
+  const type = classifySaveBytes(req.bytes, { mimeType: req.mimeType, filename });
+  if (!type) return { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
+  return { ok: true, type, filename: forceSaveBytesExtension(filename, type) };
+}
+
+/** Build the Blob in the host frame with the CLASSIFIED type (never the caller's) and download it. */
+export function downloadBytesAsBlob(bytes: ArrayBuffer, type: SaveBytesType, filename: string) {
+  triggerBlobDownload(new Blob([bytes], { type }), filename);
 }

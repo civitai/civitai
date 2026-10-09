@@ -94,8 +94,10 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
+  prepareSaveBytes,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
@@ -3608,7 +3610,7 @@ export function PageBlockHost({
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
-  // has no allow-downloads). TWO variants, each with its own security gate:
+  // has no allow-downloads). THREE variants, each with its own security gate:
   //   • url  — the block's OWN output. MUST pass the civitai image/blob origin
   //            allowlist (isAllowedSaveImageUrl) — never a host-side fetch of an
   //            attacker origin (an opaque-origin block's url/data is untrusted).
@@ -3616,6 +3618,9 @@ export function PageBlockHost({
   //            gated read (blocks.getImagesByIds) that GET_IMAGES_BY_IDS uses, so
   //            a withheld/above-ceiling image (status !== 'visible', or omitted)
   //            can NEVER be saved.
+  //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
+  //            is classified from the content (prepareSaveBytes) and only
+  //            image/JSON/text can be saved, under the classified extension.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
@@ -3639,6 +3644,16 @@ export function PageBlockHost({
       }
       saveImageInFlightRef.current += 1;
       try {
+        if (req.kind === 'bytes') {
+          const prepared = prepareSaveBytes(req);
+          if (!prepared.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: prepared.error });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, prepared.type, prepared.filename);
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+          return;
+        }
         if (req.kind === 'url') {
           if (!isAllowedSaveImageUrl(req.url, env.NEXT_PUBLIC_IMAGE_LOCATION)) {
             send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image url is not allowed' });
