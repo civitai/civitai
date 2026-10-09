@@ -1,0 +1,11 @@
+// A hint of the cap joining gets you: the post dimmed, the hat drawn faint and grey. The card's
+// wrapper carries data-event-decoration too, so only the hat button is ghosted.
+.ghost {
+  opacity: 0.75;
+
+  :global(button[data-event-decoration]) {
+    opacity: 0.8;
+    filter: grayscale(1);
+    pointer-events: none;
+  }
+}
