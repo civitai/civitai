@@ -31,6 +31,14 @@ describe.each(Object.entries(SHAPES))('hat placement for %s art', (_, fit) => {
     expect(getHatLayout('top', fit).reach.top).toBeCloseTo(-ITEM_BLEED, 6);
   });
 
+  // Sized by the art's visible pixels, not its canvas, so a short wide hat is not drawn tiny
+  // next to a tall cone. `top` is upright, so its reach is the visible box itself.
+  it('top: the longer side of the visible art is the placement size', () => {
+    const { reach } = getHatLayout('top', fit);
+    const longer = Math.max(reach.right - reach.left, reach.bottom - reach.top);
+    expect(longer).toBeCloseTo(fit?.size ?? 30, 6);
+  });
+
   // Carousels clip at the slide's own edge, with no bleed to spend.
   it('inside: never leaves the card', () => {
     const { reach } = getHatLayout('inside', fit);
