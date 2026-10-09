@@ -83,10 +83,10 @@ export function daysToScore(event: Pick<ScoredEvent, 'startDate' | 'endDate'>, n
 const syncWatermarkKey = (event: string) =>
   `${REDIS_KEYS.EVENT.CACHE}:${event}:placement-sync` as const;
 // Keyed by the first counted day too, so a preview snapshot is never served as the event's.
-const standingsKey = (event: StandingsEvent) =>
-  `${REDIS_KEYS.EVENT.CACHE}:${event.name}:standings:${scoreFromDay(event)
-    .toISOString()
-    .slice(0, 10)}` as const;
+const standingsKey = (event: StandingsEvent) => {
+  const fromDay = scoreFromDay(event).toISOString().slice(0, 10);
+  return `${REDIS_KEYS.EVENT.CACHE}:${event.name}:standings:${fromDay}` as const;
+};
 
 // Mirror ledger rows changed since the last run into ClickHouse. ReplacingMergeTree keeps the latest
 // version of each id, so re-sending rows is harmless; the watermark is rewound a little to cover
