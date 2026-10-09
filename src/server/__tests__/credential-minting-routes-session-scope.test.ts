@@ -69,17 +69,20 @@ const USER = {
   emailVerified: new Date('2026-01-01'),
 };
 
-const personalKey = (tokenScope: number) => ({
+const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
   user: USER,
   apiKeyId: 11,
+  apiKeyType,
   subject: { type: 'apiKey', id: 11 },
   tokenScope,
   buzzLimit: null,
 });
+const personalKey = (tokenScope: number) => nonOauthKey('User', tokenScope);
 
 const oauthToken = (tokenScope: number) => ({
   user: USER,
   apiKeyId: 12,
+  apiKeyType: 'Access',
   subject: { type: 'oauth', id: 'client-abc' },
   tokenScope,
   buzzLimit: null,
@@ -150,6 +153,13 @@ describe.each(routes)('$name credential requirements', (route) => {
   it('refuses a personal API key with a reduced scope', async () => {
     bearerSession.mockResolvedValue(personalKey(TokenScope.Full & ~TokenScope.UserRead));
     const { status } = await call(route, { authorization: 'Bearer personal-reduced' });
+    expect(status).toBe(403);
+    expect(route.minted()).not.toHaveBeenCalled();
+  });
+
+  it('refuses a System API key, even with the full scope', async () => {
+    bearerSession.mockResolvedValue(nonOauthKey('System', TokenScope.Full));
+    const { status } = await call(route, { authorization: 'Bearer system-full' });
     expect(status).toBe(403);
     expect(route.minted()).not.toHaveBeenCalled();
   });

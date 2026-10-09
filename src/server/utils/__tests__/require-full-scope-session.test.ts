@@ -28,8 +28,9 @@ function request({
   } as unknown as NextApiRequest;
 }
 
-const personalKey = (tokenScope: number) => ({
+const personalKey = (tokenScope: number, apiKeyType: string | null = 'User') => ({
   apiKeyId: 1,
+  ...(apiKeyType ? { apiKeyType } : {}),
   subject: { type: 'apiKey', id: 1 },
   tokenScope,
 });
@@ -54,9 +55,39 @@ describe('isFullScopeSession', () => {
     ).toBe(false);
   });
 
+  it.each(['System', 'Access', 'Refresh', 'SomethingNew'])(
+    'refuses a full-scope %s key',
+    (apiKeyType) => {
+      expect(
+        isFullScopeSession(
+          request({ authorization: 'Bearer k', context: personalKey(TokenScope.Full, apiKeyType) })
+        )
+      ).toBe(false);
+    }
+  );
+
+  it('refuses a full-scope key whose type was not recorded', () => {
+    expect(
+      isFullScopeSession(
+        request({ authorization: 'Bearer k', context: personalKey(TokenScope.Full, null) })
+      )
+    ).toBe(false);
+  });
+
+  it('refuses a User key that carries an OAuth subject', () => {
+    const context = {
+      apiKeyId: 4,
+      apiKeyType: 'User',
+      subject: { type: 'oauth', id: 'c' },
+      tokenScope: TokenScope.Full,
+    };
+    expect(isFullScopeSession(request({ authorization: 'Bearer k', context }))).toBe(false);
+  });
+
   it('refuses an OAuth token even at the full scope', () => {
     const context = {
       apiKeyId: 2,
+      apiKeyType: 'Access',
       subject: { type: 'oauth', id: 'c' },
       tokenScope: TokenScope.Full,
     };
@@ -75,6 +106,7 @@ describe('isFullScopeSession', () => {
 
   it.each([
     ['apiKeyId', { apiKeyId: 3 }],
+    ['apiKeyType', { apiKeyType: 'User' }],
     ['subject', { subject: { type: 'oauth', id: 'c' } }],
     ['tokenScope', { tokenScope: TokenScope.Full }],
   ])('treats a context carrying only %s as a bearer', (_field, context) => {
