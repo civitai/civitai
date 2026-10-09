@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { modListAppFeedbackSchema } from '~/server/schema/app-feedback.schema';
 import {
   APP_FEEDBACK_HIDE_CONFLICT_MESSAGE,
+  APP_FEEDBACK_OWNER_STATUS_FILTER_OPTIONS,
   DEFAULT_APP_FEEDBACK_MOD_FILTERS,
   appFeedbackHideErrorView,
   appFeedbackModFiltersToQuery,
@@ -271,6 +272,29 @@ describe('toAppFeedbackModRowView', () => {
     expect(view.appLabel).toBe('apl_live');
     expect(view.ownerLabel).toBe('#12');
     expect(view.triageStatus).toBe('escalated');
+  });
+
+  it("labels every developer status with the owner inbox's words, and an unknown one raw", () => {
+    const label = (ownerStatus: string | null) =>
+      toAppFeedbackModRowView({ ...ROW, ownerStatus }, modUrl).ownerStatusLabel;
+    expect([null, 'acknowledged', 'resolved', 'wont_fix', 'archived'].map(label)).toEqual([
+      'New',
+      'Acknowledged',
+      'Resolved',
+      "Won't fix",
+      'archived',
+    ]);
+  });
+});
+
+describe('APP_FEEDBACK_OWNER_STATUS_FILTER_OPTIONS', () => {
+  it('offers New then each developer status, labelled as the owner inbox labels them', () => {
+    expect(APP_FEEDBACK_OWNER_STATUS_FILTER_OPTIONS).toStrictEqual([
+      { value: 'new', label: 'New' },
+      { value: 'acknowledged', label: 'Acknowledged' },
+      { value: 'resolved', label: 'Resolved' },
+      { value: 'wont_fix', label: "Won't fix" },
+    ]);
   });
 });
 

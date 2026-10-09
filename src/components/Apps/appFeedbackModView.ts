@@ -5,8 +5,9 @@ import {
   type AppFeedbackOwnerStatusFilter,
   type ModListAppFeedbackInput,
 } from '~/server/schema/app-feedback.schema';
+import { ownerStatusLabel } from '~/components/Apps/appFeedbackInbox';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
-import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants';
+import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
 import { moderatorFeedbackReportPath } from '~/shared/constants/moderator-app';
 
 export type AppFeedbackHiddenFilter = (typeof APP_FEEDBACK_HIDDEN_FILTERS)[number];
@@ -103,18 +104,12 @@ export function toModListInput(
   };
 }
 
-const OWNER_STATUS_NEW_LABEL = 'New';
-
-export const APP_FEEDBACK_OWNER_STATUS_LABELS: Readonly<Record<FeedbackOwnerStatus, string>> = {
-  acknowledged: 'Acknowledged',
-  resolved: 'Resolved',
-  wont_fix: "Won't fix",
-};
-
+// Labels come from the owner inbox's map, so a moderator and the developer read the same word for
+// the same status.
 export const APP_FEEDBACK_OWNER_STATUS_FILTER_OPTIONS: { value: string; label: string }[] =
   APP_FEEDBACK_OWNER_STATUS_FILTERS.map((value) => ({
     value,
-    label: value === 'new' ? OWNER_STATUS_NEW_LABEL : APP_FEEDBACK_OWNER_STATUS_LABELS[value],
+    label: ownerStatusLabel(value === 'new' ? null : value),
   }));
 
 export const APP_FEEDBACK_HIDDEN_FILTER_OPTIONS: {
@@ -190,9 +185,14 @@ function userLabel(id: number, username: string | null): string {
   return username ?? `#${id}`;
 }
 
-function ownerStatusLabel(status: string | null): string {
-  if (status === null) return OWNER_STATUS_NEW_LABEL;
-  return APP_FEEDBACK_OWNER_STATUS_LABELS[status as FeedbackOwnerStatus] ?? status;
+function isOwnerStatus(value: string): value is (typeof FEEDBACK_OWNER_STATUSES)[number] {
+  return (FEEDBACK_OWNER_STATUSES as readonly string[]).includes(value);
+}
+
+/** A value outside the known set (the column is CHECK-constrained, so not expected) shows raw. */
+function modOwnerStatusLabel(status: string | null): string {
+  if (status === null || isOwnerStatus(status)) return ownerStatusLabel(status);
+  return status;
 }
 
 /** Everything a moderator row shows, derived from one `modList` row. */
@@ -218,7 +218,7 @@ export function toAppFeedbackModRowView(
     surfaceLabel: row.surface ? SURFACE_LABELS[row.surface] : null,
     modelHref: row.modelId !== null ? `/models/${row.modelId}` : null,
     modelLabel: row.modelId !== null ? `Model #${row.modelId}` : null,
-    ownerStatusLabel: ownerStatusLabel(row.ownerStatus),
+    ownerStatusLabel: modOwnerStatusLabel(row.ownerStatus),
     ownerStatusBy: row.ownerStatus !== null ? row.ownerStatusByUsername : null,
     ownerStatusAt: row.ownerStatus !== null ? row.ownerStatusAt : null,
     flagged: row.ownerFlaggedAt !== null,
