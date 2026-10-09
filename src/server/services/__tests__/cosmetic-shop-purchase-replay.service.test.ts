@@ -4,7 +4,7 @@ import type * as CosmeticPackService from '~/server/services/cosmetic-pack.servi
 import { Prisma } from '@prisma/client';
 import { BuzzApiError } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 // A shop purchase whose external transaction id the ledger has seen before
 // (a resent idempotency key, or two requests with the same one). This request
@@ -269,11 +269,6 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       code: 'BAD_REQUEST',
       message: 'Failed to purchase cosmetic',
     });
-    // Bounded: the client's own retry is off and each attempt has a deadline.
-    expect(mocks.refundMultiTx.mock.calls[0][1]).toMatchObject({
-      retries: 0,
-      timeoutMs: 10_000,
-    });
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
     expect(mocks.refundMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toContain(KEY);
   });
@@ -295,51 +290,44 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     );
   });
 
-  it('a refund that does not cover the charge is reported as unknown', async () => {
+  it('a refund is sent once, resent by the client only when the connection never opened', async () => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
     mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
-    mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE - 1 });
-
-    await expectStateUnknown(purchase());
-  });
-
-  it('a refund response with no total is reported as unknown, not as covered', async () => {
-    mocks.createMultiTx.mockResolvedValue(legs(false));
-    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
-    mocks.refundMultiTx.mockResolvedValue({});
-
-    await expectStateUnknown(purchase());
-  });
-
-  it('a refund the ledger already holds (409) counts as refunded: a refusal', async () => {
-    mocks.createMultiTx.mockResolvedValue(legs(false));
-    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
-    mocks.refundMultiTx.mockRejectedValue(ledgerError(409, 'BAD_REQUEST'));
 
     await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(stateUnknownLogged()).toBe(false);
-  });
-
-  it('a refund that fails after a charge is reported as unknown', async () => {
-    mocks.createMultiTx.mockResolvedValue(legs(false));
-    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
-    mocks.refundMultiTx.mockRejectedValue(ledgerError(503, 'INTERNAL_SERVER_ERROR'));
-
-    await expectStateUnknown(purchase());
-    // The ledger answered each time, so each attempt had finished: resent.
-    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(3);
-  });
-
-  // A timed-out attempt may still be running at the ledger: resending would
-  // overlap it, so it is not resent.
-  it('a refund attempt that timed out is not resent: state unknown', async () => {
-    mocks.createMultiTx.mockResolvedValue(legs(false));
-    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
-    mocks.refundMultiTx.mockRejectedValue(
-      new DOMException('The operation timed out.', 'TimeoutError')
-    );
-
-    await expectStateUnknown(purchase());
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+    const opts = mocks.refundMultiTx.mock.calls[0][1] as {
+      retries?: number;
+      timeoutMs?: number;
+      shouldRetry?: (e: unknown) => boolean;
+    };
+    expect(opts).toMatchObject({ retries: 1, timeoutMs: 10_000 });
+    expect(opts.shouldRetry?.(new BuzzApiError(503, 'Service Unavailable'))).toBe(false);
+    expect(opts.shouldRetry?.(connectionRefused())).toBe(true);
   });
+
+  // Every refund outcome short of "the whole amount is back" is left to
+  // reconciliation: one attempt, then "state unknown" and the event.
+  for (const [outcome, settle] of [
+    ['a ledger 5xx', (m: Mock) => m.mockRejectedValue(ledgerError(503, 'INTERNAL_SERVER_ERROR'))],
+    ['a 409', (m: Mock) => m.mockRejectedValue(ledgerError(409, 'BAD_REQUEST'))],
+    [
+      'a timeout',
+      (m: Mock) =>
+        m.mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError')),
+    ],
+    ['a short total', (m: Mock) => m.mockResolvedValue({ totalRefunded: PRICE - 1 })],
+    ['a response with no total', (m: Mock) => m.mockResolvedValue({})],
+    ['an empty response', (m: Mock) => m.mockResolvedValue(undefined)],
+  ] as const) {
+    it(`a refund ending in ${outcome} is not retried and is reported as unknown`, async () => {
+      mocks.createMultiTx.mockResolvedValue(legs(false));
+      mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+      settle(mocks.refundMultiTx);
+
+      await expectStateUnknown(purchase());
+      expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+      expect(stateUnknownLogs()).toHaveLength(1);
+    });
+  }
 });

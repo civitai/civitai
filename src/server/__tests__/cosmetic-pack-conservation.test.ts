@@ -781,18 +781,17 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
     }),
   ];
 
-  it('refunds, retries the refund, and logs when the write transaction throws', async () => {
+  // A refund is sent once; a failed one is not retried from here but left to
+  // reconciliation, reported as "state unknown" with nothing paid out.
+  it('refunds once and reports state unknown when the refund fails, paying nobody', async () => {
     purchaseCreate.mockRejectedValue(new Error('write failed'));
-    // A ledger 5xx: the attempt finished, so it may be resent.
-    refund
-      .mockRejectedValueOnce(
-        new TRPCError({
-          code: 'INTERNAL_SERVER_ERROR',
-          message: 'buzz down',
-          cause: new BuzzApiError(503, 'Service Unavailable'),
-        })
-      )
-      .mockResolvedValue({ totalRefunded: 6300 });
+    refund.mockRejectedValue(
+      new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'buzz down',
+        cause: new BuzzApiError(503, 'Service Unavailable'),
+      })
+    );
     await expect(
       purchaseCosmeticPack({
         userId: BUYER,
@@ -800,8 +799,23 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
         members,
         stickersEnabled: true,
       })
-    ).rejects.toThrow();
-    expect(refund.mock.calls.length).toBeGreaterThan(1);
+    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(refund).toHaveBeenCalledTimes(1);
+    expect(pay).not.toHaveBeenCalled();
+  });
+
+  it('refunds the whole charge and refuses when the write transaction throws', async () => {
+    purchaseCreate.mockRejectedValue(new Error('write failed'));
+    refund.mockResolvedValue({ totalRefunded: 6300 });
+    await expect(
+      purchaseCosmeticPack({
+        userId: BUYER,
+        shopItem: shopItem(6300, members.length),
+        members,
+        stickersEnabled: true,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(refund).toHaveBeenCalledTimes(1);
     expect(pay).not.toHaveBeenCalled();
   });
 
