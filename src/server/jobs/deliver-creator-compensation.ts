@@ -185,8 +185,8 @@ export function buildPayoutTransactions(
         source: 'compensation' as const,
       }));
 
-      // Still `Compensation`, so bankable, peak and pool queries treat tips as before; ledger readers
-      // tell them apart by this externalTransactionId prefix.
+      // Still `Compensation`, so peak and pool queries treat tips as before; the bankable predicate
+      // and other ledger readers tell them apart by this externalTransactionId prefix.
       const tipTx = Object.entries(tipTotals).map(([accountType, amount]) => ({
         fromAccountId: 0,
         toAccountId: userId,

@@ -85,7 +85,8 @@ export const APP_AUTHOR_FEE_DESCRIPTION = 'App author fee';
 
 /**
  * Generation tips are paid as `Compensation`; this externalTransactionId prefix is the only thing that
- * tells them apart from generation compensation. Creator Studio's earnings read matches it literally.
+ * tells them apart from generation compensation. Creator Studio's earnings read matches it literally,
+ * and the bankable predicate counts tips by it, so renaming it makes tips already paid unbankable.
  */
 export const GENERATION_TIP_TRANSACTION_PREFIX = 'generation-tip-';
 
