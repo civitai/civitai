@@ -5,8 +5,8 @@ import { extractErrorMessage } from './blockImageScanLogic';
 
 /**
  * Headless runner for one `OPEN_IMAGE_UPLOAD { bytes }` request: `BlockImageUploadModal.handleFile`'s
- * upload → persist with the block's bytes in place of a picked file, authorized BEFORE the store
- * upload so a refused app never gets bytes stored.
+ * upload → persist with the block's bytes in place of a picked file, preceded by
+ * `blocks.authorizeAppUploadImage` so the store upload only happens for a request persist admits.
  *
  * Deliberately not cancelled on unmount: with React's dev double-invoke, a cancel would drop the
  * only run. A late callback posts into a removed frame, which is harmless.

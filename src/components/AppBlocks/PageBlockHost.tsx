@@ -3634,7 +3634,8 @@ export function PageBlockHost({
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
   // Separate from saveBytesWindowRef: uploads have their own, longer window (imageUploadBytes.ts).
   const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
-  // requestIds of `bytes` uploads not yet answered, so a reused id is refused rather than dropped.
+  // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
+  // by requestId, so any reply to it would also settle — and misreport — the original request.
   const uploadBytesInFlightRef = useRef<Set<string>>(new Set());
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
@@ -4026,10 +4027,7 @@ export function PageBlockHost({
           send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_NO_TOKEN_ERROR });
           return;
         }
-        if (uploadBytesInFlightRef.current.has(requestId)) {
-          send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_INVALID_ERROR });
-          return;
-        }
+        if (uploadBytesInFlightRef.current.has(requestId)) return;
         const { result, recent } = processUploadBytes(
           bytesReq,
           uploadBytesWindowRef.current,
@@ -4108,7 +4106,7 @@ export function PageBlockHost({
                 selected: { status: 'pending', imageId, url },
               });
               setImageScanPollers((prev) =>
-                prev.some((p) => p.requestId === requestId)
+                prev.some((p) => p.requestId === requestId && !p.replyOnScan)
                   ? prev
                   : [...prev, { requestId, imageId }]
               );
@@ -5002,7 +5000,7 @@ export function PageBlockHost({
           resolves the pending upload. */}
       {imageScanPollers.map((p) => (
         <BlockImageScanPoller
-          key={p.requestId}
+          key={`${p.replyOnScan ? 'bytes' : 'picked'}:${p.requestId}`}
           imageId={p.imageId}
           onResult={(result: BlockImageScanResult) => {
             if (p.replyOnScan) {
@@ -5011,7 +5009,10 @@ export function PageBlockHost({
             } else {
               send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
             }
-            setImageScanPollers((prev) => prev.filter((x) => x.requestId !== p.requestId));
+            // The variant too, not just the id: a picked and a bytes upload may share a requestId.
+            setImageScanPollers((prev) =>
+              prev.filter((x) => !(x.requestId === p.requestId && x.replyOnScan === p.replyOnScan))
+            );
           }}
         />
       ))}

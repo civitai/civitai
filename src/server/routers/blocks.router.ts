@@ -5324,13 +5324,21 @@ export const blocksRouter = router({
     }),
 
   /**
-   * `OPEN_IMAGE_UPLOAD { bytes }`, step 1 of 2: may this page app upload an image for this viewer
-   * at all? The host asks BEFORE it puts any bytes in the image store, so an app the step-2 gates
-   * would refuse never gets content stored under the viewer's upload key. Same gates as step 2; it
-   * confers nothing — `persistAppUploadImage` re-runs them.
+   * `OPEN_IMAGE_UPLOAD { bytes }`, step 1 of 2, run BEFORE any bytes reach the image store: the
+   * same preamble, page-only check, publish bucket and per-user limit as step 2, so the store
+   * upload happens only for a request step 2 would admit (barring a change between the two calls).
+   * It confers nothing; `persistAppUploadImage` re-runs all of it. Each upload therefore spends
+   * two publish-bucket tokens.
    */
   authorizeAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many image uploads — slow down.',
+      })
+    )
     .input(z.object({ blockToken: z.string().min(1) }))
     .mutation(async ({ ctx, input }) => {
       const { claims } = await authorizeBlockPostRequest(input.blockToken, 'upload', ctx.user.id);
@@ -5340,7 +5348,7 @@ export const blocksRouter = router({
           message: 'image byte uploads are available to page apps only',
         });
       }
-      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
       if (!rate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',

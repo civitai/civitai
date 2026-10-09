@@ -185,8 +185,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
   },
   authorizeAppUploadImage: {
-    buckets: ['catalog'],
-    why: 'The pre-upload half of OPEN_IMAGE_UPLOAD { bytes }: the post preamble and nothing else, so the read bucket, like previewPostFromApp.',
+    buckets: ['publish'],
+    why: 'The pre-upload half of OPEN_IMAGE_UPLOAD { bytes }: it admits a store upload, so it charges the same publish bucket as the persist half — a refusal must land before the bytes are stored.',
   },
   persistAppUploadImage: {
     buckets: ['publish'],

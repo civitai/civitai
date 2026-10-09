@@ -277,6 +277,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       bytes: pngBytes(),
       purpose: 'generationSource',
     });
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
     h.persist.mockRejectedValueOnce(new Error('posting from apps is not enabled'));
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_persist', bytes: pngBytes() });
 
@@ -285,6 +286,9 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       expect(repliesFor(replies, 'rq_src')).toHaveLength(1);
       expect(repliesFor(replies, 'rq_persist')).toHaveLength(1);
     });
+    // A persist that fails AFTER the store upload still releases the preview object URL.
+    expect(revoke).toHaveBeenCalledWith(OBJECT_URL);
+    revoke.mockRestore();
 
     // The scan refusing the image (a thrown BAD_REQUEST from the gate).
     h.gate.mockRejectedValueOnce(
@@ -314,7 +318,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     replies.stop();
   });
 
-  test('a requestId reused while its upload is in flight is refused, and does not spend the window', async () => {
+  test('a requestId reused while its upload is in flight gets no reply of its own and spends nothing', async () => {
     // The bridge itself drops a repeated requestId for 5 s (usePostMessage's replay dedup), so the
     // reuse that reaches the host is a later one: move the clock past that, inside the 60 s window.
     let offset = 0;
@@ -329,19 +333,110 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(1));
       offset = 6_000;
       postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_dup', bytes: pngBytes() });
-      await vi.waitFor(() =>
-        expect(repliesFor(replies, 'rq_dup')).toEqual([
-          { requestId: 'rq_dup', error: 'invalid image-upload request' },
-        ])
-      );
-      // The window still has room for the rest of its budget after the refused duplicate.
+      // The rest of the window's budget is still there: had the reuse been admitted or recorded,
+      // the last of these would be refused `busy`.
       for (let i = 1; i < UPLOAD_BYTES_MAX_PER_WINDOW; i++) {
         postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: `rq_more_${i}`, bytes: pngBytes() });
       }
       await vi.waitFor(() =>
         expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW)
       );
+      await settle();
+      expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW);
+      // Any reply to the reused id would settle the ORIGINAL request in the SDK, so there is none.
+      expect(repliesFor(replies, 'rq_dup')).toEqual([]);
       expect(repliesFor(replies, `rq_more_${UPLOAD_BYTES_MAX_PER_WINDOW - 1}`)).toEqual([]);
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('once answered, a requestId is free again (the in-flight set is cleared on error and on a verdict)', async () => {
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    try {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      h.persist.mockRejectedValueOnce(new Error('posting from apps is not enabled'));
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_err', bytes: pngBytes() });
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_ok', bytes: pngBytes() });
+      await vi.waitFor(() => {
+        expect(repliesFor(replies, 'rq_err')).toHaveLength(1);
+        expect(repliesFor(replies, 'rq_ok')).toHaveLength(1);
+      });
+
+      offset = 6_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_err', bytes: pngBytes() });
+      await vi.waitFor(() => expect(repliesFor(replies, 'rq_err')).toHaveLength(2));
+      // Past the 60 s upload window too: three uploads already spent it.
+      offset = 61_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_ok', bytes: pngBytes() });
+      await vi.waitFor(() => expect(repliesFor(replies, 'rq_ok')).toHaveLength(2));
+      expect(repliesFor(replies, 'rq_err')[1]).toEqual({ requestId: 'rq_err', selected: SELECTED });
+      expect(repliesFor(replies, 'rq_ok')[1]).toEqual({ requestId: 'rq_ok', selected: SELECTED });
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('a picked async upload and a bytes upload sharing a requestId each settle independently', async () => {
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    const PICKED_ID = 500;
+    let pickedReady = false;
+    h.gate.mockImplementation(async ({ imageId }: { imageId: number }) =>
+      imageId === PICKED_ID
+        ? pickedReady
+          ? { ...READY, imageId: PICKED_ID }
+          : { status: 'pending' }
+        : READY
+    );
+    try {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      // The picker's async path: the modal accepts (persisted, scan pending) and closes.
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_x', asyncScan: true });
+      await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+      const dialog = useDialogStore.getState().dialogs[0];
+      (dialog.props as { onAccepted: (h: { imageId: number; url: string }) => void }).onAccepted({
+        imageId: PICKED_ID,
+        url: 'https://image.civitai.com/x/500.jpeg',
+      });
+      dialog.options?.onClose?.();
+      await vi.waitFor(() => expect(h.gate).toHaveBeenCalledWith({ imageId: PICKED_ID }));
+
+      // A bytes upload reusing the id, past the bridge's 5 s replay dedup.
+      offset = 6_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_x', bytes: pngBytes() });
+      await vi.waitFor(() =>
+        expect(repliesFor(replies, 'rq_x')).toContainEqual({
+          requestId: 'rq_x',
+          selected: SELECTED,
+        })
+      );
+
+      // The picked upload's poller must have survived the bytes verdict.
+      pickedReady = true;
+      await vi.waitFor(
+        () =>
+          expect(replies.of('IMAGE_SCAN_RESOLVED')).toEqual([
+            {
+              requestId: 'rq_x',
+              imageId: PICKED_ID,
+              result: { status: 'scanned', image: { ...SELECTED, imageId: PICKED_ID } },
+            },
+          ]),
+        // The picked poller's next poll is on the scan backoff schedule (first retry at 2 s).
+        { timeout: 6_000 }
+      );
       replies.stop();
     } finally {
       nowSpy.mockRestore();

@@ -407,8 +407,8 @@ export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
 
 /**
  * PNG / WebP / JPEG by magic bytes, via the shared {@link sniffImageFormat} (the same module the
- * server's `detectImageType` and `sniffSupportedImage` use). This caller's rules: full 8-byte PNG
- * signature and no GIF, the same set `detectImageType` accepts.
+ * server's `detectImageType` and `sniffSupportedImage` use). Rules: full 8-byte PNG signature and
+ * no GIF, the same set `detectImageType` accepts.
  */
 export function sniffSaveBytesImage(b: Uint8Array): SaveBytesImageType | null {
   const format = sniffImageFormat(b, { formats: ['png', 'webp', 'jpeg'], pngSignature: 'full' });

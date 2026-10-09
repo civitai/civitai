@@ -1,8 +1,8 @@
 /**
  * `OPEN_IMAGE_UPLOAD { bytes }` — the pure core of a page block uploading an image it produced in
  * the viewer's tab (no picker). Same store upload → persist → scan → gate pipeline as a picked
- * `display` upload, but authorized and persisted through `blocks.authorizeAppUploadImage` /
- * `blocks.persistAppUploadImage`, which stamp `blockUploadedAppId` so this app can post it as a
+ * `display` upload, but persisted through `blocks.persistAppUploadImage` (after
+ * `blocks.authorizeAppUploadImage`), which stamps `blockUploadedAppId` so this app can post it as a
  * `{ kind: 'published' }` source.
  */
 

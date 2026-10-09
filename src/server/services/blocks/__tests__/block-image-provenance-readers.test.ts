@@ -93,13 +93,11 @@ function ownerName(node: ts.Node): string {
 }
 
 /** Site → the key tokens it names, outside imports/re-exports (wiring, not use). */
-function deriveSites(): Map<string, Set<string>> {
+function deriveSites(files: Array<{ rel: string; text: string }>): Map<string, Set<string>> {
   const sites = new Map<string, Set<string>>();
-  for (const file of sourceFiles(SRC)) {
-    const text = fs.readFileSync(file, 'utf8');
+  for (const { rel, text } of files) {
     if (![...KEY_IDENTIFIERS, ...KEY_LITERALS].some((k) => text.includes(k))) continue;
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-    const rel = path.relative(REPO_ROOT, file).split(path.sep).join('/');
+    const source = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true);
     // `import { BLOCK_UPLOADED_APP_ID_META_KEY as K }` — later uses of `K` are uses of the key.
     const aliases = new Map<string, string>();
     const collectAliases = (node: ts.Node): void => {
@@ -146,7 +144,12 @@ function deriveSites(): Map<string, Set<string>> {
   return sites;
 }
 
-const sites = deriveSites();
+const sites = deriveSites(
+  sourceFiles(SRC).map((file) => ({
+    rel: path.relative(REPO_ROOT, file).split(path.sep).join('/'),
+    text: fs.readFileSync(file, 'utf8'),
+  }))
+);
 
 describe('App Blocks image provenance-key sites', () => {
   it('the derivation can see a site at all (positive control)', () => {
@@ -199,5 +202,31 @@ describe('App Blocks image provenance-key sites', () => {
     expect(spelled).toEqual([
       'src/server/services/blocks/block-image-upload.service.ts#BLOCK_UPLOADED_APP_ID_META_KEY',
     ]);
+  });
+
+  it('sees every spelling of a read, on synthetic sources (so each branch of the derivation is exercised)', () => {
+    const derived = deriveSites([
+      {
+        rel: 'x/aliased.ts',
+        text: `import { BLOCK_UPLOADED_APP_ID_META_KEY as K } from 'y';\nexport function viaAlias(m: any) { return m[K]; }`,
+      },
+      {
+        rel: 'x/property.ts',
+        text: `export function viaProperty(m: { blockUploadedAppId?: string }) { return m.blockUploadedAppId; }`,
+      },
+      {
+        rel: 'x/sql.ts',
+        text: "export function viaSql(a: string) { return `metadata->>'blockUploadedAppId' = ${a}`; }",
+      },
+      {
+        rel: 'x/comment.ts',
+        text: `// blockUploadedAppId in a comment is not a read\nexport const x = 1;`,
+      },
+    ]);
+    expect(Object.fromEntries([...derived].map(([k, v]) => [k, [...v]]))).toEqual({
+      'x/aliased.ts#viaAlias': [UPLOADED],
+      'x/property.ts#viaProperty': ["'blockUploadedAppId'"],
+      'x/sql.ts#viaSql': ["'blockUploadedAppId'"],
+    });
   });
 });

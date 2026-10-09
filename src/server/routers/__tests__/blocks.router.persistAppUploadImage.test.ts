@@ -188,10 +188,10 @@ describe('blocks.authorizeAppUploadImage — the gate the host runs BEFORE any b
   const authorize = (c = ctx()) =>
     blocksRouter.createCaller(c as never).authorizeAppUploadImage({ blockToken: 'tok' });
 
-  it('admits a page app holding posts:write:self, charging only the read bucket', async () => {
+  it('admits a page app holding posts:write:self, charging the SAME publish bucket as persist', async () => {
     await expect(authorize()).resolves.toEqual({ ok: true });
-    expect(mockCheckCatalogRate).toHaveBeenCalledWith('page_apb_alpha');
-    expect(mockCheckPublishRate).not.toHaveBeenCalled();
+    expect(mockCheckPublishRate).toHaveBeenCalledWith('page_apb_alpha', 1);
+    expect(mockCheckCatalogRate).not.toHaveBeenCalled();
     expect(mockPersistUpload).not.toHaveBeenCalled();
   });
 
@@ -215,8 +215,8 @@ describe('blocks.authorizeAppUploadImage — the gate the host runs BEFORE any b
       { code: 'FORBIDDEN', message: 'image byte uploads are available to page apps only' },
     ],
     [
-      'the read bucket refusing',
-      () => mockCheckCatalogRate.mockResolvedValue({ allowed: false }),
+      'the publish bucket refusing — so a persist that would be refused never gets bytes stored',
+      () => mockCheckPublishRate.mockResolvedValue({ allowed: false }),
       { code: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded, please retry shortly.' },
     ],
   ])('refuses %s', async (_label, arrange, expected) => {
