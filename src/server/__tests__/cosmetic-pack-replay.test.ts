@@ -605,12 +605,20 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
         seedClaim('pending');
 
         await expectStateUnknown(buy(KEY, { expectedAmount: PRICE, ...opts }));
+        expect(ledgerLegs).toHaveBeenCalledTimes(1);
         expect(ledgerLegs).toHaveBeenCalledWith(TX);
         expect(spend).not.toHaveBeenCalled();
         expect(createManyUserCosmetic).not.toHaveBeenCalled();
         expect(claims.rows.get(TX)).toMatchObject({ status: 'pending', attempts: 1 });
       });
     }
+
+    it('is unknown at an old amount with no confirmed amount sent, and not charged', async () => {
+      seedClaim('pending', { amount: PRICE - 500 });
+
+      await expectStateUnknown(buy(KEY));
+      expect(spend).not.toHaveBeenCalled();
+    });
 
     it('is unknown when the amount due moved from its amount, and not charged', async () => {
       seedClaim('pending', { amount: PRICE - 500 });
@@ -705,6 +713,11 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
       'nothing but the buyer’s own work',
       { members: [{ ...member, createdById: BUYER }] },
       "Everything in this pack is your own work, so there's nothing here for you to buy",
+    ],
+    [
+      'a sticker member with stickers off',
+      { members: [{ ...member, type: CosmeticType.Sticker }] },
+      'This pack is not available',
     ],
   ] as const) {
     it(`${what}: unknown on a retry, not charged`, async () => {

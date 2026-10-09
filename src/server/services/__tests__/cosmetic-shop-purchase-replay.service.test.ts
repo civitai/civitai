@@ -165,11 +165,13 @@ const purchase = (
     expectedUnitAmount,
     payWith,
     stickersEnabled,
+    packsEnabled = true,
   }: {
     idempotencyKey?: string;
     expectedUnitAmount?: number;
     payWith?: 'default' | 'blue-first';
     stickersEnabled?: boolean;
+    packsEnabled?: boolean;
   } = { idempotencyKey: KEY }
 ) =>
   purchaseCosmeticShopItem({
@@ -180,7 +182,7 @@ const purchase = (
     payWith,
     stickersEnabled,
     buzzType: 'yellow',
-    packsEnabled: true,
+    packsEnabled,
   });
 
 const nothingGrantedPaidOrRefunded = () => {
@@ -308,6 +310,20 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await expectStateUnknown(purchase());
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('a claim recreated at another amount between the read and the resume is not resumed', async () => {
+    seedClaim('pending');
+    dbMock.dbWrite.cosmeticShopPurchaseClaim.updateMany.mockImplementationOnce((async (
+      args: Parameters<typeof claims.delegate.updateMany>[0]
+    ) => {
+      claims.rows.get(TX)!.amount = PRICE - 1;
+      return claims.delegate.updateMany(args);
+    }) as never);
+
+    await expectStateUnknown(purchase());
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+    expect(claims.rows.get(TX)?.attempts).toBe(1);
   });
 
   it('a retry of a pending claim grants against the earlier charge', async () => {
@@ -817,15 +833,42 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     });
 
     it('a retry whose ledger read fails is unknown, and not charged', async () => {
-      seedClaim('pending');
+      seedClaim('pending', { amount: PRICE - 500 });
       mocks.listMultiTx.mockRejectedValue(new Error('ledger down'));
 
       await expectStateUnknown(purchase());
       expect(mocks.createMultiTx).not.toHaveBeenCalled();
       expect(claims.rows.get(TX)?.attempts).toBe(1);
+      // The reconciliation record names the claim, at its claimed amount.
       expect(stateUnknownLogs()).toEqual([
-        expect.objectContaining({ reason: 'ledger read failed on resume' }),
+        expect.objectContaining({
+          reason: 'ledger read failed on resume',
+          transactionId: TX,
+          userId: BUYER_ID,
+          shopItemId: SHOP_ITEM_ID,
+          amount: PRICE - 500,
+          error: 'ledger down',
+        }),
       ]);
+    });
+
+    it('a settled claim is answered without reading the ledger', async () => {
+      seedClaim('paid');
+      mocks.listMultiTx.mockRejectedValue(new Error('ledger down'));
+
+      await expect(purchase()).rejects.toThrow('This purchase has already been completed');
+      expect(mocks.listMultiTx).not.toHaveBeenCalled();
+    });
+
+    // The claim's own amount is held to today's price, so omitting the
+    // confirmed price does not let an uncharged claim keep an old one.
+    it('an uncharged claim at an old price is unknown with no confirmed price sent, and not charged', async () => {
+      seedClaim('pending', { amount: PRICE - 500 });
+      mocks.listMultiTx.mockResolvedValue([]);
+
+      await expectStateUnknown(purchase({ idempotencyKey: KEY }));
+      expect(mocks.listMultiTx).toHaveBeenCalledTimes(1);
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
     });
 
     // The retry path relies on this: ANY failure of a check while a claim is
@@ -907,8 +950,9 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
         await expectStateUnknown(purchase({ idempotencyKey: KEY, stickersEnabled }));
         expect(mocks.createMultiTx).not.toHaveBeenCalled();
+        // The record keeps why the retry was refused.
         expect(stateUnknownLogs()).toEqual([
-          expect.objectContaining({ reason: 'refused while a claim is pending' }),
+          expect.objectContaining({ reason: 'refused while a claim is pending', error: refusal }),
         ]);
       });
 
@@ -921,6 +965,26 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
         });
       });
     }
+
+    it('packs switched off: unknown on a pack retry, refused when new', async () => {
+      const PACK_TX = `cosmetic-pack-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${KEY}`;
+      mocks.shopItemFindUnique.mockResolvedValue({ ...row, cosmeticId: null, cosmetic: null });
+      claims.rows.set(PACK_TX, {
+        transactionId: PACK_TX,
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+      await expectStateUnknown(purchase({ idempotencyKey: KEY, packsEnabled: false }));
+      expect(mocks.purchaseCosmeticPack).not.toHaveBeenCalled();
+
+      claims.rows.clear();
+      await expect(purchase({ idempotencyKey: KEY, packsEnabled: false })).rejects.toThrow(
+        'This pack is not available'
+      );
+    });
 
     it('Blue Buzz on an item that takes none: unknown on a retry, refused when new', async () => {
       seedClaim('pending');
@@ -956,7 +1020,11 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       // Not counted as an attempt: it charged nothing.
       expect(claims.rows.get(TX)?.attempts).toBe(1);
       expect(stateUnknownLogs()).toEqual([
-        expect.objectContaining({ reason: 'expected amount differs from the claim' }),
+        expect.objectContaining({
+          reason: 'expected amount differs from the claim',
+          transactionId: TX,
+          amount: PRICE - 500,
+        }),
       ]);
     });
 
@@ -1042,9 +1110,10 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       });
       mocks.purchaseCosmeticPack.mockResolvedValue({});
 
-      await purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE });
+      // A discounted amount due, unlike the listing's price.
+      await purchase({ idempotencyKey: KEY, expectedUnitAmount: PRICE - 500 });
       expect(mocks.purchaseCosmeticPack).toHaveBeenCalledWith(
-        expect.objectContaining({ idempotencyKey: KEY, expectedAmount: PRICE })
+        expect.objectContaining({ idempotencyKey: KEY, expectedAmount: PRICE - 500 })
       );
       // The claim the listing was judged on is the one the pack is judged on:
       // passed down, not read a second time.

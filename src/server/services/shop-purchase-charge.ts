@@ -249,8 +249,9 @@ export async function resumeShopPurchase(
 
   // Counted so the request that created the claim cannot release it on a
   // decline while this one may be charging under it (see releaseClaim).
+  // `amount`: the claim read earlier, not one released and recreated since at another amount.
   const { count } = await dbWrite.cosmeticShopPurchaseClaim.updateMany({
-    where: { transactionId, status: CLAIM.pending },
+    where: { transactionId, status: CLAIM.pending, amount: existing.amount },
     data: { attempts: { increment: 1 } },
   });
   // Settled or released since the read: nothing is charged from here, and
