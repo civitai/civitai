@@ -95,6 +95,24 @@ async function attachBadge(slug: ScoreTierSlug) {
   return id;
 }
 
+type Wearing = { equipped?: boolean; toContent?: number };
+async function wear(userId: number, type: string, data: Record<string, unknown>, at: Wearing = {}) {
+  const { rows } = await q(`INSERT INTO "Cosmetic" (type, data) VALUES ($1, $2) RETURNING id`, [
+    type,
+    JSON.stringify(data),
+  ]);
+  await q(
+    `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "equippedAt", "equippedToId")
+     VALUES ($1, $2, $3::timestamp, $4)`,
+    [
+      userId,
+      (rows[0] as { id: number }).id,
+      at.equipped === false ? null : CROSSED,
+      at.toContent ?? null,
+    ]
+  );
+}
+
 const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
   q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
     userId,
@@ -138,7 +156,9 @@ beforeAll(async () => {
       "isModerator" boolean NOT NULL DEFAULT false, muted boolean NOT NULL DEFAULT false,
       "deletedAt" timestamp(3), "bannedAt" timestamp(3),
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}');
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, data jsonb);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, type text, data jsonb);
+    CREATE TABLE "UserCosmetic" ("userId" int NOT NULL, "cosmeticId" int NOT NULL,
+      "equippedAt" timestamp(3), "equippedToId" int);
     CREATE TABLE "Image" (id serial PRIMARY KEY, url text, type text, "nsfwLevel" int,
       ingestion text, "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
@@ -152,12 +172,53 @@ beforeEach(async () => {
   mocks.excluded.mockReset().mockResolvedValue([]);
   mocks.flagOn.mockReset().mockResolvedValue(true);
   await holder.db.exec(`
-    TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User", "Image";
+    TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User", "Image", "UserCosmetic";
     UPDATE "CreatorMilestone" SET "cosmeticId" = NULL;
   `);
 });
 
 describe('milestone share card', () => {
+  // A plain resize of the art comes back from the image CDN as a JPEG, which drew every tier badge on
+  // a black square. Only the optimized variant keeps the transparency; the og route re-encodes it.
+  it('asks for the transparent (optimized) variant of every piece of art', async () => {
+    await addUser(CREATOR);
+    await attachBadge('supernova');
+    await grant(CREATOR, 'supernova');
+    await wear(CREATOR, 'ProfileDecoration', { url: 'frame-art', offset: '30%' });
+    await wear(CREATOR, 'Badge', { url: 'profile-badge-art' });
+
+    const result = await card();
+
+    const urls = [result?.badgeUrl, result?.decoration?.url, result?.profileBadgeUrl];
+    expect(
+      urls.map((url) => url?.split('/').at(-2)?.split(',').includes('optimized=true'))
+    ).toEqual([true, true, true]);
+  });
+
+  it("wears the creator's profile frame and badge, the way their avatar does", async () => {
+    await addUser(CREATOR);
+    await grant(CREATOR, 'supernova');
+    await wear(CREATOR, 'ProfileDecoration', { url: 'frame-art', offset: '30%' });
+    await wear(CREATOR, 'Badge', { url: 'profile-badge-art' });
+
+    const result = await card();
+
+    expect(result?.decoration).toMatchObject({ offset: '30%' });
+    expect(result?.decoration?.url).toContain('frame-art/anim');
+    expect(result?.profileBadgeUrl).toContain('profile-badge-art/anim');
+  });
+
+  it('leaves off a cosmetic that is owned but not worn, or worn on a piece of content', async () => {
+    await addUser(CREATOR);
+    await grant(CREATOR, 'supernova');
+    await wear(CREATOR, 'ProfileDecoration', { url: 'frame-art' }, { equipped: false });
+    await wear(CREATOR, 'Badge', { url: 'profile-badge-art' }, { toContent: 77 });
+
+    const result = await card();
+
+    expect(result).toMatchObject({ decoration: null, profileBadgeUrl: null });
+  });
+
   it('renders an observed crossing with the tier, the UTC month and the badge art', async () => {
     await addUser(CREATOR);
     await attachBadge('supernova');

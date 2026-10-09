@@ -1,6 +1,7 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
+import type { CosmeticOffsets } from '~/server/schema/creator-shop.schema';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { isCreatorJourneyOnFor } from '~/server/services/creator-journey-flag.service';
 import {
@@ -18,7 +19,8 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 
 export const AVATAR_SIZE = 96;
-export const BADGE_SIZE = 320;
+export const BADGE_SIZE = 340;
+const PROFILE_BADGE_SIZE = 64;
 
 type ShareCardRow = {
   milestoneKey: string;
@@ -34,9 +36,21 @@ type ShareCardRow = {
   pictureUrl: string | null;
   pictureType: MediaType | null;
   pictureNsfwLevel: number | null;
+  decorationData: ProfileDecorationData | null;
+  profileBadgeUrl: string | null;
 };
 
+type ProfileDecorationData = { url?: string; offset?: string; offsets?: CosmeticOffsets };
+
 type ShareOptions = { pg?: AugmentedPool; now?: Date };
+
+/** A cosmetic the creator wears on their profile (not one equipped to a piece of content), as their avatar shows it. */
+const equippedProfileCosmeticSql = (type: 'ProfileDecoration' | 'Badge', column: string) => `
+  SELECT ${column} FROM "UserCosmetic" puc
+  JOIN "Cosmetic" pc ON pc.id = puc."cosmeticId"
+  WHERE puc."userId" = u.id AND puc."equippedAt" IS NOT NULL AND puc."equippedToId" IS NULL
+    AND pc.type = '${type}'
+  ORDER BY puc."equippedAt" DESC LIMIT 1`;
 
 /**
  * The crossings behind a creator's tier share cards: the one rule for whether a card renders. The card
@@ -55,7 +69,9 @@ async function getShareableMilestones(
     SELECT ucm."milestoneKey", u.username, u."isModerator", m.name AS "tierName",
       m."cosmeticId" AS "badgeId", c.data ->> 'url' AS "badgeUrl", ucm."achievedAt", ucm."seenAt",
       p."privacySettings", to_char(ucm."achievedAt", 'YYYY-MM') AS "achievedMonth",
-      i.url AS "pictureUrl", i.type AS "pictureType", i."nsfwLevel" AS "pictureNsfwLevel"
+      i.url AS "pictureUrl", i.type AS "pictureType", i."nsfwLevel" AS "pictureNsfwLevel",
+      (${equippedProfileCosmeticSql('ProfileDecoration', 'pc.data')}) AS "decorationData",
+      (${equippedProfileCosmeticSql('Badge', "pc.data ->> 'url'")}) AS "profileBadgeUrl"
     FROM "UserCreatorMilestone" ucm
     JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
     JOIN "User" u ON u.id = ucm."userId"
@@ -107,7 +123,7 @@ export async function getMilestoneShareCard(...args: Parameters<typeof getSharea
   const row = await getShareableMilestone(...args);
   if (!row) return null;
   const [{ slug }] = args;
-  const { pictureUrl, pictureType, pictureNsfwLevel } = row;
+  const { pictureUrl, pictureType, pictureNsfwLevel, decorationData, profileBadgeUrl } = row;
   return {
     username: row.username ?? 'Creator',
     avatarUrl:
@@ -119,7 +135,24 @@ export async function getMilestoneShareCard(...args: Parameters<typeof getSharea
         : null,
     tierName: row.tierName,
     accent: SCORE_TIERS.find((tier) => tier.slug === slug)?.accent ?? null,
-    badgeUrl: row.badgeUrl ? getEdgeUrl(row.badgeUrl, { width: BADGE_SIZE, anim: false }) : null,
+    // `optimized` is what keeps the art's transparency: a plain resize comes back as a JPEG.
+    badgeUrl: row.badgeUrl
+      ? getEdgeUrl(row.badgeUrl, { width: BADGE_SIZE, anim: false, optimized: true })
+      : null,
+    decoration: decorationData?.url
+      ? {
+          url: getEdgeUrl(decorationData.url, {
+            width: AVATAR_SIZE * 2,
+            anim: false,
+            optimized: true,
+          }),
+          offset: decorationData.offset,
+          offsets: decorationData.offsets,
+        }
+      : null,
+    profileBadgeUrl: profileBadgeUrl
+      ? getEdgeUrl(profileBadgeUrl, { width: PROFILE_BADGE_SIZE, anim: false, optimized: true })
+      : null,
     // A backfilled grant's achievedAt is the backfill's own date, so the card names no month, as the
     // journey page shows none. The month comes from the column's own text, so no zone can shift it.
     reached: achievedAtIsObserved(row)

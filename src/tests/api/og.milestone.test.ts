@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import sharp from 'sharp';
 import type * as MilestoneShare from '~/server/services/creator-milestone-share.service';
 
 const { getMilestoneShareCard } = vi.hoisted(() => ({ getMilestoneShareCard: vi.fn() }));
@@ -53,11 +54,14 @@ const CARD = {
   tierName: 'Supernova',
   accent: '#ae3ec9',
   badgeUrl: null,
+  decoration: null,
+  profileBadgeUrl: null,
   reached: 'November 2026',
 };
 
 beforeEach(() => {
   getMilestoneShareCard.mockReset().mockResolvedValue(CARD);
+  vi.unstubAllGlobals();
 });
 
 describe('/api/og?type=milestone', () => {
@@ -94,6 +98,34 @@ describe('/api/og?type=milestone', () => {
     it('is present when the card has a month', async () => {
       expect(Buffer.compare(await png('November 2026'), await png(null))).not.toBe(0);
     });
+  });
+
+  // Each piece of art is fetched and drawn: a card that dropped one would render the same bytes as
+  // a card that never had it.
+  it("draws the creator's avatar frame and profile badge", async () => {
+    const art = await sharp({
+      create: { width: 8, height: 8, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
+    })
+      .webp()
+      .toBuffer();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () => new Response(new Uint8Array(art), { headers: { 'content-type': 'image/webp' } })
+      )
+    );
+    const png = async (card: Record<string, unknown>) => {
+      getMilestoneShareCard.mockResolvedValue({ ...CARD, ...card });
+      return (await render('42.supernova'))._body as Buffer;
+    };
+
+    const bare = await png({});
+    const framed = await png({ decoration: { url: 'https://edge/frame', offset: '30%' } });
+    const badged = await png({ profileBadgeUrl: 'https://edge/badge' });
+
+    expect(Buffer.compare(framed, bare)).not.toBe(0);
+    expect(Buffer.compare(badged, bare)).not.toBe(0);
+    expect(Buffer.compare(framed, badged)).not.toBe(0);
   });
 
   it('takes the SHORT cache for a card and for its fallback', async () => {
