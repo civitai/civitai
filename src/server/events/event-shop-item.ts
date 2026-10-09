@@ -1,5 +1,6 @@
 import type { EventViewer, GatedEvent } from '~/server/events/event-access';
 import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
+import { loadEvents as loadRegisteredEvents } from '~/server/events/load-events';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -19,29 +20,12 @@ type ShopEvent = GatedEvent & {
 
 type EventItemData = { event: string; team?: unknown };
 
+const loadEvents = () => loadRegisteredEvents() as Promise<readonly ShopEvent[]>;
+
 export function isEventShopItemData(data: unknown): data is EventItemData {
   return (
     !!data && typeof data === 'object' && typeof (data as { event?: unknown }).event === 'string'
   );
-}
-
-// Lazy, to keep the event engine (ClickHouse, Discord, user service) off the
-// shop's import graph until an event item is actually in hand. One shared
-// promise, cleared on failure so a bad load is retried rather than kept.
-let eventsPromise: Promise<ShopEvent[]> | undefined;
-function loadEvents(): Promise<ShopEvent[]> {
-  eventsPromise ??= import('~/server/events')
-    .then((m) => m.events)
-    .catch((error) => {
-      eventsPromise = undefined;
-      logToAxiom({
-        level: 'error',
-        message: 'event-shop-item: events load failed',
-        data: { error },
-      });
-      throw error;
-    });
-  return eventsPromise;
 }
 
 const isPlayableFor = async (event: ShopEvent, viewer: EventViewer, now: Date) =>

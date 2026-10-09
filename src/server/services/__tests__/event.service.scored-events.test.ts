@@ -15,6 +15,11 @@ const { engine, scoring } = vi.hoisted(() => ({
     join: vi.fn(),
     queueAddRole: vi.fn(),
     getUserData: vi.fn(),
+    getTeamScores: vi.fn(),
+    getTeamScoreHistory: vi.fn(),
+    getPartners: vi.fn(),
+    getRewards: vi.fn(),
+    getTopContributors: vi.fn(),
   },
   scoring: {
     getEventStandings: vi.fn(),
@@ -126,5 +131,54 @@ describe('activateEventCosmetic on a join event', () => {
 
     expect(redisMock.redis.hDel).not.toHaveBeenCalled();
     expect(engine.queueAddRole).not.toHaveBeenCalled();
+  });
+});
+
+// Every event read refuses an event the viewer cannot see before touching anything, and passes the
+// viewer's access on so a previewer reads the preview's scores.
+describe('the other event reads are gated on the viewer too', () => {
+  const viewer = { id: 3, isModerator: false };
+  const reads = {
+    getTeamScores: [
+      () => service.getTeamScores({ event: 'birthday2026', viewer }),
+      engine.getTeamScores,
+    ],
+    getTeamScoreHistory: [
+      () => service.getTeamScoreHistory({ event: 'birthday2026', viewer }),
+      engine.getTeamScoreHistory,
+    ],
+    getEventPartners: [
+      () => service.getEventPartners({ event: 'birthday2026', viewer }),
+      engine.getPartners,
+    ],
+    getEventRewards: [
+      () => service.getEventRewards({ event: 'birthday2026', viewer }),
+      engine.getRewards,
+    ],
+    getEventContributors: [
+      () => service.getEventContributors({ event: 'birthday2026', viewer }),
+      engine.getTopContributors,
+    ],
+    getUserRank: [
+      () => service.getUserRank({ event: 'birthday2026', user: viewer }),
+      engine.getUserData,
+    ],
+  } as const;
+
+  for (const [name, [read, downstream]] of Object.entries(reads)) {
+    it(`${name} refuses when the viewer may not read it, and reads nothing`, async () => {
+      engine.assertReadable.mockImplementation(notStarted);
+      await expect(read()).rejects.toThrow("That event doesn't exist");
+      expect(engine.assertReadable).toHaveBeenCalledWith('birthday2026', viewer);
+      expect(downstream).not.toHaveBeenCalled();
+    });
+  }
+
+  it('reads team scores and history as the window the viewer is in', async () => {
+    engine.assertReadable.mockResolvedValue('preview');
+    await service.getTeamScores({ event: 'birthday2026', viewer });
+    await service.getTeamScoreHistory({ event: 'birthday2026', viewer });
+    expect(engine.getTeamScores).toHaveBeenCalledWith('birthday2026', 'preview');
+    expect(engine.getTeamScoreHistory).toHaveBeenCalledWith({ event: 'birthday2026' }, 'preview');
   });
 });

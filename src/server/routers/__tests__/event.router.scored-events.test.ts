@@ -11,7 +11,7 @@ const { service } = vi.hoisted(() => ({
     getEventStandings: vi.fn(async () => ({ teams: [] })),
     getMyEventCosmeticScores: vi.fn(async () => ({ points: 0, cosmetics: [] })),
     getEventCosmeticScores: vi.fn(async () => ({})),
-    getEventAccess: vi.fn(async () => 'open'),
+    getViewerEventAccess: vi.fn(async () => 'open'),
   },
 }));
 

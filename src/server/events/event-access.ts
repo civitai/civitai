@@ -68,35 +68,43 @@ export async function getEventAccess(
   if (!(await isFlagOnFor(fliptKey, viewer))) return 'closed';
   if (now >= event.endDate) return 'ended';
   if (now >= event.startDate) return 'open';
-  // Armed: the base is on before the start, so nobody plays until it opens for everyone.
+  // Armed: the base is on before the start, so nobody plays until it opens for everyone. A flag
+  // that cannot be read could be armed too (moderators are on without asking Flipt), so it closes.
+  if (!(await isFliptFlagReadable(fliptKey))) return 'closed';
   return (await isFliptPublic(fliptKey)) ? 'closed' : 'preview';
 }
 
 /**
+ * The preview's scores stop at the start of the launch's UTC day: scores are stored per UTC day,
+ * and a preview row for that day would be counted as the event's until the day is rescored.
+ */
+const previewScoresUntil = (startDate: Date) =>
+  new Date(
+    Math.min(
+      startDate.getTime(),
+      Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate())
+    )
+  );
+
+/**
  * What the background jobs score at `now`: the window, and whether only users the flag is on for
- * count. Null when nothing should be scored. Throws when the flag cannot be read, because a
- * filtered run that should not have been would zero everyone else's scores for that day.
+ * count. Null when nothing should be scored.
+ *
+ * From the start, everyone's cosmetics score whatever the flag says. Scoring a day replaces it and
+ * a finished day is never rescored, so a filtered run after the start (the base turned off for a
+ * few hours) would erase everyone else's scores for that day for good. Before the start only the
+ * preview is scored, flagged owners only, and an unreadable flag throws for the same reason.
  */
 export async function getEventScoringPhase(event: GatedEvent, now = new Date()) {
-  const fliptKey = fliptKeyOf(event);
-  if (!fliptKey) {
-    if (now < event.startDate) return null;
+  if (now >= event.startDate)
     return { from: event.startDate, to: event.endDate, fliptKey: undefined };
-  }
+  const fliptKey = fliptKeyOf(event);
+  if (!fliptKey || !event.previewFrom || now < event.previewFrom) return null;
 
   if (!(await isFliptFlagReadable(fliptKey)))
     throw new Error(`Flag ${fliptKey} is unreadable; not scoring ${event.name}`);
-  const isPublic = await isFliptPublic(fliptKey);
-
-  if (now >= event.startDate)
-    return {
-      from: event.startDate,
-      to: event.endDate,
-      fliptKey: isPublic ? undefined : fliptKey,
-    };
-  const inPreview = !!event.previewFrom && now >= event.previewFrom;
-  if (!inPreview || isPublic) return null;
-  return { from: event.previewFrom as Date, to: event.startDate, fliptKey };
+  if (await isFliptPublic(fliptKey)) return null;
+  return { from: event.previewFrom, to: previewScoresUntil(event.startDate), fliptKey };
 }
 
 export type EventScoringPhase = NonNullable<Awaited<ReturnType<typeof getEventScoringPhase>>>;

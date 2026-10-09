@@ -10,7 +10,7 @@ import {
 import {
   activateEventCosmetic,
   donate,
-  getEventAccess,
+  getViewerEventAccess,
   getEventCosmetic,
   getEventData,
   getEventRewards,
@@ -24,14 +24,19 @@ import {
   getEventCosmeticScores,
 } from '~/server/services/event.service';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// A previewer sees an event the public cannot yet, so their responses must never be cached (edge or
-// Redis) where the public could be served them.
-const noCacheInPreview = middleware(async ({ ctx, input, next }) => {
+// Reads an event the viewer cannot see as an unknown one, ahead of any cache: a cached response
+// must never answer for the gate. A viewer who sees the event differently from a signed-out viewer
+// (a tester in the preview, or a moderator while the flag's base is off) gets a response that is
+// never cached, at the edge or in Redis, where someone else could be served it.
+const eventGate = middleware(async ({ ctx, input, next }) => {
   const { event } = input as EventInput;
-  if (!ctx.cache || (await getEventAccess({ event, viewer: ctx.user })) !== 'preview')
-    return next();
+  const access = await getViewerEventAccess({ event, viewer: ctx.user });
+  if (access === 'closed') throw throwNotFoundError("That event doesn't exist");
+  if (!ctx.cache || !ctx.user) return next();
+  if ((await getViewerEventAccess({ event, viewer: undefined })) === access) return next();
   return next({ ctx: { cache: { ...ctx.cache, skip: true, canCache: false } } });
 });
 
@@ -40,23 +45,23 @@ export const eventRouter = router({
   getAccess: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getEventAccess({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) => getViewerEventAccess({ ...input, viewer: ctx.user })),
   getData: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     // .use(edgeCacheIt({ ttl: CacheTTL.lg }))
     .query(({ ctx, input }) => getEventData({ ...input, viewer: ctx.user })),
   getTeamScores: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ ctx, input }) => getTeamScores({ ...input, viewer: ctx.user })),
   getTeamScoreHistory: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(teamScoreHistorySchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ ctx, input }) => getTeamScoreHistory({ ...input, viewer: ctx.user })),
   getCosmetic: protectedProcedure
@@ -66,13 +71,13 @@ export const eventRouter = router({
   getPartners: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.day }))
     .query(({ ctx, input }) => getEventPartners({ ...input, viewer: ctx.user })),
   getRewards: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.lg }))
     .query(({ ctx, input }) => getEventRewards({ ...input, viewer: ctx.user })),
   activateCosmetic: protectedProcedure
@@ -86,7 +91,7 @@ export const eventRouter = router({
   getDonors: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     .use(
       cacheIt({
         ttl: CacheTTL.day,
@@ -103,7 +108,7 @@ export const eventRouter = router({
   getStandings: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) => getEventStandings({ ...input, viewer: ctx.user })),
   getMyCosmeticScores: protectedProcedure
@@ -113,7 +118,7 @@ export const eventRouter = router({
   getCosmeticScores: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventCosmeticScoresSchema)
-    .use(noCacheInPreview)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) => getEventCosmeticScores({ ...input, viewer: ctx.user })),
   getUserRank: protectedProcedure

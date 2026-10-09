@@ -86,6 +86,23 @@ describe('armed: base on before the start', () => {
   });
 });
 
+// Flipt not initialised on a pod: moderators stay on (they never ask Flipt) but the base reads as
+// off, which would make an armed flag look like a preview to them.
+describe('a flag that cannot be read', () => {
+  beforeEach(() => testerFlag.reset({ readable: false, testers: [TESTER.id] }));
+
+  it('closes the preview for everyone, moderators included', async () => {
+    for (const viewer of [TESTER, MOD, PUBLIC_USER, ANON])
+      expect(await access(viewer, PREVIEW)).toBe('closed');
+  });
+
+  it('leaves only moderators in after the start', async () => {
+    expect(await access(MOD, DURING)).toBe('open');
+    for (const viewer of [TESTER, PUBLIC_USER, ANON])
+      expect(await access(viewer, DURING)).toBe('closed');
+  });
+});
+
 describe('base off after the start (not armed, or the kill switch)', () => {
   it('keeps it open to testers and moderators only', async () => {
     expect(await access(TESTER, DURING)).toBe('open');
@@ -107,12 +124,15 @@ describe('an event without a flag', () => {
 });
 
 describe('what the jobs score', () => {
-  it('scores the preview window, flagged owners only, while the base is off', async () => {
+  // Scores are stored per UTC day: a preview row for the launch's day would count as the event's
+  // until that day is rescored, so the preview stops scoring at that day's start.
+  it('scores the preview window, flagged owners only, up to the launch day, while the base is off', async () => {
     expect(await getEventScoringPhase(event, PREVIEW)).toEqual({
       from: BIRTHDAY_2026_PREVIEW_FROM,
-      to: BIRTHDAY_2026_STARTS_AT,
+      to: new Date('2026-11-11T00:00:00.000Z'),
       fliptKey: 'birthday-2026',
     });
+    expect(testerFlag.asked).toContain('birthday-2026');
   });
 
   it('scores nothing once armed and before the start, or before the preview', async () => {
@@ -121,22 +141,26 @@ describe('what the jobs score', () => {
     expect(await getEventScoringPhase(event, JUST_BEFORE_START)).toBeNull();
   });
 
-  it('scores everyone from the start once public, flagged owners only if not', async () => {
-    testerFlag.reset({ public: true });
-    expect(await getEventScoringPhase(event, DURING)).toEqual({
+  // linnea, 2026-10-09: after the start the kill switch closes the surfaces, not the scoring. A day
+  // scored for flagged owners only replaces everyone's scores for it, and a finished day is never
+  // rescored, so filtering after the start would erase the public's scores for good.
+  it('scores everyone from the start, whatever the flag says, without asking it', async () => {
+    const everyone = {
       from: BIRTHDAY_2026_STARTS_AT,
       to: BIRTHDAY_2026_ENDS_AT,
       fliptKey: undefined,
-    });
-    testerFlag.reset({ public: false });
-    expect((await getEventScoringPhase(event, DURING))?.fliptKey).toBe('birthday-2026');
+    };
+    for (const state of [{ public: true }, { public: false }, { readable: false }]) {
+      testerFlag.reset(state);
+      expect(await getEventScoringPhase(event, DURING)).toEqual(everyone);
+      expect(await getEventScoringPhase(event, AFTER)).toEqual(everyone);
+    }
   });
 
-  // A filtered run that should not have been would replace a day with flagged owners only, and a
-  // finished day is not recomputed, so everyone else's scores for it would be gone for good.
-  it('refuses to score when the flag cannot be read, rather than treating it as off', async () => {
+  // A filtered preview run on an unreadable flag is still only the preview; but a "no" that is not
+  // a real answer must not decide anything, so the job fails loudly instead.
+  it('refuses to score the preview when the flag cannot be read', async () => {
     testerFlag.reset({ readable: false });
-    await expect(getEventScoringPhase(event, DURING)).rejects.toThrow(/unreadable/);
     await expect(getEventScoringPhase(event, PREVIEW)).rejects.toThrow(/unreadable/);
   });
 

@@ -26,7 +26,7 @@ import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.ser
 // unknown one.
 type Viewer = { viewer: EventViewer };
 
-export function getEventAccess({ event, viewer }: EventInput & Viewer) {
+export function getViewerEventAccess({ event, viewer }: EventInput & Viewer) {
   return eventEngine.getAccess(event, viewer);
 }
 

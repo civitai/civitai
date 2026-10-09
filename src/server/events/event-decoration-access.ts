@@ -1,5 +1,6 @@
 import type { EventViewer } from '~/server/events/event-access';
 import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
+import { loadEvents } from '~/server/events/load-events';
 import { logToAxiom } from '~/server/logging/client';
 import type { EventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import {
@@ -8,11 +9,10 @@ import {
 } from '~/shared/constants/event-decoration.constants';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
-// Lazy, like event-shop-item: the hot feed paths reach here, and between events nothing below the
-// date check runs, so the engine stays off their import graph until a decoration is in its window.
+// Lazy: the hot feed paths reach here, and outside a decoration's window nothing below the date
+// check runs, so the engine stays off their import graph until then.
 async function findEvent(name: string) {
-  const { events } = await import('~/server/events');
-  return events.find((e) => e.name === name);
+  return (await loadEvents()).find((e) => e.name === name);
 }
 
 /** Whether this viewer may place, and see, this event's decorations now. */

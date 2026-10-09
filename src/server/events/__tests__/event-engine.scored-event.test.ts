@@ -396,3 +396,53 @@ describe('join team lookup', () => {
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });
+
+// The hourly job hands the scorer the window and audience the access rule decided (event-access.ts
+// pins the rule itself; this pins that the engine passes it on).
+describe('scoring behind the flag', () => {
+  const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * HOUR);
+  const DURING = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * HOUR);
+  const scoredWith = () => mockScoring.runCosmeticPlacementScoring.mock.calls.map(([e]) => e);
+
+  it('scores the preview for flagged owners only, ending at the launch day', async () => {
+    testerFlag.reset({ public: false });
+    await eventEngine.updateLeaderboard(PREVIEW);
+    expect(scoredWith()).toEqual([
+      expect.objectContaining({
+        name: BIRTHDAY_2026_EVENT,
+        startDate: BIRTHDAY_2026_PREVIEW_FROM,
+        endDate: new Date('2026-11-11T00:00:00.000Z'),
+        scoreFrom: BIRTHDAY_2026_PREVIEW_FROM,
+        audienceFlag: 'birthday-2026',
+      }),
+    ]);
+  });
+
+  it('scores everyone from the start, base on or off', async () => {
+    for (const isPublic of [true, false]) {
+      testerFlag.reset({ public: isPublic });
+      await eventEngine.updateLeaderboard(DURING);
+    }
+    expect(scoredWith()).toEqual([
+      expect.objectContaining({
+        startDate: BIRTHDAY_2026_STARTS_AT,
+        endDate: BIRTHDAY_2026_ENDS_AT,
+        scoreFrom: BIRTHDAY_2026_STARTS_AT,
+        audienceFlag: undefined,
+      }),
+      expect.objectContaining({ audienceFlag: undefined, startDate: BIRTHDAY_2026_STARTS_AT }),
+    ]);
+  });
+
+  it('lets a tester join during the preview, and nobody else', async () => {
+    testerFlag.reset({ public: false, testers: [7] });
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Blue', '8': 'Blue' });
+    expect(await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, PREVIEW)).toMatchObject({
+      joined: true,
+    });
+    await expect(eventEngine.join(BIRTHDAY_2026_EVENT, { id: 8 }, PREVIEW)).rejects.toThrow(
+      "That event doesn't exist"
+    );
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+});
