@@ -59,7 +59,13 @@ export function MyEventHats({
         }
       />
 
-      <SimpleGrid cols={{ base: 2, md: 3, lg: 4 }} spacing="md">
+      {/* Equal rows, so the "Get another hat" card is a hat card's size even alone on its row. */}
+      <SimpleGrid
+        cols={{ base: 2, md: 3, lg: 4 }}
+        spacing="md"
+        style={{ gridAutoRows: '1fr' }}
+        data-testid="my-hats-grid"
+      >
         {hats.map((hat) => {
           const minutesLeft = minutesUntilMovable(
             hat.moveCooldownLeftMs,
@@ -79,7 +85,12 @@ export function MyEventHats({
                   />
                 ) : (
                   <div className="grid aspect-[4/5] w-full place-items-center bg-gray-1 dark:bg-dark-7">
-                    <HatArt url={hat.data.url} color={teamColor} className="!bg-transparent" />
+                    <HatArt
+                      url={hat.data.url}
+                      color={teamColor}
+                      width={192}
+                      className="!bg-transparent"
+                    />
                   </div>
                 )}
                 {!ended && (

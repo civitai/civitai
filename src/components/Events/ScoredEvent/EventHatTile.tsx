@@ -65,7 +65,9 @@ export function EventHatTile({
         })
       }
       data-tier={tier}
-      aria-label={soldOut ? `${item.title}, sold out` : `Buy ${item.title}`}
+      aria-label={
+        soldOut ? `${item.title}, sold out` : item.cosmetic ? `Buy ${item.title}` : item.title
+      }
       className={clsx(
         'group flex flex-col gap-2 rounded-lg border-2 border-solid border-gray-3 bg-white p-2 transition [--tile-bg:white]',
         'dark:border-dark-4 dark:bg-dark-6 dark:[--tile-bg:var(--mantine-color-dark-6)]',

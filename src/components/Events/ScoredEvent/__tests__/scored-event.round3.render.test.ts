@@ -138,9 +138,17 @@ describe('Your hats cards', () => {
     expect(card.textContent).toContain('Not on anything yet');
   });
 
-  it('offers no action once the event has ended', () => {
-    const el = cards([hat({ placedOn: placed })], true);
+  it('offers no action once the event has ended, on worn or unworn hats', () => {
+    const el = cards([hat({ placedOn: placed }), hat({ cosmeticId: 32 })], true);
+    expect(el.querySelectorAll('[data-testid="my-hat"]')).toHaveLength(2);
     expect(el.querySelectorAll('button')).toHaveLength(0);
+  });
+
+  // Rows of equal height, so the card is a hat card's size even alone on its row.
+  it('sizes every grid row alike', () => {
+    const grid = cards([hat({})]).querySelector<HTMLElement>('[data-testid="my-hats-grid"]')!;
+    expect(grid.style.gridAutoRows).toBe('1fr');
+    expect(grid.lastElementChild?.getAttribute('data-testid')).toBe('get-another-hat');
   });
 
   it('is a plain card, not a spotlight', () => {
@@ -198,8 +206,32 @@ describe('team shelf tiers', () => {
     expect(prop(tiles[2], '--tier-bg')).not.toContain('#fcc419');
     expect(prop(tiles[3], '--tier-bg')).toContain('#fcc419');
     expect(prop(tiles[3], '--tier-bg')).toContain('border-box');
+    expect(prop(tiles[3], '--tier-border')).toBe('transparent');
+    expect(prop(tiles[2], '--tier-shadow')).toContain('#339af0');
+    expect(prop(tiles[3], '--tier-shadow')).toContain('#339af0');
     // The properties do nothing unless the tile carries the classes that read them.
-    [tiles[2], tiles[3]].forEach((t) => expect(t.className).toContain('var(--tier-bg)'));
+    [tiles[2], tiles[3]].forEach((t) =>
+      ['var(--tier-bg)', 'var(--tier-border)', 'var(--tier-shadow)'].forEach((reader) =>
+        expect(t.className).toContain(reader)
+      )
+    );
+  });
+
+  it('keeps the foil on every tier above the third', () => {
+    const tiles = [
+      ...shelf([...items, item(5, 'Comet', 5000)]).querySelectorAll<HTMLButtonElement>(
+        'button[data-tier]'
+      ),
+    ];
+    expect(tiles.at(-1)!.dataset.tier).toBe('3');
+    expect(tiles.at(-1)!.style.getPropertyValue('--tier-bg')).toContain('#fcc419');
+  });
+
+  it('does not offer to buy a tile with nothing to buy', () => {
+    const el = shelf([{ ...item(9, 'Broken', 500), cosmetic: null }]);
+    const tile = el.querySelector<HTMLButtonElement>('button[data-tier]')!;
+    expect(tile.disabled).toBe(true);
+    expect(tile.getAttribute('aria-label')).toBe('Broken');
   });
 
   it('says Buy and the price on every tile that can be bought', () => {
@@ -216,6 +248,9 @@ describe('team shelf tiers', () => {
     const el = shelf([item(1, 'Bolt Cap', 500), item(2, 'Puff Cap', 500)]);
     const tiers = [...el.querySelectorAll('[data-testid="shelf-tier"]')];
     expect(tiers).toHaveLength(1);
+    // No divider: the tier opens straight onto its grid.
+    const [first] = [...tiers[0].children].filter((c) => c.tagName !== 'STYLE');
+    expect(first.className).toContain('mantine-SimpleGrid-root');
     expect(tiers[0].textContent).not.toContain('2 hats');
   });
 });
@@ -254,10 +289,11 @@ describe('standings beside the chart', () => {
 });
 
 describe('prize badge', () => {
+  // Not in team order, so the banner's order has to come from the teams.
   const prizeBadge = {
+    Pink: { animated: 'p-anim', static: 'p-still' },
     Yellow: { animated: 'y-anim', static: 'y-still' },
     Blue: { animated: 'b-anim', static: 'b-still' },
-    Pink: { animated: 'p-anim', static: 'p-still' },
   };
   const page = {
     headline: 'Civitai turns 4.',
@@ -296,5 +332,27 @@ describe('prize badge', () => {
       })
     );
     expect(srcs(el.querySelector('[data-testid="hero-prize"]')!)).toEqual(['b-anim']);
+  });
+
+  it('falls back to the prize art for a winner with no badge, and shows none before the end', () => {
+    const hero = (props: Record<string, unknown>) =>
+      render(
+        React.createElement(ScoredEventHero, {
+          data: {
+            ...data,
+            page: { ...page, prize: { ...page.prize, imageUrl: 'prize-art' } },
+          } as typeof data,
+          onJoin: vi.fn(),
+          joining: false,
+          ended: true,
+          ...props,
+        })
+      );
+    expect(srcs(hero({ winner: 'Green' }).querySelector('[data-testid="hero-prize"]')!)).toEqual([
+      'prize-art',
+    ]);
+    act(() => root?.unmount());
+    host?.remove();
+    expect(hero({ ended: false }).querySelector('[data-testid="hero-prize"]')).toBeNull();
   });
 });

@@ -20,9 +20,11 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   useAutoplayGifs: () => autoplay,
 }));
 let measured = 0;
+// A callback ref, so a test sees which element the size is measured on.
+const measuredRef = vi.fn();
 vi.mock('@mantine/hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof MantineHooks>()),
-  useElementSize: () => ({ ref: { current: null }, width: measured, height: 0 }),
+  useElementSize: () => ({ ref: measuredRef, width: measured, height: 0 }),
 }));
 const overlay = vi.fn();
 vi.mock('~/components/Cosmetics/EventDecoration/EventDecorationOverlay', () => ({
@@ -33,6 +35,9 @@ vi.mock('~/components/Cosmetics/EventDecoration/EventDecorationOverlay', () => (
 }));
 
 const { PrizeBadge } = await import('~/components/Events/ScoredEvent/PrizeBadge');
+const { getEventDecorationClearLeft } = await import(
+  '~/components/Cosmetics/EventDecoration/event-decoration-placement'
+);
 const { EventContentThumb } = await import('~/components/Events/ScoredEvent/EventContentThumb');
 
 let host: HTMLDivElement | undefined;
@@ -43,6 +48,7 @@ afterEach(() => {
   autoplay = true;
   measured = 0;
   overlay.mockClear();
+  measuredRef.mockClear();
 });
 
 function render(element: React.ReactElement) {
@@ -63,7 +69,8 @@ describe('PrizeBadge', () => {
     const src = render(React.createElement(PrizeBadge, { badge })).querySelector('img')!.src;
     expect(src).toContain(badge.animated);
     expect(src).toContain('optimized=true');
-    expect(src).toMatch(/width=\d+/);
+    // 160px requested (twice the displayed size), snapped up to the CDN's 320 rung.
+    expect(src).toContain('width=320');
     expect(src).not.toContain('anim=false');
   });
 
@@ -89,6 +96,16 @@ describe('EventContentThumb hat size', () => {
     expect(el.querySelector('[data-testid="hat"]')).not.toBeNull();
     expect(overlay).toHaveBeenLastCalledWith(
       expect.objectContaining({ placement: 'inside', cardWidth: 171 })
+    );
+    // The width is the thumbnail's own: the measuring ref is on its root.
+    const root = [...el.children].find((c) => c.tagName === 'DIV') as HTMLElement;
+    expect(measuredRef).toHaveBeenCalledWith(root);
+    // Corner content steps clear of the hat at its shrunk size, not a feed card's.
+    expect(root.style.getPropertyValue('--event-decoration-clear-left')).toBe(
+      `${getEventDecorationClearLeft(hat!, 'inside', undefined, 0, 171)}px`
+    );
+    expect(root.style.getPropertyValue('--event-decoration-clear-left')).not.toBe(
+      `${getEventDecorationClearLeft(hat!, 'inside')}px`
     );
   });
 
