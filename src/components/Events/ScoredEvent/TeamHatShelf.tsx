@@ -28,17 +28,11 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
     const seen = new Map<number, CosmeticShopItemGetById>();
     for (const section of sections ?? [])
       for (const { shopItem } of section.items) {
-        const data = shopItem.cosmetic?.data as
-          | { event?: unknown; team?: unknown }
-          | null
-          | undefined;
-        // The shop shows moderators every colour; this shelf is the viewer's team only.
-        const forTeam = data?.team === undefined || data.team === team;
-        if (data?.event === event && forTeam && !seen.has(shopItem.id))
-          seen.set(shopItem.id, shopItem as CosmeticShopItemGetById);
+        // The server already narrowed this to the event's items in the viewer's colour.
+        if (!seen.has(shopItem.id)) seen.set(shopItem.id, shopItem as CosmeticShopItemGetById);
       }
     return [...seen.values()].sort((a, b) => a.unitAmount - b.unitAmount || a.id - b.id);
-  }, [sections, event, team]);
+  }, [sections]);
   const prices = [...new Set(items.map((i) => i.unitAmount))];
   const shown = price === 'all' ? items : items.filter((i) => i.unitAmount === Number(price));
 

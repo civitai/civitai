@@ -28,6 +28,11 @@ export function isEventShopItemData(data: unknown): data is EventItemData {
   );
 }
 
+/** Whether a cosmetic's `data` makes it one of this event's shop items. */
+export function isItemOfEvent(data: unknown, event: string) {
+  return isEventShopItemData(data) && data.event === event;
+}
+
 const isPlayableFor = async (event: ShopEvent, viewer: EventViewer, now: Date) =>
   canPlayEvent(await getEventAccess(event, viewer, now));
 

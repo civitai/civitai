@@ -494,6 +494,13 @@ describe('the shop lists event-gated items per viewer', () => {
 
   // A community-hub section is kept in the shop even when empty (its feed is queried separately),
   // so asking for one event's items must drop it by name, not by emptiness.
+  // The full shop shows a moderator every colour; the event page's shelf is their own team's.
+  it('asked for one event, a moderator sees their own colour only', async () => {
+    expect(
+      await listedIds({ userId: BUYER_ID, isModerator: true, event: BIRTHDAY_2026_EVENT })
+    ).toEqual([{ section: 10, items: [PINK, TEAMLESS] }]);
+  });
+
   it('asked for one event, leaves out the community hub; the full shop keeps it', async () => {
     mocks.sectionFindMany.mockResolvedValue([
       section(10, [listedItem(PINK, hatData(PINK_TEAM))]),
