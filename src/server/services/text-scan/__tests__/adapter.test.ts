@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubmitModule from '~/server/services/text-scan/submit';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
@@ -92,5 +93,26 @@ describe('createTextScanAdapter', () => {
   it('passes the hooks through', () => {
     expect(adapter.applyTextScan).toBe(applyTextScan);
     expect(adapter.applyResult).toBeUndefined();
+  });
+});
+
+describe('submitViaTextScan (retry cron)', () => {
+  it('spends a retry when the scan cannot be built, so the row is not reselected forever', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'missing-prompt' });
+    await expect(adapter.submit({ entityId: 9, content: '' })).resolves.toBeNull();
+    expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith({
+      where: {
+        entityType: { in: ['Post', 'Post:shadow'] },
+        entityId: 9,
+        status: { not: 'Succeeded' },
+      },
+      data: { retryCount: { increment: 1 } },
+    });
+  });
+
+  it('leaves the budget alone for other skips', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'off' });
+    await adapter.submit({ entityId: 9, content: '' });
+    expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
   });
 });

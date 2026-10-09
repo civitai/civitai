@@ -1,3 +1,4 @@
+import { dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import {
   getTextScanMode,
@@ -16,6 +17,17 @@ import type { TextScanEntityType } from '~/server/services/text-scan/types';
 // Only the retry cron calls an adapter's submit, and it has already bumped the row it resubmits.
 export async function submitViaTextScan(entityType: TextScanEntityType, entityId: number) {
   const result = await scanEntity({ entityType, entityId, fromRetry: true });
+  // A Failed row's retry budget is only spent by a callback; a scan that never submits would
+  // otherwise be reselected on every run, crowding out the rows behind it.
+  if (result.status === 'skipped' && result.reason === 'missing-prompt')
+    await dbWrite.entityModeration.updateMany({
+      where: {
+        entityType: { in: [entityType, textScanEmEntityType(entityType, 'shadow')] },
+        entityId,
+        status: { not: 'Succeeded' },
+      },
+      data: { retryCount: { increment: 1 } },
+    });
   return result.status === 'submitted' ? { id: result.workflowId } : null;
 }
 

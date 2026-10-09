@@ -29,8 +29,9 @@ replaces Clavata only once Collection is cut over with `disableClavataFor`.
 
 `ModelRules` is a second scan of a model, separate from `Model`, so it has its own rollout and its
 prompt changes never move the `Model` verdicts. It reads the same text as `Model` (name,
-description, version names and descriptions, trained words), but only for Published or Scheduled
-models, and it runs on publish and on every edit of a public model. Its one label, `modelRules`,
+description, version names and descriptions, trained words), but only what the public can see: a
+Published or Scheduled, non-Private model and its public versions. It runs on publish and on every
+edit of a public model. Its one label, `modelRules`,
 asks which of the moderators' rules the model matches.
 
 The rules are the enabled `ModerationRule` rows with `entityType = Model` and a `semantic`
@@ -39,8 +40,9 @@ as a numbered list at scan time, so the rule text lives only in the database. Mo
 on the moderator app's `/text-scan/model-rules` page, which also lists recent matches. A verdict can
 only name rules the prompt listed, and it stores the matched rules as they read when the scan ran.
 When it is active, a match unpublishes the model for review (`needsReview`) with a notice that does
-not name the rule. A moderator who republishes the model approves those matches, so a later edit is
-not taken down for the same rule. Image moderation rules are separate and unchanged.
+not name the rule, and a match on a rule disabled since the scan began is dropped. A moderator who
+republishes the model approves those matches for the text they reviewed; edited text is judged
+again. Image moderation rules are separate and unchanged.
 
 ## Actions
 

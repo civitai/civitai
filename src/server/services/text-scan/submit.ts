@@ -423,7 +423,7 @@ export function scanEntityInBackground(args: {
 }
 
 /** Every Model scan trigger also checks the rules; the ModelRules profile skips models that are not public. */
-export function scanModelAndRules(modelId: number) {
+export function scanModelAndRules(modelId: number, { rules = true }: { rules?: boolean } = {}) {
   scanEntityInBackground({ entityType: 'Model', entityId: modelId });
-  scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
+  if (rules) scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
 }

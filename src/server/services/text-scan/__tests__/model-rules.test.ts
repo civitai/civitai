@@ -103,20 +103,20 @@ describe('filterModelRuleMatches', () => {
 });
 
 describe('getModelRuleSnapshots', () => {
-  it('reads the matched rules by id, including disabled ones', async () => {
-    dbMock.dbRead.moderationRule.findMany.mockResolvedValue([
+  it('reads the matched rules by id from the primary, enabled only', async () => {
+    dbMock.dbWrite.moderationRule.findMany.mockResolvedValue([
       { id: 3, definition: { type: 'semantic', subject: 'S', description: 'D', aliases: ['A'] } },
     ]);
     await expect(getModelRuleSnapshots([3])).resolves.toEqual([
       { id: 3, subject: 'S', description: 'D', aliases: ['A'] },
     ]);
-    expect(dbMock.dbRead.moderationRule.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [3] }, entityType: 'Model' } })
+    expect(dbMock.dbWrite.moderationRule.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [3] }, entityType: 'Model', enabled: true } })
     );
   });
 
   it('skips the query for no ids', async () => {
     await expect(getModelRuleSnapshots([])).resolves.toEqual([]);
-    expect(dbMock.dbRead.moderationRule.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.moderationRule.findMany).not.toHaveBeenCalled();
   });
 });

@@ -184,6 +184,17 @@ describe('handleTextScanCallback — ModelRules', () => {
     );
   });
 
+  it('drops a match on a rule disabled since the submit', async () => {
+    vi.mocked(getModelRuleSnapshots).mockResolvedValue([]);
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ modelRules: { matched: [{ ruleId: 3, reason: 'Names the subject.' }] } }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    const { data } = em.updateMany.mock.calls[0][0];
+    expect(data.triggeredLabels).toEqual([]);
+    expect(data.result.labels.modelRules.matched).toEqual([]);
+  });
+
   it('treats a verdict whose only match was invented as clean', async () => {
     vi.mocked(getModelRuleSnapshots).mockResolvedValue([]);
     vi.mocked(getWorkflow).mockResolvedValue(

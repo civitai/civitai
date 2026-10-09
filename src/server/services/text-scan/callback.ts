@@ -138,12 +138,12 @@ export async function handleTextScanCallback(event: { workflowId: string; status
       parsed.output.modelRules.matched,
       metadata.ruleIds
     );
-    if (dropped.length) await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
-    parsed.output.modelRules = { matched: kept };
-    modelRules = {
-      fingerprint: metadata.rulesFingerprint,
-      snapshot: await getModelRuleSnapshots(kept.map((m) => m.ruleId)),
-    };
+    if (dropped.length)
+      await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
+    const snapshot = await getModelRuleSnapshots(kept.map((m) => m.ruleId));
+    const live = new Set(snapshot.map((rule) => rule.id));
+    parsed.output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
+    modelRules = { fingerprint: metadata.rulesFingerprint, snapshot };
   }
 
   const outcome = evaluateTextScan(parsed.output, subject.declared, labels);

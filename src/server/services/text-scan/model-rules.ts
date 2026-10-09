@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -64,11 +64,14 @@ export function modelRulesFingerprint(rules: ModelRuleForPrompt[]) {
 
 export type ModelRuleSnapshot = { id: number; subject: string; description: string; aliases: string[] };
 
-/** Read by id, not from the enabled-rule cache: a rule disabled since the submit still fired. */
+/**
+ * Read by id from the primary, not from the cache, and enabled only: a rule disabled after the
+ * submit must stop acting at once, and a match on it is dropped.
+ */
 export async function getModelRuleSnapshots(ids: number[]): Promise<ModelRuleSnapshot[]> {
   if (!ids.length) return [];
-  const rows = await dbRead.moderationRule.findMany({
-    where: { id: { in: ids }, entityType: EntityType.Model },
+  const rows = await dbWrite.moderationRule.findMany({
+    where: { id: { in: ids }, entityType: EntityType.Model, enabled: true },
     select: { id: true, definition: true },
   });
   return rows.flatMap((row) => {

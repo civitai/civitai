@@ -80,7 +80,7 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/services/model.service.ts',
     'export async function migrateResourceToCollection',
-    'modelIds.forEach(scanModelAndRules)',
+    'modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }))',
     1,
   ],
   [
@@ -99,6 +99,12 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     'src/server/controllers/model-version.controller.ts',
     'export const publishModelVersionHandler',
     "scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId })",
+    1,
+  ],
+  [
+    'src/server/services/model.service.ts',
+    'export const publishPrivateModel',
+    "scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId })",
     1,
   ],
   [

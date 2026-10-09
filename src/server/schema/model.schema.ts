@@ -384,9 +384,12 @@ export type ModelMeta = Partial<{
   minorHashAccepted: { at: string };
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
-  modelRules: { ruleIds: number[]; workflowId: string; at: string };
-  /** Rule ids a moderator approved by republishing; a rescan does not act on them again. */
-  modelRulesCleared: number[];
+  modelRules: { ruleIds: number[]; workflowId: string; textHash: string; at: string };
+  /**
+   * Rules a moderator approved by republishing, for the text they reviewed: a rescan of that same
+   * text does not act on them again, while edited text is judged afresh.
+   */
+  modelRulesCleared: { ruleIds: number[]; textHash: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean | null;

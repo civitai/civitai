@@ -2,10 +2,15 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
 import type { TextScanSubject } from '~/server/services/text-scan/types';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+
+const PUBLIC_STATUSES = [ModelStatus.Published, ModelStatus.Scheduled];
 import { removeTags } from '~/utils/string-helpers';
 
-/** Shared with the `ModelRules` profile, so both scans read the same model text. */
+/**
+ * Shared with the `ModelRules` profile, so both scans read the same model text. `publicOnly` loads
+ * only what the public can see: a Published or Scheduled, non-Private model and its public versions.
+ */
 export async function loadModelScanSubjects(
   ids: number[],
   { publicOnly = false }: { publicOnly?: boolean } = {}
@@ -14,7 +19,12 @@ export async function loadModelScanSubjects(
     where: {
       id: { in: ids },
       deletedAt: null,
-      ...(publicOnly ? { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } } : {}),
+      ...(publicOnly
+        ? {
+            status: { in: PUBLIC_STATUSES },
+            availability: { not: Availability.Private },
+          }
+        : {}),
     },
     select: {
       id: true,
@@ -25,6 +35,8 @@ export async function loadModelScanSubjects(
       poi: true,
       minor: true,
       modelVersions: {
+        // Public-only: a draft version's text is not public, so it must not take the model down.
+        ...(publicOnly ? { where: { status: { in: PUBLIC_STATUSES } } } : {}),
         select: { name: true, description: true, trainedWords: true },
         orderBy: { index: 'asc' },
       },

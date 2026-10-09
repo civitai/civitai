@@ -139,7 +139,7 @@ import { submitModelTextModeration } from '~/server/services/model-moderation.ad
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
 import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import { scanModelAndRules } from '~/server/services/text-scan/submit';
+import { scanEntityInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -4802,7 +4802,8 @@ export async function setModelShowcaseCollection({
 export async function migrateResourceToCollection({
   id: modelId,
   collectionName,
-}: MigrateResourceToCollectionInput) {
+  isModerator,
+}: MigrateResourceToCollectionInput & { isModerator?: boolean }) {
   const model = await dbRead.model.findUnique({
     where: { id: modelId },
     include: { modelVersions: true, tagsOnModels: true, licenses: true, resourceReviews: true },
@@ -4929,7 +4930,7 @@ export async function migrateResourceToCollection({
   await modelsSearchIndex.queueUpdate(
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
-  modelIds.forEach(scanModelAndRules);
+  modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }));
 
   return { ok: true };
 }
@@ -5380,6 +5381,8 @@ export const publishPrivateModel = async ({
       `;
     }
   });
+  // Private -> Public is the moment the rules start to apply.
+  if (publishVersions) scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {
