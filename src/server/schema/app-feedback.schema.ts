@@ -81,8 +81,12 @@ export const modListAppFeedbackSchema = z.object({
   cursor: z.number().int().positive().optional(),
   limit: z.number().int().min(1).max(100).default(APP_FEEDBACK_PAGE_LIMIT),
   appListingId: z.string().min(1).max(64).optional(),
-  /** Rows whose listing was deleted (`appListingId` SET NULL by the FK). */
-  listingDeleted: z.boolean().optional(),
+  /**
+   * `true` = only rows whose listing was deleted (`appListingId` SET NULL by the FK); absent = no
+   * filter. Same shape as `flagged`: there is no "listing still exists" filter, so the schema
+   * refuses `false` rather than accept a value nothing branches on.
+   */
+  listingDeleted: z.literal(true).optional(),
   ownerStatus: appFeedbackOwnerStatusFilterSchema.optional(),
   /**
    * `true` = only developer-flagged rows; absent = no filter. There is no "unflagged only" filter:

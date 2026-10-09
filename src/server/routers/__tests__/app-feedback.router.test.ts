@@ -185,4 +185,19 @@ describe('moderator procedures', () => {
     });
     expect(svc.modListAppFeedback).not.toHaveBeenCalled();
   });
+
+  it('modList accepts listingDeleted: true and refuses listingDeleted: false at the schema', async () => {
+    const c = appFeedbackRouter.createCaller(ctx(moderator));
+    await c.modList({ listingDeleted: true });
+    expect(svc.modListAppFeedback).toHaveBeenCalledWith({
+      limit: 50,
+      hidden: 'all',
+      listingDeleted: true,
+    });
+    svc.modListAppFeedback.mockClear();
+    await expect(c.modList({ listingDeleted: false } as never)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(svc.modListAppFeedback).not.toHaveBeenCalled();
+  });
 });
