@@ -86,7 +86,8 @@ export function appFeedbackModalTitle(appName: string | null | undefined): strin
 
 /**
  * Must name everything stored about what the user was viewing (app version, model), or the
- * modal's "Nothing else is collected" is false.
+ * modal's "Nothing else is collected" is false. The stored `surface` (page vs model slot) is left
+ * unnamed: it is where the modal itself was opened.
  */
 export function appFeedbackSentWithLine(
   appBlockVersion: string | null | undefined,
