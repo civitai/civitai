@@ -3,13 +3,18 @@
 // comment, approval or tracking request it rides on.
 //
 // Every award and removal is gated on `isHattedEntity`, an in-memory check, so content without an
-// event hat costs nothing past that check.
+// event hat costs nothing past that check. The one exception is a comment reply or a deleted
+// comment, whose thread must be read to learn which Image or Article it belongs to.
+//
+// Each action carries `time`, taken synchronously at the write site, so two quick opposite writes
+// (react then un-react) order by when they happened, not by which hook's query finished first.
 //
 // A removal is sent only when the actor's LAST qualifying row on the entity goes (their last
 // reaction, comment, approved sticker, recommended review), so `sourceId` is one per
 // (kind, entity, actor) and an add and its removal always pair. Accepted limitation: if the hat
 // came off before the removal, the gate skips it and no removal is sent.
 import type { TrackBatchInput } from '~/server/schema/track.schema';
+import type { PlacementSurface, PlacementTargetType } from '~/shared/utils/placement';
 import type { Session } from '~/types/session';
 import { dbWrite } from '~/server/db/client';
 import { handleLogError } from '~/server/utils/errorHandling';
@@ -47,14 +52,20 @@ export function hattedImpressionEntities(events: TrackBatchInput): Entity[] {
   return hatted ?? [];
 }
 
-/** Views of hatted entities, for a signed-in viewer only. Resolves the session itself. */
+/**
+ * Views of hatted entities, for a signed-in viewer only. Resolves the session itself. A session from
+ * an API key or bearer token earns nothing: the beacon is a browser route, and a token caller can
+ * post impressions it never saw.
+ */
 export async function awardViewPoints(
   getSession: () => Promise<Session | null>,
   entities: Entity[]
 ): Promise<void> {
   try {
     if (!entities.length) return;
-    const user = (await getSession())?.user;
+    const session = await getSession();
+    if (!session || 'tokenScope' in session) return;
+    const user = session.user;
     if (!user?.id) return;
     await awardEventPoints(
       entities.map(({ entityType, entityId }) => ({
@@ -75,7 +86,8 @@ export async function awardViewPoints(
 async function removeIfLast(
   action: Required<
     Pick<EventPointAction, 'type' | 'actorId' | 'entityType' | 'entityId' | 'sourceId'>
-  >,
+  > &
+    Pick<EventPointAction, 'time'>,
   stillHas: () => Promise<number>
 ) {
   if (!isHattedEntity(action.entityType, action.entityId)) return;
@@ -91,7 +103,7 @@ const REACTION_ENTITIES = {
 
 type ReactionInput = { entityType: string; entityId: number; userId: number };
 
-const reactionTarget = ({ entityType, entityId, userId }: ReactionInput) => {
+const reactionTarget = ({ entityType, entityId, userId }: ReactionInput, time: Date) => {
   const target = REACTION_ENTITIES[entityType as keyof typeof REACTION_ENTITIES];
   if (!target) return undefined;
   return {
@@ -99,13 +111,15 @@ const reactionTarget = ({ entityType, entityId, userId }: ReactionInput) => {
     actorId: userId,
     entityType: target.entityType,
     entityId,
+    time,
     sourceId: `${target.kind}:${entityId}:${userId}`,
   };
 };
 
 export async function onReactionCreated(input: ReactionInput): Promise<void> {
+  const time = new Date();
   try {
-    const action = reactionTarget(input);
+    const action = reactionTarget(input, time);
     if (!action || !isHattedEntity(action.entityType, action.entityId)) return;
     await awardEventPoints([action]);
   } catch (error) {
@@ -114,8 +128,9 @@ export async function onReactionCreated(input: ReactionInput): Promise<void> {
 }
 
 export async function onReactionRemoved(input: ReactionInput): Promise<void> {
+  const time = new Date();
   try {
-    const action = reactionTarget(input);
+    const action = reactionTarget(input, time);
     if (!action) return;
     const { entityId, userId } = input;
     await removeIfLast(action, () =>
@@ -130,10 +145,14 @@ export async function onReactionRemoved(input: ReactionInput): Promise<void> {
 // #endregion
 
 // #region comments
-// A reply's thread hangs off a comment; its root thread is the one on the Image or Article.
-async function commentRoot(threadId: number) {
-  const thread = await dbWrite.thread.findUnique({
-    where: { id: threadId },
+type CommentRoot = Entity & { rootThreadId: number };
+
+// The Image or Article each thread hangs off, through `Thread.rootThreadId` for a reply's thread.
+// That column is server-derived from the parent comment on create; older rows written from client
+// input may point elsewhere, which here can only misattribute a reply's points, never grant more.
+async function commentRoots(threadIds: number[]) {
+  const threads = await dbWrite.thread.findMany({
+    where: { id: { in: threadIds } },
     select: {
       id: true,
       rootThreadId: true,
@@ -142,20 +161,24 @@ async function commentRoot(threadId: number) {
       rootThread: { select: { imageId: true, articleId: true } },
     },
   });
-  if (!thread) return undefined;
-  const root = thread.rootThreadId ? thread.rootThread : thread;
-  const rootThreadId = thread.rootThreadId ?? thread.id;
-  if (root?.imageId) return { rootThreadId, entityType: 'Image' as const, entityId: root.imageId };
-  if (root?.articleId)
-    return { rootThreadId, entityType: 'Article' as const, entityId: root.articleId };
-  return undefined;
+  const roots = new Map<number, CommentRoot>();
+  for (const thread of threads) {
+    const root = thread.rootThreadId ? thread.rootThread : thread;
+    const rootThreadId = thread.rootThreadId ?? thread.id;
+    if (root?.imageId)
+      roots.set(thread.id, { rootThreadId, entityType: 'Image', entityId: root.imageId });
+    else if (root?.articleId)
+      roots.set(thread.id, { rootThreadId, entityType: 'Article', entityId: root.articleId });
+  }
+  return roots;
 }
 
-const commentAction = (userId: number, { entityType, entityId }: Entity) => ({
+const commentAction = (userId: number, { entityType, entityId }: Entity, time: Date) => ({
   type: 'comment' as const,
   actorId: userId,
   entityType,
   entityId,
+  time,
   sourceId: `CommentV2:${entityType}:${entityId}:${userId}`,
 });
 
@@ -174,13 +197,14 @@ export async function onCommentCreated({
   entityId: number;
   threadId: number;
 }): Promise<void> {
+  const time = new Date();
   try {
     let target: Entity | undefined;
     if (entityType === 'image') target = { entityType: 'Image', entityId };
     else if (entityType === 'article') target = { entityType: 'Article', entityId };
-    else if (entityType === 'comment') target = await commentRoot(threadId);
+    else if (entityType === 'comment') target = (await commentRoots([threadId])).get(threadId);
     if (!target || !isHattedEntity(target.entityType, target.entityId)) return;
-    await awardEventPoints([commentAction(userId, target)]);
+    await awardEventPoints([commentAction(userId, target, time)]);
   } catch (error) {
     swallow('event-points:comment')(error);
   }
@@ -190,15 +214,19 @@ export async function onCommentCreated({
 export async function onCommentsRemoved(
   comments: { userId: number; threadId: number }[]
 ): Promise<void> {
+  const time = new Date();
   try {
+    if (!comments.length) return;
+    // One read for every thread, before any per-comment work.
+    const roots = await commentRoots([...new Set(comments.map(({ threadId }) => threadId))]);
     const seen = new Set<string>();
     for (const { userId, threadId } of comments) {
-      const root = await commentRoot(threadId);
+      const root = roots.get(threadId);
       if (!root) continue;
-      const key = `${root.rootThreadId}:${userId}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      await removeIfLast(commentAction(userId, root), () =>
+      const action = commentAction(userId, root, time);
+      if (seen.has(action.sourceId)) continue;
+      seen.add(action.sourceId);
+      await removeIfLast(action, () =>
         dbWrite.commentV2.count({
           where: {
             userId,
@@ -214,29 +242,37 @@ export async function onCommentsRemoved(
 // #endregion
 
 // #region placements
-const PLACEMENT_TYPES: Record<string, Extract<EventPointType, 'sticker' | 'remix'>> = {
+const PLACEMENT_TYPES: Partial<
+  Record<PlacementSurface, Extract<EventPointType, 'sticker' | 'remix'>>
+> = {
   sticker: 'sticker',
   remixGallery: 'remix',
 };
+const IMAGE_TARGET: PlacementTargetType = 'image';
 
 type PlacementLike = { surface: string; targetType: string; targetId: number; placerId: number };
 
-const placementAction = ({ surface, targetType, targetId, placerId }: PlacementLike) => {
-  const type = PLACEMENT_TYPES[surface];
-  if (!type || targetType !== 'image') return undefined;
+const placementAction = (
+  { surface, targetType, targetId, placerId }: PlacementLike,
+  time: Date
+) => {
+  const type = PLACEMENT_TYPES[surface as PlacementSurface];
+  if (!type || targetType !== IMAGE_TARGET) return undefined;
   return {
     type,
     actorId: placerId,
     entityType: 'Image' as const,
     entityId: targetId,
+    time,
     sourceId: `Placement:${type}:${targetId}:${placerId}`,
   };
 };
 
 /** An owner approved a placement: a sticker or an accepted remix on their image. */
 export async function onPlacementApproved(placement: PlacementLike): Promise<void> {
+  const time = new Date();
   try {
-    const action = placementAction(placement);
+    const action = placementAction(placement, time);
     if (!action || !isHattedEntity(action.entityType, action.entityId)) return;
     await awardEventPoints([action]);
   } catch (error) {
@@ -246,6 +282,7 @@ export async function onPlacementApproved(placement: PlacementLike): Promise<voi
 
 /** Approved placements taken down (by the owner, a moderator, or a cosmetic takedown). */
 export async function onPlacementsTakenDown(placementIds: number[]): Promise<void> {
+  const time = new Date();
   try {
     if (!placementIds.length) return;
     const rows = await dbWrite.placement.findMany({
@@ -254,7 +291,7 @@ export async function onPlacementsTakenDown(placementIds: number[]): Promise<voi
     });
     const seen = new Set<string>();
     for (const row of rows) {
-      const action = placementAction(row);
+      const action = placementAction(row, time);
       if (!action || seen.has(action.sourceId)) continue;
       seen.add(action.sourceId);
       await removeIfLast(action, () =>
@@ -283,6 +320,7 @@ export async function onPlacementsTakenDown(placementIds: number[]): Promise<voi
 export async function onModelReviewsChanged(
   reviews: { modelId: number; userId: number }[]
 ): Promise<void> {
+  const time = new Date();
   try {
     const seen = new Set<string>();
     for (const { modelId, userId } of reviews) {
@@ -295,6 +333,7 @@ export async function onModelReviewsChanged(
         actorId: userId,
         entityType: 'Model' as const,
         entityId: modelId,
+        time,
         sourceId: `ResourceReview:${modelId}:${userId}`,
       };
       const recommended = await dbWrite.resourceReview.count({

@@ -97,6 +97,7 @@ describe('reactions', () => {
         actorId: ACTOR,
         entityType: 'Image',
         entityId: 7,
+        time: expect.any(Date),
         sourceId: `ImageReaction:7:${ACTOR}`,
       },
     ]);
@@ -123,6 +124,7 @@ describe('reactions', () => {
         actorId: ACTOR,
         entityType: 'Article',
         entityId: 3,
+        time: expect.any(Date),
         sourceId: `ArticleReaction:3:${ACTOR}`,
       },
     ]);
@@ -150,13 +152,14 @@ describe('comments', () => {
   it('awards a top-level comment on a hatted image without a thread lookup', async () => {
     hatted.add('Image:7');
     await onCommentCreated({ userId: ACTOR, entityType: 'image', entityId: 7, threadId: 70 });
-    expect(db.thread.findUnique).not.toHaveBeenCalled();
+    expect(db.thread.findMany).not.toHaveBeenCalled();
     expect(awardEventPoints).toHaveBeenCalledWith([
       {
         type: 'comment',
         actorId: ACTOR,
         entityType: 'Image',
         entityId: 7,
+        time: expect.any(Date),
         sourceId: `CommentV2:Image:7:${ACTOR}`,
       },
     ]);
@@ -164,19 +167,22 @@ describe('comments', () => {
 
   it("credits a reply to its root thread's article", async () => {
     hatted.add('Article:3');
-    db.thread.findUnique.mockResolvedValueOnce({
-      id: 71,
-      rootThreadId: 30,
-      imageId: null,
-      articleId: null,
-      rootThread: { imageId: null, articleId: 3 },
-    });
+    db.thread.findMany.mockResolvedValueOnce([
+      {
+        id: 71,
+        rootThreadId: 30,
+        imageId: null,
+        articleId: null,
+        rootThread: { imageId: null, articleId: 3 },
+      },
+    ]);
     await onCommentCreated({ userId: ACTOR, entityType: 'comment', entityId: 99, threadId: 71 });
     expect(awardEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({
         type: 'comment',
         entityType: 'Article',
         entityId: 3,
+        time: expect.any(Date),
         sourceId: `CommentV2:Article:3:${ACTOR}`,
       }),
     ]);
@@ -190,13 +196,9 @@ describe('comments', () => {
 
   it('removes once the actor has no comment left anywhere under the root thread', async () => {
     hatted.add('Image:7');
-    db.thread.findUnique.mockResolvedValue({
-      id: 70,
-      rootThreadId: null,
-      imageId: 7,
-      articleId: null,
-      rootThread: null,
-    });
+    db.thread.findMany.mockResolvedValue([
+      { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
+    ]);
     db.commentV2.count.mockResolvedValueOnce(2).mockResolvedValueOnce(0);
 
     await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
@@ -227,6 +229,7 @@ describe('placements', () => {
             actorId: ACTOR,
             entityType: 'Image',
             entityId: 7,
+            time: expect.any(Date),
             sourceId: `Placement:sticker:7:${ACTOR}`,
           },
         ],
@@ -266,6 +269,7 @@ describe('model reviews', () => {
     actorId: ACTOR,
     entityType: 'Model',
     entityId: 4,
+    time: expect.any(Date),
     sourceId: `ResourceReview:4:${ACTOR}`,
   };
 
@@ -288,6 +292,86 @@ describe('model reviews', () => {
     await onModelReviewsChanged([{ modelId: 4, userId: ACTOR }]);
     expect(db.resourceReview.count).not.toHaveBeenCalled();
     expect(awardEventPoints).not.toHaveBeenCalled();
+    expect(removeEventPoints).not.toHaveBeenCalled();
+  });
+});
+
+describe('round 1', () => {
+  it('awards nothing to a session from an API key or bearer token', async () => {
+    await awardViewPoints(
+      async () => ({ user: { id: ACTOR }, tokenScope: 1 } as never),
+      [{ entityType: 'Image', entityId: 1 }]
+    );
+    expect(awardEventPoints).not.toHaveBeenCalled();
+  });
+
+  it('stamps an action with the time of the write, not of the query that follows it', async () => {
+    vi.useFakeTimers();
+    try {
+      hatted.add('Image:7');
+      const written = new Date('2026-10-20T10:00:00Z');
+      vi.setSystemTime(written);
+      let release!: (count: number) => void;
+      db.imageReaction.count.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+
+      const done = onReactionRemoved({ entityType: 'image', entityId: 7, userId: ACTOR });
+      vi.setSystemTime(new Date('2026-10-20T10:00:05Z'));
+      release(0);
+      await done;
+
+      expect(removeEventPoints).toHaveBeenCalledWith([expect.objectContaining({ time: written })]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads every deleted comment's thread in one query and removes once per actor and root", async () => {
+    hatted.add('Image:7');
+    db.thread.findMany.mockResolvedValue([
+      { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
+      { id: 71, rootThreadId: 70, imageId: null, articleId: null, rootThread: { imageId: 7 } },
+    ]);
+    db.commentV2.count.mockResolvedValue(0);
+
+    await onCommentsRemoved([
+      { userId: ACTOR, threadId: 70 },
+      { userId: ACTOR, threadId: 71 },
+      { userId: ACTOR, threadId: 70 },
+    ]);
+
+    expect(db.thread.findMany).toHaveBeenCalledTimes(1);
+    expect(db.thread.findMany.mock.calls[0][0]).toMatchObject({ where: { id: { in: [70, 71] } } });
+    expect(db.commentV2.count).toHaveBeenCalledTimes(1);
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the remaining-rows query for a comment on unhatted content', async () => {
+    db.thread.findMany.mockResolvedValue([
+      { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null },
+    ]);
+    await onCommentsRemoved([{ userId: ACTOR, threadId: 70 }]);
+    expect(db.commentV2.count).not.toHaveBeenCalled();
+    expect(removeEventPoints).not.toHaveBeenCalled();
+  });
+
+  it('removes a placer once however many of their placements on the image came down', async () => {
+    hatted.add('Image:7');
+    const sticker = { surface: 'sticker', targetType: 'image', targetId: 7, placerId: ACTOR };
+    db.placement.findMany.mockResolvedValue([sticker, sticker]);
+    db.placement.count.mockResolvedValue(0);
+
+    await onPlacementsTakenDown([1, 2]);
+
+    expect(db.placement.count).toHaveBeenCalledTimes(1);
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the remaining-rows query for a takedown on an unhatted image', async () => {
+    db.placement.findMany.mockResolvedValue([
+      { surface: 'sticker', targetType: 'image', targetId: 7, placerId: ACTOR },
+    ]);
+    await onPlacementsTakenDown([1]);
+    expect(db.placement.count).not.toHaveBeenCalled();
     expect(removeEventPoints).not.toHaveBeenCalled();
   });
 });

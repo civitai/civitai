@@ -36,6 +36,7 @@ const modelLike = {
   actorId: AUTHOR,
   entityType: 'Model',
   entityId: MODEL,
+  time: expect.any(Date),
   sourceId: `ResourceReview:${MODEL}:${AUTHOR}`,
 };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));

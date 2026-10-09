@@ -329,11 +329,14 @@ export const upsertComment = async ({
   parentThreadId: _clientParentThreadId,
   isModerator,
   track,
+  eventPoints = true,
   ...data
 }: UpsertCommentV2Input & {
   userId: number;
   isModerator?: boolean;
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
+  // False for automated accounts (the challenge judge): event points are for people engaging.
+  eventPoints?: boolean;
 }) => {
   await throwOnBlockedCommentContent(data.content, { isModerator });
   // Edits too, not just creates — a comment written before the block would otherwise stay editable
@@ -449,7 +452,8 @@ export const upsertComment = async ({
     });
 
     queueScamScan({ entityType: 'CommentV2', entityId: created.id });
-    void onCommentCreated({ userId, entityType, entityId, threadId: created.threadId });
+    if (eventPoints)
+      void onCommentCreated({ userId, entityType, entityId, threadId: created.threadId });
     return created;
   }
   // Wrapped so the edit's charge and the edit itself commit together.

@@ -30,6 +30,10 @@ const USER = 5;
 const like = { entityType: 'image', entityId: 7, userId: USER, reaction: 'Like' } as const;
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// Resolves to 'pending' if `call` has not settled by the time pending microtasks drain.
+const raceSettle = (call: Promise<unknown>) =>
+  Promise.race([call.then(() => 'done'), settle().then(() => 'pending')]);
+
 beforeEach(() => {
   vi.clearAllMocks();
   hatted.clear();
@@ -50,6 +54,7 @@ describe('toggleReaction event points', () => {
         actorId: USER,
         entityType: 'Image',
         entityId: 7,
+        time: expect.any(Date),
         sourceId: `ImageReaction:7:${USER}`,
       },
     ]);
@@ -85,6 +90,16 @@ describe('toggleReaction event points', () => {
 
     await expect(toggleReaction(like)).resolves.toBe('created');
     await settle();
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the reaction does not wait on points', () => {
+  it('resolves while the points call is still pending', async () => {
+    db.imageReaction.findFirst.mockResolvedValue(null);
+    awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
+
+    expect(await raceSettle(toggleReaction(like))).toBe('done');
     expect(awardEventPoints).toHaveBeenCalledTimes(1);
   });
 });

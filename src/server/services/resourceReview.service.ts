@@ -360,10 +360,11 @@ export const upsertResourceReview = async ({
   // Edits too, not just creates — a review written before a block would otherwise stay editable
   // into anything afterwards. An edit writes `modelId` through from the request while being scoped
   // by review id, so the review's stored model is checked alongside the one the request names.
+  const storedModelId = data.id ? await storedReviewModelId(data.id) : undefined;
   await throwIfBlockedByModelOwners({
     userId,
     isModerator,
-    modelIds: [data.modelId, data.id ? await storedReviewModelId(data.id) : undefined],
+    modelIds: [data.modelId, storedModelId],
   });
 
   if (!data.id) {
@@ -398,7 +399,11 @@ export const upsertResourceReview = async ({
       data,
       select: { id: true, modelId: true, modelVersionId: true, userId: true },
     });
-    void onModelReviewsChanged([ret]);
+    // An edit can move the review to another model, so the model it left is re-checked too.
+    void onModelReviewsChanged([
+      ret,
+      ...(storedModelId ? [{ modelId: storedModelId, userId: ret.userId }] : []),
+    ]);
     await bustRatingTotalsCache({
       modelId: ret.modelId,
       modelVersionId: ret.modelVersionId,

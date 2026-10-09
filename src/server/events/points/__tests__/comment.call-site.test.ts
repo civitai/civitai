@@ -44,12 +44,17 @@ const USER = 5;
 const IMAGE_THREAD = { id: 70, rootThreadId: null, imageId: 7, articleId: null, rootThread: null };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// Resolves to 'pending' if `call` has not settled by the time pending microtasks drain.
+const raceSettle = (call: Promise<unknown>) =>
+  Promise.race([call.then(() => 'done'), settle().then(() => 'pending')]);
+
 beforeEach(() => {
   vi.clearAllMocks();
   hatted.clear();
   hatted.add('Image:7');
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
   db.thread.findUnique.mockResolvedValue(IMAGE_THREAD);
+  db.thread.findMany.mockResolvedValue([IMAGE_THREAD]);
 });
 
 describe('CommentV2 event points', () => {
@@ -65,6 +70,7 @@ describe('CommentV2 event points', () => {
         actorId: USER,
         entityType: 'Image',
         entityId: 7,
+        time: expect.any(Date),
         sourceId: `CommentV2:Image:7:${USER}`,
       },
     ]);
@@ -104,9 +110,37 @@ describe('CommentV2 event points', () => {
     await expect(bulkDeleteCommentsV2({ ids: [1, 2] })).resolves.toEqual({ count: 2 });
     await settle();
 
+    // Read before the delete: after it, the rows (and so the authors) are gone.
+    expect(db.commentV2.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+      db.commentV2.deleteMany.mock.invocationCallOrder[0]
+    );
+    expect(db.commentV2.findMany.mock.calls[0][0]).toMatchObject({
+      select: { userId: true, threadId: true },
+    });
+
     expect(removeEventPoints.mock.calls.map(([[removal]]) => removal.sourceId)).toEqual([
       `CommentV2:Image:7:${USER}`,
       'CommentV2:Image:7:6',
     ]);
+  });
+});
+
+describe('comment failure paths', () => {
+  it('still deletes when the pre-delete read fails, and removes nothing', async () => {
+    db.commentV2.findMany.mockRejectedValueOnce(new Error('read failed'));
+    db.commentV2.deleteMany.mockResolvedValue({ count: 2 });
+
+    await expect(bulkDeleteCommentsV2({ ids: [1, 2] })).resolves.toEqual({ count: 2 });
+    await settle();
+    expect(removeEventPoints).not.toHaveBeenCalled();
+  });
+
+  it('resolves while the points call is still pending', async () => {
+    db.commentV2.create.mockResolvedValue({ id: 456, threadId: 70 });
+    awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
+
+    const call = upsertComment({ userId: USER, entityType: 'image', entityId: 7, content: 'hi' });
+    expect(await raceSettle(call)).toBe('done');
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
   });
 });

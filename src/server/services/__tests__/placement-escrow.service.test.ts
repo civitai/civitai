@@ -2403,6 +2403,7 @@ describe('event points on approval', () => {
         actorId: PLACER,
         entityType: 'Image',
         entityId: 99,
+        time: expect.any(Date),
         sourceId: `Placement:sticker:99:${PLACER}`,
       },
     ]);
@@ -2427,6 +2428,21 @@ describe('event points on approval', () => {
     await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
     await settle();
 
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  it('settles while the points call is still pending', async () => {
+    givenPlacement();
+    await hold();
+    awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
+
+    const outcome = await Promise.race([
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER }).then(() => 'done'),
+      settle()
+        .then(() => settle())
+        .then(() => 'pending'),
+    ]);
+    expect(outcome).toBe('done');
     expect(awardEventPoints).toHaveBeenCalledTimes(1);
   });
 

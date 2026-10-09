@@ -114,3 +114,15 @@ describe('POST /api/track/batch event points', () => {
     expect(awardEventPoints).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('token sessions', () => {
+  it('awards nothing to a session from an API key or bearer token', async () => {
+    hatted.add('Image:11');
+    getSession.mockResolvedValue({ ...SIGNED_IN, tokenScope: 1 });
+    const { done } = post([{ entityType: 'Image', entityId: 11 }]);
+    await done;
+    await settle();
+
+    expect(awardEventPoints).not.toHaveBeenCalled();
+  });
+});

@@ -62,9 +62,14 @@ const modelLike = {
   actorId: AUTHOR,
   entityType: 'Model',
   entityId: MODEL,
+  time: expect.any(Date),
   sourceId: `ResourceReview:${MODEL}:${AUTHOR}`,
 };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+// Resolves to 'pending' if `call` has not settled by the time pending microtasks drain.
+const raceSettle = (call: Promise<unknown>) =>
+  Promise.race([call.then(() => 'done'), settle().then(() => 'pending')]);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -100,6 +105,9 @@ describe('ResourceReview event points', () => {
     await updateResourceReview({ id: 7, recommended: false, userId: 1 });
     await settle();
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
+    expect(db.resourceReview.update.mock.calls[0][0]).toMatchObject({
+      select: expect.objectContaining({ userId: true }),
+    });
   });
 
   it('removes on delete', async () => {
@@ -116,12 +124,46 @@ describe('ResourceReview event points', () => {
     await deleteResourceReviews({ ids: [7] });
     await settle();
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
+    expect(dbMock.dbRead.resourceReview.findMany.mock.calls[0][0]).toMatchObject({
+      select: expect.objectContaining({ userId: true }),
+    });
   });
 
   it('is not failed by a failing points call', async () => {
     db.resourceReview.count.mockResolvedValue(1);
     awardEventPoints.mockRejectedValueOnce(new Error('redis down'));
     await expect(createResourceReview({ ...input, userId: AUTHOR })).resolves.toBe(row);
+    await settle();
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ResourceReview edits through upsert', () => {
+  it('re-checks both models when an edit moves the review to another model', async () => {
+    hatted.add('Model:11');
+    // Stored on model 11; the edit moves it to model 10.
+    db.resourceReview.findUnique.mockResolvedValue({ modelId: 11 });
+    db.resourceReview.count.mockImplementation(async (args: unknown) =>
+      (args as { where: { modelId: number } }).where.modelId === MODEL ? 1 : 0
+    );
+
+    await upsertResourceReview({ ...input, id: 7, userId: AUTHOR });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledWith([modelLike]);
+    expect(removeEventPoints).toHaveBeenCalledWith([
+      expect.objectContaining({ entityId: 11, sourceId: `ResourceReview:11:${AUTHOR}` }),
+    ]);
+    expect(db.resourceReview.update.mock.calls[0][0]).toMatchObject({
+      select: expect.objectContaining({ userId: true }),
+    });
+  });
+
+  it('resolves while the points call is still pending', async () => {
+    db.resourceReview.count.mockResolvedValue(1);
+    awardEventPoints.mockReturnValueOnce(new Promise(() => undefined));
+
+    expect(await raceSettle(createResourceReview({ ...input, userId: AUTHOR }))).toBe('done');
     await settle();
     expect(awardEventPoints).toHaveBeenCalledTimes(1);
   });
