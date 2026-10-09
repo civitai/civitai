@@ -196,6 +196,12 @@ describe('ScoredEventSections: the result the hero announces', () => {
     expect(heroProps.winner).toBe('Yellow');
   });
 
+  it('still says it is tallying before finalAt when the standings have not loaded', () => {
+    teams = undefined;
+    sections({ joined: true, ended: true, finalized: false });
+    expect(heroProps).toMatchObject({ ended: true, finalizing: true });
+  });
+
   it('claims nothing without standings', () => {
     teams = undefined;
     sections({ joined: true, ended: true });
