@@ -93,7 +93,9 @@ export default function CardDecorationModal({
       ({ data, forId, forType }) =>
         (data.url || data.cssFrame) &&
         // A frame and an event decoration are worn side by side, so each picker lists only its own.
-        (kind === 'event' ? isWearableEventDecoration(data, entityType) : !isEventDecorationData(data)) &&
+        (kind === 'event'
+          ? isWearableEventDecoration(data, entityType)
+          : !isEventDecorationData(data)) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
     ) ?? [];

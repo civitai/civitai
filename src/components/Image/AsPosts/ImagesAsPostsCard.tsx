@@ -202,7 +202,9 @@ function ImagesAsPostsCardHeader({
       py="xs"
       pr="xs"
       // Steps the avatar clear of an event decoration sitting on the corner.
-      style={{ paddingLeft: 'max(var(--mantine-spacing-xs), var(--event-decoration-clear-left, 0px))' }}
+      style={{
+        paddingLeft: 'max(var(--mantine-spacing-xs), var(--event-decoration-clear-left, 0px))',
+      }}
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',

@@ -16,7 +16,6 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useScrollMargin } from '~/hooks/useScrollMargin';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 
-
 type Props<TData> = {
   data: TData[];
   render: React.ComponentType<MasonryRenderItemProps<TData>>;

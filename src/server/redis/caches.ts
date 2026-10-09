@@ -338,7 +338,11 @@ export const cosmeticEntityCaches = Object.fromEntries(
   ])
 ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
 
-type EntityEventDecorationLookupRaw = { equippedToId: number; cosmeticId: number; claimKey: string };
+type EntityEventDecorationLookupRaw = {
+  equippedToId: number;
+  cosmeticId: number;
+  claimKey: string;
+};
 /** The event decoration each entity wears, cached apart from its frame so neither displaces the other. */
 export const eventDecorationEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [

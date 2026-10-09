@@ -113,15 +113,17 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                 {({ inView }) => (
                   <div
                     className="relative w-full"
-                    style={{
-                      aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
-                      ...(image.eventDecoration && {
-                        '--event-decoration-clear-left': `${getEventDecorationClearLeft(
-                          image.eventDecoration.data,
-                          'inside'
-                        )}px`,
-                      }),
-                    } as React.CSSProperties}
+                    style={
+                      {
+                        aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
+                        ...(image.eventDecoration && {
+                          '--event-decoration-clear-left': `${getEventDecorationClearLeft(
+                            image.eventDecoration.data,
+                            'inside'
+                          )}px`,
+                        }),
+                      } as React.CSSProperties
+                    }
                   >
                     <ImpressionSentinel
                       impressions={[{ entityType: 'Image', entityId: image.id }]}

@@ -9,8 +9,14 @@ import {
 const db = dbMock.dbWrite;
 const entityCache = () => ({ refresh: vi.fn(), fetch: vi.fn().mockResolvedValue({}) });
 const caches = vi.hoisted(() => ({
-  frame: {} as Record<string, { refresh: ReturnType<typeof vi.fn>; fetch: ReturnType<typeof vi.fn> }>,
-  event: {} as Record<string, { refresh: ReturnType<typeof vi.fn>; fetch: ReturnType<typeof vi.fn> }>,
+  frame: {} as Record<
+    string,
+    { refresh: ReturnType<typeof vi.fn>; fetch: ReturnType<typeof vi.fn> }
+  >,
+  event: {} as Record<
+    string,
+    { refresh: ReturnType<typeof vi.fn>; fetch: ReturnType<typeof vi.fn> }
+  >,
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -192,9 +198,9 @@ describe('placing an event decoration', () => {
 describe('getEventDecorationsForEntity', () => {
   it('reads the cache while an event lets that type wear one', async () => {
     caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1 } });
-    await expect(getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).resolves.toEqual(
-      { [IMAGE]: { id: 1 } }
-    );
+    await expect(getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).resolves.toEqual({
+      [IMAGE]: { id: 1 },
+    });
   });
 
   it('skips the read between events and for types no event allows', async () => {
