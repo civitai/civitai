@@ -202,7 +202,8 @@ describe('signals wrapper with two module copies (the production load shape)', (
     let error: unknown;
     ssrCopy.withSignals(async () => 'x', { lane: 'token' }).catch((e: unknown) => (error = e));
     await vi.advanceTimersByTimeAsync(0);
-    expect((error as Error | undefined)?.message).toMatch(/queue full/);
+    expect(error).toBeInstanceOf(ssrCopy.SignalsCallTimeoutError);
+    expect((error as Error).message).toMatch(/queue full/);
 
     await drain([api]);
   });

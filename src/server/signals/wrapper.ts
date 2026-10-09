@@ -188,8 +188,10 @@ type Lane = {
 // unless forced to (src/server/signals/__tests__/wrapper-gauges.dual-graph.test.ts).
 // Same pattern as `__civitaiBulkheadState` (src/server/utils/request-bulkhead.ts)
 // and the Meili wrapper fix in civitai/civitai#5578. Dev caveat: the state also
-// survives a dev-server module reload, so a changed lane default or env value
-// takes effect only after a restart (production env is fixed per process).
+// survives a dev-server module reload, so a changed lane default or lane
+// concurrency/queue env value takes effect only after a restart (timeout and
+// circuit settings are read per call and do follow a reload; production env is
+// fixed per process).
 declare global {
   // eslint-disable-next-line no-var
   var __civitaiSignalsWrapperState:
