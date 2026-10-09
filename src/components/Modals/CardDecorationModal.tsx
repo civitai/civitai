@@ -180,7 +180,11 @@ export default function CardDecorationModal({
                     </Paper>
                   </Group>
                 )}
-              <PreviewCard image={image} decoration={selectedItem} kind={kind} />
+              {/* The modal's sticky header sits flush on its body, so a hat gets only this room,
+                  and growing on hover would carry it under the header. */}
+              <div className="pt-4 [--event-decoration-allowance:16px] [--event-decoration-grow:1]">
+                <PreviewCard image={image} decoration={selectedItem} kind={kind} />
+              </div>
               <Button
                 radius="xl"
                 type="submit"

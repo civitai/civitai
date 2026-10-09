@@ -1,4 +1,5 @@
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
 /**
@@ -14,6 +15,12 @@ export const DEFAULT_HAT_PLACEMENT: HatPlacement = 'corner';
  * (brim to top) that sits inside the card. `grow` is the hover scale, about the brim.
  */
 export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
+
+const within = ([lo, hi]: readonly [number, number], value: number) =>
+  Math.min(hi, Math.max(lo, value));
+// Not `isNumber` from ~/utils/type-guards: that one accepts '5' and null.
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
 
 /**
  * How much further up and left a hat sits on a card without a padded frame, in CSS px. The 6px
@@ -70,9 +77,18 @@ export function getHatLayout(
     [left, bottom],
     [right, bottom],
   ];
-  const brimWidth = typeof fit?.size === 'number' && fit.size > 0 ? fit.size : HAT_LOOK.brim;
-  const tilt =
-    typeof fit?.tilt === 'number' && Number.isFinite(fit.tilt) ? fit.tilt : HAT_LOOK.tilt;
+  const brimWidth =
+    isFiniteNumber(fit?.size) && fit.size > 0
+      ? within(HAT_FIT_LIMITS.size, fit.size)
+      : HAT_LOOK.brim;
+  const tilt = isFiniteNumber(fit?.tilt) ? within(HAT_FIT_LIMITS.tilt, fit.tilt) : HAT_LOOK.tilt;
+  const depth = isFiniteNumber(fit?.depth)
+    ? within(HAT_FIT_LIMITS.depth, fit.depth)
+    : HAT_LOOK.onCard;
+  const grow = isFiniteNumber(fit?.grow) ? within(HAT_FIT_LIMITS.grow, fit.grow) : HAT_LOOK.grow;
+  const [offsetX, offsetY] = isNumbers(fit?.offset, 2)
+    ? fit.offset.map((x) => within(HAT_FIT_LIMITS.offset, x))
+    : [0, 0];
 
   const scale = brimWidth / (brimRight - brimLeft);
   const pivot = { x: (brimLeft + brimRight) / 2, y: brimY };
@@ -80,9 +96,9 @@ export function getHatLayout(
   const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
 
   // The brim's middle sits on the line from the corner along the hat's lean, far enough in that
-  // `onCard` of the hat's height is inside the card.
+  // `depth` of the hat's height is inside the card.
   const heightAboveBrim = (brimY - Math.min(...outline.map(([, y]) => y))) * scale;
-  const inset = HAT_LOOK.onCard * heightAboveBrim;
+  const inset = depth * heightAboveBrim;
   const points = outline.map(([x, y]) => {
     const [dx, dy] = [(x - pivot.x) * scale, (y - pivot.y) * scale];
     return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
@@ -92,13 +108,15 @@ export function getHatLayout(
   const maxX = Math.max(...points.map((p) => p.x));
   const maxY = Math.max(...points.map((p) => p.y));
 
-  const pivotX = Math.max(-sin * inset - nudge, -allowance - minX);
-  const pivotY = Math.max(cos * inset - nudge, -allowance - minY);
+  const pivotX = Math.max(-sin * inset - nudge + offsetX, -allowance - minX);
+  const pivotY = Math.max(cos * inset - nudge + offsetY, -allowance - minY);
 
   return {
     width: canvasW * scale,
     height: canvasH * scale,
     tilt,
+    /** Hover scale, about the brim. */
+    grow,
     /** Box position of the unrotated element; rotation and hover growth are about the brim. */
     left: pivotX - pivot.x * scale,
     top: pivotY - pivot.y * scale,

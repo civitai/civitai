@@ -8,6 +8,7 @@ import {
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
 // Prod birthday art (128x160 files) with the brim and convex outline measured from the pixels:
@@ -155,6 +156,13 @@ const WORN = Object.entries(ART).flatMap(([name, fit]) => [
   [`${name}`, fit] as const,
   [`${name} tilted -30`, { ...fit, tilt: -30 }] as const,
   [`${name} tilted -60`, { ...fit, tilt: -60 }] as const,
+  // Bigger or worn shallower, the tallest design reaches past the bleed and is moved to fit.
+  ...(name === 'civchan'
+    ? []
+    : [
+        [`${name} sized 56`, { ...fit, size: 56 }] as const,
+        [`${name} worn 30% deep`, { ...fit, depth: 0.3 }] as const,
+      ]),
 ]);
 
 describe.each(WORN)('the worn look on %s', (_, fit) => {
@@ -180,7 +188,7 @@ describe.each(WORN)('the worn look on %s', (_, fit) => {
       toCard(fit, 'corner', [brim[0], brim[2]]),
       toCard(fit, 'corner', [brim[1], brim[2]]),
     ];
-    expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(HAT_LOOK.brim, 6);
+    expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(fit.size ?? HAT_LOOK.brim, 6);
   });
 
   it('pivots, and grows on hover, about the middle of its brim', () => {
@@ -192,8 +200,8 @@ describe.each(WORN)('the worn look on %s', (_, fit) => {
   it('puts the chosen share of its height on the card, with nothing moved to fit', () => {
     const middle = toCard(fit, 'corner', [(brim[0] + brim[1]) / 2, brim[2]]);
     const top = Math.min(...(fit.outline as number[][]).map(([, y]) => y));
-    const height = (brim[2] - top) * (HAT_LOOK.brim / (brim[1] - brim[0]));
-    expect(Math.hypot(middle.x, middle.y)).toBeCloseTo(HAT_LOOK.onCard * height, 6);
+    const height = (brim[2] - top) * ((fit.size ?? HAT_LOOK.brim) / (brim[1] - brim[0]));
+    expect(Math.hypot(middle.x, middle.y)).toBeCloseTo((fit.depth ?? HAT_LOOK.onCard) * height, 6);
   });
 });
 
@@ -241,6 +249,16 @@ it.each([
   expect(declared(file, declaration)).toBe(true);
 });
 
+// Measured in a real Mantine modal: the sticky header sits flush on the body, so the preview card
+// had no room above it and the hat was hidden behind the header.
+it('the decoration modal makes room above its preview card, declares it, and stops growth', () => {
+  const source = readFileSync('src/components/Modals/CardDecorationModal.tsx', 'utf8');
+  const wrapper = source.match(/<div className="([^"]*)">\s*<PreviewCard /);
+  expect(wrapper?.[1].split(/\s+/).sort()).toEqual(
+    ['pt-4', '[--event-decoration-allowance:16px]', '[--event-decoration-grow:1]'].sort()
+  );
+});
+
 it('masonry carousels give hats no room and no growth', () => {
   const source = readFileSync('src/components/MasonryColumns/MasonryCarousel.tsx', 'utf8');
   expect(source).toMatch(/'\[--event-decoration-allowance:0px\] \[--event-decoration-grow:1\]'/);
@@ -276,13 +294,13 @@ it.each(Object.entries(ART))('a hat kept inside the card ignores the nudge: %s',
 
 describe('a hat too big for the bleed', () => {
   it('is moved right until it fits the left edge', () => {
-    const { reach } = getHatLayout('corner', { ...ART.basic, size: 120, tilt: -80 });
+    const { reach } = getHatLayout('corner', { ...ART.basic, size: 64, tilt: -80 });
     expect(reach.left).toBeCloseTo(-ITEM_BLEED, 6);
     expect(reach.top).toBeGreaterThanOrEqual(-ITEM_BLEED - 1e-9);
   });
 
   it('is moved down until it fits the top edge', () => {
-    const { reach } = getHatLayout('corner', { ...ART.basic, size: 120, tilt: -10 });
+    const { reach } = getHatLayout('corner', { ...ART.basic, size: 64, tilt: -10 });
     expect(reach.top).toBeCloseTo(-ITEM_BLEED, 6);
     expect(reach.left).toBeGreaterThanOrEqual(-ITEM_BLEED - 1e-9);
   });
@@ -311,6 +329,93 @@ it('outlines its hit area with the art, not the canvas', () => {
   );
 });
 
+// Each hat may carry its own look (set by mods per cosmetic); without one it wears HAT_LOOK.
+describe('a hat with its own fit', () => {
+  it('grows on hover by its own amount, or the chosen look', () => {
+    expect(getHatLayout('corner', ART.basic).grow).toBe(HAT_LOOK.grow);
+    expect(getHatLayout('corner', { ...ART.basic, grow: 1.15 }).grow).toBe(1.15);
+  });
+
+  it.each(Object.entries(ART))('moves %s by exactly its offset where there is room', (_, fit) => {
+    const at = getHatLayout('corner', fit, Infinity);
+    const moved = getHatLayout('corner', { ...fit, offset: [5, -7] }, Infinity);
+    expect(moved.reach.left).toBeCloseTo(at.reach.left + 5, 9);
+    expect(moved.reach.top).toBeCloseTo(at.reach.top - 7, 9);
+    expect(moved.origin).toBe(at.origin);
+  });
+
+  // Each axis on its own: the room is set 6px past where the hat already reaches, so only the
+  // offset can carry it into the crop.
+  it.each(Object.entries(ART))("cannot offset %s past its container's room", (_, fit) => {
+    const at = getHatLayout('corner', fit, Infinity).reach;
+    const roomLeft = -at.left + 6;
+    const left = getHatLayout('corner', { ...fit, offset: [-12, 0] }, roomLeft).reach;
+    expect(left.left).toBeCloseTo(-roomLeft, 6);
+    const roomTop = -at.top + 6;
+    const up = getHatLayout('corner', { ...fit, offset: [0, -12] }, roomTop).reach;
+    expect(up.top).toBeCloseTo(-roomTop, 6);
+  });
+
+  it.each(Object.entries(ART))(
+    'keeps %s inside the card in a carousel, whatever its fit',
+    (_, fit) => {
+      const { reach } = getHatLayout('inside', {
+        ...fit,
+        size: 64,
+        depth: 0.2,
+        offset: [-12, -12],
+      });
+      expect(reach.left).toBeGreaterThanOrEqual(2 - 1e-9);
+      expect(reach.top).toBeGreaterThanOrEqual(2 - 1e-9);
+    }
+  );
+
+  // Measured against the art placed on the card, not against the layout's own `reach`.
+  it.each(Object.entries(ART))('moves the corner chips clear of %s wherever it sits', (_, own) => {
+    const fit: EventDecorationFit = { ...own, size: 64, offset: [12, 0] };
+    const placed = (fit.outline as number[][]).map((p) => toCard(fit, 'corner', p));
+    const clear = getEventDecorationClearLeft({ type: 'hat', fit }, 'corner');
+    expect(clear).toBeGreaterThan(Math.max(...placed.map((p) => p.x)));
+  });
+
+  it.each<[string, EventDecorationFit, EventDecorationFit]>([
+    ['size', { size: 500 }, { size: 64 }],
+    ['size', { size: 5 }, { size: 24 }],
+    ['tilt', { tilt: -200 }, { tilt: -80 }],
+    ['tilt', { tilt: 30 }, { tilt: 0 }],
+    ['depth', { depth: 5 }, { depth: 0.8 }],
+    ['depth', { depth: 0 }, { depth: 0.2 }],
+    ['grow', { grow: 9 }, { grow: 1.6 }],
+    ['grow', { grow: 0.5 }, { grow: 1 }],
+    ['offset', { offset: [100, -100] }, { offset: [12, -12] }],
+  ])('pulls a %s out of range to the nearest end', (_, wild, end) => {
+    expect(getHatLayout('corner', { ...ART.basic, ...wild }, Infinity)).toEqual(
+      getHatLayout('corner', { ...ART.basic, ...end }, Infinity)
+    );
+    expect(getHatLayout('corner', { ...ART.basic, ...end }, Infinity)).not.toEqual(
+      getHatLayout('corner', ART.basic, Infinity)
+    );
+  });
+
+  // The ranges a mod can set, agreed for the hat editor (2026-10-09). Change them deliberately.
+  it('limits each setting to the agreed range', () => {
+    expect(HAT_FIT_LIMITS).toEqual({
+      size: [24, 64],
+      tilt: [-80, 0],
+      depth: [0.2, 0.8],
+      grow: [1, 1.6],
+      offset: [-12, 12],
+    });
+  });
+
+  it("wears today's look when its fit sets none of these", () => {
+    const settings = { size: 40, tilt: -45, depth: 0.47, grow: 1.4, offset: [0, 0] as [0, 0] };
+    expect(getHatLayout('corner', { ...ART.civchan, ...settings })).toEqual(
+      getHatLayout('corner', ART.civchan)
+    );
+  });
+});
+
 describe('getEventDecorationClearLeft', () => {
   it('is zero for decorations that are not hats', () => {
     expect(getEventDecorationClearLeft({ type: 'scarf' }, 'corner')).toBe(0);
@@ -325,7 +430,12 @@ describe('fit data that does not describe real art', () => {
       size: -3,
       brim: [5, 1, 3],
       outline: [[1, 2]],
+      tilt: Infinity,
+      depth: 'x',
+      grow: NaN,
+      offset: [1],
     } as never;
     expect(getHatLayout('corner', broken)).toEqual(getHatLayout('corner'));
+    expect(getHatLayout('corner', { offset: ['a', 1] } as never)).toEqual(getHatLayout('corner'));
   });
 });

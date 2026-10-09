@@ -62,8 +62,8 @@ const items: Item[] = Array.from({ length: 8 }, (_, i) => ({ id: i }));
 
 /**
  * Card 1 (the right column's first card) wears a hat; card 3 a hat and a padded CSS frame; card 5 a
- * hat and lights, a cosmetic with no padding; card 6 a hat and a padded texture frame. The rest are
- * plain.
+ * hat and lights, a cosmetic with no padding; card 6 a hat and a padded texture frame; card 2 a
+ * hat and a 2px border; card 7 a hat with its own hover growth. The rest are plain.
  */
 function Card({ data }: { data: Item }) {
   const card = (
@@ -101,6 +101,18 @@ function Card({ data }: { data: Item }) {
         cosmetic={{ texture: { url: 'texture.png', size: { width: 64, height: 64 } } }}
         eventDecoration={HAT}
       >
+        {card}
+      </TwCosmeticWrapper>
+    );
+  if (data.id === 2)
+    return (
+      <TwCosmeticWrapper cosmetic={{ border: 'red', borderWidth: 2 }} eventDecoration={HAT}>
+        {card}
+      </TwCosmeticWrapper>
+    );
+  if (data.id === 7)
+    return (
+      <TwCosmeticWrapper eventDecoration={{ ...HAT, fit: { ...FIT, grow: 1.15 } }}>
         {card}
       </TwCosmeticWrapper>
     );
@@ -270,6 +282,28 @@ describe('MasonryColumnsVirtual with worn hats', () => {
       expect(Math.abs(parseFloat(getComputedStyle(chip).paddingLeft) - clear)).toBeLessThan(1);
     }
   );
+
+  test('a hat grows on hover by its own amount', async () => {
+    await renderAtViewport(<Gallery />, VIEWPORT);
+    await vi.waitFor(() => expect(hatOf(7)).toBeTruthy());
+    await userEvent.hover(card(7));
+    await vi.waitFor(() => expect(getComputedStyle(hatOf(7)).scale).toBe('1.15'), GROW_WAIT);
+  });
+
+  // A border is drawn outside the picture and the hat is placed from inside it, so a bordered
+  // card's hat sits that much further from the crop, never closer. Nothing needs to count it.
+  test("a card's border moves its hat away from the crop, by the border's width", async () => {
+    await renderAtViewport(<Gallery />, VIEWPORT);
+    await vi.waitFor(() => expect(hatOf(2)).toBeTruthy());
+    const fromEdge = (id: number) => {
+      const wrapper = card(id).closest('[data-event-decoration]')!.getBoundingClientRect();
+      const box = hatOf(id).getBoundingClientRect();
+      return [box.left - wrapper.left, box.top - wrapper.top];
+    };
+    const [plain, bordered] = [fromEdge(1), fromEdge(2)];
+    expect(bordered[0] - plain[0]).toBeCloseTo(2, 1);
+    expect(bordered[1] - plain[1]).toBeCloseTo(2, 1);
+  });
 
   // The canvas is a rectangle that lies over the neighbouring cards; only the art takes clicks.
   test('a click beside the art, inside its canvas, does not hit the hat', async () => {
