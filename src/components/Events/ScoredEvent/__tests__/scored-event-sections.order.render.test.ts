@@ -37,7 +37,10 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   useTeamColor: () => () => 'pink',
   useMutateEvent: () => ({ activateCosmetic: vi.fn(), equipping: false }),
 }));
-const marker = (name: string) => () => React.createElement('section', { 'data-section': name });
+const marker = (name: string) =>
+  function Marker() {
+    return React.createElement('section', { 'data-section': name });
+  };
 let heroProps: Record<string, unknown> = {};
 vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
   ScoredEventHero: (props: Record<string, unknown>) => {
