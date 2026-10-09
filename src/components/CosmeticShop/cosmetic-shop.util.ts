@@ -187,6 +187,8 @@ export const useMutateCosmeticShop = () => {
   });
 
   const refreshAfterPurchase = async (shopItemId: number) => {
+    // A pack's amount due depends on what the buyer owns, so a purchase changes it.
+    await queryUtils.creatorShop.getPack.invalidate();
     await queryUtils.userProfile.get.invalidate();
     await queryUtils.user.getCosmetics.invalidate();
     if (currentUser?.id) {
@@ -233,6 +235,8 @@ export const useMutateCosmeticShop = () => {
     onError(error) {
       // Not a failure: see handlePurchaseShopItemMutation.
       if (isPurchaseAlreadyCompleted(error)) return;
+      // A refusal may be a price that moved; show the buyer the current one.
+      void queryUtils.creatorShop.getPack.invalidate();
       onError(error, 'Failed to purchase cosmetic');
     },
   });

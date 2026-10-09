@@ -14,29 +14,58 @@ const send = vi.fn();
 const httpError = (httpStatus: number, message = 'nope') =>
   Object.assign(new Error(message), { data: { httpStatus } });
 
+// `trpc.useUtils()` with one stable spy per path, so a refresh can be asserted
+// (the proxy stub's default mints a fresh spy on every read).
+const utilSpies = new Map<string, ReturnType<typeof vi.fn>>();
+const utilSpy = (path: string) => {
+  if (!utilSpies.has(path))
+    utilSpies.set(
+      path,
+      vi.fn(async () => undefined)
+    );
+  return utilSpies.get(path)!;
+};
+const utilsAt = (path: string[]): unknown =>
+  new Proxy(
+    {},
+    {
+      get: (_t, key: string) =>
+        key === 'then'
+          ? undefined
+          : ['invalidate', 'setData'].includes(key)
+          ? utilSpy([...path, key].join('.'))
+          : utilsAt([...path, key]),
+    }
+  );
+const packRefreshes = () => utilSpy('creatorShop.getPack.invalidate').mock.calls.length;
+const holdingsRefreshes = () => utilSpy('user.getCosmetics.invalidate').mock.calls.length;
+
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: makeTrpcProxy({
-    'cosmeticShop.purchaseShopItem': {
-      // Runs the hook's own callbacks around the call, as react-query does.
-      useMutation: (options: {
-        onSuccess?: (data: unknown, input: unknown) => Promise<void>;
-        onError?: (error: unknown) => void;
-      }) => ({
-        isPending: false,
-        mutateAsync: async (input: unknown) => {
-          try {
-            const result = await send(input);
-            await options.onSuccess?.(result, input);
-            return result;
-          } catch (error) {
-            options.onError?.(error);
-            throw error;
-          }
-        },
-      }),
+  trpc: makeTrpcProxy(
+    {
+      'cosmeticShop.purchaseShopItem': {
+        // Runs the hook's own callbacks around the call, as react-query does.
+        useMutation: (options: {
+          onSuccess?: (data: unknown, input: unknown) => Promise<void>;
+          onError?: (error: unknown) => void;
+        }) => ({
+          isPending: false,
+          mutateAsync: async (input: unknown) => {
+            try {
+              const result = await send(input);
+              await options.onSuccess?.(result, input);
+              return result;
+            } catch (error) {
+              options.onError?.(error);
+              throw error;
+            }
+          },
+        }),
+      },
     },
-  }),
+    { useUtils: () => utilsAt([]) }
+  ),
 }));
 const showErrorNotification = vi.fn();
 vi.mock('~/utils/notifications', async (importOriginal) => ({
@@ -89,6 +118,7 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 beforeEach(() => {
   send.mockReset();
   showErrorNotification.mockReset();
+  utilSpies.clear();
   usePurchaseIntentKeyStore.setState({ keys: {} });
 });
 afterEach(() => unmount());
@@ -196,6 +226,15 @@ describe('a purchase already completed under its key', () => {
     expect(showErrorNotification).not.toHaveBeenCalled();
   });
 
+  // What the buyer holds, and a pack's discounted price, both changed: refresh
+  // them, or the shop offers the item again at the old number.
+  it('refreshes holdings and pack prices', async () => {
+    send.mockRejectedValueOnce(alreadyCompleted());
+    await buy(mountPurchaser());
+    expect(holdingsRefreshes()).toBe(1);
+    expect(packRefreshes()).toBe(1);
+  });
+
   it("resolves for a caller's own key too (the sticker draft)", async () => {
     send.mockRejectedValueOnce(alreadyCompleted());
     await expect(buy(mountPurchaser(), '11111111-1111-4111-8111-111111111111')).resolves.toEqual({
@@ -212,10 +251,24 @@ describe('a purchase already completed under its key', () => {
     expect(keySent(1)).not.toBe(keySent(0));
   });
 
-  it('any other refusal still rejects and is shown (control)', async () => {
+  it('any other refusal still rejects and is shown, without refreshing holdings (control)', async () => {
     send.mockRejectedValueOnce(httpError(400, 'This cosmetic is not available'));
     await expect(buy(mountPurchaser())).rejects.toThrow('not available');
     expect(showErrorNotification).toHaveBeenCalledTimes(1);
+    expect(holdingsRefreshes()).toBe(0);
+  });
+
+  // A refusal may be a pack price that moved; the modal must show the new one.
+  it('a refusal refreshes pack prices', async () => {
+    send.mockRejectedValueOnce(httpError(400, 'The price changed to 10 Buzz.'));
+    await expect(buy(mountPurchaser())).rejects.toThrow();
+    expect(packRefreshes()).toBe(1);
+  });
+
+  it('a success refreshes pack prices', async () => {
+    send.mockResolvedValueOnce({ granted: [] });
+    await buy(mountPurchaser());
+    expect(packRefreshes()).toBe(1);
   });
 });
 
@@ -229,6 +282,17 @@ describe('mintPurchaseKey', () => {
     const b = mintPurchaseKey({ getRandomValues });
     expect(a).toMatch(UUID_V4);
     expect(b).not.toBe(a);
+  });
+
+  // All-ones bytes: only the version and variant bits make this a v4 UUID.
+  it('sets the v4 version and variant bits', () => {
+    const allOnes = <T extends ArrayBufferView | null>(array: T) => {
+      (array as unknown as Uint8Array).fill(0xff);
+      return array;
+    };
+    expect(mintPurchaseKey({ getRandomValues: allOnes })).toBe(
+      'ffffffff-ffff-4fff-bfff-ffffffffffff'
+    );
   });
 
   it('prefers randomUUID', () => {

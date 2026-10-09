@@ -35,6 +35,7 @@ import {
   purchaseStateUnknown,
   refundCallOptions,
   refundClaimedCharge,
+  releaseClaim,
 } from '~/server/services/shop-purchase-charge';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -563,15 +564,6 @@ export const purchaseCosmeticPack = async ({
 
   if (amountDue <= 0) throw throwBadRequestError('You already own everything in this pack');
 
-  // The buyer confirmed a number on a button. A pack re-priced, or a discount
-  // that changed (a member bought or deleted since), must refuse rather than
-  // charge a number they never agreed to. Before the claim, so nothing is
-  // charged or recorded.
-  if (expectedAmount !== undefined && expectedAmount !== amountDue)
-    throw throwBadRequestError(
-      `The price changed to ${amountDue} Buzz. Check the new price and try again.`
-    );
-
   // The buyer's key when they sent one, so a retry of the same intent is
   // recognised; otherwise random rather than a timestamp: a pack is repeatable (a
   // consumable member tops up), so two calls in the same millisecond would share
@@ -590,6 +582,20 @@ export const purchaseCosmeticPack = async ({
   });
   const amountCharged = claim.amount;
   const chargeContext = { shopItemId: shopItem.id, userId, transactionId, amount: amountCharged };
+
+  // The buyer confirmed a number on a button. A pack re-priced, or a discount
+  // that changed (a member bought or deleted since), must refuse rather than
+  // charge a number they never agreed to. After the claim lookup, because the
+  // purchase itself changes the discount: a retry of this key is answered from
+  // its claim (completed, or resumed at the claimed amount), never compared
+  // with today's price. Only a new claim is checked, and released before any
+  // charge.
+  if (!claim.resumed && expectedAmount !== undefined && expectedAmount !== amountDue) {
+    await releaseClaim(chargeContext);
+    throw throwBadRequestError(
+      `The price changed to ${amountDue} Buzz. Check the new price and try again.`
+    );
+  }
   const transaction = await chargeForShopPurchase(
     () =>
       createMultiAccountBuzzTransaction(

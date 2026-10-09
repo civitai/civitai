@@ -52,6 +52,7 @@ vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
 
 const { purchaseCosmeticPack } = await import('~/server/services/cosmetic-pack.service');
 const { PURCHASE_STATE_UNKNOWN_MESSAGE } = await import('~/server/services/shop-purchase-charge');
+const { computePackAmountDue } = await import('~/server/schema/creator-shop.schema');
 
 // The shape the real buzz client hands back: buzz.service's mapError wraps the
 // ledger's status in a TRPCError and keeps the BuzzApiError as `cause`.
@@ -85,7 +86,7 @@ const member = {
   floorAmount: 1700,
 };
 
-const buy = (idempotencyKey?: string, expectedAmount?: number) =>
+const buy = (idempotencyKey?: string, expectedAmount?: number, members = [member]) =>
   purchaseCosmeticPack({
     userId: BUYER,
     idempotencyKey,
@@ -96,9 +97,9 @@ const buy = (idempotencyKey?: string, expectedAmount?: number) =>
       unitAmount: PRICE,
       addedById: PACK_CREATOR,
       meta: { purchases: 0 },
-      memberCount: 1,
+      memberCount: members.length,
     },
-    members: [member],
+    members,
     buzzType: 'yellow',
   });
 
@@ -193,6 +194,67 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
 
     await buy(KEY, PRICE);
     expect(spend).toHaveBeenCalledTimes(1);
+  });
+
+  // The button shows the discounted amount; that is what is compared.
+  describe('with a member the buyer already owns', () => {
+    const second = { ...member, cosmeticId: 1002, listingId: 5002 };
+    const members = [member, second];
+    const discounted = computePackAmountDue({
+      packPrice: PRICE,
+      members: members.map((m) => ({
+        cosmeticId: m.cosmeticId,
+        type: m.type,
+        listPrice: m.floorAmount,
+        isOwn: m.createdById === PACK_CREATOR,
+        createdById: m.createdById,
+      })),
+      ownedCosmeticIds: [member.cosmeticId],
+      buyerId: BUYER,
+      packCreatorId: PACK_CREATOR,
+    }).amountDue;
+
+    beforeEach(() => {
+      dbMock.dbWrite.userCosmetic.findMany.mockResolvedValue([{ cosmeticId: member.cosmeticId }]);
+    });
+
+    it('is a real discount (precondition)', () => {
+      expect(discounted).toBeGreaterThan(0);
+      expect(discounted).toBeLessThan(PRICE);
+    });
+
+    it('charges the discounted amount the button showed', async () => {
+      spend.mockResolvedValue(legs(false, discounted));
+
+      await buy(KEY, discounted, members);
+      expect(spend.mock.calls[0][0].amount).toBe(discounted);
+    });
+
+    it('refuses the undiscounted price', async () => {
+      await expect(buy(KEY, PRICE, members)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: `The price changed to ${discounted} Buzz. Check the new price and try again.`,
+      });
+      expect(spend).not.toHaveBeenCalled();
+    });
+  });
+
+  // The purchase changes the discount (the buyer now owns its members), so a
+  // retry of the same key must be answered from its claim, not from the price.
+  it('a retry of a completed purchase is completed, whatever amount it shows', async () => {
+    seedClaim('paid');
+
+    await expect(buy(KEY, PRICE - 1)).rejects.toThrow('This purchase has already been completed');
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('a retry of a pending claim charges the claimed amount, whatever the button shows', async () => {
+    seedClaim('pending');
+    spend.mockResolvedValue(legs(true));
+
+    await buy(KEY, PRICE - 1);
+    expect(spend.mock.calls[0][0].amount).toBe(PRICE);
+    expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
   it('refuses a replay of a key already paid, before any charge', async () => {

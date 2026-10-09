@@ -201,7 +201,7 @@ export async function chargeForShopPurchase<T extends Charge>(
   throw purchaseStateUnknown(context, 'ledger returned duplicate legs');
 }
 
-async function releaseClaim(context: ShopChargeContext) {
+export async function releaseClaim(context: ShopChargeContext) {
   try {
     // `attempts: 1`: a request that resumed this claim may have charged under it
     // before this one was declined, and its charge needs the claim to settle.
