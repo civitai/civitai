@@ -142,6 +142,19 @@ describe('PlaceHatModal tiles', () => {
     );
     expect(labels).toEqual([[], ['My LoRA']]);
   });
+
+  // A feed-sized hat on the first tile reaches about 24px past it at rest and twice that grown;
+  // the modal crops anything further, so the grid makes room for the rest pose and holds it there.
+  it('gives a worn hat room past the first tiles and does not grow it', () => {
+    placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }];
+    const modal = render(
+      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: hat(), myHats: [hat()] })
+    );
+    const grid = modal.querySelector('button')!.parentElement!;
+    expect(grid.className.split(' ')).toEqual(
+      expect.arrayContaining(['pl-6', 'pt-6', '[--event-decoration-grow:1]'])
+    );
+  });
 });
 
 describe('MyEventHats cooldown', () => {

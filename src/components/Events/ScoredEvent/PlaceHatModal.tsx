@@ -66,8 +66,13 @@ export default function PlaceHatModal({
             You have nothing published that a hat can go on yet.
           </Text>
         ) : (
-          // Padded so a worn hat has room past the first row's and first column's corners.
-          <SimpleGrid cols={{ base: 2, xs: 3, sm: 4 }} spacing="sm" className="px-2 pt-2">
+          // Padded so a worn hat has room past the first row's and first column's corners. The
+          // modal crops what reaches further, so the hat does not grow on hover in here.
+          <SimpleGrid
+            cols={{ base: 2, xs: 3, sm: 4 }}
+            spacing="sm"
+            className="pl-6 pr-2 pt-6 [--event-decoration-grow:1]"
+          >
             {content.map((c) => {
               const other = wearer(c.entityType, c.entityId);
               const current =
@@ -87,7 +92,6 @@ export default function PlaceHatModal({
                     entityType={c.entityType}
                     image={c.image}
                     hat={(other?.data ?? (current ? hat.data : undefined)) as EventDecorationData}
-                    allowance={12}
                   />
                   {c.title && (
                     <Text size="xs" fw={600} lineClamp={1}>

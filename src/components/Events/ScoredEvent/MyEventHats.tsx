@@ -20,8 +20,6 @@ type MyHat = RouterOutput['event']['getMyHats'][number];
 // a feed card. The picture rounds its own top corners to the card's (8px less the 1px border).
 const CARD = `flex flex-col rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
 const PICTURE_RADIUS = 'rounded-t-[7px]';
-// The room around a card in this grid (its 16px gap, the 16px phone gutter) the hat may reach into.
-const HAT_ROOM = 12;
 
 export function MyEventHats({
   event,
@@ -72,6 +70,8 @@ export function MyEventHats({
         cols={{ base: 2, md: 3, lg: 4 }}
         spacing="md"
         style={{ gridAutoRows: '1fr' }}
+        // A phone's 16px gutter is less room than the feed's: the hat moves in rather than crops.
+        className="max-sm:[--event-decoration-allowance:16px]"
         data-testid="my-hats-grid"
       >
         {hats.map((hat) => {
@@ -90,7 +90,6 @@ export function MyEventHats({
                     image={hat.placedOn.image}
                     hat={hat.data}
                     className={PICTURE_RADIUS}
-                    allowance={HAT_ROOM}
                     wornOn={{
                       entityType: hat.placedOn.entityType as CosmeticEntity,
                       entityId: hat.placedOn.entityId,

@@ -204,10 +204,14 @@ describe('Your hats card wears its hat', () => {
     )
       if (/overflow-(hidden|clip|auto|scroll)/.test(node.className)) clipping.push(node.className);
     expect(clipping).toEqual([]);
+    // A phone's 16px gutter is the grid's only room short of the feed's.
+    expect(el.querySelector('[data-testid="my-hats-grid"]')!.className).toContain(
+      'max-sm:[--event-decoration-allowance:16px]'
+    );
+    expect(thumbProps.mock.lastCall?.[0]).not.toHaveProperty('allowance');
     expect(thumbProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
         hat: { url: 'u' },
-        allowance: 12,
         className: 'rounded-t-[7px]',
         wornOn: { entityType: 'Image', entityId: 9 },
       })
