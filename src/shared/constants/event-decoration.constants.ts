@@ -57,6 +57,12 @@ export type EventDecorationFit = {
   size?: number;
   /** Degrees; negative leans left. */
   tilt?: number;
+  /** Share of the hat's height (brim to top) worn on the card. */
+  depth?: number;
+  /** Hover scale. */
+  grow?: number;
+  /** [x, y] in CSS px from where the hat would sit; positive is right and down, onto the card. */
+  offset?: [number, number];
 };
 
 export type EventDecorationData = {

@@ -6,7 +6,6 @@ import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-
 import {
   DEFAULT_HAT_PLACEMENT,
   getHatLayout,
-  HAT_LOOK,
   HAT_PLAIN_CARD_NUDGE,
   hatShiftCss,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
@@ -67,7 +66,7 @@ function CardHat({
     height: layout.height,
     transform: `rotate(${layout.tilt}deg)`,
     transformOrigin: layout.origin,
-    '--hat-grow': HAT_LOOK.grow,
+    '--hat-grow': layout.grow,
   } as CSSProperties;
   const grows = placement === 'corner' && styles.grows;
 
