@@ -1,3 +1,4 @@
+import { moderatorFeedbackReportPath } from '@civitai/shared/moderator-paths';
 import { urlWith } from './url';
 
 /**
@@ -30,5 +31,8 @@ export function feedbackOpenHref(url: URL, id: number | null): string {
   return urlWith(url, { [FEEDBACK_OPEN_PARAM]: id });
 }
 
-/** The permanent link to one report, independent of the queue's filters, sort and cursor. */
-export const feedbackReportHref = (id: number): string => `/feedback/${id}`;
+/**
+ * The permanent link to one report, independent of the queue's filters, sort and cursor. Built by the
+ * shared `moderatorFeedbackReportPath`, which the main app's moderator tab links with too.
+ */
+export const feedbackReportHref = (id: number): string => moderatorFeedbackReportPath(id);
