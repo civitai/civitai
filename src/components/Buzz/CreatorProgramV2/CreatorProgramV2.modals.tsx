@@ -299,6 +299,7 @@ const BankableBuzzInfo = ({
             <li>Licensing fees</li>
             <li>Early Access and paid access</li>
             <li>Tips from other users</li>
+            <li>Generator tips</li>
             <li>Donations, shop sales and bounties</li>
             <li>App author fees</li>
             <li>Sticker, remix and promotion fees</li>
@@ -307,7 +308,7 @@ const BankableBuzzInfo = ({
         <div>
           <p className="font-bold">Not bankable</p>
           <ul className="list-disc pl-4">
-            <li>Generation compensation, including generator tips</li>
+            <li>Generation compensation</li>
             <li>Buzz you bought</li>
             <li>Rewards and credits from Civitai</li>
           </ul>

@@ -279,6 +279,12 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
     ]);
   });
 
+  // The generation-tip clause matches Blue tips too; only the bankable-account filter keeps them out.
+  // Making Blue bankable would make every Blue generation tip bankable with it.
+  it('keeps Blue out of the bankable accounts the earned query filters on', () => {
+    expect(buzzBankTypesSql).toBe("'green', 'yellow'");
+  });
+
   // Tips paid before their own transaction existed sit inside compensation and cannot be counted
   // here. That is only safe while every such date falls before the cutover, inside the snapshot.
   // If the cutover moves earlier than the tip split, those tips silently become unbankable.
