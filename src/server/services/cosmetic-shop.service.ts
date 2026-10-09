@@ -73,6 +73,7 @@ import {
   chargeForShopPurchase,
   chargeRetryOptions,
   purchaseStateUnknown,
+  refundCallOptions,
   refundShopCharge,
 } from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -1377,10 +1378,13 @@ export const purchaseCosmeticShopItem = async ({
     // refusal below.
     await refundShopCharge(
       () =>
-        refundMultiAccountTransaction({
-          externalTransactionIdPrefix: transactionId,
-          description: `Failed to purchase cosmetic - ${shopItem.title}`,
-        }),
+        refundMultiAccountTransaction(
+          {
+            externalTransactionIdPrefix: transactionId,
+            description: `Failed to purchase cosmetic - ${shopItem.title}`,
+          },
+          refundCallOptions
+        ),
       { ...chargeContext, error }
     );
 

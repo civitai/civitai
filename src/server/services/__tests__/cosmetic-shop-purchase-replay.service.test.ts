@@ -269,6 +269,11 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       code: 'BAD_REQUEST',
       message: 'Failed to purchase cosmetic',
     });
+    // Bounded: the client's own retry is off and each attempt has a deadline.
+    expect(mocks.refundMultiTx.mock.calls[0][1]).toMatchObject({
+      retries: 0,
+      timeoutMs: expect.any(Number),
+    });
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
     expect(mocks.refundMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toContain(KEY);
   });

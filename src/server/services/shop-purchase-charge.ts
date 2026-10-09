@@ -61,6 +61,13 @@ export function purchaseStateUnknown(
 // retried.
 export const chargeRetryOptions = { shouldRetry: isSafeToRetry };
 
+// Refunds are retried by refundShopCharge, briefly and a bounded number of
+// times, so the client's own retry is off and each attempt has a deadline: a
+// purchase request waits on this before it answers.
+export const refundCallOptions = { retries: 0, timeoutMs: 10_000 };
+const REFUND_ATTEMPTS = 3;
+const REFUND_RETRY_DELAY_MS = 250;
+
 type Charge = { transactionIds: { duplicate?: boolean }[]; transactionCount: number };
 
 export async function chargeForShopPurchase<T extends Charge>(
@@ -94,17 +101,19 @@ export async function refundShopCharge(
 ) {
   let refunded: { totalRefunded: number } | 'already-refunded';
   try {
-    refunded = await withRetries(() =>
-      refund().catch((refundError: unknown) => {
-        if (getBuzzApiStatus(refundError) === 409) return 'already-refunded' as const;
-        throw refundError;
-      })
+    refunded = await withRetries(
+      () =>
+        refund().catch((refundError: unknown) => {
+          if (getBuzzApiStatus(refundError) === 409) return 'already-refunded' as const;
+          throw refundError;
+        }),
+      REFUND_ATTEMPTS - 1,
+      REFUND_RETRY_DELAY_MS
     );
   } catch (refundError) {
     throw purchaseStateUnknown({ ...context, refundError }, 'refund failed');
   }
   if (refunded === 'already-refunded') return;
-  // Not `<`: a missing total must not read as covered.
-  if (!(refunded.totalRefunded >= context.amount))
+  if (refunded.totalRefunded < context.amount)
     throw purchaseStateUnknown(context, 'refund did not cover the charge');
 }

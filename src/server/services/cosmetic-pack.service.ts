@@ -31,6 +31,7 @@ import {
   chargeForShopPurchase,
   chargeRetryOptions,
   purchaseStateUnknown,
+  refundCallOptions,
   refundShopCharge,
 } from '~/server/services/shop-purchase-charge';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
@@ -660,10 +661,13 @@ export const purchaseCosmeticPack = async ({
     // refusal below.
     await refundShopCharge(
       () =>
-        refundMultiAccountTransaction({
-          externalTransactionIdPrefix: transactionId,
-          description: `Failed to purchase cosmetic pack - ${shopItem.title}`,
-        }),
+        refundMultiAccountTransaction(
+          {
+            externalTransactionIdPrefix: transactionId,
+            description: `Failed to purchase cosmetic pack - ${shopItem.title}`,
+          },
+          refundCallOptions
+        ),
       { ...chargeContext, error }
     );
     logToAxiom({
