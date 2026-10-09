@@ -135,6 +135,7 @@ function VirtualColumn<TData>({
         <div
           key={`${item.index}_${item.key}`}
           className={styles.item}
+          data-masonry-item
           style={{
             position: 'absolute',
             top: 0,

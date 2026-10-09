@@ -16,11 +16,12 @@ export const DEFAULT_HAT_PLACEMENT: HatPlacement = 'corner';
 export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
 
 /**
- * How far past the card's top and left edges the hat may reach at rest. Grids crop whatever a
- * card paints further out (virtual masonry's paint containment, home blocks' overflow), so a hat
- * that would reach further is moved into the card until it fits.
+ * How far past the card's top and left edges the hat may reach at rest. Containers crop whatever
+ * a card paints further out (virtual masonry's paint containment, home blocks' overflow), so a
+ * hat that would reach further is moved into the card until it fits. A container with less room
+ * than the feed declares it as `--event-decoration-allowance` (see EventDecorationOverlay).
  */
-const ALLOWANCE: Record<HatPlacement, number> = { corner: ITEM_BLEED, inside: -2 };
+export const HAT_ALLOWANCE: Record<HatPlacement, number> = { corner: ITEM_BLEED, inside: -2 };
 
 // The art convention when a cosmetic says nothing about its own fit: a 128x160 canvas, hat drawn
 // upright, nothing below y=156.
@@ -37,7 +38,11 @@ const isNumbers = (value: unknown, length: number): value is number[] =>
  * Sizing and the overhang solve use the art's own brim and outline when its fit gives them, so
  * every design is worn at the same size and none is cropped.
  */
-export function getHatLayout(placement: HatPlacement, fit?: EventDecorationFit) {
+export function getHatLayout(
+  placement: HatPlacement,
+  fit?: EventDecorationFit,
+  allowance = HAT_ALLOWANCE[placement]
+) {
   const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
   const [left, top, right, bottom] =
     isNumbers(fit?.bounds, 4) && fit.bounds[2] > fit.bounds[0] && fit.bounds[3] > fit.bounds[1]
@@ -45,17 +50,18 @@ export function getHatLayout(placement: HatPlacement, fit?: EventDecorationFit) 
       : DEFAULT_BOUNDS;
   const [brimLeft, brimRight, brimY] =
     isNumbers(fit?.brim, 3) && fit.brim[1] > fit.brim[0] ? fit.brim : [left, right, bottom];
-  const outline =
+  const artOutline =
     Array.isArray(fit?.outline) &&
     fit.outline.length >= 3 &&
     fit.outline.every((point) => isNumbers(point, 2))
       ? fit.outline
-      : [
-          [left, top],
-          [right, top],
-          [left, bottom],
-          [right, bottom],
-        ];
+      : undefined;
+  const outline = artOutline ?? [
+    [left, top],
+    [right, top],
+    [left, bottom],
+    [right, bottom],
+  ];
   const brimWidth = typeof fit?.size === 'number' && fit.size > 0 ? fit.size : HAT_LOOK.brim;
   const tilt =
     typeof fit?.tilt === 'number' && Number.isFinite(fit.tilt) ? fit.tilt : HAT_LOOK.tilt;
@@ -78,7 +84,6 @@ export function getHatLayout(placement: HatPlacement, fit?: EventDecorationFit) 
   const maxX = Math.max(...points.map((p) => p.x));
   const maxY = Math.max(...points.map((p) => p.y));
 
-  const allowance = ALLOWANCE[placement];
   const pivotX = Math.max(-sin * inset, -allowance - minX);
   const pivotY = Math.max(cos * inset, -allowance - minY);
 
@@ -90,6 +95,10 @@ export function getHatLayout(placement: HatPlacement, fit?: EventDecorationFit) 
     left: pivotX - pivot.x * scale,
     top: pivotY - pivot.y * scale,
     origin: `${pivot.x * scale}px ${pivot.y * scale}px`,
+    /** The art's own outline, so clicks beside the hat reach whatever is under it. */
+    hitArea:
+      artOutline &&
+      `polygon(${artOutline.map(([x, y]) => `${x * scale}px ${y * scale}px`).join(', ')})`,
     /** Visible extent on the card at rest, for whatever has to keep clear of the hat. */
     reach: {
       left: pivotX + minX,

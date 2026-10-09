@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
   getEventDecorationClearLeft,
@@ -113,10 +114,16 @@ describe.each(Object.entries(SHAPES))('hat placement for %s art', (_, fit) => {
   });
 
   // Carousels clip at the slide's own edge, with no bleed to spend.
-  it('inside: never leaves the card', () => {
+  it('inside: stays 2px inside the card', () => {
     const { reach } = getHatLayout('inside', fit);
-    expect(reach.top).toBeGreaterThanOrEqual(0);
-    expect(reach.left).toBeGreaterThanOrEqual(0);
+    expect(reach.top).toBeGreaterThanOrEqual(2 - 1e-9);
+    expect(reach.left).toBeGreaterThanOrEqual(2 - 1e-9);
+  });
+
+  it('keeps the art in proportion', () => {
+    const { width, height } = getHatLayout('corner', fit);
+    const [w, h] = fit?.canvas ?? [128, 160];
+    expect(height / width).toBeCloseTo(h / w, 9);
   });
 
   it.each<HatPlacement>(['corner', 'inside'])(
@@ -128,12 +135,43 @@ describe.each(Object.entries(SHAPES))('hat placement for %s art', (_, fit) => {
   );
 });
 
-describe.each(Object.entries(ART))('the worn look on %s', (_, fit) => {
+// `reach` is what the clamp and the chips use, so it must be the art where it actually lands.
+describe.each(Object.entries(ART))('the reach of %s', (_, fit) => {
+  it.each<HatPlacement>(['corner', 'inside'])(
+    '%s: is the box around the placed outline',
+    (placement) => {
+      const placed = (fit.outline as number[][]).map((p) => toCard(fit, placement, p));
+      const { reach } = getHatLayout(placement, fit);
+      expect(reach.left).toBeCloseTo(Math.min(...placed.map((p) => p.x)), 6);
+      expect(reach.top).toBeCloseTo(Math.min(...placed.map((p) => p.y)), 6);
+      expect(reach.right).toBeCloseTo(Math.max(...placed.map((p) => p.x)), 6);
+      expect(reach.bottom).toBeCloseTo(Math.max(...placed.map((p) => p.y)), 6);
+    }
+  );
+});
+
+const WORN = Object.entries(ART).flatMap(([name, fit]) => [
+  [`${name}`, fit] as const,
+  [`${name} tilted -30`, { ...fit, tilt: -30 }] as const,
+  [`${name} tilted -60`, { ...fit, tilt: -60 }] as const,
+]);
+
+describe.each(WORN)('the worn look on %s', (_, fit) => {
   const brim = fit.brim as number[];
+  const tilt = fit.tilt ?? HAT_LOOK.tilt;
   const outline = (fit.outline as number[][]).map((p) => toCard(fit, 'corner', p));
 
   it('wears the card corner inside the hat', () => {
     expect(insidePolygon({ x: 0, y: 0 }, outline)).toBe(true);
+  });
+
+  it('leans along a line through the corner', () => {
+    const middle = toCard(fit, 'corner', [(brim[0] + brim[1]) / 2, brim[2]]);
+    const rad = (tilt * Math.PI) / 180;
+    const up = { x: Math.sin(rad), y: -Math.cos(rad) };
+    const toCorner = { x: -middle.x, y: -middle.y };
+    expect(up.x * toCorner.y - up.y * toCorner.x).toBeCloseTo(0, 6);
+    expect(up.x * toCorner.x + up.y * toCorner.y).toBeGreaterThan(0);
   });
 
   it('is sized by its brim', () => {
@@ -170,11 +208,50 @@ it('wears the look chosen on real cards', () => {
   expect(HAT_LOOK).toEqual({ brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 });
 });
 
+// SCSS cannot import ITEM_BLEED, so home blocks restate it: room above and left of their edge
+// cards, traded from margin to padding around the cards' own 8px (`p-2`) so nothing moves.
+it('home blocks give edge cards the same room as the feed', () => {
+  const scss = readFileSync('src/components/HomeBlocks/HomeBlock.module.scss', 'utf8');
+  const grid = scss.slice(scss.indexOf('.grid {'));
+  for (const side of ['top', 'left']) {
+    expect(grid).toContain(`margin-${side}: -${ITEM_BLEED}px;`);
+    expect(grid).toContain(`padding-${side}: ${ITEM_BLEED - 8}px;`);
+  }
+});
+
+// Each axis is moved in on its own: a hat leaning far left overshoots the left edge, an upright
+// one the top.
 describe('a hat too big for the bleed', () => {
-  it('is moved into the card until it fits', () => {
-    const { reach } = getHatLayout('corner', { ...ART.basic, size: 120 });
-    expect(Math.min(reach.left, reach.top)).toBeCloseTo(-ITEM_BLEED, 6);
+  it('is moved right until it fits the left edge', () => {
+    const { reach } = getHatLayout('corner', { ...ART.basic, size: 120, tilt: -80 });
+    expect(reach.left).toBeCloseTo(-ITEM_BLEED, 6);
+    expect(reach.top).toBeGreaterThanOrEqual(-ITEM_BLEED - 1e-9);
   });
+
+  it('is moved down until it fits the top edge', () => {
+    const { reach } = getHatLayout('corner', { ...ART.basic, size: 120, tilt: -10 });
+    expect(reach.top).toBeCloseTo(-ITEM_BLEED, 6);
+    expect(reach.left).toBeGreaterThanOrEqual(-ITEM_BLEED - 1e-9);
+  });
+});
+
+// Containers with less room than the feed (carousels, profile grids) pass their own allowance.
+it.each([0, 8, 24])('fits a container that gives %ipx of room', (allowance) => {
+  const { reach } = getHatLayout('corner', ART.civchan, allowance);
+  expect(Math.min(reach.left, reach.top)).toBeCloseTo(-allowance, 6);
+});
+
+it('outlines its hit area with the art, not the canvas', () => {
+  const { hitArea, width } = getHatLayout('corner', ART.basic);
+  const scale = width / 128;
+  expect(hitArea).toBe(
+    `polygon(${(ART.basic.outline as number[][])
+      .map(([x, y]) => `${x * scale}px ${y * scale}px`)
+      .join(', ')})`
+  );
+  expect(
+    getHatLayout('corner', { canvas: [128, 160], bounds: [0, 0, 128, 156] }).hitArea
+  ).toBeUndefined();
 });
 
 describe('getEventDecorationClearLeft', () => {

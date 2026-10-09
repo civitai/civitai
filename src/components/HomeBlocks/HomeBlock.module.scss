@@ -59,6 +59,8 @@
     margin-right: calc(var(--mantine-spacing-md) * -1);
     margin-left: calc(var(--mantine-spacing-md) * -1);
     padding-left: var(--mantine-spacing-md);
+    // The scroller's own padding plus the cards' `p-2` is all the room a hat has on the left.
+    --event-decoration-allowance: calc(var(--mantine-spacing-md) + 8px);
 
     & > * {
       scroll-snap-align: center;
