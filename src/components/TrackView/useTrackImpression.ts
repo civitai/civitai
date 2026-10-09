@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef } from 'react';
 import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   getCurrentImpressionSurface,
   recordImpression,
@@ -130,8 +130,11 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
   targets: ImpressionTarget[] | undefined
 ) {
   const ref = useRef<T>(null);
-  const features = useFeatureFlags();
-  const enabled = !!features.feedImpressions && !!targets?.length;
+  // Optional, not `useFeatureFlags`: ElementInView calls this for every caller,
+  // tracked or not, and must not throw outside a FeatureFlagsProvider. No flags
+  // means off.
+  const features = useOptionalFeatureFlags();
+  const enabled = !!features?.feedImpressions && !!targets?.length;
 
   // Identity of the entities, not of the array — callers rebuild the array every
   // render, and re-observing on that would be constant churn. This is the effect's
