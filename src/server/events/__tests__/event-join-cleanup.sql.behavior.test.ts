@@ -4,6 +4,7 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import {
   BIRTHDAY_2026_EVENT,
   BIRTHDAY_2026_STARTS_AT,
@@ -40,11 +41,6 @@ const MIGRATION = path.resolve(
 );
 const db = { pg: null as unknown as PGlite };
 
-// Run a Prisma tagged-template call as the parameterised statement Prisma would send.
-function toQuery(strings: TemplateStringsArray, values: unknown[]) {
-  return strings.reduce((sql, part, i) => sql + part + (i < values.length ? `$${i + 1}` : ''), '');
-}
-
 const HATS = { Yellow: 21, Blue: 22, Pink: 23, Green: 24 } as const;
 const FRAME = 30;
 const OTHER_EVENT_HAT = 31;
@@ -70,15 +66,9 @@ beforeAll(async () => {
   `);
   await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
 
-  const run = async (strings: TemplateStringsArray, ...values: unknown[]) =>
-    db.pg.query(toQuery(strings, values), values as unknown[]);
-  dbMock.dbWrite.$executeRaw.mockImplementation(
-    (async (s: TemplateStringsArray, ...v: unknown[]) =>
-      (await run(s, ...v)).affectedRows ?? 0) as never
-  );
-  dbMock.dbWrite.$queryRaw.mockImplementation(
-    (async (s: TemplateStringsArray, ...v: unknown[]) => (await run(s, ...v)).rows) as never
-  );
+  const raw = pgliteRaw(db.pg);
+  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
 });
 
 afterAll(async () => {

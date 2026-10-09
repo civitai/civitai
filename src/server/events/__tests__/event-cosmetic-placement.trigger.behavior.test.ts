@@ -266,6 +266,37 @@ describe('event_cosmetic_placement_log trigger', () => {
     ]);
   });
 
+  it('applies twice without error and still logs one interval per placement', async () => {
+    await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
+    await grant(OWNER, HAT);
+    await equip(OWNER, HAT, 'claimed', 'Image', 10);
+    expect(await placements()).toHaveLength(1);
+  });
+
+  // PGlite cannot show lock contention, so the lock discipline is pinned on the text. Each trigger
+  // statement takes SHARE ROW EXCLUSIVE behind a 2s timeout; a DROP TRIGGER would take ACCESS
+  // EXCLUSIVE and queue every read of "UserCosmetic".
+  it('creates each trigger behind its own SET LOCAL lock_timeout, and never drops one', () => {
+    const sql = readFileSync(MIGRATION, 'utf8').replace(/--.*$/gm, '');
+    expect(sql).not.toMatch(/DROP\s+TRIGGER/i);
+    const blocks = sql.match(/SET LOCAL lock_timeout = '\d+s';\s*CREATE OR REPLACE TRIGGER/g) ?? [];
+    expect(blocks).toHaveLength(3);
+    expect(sql.match(/CREATE (OR REPLACE )?TRIGGER/g)).toHaveLength(3);
+  });
+
+  it('lets a frame and a hat share an entity, logging only the hat', async () => {
+    await grant(OWNER, FRAME);
+    await grant(OWNER, HAT);
+    await equip(OWNER, FRAME, 'claimed', 'Image', 10);
+    await equip(OWNER, HAT, 'claimed', 'Image', 10);
+
+    const equipped = await db.pg.query<{ cosmeticId: number }>(
+      `SELECT "cosmeticId" FROM "UserCosmetic" WHERE "equippedToId" = 10 ORDER BY "cosmeticId"`
+    );
+    expect(equipped.rows.map((r) => r.cosmeticId)).toEqual([HAT, FRAME]);
+    expect((await placements()).map((r) => [r.cosmeticId, r.open])).toEqual([[HAT, true]]);
+  });
+
   it('leaves no lock_timeout behind on the session that applied the migration', async () => {
     // SET LOCAL ends with its DO block; a plain SET would leave 2s on a pooled connection.
     const res = await db.pg.query<{ lock_timeout: string }>('SHOW lock_timeout');

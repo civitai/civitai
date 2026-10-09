@@ -116,7 +116,9 @@ describe('activateEventCosmetic on a join event', () => {
 
   it('does neither on a repeat join', async () => {
     engine.join.mockResolvedValue({ team: 'Blue', cosmeticId: 22, joined: false });
-    await service.activateEventCosmetic({ event: 'birthday2026', userId: 7 });
+    const res = await service.activateEventCosmetic({ event: 'birthday2026', userId: 7 });
+
+    expect(res).toEqual({ cosmetic: { id: 22 } }); // the held cosmetic, passed through
 
     expect(redisMock.redis.hDel).not.toHaveBeenCalled();
     expect(engine.queueAddRole).not.toHaveBeenCalled();

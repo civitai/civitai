@@ -4,7 +4,7 @@
 //
 // Rules, in the order the query applies them:
 // - A placement counts only while it is on its owner's own content (entityOwnerId = userId), and
-//   never for an owner who is banned or excluded from leaderboards.
+//   never for an owner who is banned or excluded from leaderboards (applied to the final rows).
 // - An impression or reaction counts only inside a placement interval, and never from the owner.
 // - Each viewer counts once per entity per day, credited to the cosmetic the entity wore when that
 //   viewer first saw it that day, so rotating cosmetics through one entity does not multiply views.
@@ -45,7 +45,6 @@ WITH
       AND startedAt < {dayEnd:DateTime64(3)}
       AND (endedAt IS NULL OR endedAt > {dayStart:DateTime64(3)})
       AND entityOwnerId = userId
-      AND userId NOT IN (SELECT userId FROM restrictedUsers)
   ),
   botSessions AS (
     SELECT sessionKey FROM impressions
@@ -147,5 +146,8 @@ FROM (
   UNION ALL
   SELECT hat, toUInt64(0), toUInt64(0), toUInt64(count()) FROM reactionsCapped GROUP BY hat
 )
+-- Restricted owners are dropped here, once, rather than inside placements: ClickHouse inlines a CTE at
+-- every reference, and placements is referenced three times.
+WHERE hat.1 NOT IN (SELECT userId FROM restrictedUsers)
 GROUP BY hat
 `;

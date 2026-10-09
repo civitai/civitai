@@ -39,6 +39,8 @@ export const events = [holiday2024, birthday2026];
 // module load: a list frozen at boot drops the event on the first deploy after it ends, and cleanup
 // silently never runs. Bounded so a deploy can never reach back to a long-finished event.
 export const EVENT_CLEANUP_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+// Cleanup markers must outlive the grace window, so a finished cleanup never runs again.
+const CLEANUP_MARKER_TTL_S = 30 * 24 * 60 * 60;
 export function getActiveEvents(now = new Date()) {
   return events.filter(
     (x) => x.startDate <= now && x.endDate.getTime() + EVENT_CLEANUP_GRACE_MS >= now.getTime()
@@ -103,7 +105,7 @@ export const eventEngine = {
           if (!(await redis.get(unequipKey))) {
             const entities = await unequipEventCosmetics(eventDef.name);
             await refreshEventDecorations(entities);
-            await redis.set(unequipKey, 'true', { EX: 60 * 60 * 24 * 30 });
+            await redis.set(unequipKey, 'true', { EX: CLEANUP_MARKER_TTL_S });
           }
           // Phase 2 waits until scoring has finished taking late data, so the winner is decided on
           // the final standings.
@@ -142,8 +144,7 @@ export const eventEngine = {
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
 
         // Mark cleanup as complete, only after every step succeeded so a failure retries tomorrow.
-        // Outlives the grace window, so it never runs twice.
-        await redis.set(cleanupKey, `true`, { EX: 60 * 60 * 24 * 30 });
+        await redis.set(cleanupKey, `true`, { EX: CLEANUP_MARKER_TTL_S });
       } else {
         // If the event isn't over, run the daily reset
         if (eventDef.onDailyReset) {
@@ -293,8 +294,7 @@ export const eventEngine = {
   },
   async getEventData(event: string, now = new Date()) {
     const eventDef = getEventDef(event);
-    // Unannounced until it starts: the page 404s exactly like an unknown slug.
-    if (eventDef.startDate > now) throw new Error("That event doesn't exist");
+    this.assertStarted(event, now);
 
     let coverImage = eventDef.coverImage;
     let coverImageUser;
@@ -401,9 +401,9 @@ export const eventEngine = {
   },
   // Scored-event reads. Like getEventData, an event that has not started reads as nonexistent.
   getStartedScoredEvent(event: string, now = new Date()) {
-    const eventDef = getEventDef(event);
-    const scored = scoredEvent(eventDef);
-    if (!scored || eventDef.startDate > now) throw new Error("That event doesn't exist");
+    this.assertStarted(event, now);
+    const scored = scoredEvent(getEventDef(event));
+    if (!scored) throw new Error("That event doesn't exist");
     return scored;
   },
   isJoinEvent(event: string) {
@@ -416,8 +416,7 @@ export const eventEngine = {
     const eventDef = getEventDef(event);
     const claimKey = eventDef.join?.claimKey;
     if (!claimKey) throw new Error('This event has no join');
-    // Before the start the event reads as nonexistent, like every other route.
-    if (now < eventDef.startDate) throw new Error("That event doesn't exist");
+    this.assertStarted(event, now);
     if (now >= eventDef.endDate) throw new Error('This event is not running');
 
     // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
@@ -457,7 +456,7 @@ export const eventEngine = {
     const heldId = held?.cosmeticId ?? cosmeticId;
     return { team: teamByCosmetic.get(heldId) ?? team, cosmeticId: heldId, joined: false };
   },
-  // Scored-event and join reads before the start read as nonexistent.
+  // Unannounced until it starts: every route reads an event that has not started like an unknown slug.
   assertStarted(event: string, now = new Date()) {
     if (getEventDef(event).startDate > now) throw new Error("That event doesn't exist");
   },

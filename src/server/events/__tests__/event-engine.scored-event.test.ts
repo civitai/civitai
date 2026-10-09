@@ -238,6 +238,32 @@ describe('end-of-event cleanup', () => {
     expect(mockRefresh.mock.calls.flatMap(([, ids]) => ids)).toHaveLength(2500);
   });
 
+  it('decides the winner exactly when scoring stops, not a moment before', async () => {
+    const finalize = birthday2026.scoring!.finalizeAfterMs;
+    const unequipped = async (key: string) =>
+      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null;
+    redisMock.redis.get.mockImplementation(unequipped);
+
+    await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize - 1));
+    expect(winnerUpdates()).toHaveLength(0);
+    await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize));
+    expect(winnerUpdates()).toHaveLength(1);
+
+    // ...and the hourly scoring runs up to that same instant and no further: the two cut-offs are one.
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize));
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize + 1));
+    expect(mockScoring.runCosmeticPlacementScoring).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mark cleanup done when flagging the winner fails', async () => {
+    redisMock.redis.get.mockImplementation(async (key: string) =>
+      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null
+    );
+    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
+    await expect(eventEngine.dailyReset(secondReset)).rejects.toThrow('db down');
+    expect(setKeys()).not.toContain(`eventCleanup:${BIRTHDAY_2026_EVENT}`);
+  });
+
   it('does not clean up twice', async () => {
     redisMock.redis.get.mockResolvedValue('true');
     await eventEngine.dailyReset(secondReset);

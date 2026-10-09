@@ -131,7 +131,7 @@ async function scoreDay(event: ScoredEvent, window: { day: Date; start: Date; en
     format: 'JSONEachRow',
     // A slow hour fails under these limits rather than at the socket timeout; the next run
     // recomputes the whole day, so a failed hour loses nothing.
-    clickhouse_settings: { max_execution_time: 120, max_memory_usage: '8000000000' },
+    clickhouse_settings: { max_execution_time: 120, max_memory_usage: '16000000000' },
     query_params: {
       event: event.name,
       dayStart: chDate(window.start),
@@ -195,17 +195,26 @@ export async function runCosmeticPlacementScoring(event: ScoredEvent, now = new 
   return { synced, scored };
 }
 
-// Banned, deleted and leaderboard-excluded users drop out of every published standing. Their rows stay
-// in the table, so a reversal restores them.
+// Banned, deleted and leaderboard-excluded users drop out of the standings (team totals, history and
+// rankings). Their rows stay in the table, so a reversal restores them; per-cosmetic reads below are
+// not filtered. Reads the primary: the hourly job builds this right after writing the day, and a
+// lagging replica would freeze stale numbers into the snapshot for an hour.
 async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
-  const teamDays = await dbRead.$queryRaw<{ team: string; day: Date; points: number }[]>`
-    SELECT s.team, s.day, sum(s.points)::int AS points
-    FROM "EventCosmeticScoreDaily" s
-    JOIN "User" u ON u.id = s."userId"
-    WHERE s.event = ${event.name}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards"
-    GROUP BY s.team, s.day
-    ORDER BY s.day
+  // The few hidden users, found once over the event's distinct users, so the three aggregates below
+  // need no per-row join to "User".
+  const hidden = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT u.id FROM "User" u
+    WHERE u.id IN (SELECT DISTINCT "userId" FROM "EventCosmeticScoreDaily" WHERE event = ${event.name})
+      AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR u."excludeFromLeaderboards")
+  `;
+  const hiddenIds = hidden.map((u) => u.id);
+
+  const teamDays = await dbWrite.$queryRaw<{ team: string; day: Date; points: number }[]>`
+    SELECT team, day, sum(points)::int AS points
+    FROM "EventCosmeticScoreDaily"
+    WHERE event = ${event.name} AND "userId" <> ALL(${hiddenIds}::int[])
+    GROUP BY team, day
+    ORDER BY day
   `;
   const totals = new Map<string, number>();
   const history = event.teams.map((team) => ({
@@ -225,28 +234,24 @@ async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
   teams.sort((a, b) => b.score - a.score);
   teams.forEach((t, i) => (t.rank = i + 1));
 
-  const topCosmetics = await dbRead.$queryRaw<CosmeticScore[]>`
-    SELECT s."userId", s."cosmeticId", s."claimKey", s.team,
-      sum(s.points)::int AS points, sum(s.impressions)::int AS impressions,
-      sum(s."anonImpressions")::int AS "anonImpressions", sum(s.reactions)::int AS reactions
-    FROM "EventCosmeticScoreDaily" s
-    JOIN "User" u ON u.id = s."userId"
-    WHERE s.event = ${event.name}
-      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards"
-    GROUP BY s."userId", s."cosmeticId", s."claimKey", s.team
+  const topCosmetics = await dbWrite.$queryRaw<CosmeticScore[]>`
+    SELECT "userId", "cosmeticId", "claimKey", team,
+      sum(points)::int AS points, sum(impressions)::int AS impressions,
+      sum("anonImpressions")::int AS "anonImpressions", sum(reactions)::int AS reactions
+    FROM "EventCosmeticScoreDaily"
+    WHERE event = ${event.name} AND "userId" <> ALL(${hiddenIds}::int[])
+    GROUP BY "userId", "cosmeticId", "claimKey", team
     ORDER BY points DESC
     LIMIT ${TOP_COSMETICS}
   `;
 
-  const userRows = await dbRead.$queryRaw<{ team: string; userId: number; points: number }[]>`
+  const userRows = await dbWrite.$queryRaw<{ team: string; userId: number; points: number }[]>`
     SELECT team, "userId", points FROM (
-      SELECT s.team, s."userId", sum(s.points)::int AS points,
-        row_number() OVER (PARTITION BY s.team ORDER BY sum(s.points) DESC) AS rn
-      FROM "EventCosmeticScoreDaily" s
-      JOIN "User" u ON u.id = s."userId"
-      WHERE s.event = ${event.name}
-        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards"
-      GROUP BY s.team, s."userId"
+      SELECT team, "userId", sum(points)::int AS points,
+        row_number() OVER (PARTITION BY team ORDER BY sum(points) DESC) AS rn
+      FROM "EventCosmeticScoreDaily"
+      WHERE event = ${event.name} AND "userId" <> ALL(${hiddenIds}::int[])
+      GROUP BY team, "userId"
     ) ranked
     WHERE rn <= ${TOP_USERS_PER_TEAM}
     ORDER BY team, points DESC
