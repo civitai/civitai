@@ -100,7 +100,8 @@ export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchased
 
 /**
  * A win is a prize place in a contest someone else ran, one per contest: a place in a daily
- * challenge, or in a community challenge or completed Crucible with at least 10 distinct entrants.
+ * challenge, or in a community challenge or completed Crucible with at least 10 distinct entrants
+ * besides the host. A Crucible place counts only if its share of the pool is above zero.
  * Challenge wins are dated when the winner was recorded, which for community challenges can be days
  * after they close; a Crucible's places are written within a minute of its end.
  */
@@ -112,15 +113,16 @@ export const competeWinsSource = `SELECT cw."userId", cw."createdAt" AS at, 'cha
     WHERE ch.source IN ('System', 'Mod')
       OR (ch.source = 'User' AND ch."createdById" IS DISTINCT FROM cw."userId"
         AND (SELECT count(DISTINCT ci."addedById") FROM "CollectionItem" ci
-          WHERE ci."collectionId" = ch."collectionId") >= ${COMPETE_MIN_ENTRANTS})
+          WHERE ci."collectionId" = ch."collectionId"
+            AND ci."addedById" IS DISTINCT FROM ch."createdById") >= ${COMPETE_MIN_ENTRANTS})
     UNION ALL
-    SELECT ce."userId", c."endAt", 'crucible:' || c.id
+    SELECT ce."userId", coalesce(c."endAt", c."updatedAt"), 'crucible:' || c.id
     FROM "CrucibleEntry" ce
     JOIN "Crucible" c ON c.id = ce."crucibleId"
-    WHERE c.status = 'Completed' AND (c."prizePositions" -> ce.position::text) IS NOT NULL
+    WHERE c.status = 'Completed' AND (c."prizePositions" -> ce.position::text) > '0'::jsonb
       AND ce."userId" <> c."userId"
       AND (SELECT count(DISTINCT e."userId") FROM "CrucibleEntry" e
-        WHERE e."crucibleId" = c.id) >= ${COMPETE_MIN_ENTRANTS}
+        WHERE e."crucibleId" = c.id AND e."userId" <> c."userId") >= ${COMPETE_MIN_ENTRANTS}
     GROUP BY ce."userId", c.id`;
 
 const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m}"`).join(', ')}
