@@ -65,6 +65,9 @@ vi.mock('../../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 vi.mock('~/server/prom/client', async (importOriginal) => {
   const actual = await importOriginal<typeof PromClient>();
   return {
@@ -175,7 +178,17 @@ import {
   getImagesFromFeedServiceForRest,
 } from '~/server/services/image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { imageMetaCache, imageResourcesCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import {
+  eventDecorationEntityCaches,
+  imageMetaCache,
+  imageResourcesCache,
+  tagIdsForImagesCache,
+} from '~/server/redis/caches';
+import {
+  BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
+} from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 const FEED_CREATED_AT = '2026-01-01T00:00:00.000Z';
 const FEED_SORT_AT = '2026-03-01T12:00:00.000Z';
@@ -828,5 +841,75 @@ describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
     expect(await counted()).toEqual([
       { outcome: 'rejected', reason: 'offset>20000', route: 'website', value: 1 },
     ]);
+  });
+});
+
+// The website image feed is served by the feed service, which hydrates its rows through the same
+// query as the database path. Before launch the birthday decorations on those rows must reach only
+// a viewer the `birthday2026` flag is on for, so the viewer has to survive the hydrate query.
+describe('event decorations on a feed-served website page before launch', () => {
+  const VIEWER = { id: 42, isModerator: false };
+  const HAT = { type: 'hat', event: BIRTHDAY_2026_EVENT, url: 'hat.png', team: 'Blue' };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000));
+    h.websiteFlagOn.mockReturnValue(true);
+    h.available.mockReturnValue(true);
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.enforce.mockImplementation(async () => ({ emptyResult: false }));
+    h.rawQuery.mockReset();
+    h.rawQuery.mockResolvedValue({ rows: [rawRow(9), rawRow(5)] });
+    h.realHydrate = true;
+    cacheFetchOptions();
+    vi.spyOn(eventDecorationEntityCaches.Image, 'fetch').mockResolvedValue({
+      9: {
+        id: 1,
+        name: 'Party Hat',
+        type: 'ContentDecoration',
+        source: 'Purchase',
+        data: HAT,
+        claimKey: 'tx',
+      },
+    } as never);
+  });
+  afterEach(() => {
+    h.realHydrate = false;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const page = () =>
+    getAllImagesIndex({
+      sort: 'Newest',
+      period: 'Week',
+      browsingLevel: 1,
+      limit: 100,
+      include: ['tagIds'],
+      user: VIEWER,
+      // What image.getInfinite passes (image.controller.ts).
+      eventDecorationViewer: VIEWER,
+    } as unknown as Parameters<typeof getAllImagesIndex>[0]);
+  const hats = (r: Awaited<ReturnType<typeof page>>) =>
+    Object.fromEntries(
+      (r.items as { id: number; eventDecoration?: { data?: unknown } | null }[]).map((i) => [
+        i.id,
+        i.eventDecoration?.data ?? null,
+      ])
+    );
+
+  it('shows the hat to a viewer the flag is on for', async () => {
+    testerFlag.reset({ testers: [VIEWER.id] });
+    const r = await page();
+    expect(r.source).toBe('feed');
+    expect(hats(r)).toEqual({ 9: HAT, 5: null });
+  });
+
+  it('shows no hat to a viewer the flag is off for', async () => {
+    testerFlag.reset({ testers: [] });
+    const r = await page();
+    expect(r.source).toBe('feed');
+    expect(hats(r)).toEqual({ 9: null, 5: null });
   });
 });
