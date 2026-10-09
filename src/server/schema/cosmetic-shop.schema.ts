@@ -270,4 +270,6 @@ export const getShopInput = z.object({
   // but a shopper filtering the shelf thinks of it as one more kind of thing.
   cosmeticTypes: z.array(z.union([z.enum(CosmeticType), z.literal('Pack')])).optional(),
   sectionId: z.number().optional(),
+  // Only this event's items (Cosmetic.data.event), for the event's own page.
+  event: z.string().max(64).optional(),
 });

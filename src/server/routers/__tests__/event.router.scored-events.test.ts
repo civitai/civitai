@@ -12,6 +12,8 @@ const { service } = vi.hoisted(() => ({
     getMyEventCosmeticScores: vi.fn(async () => ({ points: 0, cosmetics: [] })),
     getEventCosmeticScores: vi.fn(async () => ({})),
     getViewerEventAccess: vi.fn(async () => 'open'),
+    getMyEventHats: vi.fn(async () => []),
+    getPlaceableEventContent: vi.fn(async () => []),
   },
 }));
 
@@ -46,6 +48,29 @@ describe('scored-event route access', () => {
   it('serves getMyCosmeticScores for the signed-in caller only', async () => {
     await callerFor({ id: 7 }).getMyCosmeticScores({ event: 'birthday2026' });
     expect(service.getMyEventCosmeticScores).toHaveBeenCalledWith({
+      user: { id: 7 },
+      event: 'birthday2026',
+    });
+  });
+
+  // Both read the caller's own hats and posts, so a signed-out call must never reach the service.
+  it('refuses getMyHats and getPlaceableContent to a signed-out caller', async () => {
+    const anon = callerFor(undefined);
+    await expect(anon.getMyHats({ event: 'birthday2026' })).rejects.toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED' })
+    );
+    await expect(anon.getPlaceableContent({ event: 'birthday2026' })).rejects.toThrow(
+      expect.objectContaining({ code: 'UNAUTHORIZED' })
+    );
+    expect(service.getMyEventHats).not.toHaveBeenCalled();
+    expect(service.getPlaceableEventContent).not.toHaveBeenCalled();
+  });
+
+  it('reads getMyHats and getPlaceableContent as the signed-in caller', async () => {
+    await callerFor({ id: 7 }).getMyHats({ event: 'birthday2026' });
+    await callerFor({ id: 7 }).getPlaceableContent({ event: 'birthday2026' });
+    expect(service.getMyEventHats).toHaveBeenCalledWith({ user: { id: 7 }, event: 'birthday2026' });
+    expect(service.getPlaceableEventContent).toHaveBeenCalledWith({
       user: { id: 7 },
       event: 'birthday2026',
     });

@@ -1,140 +1,100 @@
-import { Button, Card, Group, Progress, Stack, Text, Title } from '@mantine/core';
-import { IconChevronRight } from '@tabler/icons-react';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { Stack, Text } from '@mantine/core';
+import { IconShoppingBag } from '@tabler/icons-react';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
+import { EventRules } from '~/components/Events/ScoredEvent/EventRules';
+import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
+import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
+import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
+import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
+import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { numberWithCommas } from '~/utils/number-helpers';
+import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-// Team standings, the viewer's own points and cosmetics, and the top-scoring cosmetics. Scores are
-// recomputed hourly by the event engine; everything here reads that snapshot.
-export function ScoredEventSections({
-  event,
-  joined,
-  ended,
-}: {
-  event: string;
-  joined: boolean;
-  ended: boolean;
-}) {
+type EventData = RouterOutput['event']['getData'];
+
+// The team strictly ahead of the rest; none on a tie for first.
+function leader(teams?: { team: string; score: number }[]) {
+  if (!teams?.length || (teams[1] && teams[1].score === teams[0].score)) return undefined;
+  return teams[0].team;
+}
+
+/**
+ * The page of a scored event: what it is, where the teams stand, the viewer's hats and what they
+ * earned, and the shop's event items. Everything event-specific comes from the event definition
+ * (`page`, `scoring`, its decoration), so another scored event gets this page by defining one.
+ */
+export function ScoredEventSections({ event, data }: { event: string; data: EventData }) {
   const currentUser = useCurrentUser();
   const teamColor = useTeamColor();
-  const { data: standings } = trpc.event.getStandings.useQuery({ event });
-  const { data: mine } = trpc.event.getMyCosmeticScores.useQuery(
+  const utils = trpc.useUtils();
+  const ended = data.endDate < new Date();
+
+  const { data: eventCosmetic } = trpc.event.getCosmetic.useQuery(
     { event },
-    { enabled: !!currentUser && joined }
+    { enabled: !!currentUser }
   );
+  const joined = !!eventCosmetic?.obtained;
+  const team = joined
+    ? (eventCosmetic?.cosmetic?.data as { team?: string } | undefined)?.team
+    : undefined;
+
+  const { data: standings } = trpc.event.getStandings.useQuery({ event });
+  const { data: hats = [] } = trpc.event.getMyHats.useQuery({ event }, { enabled: joined });
   const { activateCosmetic, equipping } = useMutateEvent();
 
   const handleJoin = async () => {
     try {
       await activateCosmetic({ event });
+      await utils.event.getMyHats.invalidate({ event });
     } catch (e) {
       showErrorNotification({ title: 'Unable to join', error: e as Error });
     }
   };
 
-  const total = standings?.teams.reduce((sum, t) => sum + t.score, 0) ?? 0;
+  const color = (team && teamColor(team)) ?? 'var(--mantine-color-blue-5)';
+  const rank = team ? standings?.teams.find((t) => t.team === team)?.rank : undefined;
+  const points = hats.reduce((sum, h) => sum + h.points, 0);
 
   return (
-    <Stack gap="xl">
-      {!joined && !ended && (
-        <LoginRedirect reason="perform-action">
-          <Button
-            radius="xl"
-            size="lg"
-            rightSection={!equipping ? <IconChevronRight /> : undefined}
-            onClick={handleJoin}
-            loading={equipping}
-            fullWidth
-          >
-            {equipping ? 'Assigning team...' : 'Join and get your hat'}
-          </Button>
-        </LoginRedirect>
+    <Stack gap={56}>
+      <ScoredEventHero
+        data={data}
+        team={team}
+        rank={rank}
+        points={points}
+        ended={ended}
+        winner={ended ? leader(standings?.teams) : undefined}
+        teamHats={standings?.teamHats}
+        onJoin={handleJoin}
+        joining={equipping}
+      />
+
+      {standings && <TeamStandings standings={standings} myTeam={team} />}
+
+      {joined && hats.length > 0 && (
+        <MyEventHats event={event} hats={hats} teamColor={color} ended={ended} />
       )}
 
-      <Card radius="lg" p="lg" className="bg-gray-0 dark:bg-dark-6">
-        <Stack gap="md">
-          <Title order={3}>Team standings</Title>
-          {standings?.teams.map((t) => (
-            <Stack key={t.team} gap={4}>
-              <Group justify="space-between">
-                <Text fw={600} c={teamColor(t.team)}>
-                  #{t.rank} {t.team}
-                </Text>
-                <Text fw={600}>{numberWithCommas(t.score)}</Text>
-              </Group>
-              <Progress
-                value={total ? (t.score / total) * 100 : 0}
-                color={t.team.toLowerCase()}
-                radius="xl"
-              />
-            </Stack>
-          ))}
-          {standings && (
-            <Text size="xs" c="dimmed">
-              Updated hourly. Last update {standings.updatedAt.toLocaleTimeString()}.
-            </Text>
-          )}
-        </Stack>
-      </Card>
-
-      {mine && (
-        <Card radius="lg" p="lg" className="bg-gray-0 dark:bg-dark-6">
-          <Stack gap="md">
-            <Group justify="space-between">
-              <Title order={3}>Your hats</Title>
-              <Text fw={700} fz="xl">
-                {numberWithCommas(mine.points)} points
+      {!ended &&
+        (team ? (
+          <TeamHatShelf event={event} team={team} />
+        ) : (
+          <SpotlightBorderCard color="var(--mantine-color-blue-5)">
+            <Stack gap={4} p="lg" align="center" ta="center">
+              <IconShoppingBag size={28} />
+              <Text fw={700}>Join to shop for hats</Text>
+              <Text c="dimmed" size="sm">
+                Hats come in your team&apos;s colour, so the shop opens once you have a team.
               </Text>
-            </Group>
-            {mine.cosmetics.length === 0 ? (
-              <Text c="dimmed">Put a hat on your images, models or articles to start scoring.</Text>
-            ) : (
-              mine.cosmetics.map((c) => (
-                <Group key={`${c.cosmeticId}:${c.claimKey}`} justify="space-between">
-                  <Text c={teamColor(c.team)}>{c.name ?? 'Hat'}</Text>
-                  <Text size="sm">
-                    {numberWithCommas(c.points)} points ·{' '}
-                    {numberWithCommas(c.impressions + c.anonImpressions)} views ·{' '}
-                    {numberWithCommas(c.reactions)} reactions
-                  </Text>
-                </Group>
-              ))
-            )}
-          </Stack>
-        </Card>
-      )}
+            </Stack>
+          </SpotlightBorderCard>
+        ))}
 
-      {!!standings?.topCosmetics.length && (
-        <Card radius="lg" p="lg" className="bg-gray-0 dark:bg-dark-6">
-          <Stack gap="md">
-            <Title order={3}>Top hats</Title>
-            {standings.topCosmetics.map((c, i) => (
-              <Group key={`${c.userId}:${c.cosmeticId}:${c.claimKey}`} justify="space-between">
-                <Group gap="sm">
-                  <Text fw={600} w={32}>
-                    {i + 1}
-                  </Text>
-                  <UserAvatar
-                    userId={c.userId}
-                    user={standings.users[c.userId]}
-                    indicatorProps={{ color: c.team.toLowerCase() }}
-                    avatarSize="sm"
-                    withUsername
-                    linkToProfile
-                  />
-                </Group>
-                <Text fw={600} c={teamColor(c.team)}>
-                  {numberWithCommas(c.points)}
-                </Text>
-              </Group>
-            ))}
-          </Stack>
-        </Card>
-      )}
+      {standings && <TopHats standings={standings} />}
+
+      <EventRules data={data} />
     </Stack>
   );
 }

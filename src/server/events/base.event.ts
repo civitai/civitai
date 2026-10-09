@@ -244,8 +244,20 @@ export type CosmeticPlacementScoring = {
   finalizeAfterMs: number;
 };
 
+// The words a scored event's page shows. The numbers on it (reaction weight, caps, cooldown, what can
+// wear a decoration) are read from `scoring` and the event's decoration definition, never restated
+// here, so the page cannot drift from the rules the scoring job applies.
+export type EventPageCopy = {
+  headline: string;
+  summary: string;
+  steps: { title: string; body: string }[];
+  prize: { title: string; body: string; imageUrl?: string };
+  faq?: { question: string; answer: string }[];
+};
+
 type HolidayEventDefinition = {
   title: string;
+  page?: EventPageCopy;
   startDate: Date;
   endDate: Date;
   teams: readonly string[];

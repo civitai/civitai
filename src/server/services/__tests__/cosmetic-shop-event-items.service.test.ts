@@ -483,6 +483,37 @@ describe('the shop lists event-gated items per viewer', () => {
       { section: 20, items: [BLUE + 10] },
     ]);
   });
+
+  // The event page's shelf: only that event's items, still per viewer, empty sections dropped.
+  it("asked for one event, lists only that event's items the viewer may see", async () => {
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK, TEAMLESS] },
+    ]);
+    expect(await listedIds({ event: UNREGISTERED_EVENT })).toEqual([]);
+  });
+
+  // A community-hub section is kept in the shop even when empty (its feed is queried separately),
+  // so asking for one event's items must drop it by name, not by emptiness.
+  // The full shop shows a moderator every colour; the event page's shelf is their own team's.
+  it('asked for one event, a moderator sees their own colour only', async () => {
+    expect(
+      await listedIds({ userId: BUYER_ID, isModerator: true, event: BIRTHDAY_2026_EVENT })
+    ).toEqual([{ section: 10, items: [PINK, TEAMLESS] }]);
+  });
+
+  it('asked for one event, leaves out the community hub; the full shop keeps it', async () => {
+    mocks.sectionFindMany.mockResolvedValue([
+      section(10, [listedItem(PINK, hatData(PINK_TEAM))]),
+      { ...section(30, []), meta: { communityHub: true } },
+    ]);
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK] },
+    ]);
+    expect(await listedIds({ userId: BUYER_ID })).toEqual([
+      { section: 10, items: [PINK] },
+      { section: 30, items: [] },
+    ]);
+  });
 });
 
 // Justin, 2026-10-09: before launch the event, the shop's hats included, is for testers and
@@ -518,6 +549,31 @@ describe('before launch, behind the flag', () => {
     testerFlag.reset({ public: true, testers: [BUYER_ID] });
     await expect(purchase()).rejects.toThrow('This item is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  // A moderator plays the preview without being a tester (as the page and purchase already allow),
+  // so their event shelf must not come back empty.
+  it('asked for one event, lists a moderator their own colour during the preview', async () => {
+    testerFlag.reset({ testers: [] });
+    mocks.sectionFindMany.mockResolvedValue([
+      section(10, [listedItem(PINK, hatData(PINK_TEAM)), listedItem(BLUE, hatData(BLUE_TEAM))]),
+    ]);
+    expect(
+      await listedIds({ userId: BUYER_ID, isModerator: true, event: BIRTHDAY_2026_EVENT })
+    ).toEqual([{ section: 10, items: [PINK] }]);
+    // The same viewer without the moderator flag sees nothing: the preview is closed to them.
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([]);
+  });
+
+  // The full shop is unchanged for moderators: every item, every colour, nothing filtered.
+  it('without an event, still lists a moderator every item during the preview', async () => {
+    testerFlag.reset({ testers: [] });
+    mocks.sectionFindMany.mockResolvedValue([
+      section(10, [listedItem(PINK, hatData(PINK_TEAM)), listedItem(BLUE, hatData(BLUE_TEAM))]),
+    ]);
+    expect(await listedIds({ userId: BUYER_ID, isModerator: true })).toEqual([
+      { section: 10, items: [PINK, BLUE] },
+    ]);
   });
 
   it('lists the hats to a tester and to nobody else, signed out included', async () => {

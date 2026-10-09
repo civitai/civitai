@@ -11,6 +11,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   assertEventShopItemPurchasable,
   createEventShopItemVisibility,
+  isItemOfEvent,
   isEventShopItemData,
 } from '~/server/events/event-shop-item';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
@@ -685,6 +686,7 @@ export const getShopSectionsWithItems = async ({
   userId,
   cosmeticTypes,
   sectionId,
+  event,
 }: {
   isModerator?: boolean;
   creatorShopEnabled?: boolean;
@@ -823,17 +825,27 @@ export const getShopSectionsWithItems = async ({
   });
   // Event items (team hats) are filtered here rather than in the query: the
   // viewer's team comes from the event, not the database.
-  const eventItemVisible = createEventShopItemVisibility({ userId });
-  const visibleSections = isModerator
-    ? sections
-    : await Promise.all(
-        sections.map(async (section) => {
-          const visible = await Promise.all(
-            section.items.map((item) => eventItemVisible(item.shopItem.cosmetic?.data))
-          );
-          return { ...section, items: section.items.filter((_, i) => visible[i]) };
-        })
-      );
+  const eventItemVisible = createEventShopItemVisibility({ userId, isModerator });
+  // The event page's shelf is the viewer's own colour, moderators included.
+  const shown =
+    isModerator && !event
+      ? sections
+      : await Promise.all(
+          sections.map(async (section) => {
+            const visible = await Promise.all(
+              section.items.map((item) => eventItemVisible(item.shopItem.cosmetic?.data))
+            );
+            return { ...section, items: section.items.filter((_, i) => visible[i]) };
+          })
+        );
+  const visibleSections = event
+    ? shown
+        .filter((s) => !(s.meta as CosmeticShopSectionMeta | null)?.communityHub)
+        .map((s) => ({
+          ...s,
+          items: s.items.filter((item) => isItemOfEvent(item.shopItem.cosmetic?.data, event)),
+        }))
+    : shown;
   const sold = await getSoldCounts(
     visibleSections.flatMap((s) => s.items.map((i) => i.shopItem.id))
   );

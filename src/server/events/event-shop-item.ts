@@ -28,6 +28,11 @@ export function isEventShopItemData(data: unknown): data is EventItemData {
   );
 }
 
+/** Whether a cosmetic's `data` makes it one of this event's shop items. */
+export function isItemOfEvent(data: unknown, event: string) {
+  return isEventShopItemData(data) && data.event === event;
+}
+
 const isPlayableFor = async (event: ShopEvent, viewer: EventViewer, now: Date) =>
   canPlayEvent(await getEventAccess(event, viewer, now));
 
@@ -100,7 +105,13 @@ export async function assertEventShopItemPurchasable({
  * events can't be loaded, event items are hidden and the rest of the shop still
  * renders.
  */
-export function createEventShopItemVisibility({ userId }: { userId?: number }) {
+export function createEventShopItemVisibility({
+  userId,
+  isModerator,
+}: {
+  userId?: number;
+  isModerator?: boolean;
+}) {
   const now = new Date();
   const teams = new Map<string, Promise<string>>();
 
@@ -108,7 +119,10 @@ export function createEventShopItemVisibility({ userId }: { userId?: number }) {
     if (!isEventShopItemData(data)) return true;
     const events = await loadEvents().catch(() => undefined);
     const event = events?.find((e) => e.name === data.event);
-    if (!event || !(await isPlayableFor(event, userId ? { id: userId } : undefined, now)))
+    if (
+      !event ||
+      !(await isPlayableFor(event, userId ? { id: userId, isModerator } : undefined, now))
+    )
       return false;
     if (data.team === undefined || !userId) return true;
 
