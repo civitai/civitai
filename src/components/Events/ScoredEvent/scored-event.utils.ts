@@ -51,3 +51,21 @@ export function describeEntityTypes(types: readonly CosmeticEntity[]) {
 export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
   return Math.max(0, Math.ceil((cooldownLeftMs - Math.max(0, elapsedMs)) / 60_000));
 }
+
+export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'rules';
+
+/**
+ * The page's sections below the hero, in the order the viewer needs them: how it works first for a
+ * visitor deciding whether to join, their own hats first for a player, the result once it is over.
+ */
+export function scoredSectionOrder({
+  joined,
+  ended,
+}: {
+  joined: boolean;
+  ended: boolean;
+}): ScoredSection[] {
+  if (ended) return ['standings', 'topHats', 'hats'];
+  if (joined) return ['hats', 'standings', 'shop', 'topHats', 'rules'];
+  return ['rules', 'shop', 'standings', 'topHats'];
+}

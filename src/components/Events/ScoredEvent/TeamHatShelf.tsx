@@ -1,15 +1,8 @@
-import {
-  Center,
-  Group,
-  Loader,
-  SegmentedControl,
-  SimpleGrid,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Center, Loader, SegmentedControl, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconShoppingBag } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import { useTeamColor } from '~/components/Events/events.utils';
+import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -21,6 +14,7 @@ import { trpc } from '~/utils/trpc';
  * with the shop's own card, so buying here is buying in the shop.
  */
 export function TeamHatShelf({ event, team }: { event: string; team: string }) {
+  const teamColor = useTeamColor();
   const { data: sections, isLoading } = trpc.cosmeticShop.getShop.useQuery({ event });
   const [price, setPrice] = useState('all');
 
@@ -38,16 +32,12 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
 
   return (
     <Stack gap="md" id="team-hats">
-      <Group justify="space-between" align="flex-end">
-        <Stack gap={4}>
-          <Group gap={8}>
-            <IconShoppingBag size={24} />
-            <Title order={2}>Team {team} hats</Title>
-          </Group>
-          <Text size="sm" c="dimmed">
-            Every design in your colour. Each one is a separate hat you can place.
-          </Text>
-        </Stack>
+      <EventSectionHeading
+        icon={IconShoppingBag}
+        title={`Team ${team} hats`}
+        color={teamColor(team)}
+        subtitle="Every design in your colour. Each one is a separate hat you can place."
+      >
         {prices.length > 1 && (
           <SegmentedControl
             radius="xl"
@@ -60,7 +50,7 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
             ]}
           />
         )}
-      </Group>
+      </EventSectionHeading>
       {isLoading ? (
         <Center py="xl">
           <Loader />

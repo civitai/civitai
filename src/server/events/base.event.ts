@@ -249,6 +249,10 @@ export type CosmeticPlacementScoring = {
 // here, so the page cannot drift from the rules the scoring job applies.
 export type EventPageCopy = {
   headline: string;
+  // A second headline line, drawn in the team-colour gradient.
+  headlineAccent?: string;
+  // CDN image id for the hero art. Keep its subject on the right: the left side sits under the copy.
+  heroImage?: string;
   // Shown verbatim on the hero's date badge, e.g. "Nov 11 to Nov 25"; without it the badge formats
   // startDate and endDate in the viewer's timezone.
   dates?: string;

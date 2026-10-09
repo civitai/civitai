@@ -80,6 +80,7 @@ const hero = (page: { headline: string; dates?: string }) =>
     React.createElement(ScoredEventHero, {
       data: {
         title: 'Birthday',
+        teams: ['Yellow', 'Blue', 'Pink', 'Green'],
         startDate: new Date('2026-11-11T08:00:00.000Z'),
         endDate: new Date('2026-11-26T08:00:00.000Z'),
         page,

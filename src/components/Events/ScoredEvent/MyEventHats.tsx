@@ -1,8 +1,9 @@
-import { Button, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Button, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconArrowsMove, IconClock, IconEye, IconHeart, IconHanger } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
 import PlaceHatModal from '~/components/Events/ScoredEvent/PlaceHatModal';
 import { minutesUntilMovable } from '~/components/Events/ScoredEvent/scored-event.utils';
@@ -41,18 +42,20 @@ export function MyEventHats({
 
   return (
     <Stack gap="md">
-      <Group justify="space-between" align="flex-end">
-        <Stack gap={4}>
-          <Title order={2}>Your hats</Title>
-          <Text size="sm" c="dimmed">
+      <EventSectionHeading
+        icon={IconHanger}
+        title="Your hats"
+        color={teamColor}
+        subtitle={
+          <>
             {hats.length} {hats.length === 1 ? 'hat' : 'hats'} ·{' '}
             <Text component="span" fw={700} c={teamColor}>
               {numberWithCommas(total)}
             </Text>{' '}
             points for your team
-          </Text>
-        </Stack>
-      </Group>
+          </>
+        }
+      />
 
       <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
         {hats.map((hat) => {
