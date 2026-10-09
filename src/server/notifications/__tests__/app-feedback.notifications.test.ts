@@ -207,7 +207,8 @@ describe('owner digest — the query', () => {
       user: { bannedAt: null },
     });
     for (const [key, fragment] of Object.entries(enforcedBy)) expect(sql, key).toContain(fragment);
-    // "New" is whatever the inbox's New filter renders to — read from the inbox, not restated.
+    // "New" is read from the inbox's own filter. The literal pin below is deliberate: it keeps
+    // `toContain` from passing on an empty fragment, and makes a lockstep change a reviewed one.
     const inboxNew = ownerStatusSql('new');
     expect(inboxNew).toHaveLength(1);
     expect(inboxNew[0].values).toEqual([]);

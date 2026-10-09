@@ -113,7 +113,7 @@ export function appFeedbackDigestMessage(details: Partial<AppFeedbackDigestDetai
  * What a row must be to count, judged when the digest is sent. The first three are the owner
  * inbox's own rules (`ownerVisibleWhere` and its `new` filter in `app-feedback.service.ts`),
  * restated as SQL text because the runner takes a raw string; the "agrees with the owner inbox"
- * test fails if either inbox rule changes without this query:
+ * test fails if `ownerVisibleWhere`'s rules or `ownerStatusSql('new')` change without this query:
  *   - still NEW to the developer (`ownerStatus` NULL), as the inbox's New filter counts it;
  *   - not hidden from the developer by a moderator;
  *   - not from a reporter who is now banned;
