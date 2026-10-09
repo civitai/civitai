@@ -174,3 +174,19 @@ export function getEventDecorationClearLeftCss(
   const { reach } = getHatLayout('corner', decoration.fit, Infinity, nudge);
   return `calc(${Math.ceil(reach.right) + 4}px + ${hatShiftCss(reach.left)})`;
 }
+
+/** A moderator's unsaved edit to a hat's fit; `null` puts a field back to the default look. */
+export type HatFitChanges = Partial<{
+  [K in 'size' | 'tilt' | 'depth' | 'grow' | 'offset']: EventDecorationFit[K] | null;
+}>;
+
+/** The hat's fit with the unsaved changes applied: a cleared field falls back to the look. */
+export function applyHatFitChanges(fit: EventDecorationFit | undefined, changes: HatFitChanges) {
+  const next: EventDecorationFit = { ...fit };
+  for (const [key, value] of Object.entries(changes) as [keyof HatFitChanges, unknown][]) {
+    if (value === undefined) continue;
+    if (value === null) delete next[key];
+    else Object.assign(next, { [key]: value });
+  }
+  return next;
+}

@@ -37,8 +37,7 @@ import {
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
-import { eventDecorationEntityCaches } from '~/server/redis/caches';
-import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
 
 export const events = [holiday2024, birthday2026];
 
@@ -83,23 +82,6 @@ function scoredEventFor(eventDef: EventDef, access: EventAccess) {
 }
 function findEventDef(event: string) {
   return events.find((x) => x.name === event);
-}
-
-// Event cosmetics render from their own cache, which also caches misses for an hour, so every
-// entity that loses one must be refreshed or it keeps showing the cosmetic.
-async function refreshEventDecorations(
-  entities: { entityType: CosmeticEntity; entityId: number }[]
-) {
-  const byType = new Map<CosmeticEntity, number[]>();
-  for (const { entityType, entityId } of entities) {
-    const ids = byType.get(entityType) ?? [];
-    ids.push(entityId);
-    byType.set(entityType, ids);
-  }
-  for (const [entityType, ids] of byType) {
-    for (let i = 0; i < ids.length; i += 1000)
-      await eventDecorationEntityCaches[entityType].refresh(ids.slice(i, i + 1000));
-  }
 }
 
 export const eventEngine = {

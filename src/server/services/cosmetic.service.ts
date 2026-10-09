@@ -19,6 +19,7 @@ import type {
   GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
   SetStickerPlacementRatingInput,
+  UpdateEventHatFitInput,
 } from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
@@ -33,6 +34,7 @@ import {
   isEventDecorationData,
 } from '~/shared/constants/event-decoration.constants';
 import type { EventViewer } from '~/server/events/event-access';
+import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
 import {
   getVisibleDecorationEvents,
   isEventDecorationPlayable,
@@ -723,6 +725,45 @@ export async function updateCosmetic({
   }
 
   return cosmetic;
+}
+
+/**
+ * Sets one event hat's placement for everyone wearing it. The fit is merged in SQL, field by field,
+ * so a save can never drop the art's measured shape, nor a field another moderator just set.
+ */
+export async function updateEventHatFit({ id, fit }: UpdateEventHatFitInput) {
+  const fields = Object.entries(fit).filter(([, value]) => value !== undefined);
+  const set = Object.fromEntries(fields.filter(([, value]) => value !== null));
+  const unset = fields.filter(([, value]) => value === null).map(([key]) => key);
+  const [updated] = await dbWrite.$queryRaw<{ data: Prisma.JsonValue }[]>`
+    UPDATE "Cosmetic"
+    SET data = jsonb_set(
+          data,
+          '{fit}',
+          (CASE WHEN jsonb_typeof(data->'fit') = 'object' THEN data->'fit' ELSE '{}'::jsonb END
+            - ${unset}::text[]) || ${JSON.stringify(set)}::jsonb
+        ),
+        "updatedAt" = now()
+    WHERE id = ${id} AND jsonb_typeof(data->'event') = 'string' AND data->>'type' = 'hat'
+    RETURNING data
+  `;
+  if (!updated) throw throwBadRequestError('Only an event hat has a fit to edit');
+
+  const worn = await dbWrite.userCosmetic.findMany({
+    where: { cosmeticId: id, equippedToId: { not: null } },
+    select: { equippedToId: true, equippedToType: true },
+  });
+  // First: the event decoration caches copy the hat's data out of this one. The frame caches
+  // (cosmeticEntityCaches) never hold an event hat, so they need nothing.
+  await cosmeticCache.refresh([id]);
+  await refreshEventDecorations(
+    worn.flatMap(({ equippedToId, equippedToType }) =>
+      equippedToId !== null && equippedToType !== null
+        ? [{ entityType: equippedToType, entityId: equippedToId }]
+        : []
+    )
+  );
+  return { id, data: updated.data };
 }
 
 export async function deleteCosmetic({ id }: { id: number }) {

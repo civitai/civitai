@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { describe, expect, it } from 'vitest';
 import {
+  applyHatFitChanges,
   getEventDecorationClearLeft,
   getHatLayout,
   HAT_LOOK,
@@ -437,5 +438,34 @@ describe('fit data that does not describe real art', () => {
     } as never;
     expect(getHatLayout('corner', broken)).toEqual(getHatLayout('corner'));
     expect(getHatLayout('corner', { offset: ['a', 1] } as never)).toEqual(getHatLayout('corner'));
+  });
+});
+
+// What the editor previews is what a save stores: the same field-by-field merge.
+describe('an unsaved hat edit', () => {
+  const stored = { ...ART.basic, tilt: -30, grow: 1.2 };
+
+  it('keeps the shape and the fields it does not touch', () => {
+    expect(applyHatFitChanges(stored, { size: 50 })).toEqual({ ...stored, size: 50 });
+  });
+
+  it('drops a cleared field so the hat wears the default look', () => {
+    const { grow: _, ...rest } = stored;
+    expect(applyHatFitChanges(stored, { grow: null })).toEqual(rest);
+    expect(getHatLayout('corner', applyHatFitChanges(stored, { grow: null })).grow).toBe(
+      HAT_LOOK.grow
+    );
+  });
+
+  it('skips a setting the edit leaves undefined', () => {
+    const result = applyHatFitChanges(stored, { size: undefined, tilt: -50 });
+    expect(result).toStrictEqual({ ...stored, tilt: -50 });
+    expect('size' in result).toBe(false);
+  });
+
+  it('does not change the fit it was given', () => {
+    const before = structuredClone(stored);
+    applyHatFitChanges(stored, { tilt: null, size: 30 });
+    expect(stored).toEqual(before);
   });
 });
