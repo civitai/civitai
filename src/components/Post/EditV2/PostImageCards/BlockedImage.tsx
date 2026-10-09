@@ -9,9 +9,7 @@ export function BlockedImage({ image }: { image: PostEditMediaDetail }) {
 }
 
 function Preview({ image }: { image: PostEditMediaDetail }) {
-  const setImages = usePostEditStore((state) => state.setImages);
-  const handleRemoveClick = () =>
-    setImages((images) => images.filter((x) => x.data.url !== image.url));
+  const handleRemoveClick = useRemoveImage(image.url);
   return (
     <div className="relative overflow-hidden rounded-lg">
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -39,10 +37,8 @@ function Preview({ image }: { image: PostEditMediaDetail }) {
 }
 
 function EditDetail({ image }: { image: PostEditMediaDetail }) {
-  const setImages = usePostEditStore((state) => state.setImages);
   const meta = image.type === 'image' ? image.meta : undefined;
-  const handleRemoveClick = () =>
-    setImages((images) => images.filter((x) => x.data.url !== image.url));
+  const handleRemoveClick = useRemoveImage(image.url);
   return (
     <Alert
       color="red"
@@ -73,4 +69,13 @@ function EditDetail({ image }: { image: PostEditMediaDetail }) {
       </CustomCard>
     </Alert>
   );
+}
+
+/** Removes the card, and releases its local preview (an in-memory copy of the pick, say) with it. */
+function useRemoveImage(url: string) {
+  const setImages = usePostEditStore((state) => state.setImages);
+  return () => {
+    setImages((images) => images.filter((x) => x.data.url !== url));
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+  };
 }
