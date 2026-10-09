@@ -182,10 +182,12 @@ describe('milestone share card', () => {
     expect(await card()).toMatchObject({ reached: 'November 2026' });
   });
 
-  it('falls back for a backfilled (caught-up) grant, which has no observed crossing', async () => {
+  // Decided with the lead: at launch every tier held was backfilled, so refusing them offered nobody a
+  // card. Its achievedAt is the backfill's date, so the card names no month, as the journey page does.
+  it('renders a backfilled (caught-up) grant, with no month', async () => {
     await addUser(CREATOR);
     await grant(CREATOR, 'supernova', 'silent');
-    expect(await card()).toBeNull();
+    expect(await card()).toMatchObject({ tierName: 'Supernova', reached: null });
   });
 
   it('falls back for a tier the creator does not hold', async () => {
@@ -280,7 +282,7 @@ describe('profile og:image swap', () => {
       isMilestoneShareable({ userId: CREATOR, slug }, { pg, now: NOW });
 
     expect(await shareable('supernova')).toBe(true);
-    expect(await shareable('nova')).toBe(false);
+    expect(await shareable('nova')).toBe(true);
     expect(await shareable('legend')).toBe(false);
   });
 
@@ -313,7 +315,7 @@ describe('journey page share buttons', () => {
     await grant(CREATOR, 'spark');
     await setPrivacy(CREATOR, { hiddenBadgeIds: [hidden] });
 
-    const expected = ['spark', 'kindle', 'supernova', 'legend'];
+    const expected = ['spark', 'kindle', 'nova', 'supernova', 'legend'];
     expect(await tierSlugs()).toEqual(expected);
     const perTier = [];
     for (const { slug } of SCORE_TIERS)
