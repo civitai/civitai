@@ -602,8 +602,10 @@ function readContext(context: unknown): {
 
 export async function modListAppFeedback(input: ModListAppFeedbackInput) {
   const conditions = [...modListConditions(input), ...cursorSql(input.cursor)];
+  // The PRIMARY, not a replica: the moderator tab refetches this right after a hide/unhide and must
+  // read its own write. Moderator-only, over a small table.
   // LEFT joins from the listing on, so a row whose listing was deleted still lists.
-  const rows = await dbRead.$queryRaw<ModFeedbackRow[]>(Prisma.sql`
+  const rows = await dbWrite.$queryRaw<ModFeedbackRow[]>(Prisma.sql`
     SELECT
       f.id,
       f.message,
@@ -658,9 +660,12 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
   };
 }
 
-/** The tab badge: reports a developer flagged that no moderator has hidden yet. */
+/**
+ * The tab badge: reports a developer flagged that no moderator has hidden yet. The primary, for the
+ * same read-your-writes reason as `modListAppFeedback` — a hide changes this count.
+ */
 export async function modCountFlaggedAppFeedback(): Promise<number> {
-  return dbRead.feedback.count({
+  return dbWrite.feedback.count({
     where: {
       area: APP_BLOCK_FEEDBACK_AREA,
       ownerFlaggedAt: { not: null },

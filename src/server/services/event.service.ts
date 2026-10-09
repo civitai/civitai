@@ -3,6 +3,7 @@ import { pack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import type { EventViewer } from '~/server/events/event-access';
 import {
   cosmeticCache,
   profilePictureCache,
@@ -21,25 +22,35 @@ import {
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
 
-export async function getEventData({ event }: EventInput) {
+// Every event read is gated on what the viewer may see (event-access.ts); a closed event reads as an
+// unknown one.
+type Viewer = { viewer: EventViewer };
+
+export function getViewerEventAccess({ event, viewer }: EventInput & Viewer) {
+  return eventEngine.getAccess(event, viewer);
+}
+
+export async function getEventData({ event, viewer }: EventInput & Viewer) {
   try {
-    return await eventEngine.getEventData(event);
+    return await eventEngine.getEventData(event, viewer);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
 }
 
-export function getTeamScores({ event }: EventInput) {
+export async function getTeamScores({ event, viewer }: EventInput & Viewer) {
   try {
-    return eventEngine.getTeamScores(event);
+    const access = await eventEngine.assertReadable(event, viewer);
+    return await eventEngine.getTeamScores(event, access);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
 }
 
-export function getTeamScoreHistory(input: TeamScoreHistoryInput) {
+export async function getTeamScoreHistory({ viewer, ...input }: TeamScoreHistoryInput & Viewer) {
   try {
-    return eventEngine.getTeamScoreHistory(input);
+    const access = await eventEngine.assertReadable(input.event, viewer);
+    return await eventEngine.getTeamScoreHistory(input, access);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -55,9 +66,13 @@ const noCosmetic = {
   data: {},
   cosmetic: null,
 } as EventCosmetic;
-export async function getEventCosmetic({ event, userId }: EventInput & { userId: number }) {
+export async function getEventCosmetic({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  const userId = user.id;
   try {
-    eventEngine.assertStarted(event);
+    await eventEngine.assertReadable(event, user);
     const key = `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}` as const;
     // TODO optimize, let's cache this to avoid multiple queries
     let userStatus = await redis.packed.hGet<
@@ -83,18 +98,23 @@ export async function getEventCosmetic({ event, userId }: EventInput & { userId:
   }
 }
 
-export async function getEventPartners({ event }: EventInput) {
+export async function getEventPartners({ event, viewer }: EventInput & Viewer) {
   try {
-    return eventEngine.getPartners(event);
+    await eventEngine.assertReadable(event, viewer);
+    return await eventEngine.getPartners(event);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
 }
 
-export async function activateEventCosmetic({ event, userId }: EventInput & { userId: number }) {
+export async function activateEventCosmetic({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  const userId = user.id;
   try {
     if (eventEngine.isJoinEvent(event)) {
-      const { cosmeticId, team, joined } = await eventEngine.join(event, userId);
+      const { cosmeticId, team, joined } = await eventEngine.join(event, user);
       const cosmetic = await getCosmeticDetail({ id: cosmeticId });
       if (joined) {
         await redis.hDel(
@@ -162,16 +182,18 @@ export async function donate({
   }
 }
 
-export async function getEventRewards({ event }: EventInput) {
+export async function getEventRewards({ event, viewer }: EventInput & Viewer) {
   try {
-    return eventEngine.getRewards(event);
+    await eventEngine.assertReadable(event, viewer);
+    return await eventEngine.getRewards(event);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
 }
 
-export async function getEventContributors({ event }: EventInput) {
+export async function getEventContributors({ event, viewer }: EventInput & Viewer) {
   try {
+    await eventEngine.assertReadable(event, viewer);
     const contributors = await eventEngine.getTopContributors(event);
     const userIdSet = new Set<number>();
     for (const team of Object.values(contributors.teams)) {
@@ -217,8 +239,13 @@ export async function getEventContributors({ event }: EventInput) {
   }
 }
 
-export async function getUserRank({ event, userId }: EventInput & { userId: number }) {
+export async function getUserRank({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  const userId = user.id;
   try {
+    await eventEngine.assertReadable(event, user);
     const { team } = await eventEngine.getUserData({ event, userId });
     const { teams } = await eventEngine.getTopContributors(event);
     if (!teams[team]) return null;
@@ -230,9 +257,9 @@ export async function getUserRank({ event, userId }: EventInput & { userId: numb
   }
 }
 
-export async function getEventStandings({ event }: EventInput) {
+export async function getEventStandings({ event, viewer }: EventInput & Viewer) {
   try {
-    const scored = eventEngine.getStartedScoredEvent(event);
+    const scored = await eventEngine.getReadableScoredEvent(event, viewer);
     const standings = await getScoredEventStandings(scored);
     const userIds = [
       ...new Set([
@@ -247,10 +274,13 @@ export async function getEventStandings({ event }: EventInput) {
   }
 }
 
-export async function getMyEventCosmeticScores({ event, userId }: EventInput & { userId: number }) {
+export async function getMyEventCosmeticScores({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
   try {
-    const scored = eventEngine.getStartedScoredEvent(event);
-    const scores = await getUserCosmeticScores(scored.name, userId);
+    const scored = await eventEngine.getReadableScoredEvent(event, user);
+    const scores = await getUserCosmeticScores(scored, user.id);
     const details = await cosmeticCache.fetch([...new Set(scores.map((x) => x.cosmeticId))]);
     const cosmetics = scores.map((x) => ({ ...x, name: details[x.cosmeticId]?.name ?? null }));
     const points = cosmetics.reduce((sum, x) => sum + x.points, 0);
@@ -263,10 +293,11 @@ export async function getMyEventCosmeticScores({ event, userId }: EventInput & {
 export async function getEventCosmeticScores({
   event,
   cosmetics,
-}: EventInput & { cosmetics: CosmeticScoreKey[] }) {
+  viewer,
+}: EventInput & Viewer & { cosmetics: CosmeticScoreKey[] }) {
   try {
-    const scored = eventEngine.getStartedScoredEvent(event);
-    return await getCosmeticScores(scored.name, cosmetics);
+    const scored = await eventEngine.getReadableScoredEvent(event, viewer);
+    return await getCosmeticScores(scored, cosmetics);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

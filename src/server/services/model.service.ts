@@ -1,4 +1,5 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import type { EventViewer } from '~/server/events/event-access';
 import {
   coverageColumn,
   coveragePair,
@@ -354,6 +355,7 @@ export const getModelsRaw = async ({
   domain,
   ignoreBrowsingAddons,
   _forceBaseModelMetrics,
+  eventDecorationViewer,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -372,6 +374,9 @@ export const getModelsRaw = async ({
   ignoreBrowsingAddons?: boolean;
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
@@ -1153,7 +1158,11 @@ export const getModelsRaw = async ({
         : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
       getModelPaidAccessGates(modelIds),
       includeCosmetics
-        ? getEventDecorationsForEntity({ ids: modelIds, entity: 'Model' })
+        ? getEventDecorationsForEntity({
+            ids: modelIds,
+            entity: 'Model',
+            viewer: eventDecorationViewer,
+          })
         : undefined,
     ])
   );
@@ -1558,9 +1567,13 @@ export const getModelsWithImagesAndModelVersions = async ({
   // skipped and raw metrics are emitted (pre-#3266 visibility).
   metricPrivacyEnabled = true,
   domain,
+  eventDecorationViewer,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   imagesPerModel?: number;
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
@@ -1587,6 +1600,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     user,
     domain,
     include: ['cosmetics'],
+    eventDecorationViewer,
   });
 
   const modelVersionIds = items

@@ -3,18 +3,23 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * The service layer is where the scored-event routes meet the engine. These pin that every scored
- * read goes through the engine's start gate, and that the join branch only side-effects on a real
- * join.
+ * read goes through the engine's access gate for the viewer, and that the join branch only
+ * side-effects on a real join.
  */
 
 const { engine, scoring } = vi.hoisted(() => ({
   engine: {
-    getStartedScoredEvent: vi.fn(),
-    assertStarted: vi.fn(),
+    getReadableScoredEvent: vi.fn(),
+    assertReadable: vi.fn(),
     isJoinEvent: vi.fn(),
     join: vi.fn(),
     queueAddRole: vi.fn(),
     getUserData: vi.fn(),
+    getTeamScores: vi.fn(),
+    getTeamScoreHistory: vi.fn(),
+    getPartners: vi.fn(),
+    getRewards: vi.fn(),
+    getTopContributors: vi.fn(),
   },
   scoring: {
     getEventStandings: vi.fn(),
@@ -48,33 +53,34 @@ const scored = { name: 'birthday2026', teams: ['Yellow', 'Blue'] };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  engine.getStartedScoredEvent.mockReturnValue(scored);
+  engine.getReadableScoredEvent.mockResolvedValue(scored);
   scoring.getEventStandings.mockResolvedValue({ teams: [], topCosmetics: [], topUsers: {} });
   scoring.getUserCosmeticScores.mockResolvedValue([]);
   scoring.getCosmeticScores.mockResolvedValue({});
 });
 
-describe('scored reads are gated on the event having started', () => {
+describe('scored reads are gated on what the viewer may read', () => {
+  const viewer = { id: 1, isModerator: false };
   const reads = {
-    getEventStandings: () => service.getEventStandings({ event: 'birthday2026' }),
+    getEventStandings: () => service.getEventStandings({ event: 'birthday2026', viewer }),
     getMyEventCosmeticScores: () =>
-      service.getMyEventCosmeticScores({ event: 'birthday2026', userId: 1 }),
+      service.getMyEventCosmeticScores({ event: 'birthday2026', user: viewer }),
     getEventCosmeticScores: () =>
-      service.getEventCosmeticScores({ event: 'birthday2026', cosmetics: [] }),
+      service.getEventCosmeticScores({ event: 'birthday2026', cosmetics: [], viewer }),
   };
 
   for (const [name, read] of Object.entries(reads)) {
-    it(`${name} refuses before the start and reads nothing`, async () => {
-      engine.getStartedScoredEvent.mockImplementation(notStarted);
+    it(`${name} refuses when the viewer may not read it, and reads nothing`, async () => {
+      engine.getReadableScoredEvent.mockImplementation(notStarted);
       await expect(read()).rejects.toThrow("That event doesn't exist");
       expect(scoring.getEventStandings).not.toHaveBeenCalled();
       expect(scoring.getUserCosmeticScores).not.toHaveBeenCalled();
       expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
     });
 
-    it(`${name} reads once started`, async () => {
+    it(`${name} reads for that viewer`, async () => {
       await read();
-      expect(engine.getStartedScoredEvent).toHaveBeenCalledWith('birthday2026');
+      expect(engine.getReadableScoredEvent).toHaveBeenCalledWith('birthday2026', viewer);
     });
   }
 
@@ -83,16 +89,19 @@ describe('scored reads are gated on the event having started', () => {
       { cosmeticId: 21, claimKey: 'claimed', points: 20 },
       { cosmeticId: 21, claimKey: 'txn-1', points: 4 },
     ]);
-    const res = await service.getMyEventCosmeticScores({ event: 'birthday2026', userId: 1 });
+    const res = await service.getMyEventCosmeticScores({
+      event: 'birthday2026',
+      user: { id: 1 },
+    });
     expect(res.points).toBe(24);
     expect(res.cosmetics.map((c) => c.name)).toEqual(['Party Cap - Yellow', 'Party Cap - Yellow']);
   });
 
-  it('getEventCosmetic refuses before the start without touching the cache', async () => {
-    engine.assertStarted.mockImplementation(notStarted);
-    await expect(service.getEventCosmetic({ event: 'birthday2026', userId: 1 })).rejects.toThrow(
-      "That event doesn't exist"
-    );
+  it('getEventCosmetic refuses an unreadable event without touching the cache', async () => {
+    engine.assertReadable.mockImplementation(notStarted);
+    await expect(
+      service.getEventCosmetic({ event: 'birthday2026', user: { id: 1 } })
+    ).rejects.toThrow("That event doesn't exist");
     expect(redisMock.redis.packed.hGet).not.toHaveBeenCalled();
   });
 });
@@ -102,7 +111,7 @@ describe('activateEventCosmetic on a join event', () => {
 
   it('clears the status cache and queues the team role on a real join', async () => {
     engine.join.mockResolvedValue({ team: 'Blue', cosmeticId: 22, joined: true });
-    const res = await service.activateEventCosmetic({ event: 'birthday2026', userId: 7 });
+    const res = await service.activateEventCosmetic({ event: 'birthday2026', user: { id: 7 } });
 
     expect(res).toEqual({ cosmetic: { id: 22 } });
     expect(redisMock.redis.hDel).toHaveBeenCalledTimes(1);
@@ -116,11 +125,69 @@ describe('activateEventCosmetic on a join event', () => {
 
   it('does neither on a repeat join', async () => {
     engine.join.mockResolvedValue({ team: 'Blue', cosmeticId: 22, joined: false });
-    const res = await service.activateEventCosmetic({ event: 'birthday2026', userId: 7 });
+    const res = await service.activateEventCosmetic({ event: 'birthday2026', user: { id: 7 } });
 
     expect(res).toEqual({ cosmetic: { id: 22 } }); // the held cosmetic, passed through
 
     expect(redisMock.redis.hDel).not.toHaveBeenCalled();
     expect(engine.queueAddRole).not.toHaveBeenCalled();
+  });
+});
+
+// Every event read refuses an event the viewer cannot see before touching anything, and passes the
+// viewer's access on so a previewer reads the preview's scores.
+describe('the other event reads are gated on the viewer too', () => {
+  const viewer = { id: 3, isModerator: false };
+  const reads = {
+    getTeamScores: [
+      () => service.getTeamScores({ event: 'birthday2026', viewer }),
+      engine.getTeamScores,
+    ],
+    getTeamScoreHistory: [
+      () => service.getTeamScoreHistory({ event: 'birthday2026', viewer }),
+      engine.getTeamScoreHistory,
+    ],
+    getEventPartners: [
+      () => service.getEventPartners({ event: 'birthday2026', viewer }),
+      engine.getPartners,
+    ],
+    getEventRewards: [
+      () => service.getEventRewards({ event: 'birthday2026', viewer }),
+      engine.getRewards,
+    ],
+    getEventContributors: [
+      () => service.getEventContributors({ event: 'birthday2026', viewer }),
+      engine.getTopContributors,
+    ],
+    getUserRank: [
+      () => service.getUserRank({ event: 'birthday2026', user: viewer }),
+      engine.getUserData,
+    ],
+  } as const;
+
+  for (const [name, [read, downstream]] of Object.entries(reads)) {
+    // Control for the refusal below: the same read goes through for a viewer who may read it.
+    it(`${name} reads for a viewer who may`, async () => {
+      engine.assertReadable.mockReset().mockResolvedValue('open');
+      engine.getTopContributors.mockResolvedValue({ allTime: [], day: [], teams: {} });
+      engine.getUserData.mockResolvedValue({ team: 'Blue' });
+      await read();
+      expect(downstream).toHaveBeenCalledTimes(1);
+    });
+
+    it(`${name} refuses when the viewer may not read it, and reads nothing`, async () => {
+      engine.assertReadable.mockImplementation(notStarted);
+      await expect(read()).rejects.toThrow("That event doesn't exist");
+      expect(engine.assertReadable).toHaveBeenCalledWith('birthday2026', viewer);
+      expect(downstream).not.toHaveBeenCalled();
+    });
+  }
+
+  it('reads team scores and history as the window the viewer is in', async () => {
+    engine.assertReadable.mockResolvedValue('preview');
+    await service.getTeamScores({ event: 'birthday2026', viewer });
+    await service.getTeamScoreHistory({ event: 'birthday2026', viewer });
+    expect(engine.getTeamScores).toHaveBeenCalledWith('birthday2026', 'preview');
+    expect(engine.getTeamScoreHistory).toHaveBeenCalledWith({ event: 'birthday2026' }, 'preview');
   });
 });

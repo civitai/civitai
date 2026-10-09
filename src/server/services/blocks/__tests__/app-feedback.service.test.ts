@@ -1002,11 +1002,12 @@ describe('moderator procedures', () => {
     ]);
   });
 
-  it('modCountFlagged counts flagged rows no moderator has hidden', async () => {
+  it('modCountFlagged counts flagged rows no moderator has hidden, on the primary', async () => {
     await modCountFlaggedAppFeedback();
-    expect(dbMock.dbRead.feedback.count).toHaveBeenCalledWith({
+    expect(dbMock.dbWrite.feedback.count).toHaveBeenCalledWith({
       where: { area: 'app-block', ownerFlaggedAt: { not: null }, hiddenFromOwnerAt: null },
     });
+    expect(dbMock.dbRead.feedback.count).not.toHaveBeenCalled();
   });
 
   /** A transaction client distinct from `dbWrite`, so a write that escapes the tx shows. */
@@ -1078,8 +1079,17 @@ describe('moderator procedures', () => {
     reporterId: REPORTER,
   };
 
+  /** modList reads the primary, so the list refetched after a hide/unhide shows the write. */
+  const lastModListQuery = () => dbMock.dbWrite.$queryRaw.mock.calls.at(-1)![0] as Prisma.Sql;
+
+  it('modList reads the primary, never a replica', async () => {
+    await modListAppFeedback({ limit: 2, hidden: 'all' });
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
   it('modList sanitises context, drops the raw column, and pages with a look-ahead', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
       { ...modRow, context: { surface: 'page', modelId: 31337, smuggled: 'x' } },
       { ...modRow, id: 702, context: { surface: 'javascript:alert(1)', modelId: 1.5 } },
       { ...modRow, id: 603, context: null },
@@ -1090,7 +1100,7 @@ describe('moderator procedures', () => {
       { ...modRow, id: 702, surface: null, modelId: null },
     ]);
     expect(res.nextCursor).toBe(702);
-    const q = lastQuery();
+    const q = lastModListQuery();
     expect(norm(q.sql)).toMatch(
       /WHERE f\.area = \? AND \(f\."createdAt", f\.id\) < \(SELECT c\."createdAt", c\.id FROM "Feedback" c WHERE c\.id = \? AND c\.area = \?\) ORDER BY f\."createdAt" DESC, f\.id DESC LIMIT \?$/
     );
@@ -1102,7 +1112,7 @@ describe('moderator procedures', () => {
   });
 
   it('modList: a full last page has no next cursor', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ ...modRow, context: {} }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ ...modRow, context: {} }]);
     expect((await modListAppFeedback({ limit: 1, hidden: 'all' })).nextCursor).toBeUndefined();
   });
 });

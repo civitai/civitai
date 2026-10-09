@@ -1,3 +1,4 @@
+import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -185,9 +186,13 @@ export const getArticles = async ({
   browsingLevel,
   include,
   forceHidePrivate,
+  eventDecorationViewer,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   // When true, `availability = Private` articles are ALWAYS dropped, even when a
   // `username`/`collectionId`/etc. filter is set (which normally expands the result
   // set to include the caller's private articles). Used by the public REST surface
@@ -533,7 +538,11 @@ export const getArticles = async ({
     const [cosmetics, eventDecorations] = includeCosmetics
       ? await Promise.all([
           getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' }),
-          getEventDecorationsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' }),
+          getEventDecorationsForEntity({
+            ids: articles.map((x) => x.id),
+            entity: 'Article',
+            viewer: eventDecorationViewer,
+          }),
         ])
       : [{}, {}];
 

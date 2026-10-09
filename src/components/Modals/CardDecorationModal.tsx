@@ -18,11 +18,8 @@ import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
-import {
-  getEventDecorationDefinition,
-  isEventDecorationData,
-  isEventDecorationLive,
-} from '~/shared/constants/event-decoration.constants';
+import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
@@ -41,6 +38,7 @@ export default function CardDecorationModal({
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
   const { equip, unequip, isLoading } = useEquipContentDecoration();
+  const playableEvent = usePlayableEventDecoration(entityType)?.event;
   const handleSubmit = async ({ cosmetic }: z.infer<typeof schema>) => {
     const unequipping = currentCosmetic && !cosmetic;
 
@@ -94,7 +92,7 @@ export default function CardDecorationModal({
         (data.url || data.cssFrame) &&
         // A frame and an event decoration are worn side by side, so each picker lists only its own.
         (kind === 'event'
-          ? isWearableEventDecoration(data, entityType)
+          ? isEventDecorationData(data) && data.event === playableEvent
           : !isEventDecorationData(data)) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
@@ -210,14 +208,6 @@ export type Props = {
   /** Frames and event decorations are worn side by side; each has its own picker. */
   kind?: 'frame' | 'event';
 };
-
-function isWearableEventDecoration(data: unknown, entityType: CosmeticEntity) {
-  if (!isEventDecorationData(data)) return false;
-  const definition = getEventDecorationDefinition(data.event);
-  return (
-    !!definition && isEventDecorationLive(definition) && definition.entityTypes.includes(entityType)
-  );
-}
 
 export const PreviewCard = ({
   image,

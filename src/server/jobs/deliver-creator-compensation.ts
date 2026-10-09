@@ -22,6 +22,7 @@ import {
   licenseFeeAmountPaidCounter,
   licenseFeeCreatorsPaidCounter,
 } from '~/server/prom/client';
+import { logToAxiom } from '~/server/logging/client';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('creator-compensation', 'green');
@@ -30,42 +31,77 @@ export const updateCreatorResourceCompensation = createJob(
   'deliver-creator-compensation',
   '0 2 * * *', // Run 2:00 AM UTC daily
   async () => {
-    if (!clickhouse) {
-      log('ClickHouse not available, skipping job');
-      return;
-    }
-
-    // If it's a new day, we need to run the compensation payout job
-    const [lastPayout, setLastPayout] = await getJobDate(
-      'run-daily-compensation-payout',
-      new Date()
-    );
-    const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
-    if (!shouldPayout) {
-      log('Payout already ran today, skipping');
-      return;
-    }
-
-    try {
-      await runPayout(lastPayout);
-      await setLastPayout();
-      log('Updated last payout date');
-
-      try {
-        await clickhouse.$query`
-          INSERT INTO kafka.manual_events VALUES
-            (now(), 'update-compensation', '{"date":"${formatDate(lastPayout, 'YYYY-MM-DD')}"}');
-        `;
-        log('Queued compensation update event to Kafka');
-      } catch (error) {
-        log('Error queueing compensation update event to Kafka:', error);
-      }
-    } catch (error) {
-      log('❌ Payout failed:', error);
-      throw error;
-    }
+    await payDueCompensation(new Date());
   }
 );
+
+/** Dates one run pays at most. A stale or corrupted last-payout value must never make one run pay months. */
+export const MAX_PAYOUT_DATES_PER_RUN = 7;
+
+/**
+ * The UTC payout dates still owed, oldest first: from the day `lastPayout` falls on through yesterday.
+ * `lastPayout` names the next date to pay; today is never due because its compensation is still accruing.
+ */
+export function payoutDatesDue(lastPayout: Date, now: Date): Date[] {
+  const today = dayjs.utc(now).startOf('day');
+  const dates: Date[] = [];
+  for (let day = dayjs.utc(lastPayout).startOf('day'); day.isBefore(today); day = day.add(1, 'day'))
+    dates.push(day.toDate());
+  return dates;
+}
+
+export async function payDueCompensation(now: Date) {
+  if (!clickhouse) {
+    log('ClickHouse not available, skipping job');
+    return;
+  }
+
+  const [lastPayout, setLastPayout] = await getJobDate('run-daily-compensation-payout', now);
+  const due = payoutDatesDue(lastPayout, now);
+  if (!due.length) {
+    log('Payout already ran today, skipping');
+    return;
+  }
+
+  if (due.length > MAX_PAYOUT_DATES_PER_RUN) {
+    const message = `Creator compensation is ${due.length} payout dates behind; paying the oldest ${MAX_PAYOUT_DATES_PER_RUN} this run`;
+    log(`⚠️ ${message}`);
+    logToAxiom({
+      type: 'error',
+      name: 'creator-compensation-backlog',
+      message,
+      details: {
+        lastPayout: lastPayout.toISOString(),
+        oldestDue: formatDate(due[0], 'YYYY-MM-DD', true),
+        datesDue: due.length,
+      },
+    }).catch(() => undefined);
+  }
+
+  for (const date of due.slice(0, MAX_PAYOUT_DATES_PER_RUN)) {
+    const dateStr = formatDate(date, 'YYYY-MM-DD', true);
+    try {
+      await runPayout(date);
+    } catch (error) {
+      log(`❌ Payout failed for ${dateStr}:`, error);
+      throw error;
+    }
+    // The next date to pay, not now(): a run that fails on a later date, or a retry on another day,
+    // resumes at the first unpaid date instead of skipping it.
+    await setLastPayout(dayjs.utc(date).add(1, 'day').toDate());
+    log(`Paid ${dateStr}, updated last payout date`);
+
+    try {
+      await clickhouse.$query`
+        INSERT INTO kafka.manual_events VALUES
+          (now(), 'update-compensation', '{"date":"${dateStr}"}');
+      `;
+      log('Queued compensation update event to Kafka');
+    } catch (error) {
+      log('Error queueing compensation update event to Kafka:', error);
+    }
+  }
+}
 
 type UserVersions = { userId: number; modelVersionIds: number[] };
 // Orchestrator ships PascalCase accountType (e.g. 'Yellow', 'CashSettled'); the

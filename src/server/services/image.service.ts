@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
   assertMediaPresentForPublish,
@@ -1588,6 +1589,9 @@ type GetAllImagesRaw = {
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
   user?: SessionUser;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   // Request color, used to pick which "new & upcoming" board backs `newCreators`.
   domain?: DomainColor;
   // Server-only: not in the tRPC schema, so a client cannot set or lift it.
@@ -2607,7 +2611,12 @@ const getAllImagesUncaptured = async (
         : undefined,
       // Not behind `include: ['cosmetics']`: every surface that shows the image (the model page
       // carousel asks for no includes) must show the hat it is scored for. Empty between events.
-      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image', writeBack: cacheWriteBack }),
+      getEventDecorationsForEntity({
+        ids: imageIds,
+        entity: 'Image',
+        writeBack: cacheWriteBack,
+        viewer: input.eventDecorationViewer,
+      }),
     ])
   );
 
@@ -3186,7 +3195,11 @@ export const getAllImagesIndex = async (
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
       // Unconditional for the same reason as in getAllImages.
-      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
+      getEventDecorationsForEntity({
+        ids: imageIds,
+        entity: 'Image',
+        viewer: input.eventDecorationViewer,
+      }),
     ])
   );
 

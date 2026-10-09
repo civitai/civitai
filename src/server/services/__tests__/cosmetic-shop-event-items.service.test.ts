@@ -31,6 +31,8 @@ vi.mock('~/server/events', async () => {
         name: c.BIRTHDAY_2026_EVENT,
         startDate: c.BIRTHDAY_2026_STARTS_AT,
         endDate: c.BIRTHDAY_2026_ENDS_AT,
+        featureFlag: 'birthday2026',
+        previewFrom: c.BIRTHDAY_2026_PREVIEW_FROM,
         teams: [...c.BIRTHDAY_2026_TEAMS],
         getUserTeam: (userId: number, opts?: { strict?: boolean }) =>
           mocks.getUserTeam(userId, opts) as Promise<string>,
@@ -60,6 +62,9 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: mocks.getBlockedPairIds,
 }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 
 import { getShopSectionsWithItems, purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -71,9 +76,11 @@ import { soldCountsFake } from '~/test-utils/soldCountsFake';
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
   BIRTHDAY_2026_TEAMS,
 } from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 const fwd =
   (fn: (...a: unknown[]) => unknown) =>
@@ -163,6 +170,7 @@ describe('buying an event-gated item (team hat)', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(DURING_EVENT);
+    testerFlag.reset({ public: true });
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.shopItemFindUnique.mockResolvedValue(hatRow());
     mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
@@ -340,6 +348,7 @@ describe('the shop lists event-gated items per viewer', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(DURING_EVENT);
+    testerFlag.reset({ public: true });
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.getBlockedPairIds.mockResolvedValue([]);
     mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
@@ -383,5 +392,48 @@ describe('the shop lists event-gated items per viewer', () => {
       { section: 10, items: [PINK, BLUE, UNKNOWN_EVENT, ORDINARY, TEAMLESS] },
       { section: 20, items: [BLUE + 10] },
     ]);
+  });
+});
+
+// Justin, 2026-10-09: before launch the event, the shop's hats included, is for testers and
+// moderators only (the `birthday2026` flag). See event-access.test.ts for the rule.
+describe('before launch, behind the flag', () => {
+  const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000);
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(PREVIEW);
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.shopItemFindUnique.mockResolvedValue(hatRow());
+    mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.userCosmeticCreate.mockImplementation(async ({ data }) => data);
+    mocks.createMultiTx.mockImplementation(async ({ fromAccountTypes }) =>
+      chargeResponse(fromAccountTypes[0])
+    );
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({}));
+    mocks.sectionFindMany.mockResolvedValue([section(10, [listedItem(PINK, hatData(PINK_TEAM))])]);
+  });
+
+  it('sells a hat to a tester during the preview', async () => {
+    testerFlag.reset({ testers: [BUYER_ID] });
+    await purchase();
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses everyone else before any charge, and the tester once it is armed', async () => {
+    testerFlag.reset({ testers: [] });
+    await expect(purchase()).rejects.toThrow('This item is not available');
+    testerFlag.reset({ public: true, testers: [BUYER_ID] });
+    await expect(purchase()).rejects.toThrow('This item is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('lists the hats to a tester and to nobody else, signed out included', async () => {
+    testerFlag.reset({ testers: [BUYER_ID] });
+    expect(await listedIds({ userId: BUYER_ID })).toEqual([{ section: 10, items: [PINK] }]);
+    expect(await listedIds({ userId: BUYER_ID + 1 })).toEqual([]);
+    expect(await listedIds({})).toEqual([]);
   });
 });

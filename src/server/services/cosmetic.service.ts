@@ -30,10 +30,13 @@ import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/er
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import {
   getEventDecorationDefinition,
-  getLiveEventDecorationEntityTypes,
   isEventDecorationData,
-  isEventDecorationLive,
 } from '~/shared/constants/event-decoration.constants';
+import type { EventViewer } from '~/server/events/event-access';
+import {
+  getVisibleDecorationEvents,
+  isEventDecorationPlayable,
+} from '~/server/events/event-decoration-access';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
 import {
@@ -214,7 +217,8 @@ export async function equipCosmeticToEntity({
   equippedToType,
   equippedToId,
   userId,
-}: EquipCosmeticInput & { userId: number }) {
+  isModerator,
+}: EquipCosmeticInput & { userId: number; isModerator?: boolean }) {
   const userCosmetic = await dbWrite.userCosmetic.findFirst({
     where: { userId, cosmeticId, claimKey },
     select: {
@@ -254,6 +258,7 @@ export async function equipCosmeticToEntity({
       placedAt: getPlacedAt(userCosmetic.data),
       equippedToType,
       now,
+      user: { id: userId, isModerator },
     });
     // The cooldown is enforced by the write itself, not only by the read above: concurrent equips
     // of one decoration all read the same placedAt, and each placement counts toward a score.
@@ -364,19 +369,35 @@ export async function getCosmeticsForEntity({
   return await cosmeticEntityCaches[entity].fetch(ids);
 }
 
-/** The event decoration each entity wears. Skips the read while no event lets this type wear one. */
+/**
+ * The event decoration each entity wears, for events this viewer may see (event-access.ts). Skips
+ * the read while none lets this type wear one.
+ */
 export async function getEventDecorationsForEntity({
   ids,
   entity,
   writeBack,
+  viewer,
 }: {
   ids: number[];
   entity: CosmeticEntity;
   /** false on pages nobody revisits, so a walk does not fill Redis with misses. */
   writeBack?: boolean;
+  /**
+   * Who is looking. Before launch only flagged users see decorations, so pass one only where the
+   * response is never cached for someone else; omitted, the viewer is treated as signed out.
+   */
+  viewer?: EventViewer;
 }): Promise<Record<number, WithClaimKey<EventDecorationCosmetic>>> {
-  if (ids.length === 0 || !getLiveEventDecorationEntityTypes().has(entity)) return {};
-  return await eventDecorationEntityCaches[entity].fetch(ids, { writeBack });
+  if (ids.length === 0) return {};
+  const events = await getVisibleDecorationEvents(entity, viewer);
+  if (!events.size) return {};
+  const decorations = await eventDecorationEntityCaches[entity].fetch(ids, { writeBack });
+  const visible: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
+  for (const [id, decoration] of Object.entries(decorations))
+    if (isEventDecorationData(decoration.data) && events.has(decoration.data.event))
+      visible[Number(id)] = decoration;
+  return visible;
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
@@ -404,14 +425,16 @@ async function assertCanPlaceEventDecoration({
   placedAt,
   equippedToType,
   now,
+  user,
 }: {
   decoration: EventDecorationData;
   placedAt: Date | undefined;
   equippedToType: CosmeticEntity;
   now: Date;
+  user: EventViewer;
 }) {
   const definition = getEventDecorationDefinition(decoration.event);
-  if (!definition || !isEventDecorationLive(definition, now))
+  if (!definition || !(await isEventDecorationPlayable(definition, user, now)))
     throw throwBadRequestError('This can only be used while its event is running');
   if (!definition.entityTypes.includes(equippedToType))
     throw throwBadRequestError('This cannot be put on that kind of content');

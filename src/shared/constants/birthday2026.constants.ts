@@ -12,3 +12,5 @@ export type Birthday2026Team = (typeof BIRTHDAY_2026_TEAMS)[number];
 // Pacific midnight, Nov 11 through the end of Nov 25. ENDS_AT is exclusive.
 export const BIRTHDAY_2026_STARTS_AT = new Date('2026-11-11T08:00:00.000Z');
 export const BIRTHDAY_2026_ENDS_AT = new Date('2026-11-26T08:00:00.000Z');
+// Users the `birthday2026` flag is on for (testers and moderators) play from here until the start.
+export const BIRTHDAY_2026_PREVIEW_FROM = new Date('2026-10-09T00:00:00.000Z');
