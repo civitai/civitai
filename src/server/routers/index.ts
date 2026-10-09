@@ -10,6 +10,9 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  appFeedback: lazy(() =>
+    import('~/server/routers/app-feedback.router').then((m) => m.appFeedbackRouter)
+  ),
   appCollaborators: lazy(() =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter)
   ),
