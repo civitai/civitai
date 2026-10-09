@@ -31,11 +31,27 @@ const toKey = (file: string) => relative(SRC, file).split('\\').join('/');
 
 // What "this component reports impressions itself" looks like. An empty or
 // undefined `impressions` records nothing, so it is not a marker.
-const DIRECT_MARKERS = [
-  /\buseTrackImpression\b\s*(<[^>]*>)?\s*\(/,
+const PROP_MARKERS = [
   /\bimpressions?=\{(?!\s*(undefined|null|\[\s*\])\s*\})/,
   /<ImpressionSentinel\b/,
 ];
+
+/**
+ * The hook only records once its ref is on an element, so a call whose ref is
+ * never used is not a marker: `const r = useTrackImpression(…)` needs `r` again.
+ */
+function callsTrackingHook(body: string): boolean {
+  const assigned = Array.from(
+    body.matchAll(/\bconst\s+([\w$]+)\s*=\s*useTrackImpression\b/g),
+    (m) => m[1]
+  );
+  const usedAgain = (ref: string) =>
+    (body.match(new RegExp(String.raw`\b${ref}\b`, 'g')) ?? []).length > 1;
+  return assigned.some(usedAgain) || /ref=\{\s*useTrackImpression\b/.test(body);
+}
+
+const tracksDirectly = (body: string) =>
+  callsTrackingHook(body) || PROP_MARKERS.some((re) => re.test(body));
 
 // Shells that track only what their caller passes. Rendering one proves
 // nothing; the caller must pass the prop, which is a marker in its own body.
@@ -180,7 +196,7 @@ function isTracked(component: Component, tree: SourceTree, depth = 1): boolean {
     const inner = resolveComponent(component.file, memoOf, tree);
     return !!inner && isTracked(inner, tree, depth);
   }
-  if (DIRECT_MARKERS.some((re) => re.test(body))) return true;
+  if (tracksDirectly(body)) return true;
   if (depth === 0) return false;
   return rendersTracked(component.file, body, tree, depth - 1);
 }
@@ -213,13 +229,11 @@ function renderExpressions(source: string): string[] {
 
 /** The cards a `render={…}` names: identifiers, or `<inline>` for anything else. */
 function renderTargets(expr: string): string[] {
-  const ids = /^[\w$]+(\s*\?\?\s*[\w$]+)*$/.test(expr)
-    ? expr
-        .split('??')
-        .map((s) => s.trim())
-        .filter((id) => /^[A-Z]/.test(id))
-    : [];
-  return ids.length ? ids : ['<inline>'];
+  if (!/^[\w$]+(\s*\?\?\s*[\w$]+)*$/.test(expr)) return ['<inline>'];
+  const ids = expr.split('??').map((s) => s.trim());
+  const cards = ids.filter((id) => /^[A-Z]/.test(id));
+  // A lowercase callback anywhere in the chain is opaque, so it is reported too.
+  return cards.length === ids.length ? cards : [...cards, '<inline>'];
 }
 
 /** `file:Card` for every grid card that does not report impressions. */
@@ -301,6 +315,16 @@ describe('feed cards report impressions', () => {
     expect(isTracked({ file: join(SRC, path), name }, new Map(), 0)).toBe(true);
   });
 
+  // Their exemption says the shell records the cover image; hold them to it.
+  test.each([
+    ['components/Cards/ChallengeCard.tsx', 'ChallengeCard'],
+    ['components/Cards/ComicCard.tsx', 'ComicCard'],
+    ['components/Cards/CrucibleCard.tsx', 'CrucibleCard'],
+  ])('%s still hands its cover image to AspectRatioImageCard', (path, name) => {
+    const body = componentBody({ file: join(SRC, path), name }, new Map()) ?? '';
+    expect(body).toMatch(/<AspectRatioImageCard\b[^>]*?\bimage=\{(?!\s*(undefined|null)\s*\})/);
+  });
+
   test('ElementInView forwards `impressions` to useTrackImpression', () => {
     const source = read(join(SRC, 'components/IntersectionObserver/ElementInView.tsx'), new Map());
     expect(source).toMatch(/useTrackImpression\b[^;]*\(\s*impressions\s*\)/);
@@ -330,6 +354,11 @@ describe('the guard can fail', () => {
 
   test('a card that tracks directly passes', () => {
     expect(untracked(card(tracking))).toEqual([]);
+  });
+
+  test('a hook whose ref is never attached is not tracking', () => {
+    const source = `export function Card() { const ref = useTrackImpression([x]); return <div />; }\n`;
+    expect(untracked(source)).toEqual(['fixture/Feed.tsx:Card']);
   });
 
   test('a card that renders a tracked component passes, one level down', () => {
@@ -374,7 +403,10 @@ describe('the guard can fail', () => {
     ]);
   });
 
-  test('a lowercase render callback is opaque, so it is reported', () => {
-    expect(untracked(card(tracking), 'renderItem')).toEqual(['fixture/Feed.tsx:<inline>']);
-  });
+  test.each(['renderItem', 'renderItem ?? Card'])(
+    'a lowercase render callback is opaque, so `%s` is reported',
+    (render) => {
+      expect(untracked(card(tracking), render)).toEqual(['fixture/Feed.tsx:<inline>']);
+    }
+  );
 });
