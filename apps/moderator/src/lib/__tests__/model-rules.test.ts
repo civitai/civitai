@@ -70,6 +70,23 @@ describe('convertLegacyModelRule', () => {
     expect(out.legacyMatch).toBe(definition);
   });
 
+  it('shortens a likeness-claim reason for the scan; the full reason stays the note', () => {
+    const out = convertLegacyModelRule(
+      content('Jane Doe'),
+      'Jane Doe has claimed their digital likeness on Civitai, posting content of them is not allowed'
+    );
+    expect(out.description).toBe('Real person who has claimed their likeness');
+  });
+
+  it('reads escaped punctuation as literal text', () => {
+    const out = convertLegacyModelRule(
+      content(String.raw`/(?:\b|\s)Jane[\s\-_]*Q\.[\s\-_]*Doe(?:\b|\s)/gmi`),
+      null
+    );
+    expect(out).toMatchObject({ subject: 'Jane Q. Doe', aliases: [] });
+    expect(out.needsAttention).toBeUndefined();
+  });
+
   it('accepts a bare string match', () => {
     expect(convertLegacyModelRule(content('Plain Name'), null).subject).toBe('Plain Name');
   });

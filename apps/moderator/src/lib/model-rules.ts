@@ -11,6 +11,17 @@ export type SemanticModelRule = {
 };
 
 export const DEFAULT_RULE_DESCRIPTION = 'Takedown request';
+export const LIKENESS_RULE_DESCRIPTION = 'Real person who has claimed their likeness';
+
+// The regex-era reasons repeat one sentence per likeness claim. It is sent to the scan with every rule,
+// so it is shortened there; the full sentence stays as the internal note.
+const LIKENESS_REASON = /has claimed their (digital )?likeness/i;
+
+const descriptionFor = (reason: string | null | undefined) => {
+  const text = reason?.trim();
+  if (!text) return DEFAULT_RULE_DESCRIPTION;
+  return LIKENESS_REASON.test(text) ? LIKENESS_RULE_DESCRIPTION : text;
+};
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -71,6 +82,12 @@ function expand(body: string): string[] {
         if (body[i] !== ')') throw new Unparseable();
         i++;
         result = cross(result, inner);
+      } else if (body[i] === '\\') {
+        // `\.` and friends are literal punctuation; `\s`, `\d`, `\w` are classes we cannot list.
+        const escaped = body[i + 1];
+        if (escaped === undefined || /[A-Za-z0-9]/.test(escaped)) throw new Unparseable();
+        i += 2;
+        result = result.map((r) => r + escaped);
       } else {
         const ch = body[i++];
         result = result.map((r) => r + ch);
@@ -168,7 +185,7 @@ export function convertLegacyModelRule(
   return {
     type: 'semantic',
     subject,
-    description: reason?.trim() || DEFAULT_RULE_DESCRIPTION,
+    description: descriptionFor(reason),
     aliases,
     legacyMatch: definition,
     ...(needsAttention ? { needsAttention: true } : {}),

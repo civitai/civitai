@@ -115,7 +115,7 @@
             </TableCell>
             <TableCell class="max-w-72 whitespace-normal align-top text-dark-1">
               <p class="break-words">{rule.description || '—'}</p>
-              {#if rule.note}
+              {#if rule.note && rule.note !== rule.description}
                 <p class="mt-1 break-words text-xs text-dark-2">Note: {rule.note}</p>
               {/if}
             </TableCell>
