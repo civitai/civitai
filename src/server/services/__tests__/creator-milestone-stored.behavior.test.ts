@@ -86,7 +86,7 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text);
     CREATE TABLE "UserCosmetic" (
       "userId" int NOT NULL, "cosmeticId" int NOT NULL, "claimKey" text NOT NULL DEFAULT 'claimed',
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
