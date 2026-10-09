@@ -2508,6 +2508,28 @@ export type CosmeticShopItemCosmetic = {
   index: Generated<number>;
   floorAmount: number;
 };
+export type CosmeticShopPurchaseClaim = {
+  /**
+   * The charge's external transaction id prefix (UserCosmeticShopPurchases.buzzTransactionId once paid).
+   */
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  /**
+   * What this claim charges. A retry of a pending claim charges this, not the current price.
+   */
+  amount: number;
+  /**
+   * pending | refunding | refunded | paid (text + CHECK, not an enum).
+   */
+  status: string;
+  /**
+   * Requests that have charged under this claim: 1 for the one that created it, +1 per resume.
+   */
+  attempts: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type CosmeticShopSection = {
   id: Generated<number>;
   addedById: number | null;
@@ -2756,6 +2778,33 @@ export type EntityModeration = {
   nsfwLevel: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type EventCosmeticPlacement = {
+  id: Generated<string>;
+  event: string;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  entityType: CosmeticEntity;
+  entityId: number;
+  entityOwnerId: number | null;
+  startedAt: Generated<Timestamp>;
+  endedAt: Timestamp | null;
+  updatedAt: Generated<Timestamp>;
+};
+export type EventCosmeticScoreDaily = {
+  event: string;
+  day: Timestamp;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  impressions: Generated<number>;
+  anonImpressions: Generated<number>;
+  reactions: Generated<number>;
+  points: Generated<number>;
+  updatedAt: Generated<Timestamp>;
 };
 export type FeaturedModelVersion = {
   id: Generated<number>;
@@ -5146,6 +5195,7 @@ export type DB = {
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
   CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
+  CosmeticShopPurchaseClaim: CosmeticShopPurchaseClaim;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
@@ -5170,6 +5220,8 @@ export type DB = {
   EntityMetric: EntityMetric;
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
+  EventCosmeticPlacement: EventCosmeticPlacement;
+  EventCosmeticScoreDaily: EventCosmeticScoreDaily;
   FeaturedModelVersion: FeaturedModelVersion;
   Feedback: Feedback;
   File: File;

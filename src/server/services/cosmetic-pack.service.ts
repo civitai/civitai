@@ -30,9 +30,11 @@ import { isEventShopItemData } from '~/server/events/event-shop-item';
 import {
   chargeForShopPurchase,
   chargeRetryOptions,
+  claimShopPurchase,
+  markClaimPaid,
   purchaseStateUnknown,
   refundCallOptions,
-  refundShopCharge,
+  refundClaimedCharge,
 } from '~/server/services/shop-purchase-charge';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -481,7 +483,7 @@ export const purchaseCosmeticPack = async ({
   stickersEnabled,
 }: {
   userId: number;
-  /** The buyer's purchase intent. A replay of one already recorded is refused. */
+  /** The buyer's purchase intent. A replay is answered from its claim (shop-purchase-charge.ts). */
   idempotencyKey?: string;
   shopItem: {
     id: number;
@@ -511,7 +513,7 @@ export const purchaseCosmeticPack = async ({
     where: { userId, cosmeticId: { in: members.map((m) => m.cosmeticId) } },
     select: { cosmeticId: true },
   });
-  const { amountDue: amountCharged } = computePackAmountDue({
+  const { amountDue } = computePackAmountDue({
     packPrice: shopItem.unitAmount,
     members: members.map((m) => ({
       cosmeticId: m.cosmeticId,
@@ -556,20 +558,25 @@ export const purchaseCosmeticPack = async ({
       "Everything in this pack is your own work, so there's nothing here for you to buy"
     );
 
-  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
+  if (amountDue <= 0) throw throwBadRequestError('You already own everything in this pack');
 
   // The buyer's key when they sent one, so a retry of the same intent is
   // recognised; otherwise random rather than a timestamp: a pack is repeatable (a
   // consumable member tops up), so two calls in the same millisecond would share
   // an external id — and a duplicate reads as "the money already moved".
-  const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${idempotencyKey ?? randomUUID()}`;
-  if (idempotencyKey) {
-    const alreadyProcessed = await dbWrite.userCosmeticShopPurchases.findUnique({
-      where: { buzzTransactionId: transactionId },
-      select: { buzzTransactionId: true },
-    });
-    if (alreadyProcessed) throw throwBadRequestError('This purchase has already been completed');
-  }
+  // `v2`: claims began with this prefix, so no key used under it has ledger
+  // history from before there was a claim to account for it.
+  const transactionId = `cosmetic-pack-v2-${userId}-${shopItem.id}-${
+    idempotencyKey ?? randomUUID()
+  }`;
+  // A resumed claim charges what it claimed, not today's discount.
+  const claim = await claimShopPurchase({
+    shopItemId: shopItem.id,
+    userId,
+    transactionId,
+    amount: amountDue,
+  });
+  const amountCharged = claim.amount;
   const chargeContext = { shopItemId: shopItem.id, userId, transactionId, amount: amountCharged };
   const transaction = await chargeForShopPurchase(
     () =>
@@ -585,7 +592,8 @@ export const purchaseCosmeticPack = async ({
         },
         chargeRetryOptions
       ),
-    chargeContext
+    chargeContext,
+    claim
   );
   // 🔴 NOT a 400, and that changed meaning recently. The Buzz service answered
   // and created nothing, which is AMBIGUOUS — the charge may have happened. The
@@ -604,6 +612,8 @@ export const purchaseCosmeticPack = async ({
 
   try {
     await dbWrite.$transaction(async (tx) => {
+      await markClaimPaid(tx, transactionId);
+
       await tx.userCosmeticShopPurchases.create({
         data: {
           userId,
@@ -659,7 +669,7 @@ export const purchaseCosmeticPack = async ({
     // Charged and not fully refunded is "state unknown", logged for
     // reconciliation; only a refund known to cover the charge reaches the
     // refusal below.
-    await refundShopCharge(
+    await refundClaimedCharge(
       () =>
         refundMultiAccountTransaction(
           {

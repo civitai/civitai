@@ -1,17 +1,15 @@
-import { Anchor, Card, Loader, Stack, Text, Title, Tooltip } from '@mantine/core';
-import {
-  IconArrowRight,
-  IconCalendarCheck,
-  IconCircleCheck,
-  IconLock,
-  IconTrendingUp,
-} from '@tabler/icons-react';
+import { Anchor, Card, Collapse, Loader, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { IconArrowRight, IconChevronDown, IconCircleCheck, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
+import { useDisclosure } from '@mantine/hooks';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
+import { CreatorScoreExplainer } from '~/components/Account/CreatorScoreExplainer';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
-import { CreatorAchievements, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
+import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
+import { LinkedText, rewardLinks, unlockLinksFor } from '~/components/CreatorJourney/journey-links';
+import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
@@ -21,11 +19,8 @@ import {
   TierBadge,
   tierAccents,
 } from '~/components/CreatorJourney/tier-badge';
-import {
-  SpotlightBorderCard,
-  SpotlightDivider,
-} from '~/components/SpotlightCard/SpotlightBorderCard';
-import { CREATOR_SCORE_EXPLAINER_HREF } from '~/shared/constants/creator-journey.constants';
+import { CREATOR_SHOWCASE_HREF } from '~/shared/constants/creator-journey.constants';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   CreatorScoreKinds,
   CreatorScoreRung,
@@ -50,6 +45,7 @@ const accentOf = (tier: CreatorScoreTier | null | undefined) =>
 
 export function CreatorJourney() {
   const { data, isLoading } = trpc.creatorJourney.getMine.useQuery();
+  const currentUser = useCurrentUser();
 
   if (isLoading || !data)
     return (
@@ -58,10 +54,10 @@ export function CreatorJourney() {
       </div>
     );
 
-  return <CreatorJourneyView journey={data} />;
+  return <CreatorJourneyView journey={data} username={currentUser?.username ?? undefined} />;
 }
 
-export function CreatorJourneyView({ journey }: { journey: Journey }) {
+export function CreatorJourneyView({ journey, username }: { journey: Journey; username?: string }) {
   const kinds: CreatorScoreKinds = {
     total: journey.scores?.total ?? 0,
     aggregate: journey.scores?.aggregate,
@@ -86,6 +82,9 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
           Where your Creator Score stands, what it unlocks next, and the badges you have earned.
           Only you can see this page.
         </Text>
+        <Anchor component={NextLink} href={CREATOR_SHOWCASE_HREF} size="sm">
+          See the Creator Showcase <IconArrowRight size={14} className="inline" />
+        </Anchor>
       </Stack>
 
       <Card
@@ -161,6 +160,7 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
               isNext={rung === next}
               badgeEarned={!!rung.tier && earnedKeys.has(rung.tier.key)}
               isLast={index === rungs.length - 1}
+              username={username}
             />
           ))}
         </Stack>
@@ -171,12 +171,10 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
           Where Your Score Comes From
         </Title>
         <UserScoreDisplay scores={journey.scores?.breakdown} abbreviate={false} />
-        <Anchor component={NextLink} href={CREATOR_SCORE_EXPLAINER_HREF} size="sm">
-          How Creator Score is earned <IconArrowRight size={14} className="inline" />
-        </Anchor>
+        <ScoreExplainerToggle />
       </Stack>
 
-      <CreatorAchievements activity={journey.activity} />
+      <CreatorAchievements activity={journey.activity} username={username} />
 
       <CreatorSecrets secrets={journey.secrets} />
 
@@ -208,58 +206,6 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
 // Artless activity milestones get their own section; the shelf holds tiers and anything with art.
 export function isShelfBadge(badge: Pick<Journey['earned'][number], 'track' | 'badgeUrl'>) {
   return badge.track === 'score' || !!badge.badgeUrl;
-}
-
-function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {
-  const accent = tierAccents[badge.key] ?? DEFAULT_ACCENT;
-
-  return (
-    <SpotlightBorderCard
-      color={accent}
-      style={accentVar(accent)}
-      faceClassName="flex flex-col items-center gap-2 p-4 text-center"
-    >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-20"
-        style={{
-          background: 'radial-gradient(60% 100% at 50% 0%, var(--cj-accent) 0%, transparent 100%)',
-        }}
-      />
-      <TierBadge name={badge.name} badgeUrl={badge.badgeUrl} state="earned" size={72} />
-      <Text fw={800} size="lg" lh={1.2}>
-        {badge.name}
-      </Text>
-      {badge.track === 'score' && badge.threshold != null ? (
-        <div className="flex flex-col items-center">
-          <div className="flex items-center gap-1">
-            <IconTrendingUp size={16} className="shrink-0 text-[var(--cj-accent)]" />
-            <Text fw={700} className="tabular-nums">
-              {numberWithCommas(badge.threshold)}
-            </Text>
-          </div>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600} className="tracking-wide">
-            Creator Score
-          </Text>
-        </div>
-      ) : (
-        badge.description && (
-          <Text size="xs" c="dimmed">
-            {badge.description}
-          </Text>
-        )
-      )}
-      <div className="mt-auto flex w-full flex-col items-center gap-2">
-        <SpotlightDivider />
-        <div className="flex items-center gap-1.5">
-          <IconCalendarCheck size={14} className="shrink-0 text-gray-6 dark:text-dark-2" />
-          <Text size="xs" c="dimmed">
-            {earnedLabel(badge.achievedAt)}
-          </Text>
-        </div>
-      </div>
-    </SpotlightBorderCard>
-  );
 }
 
 function HeroBadge({ tier, earned }: { tier: CreatorScoreTier | null; earned: boolean }) {
@@ -316,7 +262,7 @@ function BadgeStrip({
             >
               <div
                 className={clsx(
-                  'flex w-full min-w-0 max-w-[52px] justify-center justify-self-center rounded-md p-0.5 sm:p-1',
+                  'flex w-full min-w-0 max-w-[64px] justify-center justify-self-center rounded-md p-0.5 sm:p-1',
                   state === 'next' && 'bg-white/70 ring-2 ring-[var(--cj-accent)] dark:bg-dark-6'
                 )}
                 style={accentVar(accentOf(tier))}
@@ -325,7 +271,7 @@ function BadgeStrip({
                   name={tier.name}
                   badgeUrl={tier.badgeUrl}
                   state={state}
-                  size={44}
+                  size={56}
                   fluid
                 />
               </div>
@@ -389,9 +335,29 @@ function NextRung({
       </Stack>
       {next.tier && (
         <div style={accentVar(toAccent)}>
-          <TierBadge name={next.tier.name} badgeUrl={next.tier.badgeUrl} state="next" size={64} />
+          <TierBadge name={next.tier.name} badgeUrl={next.tier.badgeUrl} state="next" size={72} />
         </div>
       )}
+    </div>
+  );
+}
+
+function ScoreExplainerToggle() {
+  const [opened, { toggle }] = useDisclosure(false);
+  return (
+    <div>
+      <Anchor component="button" type="button" size="sm" aria-expanded={opened} onClick={toggle}>
+        How Creator Score is earned{' '}
+        <IconChevronDown
+          size={14}
+          className={clsx('inline transition-transform', opened && 'rotate-180')}
+        />
+      </Anchor>
+      <Collapse in={opened}>
+        <Card withBorder radius="md" mt="xs">
+          <CreatorScoreExplainer />
+        </Card>
+      </Collapse>
     </div>
   );
 }
@@ -402,12 +368,14 @@ function LadderRung({
   isNext,
   isLast,
   badgeEarned,
+  username,
 }: {
   rung: CreatorScoreRung;
   kinds: CreatorScoreKinds;
   isNext: boolean;
   isLast: boolean;
   badgeEarned: boolean;
+  username?: string;
 }) {
   const reached = kinds.total >= rung.minScore;
   const accent = accentOf(rung.tier);
@@ -416,11 +384,11 @@ function LadderRung({
 
   return (
     <div className="flex gap-3 sm:gap-4" style={accentVar(accent)}>
-      <div className="flex w-14 shrink-0 flex-col items-center">
+      <div className="flex w-16 shrink-0 flex-col items-center">
         {rung.tier ? (
-          <TierBadge name={rung.tier.name} badgeUrl={rung.tier.badgeUrl} state={state} size={56} />
+          <TierBadge name={rung.tier.name} badgeUrl={rung.tier.badgeUrl} state={state} size={64} />
         ) : (
-          <div className="flex h-14 items-center">
+          <div className="flex h-16 items-center">
             <div
               className={clsx(
                 'size-4 rounded-full border-2',
@@ -487,14 +455,14 @@ function LadderRung({
           <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
             {rewards.map((reward) => (
               <UnlockItem key={reward} unlocked={badgeEarned}>
-                {reward}
+                <LinkedText text={reward} links={rewardLinks(username)} />
               </UnlockItem>
             ))}
             {groupCreatorScoreUnlocks(rung.unlocks).map((group) => {
               const unlocked = group.unlocks.every((u) => isCreatorScoreUnlockReached(u, kinds));
               return (
                 <UnlockItem key={group.key} unlocked={unlocked}>
-                  {group.label}
+                  <LinkedText text={group.label} links={unlockLinksFor(group.key)} />
                   {group.minScore !== rung.minScore &&
                     ` (from ${numberWithCommas(group.minScore)})`}
                 </UnlockItem>

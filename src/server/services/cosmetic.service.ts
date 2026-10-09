@@ -240,8 +240,7 @@ export async function equipCosmeticToEntity({
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&
-    userCosmetic.forId !== equippedToId &&
-    userCosmetic.forType !== equippedToType
+    (userCosmetic.forId !== equippedToId || userCosmetic.forType !== equippedToType)
   ) {
     throw new Error('You cannot equip this cosmetic to this entity');
   }

@@ -28,6 +28,9 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
+import { AppFeedbackModal, ChromeFeedbackMenuItem } from './ChromeFeedbackEntry';
+import { resolveAppFeedbackRequest } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
@@ -447,6 +450,10 @@ export function AppBlockChrome({
   // only when there is something to review: an id is what the entry point resolved
   // and handed up, so there is no window in which the modal exists without one.
   const [reviewListingId, setReviewListingId] = useState<string | null>(null);
+  // The feedback modal's target, `null` while closed — owned here for the same reason as
+  // `reviewListingId`.
+  const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
+  const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -732,9 +739,9 @@ export function AppBlockChrome({
           literal-href items) correctly does not treat it as a destination the
           store subnav must also list.
 
-          Placed directly under "Manage apps" so the two whole-app actions that
-          are ALWAYS about the running app ("rate it", "see what it can do") sit
-          together above the dismissal, and "Hide app" stays last.
+          Placed directly under "Manage apps" so the whole-app actions about the
+          running app (rate it, send feedback, see what it can do) sit together
+          above the dismissal, and "Hide app" stays last.
 
           🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
           only to a viewer the server would accept: signed in, not the owner,
@@ -746,6 +753,9 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
+      {/* Private feedback to the developer. Unlike the review item it also works on the model
+          slot (no slug there): eligibility is asked of the server by AppBlock id. */}
+      <ChromeFeedbackMenuItem request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -942,6 +952,9 @@ export function AppBlockChrome({
           opened
           onClose={() => setReviewListingId(null)}
         />
+      )}
+      {feedbackTarget && (
+        <AppFeedbackModal target={feedbackTarget} onClose={() => setFeedbackTarget(null)} />
       )}
     </>
   );

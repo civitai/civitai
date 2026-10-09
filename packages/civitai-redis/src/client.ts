@@ -2678,6 +2678,10 @@ const REDIS_KEYS_UNPREFIXED = {
       CACHE: 'packed:holiday2024',
     },
   },
+  BIRTHDAY: {
+    // Must equal BIRTHDAY_2026_EVENT; birthday2026.event.ts fails to compile otherwise.
+    '2026': { BASE: 'birthday2026' },
+  },
   BEEHIIV: {
     NEWSLETTER: 'newsletter',
   },

@@ -3116,6 +3116,35 @@ export interface UserCosmetic {
   remaining: number | null;
 }
 
+export interface EventCosmeticPlacement {
+  id: bigint;
+  event: string;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  entityType: CosmeticEntity;
+  entityId: number;
+  entityOwnerId: number | null;
+  startedAt: Date;
+  endedAt: Date | null;
+  updatedAt: Date;
+}
+
+export interface EventCosmeticScoreDaily {
+  event: string;
+  day: Date;
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  team: string;
+  impressions: number;
+  anonImpressions: number;
+  reactions: number;
+  points: number;
+  updatedAt: Date;
+}
+
 export interface CreatorMilestone {
   key: string;
   track: string;
@@ -3237,6 +3266,17 @@ export interface UserCosmeticShopPurchases {
   refunded: boolean;
   meta: JsonValue | null;
   components?: UserCosmeticShopPurchaseCosmetic[];
+}
+
+export interface CosmeticShopPurchaseClaim {
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  amount: number;
+  status: string;
+  attempts: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface UserCosmeticShopPurchaseCosmetic {

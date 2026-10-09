@@ -1,4 +1,8 @@
 export const CREATOR_JOURNEY_HREF = '/creators/journey';
+export const CREATOR_SHOWCASE_HREF = '/creators/showcase';
+
+/** CDN art for a hidden achievement not yet found: a gunmetal hexagon with a "?". */
+export const HIDDEN_ACHIEVEMENT_PLACEHOLDER = '697cac26-7f27-4205-8a3c-886d31e17153';
 
 /** The account score card, where the "how Creator Score is earned" explainer lives. */
 export const CREATOR_SCORE_EXPLAINER_HREF = '/user/account#creator-score';

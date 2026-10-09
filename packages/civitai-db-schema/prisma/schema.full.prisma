@@ -5150,6 +5150,42 @@ model UserCosmetic {
   @@id([userId, cosmeticId, claimKey])
 }
 
+/// Written only by the `event_cosmetic_placement_log` trigger on "UserCosmetic"; never insert from app code.
+/// The open-interval partial unique index lives in the migration (Prisma cannot express it).
+model EventCosmeticPlacement {
+  id            BigInt         @id @default(autoincrement())
+  event         String
+  userId        Int
+  cosmeticId    Int
+  claimKey      String
+  team          String
+  entityType    CosmeticEntity
+  entityId      Int
+  entityOwnerId Int?
+  startedAt     DateTime       @default(now()) @db.Timestamptz(3)
+  endedAt       DateTime?      @db.Timestamptz(3)
+  updatedAt     DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@index([event, updatedAt])
+}
+
+model EventCosmeticScoreDaily {
+  event           String
+  day             DateTime @db.Date
+  userId          Int
+  cosmeticId      Int
+  claimKey        String
+  team            String
+  impressions     Int      @default(0)
+  anonImpressions Int      @default(0)
+  reactions       Int      @default(0)
+  points          Int      @default(0)
+  updatedAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([event, userId, cosmeticId, claimKey, day])
+  @@index([event, day])
+}
+
 /// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
 model CreatorMilestone {
   key          String                 @id
@@ -5314,6 +5350,29 @@ model UserCosmeticShopPurchases {
   // still scans the table to count one item's rows. Applied by hand — the
   // migration beside this schema carries the plans and what the index does not fix.
   @@index([shopItemId])
+}
+
+// A shop or pack purchase's claim on its charge prefix, written BEFORE the
+// charge. Kept apart from UserCosmeticShopPurchases so that table keeps holding
+// only paid sales: every sold count, the takedown refund and the milestone
+// detectors read it without a status filter. See shop-purchase-charge.ts for the
+// state machine. No foreign keys: a claim is the reconciliation record for money
+// that may have moved, and must outlive the item or account it names.
+model CosmeticShopPurchaseClaim {
+  /// The charge's external transaction id prefix (UserCosmeticShopPurchases.buzzTransactionId once paid).
+  transactionId String   @id
+  userId        Int
+  shopItemId    Int
+  /// What this claim charges. A retry of a pending claim charges this, not the current price.
+  amount        Int
+  /// pending | refunding | refunded | paid (text + CHECK, not an enum).
+  status        String
+  /// Requests that have charged under this claim: 1 for the one that created it, +1 per resume.
+  attempts      Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  @@index([status, createdAt])
 }
 
 model UserCosmeticShopPurchaseCosmetic {
