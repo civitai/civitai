@@ -84,7 +84,10 @@ export function appFeedbackModalTitle(appName: string | null | undefined): strin
     : "Send private feedback to this app's developer";
 }
 
-/** Must name everything the request stores besides the text, or the modal's privacy claim is false. */
+/**
+ * Must name everything stored about what the user was viewing (app version, model), or the
+ * modal's "Nothing else is collected" is false.
+ */
 export function appFeedbackSentWithLine(
   appBlockVersion: string | null | undefined,
   context: AppFeedbackContext

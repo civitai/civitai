@@ -31,7 +31,8 @@ const mocks = vi.hoisted(() => ({
   createGate: null as Promise<void> | null,
   detail: null as unknown,
   detailInputs: [] as unknown[],
-  myReviewInputs: [] as unknown[],
+  /** Give each slug its own listing id, so which app a hand-off targeted is visible. */
+  detailIdFromSlug: false,
   upsertReviewInputs: [] as unknown[],
 }));
 
@@ -80,7 +81,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               queryKey: [['appListings', 'getAppDetail'], { input, type: 'query' }],
               queryFn: async () => {
                 mocks.detailInputs.push(input);
-                return mocks.detail;
+                const slug = (input as { slug?: string }).slug;
+                return mocks.detail && mocks.detailIdFromSlug
+                  ? { ...(mocks.detail as object), id: `apl_${slug}`, slug }
+                  : mocks.detail;
               },
               ...opts,
             }),
@@ -89,10 +93,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (input: unknown, opts?: Record<string, unknown>) =>
             useQuery({
               queryKey: [['appListings', 'getMyReview'], { input, type: 'query' }],
-              queryFn: async () => {
-                mocks.myReviewInputs.push(input);
-                return null;
-              },
+              queryFn: async () => null,
               ...opts,
             }),
         },
@@ -217,7 +218,7 @@ beforeEach(async () => {
   mocks.createGate = null;
   mocks.detail = null;
   mocks.detailInputs = [];
-  mocks.myReviewInputs = [];
+  mocks.detailIdFromSlug = false;
   mocks.upsertReviewInputs = [];
   await page.viewport(1280, 900);
 });
@@ -429,25 +430,50 @@ describe('the "Rate this app" line', () => {
 });
 
 describe('a reused host (app A → app B without remount)', () => {
-  test('the open modal still sends to the app it was opened for', async () => {
-    const chrome = (slug: string) => (
-      <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...PAGE_PROPS} slug={slug} />
-    );
+  const chrome = (slug: string) => (
+    <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...PAGE_PROPS} slug={slug} />
+  );
+
+  /** Opens the modal on app A, then moves the same host to app B. */
+  async function openOnAThenMoveToB() {
+    mocks.detailIdFromSlug = true;
+    mocks.detail = {
+      name: APP_NAME,
+      kind: 'onsite',
+      creator: { id: 4242, username: 'publisher', image: null },
+      recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+      reviewCount: 0,
+    };
     const view = await render(chrome('app-a'), { wrapper: ProdishProviders });
     await openOverflow();
     await expect.element(feedbackItem()).toBeInTheDocument();
     await feedbackItem().click();
     await expect.element(modal()).toBeInTheDocument();
-
     // Same element type at the same position, so React updates props rather than remounting —
-    // the modal staying open below is what shows it.
+    // the modal staying open is what shows it.
     await view.rerender(chrome('app-b'));
     await expect.element(modal()).toBeInTheDocument();
+    // Let any listing lookup the new props trigger settle (the mock resolves immediately).
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+  }
+
+  test('the open modal still sends to the app it was opened for', async () => {
+    await openOnAThenMoveToB();
     await typeAndSend('about app A');
     await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: 'app-a' }, message: 'about app A', context: { surface: 'page' } },
     ]);
+  });
+
+  test('its "Rate this app" link still reviews the app it was opened for', async () => {
+    await openOnAThenMoveToB();
+    await page.getByTestId('app-feedback-rate-app').click();
+    await page.getByRole('button', { name: 'Recommend', exact: true }).click();
+    await page.getByRole('button', { name: 'Post review' }).click();
+    expect(mocks.upsertReviewInputs).toHaveLength(1);
+    expect(mocks.upsertReviewInputs[0]).toMatchObject({ appListingId: 'apl_app-a' });
   });
 });
 
@@ -461,7 +487,8 @@ describe('while a submit is pending', () => {
     await userEvent.fill(messageBox().element() as HTMLElement, 'hello');
     await sendButton().click();
     await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
-    // DOM clicks, not userEvent: these controls are expected to be disabled while pending.
+    // DOM clicks, not userEvent: these controls are expected to be disabled while pending. A
+    // loading Mantine Button is disabled, so this pins the disabled Send, not `submit`'s own guard.
     (sendButton().element() as HTMLButtonElement).click();
     await userEvent.keyboard('{Escape}');
     const cancel = page.getByRole('button', { name: 'Cancel' });
