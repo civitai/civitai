@@ -86,13 +86,12 @@ async function gaugeValue(name: string, backend: string): Promise<number | undef
 type Registration = {
   prom: PromClient;
   gauge: ReturnType<PromClient['register']['getSingleMetric']>;
-  collect: unknown;
 };
 
 async function snapshotRegistration(): Promise<Registration> {
   const prom = await loadPromClient();
   const gauge = prom.register.getSingleMetric('civitai_app_meili_call_active');
-  return { prom, gauge, collect: (gauge as unknown as { collect?: unknown })?.collect };
+  return { prom, gauge };
 }
 
 async function loadTwoCopies(): Promise<{
@@ -153,19 +152,18 @@ afterEach(async () => {
 });
 
 describe('meili wrapper gauges with two module copies (the production load shape)', () => {
-  it('PRECONDITION: two module copies share ONE prom-client and ONE gauge, and the second reassigns its collect', async () => {
+  // Harness facts only. This must hold for ANY correct client.ts, so it asserts nothing about
+  // which copy's collect() is installed. A fix that keeps the first copy's hook is just as valid.
+  it('PRECONDITION: two module copies share ONE prom-client and ONE gauge object', async () => {
     const { apiCopy, ssrCopy, afterApi, afterSsr } = await loadTwoCopies();
     // Two distinct module instances were built...
     expect(apiCopy).not.toBe(ssrCopy);
     expect(apiCopy.withMeili).not.toBe(ssrCopy.withMeili);
     // ...over the SAME prom-client instance, so the same default registry...
     expect(afterSsr.prom).toBe(afterApi.prom);
-    // ...where the second copy got the FIRST copy's gauge object back ("already registered")...
+    // ...where the second copy got the FIRST copy's gauge object back ("already registered").
     expect(afterApi.gauge).toBeTruthy();
     expect(afterSsr.gauge).toBe(afterApi.gauge);
-    // ...and replaced its collect hook. That reassignment is the production mechanism.
-    expect(afterSsr.collect).toBeTypeOf('function');
-    expect(afterSsr.collect).not.toBe(afterApi.collect);
   });
 
   it('CONTROL: with ONE copy loaded, the harness observes live non-zero gauge values', async () => {
