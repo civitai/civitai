@@ -2,6 +2,8 @@ import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
 import { earnedLabel, Hexagon } from '~/components/CreatorJourney/CreatorAchievements';
 import { accentVar, TierBadge } from '~/components/CreatorJourney/tier-badge';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { HIDDEN_ACHIEVEMENT_PLACEHOLDER } from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
 
 type Secret = RouterOutput['creatorJourney']['getMine']['secrets'][number];
@@ -43,9 +45,17 @@ function SecretTile({ secret }: { secret: Secret }) {
       )}
     >
       {secret.badgeUrl ? (
-        <TierBadge name={secret.name} badgeUrl={secret.badgeUrl} state="earned" size={40} />
+        <TierBadge name={secret.name} badgeUrl={secret.badgeUrl} state="earned" size={52} />
+      ) : secret.earned ? (
+        <Hexagon label="?" state="earned" size={52} />
       ) : (
-        <Hexagon label="?" state={secret.earned ? 'earned' : 'locked'} size={40} />
+        <EdgeMedia
+          src={HIDDEN_ACHIEVEMENT_PLACEHOLDER}
+          alt=""
+          width={144}
+          className="size-[52px] shrink-0 object-contain"
+          optimized
+        />
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <Text size="sm" fw={700} truncate>
