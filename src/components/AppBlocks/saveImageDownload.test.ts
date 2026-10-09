@@ -287,30 +287,41 @@ const GIF = ab(0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00,
 
 describe('resolveSaveImageRequest — bytes variant', () => {
   it('parses a bytes request, keeping the filename and mimeType hints', () => {
-    expect(
-      resolveSaveImageRequest({
-        requestId: 'r',
-        bytes: PNG,
-        filename: 'healed.png',
-        mimeType: 'image/png',
-      })
-    ).toEqual({
+    const res = resolveSaveImageRequest({
+      requestId: 'r',
+      bytes: PNG,
+      filename: 'healed.png',
+      mimeType: 'image/png',
+    });
+    expect(res).toEqual({
       requestId: 'r',
       kind: 'bytes',
       bytes: PNG,
       filename: 'healed.png',
       mimeType: 'image/png',
     });
+    // toEqual treats any two ArrayBuffers as equal, so pin identity separately.
+    expect(res && 'bytes' in res ? res.bytes : null).toBe(PNG);
   });
 
-  it('bytes together with url or imageId is invalid', () => {
-    expect(
-      resolveSaveImageRequest({ requestId: 'r', bytes: PNG, url: 'https://image.civitai.com/x' })
-    ).toEqual({ requestId: 'r', kind: 'invalid' });
-    expect(resolveSaveImageRequest({ requestId: 'r', bytes: PNG, imageId: 5 })).toEqual({
-      requestId: 'r',
-      kind: 'invalid',
-    });
+  it('drops a non-string mimeType hint', () => {
+    const res = resolveSaveImageRequest({ requestId: 'r', bytes: PNG, mimeType: 5 });
+    expect(res && 'mimeType' in res ? res.mimeType : 'missing').toBeUndefined();
+  });
+
+  it('bytes together with url or imageId is invalid, even when that sibling is itself invalid', () => {
+    for (const sibling of [
+      { url: 'https://image.civitai.com/x' },
+      { imageId: 5 },
+      { url: '' },
+      { imageId: 0 },
+      { imageId: 'x' },
+    ]) {
+      expect(resolveSaveImageRequest({ requestId: 'r', bytes: PNG, ...sibling })).toEqual({
+        requestId: 'r',
+        kind: 'invalid',
+      });
+    }
   });
 
   it('refuses anything that is not an ArrayBuffer', () => {
@@ -387,6 +398,14 @@ describe('classifySaveBytes', () => {
   it('a truncated PNG signature is not an image', () => {
     expect(classifySaveBytes(ab(0x89, 0x50, 0x4e, 0x47))).toBeNull();
   });
+
+  it('a RIFF container that is not WebP, and a near-miss JPEG prefix, are not images', () => {
+    // RIFF....WAVE: the RIFF check alone would call this WebP.
+    expect(
+      classifySaveBytes(ab(0x52, 0x49, 0x46, 0x46, 0x24, 0, 0, 0, 0x57, 0x41, 0x56, 0x45))
+    ).toBeNull();
+    expect(classifySaveBytes(ab(0xff, 0xd8, 0x00, 0xe0, 0x00, 0x10))).toBeNull();
+  });
 });
 
 describe('forceSaveBytesExtension', () => {
@@ -398,11 +417,14 @@ describe('forceSaveBytesExtension', () => {
     expect(forceSaveBytesExtension('render.svg', 'image/webp')).toBe('render.webp');
     expect(forceSaveBytesExtension('notes', 'text/plain')).toBe('notes.txt');
     expect(forceSaveBytesExtension('', 'image/png')).toBe('download.png');
+    expect(forceSaveBytesExtension('page.xhtml', 'text/plain')).toBe('page.txt');
   });
 
   it('drops control and bidi-override characters', () => {
     expect(forceSaveBytesExtension('inv\u202Egpj.exe', 'text/plain')).toBe('invgpj.txt');
     expect(forceSaveBytesExtension('a\u0000b\n.png', 'image/png')).toBe('ab.png');
+    expect(forceSaveBytesExtension('x⁧gpj.exe⁩', 'text/plain')).toBe('xgpj.txt');
+    expect(forceSaveBytesExtension('a‎b​c\u007f.txt', 'text/plain')).toBe('abc.txt');
   });
 });
 
@@ -415,6 +437,9 @@ describe('prepareSaveBytes', () => {
     });
     expect(
       prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'meta.json', mimeType: 'text/html' })
+    ).toEqual({ ok: true, type: 'application/json', filename: 'meta.json' });
+    expect(
+      prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'meta', mimeType: 'application/json' })
     ).toEqual({ ok: true, type: 'application/json', filename: 'meta.json' });
     expect(prepareSaveBytes({ bytes: textAb('hello') })).toEqual({
       ok: true,

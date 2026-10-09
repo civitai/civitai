@@ -1067,7 +1067,11 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_save_bytes', ok: true });
     });
-    expect(mocks.saveBytesDownload).toHaveBeenCalledWith(bytes, 'image/png', 'healed.png');
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+    const [savedBytes, savedType, savedName] = mocks.saveBytesDownload.mock.calls[0];
+    // toBe, not toEqual: vitest's toEqual treats any two ArrayBuffers as equal.
+    expect(savedBytes).toBe(bytes);
+    expect([savedType, savedName]).toEqual(['image/png', 'healed.png']);
     expect(mocks.saveDownload).not.toHaveBeenCalled();
     replies.stop();
   });

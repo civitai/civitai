@@ -68,7 +68,7 @@ export const CIVITAI_IMAGE_HOSTS: readonly string[] = [
 /** Bound the host-side blob fetch so a hostile block can't pull an unbounded video. */
 export const SAVE_IMAGE_MAX_BYTES = 200 * 1024 * 1024; // 200 MB
 
-/** Lower than the url cap: `bytes` are copied across frames into the viewer's tab memory, not streamed. */
+/** Lower than the url cap: the whole file sits in the viewer's tab (and is copied again into a Blob), not streamed. */
 export const SAVE_BYTES_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
 /**
@@ -347,8 +347,9 @@ export const SAVE_BYTES_TOO_LARGE_ERROR = 'file exceeds the maximum save size';
 export const SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR = 'file type is not allowed';
 
 /**
- * Client-side copy of `sniffSupportedImage` (block-image-upload.service.ts), which is server-only.
- * Deliberately narrower: no GIF, and the full 8-byte PNG signature.
+ * Client-side copy of the server-only sniffers `detectImageType` (publish-request.service.ts) and
+ * `sniffSupportedImage` (block-image-upload.service.ts). Same set as `detectImageType`: no GIF,
+ * full 8-byte PNG signature.
  */
 function sniffSaveBytesImage(b: Uint8Array): SaveBytesType | null {
   if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
@@ -398,12 +399,12 @@ export function classifySaveBytes(
 
 /**
  * Replace whatever extension `filename` carries with the classified type's own, so a block can
- * never save `x.html` / `x.exe` / `x.svg`. Also drops control and bidi-override characters, which
- * can make a name display with a different extension than the one it has.
+ * never save `x.html` / `x.exe` / `x.svg`. Also drops control and format (bidi, zero-width)
+ * characters, which can make a name display with a different extension than the one it has.
  */
 export function forceSaveBytesExtension(filename: string, type: SaveBytesType): string {
-  // eslint-disable-next-line no-control-regex
-  const cleaned = filename.replace(/[\u0000-\u001f\u007f‪-‮⁦-⁩]/g, '').trim();
+  // \p{Cf} covers every bidi override/isolate and zero-width mark, not a hand-picked range.
+  const cleaned = filename.replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
   const name = cleaned.length > 0 ? cleaned : 'download';
   const m = name.match(/^(.+)\.([a-zA-Z0-9]{1,5})$/);
   return `${m ? m[1] : name}.${SAVE_BYTES_EXTENSION[type]}`;
