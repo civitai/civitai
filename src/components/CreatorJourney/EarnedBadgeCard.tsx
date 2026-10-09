@@ -34,7 +34,7 @@ export function EarnedBadgeCard({
   badge: EarnedBadge;
   accent?: string;
   action?: ReactNode;
-  /** Show a tier's threshold as "10,000+", so on someone else's profile it reads as a floor, not their score. */
+  /** Show a tier's threshold as "10,000+": on a profile, which anyone can view, it must read as a floor, not a score. */
   thresholdAsFloor?: boolean;
 }) {
   accent ??= tierAccents[badge.key] ?? DEFAULT_ACCENT;
