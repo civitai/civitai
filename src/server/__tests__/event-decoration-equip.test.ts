@@ -263,6 +263,30 @@ describe('placing an event decoration', () => {
   });
 });
 
+// A cosmetic awarded for one entity (forId/forType) goes on that entity only: the id AND the type
+// must both match, as the decoration picker already requires.
+describe('a cosmetic locked to one entity', () => {
+  const lockedTo = (forId: number, forType: string) => ({ ...frameRow(), forId, forType });
+
+  it.each([
+    ['another entity of the same type', IMAGE + 1, 'Image'],
+    ['the same id on another type', IMAGE, 'Model'],
+  ])('is refused on %s', async (_, forId, forType) => {
+    db.userCosmetic.findFirst.mockResolvedValue(lockedTo(forId, forType));
+    await expect(equipHat()).rejects.toThrow(/cannot equip this cosmetic to this entity/);
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('is allowed on the entity it is locked to', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(lockedTo(IMAGE, 'Image'));
+    await equipHat();
+    expect(db.userCosmetic.updateMany.mock.calls.at(-1)![0].data).toMatchObject({
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+  });
+});
+
 describe('equipping any decoration requires owning the content', () => {
   it.each([
     ['a frame', frameRow],
