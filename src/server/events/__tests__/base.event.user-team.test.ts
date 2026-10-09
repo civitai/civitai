@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // getUserTeam reads manual team assignments from sysRedis. By default a failed
 // read falls back to the computed team (cosmetic resolution must not 500 during
@@ -6,17 +7,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // team-coloured item on a guessed team charges someone assigned by hand for a
 // colour that isn't theirs.
 
-const { mockHGetAll, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  mockHGetAll: vi.fn(),
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
   mockLogSysRedisFailOpen: vi.fn(),
 }));
 
-vi.mock('~/server/redis/client', async () => ({
-  ...(await import('@civitai/redis/client')),
-  sysRedis: { hGetAll: mockHGetAll },
-  redis: { hGet: vi.fn(), hSet: vi.fn(), del: vi.fn() },
-  withSysReadDeadline: (p: Promise<unknown>) => p,
-}));
+// sysRedis comes from the canonical redis mock (setup.ts registers it).
+const mockHGetAll = redisMock.sysRedis.hGetAll;
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
 
