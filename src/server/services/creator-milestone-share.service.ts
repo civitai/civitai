@@ -68,9 +68,10 @@ async function getShareableMilestones(
     `,
     [userId, slugs.map(scoreTierKey), excludedUserIds, toUtcTimestamp(now)]
   );
-  const rows = (await query.result()).filter(
-    // A backfilled grant was never seen crossing, so it has no moment to celebrate.
-    (row) => achievedAtIsObserved(row) && isBadgeShownOnProfile(row.privacySettings, row.badgeId)
+  // A backfilled grant shares too: at launch every tier held was backfilled, so filtering them out
+  // offered nobody a card.
+  const rows = (await query.result()).filter((row) =>
+    isBadgeShownOnProfile(row.privacySettings, row.badgeId)
   );
   const [row] = rows;
   if (!row) return [];
@@ -119,7 +120,10 @@ export async function getMilestoneShareCard(...args: Parameters<typeof getSharea
     tierName: row.tierName,
     accent: SCORE_TIERS.find((tier) => tier.slug === slug)?.accent ?? null,
     badgeUrl: row.badgeUrl ? getEdgeUrl(row.badgeUrl, { width: BADGE_SIZE, anim: false }) : null,
-    // From the column's own text, so no zone can shift the month.
-    reached: formatDate(`${row.achievedMonth}-01`, 'MMMM YYYY', true),
+    // A backfilled grant's achievedAt is the backfill's own date, so the card names no month, as the
+    // journey page shows none. The month comes from the column's own text, so no zone can shift it.
+    reached: achievedAtIsObserved(row)
+      ? formatDate(`${row.achievedMonth}-01`, 'MMMM YYYY', true)
+      : null,
   };
 }

@@ -860,9 +860,11 @@ function MilestoneCard({ card }: { card: MilestoneCardData }) {
           >
             {card.tierName}
           </div>
-          <div style={{ display: 'flex', fontSize: 24, color: colors.textSecondary }}>
-            {`Reached ${card.reached}`}
-          </div>
+          {card.reached && (
+            <div style={{ display: 'flex', fontSize: 24, color: colors.textSecondary }}>
+              {`Reached ${card.reached}`}
+            </div>
+          )}
         </div>
       </div>
 

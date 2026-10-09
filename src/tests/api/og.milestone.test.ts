@@ -73,6 +73,29 @@ describe('/api/og?type=milestone', () => {
     expect(Buffer.compare(card._body as Buffer, fallback._body as Buffer)).not.toBe(0);
   });
 
+  // A backfilled tier's card carries no month, so it must print no "Reached" line at all. Compared
+  // byte-for-byte against a line holding each thing a broken template would print in its place.
+  describe('the "Reached" line', () => {
+    const png = async (reached: string | null) => {
+      getMilestoneShareCard.mockResolvedValue({ ...CARD, reached });
+      return (await render('42.supernova'))._body as Buffer;
+    };
+
+    it('renders the same card to the same bytes, so a difference below means something', async () => {
+      expect(Buffer.compare(await png(null), await png(null))).toBe(0);
+    });
+
+    it('is absent when the card has no month', async () => {
+      const noMonth = await png(null);
+      for (const filler of [' ', 'null', 'undefined'])
+        expect(Buffer.compare(noMonth, await png(filler)), filler).not.toBe(0);
+    });
+
+    it('is present when the card has a month', async () => {
+      expect(Buffer.compare(await png('November 2026'), await png(null))).not.toBe(0);
+    });
+  });
+
   it('takes the SHORT cache for a card and for its fallback', async () => {
     // A hidden badge or a new strike must take a shared card down within minutes, and a card
     // that is not live yet must not sit on the hour-long fallback cache. Whole value, since
