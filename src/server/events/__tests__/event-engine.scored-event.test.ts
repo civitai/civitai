@@ -254,3 +254,13 @@ describe('join', () => {
     expect((await join(BIRTHDAY_2026_STARTS_AT)).joined).toBe(false);
   });
 });
+
+describe('join team lookup', () => {
+  it('refuses to join when the manual team assignments cannot be read', async () => {
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT)).rejects.toThrow(
+      'ECONNREFUSED'
+    );
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});

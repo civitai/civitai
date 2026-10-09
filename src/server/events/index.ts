@@ -409,7 +409,9 @@ export const eventEngine = {
     if (now < eventDef.startDate || now >= eventDef.endDate)
       throw new Error('This event is not running');
 
-    const team = await eventDef.getUserTeam(userId);
+    // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
+    // team's colour to someone assigned by hand.
+    const team = await eventDef.getUserTeam(userId, { strict: true });
     const cosmeticId = await eventDef.getTeamCosmetic(team);
     if (!cosmeticId) throw new Error("This event's cosmetics are not set up yet");
 
