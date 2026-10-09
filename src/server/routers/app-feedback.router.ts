@@ -3,6 +3,7 @@ import {
   createAppFeedbackSchema,
   flagAppFeedbackSchema,
   getAppFeedbackEligibilitySchema,
+  hasAnyAppFeedbackForListingSchema,
   listAppFeedbackForListingSchema,
   modListAppFeedbackSchema,
   modSetAppFeedbackHiddenSchema,
@@ -13,6 +14,7 @@ import {
   createAppFeedback,
   flagAppFeedbackAbusive,
   getAppFeedbackEligibility,
+  hasAnyAppFeedbackForListing,
   listAppFeedbackForListing,
   modCountFlaggedAppFeedback,
   modListAppFeedback,
@@ -53,6 +55,11 @@ export const appFeedbackRouter = router({
   listForListing: protectedProcedure
     .input(listAppFeedbackForListingSchema)
     .query(({ ctx, input }) => listAppFeedbackForListing({ userId: ctx.user.id, input })),
+
+  // Whether the editor offers the Feedback tab at all. Same authz and visibility as the list.
+  hasAnyForListing: protectedProcedure
+    .input(hasAnyAppFeedbackForListingSchema)
+    .query(({ ctx, input }) => hasAnyAppFeedbackForListing({ userId: ctx.user.id, input })),
 
   setOwnerStatus: protectedProcedure
     .input(setAppFeedbackOwnerStatusSchema)
