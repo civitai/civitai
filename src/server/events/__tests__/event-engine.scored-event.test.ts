@@ -10,7 +10,7 @@ import {
 
 const { mockCreateNotification, mockRefresh, mockScoring } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn(),
-  mockRefresh: vi.fn(async () => undefined),
+  mockRefresh: vi.fn(async (_type: string, _ids: number[]) => undefined),
   mockScoring: {
     getEventStandings: vi.fn(),
     getTeamScoreHistory: vi.fn(),
@@ -24,7 +24,11 @@ vi.mock('~/server/services/notification.service', () => ({
 }));
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { refresh: vi.fn() },
-  cosmeticEntityCaches: new Proxy({}, { get: () => ({ refresh: mockRefresh }) }),
+  cosmeticEntityCaches: new Proxy({}, { get: () => ({ refresh: vi.fn() }) }),
+  eventDecorationEntityCaches: new Proxy(
+    {},
+    { get: (_t, type: string) => ({ refresh: (ids: number[]) => mockRefresh(type, ids) }) }
+  ),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/buzz.service', () => ({
@@ -173,8 +177,8 @@ describe('end-of-event cleanup', () => {
     await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR));
 
     expect(mockScoring.unequipEventCosmetics).toHaveBeenCalledTimes(1);
-    expect(mockRefresh).toHaveBeenCalledWith([5]);
-    expect(mockRefresh).toHaveBeenCalledWith([6]);
+    expect(mockRefresh).toHaveBeenCalledWith('Image', [5]);
+    expect(mockRefresh).toHaveBeenCalledWith('Model', [6]);
     const winnerUpdate = dbMock.dbWrite.$executeRaw.mock.calls.find(([sql]) =>
       (sql as TemplateStringsArray).join('?').includes('{winner}')
     );

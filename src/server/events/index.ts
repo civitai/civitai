@@ -30,7 +30,7 @@ import {
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
-import { cosmeticEntityCaches } from '~/server/redis/caches';
+import { eventDecorationEntityCaches } from '~/server/redis/caches';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
 export const events = [holiday2024, birthday2026];
@@ -56,7 +56,9 @@ function scoredEvent(eventDef: EventDef) {
   return scoring ? { ...eventDef, scoring } : undefined;
 }
 
-async function refreshEntityCosmetics(
+// Event cosmetics render from their own cache, which also caches misses for an hour, so every
+// entity that loses one must be refreshed or it keeps showing the cosmetic.
+async function refreshEventDecorations(
   entities: { entityType: CosmeticEntity; entityId: number }[]
 ) {
   const byType = new Map<CosmeticEntity, number[]>();
@@ -67,7 +69,7 @@ async function refreshEntityCosmetics(
   }
   for (const [entityType, ids] of byType) {
     for (let i = 0; i < ids.length; i += 1000)
-      await cosmeticEntityCaches[entityType].refresh(ids.slice(i, i + 1000));
+      await eventDecorationEntityCaches[entityType].refresh(ids.slice(i, i + 1000));
   }
 }
 
@@ -113,7 +115,7 @@ export const eventEngine = {
           // Scored events place cosmetics on content: clear the placement itself, not only the
           // equip timestamp, or the decoration stays rendered.
           const entities = await unequipEventCosmetics(eventDef.name);
-          await refreshEntityCosmetics(entities);
+          await refreshEventDecorations(entities);
         } else {
           // Unequip all event cosmetics
           const cosmeticIds = [];

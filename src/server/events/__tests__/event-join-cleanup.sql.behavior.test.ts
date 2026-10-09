@@ -21,6 +21,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { refresh: vi.fn() },
   cosmeticEntityCaches: new Proxy({}, { get: () => ({ refresh: vi.fn() }) }),
+  eventDecorationEntityCaches: new Proxy({}, { get: () => ({ refresh: vi.fn() }) }),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
