@@ -14,7 +14,7 @@ type Row = { id: number; v: string };
 const KEY = 'packed:caches:test-write-back' as RedisKeyTemplateCache;
 const keyFor = (id: number) => `${KEY}:${id}`;
 
-function build({ localTtl }: { localTtl?: number } = {}) {
+function build({ localTtl, gated = false }: { localTtl?: number; gated?: boolean } = {}) {
   const store = new Map<string, unknown>();
   const redis = {
     packed: {
@@ -28,6 +28,7 @@ function build({ localTtl }: { localTtl?: number } = {}) {
     setNxKeepTtlWithEx: vi.fn(async () => true),
   };
   const noop = () => undefined;
+  const joins: number[] = [];
   const { createCachedObject } = createCacheBuilders({
     redis: redis as unknown as CacheBuilderDeps['redis'],
     defaultTtl: 300,
@@ -37,7 +38,7 @@ function build({ localTtl }: { localTtl?: number } = {}) {
       revalidate: noop,
       failOpenDegraded: noop,
       failOpenOriginFetch: noop,
-      missWouldJoin: noop,
+      missWouldJoin: (_name, count) => joins.push(count),
     },
     logFailOpen: noop,
     logRefreshError: noop,
@@ -45,11 +46,18 @@ function build({ localTtl }: { localTtl?: number } = {}) {
     clearByPattern: async () => undefined,
   });
   // Ids >= 100 have no row, so they exercise the not-found marker.
-  const lookupFn = vi.fn(async (ids: number[]) =>
-    Object.fromEntries(ids.filter((id) => id < 100).map((id) => [id, { id, v: `db-${id}` }]))
-  );
+  // With `gated`, every lookup parks until release() so two fetches can overlap.
+  const gates: (() => void)[] = [];
+  const release = () => gates.splice(0).forEach((open) => open());
+  const lookupFn = vi.fn(async (ids: number[]) => {
+    if (gated) await new Promise<void>((resolve) => gates.push(resolve));
+    return Object.fromEntries(
+      ids.filter((id) => id < 100).map((id) => [id, { id, v: `db-${id}` }])
+    );
+  });
   const cache = createCachedObject<Row>({ key: KEY, idKey: 'id', lookupFn, ttl: 60, localTtl });
-  return { cache, store, redis, lookupFn };
+  const parked = (n: number) => vi.waitFor(() => expect(lookupFn).toHaveBeenCalledTimes(n));
+  return { cache, store, redis, lookupFn, joins, release, parked };
 }
 
 describe('createCachedObject fetch — writeBack option', () => {
@@ -123,6 +131,47 @@ describe('createCachedObject fetch — writeBack option', () => {
     await writing.cache.fetch([1]);
     await writing.cache.fetch([1]);
     expect(writing.lookupFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('[invariant on the pre-change code] serves an L1 hit with writeBack:false, without reading Redis', async () => {
+    const t = build({ localTtl: 30 });
+    await t.cache.fetch([1]);
+    const result = await t.cache.fetch([1], { writeBack: false });
+
+    expect(result).toEqual({ 1: { id: 1, v: 'db-1' } });
+    expect(t.redis.packed.mGet).toHaveBeenCalledTimes(1);
+    expect(t.lookupFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not copy a Redis hit into L1 on a writeBack:false fetch', async () => {
+    const t = build({ localTtl: 30 });
+    t.store.set(keyFor(7), { id: 7, v: 'cached-7', cachedAt: new Date() });
+    await t.cache.fetch([7], { writeBack: false });
+    await t.cache.fetch([7], { writeBack: false });
+
+    // An L1 entry from the first call would have answered the second without a Redis read.
+    expect(t.redis.packed.mGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('a writeBack:false lookup is not counted as joinable by an overlapping default fetch', async () => {
+    const readOnly = build({ gated: true });
+    const first = readOnly.cache.fetch([1], { writeBack: false });
+    await readOnly.parked(1);
+    const second = readOnly.cache.fetch([1]);
+    await readOnly.parked(2);
+    readOnly.release();
+    await Promise.all([first, second]);
+    expect(readOnly.joins).toEqual([]);
+
+    // Positive control: the same overlap with a writing originator counts one join.
+    const writing = build({ gated: true });
+    const a = writing.cache.fetch([1]);
+    await writing.parked(1);
+    const b = writing.cache.fetch([1]);
+    await writing.parked(2);
+    writing.release();
+    await Promise.all([a, b]);
+    expect(writing.joins).toEqual([1]);
   });
 
   it('a writeBack:false miss does not stop a later default fetch from writing', async () => {

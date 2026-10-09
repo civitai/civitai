@@ -73,8 +73,8 @@ export type CachedLookupOptions<T extends object> = {
 /** Per-call options for `fetch`. */
 export type CachedFetchOptions = {
   /**
-   * `false` makes this call read-only against the cache: hits (Redis or L1) are served as usual,
-   * but misses go to `lookupFn` and are returned WITHOUT being written to Redis or L1, and stale
+   * `false` makes this call read-only against the cache: it never writes Redis or the L1. Hits
+   * are served as usual, misses go to `lookupFn` and are returned without being cached, and stale
    * entries are served as-is instead of being revalidated. For callers whose ids are unlikely to
    * be read again soon (e.g. a cold back-catalogue walk), where the write only costs memory.
    */
@@ -480,7 +480,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
 
         // finally: a throwing lookupFn must not leave its ids registered as in flight.
-        const releaseMissFill = trackMissFill(cacheMisses, debounced, dontCache);
+        // A read-only lookup is never cached, so like a debounce-window lookup it registers nothing.
+        const releaseMissFill = trackMissFill(
+          cacheMisses,
+          debounced,
+          writeBack ? dontCache : cacheMisses
+        );
         try {
           const dbResults: Record<string, T> = {};
           const lookupBatches = chunk([...cacheMisses], 10000);
@@ -576,10 +581,11 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
 
       // Backfill L1 with the FINAL shape (post-appendFn, cachedAt stripped) so a later L1 hit is
       // byte-identical to this return. Skip exactly what the Redis write skipped.
-      backfillLocal(final, (x) => {
-        const id = x[idKey] as unknown as number;
-        return (!writeBack && cacheMisses.has(id)) || dontCache.has(id) || !!dontCacheFn?.(x);
-      });
+      if (writeBack)
+        backfillLocal(
+          final,
+          (x) => dontCache.has(x[idKey] as unknown as number) || !!dontCacheFn?.(x)
+        );
       return localCache ? [...l1Hits, ...final] : final;
     }
 
