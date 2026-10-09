@@ -1,6 +1,10 @@
 import { Stack } from '@mantine/core';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
 import { EventRules } from '~/components/Events/ScoredEvent/EventRules';
+import {
+  MyHatsLivePoints,
+  useEventTeamsLivePoints,
+} from '~/components/Events/ScoredEvent/event-points-live';
 import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPreview';
 import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
 import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
@@ -45,6 +49,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     : undefined;
 
   const { data: standings } = trpc.event.getStandings.useQuery({ event });
+  useEventTeamsLivePoints(event);
   // Scores take late data until finalAt, and the standings snapshot is hourly: the result is final
   // only once a snapshot taken after finalAt is on the page.
   const finalizing =
@@ -75,13 +80,16 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
       <TeamStandings standings={standings} myTeam={team} startDate={data.startDate} />
     ),
     hats: joined && hats.length > 0 && (
-      <MyEventHats
-        event={event}
-        hats={hats}
-        fetchedAt={hatsFetchedAt}
-        teamColor={color}
-        ended={ended}
-      />
+      <>
+        <MyHatsLivePoints event={event} topicIds={hats.map((h) => h.topicId)} />
+        <MyEventHats
+          event={event}
+          hats={hats}
+          fetchedAt={hatsFetchedAt}
+          teamColor={color}
+          ended={ended}
+        />
+      </>
     ),
     shop: team ? (
       <TeamHatShelf event={event} team={team} />

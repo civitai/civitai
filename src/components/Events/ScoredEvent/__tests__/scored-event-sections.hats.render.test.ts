@@ -16,7 +16,9 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hats = [{ cosmeticId: 31, claimKey: 'claimed', points: 5, moveCooldownLeftMs: 60_000 }];
+const hats = [
+  { cosmeticId: 31, claimKey: 'claimed', topicId: 't31', points: 5, moveCooldownLeftMs: 60_000 },
+];
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
@@ -37,6 +39,18 @@ let myHatsProps: Record<string, unknown> | undefined;
 vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({
   MyEventHats: (props: Record<string, unknown>) => {
     myHatsProps = props;
+    return null;
+  },
+}));
+// The live points subscriptions need the app's SignalProvider; record what the page asks for.
+const live = vi.hoisted(() => ({
+  teams: [] as string[],
+  myHats: undefined as Record<string, unknown> | undefined,
+}));
+vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
+  useEventTeamsLivePoints: (event: string) => void live.teams.push(event),
+  MyHatsLivePoints: (props: Record<string, unknown>) => {
+    live.myHats = props;
     return null;
   },
 }));
@@ -78,5 +92,8 @@ describe('ScoredEventSections: Your hats', () => {
     );
     expect(myHatsProps?.hats).toBe(hats);
     expect(myHatsProps?.fetchedAt).toBe(1_234_567);
+    // While the page is open it follows the team totals and each of the viewer's hats live.
+    expect(live.teams).toContain('birthday2026');
+    expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'] });
   });
 });
