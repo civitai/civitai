@@ -8,8 +8,10 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconBolt, IconClock, IconShoppingBag } from '@tabler/icons-react';
+import { IconClock, IconShoppingBag } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventHatTile } from '~/components/Events/ScoredEvent/EventHatTile';
@@ -27,6 +29,7 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
   const teamColor = useTeamColor();
   const { data: sections, isLoading } = trpc.cosmeticShop.getShop.useQuery({ event });
   const [price, setPrice] = useState('all');
+  const [buzzType] = useAvailableBuzz();
 
   const items = useMemo(() => {
     const seen = new Map<number, CosmeticShopItemGetById>();
@@ -98,7 +101,7 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
               {prices.length > 1 && (
                 <Group gap="sm" wrap="nowrap">
                   <Group gap={4} wrap="nowrap" className="shrink-0">
-                    <IconBolt size={16} className="fill-current text-yellow-6" />
+                    <CurrencyIcon currency="BUZZ" type={buzzType} size={16} />
                     <Text fw={800} className="tabular-nums">
                       {numberWithCommas(tier.price)}
                     </Text>

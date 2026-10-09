@@ -15,7 +15,12 @@ import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 type MyHat = RouterOutput['event']['getMyHats'][number];
 
-const CARD = `flex flex-col overflow-hidden rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
+// Not overflow-hidden: the worn hat sits on the picture's corner and reaches past the card, as on
+// a feed card. The picture rounds its own top corners to the card's (8px less the 1px border).
+const CARD = `flex flex-col rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
+const PICTURE_RADIUS = 'rounded-t-[7px]';
+// The room around a card in this grid (its 16px gap, the 16px phone gutter) the hat may reach into.
+const HAT_ROOM = 12;
 
 export function MyEventHats({
   event,
@@ -83,10 +88,13 @@ export function MyEventHats({
                     entityType={hat.placedOn.entityType}
                     image={hat.placedOn.image}
                     hat={hat.data}
-                    className="rounded-none"
+                    className={PICTURE_RADIUS}
+                    allowance={HAT_ROOM}
                   />
                 ) : (
-                  <div className="grid aspect-[4/5] w-full place-items-center bg-gray-1 dark:bg-dark-7">
+                  <div
+                    className={`grid aspect-[4/5] w-full place-items-center bg-gray-1 dark:bg-dark-7 ${PICTURE_RADIUS}`}
+                  >
                     <HatArt
                       url={hat.data.url}
                       color={teamColor}

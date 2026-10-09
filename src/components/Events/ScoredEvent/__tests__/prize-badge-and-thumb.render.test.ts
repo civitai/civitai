@@ -30,12 +30,12 @@ const overlay = vi.fn();
 vi.mock('~/components/Cosmetics/EventDecoration/EventDecorationOverlay', () => ({
   EventDecorationOverlay: (props: Record<string, unknown>) => {
     overlay(props);
-    return React.createElement('div', { 'data-testid': 'hat' });
+    return React.createElement('button', { 'data-testid': 'hat' });
   },
 }));
 
 const { PrizeBadge } = await import('~/components/Events/ScoredEvent/PrizeBadge');
-const { getEventDecorationClearLeft } = await import(
+const { getEventDecorationClearLeftCss, HAT_PLAIN_CARD_NUDGE } = await import(
   '~/components/Cosmetics/EventDecoration/event-decoration-placement'
 );
 const { EventContentThumb } = await import('~/components/Events/ScoredEvent/EventContentThumb');
@@ -83,36 +83,61 @@ describe('PrizeBadge', () => {
   });
 });
 
-describe('EventContentThumb hat size', () => {
+describe('EventContentThumb wears its hat as a feed card does', () => {
   const hat = { type: 'hat', url: 'hat-url' } as React.ComponentProps<
     typeof EventContentThumb
   >['hat'];
-  const thumb = () =>
-    render(React.createElement(EventContentThumb, { entityType: 'Image', image: null, hat }));
+  const thumb = (props: Record<string, unknown> = {}) =>
+    render(
+      React.createElement(EventContentThumb, { entityType: 'Image', image: null, hat, ...props })
+    );
+  const wrapperOf = (el: HTMLElement) =>
+    [...el.children].find((c) => c.tagName === 'DIV') as HTMLElement;
 
-  it("gives the hat the thumbnail's measured width, so it shrinks to fit", () => {
+  it("draws the hat on the feed's corner, outside the clipped card, at the card's width", () => {
     measured = 171;
-    const el = thumb();
-    expect(el.querySelector('[data-testid="hat"]')).not.toBeNull();
-    expect(overlay).toHaveBeenLastCalledWith(
-      expect.objectContaining({ placement: 'inside', cardWidth: 171 })
-    );
-    // The width is the thumbnail's own: the measuring ref is on its root.
-    const root = [...el.children].find((c) => c.tagName === 'DIV') as HTMLElement;
-    expect(measuredRef).toHaveBeenCalledWith(root);
-    // Corner content steps clear of the hat at its shrunk size, not a feed card's.
-    expect(root.style.getPropertyValue('--event-decoration-clear-left')).toBe(
-      `${getEventDecorationClearLeft(hat!, 'inside', undefined, 0, 171)}px`
-    );
-    expect(root.style.getPropertyValue('--event-decoration-clear-left')).not.toBe(
-      `${getEventDecorationClearLeft(hat!, 'inside')}px`
+    const wrapper = wrapperOf(thumb());
+    // The feed's own wrapper: it carries the hover-grow hook and holds the hat beside the card.
+    expect(wrapper.dataset.eventDecoration).toBe('hat');
+    const [card, worn] = [...wrapper.children] as HTMLElement[];
+    expect(card.className).toContain('overflow-hidden');
+    expect(worn.dataset.testid).toBe('hat');
+    expect(card.contains(worn)).toBe(false);
+    // The width is the card's own: the measuring ref is on it.
+    expect(measuredRef).toHaveBeenCalledWith(card);
+    expect(overlay).toHaveBeenLastCalledWith({ decoration: hat, framed: false, cardWidth: 171 });
+    expect(wrapper.style.getPropertyValue('--event-decoration-clear-left')).toBe(
+      getEventDecorationClearLeftCss(hat!, undefined, HAT_PLAIN_CARD_NUDGE, 171)
     );
   });
 
-  // A feed-sized hat for one frame would flash and overflow the small card.
-  it('draws no hat until the width is measured', () => {
+  it('lets the hat reach only as far as the room around the card', () => {
+    measured = 171;
+    expect(wrapperOf(thumb()).style.getPropertyValue('--event-decoration-allowance')).toBe('4px');
+    act(() => root?.unmount());
+    host?.remove();
+    expect(
+      wrapperOf(thumb({ allowance: 12 })).style.getPropertyValue('--event-decoration-allowance')
+    ).toBe('12px');
+  });
+
+  // A feed-sized hat for one frame would flash; mounting it late would shift the layout.
+  it('hides the hat until the card is measured, without changing what is drawn', () => {
     measured = 0;
-    expect(thumb().querySelector('[data-testid="hat"]')).toBeNull();
+    const wrapper = wrapperOf(thumb());
+    expect(wrapper.querySelector('[data-testid="hat"]')).not.toBeNull();
+    expect(wrapper.className).toContain('[&>button]:invisible');
+    act(() => root?.unmount());
+    host?.remove();
+    measured = 171;
+    expect(wrapperOf(thumb()).className).not.toContain('invisible');
+  });
+
+  it('is a plain card with no hat', () => {
+    measured = 171;
+    const card = wrapperOf(thumb({ hat: undefined }));
+    expect(card.dataset.eventDecoration).toBeUndefined();
+    expect(card.className).toContain('overflow-hidden');
     expect(overlay).not.toHaveBeenCalled();
   });
 });

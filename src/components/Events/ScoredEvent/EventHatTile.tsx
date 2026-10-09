@@ -1,8 +1,10 @@
 import { Group, Text, UnstyledButton } from '@mantine/core';
-import { IconBolt } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
 import { EVENT_CARD_SURFACE } from '~/components/Events/ScoredEvent/scored-event.utils';
@@ -55,6 +57,9 @@ export function EventHatTile({
   const url = (item.cosmetic?.data as { url?: unknown } | null)?.url;
   const purchases = (item.meta as CosmeticShopItemMeta | null)?.purchases ?? 0;
   const soldOut = item.availableQuantity != null && item.availableQuantity - purchases <= 0;
+  // The price is in the site's Buzz (yellow, or green on the green site), coloured as the shop does.
+  const [buzzType] = useAvailableBuzz();
+  const buzz = useBuzzCurrencyConfig(buzzType);
 
   return (
     <UnstyledButton
@@ -92,8 +97,8 @@ export function EventHatTile({
           soldOut
             ? undefined
             : {
-                background: `color-mix(in srgb, ${color} 18%, transparent)`,
-                color,
+                background: `color-mix(in srgb, ${buzz.color} 16%, transparent)`,
+                color: buzz.color,
               }
         }
         data-testid="tile-buy"
@@ -105,7 +110,7 @@ export function EventHatTile({
         ) : (
           <>
             <span>Buy</span>
-            <IconBolt size={14} className="fill-current" />
+            <CurrencyIcon currency="BUZZ" type={buzzType} size={14} />
             <span className="tabular-nums">{numberWithCommas(item.unitAmount)}</span>
           </>
         )}
