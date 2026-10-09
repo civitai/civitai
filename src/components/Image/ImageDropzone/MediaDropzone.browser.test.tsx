@@ -40,7 +40,7 @@ import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 // eslint-disable-next-line import/first
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 // eslint-disable-next-line import/first
-import { UNREADABLE_PROBE_TIMEOUT_MS } from '~/utils/unreadable-pick';
+import { isPickSnapshot, UNREADABLE_PROBE_TIMEOUT_MS } from '~/utils/unreadable-pick';
 
 const PICK_MESSAGE =
   "Your phone's photo picker gave us a file we can't open. Choose it from Files instead.";
@@ -311,6 +311,8 @@ describe('MediaDropzone — a picked file that turns unreadable after the pick',
     await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
     const [{ file }] = onDrop.mock.calls[0][0] as { file: File }[];
     expect([file.name, file.type]).toEqual(['photo-0.jpg', 'image/jpeg']);
+    // The consumer gets the copy itself, which is how the post editor tells it from the device's own.
+    expect(isPickSnapshot(file)).toBe(true);
     expect(await file.text()).toBe('photo bytes');
     expect(reports()).toEqual([]);
   });

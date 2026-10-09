@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   boundedFileFields,
+  isPickSnapshot,
   isReadFailure,
   probeUnreadablePick,
   snapshotPick,
@@ -177,6 +178,20 @@ describe('snapshotPick', () => {
       'image/jpeg',
       1_700_000_000_000,
     ]);
+    expect(isPickSnapshot(file!)).toBe(true);
+    expect(isPickSnapshot(photo)).toBe(false);
+  });
+
+  it('marks no file it keeps as it is as a copy', async () => {
+    const big = imageFile(new Uint8Array(MAX_BYTES + 1));
+    const video = new File(['v'], 'v.mp4', { type: 'video/mp4' });
+    const failing = imageFile('x');
+    failing.arrayBuffer = () => Promise.reject(new DOMException('denied', 'SecurityError'));
+    for (const original of [big, video, failing]) {
+      const { file } = await snapshotPick(original, { maxBytes: MAX_BYTES });
+      expect(file).toBe(original);
+      expect(isPickSnapshot(original)).toBe(false);
+    }
   });
 
   it('does not read an image over the size limit in full: it is probed and kept', async () => {

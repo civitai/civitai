@@ -1228,7 +1228,7 @@ export function SourceImageUploadMultiple({
     try {
       // Resolve dimensions (cache-first) so we can detect whether cropping is needed. A picked file
       // that can no longer be read is set aside for the Files fallback; the others carry on.
-      const measured = await Promise.all(
+      const settled = await Promise.allSettled(
         items.map(async (item) => {
           const cached = sourceMetadataStore.getMetadata(item.previewUrl);
           let dims =
@@ -1248,6 +1248,7 @@ export function SourceImageUploadMultiple({
           return { dimensioned: { ...item, width: dims.width, height: dims.height } };
         })
       );
+      const measured = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
       const unreadableItems = measured.flatMap((m) => (m.unreadable ? [m.unreadable] : []));
       if (unreadableItems.length) {
         const ids = new Set(unreadableItems.map((x) => x.uploadId));
@@ -1261,6 +1262,8 @@ export function SourceImageUploadMultiple({
           unreadableItems.map((x) => x.slotIndex)
         );
       }
+      const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed) throw failed.reason;
       const dimensioned = measured.flatMap((m) => (m.dimensioned ? [m.dimensioned] : []));
       if (!dimensioned.length) return;
 

@@ -1912,12 +1912,12 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
     await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
   });
 
-  test('two slots, one unreadable: the other still uploads, and only the unreadable one is offered', async () => {
+  test('two slots, one unreadable: the other still uploads, and the Files fallback fills the unreadable one', async () => {
+    const unreadableUrls = new Set<string>();
     mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
       if (unreadableUrls.has(src as string)) throw imageLoadError();
       return { width: 1024, height: 1024 };
     });
-    const unreadableUrls = new Set<string>();
     const { createObjectURL } = URL;
     URL.createObjectURL = (obj: Blob | MediaSource) => {
       const url = createObjectURL.call(URL, obj);
@@ -1934,9 +1934,42 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
     await expect.element(page.getByText(PICK_MESSAGE, { exact: true })).toBeVisible();
     expect(filesFallbackInput().multiple).toBe(false);
     await vi.waitFor(() => expect(uploads).toHaveLength(1));
-    const uploaded = await loadableImageUrl();
-    uploads[0].resolve({ url: uploaded, available: true });
-    await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
+    const first = await loadableImageUrl();
+    uploads[0].resolve({ url: first, available: true });
+    await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([first]));
+
+    // The first slot is filled, so a file from Files can only fill the second.
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-2.jpg')]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    const second = await loadableImageUrl();
+    uploads[1].resolve({ url: second, available: true });
+    await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([first, second]));
+  });
+
+  test('two slots, one unreadable and one failing otherwise: both are told', async () => {
+    const urls = new Map<string, string>();
+    mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
+      const name = urls.get(src as string);
+      if (name?.startsWith('uncopied')) throw imageLoadError();
+      throw new DOMException('Image failed to load', 'EncodingError');
+    });
+    const { createObjectURL } = URL;
+    URL.createObjectURL = (obj: Blob | MediaSource) => {
+      const url = createObjectURL.call(URL, obj);
+      if (obj instanceof File) urls.set(url, obj.name);
+      return url;
+    };
+    onTestFinished(() => {
+      URL.createObjectURL = createObjectURL;
+    });
+    renderWithProviders(<SlotHarness />);
+    await chooseFiles(dropzoneInput(), [devicePick('0.jpg'), imageFile('photo-1.jpg')]);
+
+    await expect.element(page.getByText(PICK_MESSAGE, { exact: true })).toBeVisible();
+    await expect.element(page.getByText(PREP_ERROR, { exact: true })).toBeVisible();
+    await expect.poll(loaderCount).toBe(0);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
   });
 
   test('off Android: a neutral message and no Files chooser', async () => {
