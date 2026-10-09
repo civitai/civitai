@@ -1,3 +1,4 @@
+import { useElementSize } from '@mantine/hooks';
 import { IconBox, IconFileText, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
@@ -27,16 +28,27 @@ export function EventContentThumb({
   className?: string;
 }) {
   const Icon = TYPE_ICON[entityType as keyof typeof TYPE_ICON] ?? IconPhoto;
+  // The hat is sized for a feed card; on this smaller card it shrinks by the card's width. Until
+  // that is measured there is no hat, rather than a feed-sized one for a frame.
+  const { ref, width } = useElementSize();
+  const wearing = hat && width > 0 ? hat : undefined;
   return (
     <div
+      ref={ref}
       className={clsx(
         'relative aspect-[4/5] w-full overflow-hidden rounded-md bg-gray-2 dark:bg-dark-5',
         className
       )}
       style={
-        hat
+        wearing
           ? ({
-              '--event-decoration-clear-left': `${getEventDecorationClearLeft(hat, 'inside')}px`,
+              '--event-decoration-clear-left': `${getEventDecorationClearLeft(
+                wearing,
+                'inside',
+                undefined,
+                0,
+                width
+              )}px`,
             } as CSSProperties)
           : undefined
       }
@@ -64,7 +76,9 @@ export function EventContentThumb({
           <Icon size={28} stroke={1.5} />
         </div>
       )}
-      {hat && <EventDecorationOverlay decoration={hat} placement="inside" />}
+      {wearing && (
+        <EventDecorationOverlay decoration={wearing} placement="inside" cardWidth={width} />
+      )}
     </div>
   );
 }

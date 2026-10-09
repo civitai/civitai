@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
+import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
@@ -167,7 +168,9 @@ export function ScoredEventHero({
             </Text>
             {winner && page?.prize && (
               <Group gap="md" wrap="nowrap" data-testid="hero-prize">
-                {page.prize.imageUrl ? (
+                {page.prizeBadge?.[winner] ? (
+                  <PrizeBadge badge={page.prizeBadge[winner]} className="w-16 shrink-0" />
+                ) : page.prize.imageUrl ? (
                   <div className="w-16 shrink-0">
                     <EdgeMedia src={page.prize.imageUrl} width={128} alt="" />
                   </div>

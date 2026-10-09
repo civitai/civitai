@@ -1,17 +1,57 @@
 import { Group, Text, UnstyledButton } from '@mantine/core';
+import { IconBolt } from '@tabler/icons-react';
+import clsx from 'clsx';
+import type { CSSProperties } from 'react';
 import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
+import { EVENT_CARD_SURFACE } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
-import { Currency } from '~/shared/utils/prisma/enums';
 import type { CosmeticShopItemGetById } from '~/types/router';
+import { numberWithCommas } from '~/utils/number-helpers';
+
+/**
+ * How a tile is dressed by its price tier, cheapest first: plain; then a team-colour border over a
+ * team-tinted fill; then a foil border of the team colour and gold over a fill that shades from the
+ * team colour to gold. Every tier above the second keeps the foil.
+ */
+function tierStyle(tier: number, color: string): CSSProperties | undefined {
+  if (tier === 0) return undefined;
+  const tint = (c: string, pct: number) => `color-mix(in srgb, ${c} ${pct}%, var(--tile-bg))`;
+  // Custom properties, read by the TIERED classes: they beat the theme's dark: border and fill.
+  if (tier === 1)
+    return {
+      '--tier-border': `color-mix(in srgb, ${color} 55%, transparent)`,
+      '--tier-bg': `linear-gradient(170deg, ${tint(color, 14)}, var(--tile-bg) 70%)`,
+      '--tier-shadow': `0 0 16px -6px ${color}`,
+    } as CSSProperties;
+  return {
+    '--tier-border': 'transparent',
+    '--tier-bg': `linear-gradient(160deg, ${tint(color, 18)}, var(--tile-bg) 55%, ${tint(
+      '#fcc419',
+      14
+    )}) padding-box, linear-gradient(135deg, ${color}, #fcc419, ${color}) border-box`,
+    '--tier-shadow': `0 0 22px -6px ${color}`,
+  } as CSSProperties;
+}
+
+const TIERED =
+  '![border-color:var(--tier-border)] ![background:var(--tier-bg)] [box-shadow:var(--tier-shadow)]';
 
 /**
  * A hat for sale on the event page. Opens the shop's own preview, so buying here is buying in the
  * shop: same checks, same purchase.
  */
-export function EventHatTile({ item, color }: { item: CosmeticShopItemGetById; color?: string }) {
+export function EventHatTile({
+  item,
+  color = 'var(--mantine-color-blue-5)',
+  tier = 0,
+}: {
+  item: CosmeticShopItemGetById;
+  color?: string;
+  /** The item's price tier on the shelf, 0 for the cheapest. */
+  tier?: number;
+}) {
   const url = (item.cosmetic?.data as { url?: unknown } | null)?.url;
   const purchases = (item.meta as CosmeticShopItemMeta | null)?.purchases ?? 0;
   const soldOut = item.availableQuantity != null && item.availableQuantity - purchases <= 0;
@@ -25,25 +65,51 @@ export function EventHatTile({ item, color }: { item: CosmeticShopItemGetById; c
           props: { shopItem: item },
         })
       }
-      className="flex flex-col gap-2 rounded-lg border border-solid border-gray-3 p-2 transition-colors hover:border-gray-5 disabled:opacity-50 dark:border-dark-4 dark:hover:border-dark-2"
-    >
-      {typeof url === 'string' && <HatArt url={url} color={color} />}
-      <Group justify="space-between" gap="xs" wrap="nowrap" px={4}>
-        <Text fw={700} size="sm" truncate>
-          {item.title}
-        </Text>
-        <CurrencyBadge
-          currency={Currency.BUZZ}
-          unitAmount={item.unitAmount}
-          variant="transparent"
-          className="shrink-0 !px-0"
-        />
-      </Group>
-      {soldOut && (
-        <Text size="xs" c="dimmed" px={4}>
-          Sold out
-        </Text>
+      data-tier={tier}
+      aria-label={
+        soldOut ? `${item.title}, sold out` : item.cosmetic ? `Buy ${item.title}` : item.title
+      }
+      className={clsx(
+        'group flex flex-col gap-2 rounded-lg border-2 border-solid border-gray-3 p-2 transition [--tile-bg:white]',
+        'dark:border-dark-4 dark:[--tile-bg:var(--mantine-color-dark-6)]',
+        EVENT_CARD_SURFACE,
+        'enabled:hover:-translate-y-0.5 enabled:hover:shadow-lg disabled:opacity-50',
+        'motion-reduce:transition-none motion-reduce:hover:translate-y-0',
+        tier > 0 && TIERED
       )}
+      style={tierStyle(tier, color)}
+    >
+      {typeof url === 'string' && <HatArt url={url} color={color} width={192} />}
+      <Text fw={700} size="sm" truncate px={2}>
+        {item.title}
+      </Text>
+      <Group
+        gap={4}
+        justify="center"
+        wrap="nowrap"
+        className="rounded-full py-1 text-sm font-bold transition-colors"
+        style={
+          soldOut
+            ? undefined
+            : {
+                background: `color-mix(in srgb, ${color} 18%, transparent)`,
+                color,
+              }
+        }
+        data-testid="tile-buy"
+      >
+        {soldOut ? (
+          <Text size="sm" fw={700} c="dimmed">
+            Sold out
+          </Text>
+        ) : (
+          <>
+            <span>Buy</span>
+            <IconBolt size={14} className="fill-current" />
+            <span className="tabular-nums">{numberWithCommas(item.unitAmount)}</span>
+          </>
+        )}
+      </Group>
     </UnstyledButton>
   );
 }

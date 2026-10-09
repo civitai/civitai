@@ -259,6 +259,9 @@ export type EventPageCopy = {
   summary: string;
   steps: { title: string; body: string }[];
   prize: { title: string; body: string; imageUrl?: string };
+  // The prize badge's art per team, as CDN image ids: `animated` for viewers who autoplay, `static`
+  // (a still frame) for those who turned autoplay off.
+  prizeBadge?: Record<string, { animated: string; static: string }>;
   faq?: { question: string; answer: string }[];
 };
 
