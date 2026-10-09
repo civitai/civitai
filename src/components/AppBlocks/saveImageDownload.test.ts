@@ -423,8 +423,8 @@ describe('forceSaveBytesExtension', () => {
   it('drops control and bidi-override characters', () => {
     expect(forceSaveBytesExtension('inv\u202Egpj.exe', 'text/plain')).toBe('invgpj.txt');
     expect(forceSaveBytesExtension('a\u0000b\n.png', 'image/png')).toBe('ab.png');
-    expect(forceSaveBytesExtension('x⁧gpj.exe⁩', 'text/plain')).toBe('xgpj.txt');
-    expect(forceSaveBytesExtension('a‎b​c\u007f.txt', 'text/plain')).toBe('abc.txt');
+    expect(forceSaveBytesExtension('x\u2067gpj.exe\u2069', 'text/plain')).toBe('xgpj.txt');
+    expect(forceSaveBytesExtension('a\u200eb\u200bc\u007f.txt', 'text/plain')).toBe('abc.txt');
   });
 });
 
