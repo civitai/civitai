@@ -21,6 +21,7 @@
   import { FEEDBACK_ROW_INTERACTIVE, feedbackRowExpands } from '$lib/feedback-row-click';
   import { feedbackNextPageHref } from '$lib/feedback-sort';
   import {
+    feedbackAreaLabel,
     feedbackAttachmentCount,
     feedbackStatusBadgeClass,
     handledByLabel,
@@ -407,7 +408,7 @@
             <TableCell class="whitespace-nowrap tabular-nums" title={dateTime(row.createdAt)}>
               {shortAge(row.createdAt)}
             </TableCell>
-            <TableCell><Badge variant="outline">{row.area}</Badge></TableCell>
+            <TableCell><Badge variant="outline">{feedbackAreaLabel(row.area)}</Badge></TableCell>
             <TableCell>
               {#if row.username}
                 <a href={userLookupUrl(row.username)} class={LINK_CLASS}>{row.username}</a>
