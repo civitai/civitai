@@ -143,18 +143,40 @@ it('a hostile excerpt passes through unchanged — escaping is the renderer’s 
   expect(describeBuildFailure(HOSTILE_DETAIL).excerpt).toBe(HOSTILE_EXCERPT);
 });
 
-describe('the build’s own report of the failed step wins over the text', () => {
-  it('a reported step + class decide the cause even when the excerpt reads like the author’s', () => {
-    // The excerpt alone would be classed `author` (first line `ERROR:`).
+describe('the build’s own report of the failed step: a positive class wins, unknown defers to the text', () => {
+  it('build + unknown: the text rules decide the cause, and the step is still shown', () => {
+    // `unknown` means no deterministic signal says either way, so the recipe's own
+    // author-facing `ERROR:` line still yields the author guidance.
     const d = describeBuildFailure(RECIPE_ERROR_DETAIL, {
       failedStep: 'build',
       failureClass: 'unknown',
     });
+    expect(d.failureClass).toBe('author');
+    expect(d.guidance).toBe(AUTHOR_FAILURE_GUIDANCE);
+    expect(d.failedStepLabel).toBe('build');
+    expect(d.excerpt).toBe(RECIPE_ERROR_EXCERPT);
+  });
+
+  it('build + unknown with no recognisable excerpt stays neutral unknown, with the step', () => {
+    const d = describeBuildFailure(NPM_TAIL_DETAIL, {
+      failedStep: 'build',
+      failureClass: 'unknown',
+    });
     expect(d.failureClass).toBe('unknown');
+    expect(d.guidance).toBe(UNKNOWN_FAILURE_GUIDANCE);
     expect(d.failedStepLabel).toBe('build');
     expect(d.badge).toBe('failed at build');
-    expect(d.guidance).toBe(UNKNOWN_FAILURE_GUIDANCE);
-    expect(d.excerpt).toBe(RECIPE_ERROR_EXCERPT);
+    expect(d.excerpt).toBe(NPM_TAIL_EXCERPT);
+  });
+
+  it('a POSITIVE class still wins over an `ERROR:`-looking excerpt (platform stays platform)', () => {
+    const d = describeBuildFailure(RECIPE_ERROR_DETAIL, {
+      failedStep: 'clone',
+      failureClass: 'platform',
+    });
+    expect(d.failureClass).toBe('platform');
+    expect(d.guidance).toBe(PLATFORM_FAILURE_GUIDANCE);
+    expect(d.failedStepLabel).toBe('fetching the source');
   });
 
   it('…and against a scan excerpt, a clone failure is ours', () => {

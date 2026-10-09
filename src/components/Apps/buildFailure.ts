@@ -20,7 +20,10 @@ import {
  *      exactly and win outright: they describe something that happened AFTER, or instead
  *      of, the build the attempt row records.
  *   2. Otherwise, when the latest attempt reports which pipeline step failed and the class
- *      the server derived from it, those decide the cause. Deterministic: no log text.
+ *      the server derived from it, a POSITIVE class (author / platform / transient, or a
+ *      scan step) decides the cause. Deterministic: no log text. A class of `unknown`
+ *      means no deterministic signal says either way, so rule 3 decides the cause and the
+ *      reported step is still shown.
  *   3. Otherwise (a pipeline or a row that predates the signals, no attempt row as new as
  *      the version's last deploy_state change, or the attempts table not applied yet) the
  *      cause is inferred from the TEXT of the stored detail.
@@ -128,13 +131,18 @@ function securityScan(
 /**
  * The cause from the build's own report of which step failed.
  *
- * A `scan` failure the server classes `unknown` keeps the security-scan wording: the step
- * is known even though whose component the finding is in is not yet.
+ * A POSITIVE class (`author`, `platform`, `transient`) decides the cause outright, over
+ * anything the excerpt says. `unknown` means no deterministic signal says either way, so
+ * the TEXT rules decide the cause and guidance (`textCause`), and only the step label is
+ * added. The one exception is `scan`: a scan failure classed `unknown` keeps the
+ * security-scan wording, because the step itself is known even though whose component the
+ * finding is in is not yet.
  */
 function fromSignals(
   step: BuildPipelineStep,
   cls: BuildFailureClassSignal,
-  excerpt: string | null
+  excerpt: string | null,
+  textCause: () => BuildFailureDescription
 ): BuildFailureDescription {
   const failedStepLabel = BUILD_STEP_LABELS[step];
   switch (cls) {
@@ -165,10 +173,15 @@ function fromSignals(
         excerpt,
         failedStepLabel,
       };
-    case 'unknown':
-      return step === 'scan'
-        ? securityScan(excerpt, failedStepLabel)
-        : unknown(excerpt, failedStepLabel);
+    case 'unknown': {
+      if (step === 'scan') return securityScan(excerpt, failedStepLabel);
+      const text = textCause();
+      return {
+        ...text,
+        failedStepLabel,
+        badge: text.failureClass === 'unknown' ? `failed at ${failedStepLabel}` : text.badge,
+      };
+    }
   }
 }
 
@@ -214,9 +227,17 @@ export function describeBuildFailure(
   const step = signals?.failedStep;
   const cls = signals?.failureClass;
   if (isBuildDetail && isBuildPipelineStep(step) && isBuildFailureClassSignal(cls)) {
-    return fromSignals(step, cls, rest);
+    return fromSignals(step, cls, rest, () => describeFromText(detail, head, rest));
   }
+  return describeFromText(detail, head, rest);
+}
 
+/** The text rules: the cause as inferred from the stored detail alone. */
+function describeFromText(
+  detail: string,
+  head: string,
+  rest: string | null
+): BuildFailureDescription {
   if (detail.length === 0) return unknown(null);
 
   // Not a shape any writer produces today. Show it as the excerpt rather than hide it,
