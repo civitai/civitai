@@ -18,7 +18,10 @@ import {
   maskUnearnedMilestone,
 } from '~/server/services/creator-journey.service';
 import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
-import { judgeVoteCountSql } from '~/server/services/creator-milestone-detectors';
+import {
+  judgeVoteCountSql,
+  ledgerWinCountSql,
+} from '~/server/services/creator-milestone-detectors';
 
 const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[0]> = {}) => ({
   key: 'hidden:remix',
@@ -576,11 +579,13 @@ describe('judge votes', () => {
   });
 
   it("shows the viewer's own Crucible vote count against every judge rank", async () => {
-    chQuery.mockResolvedValue({ json: async () => [{ votes: '640' }] });
+    chQuery.mockImplementation(async ({ query }: { query: string }) => ({
+      json: async () => (query === judgeVoteCountSql ? [{ votes: '640' }] : [{ wins: '0' }]),
+    }));
 
     const { activity } = await getCreatorJourney(42);
 
-    expect(chQuery).toHaveBeenCalledTimes(1);
+    expect(chQuery).toHaveBeenCalledTimes(2);
     expect(chQuery).toHaveBeenCalledWith({
       query: judgeVoteCountSql,
       query_params: { userId: 42 },
@@ -639,5 +644,64 @@ describe('judge votes', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('compete wins', () => {
+  const winRung = (threshold: number) => ({
+    ...definition({
+      key: `compete:wins-${threshold}`,
+      track: 'compete',
+      threshold,
+      hidden: false,
+      hint: null,
+    }),
+    name: `${threshold} Wins`,
+    cosmetic: null,
+  });
+
+  beforeEach(() => {
+    chQuery.mockReset();
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([{ wins: 3 }] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? [winRung(1), winRung(5), winRung(10)] : [])) as never);
+  });
+
+  // Wins before the winners table exist only in the ledger; without them a veteran reads as new.
+  it("adds the viewer's ledger wins to the wins in Postgres", async () => {
+    chQuery.mockImplementation(async ({ query }: { query: string }) => ({
+      json: async () => (query === ledgerWinCountSql ? [{ wins: '4' }] : [{ votes: '0' }]),
+    }));
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(chQuery).toHaveBeenCalledWith({
+      query: ledgerWinCountSql,
+      query_params: { userId: 42 },
+      format: 'JSONEachRow',
+      abort_signal: expect.any(AbortSignal),
+      clickhouse_settings: { max_execution_time: 5 },
+    });
+    expect(
+      activity.milestones.map(({ key, measure, current }) => ({ key, measure, current }))
+    ).toEqual([
+      { key: 'compete:wins-1', measure: 'wins', current: 7 },
+      { key: 'compete:wins-5', measure: 'wins', current: 7 },
+      { key: 'compete:wins-10', measure: 'wins', current: 7 },
+    ]);
+  });
+
+  it('still loads, counting the Postgres wins, when the ledger read fails', async () => {
+    chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
+    loggingMock.logToAxiom.mockClear();
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(activity.milestones.map((m) => m.current)).toEqual([3, 3, 3]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-journey-ledger-wins' })
+    );
   });
 });
