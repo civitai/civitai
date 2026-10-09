@@ -24,6 +24,7 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 const state = vi.hoisted(() => ({
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
   subListingCount: 0,
+  flaggedCount: 0,
 }));
 
 // Page's getServerSideProps calls createServerSideProps at module top — stub so
@@ -157,6 +158,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'appListings.countSubListingQueue': {
         useQuery: () => ({ data: { count: state.subListingCount } }),
       },
+      'appFeedback.modCountFlagged': { useQuery: () => ({ data: state.flaggedCount }) },
     },
     {
       useUtils: () => ({
@@ -184,10 +186,42 @@ function routerPush() {
   return (readRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push;
 }
 
+function routerState() {
+  return readRouter() as unknown as { query: Record<string, string> };
+}
+
 beforeEach(() => {
   state.flags = { appBlocks: true, appReviewPage: true };
   state.subListingCount = 0;
+  state.flaggedCount = 0;
+  routerState().query = {};
   routerPush().mockClear();
+});
+
+describe('ReviewQueuePage — App feedback tab', () => {
+  test('a moderator gets the tab, with the flagged count on its label', async () => {
+    state.flaggedCount = 3;
+    renderWithProviders(<ReviewQueuePage canMonitorAppFeedback />);
+    await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-feedback-flagged-count')).toHaveTextContent('3');
+  });
+
+  test('?tab=app-feedback opens it for a moderator', async () => {
+    routerState().query = { tab: 'app-feedback' };
+    renderWithProviders(<ReviewQueuePage canMonitorAppFeedback />);
+    await expect
+      .element(page.getByRole('tab', { name: /App feedback/ }))
+      .toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('without it: no tab, and ?tab=app-feedback lands on Pending', async () => {
+    routerState().query = { tab: 'app-feedback' };
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByRole('tab', { name: /Pending/ }))
+      .toHaveAttribute('aria-selected', 'true');
+    expect(page.getByRole('tab', { name: /App feedback/ }).elements()).toHaveLength(0);
+  });
 });
 
 describe('ReviewQueuePage — Sub-listings tab', () => {
