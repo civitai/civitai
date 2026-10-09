@@ -9,9 +9,9 @@ type CredentialContext = {
 };
 
 /**
- * True when the request was authenticated by a browser session, or by an API key that was not
- * issued to an OAuth client (a `User` or `System` key) and holds the full scope. OAuth-issued tokens (at any scope), reduced-scope keys and
- * query-string tokens (any value) are refused.
+ * True when the request was authenticated by a browser session, or by a full-scope API key not
+ * issued to an OAuth client (no `clientId`). OAuth-issued tokens (at any scope), reduced-scope
+ * keys and any non-empty `?token=` are refused.
  *
  * Reads `req.context`, so it must run after `getServerAuthSession` (which `AuthedEndpoint`
  * calls). Any sign of a bearer credential — the header or a context field — counts as one, so
@@ -35,7 +35,7 @@ export function isFullScopeSession(req: NextApiRequest): boolean {
 export function requireFullScopeSession(req: NextApiRequest, res: NextApiResponse): boolean {
   if (isFullScopeSession(req)) return true;
   res.status(403).json({
-    error: 'This action requires a signed-in session or a full-access personal API key',
+    error: 'This action requires a signed-in session or a full-access API key',
   });
   return false;
 }
