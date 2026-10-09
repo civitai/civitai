@@ -45,6 +45,24 @@ export const birthday2026 = createEvent(name, {
       title: 'Birthday 2026 Champion badge',
       body: 'An animated badge in the winning colour, for every member of the winning team whose hats earned points.',
     },
+    prizeBadge: {
+      Yellow: {
+        animated: '5cf4f411-bb05-4afc-86b9-0ce9fbd8c683',
+        static: 'c447b59d-bc02-4e7f-a83b-ad1efe3a70cf',
+      },
+      Blue: {
+        animated: 'd0aedf96-8bb4-4837-9e22-f13662391e98',
+        static: 'aa5ee01e-dfee-458a-9431-16c5e8656754',
+      },
+      Pink: {
+        animated: '54cec518-332c-49cb-8584-359df0ff2ff8',
+        static: '271a8ed5-46ae-47bc-8e63-7f913859bd3b',
+      },
+      Green: {
+        animated: '3d5d9dea-c84a-4801-bf95-78dae8731010',
+        static: '0c6d2d0a-ab63-45ee-925f-4019ee78db20',
+      },
+    },
     faq: [
       {
         question: 'What happens to my hats when the event ends?',

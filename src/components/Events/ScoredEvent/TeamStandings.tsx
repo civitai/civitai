@@ -1,4 +1,4 @@
-import { Group, Paper, Progress, SegmentedControl, Stack, Text } from '@mantine/core';
+import { Group, Paper, Progress, SegmentedControl, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconChartLine, IconFlame, IconTrophy } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';
 import {
@@ -105,12 +105,9 @@ export function TeamStandings({
         }
       />
 
-      <div
-        className={
-          charted ? 'grid gap-4 @md:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]' : 'flex flex-col gap-4'
-        }
-      >
-        <Stack gap="sm" data-testid="standings-rows">
+      {/* Standings in the left third and the chart in the rest; stacked on a phone. */}
+      <div className="grid gap-4 @md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <Stack gap="xs" data-testid="standings-rows">
           {standings.teams.map((t) => {
             const color = teamColor(t.team) ?? 'gray';
             const mine = t.team === myTeam;
@@ -125,16 +122,16 @@ export function TeamStandings({
                   mine ? { borderColor: color, boxShadow: `0 0 18px -4px ${color}` } : undefined
                 }
               >
-                <Group gap="md" p="md" wrap="nowrap">
-                  <Text fw={800} fz={22} w={22} ta="center">
+                <Group gap="sm" px="sm" py={10} wrap="nowrap">
+                  <Text fw={800} fz={18} w={18} ta="center">
                     {t.rank}
                   </Text>
-                  <div className="w-10 shrink-0">
-                    {hat && <EdgeMedia src={hat} width={80} alt="" />}
+                  <div className="w-8 shrink-0">
+                    {hat && <EdgeMedia src={hat} width={64} alt="" />}
                   </div>
                   <Stack gap={6} className="min-w-0 flex-1">
                     <Group justify="space-between" gap="xs" wrap="nowrap">
-                      <Text fw={700} c={color} truncate>
+                      <Text fw={700} size="sm" c={color} truncate>
                         Team {t.team}
                         {mine && ' · you'}
                       </Text>
@@ -183,15 +180,67 @@ export function TeamStandings({
             </Stack>
           </SpotlightBorderCard>
         ) : (
-          <Text size="sm" c="dimmed" data-testid="chart-pending">
-            <IconChartLine size={14} className="inline align-[-2px]" />{' '}
-            {startDate > new Date()
-              ? `Scoring starts ${formatDate(startDate, 'MMM D')}. The chart fills in from there.`
-              : 'The chart starts after the first hour of scoring.'}
-          </Text>
+          <ChartPending
+            startDate={startDate}
+            colors={standings.teams.map((t) => teamColor(t.team))}
+          />
         )}
       </div>
     </Stack>
+  );
+}
+
+// Where the chart will be, before there is anything to plot: a faint sketch of team lines behind a
+// plain statement of when it fills in.
+const SKETCH = [
+  '0,70 20,62 40,64 60,48 80,40 100,30',
+  '0,78 20,74 40,60 60,58 80,52 100,46',
+  '0,82 20,80 40,74 60,70 80,62 100,60',
+  '0,88 20,86 40,84 60,80 80,78 100,74',
+];
+
+function ChartPending({ startDate, colors }: { startDate: Date; colors: (string | undefined)[] }) {
+  const upcoming = startDate > new Date();
+  return (
+    <div
+      className="relative flex min-h-[240px] flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border border-dashed border-gray-4 bg-gray-0 p-6 text-center dark:border-dark-3 dark:bg-dark-7"
+      data-testid="chart-pending"
+    >
+      <svg
+        aria-hidden
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className="pointer-events-none absolute inset-0 size-full opacity-25"
+      >
+        {SKETCH.map((points, i) => (
+          <polyline
+            key={points}
+            points={points}
+            fill="none"
+            stroke={colors[i] ?? 'currentColor'}
+            strokeWidth={2}
+            strokeDasharray="4 3"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+      </svg>
+      <ThemeIcon size={72} radius="xl" variant="light" color="blue" className="relative">
+        <IconChartLine size={40} />
+      </ThemeIcon>
+      <Stack gap={4} className="relative" maw={360}>
+        <Text fw={800} size="lg">
+          {upcoming ? "Competition hasn't started yet" : 'The graph is on its way'}
+        </Text>
+        <Text size="sm" c="dimmed">
+          {upcoming
+            ? `There will be a graph of every team's points here. Scoring starts ${formatDate(
+                startDate,
+                'MMM D'
+              )}.`
+            : 'It draws its first point after the first hour of scoring.'}
+        </Text>
+      </Stack>
+    </div>
   );
 }
 

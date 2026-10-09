@@ -8,7 +8,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconClock, IconShoppingBag } from '@tabler/icons-react';
+import { IconBolt, IconClock, IconShoppingBag } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
@@ -44,6 +44,13 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
     .filter((d): d is Date => !!d)
     .sort((a, b) => a.getTime() - b.getTime())[0];
   const shown = price === 'all' ? items : items.filter((i) => i.unitAmount === Number(price));
+  // One group per price, cheapest first; `shown` is already in price order.
+  const tiers: { price: number; items: CosmeticShopItemGetById[] }[] = [];
+  for (const item of shown) {
+    const last = tiers[tiers.length - 1];
+    if (last?.price === item.unitAmount) last.items.push(item);
+    else tiers.push({ price: item.unitAmount, items: [item] });
+  }
 
   return (
     <Stack gap="md" id="team-hats">
@@ -51,7 +58,7 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
         icon={IconShoppingBag}
         title={`Team ${team} hats`}
         color={teamColor(team)}
-        subtitle="Every design in your colour. Each one is a separate hat you can place."
+        subtitle="Every design in your colour. Pick one to preview and buy it."
       >
         <Group gap="sm">
           {leavesAt && (
@@ -85,11 +92,36 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
       ) : !shown.length ? (
         <Text c="dimmed">No hats are for sale right now.</Text>
       ) : (
-        <SimpleGrid cols={{ base: 2, sm: 3, md: 4 }} spacing="md">
-          {shown.map((item) => (
-            <EventHatTile key={item.id} item={item} color={teamColor(team)} />
+        <Stack gap="lg">
+          {tiers.map((tier) => (
+            <Stack key={tier.price} gap="sm" data-testid="shelf-tier">
+              {prices.length > 1 && (
+                <Group gap="sm" wrap="nowrap">
+                  <Group gap={4} wrap="nowrap" className="shrink-0">
+                    <IconBolt size={16} className="fill-current text-yellow-6" />
+                    <Text fw={800} className="tabular-nums">
+                      {numberWithCommas(tier.price)}
+                    </Text>
+                    <Text size="sm" c="dimmed">
+                      · {tier.items.length} {tier.items.length === 1 ? 'hat' : 'hats'}
+                    </Text>
+                  </Group>
+                  <div className="h-px flex-1 bg-gray-3 dark:bg-dark-4" />
+                </Group>
+              )}
+              <SimpleGrid cols={{ base: 2, xs: 3, sm: 4, md: 5, lg: 6 }} spacing="sm">
+                {tier.items.map((item) => (
+                  <EventHatTile
+                    key={item.id}
+                    item={item}
+                    color={teamColor(team)}
+                    tier={prices.indexOf(tier.price)}
+                  />
+                ))}
+              </SimpleGrid>
+            </Stack>
           ))}
-        </SimpleGrid>
+        </Stack>
       )}
     </Stack>
   );

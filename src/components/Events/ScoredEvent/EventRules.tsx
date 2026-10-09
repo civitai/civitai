@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
+import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
 import { describeEntityTypes } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { RouterOutput } from '~/types/router';
 
@@ -34,6 +35,10 @@ export function EventRules({ data }: { data: EventData }) {
   const cooldownMin = decoration ? Math.round(decoration.moveCooldownMs / 60_000) : 0;
   // Each step takes the next team's colour, as the hero's headline does.
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
+  const badges = data.teams.flatMap((team) => {
+    const badge = page.prizeBadge?.[team];
+    return badge ? [{ team, badge }] : [];
+  });
 
   return (
     <Stack gap="md">
@@ -115,16 +120,25 @@ export function EventRules({ data }: { data: EventData }) {
         className="rounded-xl border border-solid border-yellow-6/40 bg-yellow-0 p-4 dark:bg-yellow-9/10"
         data-testid="event-prize"
       >
-        <Group gap="lg" wrap="nowrap">
-          <div className="w-16 shrink-0 @sm:w-20">
-            {page.prize.imageUrl ? (
-              <EdgeMedia src={page.prize.imageUrl} width={160} alt="" />
-            ) : (
-              <ThemeIcon size={64} radius="xl" color="yellow" variant="light">
-                <IconTrophy size={36} />
-              </ThemeIcon>
-            )}
-          </div>
+        <div className="flex flex-col gap-4 @sm:flex-row @sm:items-center @sm:gap-6">
+          {badges.length ? (
+            // Every colour the badge comes in, in team order: the winners get theirs.
+            <div className="flex shrink-0 gap-1" data-testid="event-prize-badges">
+              {badges.map(({ team, badge }) => (
+                <PrizeBadge key={team} badge={badge} className="w-14 @sm:w-16" />
+              ))}
+            </div>
+          ) : (
+            <div className="w-16 shrink-0 @sm:w-20">
+              {page.prize.imageUrl ? (
+                <EdgeMedia src={page.prize.imageUrl} width={160} alt="" />
+              ) : (
+                <ThemeIcon size={64} radius="xl" color="yellow" variant="light">
+                  <IconTrophy size={36} />
+                </ThemeIcon>
+              )}
+            </div>
+          )}
           <Stack gap={4}>
             <Text size="xs" fw={700} tt="uppercase" c="yellow" lts={0.5}>
               The prize
@@ -136,7 +150,7 @@ export function EventRules({ data }: { data: EventData }) {
               {page.prize.body}
             </Text>
           </Stack>
-        </Group>
+        </div>
       </div>
 
       {!!page.faq?.length && (
