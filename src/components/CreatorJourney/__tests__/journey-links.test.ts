@@ -3,7 +3,9 @@ import { MantineProvider } from '@mantine/core';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import '~/__tests__/mocks/db.mock';
+import { measureHref } from '~/components/CreatorJourney/CreatorAchievements';
 import {
+  isAppPath,
   LinkedText,
   rewardLinks,
   unlockLinks,
@@ -63,9 +65,92 @@ describe('journey ladder links', () => {
     expect(linked).toContain('/user/alice');
   });
 
+  it('leaves the profile unlinked when there is no username', () => {
+    const linked = (Object.values(tierRewards).flat() as string[]).flatMap((reward) =>
+      hrefs(render(reward, rewardLinks()))
+    );
+    expect(linked.filter((href) => href.startsWith('/user/'))).toEqual([]);
+  });
+
+  it('sends each unlock to its page', () => {
+    const studio = 'https://creator-studio.civitai.com';
+    expect(
+      Object.fromEntries(
+        Object.entries(unlockLinks).map(([key, links]) => [key, links.map((link) => link.href)])
+      )
+    ).toEqual({
+      'crucible-judge': ['/crucibles'],
+      'daily-posts': ['/posts/create'],
+      'daily-articles': ['/articles/create'],
+      'challenge-create': ['/challenges/create', '/crucibles/create'],
+      'monetize-pricing': [`${studio}/models`],
+      'monetize-sales': [`${studio}/sales`],
+      'early-access-days': [`${studio}/models`],
+      'early-access-quantity': [`${studio}/models`],
+      announcements: [`${studio}/announcements`],
+      'placement-price-cap': ['/user/placements'],
+      'placement-free-slots': ['/user/placements'],
+      'creator-program': ['/creator-program'],
+    });
+  });
+
+  it('opens Creator Studio in a new tab and keeps app paths in the tab', () => {
+    const external = render('Run sales on your model versions', unlockLinksFor('monetize-sales'));
+    expect(external).toMatch(/target="_blank"/);
+    expect(external).toMatch(/rel="noreferrer"/);
+    const internal = render('Judge crucibles', unlockLinksFor('crucible-judge'));
+    expect(internal).not.toMatch(/target=/);
+    expect(isAppPath('/crucibles')).toBe(true);
+    expect(isAppPath('//evil.example/x')).toBe(false);
+  });
+
+  it('links phrases in text order whatever order the links are listed, skipping an overlap', () => {
+    const html = render('Create challenges and crucibles', [
+      { phrase: 'crucibles', href: '/b' },
+      { phrase: 'challenges', href: '/a' },
+      { phrase: 'challenges and', href: '/overlap' },
+    ]);
+    expect(hrefs(html)).toEqual(['/a', '/b']);
+    expect(visibleText(html)).toBe('Create challenges and crucibles');
+  });
+
   it('leaves the line whole and unlinked when a phrase is absent', () => {
     const html = render('Higher comment limits', [{ phrase: 'crucibles', href: '/crucibles' }]);
     expect(hrefs(html)).toEqual([]);
     expect(visibleText(html)).toBe('Higher comment limits');
+  });
+});
+
+describe('achievement row links', () => {
+  it('links rows to where the work happens, and only votes without a username', () => {
+    const measures = [
+      'models',
+      'articles',
+      'downloads',
+      'followers',
+      'reactions',
+      'revenue',
+      'votes',
+    ] as const;
+    const table = (username?: string) =>
+      Object.fromEntries(measures.map((measure) => [measure, measureHref(measure, username)]));
+    expect(table('alice')).toEqual({
+      models: '/user/alice/models',
+      articles: '/user/alice/articles',
+      downloads: undefined,
+      followers: undefined,
+      reactions: undefined,
+      revenue: '/user/alice/shop',
+      votes: '/crucibles',
+    });
+    expect(table()).toEqual({
+      models: undefined,
+      articles: undefined,
+      downloads: undefined,
+      followers: undefined,
+      reactions: undefined,
+      revenue: undefined,
+      votes: '/crucibles',
+    });
   });
 });

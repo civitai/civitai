@@ -72,8 +72,11 @@ export function LinkedText({ text, links }: { text: string; links: PhraseLink[] 
   return <>{parts}</>;
 }
 
+// `//host` is protocol-relative, so it leaves the site and must not go through NextLink.
+export const isAppPath = (href: string) => href.startsWith('/') && !href.startsWith('//');
+
 function PhraseAnchor({ href, children }: { href: string; children: ReactNode }) {
-  return href.startsWith('/') ? (
+  return isAppPath(href) ? (
     <Anchor component={NextLink} href={href} inherit>
       {children}
     </Anchor>

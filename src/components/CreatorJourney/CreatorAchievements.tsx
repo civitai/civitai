@@ -61,7 +61,7 @@ const measureCopy: Record<
 };
 
 /** Where a measure's work happens. Followers, downloads and reactions have no page of their own. */
-function measureHref(measure: Measure, username?: string) {
+export function measureHref(measure: Measure, username?: string) {
   if (measure === 'votes') return '/crucibles';
   if (!username) return undefined;
   if (measure === 'models') return `/user/${username}/models`;

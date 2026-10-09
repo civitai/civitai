@@ -9,7 +9,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useDisclosure } from '@mantine/hooks';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { CreatorScoreExplainer } from '~/components/Account/CreatorScoreExplainer';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
@@ -405,16 +405,10 @@ function NextRung({
 }
 
 function ScoreExplainerToggle() {
-  const [opened, setOpened] = useState(false);
+  const [opened, { toggle }] = useDisclosure(false);
   return (
     <div>
-      <Anchor
-        component="button"
-        type="button"
-        size="sm"
-        aria-expanded={opened}
-        onClick={() => setOpened((value) => !value)}
-      >
+      <Anchor component="button" type="button" size="sm" aria-expanded={opened} onClick={toggle}>
         How Creator Score is earned{' '}
         <IconChevronDown
           size={14}

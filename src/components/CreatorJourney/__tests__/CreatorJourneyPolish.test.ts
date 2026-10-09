@@ -26,7 +26,10 @@ const secret = (key: string, earned: boolean) => ({
   achievedAt: earned ? new Date('2026-10-06T00:00:00Z') : null,
 });
 
-const journey = (secrets: ReturnType<typeof secret>[] = []) =>
+const journey = (
+  secrets: ReturnType<typeof secret>[] = [],
+  extra: Partial<Record<'unlocks' | 'tiers' | 'activity', unknown>> = {}
+) =>
   ({
     scores: { total: 100, breakdown: {} },
     unlocks: [],
@@ -34,12 +37,26 @@ const journey = (secrets: ReturnType<typeof secret>[] = []) =>
     earned: [],
     activity: { milestones: [], closestNext: null },
     secrets,
+    ...extra,
   } as unknown as Journey);
+
+const milestone = (measure: string, key: string) => ({
+  key,
+  track: 'create',
+  measure,
+  threshold: 10,
+  name: key,
+  description: null,
+  badgeUrl: null,
+  current: 1,
+  earned: false,
+  achievedAt: null,
+});
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function mount(value: Journey) {
+function mount(value: Journey, username?: string) {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -48,7 +65,7 @@ function mount(value: Journey) {
       React.createElement(
         MantineProvider,
         null,
-        React.createElement(CreatorJourneyView, { journey: value })
+        React.createElement(CreatorJourneyView, { journey: value, username })
       )
     )
   );
@@ -76,10 +93,52 @@ describe('journey page polish', () => {
     const toggle = [...page.querySelectorAll('button')].find((b) =>
       b.textContent?.includes('How Creator Score is earned')
     );
+    // Collapse keeps its children mounted while closed, so read its aria-hidden, not the text.
+    const panel = [...page.querySelectorAll('[aria-hidden]')].find((el) =>
+      el.textContent?.startsWith('How Creator Score works')
+    );
     expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(panel?.getAttribute('aria-hidden')).toBe('true');
     act(() => toggle?.click());
     expect(toggle?.getAttribute('aria-expanded')).toBe('true');
-    expect(page.textContent).toContain('How Creator Score works');
+    expect(panel?.getAttribute('aria-hidden')).toBe('false');
+  });
+
+  it('links ladder unlocks, tier rewards and achievement rows on the rendered page', () => {
+    const page = mount(
+      journey([], {
+        tiers: [
+          {
+            key: 'score:supernova',
+            name: 'Supernova',
+            threshold: 1000,
+            hint: null,
+            badgeUrl: null,
+          },
+          { key: 'score:legend', name: 'Legend', threshold: 2000, hint: null, badgeUrl: null },
+        ],
+        unlocks: [
+          {
+            key: 'daily-posts:500',
+            minScore: 500,
+            label: 'Post up to 60 times a day',
+            surface: 'posting',
+            scoreKind: 'total',
+            source: 'compiled',
+          },
+        ],
+        activity: {
+          milestones: [milestone('models', 'create:models-10')],
+          closestNext: null,
+        },
+      }),
+      'alice'
+    );
+    const hrefs = [...page.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(
+      expect.arrayContaining(['/posts/create', '/user/alice', '/user/alice/models'])
+    );
+    expect(hrefs.filter((href) => href === '/creators/showcase')).toHaveLength(3);
   });
 
   it('shows the placeholder art on a hidden achievement not yet found, and not on a found one', () => {
