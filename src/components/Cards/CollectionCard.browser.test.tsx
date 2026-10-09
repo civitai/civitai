@@ -21,6 +21,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 vi.mock('~/providers/BrowserSettingsProvider', () => ({
   useBrowsingSettings: <T,>(selector: (state: { autoplayGifs: boolean }) => T) =>
     selector({ autoplayGifs: false }),
+  useAutoplayGifs: () => false,
 }));
 vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   function ImageGuard2({ children }: { children: (safe: boolean) => ReactNode }) {
