@@ -3,7 +3,6 @@ import type * as ApiKeyController from '~/server/controllers/api-key.controller'
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-// Handlers are stubbed so only the router's middleware chain is under test.
 vi.mock('~/server/controllers/api-key.controller', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiKeyController>()),
   addApiKeyHandler: vi.fn(async () => 'added'),
@@ -42,6 +41,7 @@ function ctx(credential: Record<string, unknown> = {}) {
   } as never;
 }
 
+// The tRPC context carries no key type, so User and System keys reach the gate identically.
 const bearers: [string, Record<string, unknown>][] = [
   ['a full-scope User key', { apiKeyId: 1, subject: { type: 'apiKey', id: 1 } }],
   ['a full-scope System key', { apiKeyId: 2, subject: { type: 'apiKey', id: 2 } }],

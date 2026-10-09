@@ -76,8 +76,9 @@ export interface TRPCMeta {
    * When true, this procedure cannot be invoked via API key or OAuth token,
    * regardless of scope — only session auth (browser cookie) is allowed.
    * Used for Civitai-side buzz-spending operations (tips, bounty creation,
-   * cosmetic purchases, etc.). Buzz spend through tokens is delegated entirely
-   * to the orchestrator.
+   * cosmetic purchases, etc.), for API-key add/limit/delete, and for OAuth
+   * connected-app limit/revoke mutations.
+   * Buzz spend through tokens is delegated entirely to the orchestrator.
    */
   blockApiKeys?: boolean;
 }
@@ -230,13 +231,12 @@ const applyDomainFeature = t.middleware(async (options) => {
 
 /**
  * Token scope enforcement middleware (fail-safe).
- * - Session auth (no apiKeyId) is always allowed through unless blockApiKeys is set.
+ * - Session auth (no apiKeyId) always passes.
  * - Procedures without `.meta({ requiredScope })` implicitly require `TokenScope.Full`.
  *   Scoped tokens are denied on un-annotated endpoints; session and full-access keys
  *   pass through (subject to the blockApiKeys gate below).
  * - blockApiKeys: when set, the procedure is forbidden for any API-key/OAuth-token
- *   request regardless of scope. Used for buzz-spending operations that the
- *   orchestrator owns; tokens have no business spending buzz on Civitai's side.
+ *   request regardless of scope (session auth only).
  */
 // `enforceTokenScope`'s body lives in a light standalone module so the OAuth
 // scope-verification + unified scope-usage audit wiring is unit-testable without

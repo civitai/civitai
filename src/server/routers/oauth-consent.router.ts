@@ -47,7 +47,7 @@ export const oauthConsentRouter = router({
   // the consent so it persists across access-token rotations — refresh-issued
   // tokens for the same consent inherit it automatically.
   setBuzzLimit: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+    .meta({ requiredScope: TokenScope.UserWrite, blockApiKeys: true })
     .input(
       z.object({
         clientId: z.string(),
@@ -55,22 +55,6 @@ export const oauthConsentRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Self-modify guard: an OAuth-issued token must not be able to raise or
-      // clear the limit on the consent it was issued under. Session auth is
-      // unaffected.
-      const subject = (
-        ctx as unknown as {
-          subject?: { type: string; id: number | string } | null;
-        }
-      ).subject;
-      if (subject && subject.type === 'oauth' && subject.id === input.clientId) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message:
-            'An OAuth token cannot modify its own consent spend limit. Use a different key or session auth.',
-        });
-      }
-
       const consent = await dbWrite.oauthConsent.findUnique({
         where: { userId_clientId: { userId: ctx.user.id, clientId: input.clientId } },
         select: { id: true },
@@ -116,7 +100,7 @@ export const oauthConsentRouter = router({
 
   // Revoke access for a connected app (delete all tokens + consent)
   revokeApp: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite })
+    .meta({ requiredScope: TokenScope.UserWrite, blockApiKeys: true })
     .input(z.object({ clientId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const consent = await dbWrite.oauthConsent.findUnique({
