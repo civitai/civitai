@@ -491,6 +491,22 @@ describe('the shop lists event-gated items per viewer', () => {
     ]);
     expect(await listedIds({ event: UNREGISTERED_EVENT })).toEqual([]);
   });
+
+  // A community-hub section is kept in the shop even when empty (its feed is queried separately),
+  // so asking for one event's items must drop it by name, not by emptiness.
+  it('asked for one event, leaves out the community hub; the full shop keeps it', async () => {
+    mocks.sectionFindMany.mockResolvedValue([
+      section(10, [listedItem(PINK, hatData(PINK_TEAM))]),
+      { ...section(30, []), meta: { communityHub: true } },
+    ]);
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK] },
+    ]);
+    expect(await listedIds({ userId: BUYER_ID })).toEqual([
+      { section: 10, items: [PINK] },
+      { section: 30, items: [] },
+    ]);
+  });
 });
 
 // Justin, 2026-10-09: before launch the event, the shop's hats included, is for testers and
