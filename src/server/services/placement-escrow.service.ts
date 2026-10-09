@@ -13,6 +13,7 @@ import {
 } from '~/server/services/buzz.service';
 import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';
 import { getPlacementConfig } from '~/server/services/placement.service';
+import { onPlacementApproved } from '~/server/events/points/hooks';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { isPlacementSpendType } from '~/shared/constants/placement.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -670,7 +671,10 @@ export async function settlePlacement({
 
   await payOutPlacement(placement);
 
-  if (count > 0 && status === 'approved') await rewardAccepted(placement);
+  if (count > 0 && status === 'approved') {
+    await rewardAccepted(placement);
+    void onPlacementApproved(placement);
+  }
 
   return { settled: count > 0, placement };
 }

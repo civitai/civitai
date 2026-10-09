@@ -11,6 +11,7 @@ import {
 } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
+import { onReactionCreated, onReactionRemoved } from '~/server/events/points/hooks';
 
 export const toggleReaction = async ({
   entityType,
@@ -22,11 +23,13 @@ export const toggleReaction = async ({
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
     const deleted = await deleteReaction({ entityType, entityId, userId, reaction });
+    if (deleted > 0) void onReactionRemoved({ entityType, entityId, userId });
     return deleted > 0 ? 'removed' : 'noop';
   } else {
     // Enforce on create only — a user blocked after reacting can still un-react.
     await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
     await createReaction({ entityType, entityId, userId, reaction });
+    void onReactionCreated({ entityType, entityId, userId });
     return 'created';
   }
 };

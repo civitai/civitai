@@ -400,6 +400,12 @@ export class Tracker {
     }
   }
 
+  // The request's session, resolved once and shared with every track() call on this Tracker.
+  public async getSession() {
+    await this.resolveSession();
+    return this.session;
+  }
+
   constructor(
     req?: NextApiRequest,
     res?: NextApiResponse,

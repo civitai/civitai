@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as Hooks from '~/server/events/points/hooks';
 
 const queryRaw = dbMock.dbWrite.$queryRaw;
 const settlePlacement = vi.fn();
@@ -12,6 +13,13 @@ const suspensionFindUnique = dbMock.dbWrite.placementSuspension.findUnique;
 const suspensionUpsert = dbMock.dbWrite.placementSuspension.upsert;
 
 vi.mock('~/server/services/placement-escrow.service', () => ({ settlePlacement }));
+// The event points hook, so each takedown path can be seen handing its ids over. The hook's own
+// behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
+const onPlacementsTakenDown = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof Hooks>()),
+  onPlacementsTakenDown,
+}));
 
 const {
   assertCanPlace,
@@ -465,5 +473,44 @@ describe('removing every placement made with a revoked cosmetic', () => {
     expect(queryRaw).not.toHaveBeenCalled();
     expect(placementUpdateMany).not.toHaveBeenCalled();
     expect(result).toMatchObject({ considered: 0, takenDown: 0, hasMore: false });
+  });
+});
+
+describe('event points on a takedown', () => {
+  it('hands a moderator takedown of a live placement to the points hook', async () => {
+    placementFindUnique.mockResolvedValue({ id: 3101, status: 'approved' });
+    placementUpdateMany.mockResolvedValue({ count: 1 });
+
+    await removePlacementByModerator({ placementId: 3101, actorId: 47 });
+
+    expect(onPlacementsTakenDown).toHaveBeenCalledWith([3101]);
+  });
+
+  it('hands nothing over when the takedown lost a race', async () => {
+    placementFindUnique.mockResolvedValue({ id: 3101, status: 'approved' });
+    placementUpdateMany.mockResolvedValue({ count: 0 });
+
+    await removePlacementByModerator({ placementId: 3101, actorId: 47 });
+
+    expect(onPlacementsTakenDown).not.toHaveBeenCalled();
+  });
+
+  it("hands over a suspended placer's live placements", async () => {
+    suspensionFindUnique.mockResolvedValue({ userId: PLACER });
+    placementFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 7 }, { id: 8 }]);
+    placementUpdateMany.mockResolvedValue({ count: 2 });
+
+    await removePlacementsByUser({ placerId: PLACER, actorId: 99 });
+
+    expect(onPlacementsTakenDown).toHaveBeenCalledWith([7, 8]);
+  });
+
+  it("hands over a revoked cosmetic's live placements", async () => {
+    queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 4401 }, { id: 4402 }]);
+    placementUpdateMany.mockResolvedValue({ count: 2 });
+
+    await removePlacementsByCosmetic({ cosmeticIds: [8801], actorId: 47 });
+
+    expect(onPlacementsTakenDown).toHaveBeenCalledWith([4401, 4402]);
   });
 });

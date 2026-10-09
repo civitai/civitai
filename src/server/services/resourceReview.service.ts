@@ -4,6 +4,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
@@ -389,13 +390,15 @@ export const upsertResourceReview = async ({
       modelVersionId: data.modelVersionId,
     }).catch();
     if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
+    void onModelReviewsChanged([{ modelId: data.modelId, userId }]);
     return ret;
   } else {
     const ret = await dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
-      select: { id: true, modelId: true, modelVersionId: true },
+      select: { id: true, modelId: true, modelVersionId: true, userId: true },
     });
+    void onModelReviewsChanged([ret]);
     await bustRatingTotalsCache({
       modelId: ret.modelId,
       modelVersionId: ret.modelVersionId,
@@ -410,6 +413,7 @@ export const deleteResourceReview = async ({ id }: GetByIdInput) => {
   // resourceReview.controller.ts already relies on this — so we use modelId
   // and modelVersionId from the returned row rather than pre-fetching.
   const ret = await dbWrite.resourceReview.delete({ where: { id } });
+  void onModelReviewsChanged([ret]);
   await bustRatingTotalsCache({
     modelId: ret.modelId,
     modelVersionId: ret.modelVersionId,
@@ -446,11 +450,12 @@ export async function deleteResourceReviews({ ids }: { ids: number[] }) {
   // cache after.
   const affected = await dbRead.resourceReview.findMany({
     where: { id: { in: ids } },
-    select: { modelId: true, modelVersionId: true },
+    select: { modelId: true, modelVersionId: true, userId: true },
   });
   const result = await dbWrite.resourceReview.deleteMany({
     where: { id: { in: ids } },
   });
+  void onModelReviewsChanged(affected);
   await bustRatingTotalsForRows(affected).catch();
   return { count: result.count };
 }
@@ -483,6 +488,7 @@ export const createResourceReview = async ({
       throw err;
     });
   await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  void onModelReviewsChanged([{ modelId: data.modelId, userId: data.userId }]);
   await bustRatingTotalsCache({
     modelId: data.modelId,
     modelVersionId: data.modelVersionId,
@@ -515,8 +521,10 @@ export const updateResourceReview = async ({
       rating: true,
       recommended: true,
       nsfw: true,
+      userId: true,
     },
   });
+  void onModelReviewsChanged([ret]);
   await bustRatingTotalsCache({
     modelId: ret.modelId,
     modelVersionId: ret.modelVersionId,

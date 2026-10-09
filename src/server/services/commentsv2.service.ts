@@ -42,6 +42,7 @@ import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { onCommentCreated, onCommentsRemoved } from '~/server/events/points/hooks';
 
 export type CommentThread = {
   id: number;
@@ -448,6 +449,7 @@ export const upsertComment = async ({
     });
 
     queueScamScan({ entityType: 'CommentV2', entityId: created.id });
+    void onCommentCreated({ userId, entityType, entityId, threadId: created.threadId });
     return created;
   }
   // Wrapped so the edit's charge and the edit itself commit together.
@@ -663,13 +665,20 @@ export async function getCommentThreadBounty(
   return entryId ? { entryId } : null;
 }
 
-export const deleteComment = ({ id }: { id: number }) => {
-  return dbWrite.commentV2.delete({ where: { id } });
+export const deleteComment = async ({ id }: { id: number }) => {
+  const deleted = await dbWrite.commentV2.delete({ where: { id } });
+  void onCommentsRemoved([deleted]);
+  return deleted;
 };
 
 export async function bulkDeleteCommentsV2({ ids }: { ids: number[] }) {
   if (ids.length === 0) return { count: 0 };
+  // Read before the delete, for the event points removal; a failed read only skips that.
+  const removed = await dbWrite.commentV2
+    .findMany({ where: { id: { in: ids } }, select: { userId: true, threadId: true } })
+    .catch(() => []);
   const result = await dbWrite.commentV2.deleteMany({ where: { id: { in: ids } } });
+  void onCommentsRemoved(removed);
   return { count: result.count };
 }
 
