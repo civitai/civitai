@@ -79,6 +79,16 @@ export type ListingHistoryEntry = {
   deployState: string | null;
   deployUpdatedAt: Date | null;
   /**
+   * The build/deploy failure detail, ONLY on an approved `version` entry whose deploy
+   * failed — see {@link authorFailureDetail}. `null` everywhere else.
+   *
+   * 🔴 TENANT-INFLUENCED BYTES (a sanitized build-log excerpt). This read authorizes
+   * owner ∪ accepted seat, so an app's collaborators see it too — deliberately: they
+   * work on the same code. The moderator lists (`listVersionHistory`,
+   * `listApprovedRequests`) do not select it.
+   */
+  deployDetail: string | null;
+  /**
    * May THIS caller withdraw this request?
    *
    * 🔴 A SERVER-COMPUTED VERDICT, not a raw `submittedByUserId` for the client to compare.
@@ -186,6 +196,29 @@ export function canWithdrawRequest(
 }
 
 /**
+ * The `deploy_detail` an author may see for one CODE request, or `null`.
+ *
+ * 🔴 PROJECTED ONLY FOR `approved` + `failed`, because the column means different things
+ * on different rows and only that one is the author's failure detail:
+ *
+ *   - a PENDING row in the moderator review sandbox stores a JSON blob there (the review
+ *     preview's state, including its preview host) — moderator data, not the author's;
+ *   - a `building` row after a moderator re-trigger stores who re-fired it and when;
+ *   - a `failed` approved row stores the build/deploy failure, which is the thing the
+ *     History tab exists to explain.
+ *
+ * Reading the column for every row and filtering in the UI would ship the first two to
+ * every collaborator's browser for no consumer.
+ */
+export function authorFailureDetail(row: {
+  status: string;
+  deployState: string | null;
+  deployDetail: string | null;
+}): string | null {
+  return row.status === 'approved' && row.deployState === 'failed' ? row.deployDetail : null;
+}
+
+/**
  * Every publish event for ONE listing the caller may act on, newest first.
  *
  * 🔴 AUTHORIZED THROUGH {@link resolveListingAccess}, the SAME resolver `/apps/mine`'s row
@@ -248,6 +281,7 @@ export async function listListingHistory(opts: {
             rejectionReason: true,
             approvalNotes: true,
             deployState: true,
+            deployDetail: true,
             deployUpdatedAt: true,
           },
         })
@@ -276,6 +310,7 @@ export async function listListingHistory(opts: {
         approvalNotes: r.approvalNotes,
         changelog: r.changelog,
         deployState: null,
+        deployDetail: null,
         deployUpdatedAt: null,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })
@@ -291,6 +326,7 @@ export async function listListingHistory(opts: {
         rejectionReason: string | null;
         approvalNotes: string | null;
         deployState: string | null;
+        deployDetail: string | null;
         deployUpdatedAt: Date | null;
       }) => ({
         id: r.id,
@@ -303,6 +339,7 @@ export async function listListingHistory(opts: {
         approvalNotes: r.approvalNotes,
         changelog: null,
         deployState: r.deployState,
+        deployDetail: authorFailureDetail(r),
         deployUpdatedAt: r.deployUpdatedAt,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })

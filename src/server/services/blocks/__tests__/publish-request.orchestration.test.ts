@@ -1271,6 +1271,18 @@ describe('listApprovedRequests', () => {
     });
   });
 
+  it('🔴 does NOT select deployDetail — moderators get the structured state, never the excerpt', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    await listApprovedRequests({});
+    const select = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0].select;
+    expect(select.deployDetail).toBeUndefined();
+    // Positive control: the lifecycle fields the Approved tab DOES render are still selected,
+    // so the assertion above is about deployDetail rather than an empty select.
+    expect(select.deployState).toBe(true);
+    expect(select.deployUpdatedAt).toBe(true);
+  });
+
   it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {
     const { listApprovedRequests } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([row({ id: 'pubreq_z' })]);

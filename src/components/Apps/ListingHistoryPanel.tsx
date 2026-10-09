@@ -1,8 +1,21 @@
 import { Alert, Badge, Button, Group, Loader, Stack, Text } from '@mantine/core';
-import { useCallback, type ReactNode } from 'react';
+import { IconAlertTriangle } from '@tabler/icons-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
+import { DeployFailureDetail } from '~/components/Apps/DeployFailureDetail';
+import {
+  deployElapsedMs,
+  deployRefetchInterval,
+  formatElapsed,
+  isInFlightDeploy,
+  isStaleDeploy,
+  isStrandedDeploy,
+  type DeployLifecycleState,
+} from '~/components/Apps/deploy-status';
+import { deployStatusBadge, STRANDED_DEPLOY_MESSAGE } from '~/components/Apps/deployStatusBadge';
 import { withdrawSuccessMessage } from '~/components/Apps/listingPublishingActions';
 import { historyStatusColor } from '~/components/Apps/myAppsView';
+import { currentlyPublishedVersionId } from '~/components/Apps/submissionsTable';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -47,6 +60,14 @@ import { trpc } from '~/utils/trpc';
  * `resolveListingAccess` — the owner OR an accepted seat — and reads no status at all, so
  * it refuses nothing this page can reach. That is deliberate parity with `/apps/mine`,
  * where a seated collaborator could always open a row's history.
+ *
+ * 🔴 THIS IS ALSO WHERE AN APP'S TEAM LEARNS WHETHER AN APPROVED VERSION WENT LIVE. An
+ * approved version entry carries its build/deploy chip, elapsed time while it builds, and
+ * — when it failed — the cause, the guidance and the build-log excerpt
+ * (`DeployFailureDetail`). Collaborators see the excerpt too: same access rule as above,
+ * same code. That block lives in {@link ListingHistoryPanelView}, NOT in
+ * {@link ListingHistoryEntryRow}, because the row is shared with the moderator's
+ * prior-versions modal and moderators never see the excerpt.
  */
 
 /** One entry from `appListings.listingHistory` — see that service for the two streams. */
@@ -61,6 +82,14 @@ export type ListingHistoryEntry = {
   approvalNotes: string | null;
   changelog: string | null;
   deployState: string | null;
+  /** Last lifecycle transition — the clock for elapsed time and the stalled check. */
+  deployUpdatedAt?: string | Date | null;
+  /**
+   * The failure detail, sent by the server only for an approved version whose deploy
+   * failed (`authorFailureDetail`). Optional because the moderator projection never
+   * carries it.
+   */
+  deployDetail?: string | null;
   /**
    * The SERVER's verdict on whether this caller may withdraw this request. Both withdraw
    * procs are submitter-scoped, so a collaborator / transfer recipient / mod-claimed owner
@@ -88,7 +117,93 @@ export type ListingHistoryPanelViewProps = {
    * — `appListings.withdrawExternalRequest` has no such gate.
    */
   withdrawEnabled?: boolean;
+  /** Pins the clock for tests. When absent the view ticks once a second while a build runs. */
+  now?: number;
 };
+
+/**
+ * The usual wall time of a whole build + deploy. Shown only while `building`: the elapsed
+ * clock restarts at each state transition, so beside `deploying` it would undercount.
+ */
+export const TYPICAL_BUILD_HINT = 'usually 1–4 min';
+
+/** Which entries this view tracks the build/deploy lifecycle for. */
+function isApprovedVersion(e: ListingHistoryEntry): boolean {
+  return e.source === 'version' && e.status === 'approved';
+}
+
+function asLifecycleRow(e: ListingHistoryEntry) {
+  return {
+    status: e.status,
+    deployState: e.deployState as DeployLifecycleState,
+    deployUpdatedAt: e.deployUpdatedAt ?? null,
+    reviewedAt: e.reviewedAt,
+    deployDetail: e.deployDetail ?? null,
+  };
+}
+
+/** Is any approved version still building or deploying, and not yet stalled? */
+function hasFreshInFlightBuild(entries: ListingHistoryEntry[], now: number): boolean {
+  return entries.some((e) => {
+    if (!isApprovedVersion(e)) return false;
+    const row = asLifecycleRow(e);
+    return isInFlightDeploy(row) && !isStaleDeploy(row, now);
+  });
+}
+
+/** Wall clock that ticks once a second while `active`, so elapsed time moves on screen. */
+function useTickingNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return now;
+}
+
+/**
+ * The approved-version build block for the app's team: the chip (with elapsed time while
+ * building), and below the row the failure detail or the stranded notice.
+ */
+function versionBuildStatus(e: ListingHistoryEntry, isCurrentlyPublished: boolean, now: number) {
+  if (!isApprovedVersion(e)) return { chip: undefined, below: null };
+  const row = asLifecycleRow(e);
+  const badge = deployStatusBadge(row, { isCurrentlyPublished, now });
+  const elapsed =
+    isInFlightDeploy(row) && !isStaleDeploy(row, now) ? deployElapsedMs(row, now) : null;
+  const chip = badge ? (
+    <Group gap={6} wrap="nowrap" data-testid={`apps-history-deploy-${e.id}`}>
+      {badge}
+      {elapsed != null && (
+        <Text size="xs" c="dimmed" data-testid={`apps-history-elapsed-${e.id}`}>
+          {formatElapsed(elapsed)}
+          {row.deployState === 'building' ? ` · ${TYPICAL_BUILD_HINT}` : null}
+        </Text>
+      )}
+    </Group>
+  ) : undefined;
+  let below: ReactNode = null;
+  if (row.deployState === 'failed') {
+    below = (
+      <DeployFailureDetail detail={row.deployDetail} testId={`apps-history-failure-${e.id}`} />
+    );
+  } else if (isStrandedDeploy(row, now)) {
+    below = (
+      <Alert
+        color="orange"
+        variant="light"
+        icon={<IconAlertTriangle size={16} />}
+        title="Approved, but the build never started"
+        data-testid={`apps-history-stranded-${e.id}`}
+      >
+        <Text size="sm">{STRANDED_DEPLOY_MESSAGE}</Text>
+      </Alert>
+    );
+  }
+  return { chip, below };
+}
 
 /** The pure view — no queries, so every state is renderable from props alone. */
 export function ListingHistoryPanelView({
@@ -98,7 +213,12 @@ export function ListingHistoryPanelView({
   onWithdraw,
   withdrawing = false,
   withdrawEnabled = true,
+  now: pinnedNow,
 }: ListingHistoryPanelViewProps) {
+  const tickingNow = useTickingNow(
+    pinnedNow === undefined && hasFreshInFlightBuild(entries, Date.now())
+  );
+  const now = pinnedNow ?? tickingNow;
   if (errorMessage) {
     return (
       <Alert color="red" variant="light" data-testid="apps-history-error">
@@ -123,17 +243,26 @@ export function ListingHistoryPanelView({
       </Text>
     );
   }
+  // The live chip belongs to the newest approved VERSION only (listing edits are not
+  // builds). Entries arrive newest-first.
+  const publishedId = currentlyPublishedVersionId(entries.filter((e) => e.source === 'version'));
   return (
     <Stack gap={8} data-testid="apps-history-list">
-      {entries.map((e) => (
-        <ListingHistoryEntryRow
-          key={e.id}
-          entry={e}
-          onWithdraw={onWithdraw}
-          withdrawing={withdrawing}
-          withdrawEnabled={withdrawEnabled}
-        />
-      ))}
+      {entries.map((e) => {
+        const { chip, below } = versionBuildStatus(e, e.id === publishedId, now);
+        return (
+          <Stack key={e.id} gap={6}>
+            <ListingHistoryEntryRow
+              entry={e}
+              onWithdraw={onWithdraw}
+              withdrawing={withdrawing}
+              withdrawEnabled={withdrawEnabled}
+              deployStatus={chip}
+            />
+            {below}
+          </Stack>
+        );
+      })}
     </Stack>
   );
 }
@@ -152,12 +281,18 @@ export function ListingHistoryEntryRow({
   onWithdraw,
   withdrawing = false,
   withdrawEnabled = true,
+  deployStatus,
   children,
 }: {
   entry: ListingHistoryEntry;
   onWithdraw?: (entry: ListingHistoryEntry) => void;
   withdrawing?: boolean;
   withdrawEnabled?: boolean;
+  /**
+   * Replaces the plain `· <deployState>` text when given — the author view's chip and
+   * elapsed time. The moderator modal passes nothing and keeps the plain text.
+   */
+  deployStatus?: ReactNode;
   /** Rendered at the end of the row — the moderator surface's extra chips. */
   children?: ReactNode;
 }) {
@@ -182,7 +317,9 @@ export function ListingHistoryEntryRow({
       <Text size="xs" c="dimmed">
         {formatWhen(e.submittedAt)}
       </Text>
-      {e.deployState ? (
+      {deployStatus !== undefined ? (
+        deployStatus
+      ) : e.deployState ? (
         <Text size="xs" c="dimmed">
           · {e.deployState}
         </Text>
@@ -243,10 +380,23 @@ export function ListingHistoryEntryRow({
   );
 }
 
+/** The approved-version lifecycle rows a history payload carries, for the poll cadence. */
+export function historyLifecycleRows(entries: ListingHistoryEntry[] | undefined) {
+  return (entries ?? []).filter(isApprovedVersion).map(asLifecycleRow);
+}
+
 /** The container: the listing's own history read plus the two source-keyed withdraw procs. */
 export function ListingHistoryPanel({ appListingId }: { appListingId: string }) {
   const features = useFeatureFlags();
-  const query = trpc.appListings.listingHistory.useQuery({ appListingId }, { retry: false });
+  const query = trpc.appListings.listingHistory.useQuery(
+    { appListingId },
+    {
+      retry: false,
+      // Poll while any approved version is in flight (`deployRefetchInterval`) so its
+      // chip and failure detail arrive without a reload.
+      refetchInterval: (q) => deployRefetchInterval(historyLifecycleRows(q.state.data)),
+    }
+  );
   const utils = trpc.useUtils();
 
   /**

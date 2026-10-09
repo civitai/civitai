@@ -49,6 +49,7 @@ import { sanitizeAppSlug } from '~/server/utils/apps-slug';
 import {
   DEPLOY_PENDING_GRACE_MS,
   DEPLOY_STALE_AFTER_MS,
+  RETRIGGER_FAILED_AUTHOR_DETAIL,
 } from '~/shared/constants/app-block-deploy.constants';
 // Pure, dependency-free sanitizer. Applied to EVERY value written to the
 // owner-visible `deploy_detail`, so the "guaranteed printable, bounded text"
@@ -2214,10 +2215,14 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       forgejoCommitSha: true,
       // Build/deploy lifecycle — additive. The Approved tab is where a moderator
       // sees that an approved app never actually built (deployState null =
-      // STRANDED) and can re-trigger it; without these three the queue shows a
+      // STRANDED) and can re-trigger it; without these two the queue shows a
       // uniformly-healthy list of approvals regardless of what actually shipped.
+      //
+      // 🔴 `deployDetail` IS NOT SELECTED. It carries the tenant-influenced build-log
+      // excerpt, which only the app's own team may see (the listing's History tab).
+      // Moderators get the structured state above, never the excerpt, and leaving it
+      // out of the query keeps it out of the payload too.
       deployState: true,
-      deployDetail: true,
       deployUpdatedAt: true,
       submittedBy: { select: reviewUserChipSelect },
       reviewedBy: { select: reviewUserChipSelect },
@@ -3539,24 +3544,6 @@ export async function markRequestDeployState(
 // ---------------------------------------------------------------------------
 // MOD-ONLY BUILD RE-TRIGGER — recover an APPROVED request whose build never ran.
 // ---------------------------------------------------------------------------
-
-/**
- * The EXACT `deploy_detail` an app author sees when the moderator's re-trigger
- * could not be handed to the build service.
- *
- * 🔴 FIXED STRING, never derived from the thrown error. `deploy_detail` is
- * owner-visible on both `blocks.listMyPublishRequests` and
- * `GET /api/v1/blocks/submissions`, and the errors `triggerBuild` throws carry
- * infrastructure detail (the trigger receiver's raw response body, the names of
- * the trigger env vars). Those go to the server log instead.
- *
- * It says what the author actually needs: this is our failure, not their code, and
- * they should not resubmit.
- */
-export const RETRIGGER_FAILED_AUTHOR_DETAIL =
-  'Build re-trigger failed: Civitai could not reach the build service. ' +
-  'This is a problem on our side, not with your app — a moderator has to retry it. ' +
-  'No new version submission is needed.';
 
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {

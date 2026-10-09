@@ -12,6 +12,7 @@ import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pip
 import { autogenerateScreenshotIfMissing } from '~/server/services/blocks/autogenerate-screenshot.service';
 import { buildFailureDeployDetail } from '~/server/services/blocks/build-failure-reason';
 import { markRequestDeployState } from '~/server/services/blocks/publish-request.service';
+import { DEPLOY_FAILURE_DETAIL } from '~/shared/constants/app-block-deploy.constants';
 
 /**
  * POST /api/internal/blocks/build-callback
@@ -53,7 +54,9 @@ type CallbackBody = {
   sha?: string;
   appBlockId?: string;
   imageRef?: string;
-  status?: string; // "Succeeded" / "Failed" / "Cancelled" / ... per Tekton
+  // "Succeeded" / "Failed" / "Cancelled" / ..., or "None" when the run failed
+  // before its final publish step (the reported status is that step's).
+  status?: string;
   // F5 — integer unix-epoch-SECONDS timestamp the SIGNER (the datapacket-talos
   // app-blocks-callback Tekton task) stamps INSIDE the body BEFORE the HMAC, so
   // it is covered by the signature. Validated for skew below. ABSENT/non-finite
@@ -167,9 +170,11 @@ export function expectedImageRef(slug: string, sha: string): string {
   return `ghcr.io/civitai/app-block-${slug}:${sha}`;
 }
 
-// Replay guard (audit LOW). The callback payload carries no timestamp/nonce, so
-// a captured signature-valid request could be replayed to re-trigger the apply
-// Job. Dedup the apply path on (appBlockId, sha) with the redis client's
+// Replay guard (audit LOW). The payload's signed `ts` (see
+// `checkCallbackTimestamp`) rejects a replay older than ±TS_TOLERANCE_SECONDS, but
+// it is enforce-if-present and there is no nonce, so inside that window — or from
+// a sender that omits `ts` — a captured signature-valid request could still be
+// replayed to re-trigger the apply Job. Dedup the apply path on (appBlockId, sha) with the redis client's
 // purpose-built atomic primitive `setNxKeepTtlWithEx` — a single Lua
 // `SET NX` (+`EXPIRE`) that returns a typed `boolean` (true = newly set).
 // Deliberately NOT `redis.set(..., {NX,EX})` + a return-value check: the top-
@@ -187,9 +192,9 @@ export function expectedImageRef(slug: string, sha: string): string {
 // watcher clears on a DEFINITIVE apply failure, and the `triggerApply` catch
 // clears on a Job-creation failure. The TTL is only the backstop for the
 // can't-clear cases (apply 'timeout' where the Job may still run, or a
-// watcher-crash / pod-restart). Durable cross-window replay protection still
-// needs a caller-supplied signed timestamp/nonce from the Tekton finally task
-// (infra follow-up).
+// watcher-crash / pod-restart). Cross-window replay protection is the signed-`ts`
+// freshness check above, which, unlike this dedup, does not depend on Redis (but
+// allows a callback with no `ts`).
 const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 6m apply)
 function applyDedupKey(appBlockId: string, sha: string): string {
   // Reuse the block rate-limit key family (same convention as workflow-completed).
@@ -368,7 +373,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/deploy',
       description: `Apply trigger failed: ${String(e).slice(0, 80)}`,
     });
-    await markRequestDeployState(body.slug, body.sha, 'failed', 'Deploy could not start');
+    await markRequestDeployState(
+      body.slug,
+      body.sha,
+      'failed',
+      DEPLOY_FAILURE_DETAIL.couldNotStart
+    );
     res.status(500).json({ error: 'Apply trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
@@ -450,7 +460,8 @@ async function watchApplyJobAndRecord(args: {
       if (outcome === 'failed') {
         await clearApplyMark(args.appBlockId, args.sha);
       }
-      const deployDetail = outcome === 'timeout' ? 'Deploy timed out' : 'Deploy failed';
+      const deployDetail =
+        outcome === 'timeout' ? DEPLOY_FAILURE_DETAIL.timedOut : DEPLOY_FAILURE_DETAIL.failed;
       // Flip commit status so the dev sees red.
       await safe(setCommitStatus, {
         slug: args.slug,

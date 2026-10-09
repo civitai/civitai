@@ -416,7 +416,7 @@ export function AppBlockChrome({
    *  `getServerSideProps` 404s on `appBlocks && appBlocksPages` for every
    *  viewer regardless of where they came from. So every mounter passes
    *  `!!features.appBlocksPages`, exactly like `AppListingCard`,
-   *  `AppListingDetailBody`, `MySubmissionsList` and `MarketplaceBody` do.
+   *  `AppListingDetailBody` and `MarketplaceBody` do.
    *  Pinned by the source-level guard in `recentAppsRail.test.ts`.
    *
    *  🔴 DEFAULTS TO FALSE (no dead links) so a NEW mounter that forgets the
