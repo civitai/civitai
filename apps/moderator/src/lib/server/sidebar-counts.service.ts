@@ -64,9 +64,10 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // Bounded: neither count is served by an index alone; see `bounded`.
     bounded(countStuckIngestion),
     bounded(countIngestionErrorImages),
-    // NOT bounded: an index-only count over a table the producer can only grow five rows per user
-    // per hour. `bounded` exists for aggregates with no index of their own — wrapping this one in a
-    // 3-second race would add a timer and a nullable to buy nothing.
+    // NOT bounded: a count over a small table the producer can only grow five rows per user per
+    // hour, behind the 60-second cache (plan shape varies with size and vacuum state; see
+    // `countNewFeedback`). Wrapping it in a 3-second race would add a timer and a nullable to buy
+    // nothing.
     countNewFeedback(),
   ]);
   return {
