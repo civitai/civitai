@@ -111,25 +111,24 @@ export function MyEventHats({
                     />
                   </div>
                 )}
-                {!ended && (
-                  <Button
-                    size="compact-xs"
-                    radius="xl"
-                    variant={hat.placedOn ? 'default' : 'filled'}
-                    leftSection={
-                      hat.placedOn ? <IconArrowsMove size={14} /> : <IconHanger size={14} />
-                    }
-                    disabled={minutesLeft > 0}
-                    onClick={() => openPicker(hat)}
-                    className={
-                      hat.placedOn
-                        ? 'absolute right-2 top-2 shadow-md'
-                        : 'absolute bottom-3 left-1/2 -translate-x-1/2 shadow-md'
-                    }
-                  >
-                    {hat.placedOn ? 'Move' : 'Place it'}
-                  </Button>
-                )}
+                {/* Hats are kept after the event, so they can still be moved then. */}
+                <Button
+                  size="compact-xs"
+                  radius="xl"
+                  variant={hat.placedOn ? 'default' : 'filled'}
+                  leftSection={
+                    hat.placedOn ? <IconArrowsMove size={14} /> : <IconHanger size={14} />
+                  }
+                  disabled={minutesLeft > 0}
+                  onClick={() => openPicker(hat)}
+                  className={
+                    hat.placedOn
+                      ? 'absolute right-2 top-2 shadow-md'
+                      : 'absolute bottom-3 left-1/2 -translate-x-1/2 shadow-md'
+                  }
+                >
+                  {hat.placedOn ? 'Move' : 'Place it'}
+                </Button>
               </div>
               <Stack gap={8} p="sm" className="flex-1">
                 <Stack gap={0} className="min-w-0">
@@ -152,7 +151,7 @@ export function MyEventHats({
                   <HatStat value={abbreviateNumber(hat.impressions)} label="views" />
                   <HatStat value={abbreviateNumber(hat.reactions)} label="reactions" />
                 </div>
-                {!ended && minutesLeft > 0 && (
+                {minutesLeft > 0 && (
                   <Text size="xs" c="dimmed">
                     <IconClock size={12} className="inline align-[-1px]" /> Can move in{' '}
                     {minutesLeft} min

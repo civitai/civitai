@@ -18,7 +18,6 @@ const { mockCreateNotification, mockRefresh, mockScoring } = vi.hoisted(() => ({
     getEventStandings: vi.fn(),
     getTeamScoreHistory: vi.fn(),
     runCosmeticPlacementScoring: vi.fn(),
-    unequipEventCosmetics: vi.fn(),
   },
 }));
 
@@ -84,10 +83,6 @@ beforeEach(() => {
     topUsers: {},
     updatedAt: new Date(),
   });
-  mockScoring.unequipEventCosmetics.mockResolvedValue([
-    { entityType: 'Image', entityId: 5 },
-    { entityType: 'Model', entityId: 6 },
-  ]);
   mockScoring.runCosmeticPlacementScoring.mockResolvedValue({ synced: 0, scored: [] });
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
@@ -98,7 +93,6 @@ function anyWrite() {
     dbMock.dbWrite.$executeRaw.mock.calls.length,
     dbMock.dbWrite.$executeRawUnsafe.mock.calls.length,
     dbMock.dbWrite.$queryRaw.mock.calls.length,
-    mockScoring.unequipEventCosmetics.mock.calls.length,
     mockCreateNotification.mock.calls.length,
   ];
 }
@@ -227,7 +221,7 @@ describe('end-of-event cleanup', () => {
     await eventEngine.dailyReset(DEPLOY_DAY);
     await eventEngine.updateLeaderboard(DEPLOY_DAY);
 
-    expect(anyWrite()).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
     expect(redisMock.redis.set).not.toHaveBeenCalled();
   });
 
@@ -241,13 +235,16 @@ describe('end-of-event cleanup', () => {
   });
 
   it('does nothing for holiday2024 on any day after its grace window, including birthday cleanup day', async () => {
-    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
+    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
     await eventEngine.dailyReset(birthdayCleanup);
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
     expect(mockCreateNotification).not.toHaveBeenCalled();
-    // ...while the birthday event itself was cleaned up (positive control for this run).
-    expect(mockScoring.unequipEventCosmetics).toHaveBeenCalledWith(BIRTHDAY_2026_EVENT);
+    // ...while the birthday event itself was cleaned up on this same run (positive control).
+    const winnerFlags = dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
+      (sql as TemplateStringsArray).join('?').includes('{winner}')
+    );
+    expect(winnerFlags.map(([, id]) => id)).toEqual([23]);
   });
 
   it('positive control: holiday2024 cleanup does run inside its own grace window, with real cosmetic ids', async () => {
@@ -262,60 +259,35 @@ describe('end-of-event cleanup', () => {
     });
   });
 
-  const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR); // Nov 27 00:00Z
-  const secondReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR); // Nov 28 00:00Z
+  const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
+  const secondReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
   const winnerUpdates = () =>
     dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
       (sql as TemplateStringsArray).join('?').includes('{winner}')
     );
   const setKeys = () => redisMock.redis.set.mock.calls.map(([key]) => key);
 
-  it('phase 1: takes cosmetics off content at the first reset after the end, but decides no winner', async () => {
+  // Justin and Ellie, 2026-10-09: hats are kept after the event. The end-of-event reset used to take
+  // every hat off content; it must not. See event-decoration-equip.test.ts for wearing them after.
+  it('leaves cosmetics on content after the end, and decides no winner while scoring takes late data', async () => {
     await eventEngine.dailyReset(firstReset);
 
-    expect(mockScoring.unequipEventCosmetics).toHaveBeenCalledTimes(1);
-    expect(mockRefresh).toHaveBeenCalledTimes(2);
-    expect(mockRefresh).toHaveBeenCalledWith('Image', [5]);
-    expect(mockRefresh).toHaveBeenCalledWith('Model', [6]);
-    // The last day is still being rescored with late data, so the winner waits.
-    expect(winnerUpdates()).toHaveLength(0);
-    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}:unequip`]);
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
+    expect(mockRefresh).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
   });
 
-  it('phase 2: flags the winner once scoring has finished, without unequipping again', async () => {
-    redisMock.redis.get.mockImplementation(async (key: string) =>
-      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null
-    );
+  it('flags the winner once scoring has finished', async () => {
     await eventEngine.dailyReset(secondReset);
 
-    expect(mockScoring.unequipEventCosmetics).not.toHaveBeenCalled();
     const [update] = winnerUpdates();
     expect(update?.[1]).toBe(23); // Pink won
     expect((update?.[0] as TemplateStringsArray).join('?')).toContain("'true'::jsonb");
     expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
   });
 
-  it('does not mark cleanup done when the unequip fails, so the next reset retries', async () => {
-    mockScoring.unequipEventCosmetics.mockRejectedValue(new Error('db down'));
-    await expect(eventEngine.dailyReset(secondReset)).rejects.toThrow('db down');
-    expect(redisMock.redis.set).not.toHaveBeenCalled();
-    expect(winnerUpdates()).toHaveLength(0);
-  });
-
-  it('refreshes caches in chunks of 1000 ids', async () => {
-    mockScoring.unequipEventCosmetics.mockResolvedValue(
-      Array.from({ length: 2500 }, (_, i) => ({ entityType: 'Image', entityId: i + 1 }))
-    );
-    await eventEngine.dailyReset(firstReset);
-    expect(mockRefresh.mock.calls.map(([, ids]) => ids.length)).toEqual([1000, 1000, 500]);
-    expect(mockRefresh.mock.calls.flatMap(([, ids]) => ids)).toHaveLength(2500);
-  });
-
   it('decides the winner exactly when scoring stops, not a moment before', async () => {
     const finalize = birthday2026.scoring!.finalizeAfterMs;
-    const unequipped = async (key: string) =>
-      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null;
-    redisMock.redis.get.mockImplementation(unequipped);
 
     await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize - 1));
     expect(winnerUpdates()).toHaveLength(0);
@@ -329,9 +301,6 @@ describe('end-of-event cleanup', () => {
   });
 
   it('does not mark cleanup done when flagging the winner fails', async () => {
-    redisMock.redis.get.mockImplementation(async (key: string) =>
-      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null
-    );
     dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
     await expect(eventEngine.dailyReset(secondReset)).rejects.toThrow('db down');
     expect(setKeys()).not.toContain(`eventCleanup:${BIRTHDAY_2026_EVENT}`);
@@ -340,7 +309,6 @@ describe('end-of-event cleanup', () => {
   it('does not clean up twice', async () => {
     redisMock.redis.get.mockResolvedValue('true');
     await eventEngine.dailyReset(secondReset);
-    expect(mockScoring.unequipEventCosmetics).not.toHaveBeenCalled();
     expect(winnerUpdates()).toHaveLength(0);
   });
 });
@@ -357,7 +325,7 @@ describe('scored event is inert before it starts', () => {
     await eventEngine.updateLeaderboard(beforePreview);
     await eventEngine.dailyReset(beforePreview);
     expect(mockScoring.runCosmeticPlacementScoring).not.toHaveBeenCalled();
-    expect(anyWrite()).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
   });
 
   it('reads as nonexistent to the public', async () => {
@@ -448,7 +416,7 @@ describe('scoring behind the flag', () => {
       expect.objectContaining({
         name: BIRTHDAY_2026_EVENT,
         startDate: BIRTHDAY_2026_PREVIEW_FROM,
-        endDate: new Date('2026-11-11T00:00:00.000Z'),
+        endDate: new Date('2026-11-01T00:00:00.000Z'),
         scoreFrom: BIRTHDAY_2026_PREVIEW_FROM,
         audienceFlag: 'birthday-2026',
       }),
@@ -502,7 +470,17 @@ describe('getEventData: what the scored-event page reads', () => {
       headline: 'Civitai turns 4.',
       headlineAccent: 'Pick up a hat.',
       heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
-      dates: 'Nov 11 to Nov 25',
+      dates: 'Nov 1 to Nov 30',
     });
+  });
+
+  // Justin, 2026-10-09: the event runs for all of November, 2026-11-01 00:00 UTC through
+  // 2026-11-30 23:59 UTC. ENDS_AT is exclusive, so it is the first instant of December, and every
+  // date the page and banner state by hand has to say the same.
+  it('runs for all of November in UTC, and says so on the page and the banner', () => {
+    expect(BIRTHDAY_2026_STARTS_AT.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(BIRTHDAY_2026_ENDS_AT.toISOString()).toBe('2026-12-01T00:00:00.000Z');
+    expect(birthday2026.page?.dates).toBe('Nov 1 to Nov 30');
+    expect(birthday2026.banner?.text).toContain('Four colour teams, Nov 1 to Nov 30.');
   });
 });

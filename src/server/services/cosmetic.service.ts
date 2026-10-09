@@ -37,7 +37,7 @@ import type { EventViewer } from '~/server/events/event-access';
 import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
 import {
   getVisibleDecorationEvents,
-  isEventDecorationPlayable,
+  isEventDecorationWearable,
 } from '~/server/events/event-decoration-access';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
@@ -420,7 +420,8 @@ function getPlacedAt(userData: unknown) {
 
 /**
  * An event decoration counts toward its owner's team score, so it may only go on a type its event
- * allows, while that event runs, and not again within the event's cooldown.
+ * allows, once its event has opened to this user (it stays usable after the event ends), and not
+ * again within the event's cooldown.
  */
 async function assertCanPlaceEventDecoration({
   decoration,
@@ -436,8 +437,8 @@ async function assertCanPlaceEventDecoration({
   user: EventViewer;
 }) {
   const definition = getEventDecorationDefinition(decoration.event);
-  if (!definition || !(await isEventDecorationPlayable(definition, user, now)))
-    throw throwBadRequestError('This can only be used while its event is running');
+  if (!definition || !(await isEventDecorationWearable(definition, user, now)))
+    throw throwBadRequestError("This isn't available right now");
   if (!definition.entityTypes.includes(equippedToType))
     throw throwBadRequestError('This cannot be put on that kind of content');
 

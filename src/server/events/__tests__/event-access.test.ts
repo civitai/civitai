@@ -131,10 +131,17 @@ describe('what the jobs score', () => {
   it('scores the preview window, flagged owners only, up to the launch day, while the base is off', async () => {
     expect(await getEventScoringPhase(event, PREVIEW)).toEqual({
       from: BIRTHDAY_2026_PREVIEW_FROM,
-      to: new Date('2026-11-11T00:00:00.000Z'),
+      to: new Date('2026-11-01T00:00:00.000Z'),
       fliptKey: 'birthday-2026',
     });
     expect(testerFlag.asked).toContain('birthday-2026');
+  });
+
+  it('stops the preview at the start of the launch UTC day when the start is not at midnight', async () => {
+    const offMidnight = { ...event, startDate: new Date('2026-11-01T08:00:00.000Z') };
+    expect(await getEventScoringPhase(offMidnight, PREVIEW)).toMatchObject({
+      to: new Date('2026-11-01T00:00:00.000Z'),
+    });
   });
 
   it('scores nothing once armed and before the start, or before the preview', async () => {

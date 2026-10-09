@@ -15,7 +15,6 @@ import {
   getEventStandings,
   getTeamScoreHistory as getScoredTeamScoreHistory,
   runCosmeticPlacementScoring,
-  unequipEventCosmetics,
 } from '~/server/events/scoring/cosmetic-placement.service';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
@@ -37,7 +36,6 @@ import {
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
-import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
 import { cosmeticCache } from '~/server/redis/caches';
 import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 
@@ -112,27 +110,21 @@ export const eventEngine = {
 
       const scores = await this.getTeamScores(eventDef.name);
 
-      // If the event is over, unequip the event cosmetics from all users
+      // If the event is over, clean it up once
       if (eventDef.endDate < now) {
         // Check to see if we've already cleaned up this event
         const cleanupKey = `${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}` as const;
         const alreadyCleanedUp = await redis.get(cleanupKey);
         if (alreadyCleanedUp) continue;
 
-        if (eventDef.scoring) {
-          // Phase 1, at the first reset after the end: take the cosmetics off content. Clears the
-          // placement itself, not only the equip timestamp, or the decoration stays rendered.
-          const unequipKey = `${cleanupKey}:unequip` as const;
-          if (!(await redis.get(unequipKey))) {
-            const entities = await unequipEventCosmetics(eventDef.name);
-            await refreshEventDecorations(entities);
-            await redis.set(unequipKey, 'true', { EX: CLEANUP_MARKER_TTL_S });
-          }
-          // Phase 2 waits until scoring has finished taking late data, so the winner is decided on
-          // the final standings.
-          if (now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs)
-            continue;
-        }
+        // A scored event's cosmetics stay on content: owners keep them after the event (see
+        // canWearEventDecorations). Its winner waits until scoring has finished taking late
+        // data, so it is decided on the final standings.
+        if (
+          eventDef.scoring &&
+          now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs
+        )
+          continue;
 
         // Get 1st place team
         const winner = scores.find(({ rank }) => rank === 1)?.team;

@@ -24,7 +24,7 @@ export const birthday2026 = createEvent(name, {
     headline: 'Civitai turns 4.',
     headlineAccent: 'Pick up a hat.',
     heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
-    dates: 'Nov 11 to Nov 25',
+    dates: 'Nov 1 to Nov 30',
     summary:
       'Four colour teams. Put party hats on your images, models and articles, and every view and reaction they get scores for your team.',
     steps: [
@@ -66,7 +66,12 @@ export const birthday2026 = createEvent(name, {
     faq: [
       {
         question: 'What happens to my hats when the event ends?',
-        answer: 'They come off your content and stop scoring.',
+        answer:
+          "You keep them. They stay on your content and you can still move them, they just stop scoring and aren't sold any more.",
+      },
+      {
+        question: 'Do I keep hats bought during the tester and mod preview?',
+        answer: 'Yes.',
       },
       {
         question: 'Can I change teams?',
@@ -76,7 +81,7 @@ export const birthday2026 = createEvent(name, {
   },
   banner: {
     accent: 'Pick up a hat.',
-    text: 'Four colour teams, Nov 11 to Nov 25. Hat your best work and score for your team.',
+    text: 'Four colour teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
     cta: 'Join a team',
     // The hero art's backdrop, so the strip runs on seamlessly to the left of the image.
     background: '#1c1a30',

@@ -169,12 +169,10 @@ describe('placing an event decoration', () => {
     await expectRefused(/your own content/);
   });
 
-  it('is refused before the event starts and after it ends', async () => {
+  it('is refused before the event starts', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
     vi.setSystemTime(new Date(BIRTHDAY_2026_STARTS_AT.getTime() - 1));
-    await expectRefused(/while its event is running/);
-    vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
-    await expectRefused(/while its event is running/);
+    await expectRefused(/isn't available right now/);
   });
 
   it('is refused on a content type its event does not allow', async () => {
@@ -384,9 +382,9 @@ describe('getEventDecorationsForEntity', () => {
     expect(caches.event.Image.fetch).toHaveBeenCalledWith([IMAGE], { writeBack: false });
   });
 
-  it('skips the read between events and for types no event allows', async () => {
+  it('skips the read before any event is released and for types no event allows', async () => {
     await getEventDecorationsForEntity({ ids: [9], entity: 'Post' });
-    vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
+    vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1));
     await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' });
     expect(caches.event.Post.fetch).not.toHaveBeenCalled();
     expect(caches.event.Image.fetch).not.toHaveBeenCalled();
@@ -410,9 +408,9 @@ describe('behind the flag before launch', () => {
 
   it('refuses everyone else during the preview, and the tester once it is armed', async () => {
     testerFlag.reset({ testers: [] });
-    await expect(equipHat()).rejects.toThrow(/while its event is running/);
+    await expect(equipHat()).rejects.toThrow(/isn't available right now/);
     testerFlag.reset({ public: true, testers: [OWNER] });
-    await expect(equipHat()).rejects.toThrow(/while its event is running/);
+    await expect(equipHat()).rejects.toThrow(/isn't available right now/);
     expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 
@@ -444,5 +442,41 @@ describe('behind the flag before launch', () => {
         viewer: { id: OWNER },
       })
     ).toEqual({ [IMAGE]: { id: 1, data: HAT } });
+  });
+});
+
+// Justin and Ellie, 2026-10-09: hats are kept after the event, like the frames and decorations of
+// past birthdays. They stop scoring and stop being sold; they do not come off content. If you are
+// about to make an ended event take its hats away again, that reverses a product decision.
+describe('hats are kept after the event ends', () => {
+  const AFTER = [
+    ['the moment it ends', BIRTHDAY_2026_ENDS_AT],
+    ['a year later', new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 365 * 24 * 60 * 60 * 1000)],
+  ] as const;
+
+  it.each(AFTER)('can still be placed %s', async (_, at) => {
+    vi.setSystemTime(at);
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(db.$executeRaw).toHaveBeenCalled();
+  });
+
+  it.each(AFTER)('are still shown on content %s', async (_, at) => {
+    vi.setSystemTime(at);
+    caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
+    expect(await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).toEqual({
+      [IMAGE]: { id: 1, data: HAT },
+    });
+  });
+
+  it('are hidden, and cannot be placed, once the flag is off', async () => {
+    vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
+    testerFlag.reset({ testers: [] });
+    caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
+    expect(
+      await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image', viewer: { id: OWNER } })
+    ).toEqual({});
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await expect(equipHat()).rejects.toThrow(/isn't available right now/);
   });
 });

@@ -7,6 +7,14 @@ import {
 } from '~/server/flipt/tester-segment';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
+import type { EventAccess } from '~/shared/constants/event-access.constants';
+
+export type { EventAccess } from '~/shared/constants/event-access.constants';
+export {
+  canPlayEvent,
+  canReadEvent,
+  canWearEventDecorations,
+} from '~/shared/constants/event-access.constants';
 
 /**
  * Who can see and play an event. An event with a `featureFlag` is behind that Flipt flag
@@ -17,11 +25,12 @@ import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
  *   preview closes for everyone, and the event opens to all at `startDate` with no deploy.
  * - from `startDate` until `endDate`, it is open to everyone the flag is on for, which is everyone
  *   once the base is on. Turning the base off is the kill switch.
- * - after `endDate`, the same people can still read it (results), but nobody can play.
+ * - after `endDate`, the same people can still read it (results) and keep wearing the hats they
+ *   own, but nobody can play.
  *
- * An event without a flag is open on its dates alone.
+ * An event without a flag is open on its dates alone. What each level allows is in
+ * ~/shared/constants/event-access.constants.ts.
  */
-export type EventAccess = 'closed' | 'preview' | 'open' | 'ended';
 
 export type GatedEvent = {
   name: string;
@@ -32,11 +41,6 @@ export type GatedEvent = {
 };
 
 export type EventViewer = { id?: number; isModerator?: boolean } | null | undefined;
-
-/** Readable: the event page, standings and scores. */
-export const canReadEvent = (access: EventAccess) => access !== 'closed';
-/** Playable: join, buy, place, and see its decorations on content. */
-export const canPlayEvent = (access: EventAccess) => access === 'preview' || access === 'open';
 
 function fliptKeyOf(event: GatedEvent) {
   if (!event.featureFlag) return undefined;

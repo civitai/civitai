@@ -149,10 +149,24 @@ describe('Your hats cards', () => {
     expect(card.textContent).toContain('Not on anything yet');
   });
 
-  it('offers no action once the event has ended, on worn or unworn hats', () => {
+  // Justin and Ellie, 2026-10-09: hats are kept after the event, so they can still be moved and
+  // placed; only buying another is gone.
+  it('still offers Move and Place it once the event has ended, but not another hat', () => {
     const el = cards([hat({ placedOn: placed }), hat({ cosmeticId: 32 })], true);
     expect(el.querySelectorAll('[data-testid="my-hat"]')).toHaveLength(2);
-    expect(el.querySelectorAll('button')).toHaveLength(0);
+    expect([...el.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Move',
+      'Place it',
+    ]);
+    expect(el.querySelector('[data-testid="get-another-hat"]')).toBeNull();
+  });
+
+  it('keeps the move cooldown once the event has ended', () => {
+    const el = cards([hat({ placedOn: placed, moveCooldownLeftMs: 5 * 60 * 1000 })], true);
+    const move = el.querySelector<HTMLButtonElement>('button')!;
+    expect(move.textContent).toBe('Move');
+    expect(move.disabled).toBe(true);
+    expect(el.textContent).toContain('Can move in 5 min');
   });
 
   // Rows of equal height, so the card is a hat card's size even alone on its row.
