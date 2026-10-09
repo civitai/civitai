@@ -29,6 +29,7 @@ import {
 import { isEventShopItemData } from '~/server/events/event-shop-item';
 import {
   chargeForShopPurchase,
+  chargeRetryOptions,
   purchaseStateUnknown,
 } from '~/server/services/shop-purchase-charge';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
@@ -570,15 +571,18 @@ export const purchaseCosmeticPack = async ({
   const chargeContext = { shopItemId: shopItem.id, userId, transactionId };
   const transaction = await chargeForShopPurchase(
     () =>
-      createMultiAccountBuzzTransaction({
-        fromAccountId: userId,
-        fromAccountTypes,
-        toAccountId: 0,
-        amount: amountCharged,
-        type: TransactionType.Purchase,
-        description: `Cosmetic pack purchase - ${shopItem.title}`,
-        externalTransactionIdPrefix: transactionId,
-      }),
+      createMultiAccountBuzzTransaction(
+        {
+          fromAccountId: userId,
+          fromAccountTypes,
+          toAccountId: 0,
+          amount: amountCharged,
+          type: TransactionType.Purchase,
+          description: `Cosmetic pack purchase - ${shopItem.title}`,
+          externalTransactionIdPrefix: transactionId,
+        },
+        chargeRetryOptions
+      ),
     chargeContext
   );
   // 🔴 NOT a 400, and that changed meaning recently. The Buzz service answered

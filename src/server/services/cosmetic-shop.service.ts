@@ -71,6 +71,7 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   chargeForShopPurchase,
+  chargeRetryOptions,
   purchaseStateUnknown,
 } from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -96,9 +97,10 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
  * is a new intent; anything else — including no response at all — means it might
  * have, so the idempotency key is held rather than reissued.
  *
- * ⚠️ So a refusal here must NOT be raised for an ambiguous failure. The two
- * below (`transactionCount`, and the post-charge grant failure) stay 500s
- * deliberately: the money may already have moved.
+ * ⚠️ So a refusal here must NOT be raised for an ambiguous failure. An empty
+ * `transactionCount` stays a 500, and so does any post-charge failure whose
+ * money state is unknown (see shop-purchase-charge.ts). A grant failure whose
+ * refund went through is a refusal: the money is back.
  */
 export const getShopItemById = async ({ id }: GetByIdInput) => {
   const shopItemFindArgs = {
@@ -1162,15 +1164,18 @@ export const purchaseCosmeticShopItem = async ({
   const chargeContext = { shopItemId, userId, transactionId };
   const transaction = await chargeForShopPurchase(
     () =>
-      createMultiAccountBuzzTransaction({
-        fromAccountId: userId,
-        fromAccountTypes,
-        toAccountId: 0, // bank
-        amount: shopItem.unitAmount,
-        type: TransactionType.Purchase,
-        description: `Cosmetic purchase - ${shopItem.title}`,
-        externalTransactionIdPrefix: transactionId,
-      }),
+      createMultiAccountBuzzTransaction(
+        {
+          fromAccountId: userId,
+          fromAccountTypes,
+          toAccountId: 0, // bank
+          amount: shopItem.unitAmount,
+          type: TransactionType.Purchase,
+          description: `Cosmetic purchase - ${shopItem.title}`,
+          externalTransactionIdPrefix: transactionId,
+        },
+        chargeRetryOptions
+      ),
     chargeContext
   );
   if (!transaction.transactionCount) {
@@ -1377,7 +1382,9 @@ export const purchaseCosmeticShopItem = async ({
       throw purchaseStateUnknown({ ...chargeContext, error, refundError }, 'refund failed');
     }
 
-    throw new Error('Failed to purchase cosmetic');
+    // Refunded, so nothing is charged: a refusal, which lets the client retry
+    // with a new key instead of replaying the refunded one.
+    throw throwBadRequestError('Failed to purchase cosmetic');
   }
 };
 

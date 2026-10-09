@@ -231,11 +231,32 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
   });
 
-  it('any other grant failure still refunds this charge (control)', async () => {
+  it('a charge is never auto-resent after a failure that may have landed', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+
+    await purchase();
+
+    const opts = mocks.createMultiTx.mock.calls[0][1] as
+      | { shouldRetry?: (e: unknown) => boolean }
+      | undefined;
+    // A gateway 5xx may have landed; only a connection that never opened may be resent.
+    expect(opts?.shouldRetry?.(ledgerError(502, 'INTERNAL_SERVER_ERROR'))).toBe(false);
+    const refused = Object.assign(new TypeError('fetch failed'), {
+      cause: { code: 'ECONNREFUSED' },
+    });
+    expect(opts?.shouldRetry?.(refused)).toBe(true);
+  });
+
+  // Refunded, so nothing is charged: a refusal lets the client mint a new key
+  // instead of replaying the refunded one.
+  it('any other grant failure refunds this charge and is a refusal (control)', async () => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
     mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
 
-    await expect(purchase()).rejects.toThrow('Failed to purchase cosmetic');
+    await expect(purchase()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Failed to purchase cosmetic',
+    });
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
     expect(mocks.refundMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toContain(KEY);
   });

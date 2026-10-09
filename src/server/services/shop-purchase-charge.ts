@@ -1,3 +1,4 @@
+import { isSafeToRetry } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
@@ -24,6 +25,12 @@ export function purchaseStateUnknown(context: Record<string, unknown>, reason: s
   logToAxiom({ level: 'error', message: `shop purchase state unknown: ${reason}`, data: context });
   return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: PURCHASE_STATE_UNKNOWN_MESSAGE });
 }
+
+// The buzz client retries every failure by default, including ones where the
+// first attempt may have landed. Its resend would then come back as this
+// request's own duplicate. Only a failure that never reached the ledger is
+// retried.
+export const chargeRetryOptions = { shouldRetry: isSafeToRetry };
 
 type Charge = { transactionIds: { duplicate?: boolean }[]; transactionCount: number };
 

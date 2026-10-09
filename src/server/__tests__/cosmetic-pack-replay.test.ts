@@ -131,6 +131,9 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     expect(spend.mock.calls[0][0].externalTransactionIdPrefix).toBe(
       `cosmetic-pack-${BUYER}-7001-${KEY}`
     );
+    // Never auto-resent after a failure that may have landed.
+    const opts = spend.mock.calls[0][1] as { shouldRetry?: (e: unknown) => boolean } | undefined;
+    expect(opts?.shouldRetry?.(ledgerError(502, 'INTERNAL_SERVER_ERROR'))).toBe(false);
     // Positive control for the "pays nothing" assertions below.
     expect(createManyUserCosmetic).toHaveBeenCalled();
     expect(pay).toHaveBeenCalled();
