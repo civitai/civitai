@@ -159,7 +159,10 @@ describe('journey page polish', () => {
     const img = page.querySelector('[data-state="locked"] img');
     expect(img?.className.split(' ')).toContain('scale-x-110');
     // Only the placeholder art is drawn narrow; real badge art must not be stretched.
-    const earned = mount(journey([secret('secret:b', true)]));
+    const earned = mount(
+      journey([secret('secret:b', true), { ...secret('secret:c', true), badgeUrl: 'found-art' }])
+    );
+    expect(earned.querySelectorAll('[data-state="earned"]')).toHaveLength(2);
     expect(earned.querySelector('[data-state="earned"] .scale-x-110')).toBeNull();
   });
 });
