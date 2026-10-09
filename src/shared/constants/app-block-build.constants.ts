@@ -56,7 +56,8 @@ export function isBuildFailureClassSignal(value: unknown): value is BuildFailure
 
 /**
  * The stored signals for a version's latest build attempt, as the readers receive them.
- * Both are `null` when the attempt predates the signals or the attempt table is absent.
+ * Either is `null` when the attempt did not report it; the whole value is absent when there
+ * is no current attempt or the attempts table is missing.
  */
 export type BuildAttemptSignals = {
   failedStep: string | null;

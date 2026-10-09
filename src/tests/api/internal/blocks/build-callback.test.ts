@@ -790,6 +790,7 @@ describe('build-callback handler — structured signals and build attempts', () 
         // No step reported → no class stored, so the UI keeps its text fallback.
         failureClass: null,
         pipelineStatus: null,
+        createdAt: expect.any(Date),
       },
     ]);
   });
@@ -903,8 +904,11 @@ describe('build-callback handler — structured signals and build attempts', () 
     expect(res._body).toEqual({ ok: true, applied: false, reason: 'superseded run' });
     expect(mockMarkDeploy).not.toHaveBeenCalled();
     expect(mockSetCommitStatus).not.toHaveBeenCalled();
-    // History still records what the old run reported.
-    expect(callbackRows()).toEqual([expect.objectContaining({ runId: RUN_OLD, status: 'failed' })]);
+    // History still records what the old run reported — as `superseded`, which the
+    // latest-outcome read never returns, so it cannot relabel the newer run's result.
+    expect(callbackRows()).toEqual([
+      expect.objectContaining({ runId: RUN_OLD, status: 'superseded', failedStep: 'scan' }),
+    ]);
   });
 
   it('RUN-ID GUARD: the CURRENT run’s failure is applied', async () => {
@@ -936,30 +940,59 @@ describe('build-callback handler — structured signals and build attempts', () 
       await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
     }
     expect(callbackRows()).toHaveLength(1);
+    // The dedup is the DB's partial unique index; what the code owns is asking for it.
+    for (const [arg] of attempts.createMany.mock.calls) expect(arg.skipDuplicates).toBe(true);
   });
 
-  it('counts the outcome on civitai_app_block_builds_total by step and class', async () => {
+  /** The current value of one series of the build-outcome counter. */
+  async function series(labels: string): Promise<number> {
     const client = (await import('prom-client')).default;
-    const read = async () => {
-      const metric = client.register.getSingleMetric(
-        'civitai_app_block_builds_total'
-      ) as unknown as {
-        get(): Promise<{ values: { value: number; labels: Record<string, string> }[] }>;
-      };
-      const { values } = await metric.get();
-      return (
-        values.find(
-          (v) =>
-            v.labels.mode === 'build' &&
-            v.labels.outcome === 'failed' &&
-            v.labels.failed_step === 'scan' &&
-            v.labels.failure_class === 'unknown'
-        )?.value ?? 0
-      );
-    };
-    await invoke(signedReq(failBody({ failedStep: 'scan' })), makeRes());
-    const before = await read();
-    await invoke(signedReq(failBody({ failedStep: 'scan' })), makeRes());
-    expect((await read()) - before).toBe(1);
+    const metric = client.register.getSingleMetric('civitai_app_block_builds_total') as unknown as
+      | { get(): Promise<{ values: { value: number; labels: Record<string, string> }[] }> }
+      | undefined;
+    if (!metric) return 0;
+    const { values } = await metric.get();
+    const [mode, outcome, step, cls] = labels.split('/');
+    return (
+      values.find(
+        (v) =>
+          v.labels.mode === mode &&
+          v.labels.outcome === outcome &&
+          v.labels.failed_step === step &&
+          v.labels.failure_class === cls
+      )?.value ?? 0
+    );
+  }
+
+  it.each([
+    ['a reported step', { failedStep: 'scan' }, 'build/failed/scan/unknown'],
+    [
+      'a build timeout',
+      { failedStep: 'build', failedReason: 'TaskRunTimeout' },
+      'build/failed/build/transient',
+    ],
+    ['no step (older pipeline)', {}, 'build/failed/unreported/unknown'],
+  ] as const)('counts a failure with %s on its series', async (_n, extra, labels) => {
+    const before = await series(labels);
+    await invoke(signedReq(failBody(extra)), makeRes());
+    expect((await series(labels)) - before).toBe(1);
+  });
+
+  it('counts a success, and an apply failure of the built image as platform', async () => {
+    mockWaitApply.mockResolvedValue('failed');
+    const ok = await series('build/succeeded/none/none');
+    const apply = await series('build/failed/apply/platform');
+    await invoke(signedReq(validSuccessBody()), makeRes());
+    await flush(); // the apply watcher is fire-and-forget
+    expect((await series('build/succeeded/none/none')) - ok).toBe(1);
+    expect((await series('build/failed/apply/platform')) - apply).toBe(1);
+  });
+
+  it('does NOT count a superseded run’s ignored failure', async () => {
+    await triggered(RUN_OLD);
+    await triggered(RUN_NEW);
+    const before = await series('build/failed/scan/unknown');
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), makeRes());
+    expect(await series('build/failed/scan/unknown')).toBe(before);
   });
 });

@@ -2235,7 +2235,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
   const buildSignals = await failedBuildSignals(
     items
       .filter((r: (typeof rows)[number]) => r.deployState === 'failed')
-      .map((r: (typeof rows)[number]) => r.id)
+      .map((r: (typeof rows)[number]) => ({ id: r.id, deployUpdatedAt: r.deployUpdatedAt }))
   );
   return {
     items: items.map((r: (typeof rows)[number]) => ({
@@ -3509,11 +3509,11 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
  * import is inside the `try`, and the read itself already degrades to an empty map.
  */
 async function failedBuildSignals(
-  publishRequestIds: string[]
+  requests: Array<{ id: string; deployUpdatedAt: Date | null }>
 ): Promise<Map<string, BuildAttemptSignals>> {
   try {
     const { latestBuildAttemptSignals } = await import('./build-attempts.service');
-    return await latestBuildAttemptSignals(publishRequestIds);
+    return await latestBuildAttemptSignals(requests);
   } catch {
     return new Map();
   }
@@ -3523,8 +3523,8 @@ async function failedBuildSignals(
  * Record the run a trigger just started, for the build callbacks' stale-run guard.
  *
  * Best-effort, like every write to the attempts table, AND the import is inside the `try`:
- * by the time this runs the build is already triggered and the state written, so nothing
- * here may throw out of the caller. A missing table or a failed import only leaves the
+ * by the time this runs the build is already triggered, so nothing here may throw out of
+ * the caller. A missing table or a failed import only leaves the
  * guard inactive for this run.
  */
 async function recordRunTriggered(
@@ -3555,10 +3555,10 @@ export type DeployState = 'building' | 'deploying' | 'live' | 'failed';
  * request for `(slug, sha)`. Keyed on `forgejo_commit_sha` (unique per approved
  * version; parked unreviewed requests carry an empty sha so they never match)
  * + `status='approved'`. Best-effort — a status-write failure must never break
- * the approve flow or the build-callback, so errors are swallowed. The build is
- * triggered only by approveRequest, so this is the single source of these
- * transitions: approveRequest sets 'building'; build-callback sets
- * 'deploying'/'live'/'failed'.
+ * the approve flow or the build-callback, so errors are swallowed. Writers:
+ * approveRequest and retriggerBuild set 'building'; build-callback sets
+ * 'deploying'/'live'/'failed' (but skips a failure from a superseded run);
+ * retriggerBuild also sets 'failed' when its trigger cannot be sent.
  */
 export async function markRequestDeployState(
   slug: string,

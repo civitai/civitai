@@ -1,21 +1,20 @@
 // Fleet-wide App Block build outcomes, from the build callbacks.
 //
-// One increment per accepted build callback (after signature, flag, body and timestamp
-// checks), plus one per failed or timed-out deploy of an image that built. A repeated
+// One increment per APPLIED build callback outcome (after signature, flag, body and
+// timestamp checks, and after the stale-run guard: a superseded run's late failure is not
+// counted), plus one per failed or timed-out deploy of an image that built. A repeated
 // delivery of the same FAILURE callback counts again: the build service re-sends only when
 // an earlier delivery got no 2xx, so that is rare, but it is not deduplicated here. A
-// repeated SUCCESS callback is not counted twice, because it stops at the apply replay
-// guard before the increment.
+// repeated SUCCESS callback is not counted twice within the replay-guard window (it stops
+// at the apply replay guard before the increment).
 //
 // 🔴 CARDINALITY: four labels, each a closed set validated in code, with NO slug, sha,
 // run id or user. Correlation is "many failures with the same step and class", not
 // per-app; per-app attribution is in the build attempt rows. The reachable label sets
 // are enumerated in `REACHABLE_SERIES` and seeded at 0: 2 modes x 10 = 20 series per pod.
 //
-// HOW TO READ IT: prom-client counters live in the pod heap and restart with it, so for
-// "how many platform-class failures in the last hour" use
-// `sum(max_over_time(...[1h]))`-style range reads or `increase()` over the seeded series,
-// not a bare `sum()`.
+// HOW TO READ IT: prom-client counters live in the pod heap and reset on restart. Count
+// with `sum(increase(civitai_app_block_builds_total{...}[1h]))`, never a bare `sum()`.
 //
 // Same registry rules as the neighbouring modules: get-or-create against the DEFAULT
 // registry (the one `/api/metrics` serves), and import only from the request graph.
@@ -89,7 +88,7 @@ function getOrCreateCounter(reg: Registry): Counter<string> {
 /**
  * Get-or-create the counter and materialise every reachable series at 0, so an alert's
  * "no failures" reads as a zero rather than as `no data`. Idempotent; `/api/metrics` calls
- * it on every scrape.
+ * it once, at module load.
  */
 export function ensureRegisterAppBlockBuildMetrics(reg: Registry = client.register): {
   appBlockBuildsTotal: Counter<string>;

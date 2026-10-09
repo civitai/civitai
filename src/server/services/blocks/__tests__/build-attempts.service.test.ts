@@ -67,6 +67,7 @@ describe('recordBuildAttempt', () => {
           failedReason: null,
           failureClass: null,
           pipelineStatus: null,
+          createdAt: expect.any(Date),
         },
       ],
       skipDuplicates: true,
@@ -147,7 +148,9 @@ describe('isSupersededRun', () => {
   });
 
   it('the callback’s run IS the latest trigger → false', async () => {
-    db.findFirst.mockResolvedValueOnce({ runId: 'old' });
+    // The second lookup would find this run's own row — so only the equality check
+    // can answer false here.
+    db.findFirst.mockResolvedValueOnce({ runId: 'old' }).mockResolvedValueOnce({ id: 1 });
     expect(await isSupersededRun({ ...args, runId: 'old' })).toBe(false);
   });
 
@@ -176,33 +179,71 @@ describe('isSupersededRun', () => {
 });
 
 describe('latestBuildAttemptSignals', () => {
-  it('no ids → empty map, no query', async () => {
+  const T = new Date('2026-10-08T19:00:00Z');
+  const after = new Date(T.getTime() + 5);
+  const before = new Date(T.getTime() - 5);
+
+  it('no requests → empty map, no query', async () => {
     expect((await latestBuildAttemptSignals([])).size).toBe(0);
     expect(db.findMany).not.toHaveBeenCalled();
   });
 
-  it('maps each request to its latest CALLBACK row, skipping trigger rows', async () => {
+  it('maps each request to its latest OUTCOME row, newest first, outcomes only', async () => {
     db.findMany.mockResolvedValue([
-      { publishRequestId: 'p1', failedStep: 'scan', failureClass: 'unknown' },
-      { publishRequestId: 'p2', failedStep: null, failureClass: null },
+      { publishRequestId: 'p1', failedStep: 'scan', failureClass: 'unknown', createdAt: after },
+      { publishRequestId: 'p2', failedStep: null, failureClass: null, createdAt: after },
     ]);
-    const map = await latestBuildAttemptSignals(['p1', 'p2', 'p3']);
+    const map = await latestBuildAttemptSignals([
+      { id: 'p1', deployUpdatedAt: T },
+      { id: 'p2', deployUpdatedAt: T },
+      { id: 'p3', deployUpdatedAt: T },
+    ]);
     expect(Object.fromEntries(map)).toEqual({
       p1: { failedStep: 'scan', failureClass: 'unknown' },
       p2: { failedStep: null, failureClass: null },
     });
-    expect(db.findMany.mock.calls[0][0]).toMatchObject({
+    expect(db.findMany.mock.calls[0][0]).toEqual({
       where: {
         publishRequestId: { in: ['p1', 'p2', 'p3'] },
         mode: 'build',
-        status: { not: 'triggered' },
+        // Not 'triggered' (no outcome) and not 'superseded' (an old run's ignored report).
+        status: { in: ['succeeded', 'failed'] },
       },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       distinct: ['publishRequestId'],
+      select: { publishRequestId: true, failedStep: true, failureClass: true, createdAt: true },
+    });
+  });
+
+  it('drops a row OLDER than the request’s last deploy_state transition (it describes something else)', async () => {
+    db.findMany.mockResolvedValue([
+      {
+        publishRequestId: 'p_stale',
+        failedStep: 'scan',
+        failureClass: 'unknown',
+        createdAt: before,
+      },
+      { publishRequestId: 'p_equal', failedStep: 'clone', failureClass: 'platform', createdAt: T },
+      {
+        publishRequestId: 'p_noclock',
+        failedStep: 'push',
+        failureClass: 'transient',
+        createdAt: before,
+      },
+    ]);
+    const map = await latestBuildAttemptSignals([
+      { id: 'p_stale', deployUpdatedAt: T },
+      { id: 'p_equal', deployUpdatedAt: T },
+      { id: 'p_noclock', deployUpdatedAt: null },
+    ]);
+    expect(Object.fromEntries(map)).toEqual({
+      p_equal: { failedStep: 'clone', failureClass: 'platform' },
+      p_noclock: { failedStep: 'push', failureClass: 'transient' },
     });
   });
 
   it('TABLE MISSING → empty map, never throws', async () => {
     db.findMany.mockRejectedValue(missingTable());
-    expect((await latestBuildAttemptSignals(['p1'])).size).toBe(0);
+    expect((await latestBuildAttemptSignals([{ id: 'p1', deployUpdatedAt: T }])).size).toBe(0);
   });
 });

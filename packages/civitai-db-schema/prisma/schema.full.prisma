@@ -3078,7 +3078,8 @@ model AppBlockPublishRequest {
 
 /// One row per App Block build-run event: `status = 'triggered'` when civitai starts a run,
 /// then `succeeded` / `failed` for each build callback of that run, carrying the optional
-/// failed step, the build service's reason and the derived failure class.
+/// failed step, the build service's reason and the derived failure class. A failure from an
+/// older run that arrived after a newer run started is kept as `superseded`.
 ///
 /// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT. Every read and write goes
 /// through `~/server/services/blocks/build-attempts.service`, which is best-effort, so the
@@ -3095,7 +3096,7 @@ model AppBlockBuildAttempt {
   sha              String
   runId            String?  @map("run_id") // server-side only; never rendered
   mode             String // 'build' | 'review'
-  status           String // 'triggered' | 'succeeded' | 'failed'
+  status           String // 'triggered' | 'succeeded' | 'failed' | 'superseded'
   failedStep       String?  @map("failed_step") // clone|validate|build|scan|push|none
   failedReason     String?  @map("failed_reason") // build service reason word, e.g. TaskRunTimeout
   failureClass     String?  @map("failure_class") // author|platform|transient|unknown

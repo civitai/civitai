@@ -196,6 +196,18 @@ describe('the build’s own report of the failed step wins over the text', () =>
     expect(r.badge).toBe('rebuild failed');
   });
 
+  it('signals apply to an empty detail, but not to a detail in no known shape', () => {
+    const fromNull = describeBuildFailure(null, { failedStep: 'clone', failureClass: 'platform' });
+    expect(fromNull.failureClass).toBe('platform');
+    expect(fromNull.excerpt).toBeNull();
+    const odd = describeBuildFailure('something new went wrong', {
+      failedStep: 'clone',
+      failureClass: 'platform',
+    });
+    expect(odd.failureClass).toBe('unknown');
+    expect(odd.excerpt).toBe('something new went wrong');
+  });
+
   it('the text heuristic is the fallback when no usable signal is stored', () => {
     for (const signals of [
       undefined,

@@ -37,10 +37,10 @@ import {
  *   3. Bind the accepted imageRef to the REVIEW image (app-block-review-<slug>:<sha>).
  *   4. On success → create the review apply Job, advance the pending request's
  *      preview state to deploying then live (after the Job succeeds).
- *   5. On failure → flip the preview state to failed.
+ *   5. On failure → flip the preview state to failed, unless a newer run for the
+ *      same sha has superseded the sender (stale-run guard).
  *
- * The production build-callback is left UNCHANGED; this is an additive parallel
- * lane for review previews only.
+ * An additive parallel lane for review previews only.
  */
 
 // HMAC needs the exact bytes Tekton hashed — read the raw stream ourselves.
@@ -306,12 +306,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       failureClass,
       pipelineStatus: signals.pipelineStatus,
     };
-    recordAppBlockBuildOutcome({
-      mode: 'review',
-      outcome: 'failed',
-      failedStep: signals.failedStep ?? 'unreported',
-      failureClass: failureClass ?? 'unknown',
-    });
     // Stale-run guard, as in the production callback: a "Rebuild preview" of the same sha
     // starts a new run, and a late failure from the old one must not flip it to failed.
     if (
@@ -322,7 +316,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         runId: signals.runId,
       })
     ) {
-      await recordBuildAttempt(attempt);
+      await recordBuildAttempt({ ...attempt, status: 'superseded' });
       res.status(200).json({ ok: true, applied: false, reason: 'superseded run' });
       return;
     }
@@ -336,6 +330,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       { requireActivePreview: true }
     );
     await recordBuildAttempt(attempt);
+    // Counted only once the failure is APPLIED: a superseded run's late report is history,
+    // not a build outcome, and must not move a failure-rate alert.
+    recordAppBlockBuildOutcome({
+      mode: 'review',
+      outcome: 'failed',
+      failedStep: signals.failedStep ?? 'unreported',
+      failureClass: failureClass ?? 'unknown',
+    });
     res.status(200).json({ ok: true, applied: false, reason: 'review build failed' });
     return;
   }

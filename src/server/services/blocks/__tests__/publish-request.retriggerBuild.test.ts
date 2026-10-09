@@ -688,6 +688,7 @@ describe('retriggerBuild — records the run it started, for the stale-run guard
             failedReason: null,
             failureClass: null,
             pipelineStatus: null,
+            createdAt: expect.any(Date),
           },
         ],
         skipDuplicates: true,

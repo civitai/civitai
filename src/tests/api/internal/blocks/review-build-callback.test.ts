@@ -525,10 +525,12 @@ describe('review-build-callback — structured signals', () => {
       runId: RUN,
     });
     expect(mockMarkPreview).not.toHaveBeenCalled();
-    expect(mockRecordAttempt).toHaveBeenCalledWith(expect.objectContaining({ runId: RUN }));
+    expect(mockRecordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: RUN, status: 'superseded' })
+    );
   });
 
-  it('the preview failure is written even when the attempt write fails (table missing)', async () => {
+  it('the preview failure is written even when the attempt write reports failure', async () => {
     mockRecordAttempt.mockResolvedValueOnce(false);
     const { req, res } = makeReqRes(failBody({ failedStep: 'build', runId: RUN }));
     await handler(req, res);

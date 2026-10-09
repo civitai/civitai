@@ -179,6 +179,12 @@ export type ReviewRowDeploy = {
   buildSignals?: BuildAttemptSignals | null;
 };
 
+// NOTE: `deployDetail` is deliberately NOT projected here, and
+// `listApprovedRequests` does not select it either. It carries the
+// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes), which
+// only the app's own team sees: the listing's History tab reads it from
+// `appListings.listingHistory`.
+
 /**
  * "security scan · unknown" for a moderator's failed-deploy chip, from the latest build
  * attempt's structured signals; `null` when the build reported no step (or a value outside
@@ -190,11 +196,6 @@ export function failedBuildSummary(signals: BuildAttemptSignals | null | undefin
   if (!isBuildPipelineStep(step) || !isBuildFailureClassSignal(cls)) return null;
   return `${BUILD_STEP_LABELS[step]} · ${cls}`;
 }
-// NOTE: `deployDetail` is deliberately NOT projected here, and
-// `listApprovedRequests` does not select it either. It carries the
-// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes), which
-// only the app's own team sees: the listing's History tab reads it from
-// `appListings.listingHistory`.
 
 function toDate(d: string | Date): Date {
   return typeof d === 'string' ? new Date(d) : d;

@@ -303,10 +303,13 @@ export async function listListingHistory(opts: {
 
   // Best-effort and AFTER the main reads: an empty map (no attempts yet, or the attempts
   // table not applied) leaves every entry on the text fallback.
-  const failedVersionIds = blockRequests
+  const failedVersions = blockRequests
     .filter((r: { status: string; deployState: string | null }) => isAuthorFailure(r))
-    .map((r: { id: string }) => r.id);
-  const signalsById = await latestBuildAttemptSignals(failedVersionIds);
+    .map((r: { id: string; deployUpdatedAt: Date | null }) => ({
+      id: r.id,
+      deployUpdatedAt: r.deployUpdatedAt,
+    }));
+  const signalsById = await latestBuildAttemptSignals(failedVersions);
 
   const entries: ListingHistoryEntry[] = [
     ...listingRequests.map(

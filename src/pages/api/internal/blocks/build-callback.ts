@@ -29,7 +29,8 @@ import { DEPLOY_FAILURE_DETAIL } from '~/shared/constants/app-block-deploy.const
  *   2. On success → create the apply Job in civitai-apps ns to roll the
  *      new image, update app_blocks.current_version_deployed_at.
  *   3. On failure → write commit status failure to Forgejo so the
- *      developer sees the result in the repo view.
+ *      developer sees the result in the repo view — skipped when a newer
+ *      recorded run has superseded the sender (stale-run guard).
  */
 
 // HMAC verification needs the exact bytes Tekton hashed; Next's bodyParser
@@ -339,12 +340,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       failureClass,
       pipelineStatus: signals.pipelineStatus,
     };
-    recordAppBlockBuildOutcome({
-      mode: 'build',
-      outcome: 'failed',
-      failedStep: signals.failedStep ?? 'unreported',
-      failureClass: failureClass ?? 'unknown',
-    });
 
     // Stale-run guard. Failure callbacks are re-sent until one gets a 2xx, so one can land
     // after a moderator has re-triggered the build. A failure from the OLDER run must not
@@ -354,7 +349,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     if (
       await isSupersededRun({ mode: 'build', slug: body.slug, sha: body.sha, runId: signals.runId })
     ) {
-      await recordBuildAttempt(attempt);
+      await recordBuildAttempt({ ...attempt, status: 'superseded' });
       // eslint-disable-next-line no-console
       console.warn(
         `[build-callback] ignoring a failure from a superseded run for ${
@@ -385,6 +380,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // After the deploy_state write, and best-effort: a missing attempts table (its
     // migration is applied by hand) costs the history row, never the state above.
     await recordBuildAttempt(attempt);
+    // Counted only once the failure is APPLIED: a superseded run's late report is history,
+    // not a build outcome, and must not move a failure-rate alert.
+    recordAppBlockBuildOutcome({
+      mode: 'build',
+      outcome: 'failed',
+      failedStep: signals.failedStep ?? 'unreported',
+      failureClass: failureClass ?? 'unknown',
+    });
     // Response body unchanged — Tekton consumes nothing beyond `ok`.
     res.status(200).json({ ok: true, applied: false, reason: 'build failed' });
     return;

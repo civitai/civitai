@@ -8,7 +8,10 @@
 --   * status 'succeeded' / 'failed' — a build callback for that run, with the
 --                           optional failed step, the build service's reason, its
 --                           whole-run status, and the failure class civitai
---                           derived from them.
+--                           derived from them;
+--   * status 'superseded' — a failure callback from an OLDER run that arrived
+--                           after a newer run was started. Kept as history; it
+--                           did not change deploy_state.
 --
 -- app_block_publish_requests keeps ONE mutable deploy_state per version, so it
 -- cannot say which run a callback belongs to or what happened on earlier runs.
@@ -48,7 +51,7 @@ CREATE TABLE IF NOT EXISTS "app_block_build_attempts" (
   CONSTRAINT "app_block_build_attempts_mode_check"
     CHECK ("mode" IN ('build', 'review')),
   CONSTRAINT "app_block_build_attempts_status_check"
-    CHECK ("status" IN ('triggered', 'succeeded', 'failed'))
+    CHECK ("status" IN ('triggered', 'succeeded', 'failed', 'superseded'))
 );
 
 -- Latest attempt for a publish request (History tab, moderator Approved tab).

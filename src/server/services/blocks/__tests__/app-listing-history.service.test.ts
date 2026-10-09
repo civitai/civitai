@@ -841,6 +841,7 @@ describe('the latest build attempt’s step + class ride along with the failure 
         id: 'v_failed',
         deployState: 'failed',
         deployDetail: 'Build None',
+        deployUpdatedAt: new Date('2026-06-02T01:00:00Z'),
         submittedAt: new Date('2026-06-02T00:00:00Z'),
       }),
       blockReq({
@@ -850,7 +851,12 @@ describe('the latest build attempt’s step + class ride along with the failure 
       }),
     ]);
     mockDb.appBlockBuildAttempt.findMany.mockImplementation(async () => [
-      { publishRequestId: 'v_failed', failedStep: 'scan', failureClass: 'unknown' },
+      {
+        publishRequestId: 'v_failed',
+        failedStep: 'scan',
+        failureClass: 'unknown',
+        createdAt: new Date('2026-06-02T01:00:01Z'),
+      },
     ]);
     const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
     expect(out.map((e) => [e.id, e.buildSignals])).toEqual([

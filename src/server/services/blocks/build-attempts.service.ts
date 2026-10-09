@@ -21,7 +21,11 @@ import type {
  */
 
 export type BuildAttemptMode = 'build' | 'review';
-export type BuildAttemptStatus = 'triggered' | 'succeeded' | 'failed';
+/**
+ * `superseded` = a failure callback the stale-run guard ignored: kept as history, never
+ * read back as a version's latest outcome.
+ */
+export type BuildAttemptStatus = 'triggered' | 'succeeded' | 'failed' | 'superseded';
 
 export type BuildAttemptRow = {
   mode: BuildAttemptMode;
@@ -79,6 +83,10 @@ export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean>
           failedReason: row.failedReason ?? null,
           failureClass: row.failureClass ?? null,
           pipelineStatus: row.pipelineStatus ?? null,
+          // Stamped here, not by the DB default, so it is on the SAME clock as the
+          // `deploy_updated_at` the caller wrote just before; the freshness rule in
+          // `latestBuildAttemptSignals` compares the two.
+          createdAt: new Date(),
         },
       ],
       skipDuplicates: true,
@@ -90,21 +98,6 @@ export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean>
   }
 }
 
-/**
- * Has a NEWER run been started for this version since the run that sent this callback?
- *
- * The stale-run guard: build-failure callbacks are retried and can land minutes late, and
- * by then a moderator may have re-triggered the build. Without this, the old run's failure
- * overwrites the new run's `building`.
- *
- * 🔴 TRUE ONLY ON POSITIVE EVIDENCE: this callback's own run has a `triggered` row AND a
- * later `triggered` row names a different run. Every other case answers `false`, which is
- * the behaviour before this guard existed:
- * - no `runId` on the callback;
- * - the table is missing or the query fails;
- * - no trigger was recorded for this run. Its trigger-time write may have failed, and
- *   calling an unrecorded run stale would drop a CURRENT run's callback.
- */
 /**
  * Record that civitai just started run `runName` for a version, so a later callback from
  * an OLDER run can be recognised as stale (see {@link isSupersededRun}).
@@ -132,6 +125,21 @@ export async function recordBuildTriggered(args: {
   });
 }
 
+/**
+ * Has a NEWER run been started for this version since the run that sent this callback?
+ *
+ * The stale-run guard: build-failure callbacks are retried and can land minutes late, and
+ * by then a moderator may have re-triggered the build. Without this, the old run's failure
+ * overwrites the new run's `building`.
+ *
+ * 🔴 TRUE ONLY ON POSITIVE EVIDENCE: this callback's own run has a `triggered` row AND a
+ * later `triggered` row names a different run. Every other case answers `false`, which is
+ * the behaviour before this guard existed:
+ * - no `runId` on the callback;
+ * - the table is missing or the query fails;
+ * - no trigger was recorded for this run. Its trigger-time write may have failed, and
+ *   calling an unrecorded run stale would drop a CURRENT run's callback.
+ */
 export async function isSupersededRun(args: {
   mode: BuildAttemptMode;
   slug: string;
@@ -165,34 +173,46 @@ export async function isSupersededRun(args: {
 }
 
 /**
- * The failed step and failure class of each request's LATEST callback attempt in `mode`
- * (trigger rows are not callbacks and are skipped). A request with no attempt is absent
- * from the map; the whole map is empty when the table is missing.
+ * The failed step and failure class of each request's latest build outcome in `mode`, for
+ * the requests whose current `deploy_state` that outcome still describes. A request with
+ * no such attempt is absent from the map; the map is empty when the table is missing.
  *
- * Structured values only — never log text — so moderator surfaces may read this too.
+ * Two rules keep an older run's report off a newer failure:
+ * - Only `succeeded` / `failed` rows count. Trigger rows are not outcomes, and a
+ *   `superseded` row is an old run's late callback the guard already ignored.
+ * - The row must be at least as new as the request's `deployUpdatedAt`. A callback
+ *   writes `deploy_state` first and its attempt row second, so the row for the failure
+ *   on screen is never older than it. Any later transition (a failed deploy of the built
+ *   image, a re-trigger that could not start, a new run) is newer than the row, and the
+ *   row then describes something else. Both timestamps come from the app's clock; rows
+ *   written by different pods can disagree by their clock skew.
+ *
+ * Structured values only, never log text, so moderator surfaces may read this too.
  */
 export async function latestBuildAttemptSignals(
-  publishRequestIds: string[],
+  requests: Array<{ id: string; deployUpdatedAt: Date | null }>,
   mode: BuildAttemptMode = 'build'
 ): Promise<Map<string, BuildAttemptSignals>> {
   const out = new Map<string, BuildAttemptSignals>();
-  if (publishRequestIds.length === 0) return out;
+  if (requests.length === 0) return out;
+  const updatedAt = new Map(requests.map((r) => [r.id, r.deployUpdatedAt]));
   try {
     const { dbRead } = await import('~/server/db/client');
     const rows = await dbRead.appBlockBuildAttempt.findMany({
       where: {
-        publishRequestId: { in: publishRequestIds },
+        publishRequestId: { in: requests.map((r) => r.id) },
         mode,
-        status: { not: 'triggered' },
+        status: { in: ['succeeded', 'failed'] },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       distinct: ['publishRequestId'],
-      select: { publishRequestId: true, failedStep: true, failureClass: true },
+      select: { publishRequestId: true, failedStep: true, failureClass: true, createdAt: true },
     });
     for (const r of rows) {
-      if (r.publishRequestId && !out.has(r.publishRequestId)) {
-        out.set(r.publishRequestId, { failedStep: r.failedStep, failureClass: r.failureClass });
-      }
+      if (!r.publishRequestId || out.has(r.publishRequestId)) continue;
+      const since = updatedAt.get(r.publishRequestId);
+      if (since && r.createdAt.getTime() < since.getTime()) continue;
+      out.set(r.publishRequestId, { failedStep: r.failedStep, failureClass: r.failureClass });
     }
   } catch (err) {
     warn('latest attempt read', err);
