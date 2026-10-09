@@ -46,10 +46,13 @@ const { PURCHASE_STATE_UNKNOWN_MESSAGE } = await import('~/server/services/shop-
 // ledger's status in a TRPCError and keeps the BuzzApiError as `cause`.
 const ledgerError = (status: number, code: 'BAD_REQUEST' | 'INTERNAL_SERVER_ERROR') =>
   new TRPCError({ code, message: 'ledger', cause: new BuzzApiError(status, 'ledger') });
-const stateUnknownLogged = () =>
-  loggingMock.logToAxiom.mock.calls.some(([arg]) =>
-    String((arg as { message?: string }).message).startsWith('shop purchase state unknown')
-  );
+const stateUnknownLogs = () =>
+  loggingMock.logToAxiom.mock.calls
+    .map(([arg]) => arg as Record<string, unknown>)
+    .filter((arg) => arg.name === 'shop-purchase-state-unknown');
+const stateUnknownLogged = () => stateUnknownLogs().length > 0;
+const connectionRefused = () =>
+  Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
 
 const BUYER = 901;
 const PACK_CREATOR = 902;
@@ -119,7 +122,7 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockReset();
     dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockResolvedValue(null);
     pay.mockResolvedValue({ transactionId: 'payout' });
-    refund.mockResolvedValue({});
+    refund.mockResolvedValue({ totalRefunded: PRICE });
   });
 
   it("charges under the buyer's key", async () => {
@@ -133,7 +136,8 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     );
     // Never auto-resent after a failure that may have landed.
     const opts = spend.mock.calls[0][1] as { shouldRetry?: (e: unknown) => boolean } | undefined;
-    expect(opts?.shouldRetry?.(ledgerError(502, 'INTERNAL_SERVER_ERROR'))).toBe(false);
+    expect(opts?.shouldRetry?.(new BuzzApiError(502, 'Bad Gateway'))).toBe(false);
+    expect(opts?.shouldRetry?.(connectionRefused())).toBe(true);
     // Positive control for the "pays nothing" assertions below.
     expect(createManyUserCosmetic).toHaveBeenCalled();
     expect(pay).toHaveBeenCalled();
@@ -152,6 +156,9 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     spend.mockResolvedValue(legs(true));
 
     await expectStateUnknown(buy(KEY));
+    expect(stateUnknownLogs()).toEqual([
+      expect.objectContaining({ userId: BUYER, shopItemId: 7001, amount: PRICE }),
+    ]);
     expect(purchaseCreate).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
     expect(pay).not.toHaveBeenCalled();
@@ -163,6 +170,7 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
 
     await expectStateUnknown(buy(KEY));
     expect(refund).not.toHaveBeenCalled();
+    expect(stateUnknownLogged()).toBe(true);
   });
 
   it('a ledger 400 decline stays a refusal', async () => {
@@ -197,6 +205,23 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
 
     await expect(buy()).rejects.toThrow('Failed to purchase pack');
     expect(refund).toHaveBeenCalledTimes(1);
+  });
+
+  it('a refund that does not cover the charge is reported as unknown', async () => {
+    spend.mockResolvedValue(legs(false));
+    purchaseCreate.mockRejectedValue(new Error('db down'));
+    refund.mockResolvedValue({ totalRefunded: 0 });
+
+    await expectStateUnknown(buy(KEY));
+  });
+
+  it('a refund the ledger already holds (409) counts as refunded: a refusal', async () => {
+    spend.mockResolvedValue(legs(false));
+    purchaseCreate.mockRejectedValue(new Error('db down'));
+    refund.mockRejectedValue(ledgerError(409, 'BAD_REQUEST'));
+
+    await expect(buy(KEY)).rejects.toThrow('Failed to purchase pack');
+    expect(stateUnknownLogged()).toBe(false);
   });
 
   it('a refund that fails after a charge is reported as unknown', async () => {

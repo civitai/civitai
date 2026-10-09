@@ -73,6 +73,7 @@ import {
   chargeForShopPurchase,
   chargeRetryOptions,
   purchaseStateUnknown,
+  refundShopCharge,
 } from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -1161,7 +1162,7 @@ export const purchaseCosmeticShopItem = async ({
     });
     if (alreadyProcessed) throw throwBadRequestError('This purchase has already been completed');
   }
-  const chargeContext = { shopItemId, userId, transactionId };
+  const chargeContext = { shopItemId, userId, transactionId, amount: shopItem.unitAmount };
   const transaction = await chargeForShopPurchase(
     () =>
       createMultiAccountBuzzTransaction(
@@ -1371,16 +1372,17 @@ export const purchaseCosmeticShopItem = async ({
     if (idempotencyKey && isPrismaUniqueViolation(error))
       throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
 
-    try {
-      await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: transactionId,
-        description: `Failed to purchase cosmetic - ${shopItem.title}`,
-      });
-    } catch (refundError) {
-      // Charged and not refunded: the client must not read this as "nothing
-      // happened" and retry with a new key.
-      throw purchaseStateUnknown({ ...chargeContext, error, refundError }, 'refund failed');
-    }
+    // Charged and not fully refunded is "state unknown", logged for
+    // reconciliation; only a refund known to cover the charge reaches the
+    // refusal below.
+    await refundShopCharge(
+      () =>
+        refundMultiAccountTransaction({
+          externalTransactionIdPrefix: transactionId,
+          description: `Failed to purchase cosmetic - ${shopItem.title}`,
+        }),
+      { ...chargeContext, error }
+    );
 
     // Refunded, so nothing is charged: a refusal, which lets the client retry
     // with a new key instead of replaying the refunded one.

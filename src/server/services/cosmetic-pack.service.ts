@@ -31,6 +31,7 @@ import {
   chargeForShopPurchase,
   chargeRetryOptions,
   purchaseStateUnknown,
+  refundShopCharge,
 } from '~/server/services/shop-purchase-charge';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -568,7 +569,7 @@ export const purchaseCosmeticPack = async ({
     });
     if (alreadyProcessed) throw throwBadRequestError('This purchase has already been completed');
   }
-  const chargeContext = { shopItemId: shopItem.id, userId, transactionId };
+  const chargeContext = { shopItemId: shopItem.id, userId, transactionId, amount: amountCharged };
   const transaction = await chargeForShopPurchase(
     () =>
       createMultiAccountBuzzTransaction(
@@ -654,28 +655,17 @@ export const purchaseCosmeticPack = async ({
     if (idempotencyKey && isPrismaUniqueViolation(error))
       throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
 
-    // The only path where the buyer is actually out of pocket, so it must leave
-    // a trace: a failing refund used to discard the grant error and surface its
-    // own instead, recording nothing. Retried like the payout, and logged with
-    // the transaction id, which is what makes it reconcilable by hand.
-    try {
-      await withRetries(
-        () =>
-          refundMultiAccountTransaction({
-            externalTransactionIdPrefix: transactionId,
-            description: `Failed to purchase cosmetic pack - ${shopItem.title}`,
-          }),
-        3
-      );
-    } catch (refundError) {
-      logToAxiom({
-        level: 'error',
-        message: 'Failed to refund a failed pack purchase',
-        data: { shopItemId: shopItem.id, userId, transactionId, error: refundError },
-      });
-      // Charged and not refunded: a 4xx would tell the client nothing happened.
-      throw purchaseStateUnknown({ ...chargeContext, error, refundError }, 'refund failed');
-    }
+    // Charged and not fully refunded is "state unknown", logged for
+    // reconciliation; only a refund known to cover the charge reaches the
+    // refusal below.
+    await refundShopCharge(
+      () =>
+        refundMultiAccountTransaction({
+          externalTransactionIdPrefix: transactionId,
+          description: `Failed to purchase cosmetic pack - ${shopItem.title}`,
+        }),
+      { ...chargeContext, error }
+    );
     logToAxiom({
       level: 'error',
       message: 'Failed to grant a pack purchase',

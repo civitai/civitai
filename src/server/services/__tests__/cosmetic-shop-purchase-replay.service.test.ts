@@ -84,10 +84,13 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
 // ledger's status in a TRPCError and keeps the BuzzApiError as `cause`.
 const ledgerError = (status: number, code: 'BAD_REQUEST' | 'INTERNAL_SERVER_ERROR') =>
   new TRPCError({ code, message: 'ledger', cause: new BuzzApiError(status, 'ledger') });
-const stateUnknownLogged = () =>
-  loggingMock.logToAxiom.mock.calls.some(([arg]) =>
-    String((arg as { message?: string }).message).startsWith('shop purchase state unknown')
-  );
+const stateUnknownLogs = () =>
+  loggingMock.logToAxiom.mock.calls
+    .map(([arg]) => arg as Record<string, unknown>)
+    .filter((arg) => arg.name === 'shop-purchase-state-unknown');
+const stateUnknownLogged = () => stateUnknownLogs().length > 0;
+const connectionRefused = () =>
+  Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
 
 const BUYER_ID = 1;
 const SHOP_ITEM_ID = 42;
@@ -160,7 +163,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     mocks.getBlockedPairIds.mockResolvedValue([]);
     mocks.userCosmeticCreate.mockImplementation(async ({ data }) => data);
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'payout' });
-    mocks.refundMultiTx.mockResolvedValue({});
+    mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE });
   });
 
   it('grants and pays out when the ledger reports every leg as new (control)', async () => {
@@ -178,6 +181,16 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await expectStateUnknown(purchase());
     nothingGrantedPaidOrRefunded();
+    // One structured event, with what reconciliation needs to find the charge.
+    expect(stateUnknownLogs()).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        transactionId: expect.stringContaining(KEY),
+      }),
+    ]);
   });
 
   it('a charge with any duplicate leg grants, pays and refunds nothing', async () => {
@@ -192,6 +205,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await expectStateUnknown(purchase());
     nothingGrantedPaidOrRefunded();
+    expect(stateUnknownLogged()).toBe(true);
   });
 
   // Ordinary declines (insufficient funds, wrong account, limits) are ledger
@@ -240,11 +254,9 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       | { shouldRetry?: (e: unknown) => boolean }
       | undefined;
     // A gateway 5xx may have landed; only a connection that never opened may be resent.
-    expect(opts?.shouldRetry?.(ledgerError(502, 'INTERNAL_SERVER_ERROR'))).toBe(false);
-    const refused = Object.assign(new TypeError('fetch failed'), {
-      cause: { code: 'ECONNREFUSED' },
-    });
-    expect(opts?.shouldRetry?.(refused)).toBe(true);
+    // The client calls the predicate with the raw error, before it is mapped.
+    expect(opts?.shouldRetry?.(new BuzzApiError(502, 'Bad Gateway'))).toBe(false);
+    expect(opts?.shouldRetry?.(connectionRefused())).toBe(true);
   });
 
   // Refunded, so nothing is charged: a refusal lets the client mint a new key
@@ -276,6 +288,23 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
     expect(mocks.purchaseCosmeticPack).toHaveBeenCalledWith(
       expect.objectContaining({ userId: BUYER_ID, idempotencyKey: KEY })
     );
+  });
+
+  it('a refund that does not cover the charge is reported as unknown', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+    mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE - 1 });
+
+    await expectStateUnknown(purchase());
+  });
+
+  it('a refund the ledger already holds (409) counts as refunded: a refusal', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+    mocks.refundMultiTx.mockRejectedValue(ledgerError(409, 'BAD_REQUEST'));
+
+    await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(stateUnknownLogged()).toBe(false);
   });
 
   it('a refund that fails after a charge is reported as unknown', async () => {
