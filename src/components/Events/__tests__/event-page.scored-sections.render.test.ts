@@ -121,7 +121,9 @@ describe('event page: donation sections never render for a scored event', () => 
     expect(markers).toEqual(['scored']);
     expect(about).toBe(false);
     // The scored page is handed this event and its data, not left to fetch them again.
-    expect(scoredProps).toEqual({ event: 'an-event', data: queryEvent.eventData });
+    const props = scoredProps as { event: string; data: unknown };
+    expect(props.event).toBe('an-event');
+    expect(props.data).toBe(queryEvent.eventData);
   });
 
   // Positive controls: the same render does find the donation sections when they apply, so the
