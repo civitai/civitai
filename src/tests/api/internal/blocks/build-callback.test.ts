@@ -74,6 +74,22 @@ const {
         return { count };
       }
     ),
+    updateMany: vi.fn(
+      async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown>;
+        data: Record<string, unknown>;
+      }) => {
+        if (attempts.missing) attempts.fail();
+        const hits = attempts.rows.filter((r) =>
+          Object.entries(where).every(([k, v]) => r[k] === v)
+        );
+        for (const r of hits) Object.assign(r, data);
+        return { count: hits.length };
+      }
+    ),
     findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
       if (attempts.missing) attempts.fail();
       const hits = attempts.rows
@@ -124,7 +140,11 @@ vi.mock('~/server/db/client', () => ({
   dbRead: {},
   dbWrite: {
     appBlock: { update: mockAppBlockUpdate },
-    appBlockBuildAttempt: { createMany: attempts.createMany, findFirst: attempts.findFirst },
+    appBlockBuildAttempt: {
+      createMany: attempts.createMany,
+      updateMany: attempts.updateMany,
+      findFirst: attempts.findFirst,
+    },
     // Resolves the build attempt's publish_request_id from (slug, sha).
     appBlockPublishRequest: { findFirst: vi.fn(async () => ({ id: 'pubreq_RESOLVED' })) },
   },
@@ -944,6 +964,24 @@ describe('build-callback handler — structured signals and build attempts', () 
     for (const [arg] of attempts.createMany.mock.calls) expect(arg.skipDuplicates).toBe(true);
   });
 
+  it('a re-delivered failure re-stamps its row, so it stays as new as the deploy_state it rewrote', async () => {
+    await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
+    const first = (callbackRows()[0].createdAt as Date).getTime();
+    await new Promise((r) => setTimeout(r, 5));
+    await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
+    expect(callbackRows()).toHaveLength(1);
+    expect((callbackRows()[0].createdAt as Date).getTime()).toBeGreaterThan(first);
+  });
+
+  it('ORDER: the deploy_state write precedes the attempt row (the freshness rule depends on it)', async () => {
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), makeRes());
+    expect(mockMarkDeploy).toHaveBeenCalledTimes(1);
+    expect(attempts.createMany).toHaveBeenCalledTimes(1);
+    expect(mockMarkDeploy.mock.invocationCallOrder[0]).toBeLessThan(
+      attempts.createMany.mock.invocationCallOrder[0]
+    );
+  });
+
   /** The current value of one series of the build-outcome counter. */
   async function series(labels: string): Promise<number> {
     const client = (await import('prom-client')).default;
@@ -989,10 +1027,19 @@ describe('build-callback handler — structured signals and build attempts', () 
   });
 
   it('does NOT count a superseded run’s ignored failure', async () => {
+    const { ensureRegisterAppBlockBuildMetrics } = await import(
+      '~/server/prom/app-block-build.metrics'
+    );
+    ensureRegisterAppBlockBuildMetrics(); // the series exists, so "unchanged" is not 0 === 0 by absence
     await triggered(RUN_OLD);
     await triggered(RUN_NEW);
     const before = await series('build/failed/scan/unknown');
-    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), makeRes());
+    const res = makeRes();
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), res);
+    expect(res._body).toEqual({ ok: true, applied: false, reason: 'superseded run' });
     expect(await series('build/failed/scan/unknown')).toBe(before);
+    // Positive control on the same series: the CURRENT run's failure does move it.
+    await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_NEW })), makeRes());
+    expect((await series('build/failed/scan/unknown')) - before).toBe(1);
   });
 });

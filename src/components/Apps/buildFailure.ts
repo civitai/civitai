@@ -21,8 +21,9 @@ import {
  *      of, the build the attempt row records.
  *   2. Otherwise, when the latest attempt reports which pipeline step failed and the class
  *      the server derived from it, those decide the cause. Deterministic: no log text.
- *   3. Otherwise (a pipeline or a row that predates the signals, or the attempts table not
- *      applied yet) the cause is inferred from the TEXT of the stored detail.
+ *   3. Otherwise (a pipeline or a row that predates the signals, no attempt row as new as
+ *      the version's last deploy_state change, or the attempts table not applied yet) the
+ *      cause is inferred from the TEXT of the stored detail.
  *
  * 🔴 THE TEXT RULES ARE A HEURISTIC, AND THIS IS THE ONLY ONE. Keep every text-sniffing
  * rule in here rather than letting a component grow its own.

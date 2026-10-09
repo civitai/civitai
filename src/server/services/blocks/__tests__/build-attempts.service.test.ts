@@ -13,6 +13,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const db = {
   createMany: dbMock.dbWrite.appBlockBuildAttempt.createMany,
   findFirst: dbMock.dbWrite.appBlockBuildAttempt.findFirst,
+  updateMany: dbMock.dbWrite.appBlockBuildAttempt.updateMany,
   findMany: dbMock.dbRead.appBlockBuildAttempt.findMany,
   requestFindFirst: dbMock.dbWrite.appBlockPublishRequest.findFirst,
 };
@@ -72,6 +73,32 @@ describe('recordBuildAttempt', () => {
       ],
       skipDuplicates: true,
     });
+    expect(db.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('an absorbed duplicate OUTCOME row is re-stamped; a trigger row uses the column default', async () => {
+    db.createMany.mockResolvedValue({ count: 0 });
+    await recordBuildAttempt({
+      mode: 'build',
+      status: 'failed',
+      slug: 's',
+      sha: SHA,
+      runId: 'r-1',
+    });
+    expect(db.updateMany).toHaveBeenCalledWith({
+      where: { mode: 'build', runId: 'r-1', status: 'failed' },
+      data: { createdAt: expect.any(Date) },
+    });
+    vi.mocked(db.updateMany).mockClear();
+    await recordBuildTriggered({
+      mode: 'build',
+      publishRequestId: 'p',
+      slug: 's',
+      sha: SHA,
+      runName: 'r-2',
+    });
+    expect(db.createMany.mock.calls.at(-1)?.[0].data[0]).not.toHaveProperty('createdAt');
+    expect(db.updateMany).not.toHaveBeenCalled();
   });
 
   it('uses a given publish request id and does not look one up', async () => {

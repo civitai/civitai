@@ -66,7 +66,8 @@ export const REACHABLE_SERIES: readonly Series[] = [
 ];
 
 const HELP =
-  'App Block build outcomes, one per accepted build callback plus one per failed deploy of a ' +
+  "App Block build outcomes, one per applied build callback outcome (a superseded run's late " +
+  'failure is not counted) plus one per failed deploy of a ' +
   'built image. mode: build = production lane, review = moderator review sandbox. ' +
   'outcome: succeeded | failed. failed_step: the pipeline step that failed (clone, validate, ' +
   'build, scan, push), none when no step failed, apply = the image built but the deploy did ' +

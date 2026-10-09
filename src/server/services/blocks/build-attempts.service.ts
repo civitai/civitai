@@ -58,6 +58,12 @@ function warn(what: string, err: unknown): void {
  * Duplicate deliveries are absorbed by the table's partial unique index on
  * `(mode, run_id, status)`: `skipDuplicates` turns the insert into `ON CONFLICT DO
  * NOTHING`, so a repeated callback for the same run and outcome adds no row.
+ *
+ * 🔴 BUT A REPEAT OUTCOME ROW IS RE-STAMPED. A re-delivered failure rewrites
+ * `deploy_updated_at` before reaching here; left at its first-delivery time, the existing
+ * row would then look older than the transition it describes and the freshness rule in
+ * {@link latestBuildAttemptSignals} would hide it. So for an outcome row whose insert was
+ * absorbed, `created_at` moves to now: on an outcome row it means "last reported".
  */
 export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean> {
   try {
@@ -70,7 +76,11 @@ export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean>
       });
       publishRequestId = request?.id ?? null;
     }
-    await dbWrite.appBlockBuildAttempt.createMany({
+    // Outcome rows are stamped by the app, on the SAME clock as the `deploy_updated_at`
+    // the caller wrote just before (the freshness rule compares the two). Trigger rows
+    // keep the column default: they are only ordered against each other.
+    const stampedAt = row.status === 'triggered' ? undefined : new Date();
+    const { count } = await dbWrite.appBlockBuildAttempt.createMany({
       data: [
         {
           publishRequestId,
@@ -83,14 +93,17 @@ export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean>
           failedReason: row.failedReason ?? null,
           failureClass: row.failureClass ?? null,
           pipelineStatus: row.pipelineStatus ?? null,
-          // Stamped here, not by the DB default, so it is on the SAME clock as the
-          // `deploy_updated_at` the caller wrote just before; the freshness rule in
-          // `latestBuildAttemptSignals` compares the two.
-          createdAt: new Date(),
+          ...(stampedAt ? { createdAt: stampedAt } : {}),
         },
       ],
       skipDuplicates: true,
     });
+    if (count === 0 && stampedAt && row.runId) {
+      await dbWrite.appBlockBuildAttempt.updateMany({
+        where: { mode: row.mode, runId: row.runId, status: row.status },
+        data: { createdAt: stampedAt },
+      });
+    }
     return true;
   } catch (err) {
     warn(`attempt write (mode=${row.mode}, status=${row.status}, slug=${row.slug})`, err);

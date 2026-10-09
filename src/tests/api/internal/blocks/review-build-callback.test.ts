@@ -491,6 +491,14 @@ describe('review-build-callback — structured signals', () => {
     );
   });
 
+  it('ORDER: the preview-failed write precedes the attempt row', async () => {
+    const { req, res } = makeReqRes(failBody({ failedStep: 'scan', runId: RUN }));
+    await handler(req, res);
+    expect(mockMarkPreview.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRecordAttempt.mock.invocationCallOrder[0]
+    );
+  });
+
   it('a reported step names the step and class (structured, no build output)', async () => {
     const { req, res } = makeReqRes(failBody({ failedStep: 'scan', runId: RUN }));
     await handler(req, res);
