@@ -27,7 +27,12 @@ const mocks = vi.hoisted(() => ({
   eligibilityInputs: [] as unknown[],
   createInputs: [] as unknown[],
   createResult: { kind: 'ok' } as { kind: 'ok' } | { kind: 'error'; message: string; code: string },
+  /** When set, `create` waits on this before settling — holds the mutation pending. */
+  createGate: null as Promise<void> | null,
   detail: null as unknown,
+  detailInputs: [] as unknown[],
+  myReviewInputs: [] as unknown[],
+  upsertReviewInputs: [] as unknown[],
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -61,6 +66,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             useMutation({
               mutationFn: async (input: unknown) => {
                 mocks.createInputs.push(input);
+                if (mocks.createGate) await mocks.createGate;
                 const result = mocks.createResult;
                 if (result.kind === 'error')
                   throw Object.assign(new Error(result.message), { data: { code: result.code } });
@@ -72,7 +78,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (input: unknown, opts?: Record<string, unknown>) =>
             useQuery({
               queryKey: [['appListings', 'getAppDetail'], { input, type: 'query' }],
-              queryFn: async () => mocks.detail,
+              queryFn: async () => {
+                mocks.detailInputs.push(input);
+                return mocks.detail;
+              },
               ...opts,
             }),
         },
@@ -80,12 +89,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (input: unknown, opts?: Record<string, unknown>) =>
             useQuery({
               queryKey: [['appListings', 'getMyReview'], { input, type: 'query' }],
-              queryFn: async () => null,
+              queryFn: async () => {
+                mocks.myReviewInputs.push(input);
+                return null;
+              },
               ...opts,
             }),
         },
         'appListings.upsertReview': {
-          useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+          useMutation: () => ({
+            mutate: (input: unknown) => mocks.upsertReviewInputs.push(input),
+            isPending: false,
+          }),
         },
       },
       {
@@ -199,7 +214,11 @@ beforeEach(async () => {
   mocks.eligibilityInputs = [];
   mocks.createInputs = [];
   mocks.createResult = { kind: 'ok' };
+  mocks.createGate = null;
   mocks.detail = null;
+  mocks.detailInputs = [];
+  mocks.myReviewInputs = [];
+  mocks.upsertReviewInputs = [];
   await page.viewport(1280, 900);
 });
 
@@ -280,6 +299,10 @@ describe('opening the modal', () => {
     expect(page.getByTestId('app-block-menu-trigger').element().getAttribute('aria-expanded')).toBe(
       'false'
     );
+    // Desktop control for the 375px full-screen test below.
+    const content = document.querySelector('.mantine-Modal-content') as HTMLElement | null;
+    expect(content).not.toBeNull();
+    expect(content?.getAttribute('data-full-screen')).toBeNull();
   });
 
   test('Send is disabled until there is text', async () => {
@@ -306,6 +329,11 @@ describe('submitting', () => {
 
   test('model slot: sends exactly {target: appBlockId, message, context: {surface: slot, modelId}}', async () => {
     await openFeedbackModal(SLOT_PROPS);
+    await expect
+      .element(page.getByTestId('app-feedback-sent-with'))
+      .toHaveTextContent(
+        'Sent with: app version 1.4.2 and the model you were viewing. Nothing else is collected.'
+      );
     await typeAndSend('love it');
     await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
     expect(mocks.createInputs).toStrictEqual([
@@ -358,28 +386,93 @@ describe('submitting', () => {
 });
 
 describe('the "Rate this app" line', () => {
-  test('page host, review-eligible viewer: it hands off to the review modal', async () => {
-    mocks.detail = {
-      id: 'apl_01HZ',
-      slug: SLUG,
-      name: APP_NAME,
-      kind: 'onsite',
-      creator: { id: 4242, username: 'publisher', image: null },
-      recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
-      reviewCount: 0,
-    };
+  // Distinct from `eligible().appListingId`, so a hand-off of the wrong id is visible.
+  const reviewableDetail = {
+    id: 'apl_DETAIL',
+    slug: SLUG,
+    name: APP_NAME,
+    kind: 'onsite',
+    creator: { id: 4242, username: 'publisher', image: null },
+    recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
+    reviewCount: 0,
+  };
+
+  test('page host, review-eligible viewer: it hands the LISTING id to the review modal', async () => {
+    mocks.eligibility = eligible({ appListingId: 'apl_ELIGIBILITY' });
+    mocks.detail = reviewableDetail;
     await openFeedbackModal();
     await page.getByTestId('app-feedback-rate-app').click();
     await expect
       .element(page.getByText('Would you recommend this app to others?'))
       .toBeInTheDocument();
     await expect.element(modal()).not.toBeInTheDocument();
+    expect(mocks.detailInputs).toContainEqual({ slug: SLUG });
+    // Observed at the review modal's own submit: `getMyReview` is no witness, because the ⋮ menu's
+    // review label already queried it for the same id.
+    await page.getByRole('button', { name: 'Recommend', exact: true }).click();
+    await page.getByRole('button', { name: 'Post review' }).click();
+    expect(mocks.upsertReviewInputs).toHaveLength(1);
+    expect(mocks.upsertReviewInputs[0]).toMatchObject({ appListingId: 'apl_DETAIL' });
   });
 
-  test('model slot has no slug, so the line is absent', async () => {
+  test('model slot has no slug, so the line is absent and no listing is fetched', async () => {
+    // A reviewable listing IS available, so only the missing slug can keep the line away.
+    mocks.detail = reviewableDetail;
     await openFeedbackModal(SLOT_PROPS);
     await expect.element(messageBox()).toBeInTheDocument();
+    // Two frames past the commit, so a mount-time query would have fired.
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(mocks.detailInputs).toHaveLength(0);
     expect(page.getByTestId('app-feedback-rate-app').elements()).toHaveLength(0);
+  });
+});
+
+describe('a reused host (app A → app B without remount)', () => {
+  test('the open modal still sends to the app it was opened for', async () => {
+    const chrome = (slug: string) => (
+      <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...PAGE_PROPS} slug={slug} />
+    );
+    const view = await render(chrome('app-a'), { wrapper: ProdishProviders });
+    await openOverflow();
+    await expect.element(feedbackItem()).toBeInTheDocument();
+    await feedbackItem().click();
+    await expect.element(modal()).toBeInTheDocument();
+
+    // Same element type at the same position, so React updates props rather than remounting —
+    // the modal staying open below is what shows it.
+    await view.rerender(chrome('app-b'));
+    await expect.element(modal()).toBeInTheDocument();
+    await typeAndSend('about app A');
+    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    expect(mocks.createInputs).toStrictEqual([
+      { target: { slug: 'app-a' }, message: 'about app A', context: { surface: 'page' } },
+    ]);
+  });
+});
+
+describe('while a submit is pending', () => {
+  test('a second Send is ignored and the modal cannot be dismissed', async () => {
+    let release: () => void = () => undefined;
+    mocks.createGate = new Promise<void>((r) => {
+      release = r;
+    });
+    await openFeedbackModal();
+    await userEvent.fill(messageBox().element() as HTMLElement, 'hello');
+    await sendButton().click();
+    await vi.waitFor(() => expect(mocks.createInputs).toHaveLength(1));
+    // DOM clicks, not userEvent: these controls are expected to be disabled while pending.
+    (sendButton().element() as HTMLButtonElement).click();
+    await userEvent.keyboard('{Escape}');
+    const cancel = page.getByRole('button', { name: 'Cancel' });
+    await expect.element(cancel).toBeDisabled();
+    (cancel.element() as HTMLButtonElement).click();
+    await expect.element(modal()).toBeInTheDocument();
+    expect(mocks.createInputs).toHaveLength(1);
+
+    release();
+    await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
+    expect(mocks.createInputs).toHaveLength(1);
   });
 });
 

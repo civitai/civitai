@@ -739,9 +739,9 @@ export function AppBlockChrome({
           literal-href items) correctly does not treat it as a destination the
           store subnav must also list.
 
-          Placed directly under "Manage apps" so the two whole-app actions that
-          are ALWAYS about the running app ("rate it", "see what it can do") sit
-          together above the dismissal, and "Hide app" stays last.
+          Placed directly under "Manage apps" so the whole-app actions about the
+          running app (rate it, send feedback, see what it can do) sit together
+          above the dismissal, and "Hide app" stays last.
 
           🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
           only to a viewer the server would accept: signed in, not the owner,
@@ -755,7 +755,11 @@ export function AppBlockChrome({
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
       {/* Private feedback to the developer. Unlike the review item it also works on the model
           slot (no slug there): eligibility is asked of the server by AppBlock id. */}
-      <ChromeFeedbackMenuItem request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
+      <ChromeFeedbackMenuItem
+        request={feedbackRequest}
+        slug={slug}
+        onOpenFeedback={setFeedbackTarget}
+      />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -953,11 +957,9 @@ export function AppBlockChrome({
           onClose={() => setReviewListingId(null)}
         />
       )}
-      {feedbackTarget && feedbackRequest && (
+      {feedbackTarget && (
         <AppFeedbackModal
-          request={feedbackRequest}
           target={feedbackTarget}
-          slug={slug}
           onClose={() => setFeedbackTarget(null)}
           onOpenReview={(appListingId) => {
             setFeedbackTarget(null);

@@ -9,8 +9,8 @@ import { sanitizeAppChromeName } from './appChromeName';
 
 /**
  * Pure decisions behind the chrome's "Send feedback to developer" entry and modal. They live
- * here, not in the components, so the node `unit` project covers them: the browser suites are
- * report-only.
+ * here, not in the components, so the node `unit` project covers them: the `*.browser.test.tsx`
+ * suites do not gate merges.
  */
 
 /** What the chrome tells the server about where the feedback came from. */
@@ -84,10 +84,18 @@ export function appFeedbackModalTitle(appName: string | null | undefined): strin
     : "Send private feedback to this app's developer";
 }
 
-export function appFeedbackSentWithLine(appBlockVersion: string | null | undefined): string {
+/** Must name everything the request stores besides the text, or the modal's privacy claim is false. */
+export function appFeedbackSentWithLine(
+  appBlockVersion: string | null | undefined,
+  context: AppFeedbackContext
+): string {
   const version = sanitizeAppChromeName(appBlockVersion);
-  return version
-    ? `Sent with: app version ${version}. Nothing else is collected.`
+  const parts = [
+    version ? `app version ${version}` : null,
+    context.modelId != null ? 'the model you were viewing' : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length
+    ? `Sent with: ${parts.join(' and ')}. Nothing else is collected.`
     : 'Nothing else is collected with your message.';
 }
 
@@ -112,10 +120,9 @@ function isJsonMessage(message: string): boolean {
 }
 
 /**
- * The text the modal shows for a failed submit. The rate caps, the content filter (which lists
- * the blocked links) and the self / muted / collection-off refusals all carry server-authored
- * text meant for this user; NOT_FOUND deliberately does not distinguish "blocked", "not approved"
- * and "missing", so it gets one neutral sentence instead of "App not found".
+ * Server messages for these codes are user-facing, except NOT_FOUND, which deliberately conflates
+ * "hidden", "not approved" and "missing" — "App not found" would read wrong, so it gets one
+ * neutral sentence.
  */
 export function appFeedbackSubmitErrorMessage(error: SubmitError): string {
   const code = error.data?.code;

@@ -27,13 +27,26 @@ import { ChromeSurfaceItem } from './ChromeSurface';
  * surface, because Mantine unmounts a closed dropdown or sheet together with anything inside it.
  */
 
-export type AppFeedbackModalTarget = { appName: string; appBlockVersion: string | null };
+/**
+ * Everything the modal needs, captured when the item is clicked. The request is part of the
+ * snapshot, not re-derived from the chrome's props: the page host can be reused across apps
+ * without remounting, and a modal titled for app A must not submit to app B.
+ */
+export type AppFeedbackModalTarget = {
+  request: AppFeedbackRequest;
+  /** The store slug, for the "Rate this app" link. Absent on the model slot. */
+  slug: string | undefined;
+  appName: string;
+  appBlockVersion: string | null;
+};
 
 export function ChromeFeedbackMenuItem({
   request,
+  slug,
   onOpenFeedback,
 }: {
   request: AppFeedbackRequest | null;
+  slug: string | undefined;
   onOpenFeedback: (target: AppFeedbackModalTarget) => void;
 }) {
   const currentUser = useCurrentUser();
@@ -44,18 +57,20 @@ export function ChromeFeedbackMenuItem({
     request,
   });
   if (!entry) return null;
-  return <ChromeFeedbackMenuItemBody request={entry} onOpenFeedback={onOpenFeedback} />;
+  return <ChromeFeedbackMenuItemBody request={entry} slug={slug} onOpenFeedback={onOpenFeedback} />;
 }
 
 function ChromeFeedbackMenuItemBody({
   request,
+  slug,
   onOpenFeedback,
 }: {
   request: AppFeedbackRequest;
+  slug: string | undefined;
   onOpenFeedback: (target: AppFeedbackModalTarget) => void;
 }) {
-  // The same predicate `appFeedback.create` runs, so the item is never offered where the submit
-  // would be refused (owner/editor, not approved, store scope, block, area flag off).
+  // `getEligibility` runs the same predicate as `appFeedback.create`, so the item is never offered
+  // where the submit would be refused.
   const { data } = trpc.appFeedback.getEligibility.useQuery(
     { target: request.target },
     { retry: false }
@@ -65,7 +80,7 @@ function ChromeFeedbackMenuItemBody({
   return (
     <ChromeSurfaceItem
       leftSection={<IconMessage2 size={14} stroke={1.5} />}
-      onClick={() => onOpenFeedback({ appName, appBlockVersion })}
+      onClick={() => onOpenFeedback({ request, slug, appName, appBlockVersion })}
       data-testid="app-block-feedback-menu-item"
     >
       Send feedback to developer
@@ -74,21 +89,17 @@ function ChromeFeedbackMenuItemBody({
 }
 
 export function AppFeedbackModal({
-  request,
   target,
-  slug,
   onClose,
   onOpenReview,
 }: {
-  request: AppFeedbackRequest;
   target: AppFeedbackModalTarget;
-  /** The store slug, for the "Rate this app" link. Absent on the model slot. */
-  slug: string | undefined;
   onClose: () => void;
   onOpenReview: (appListingId: string) => void;
 }) {
   // Same viewport rule as `ReviewListingModal`: a modal IS the viewport.
   const isMobile = useIsMobile({ type: 'media' });
+  const { request, slug } = target;
   const [message, setMessage] = useState('');
   // Not `useFeedbackSubmission`: that hook attaches host-page diagnostics (session id, console
   // and network errors) to every submit, and none of that is collected for app feedback.
@@ -163,7 +174,7 @@ export function AppFeedbackModal({
             data-testid="app-feedback-message"
           />
           <Text size="xs" c="dimmed" data-testid="app-feedback-sent-with">
-            {appFeedbackSentWithLine(target.appBlockVersion)}
+            {appFeedbackSentWithLine(target.appBlockVersion, request.context)}
           </Text>
           {errorMessage && (
             <Alert color="red" variant="light" data-testid="app-feedback-error">

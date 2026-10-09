@@ -151,10 +151,24 @@ describe('modal copy', () => {
   });
 
   it('sent-with line names the version when there is one', () => {
-    expect(appFeedbackSentWithLine('1.4.2')).toBe(
+    expect(appFeedbackSentWithLine('1.4.2', { surface: 'page' })).toBe(
       'Sent with: app version 1.4.2. Nothing else is collected.'
     );
-    expect(appFeedbackSentWithLine(null)).toBe('Nothing else is collected with your message.');
+    expect(appFeedbackSentWithLine(null, { surface: 'page' })).toBe(
+      'Nothing else is collected with your message.'
+    );
+  });
+
+  it('sent-with line names the model whenever the request carries one', () => {
+    expect(appFeedbackSentWithLine('1.4.2', { surface: 'slot', modelId: 31337 })).toBe(
+      'Sent with: app version 1.4.2 and the model you were viewing. Nothing else is collected.'
+    );
+    expect(appFeedbackSentWithLine(null, { surface: 'slot', modelId: 31337 })).toBe(
+      'Sent with: the model you were viewing. Nothing else is collected.'
+    );
+    expect(appFeedbackSentWithLine('1.4.2', { surface: 'slot' })).toBe(
+      'Sent with: app version 1.4.2. Nothing else is collected.'
+    );
   });
 });
 

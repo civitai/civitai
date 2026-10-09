@@ -30,7 +30,7 @@ import { useChromeListingDetail } from './useChromeListingDetail';
  * rendered beside its trigger would be destroyed by the very click that opens it —
  * the same constraint that made `ReviewListingModal` a caller-controlled component
  * in the first place, and the reason `AppListingDetailBody` owns its copy too. Both
- * components here take an `onOpenReview(appListingId)` and hand the id UP to
+ * entry points take an `onOpenReview(appListingId)` and hand the id UP to
  * `AppBlockChrome`, which mounts the modal outside every floating surface.
  *
  * 🔴 EACH ENTRY POINT CLOSES ITS OWN OPENER. A dropdown left hanging behind a modal
@@ -71,26 +71,7 @@ export function useChromeReviewLabel(appListingId: string): string {
   return myReview ? 'Edit your review' : 'Rate this app';
 }
 
-/**
- * The ⋮ overflow-menu item. Renders `null` for a viewer the server would refuse.
- *
- * 🔴 THE GATE IS SPLIT ACROSS TWO COMPONENTS BECAUSE THE RULES OF HOOKS MAKE A
- * ONE-COMPONENT VERSION FIRE THE QUERY ANYWAY. An `if (!eligible) return null` above
- * a `useQuery` is not legal, and an `enabled:` flag is a rule someone has to keep
- * correct. Mounting the query-bearing half only once the cheap synchronous gates
- * (store access, a threaded slug) have passed makes the laziness structural — the
- * same split F2 used for `AppNameCrumb` → `AppNameCrumbCard`, and for the same
- * measured reason: a hook instantiated on every chrome render reaches contexts the
- * chrome does not own.
- *
- * 🔴 THE STORE-ACCESS TERM IS `hasAppsStoreAccess`, READ THROUGH
- * `useOptionalFeatureFlags`. `useFeatureFlags` THROWS outside its provider, and this
- * chrome is deliberately renderable in isolation; the optional hook returns `null`
- * there and `hasAppsStoreAccess(null)` is `false`, so missing flags REMOVE the
- * affordance rather than granting it. It is the same predicate the store itself
- * gates on, which matters because `getAppDetail` resolves a `none` scope for this
- * cohort and throws NOT_FOUND — an item here would open a modal that can never load.
- */
+/** The ⋮ overflow-menu item. Renders `null` for a viewer the server would refuse. */
 export function ChromeReviewMenuItem({
   slug,
   onOpenReview,
@@ -112,6 +93,21 @@ export function ChromeReviewMenuItem({
  * Renders `children` with the listing id only for a viewer the review gate admits. Shared by the
  * ⋮ item and the feedback modal's "Rate this app" link, so the two cannot offer review to
  * different viewers.
+ *
+ * 🔴 THE GATE IS SPLIT ACROSS TWO COMPONENTS BECAUSE THE RULES OF HOOKS MAKE A
+ * ONE-COMPONENT VERSION FIRE THE QUERY ANYWAY. An `if (!eligible) return null` above
+ * a `useQuery` is not legal, and an `enabled:` flag is a rule someone has to keep
+ * correct. Mounting the query-bearing half (`ChromeReviewEligibleBody`) only once the
+ * cheap synchronous gates (store access, a threaded slug) have passed makes the
+ * laziness structural — the same split F2 used for `AppNameCrumb` → `AppNameCrumbCard`.
+ *
+ * 🔴 THE STORE-ACCESS TERM IS `hasAppsStoreAccess`, READ THROUGH
+ * `useOptionalFeatureFlags`. `useFeatureFlags` THROWS outside its provider, and this
+ * chrome is deliberately renderable in isolation; the optional hook returns `null`
+ * there and `hasAppsStoreAccess(null)` is `false`, so missing flags REMOVE the
+ * affordance rather than granting it. It is the same predicate the store itself
+ * gates on, which matters because `getAppDetail` resolves a `none` scope for this
+ * cohort and throws NOT_FOUND — an entry here would open a modal that can never load.
  */
 export function ChromeReviewEligible({
   slug,
@@ -141,9 +137,9 @@ function ChromeReviewEligibleBody({
     ownerUserId: detail?.creator?.id ?? null,
     listingKind: detail?.kind,
   });
-  // No listing row yet (in flight, 404, scope-gated) → nothing to review. The item
-  // appears when the data arrives; it is never rendered against a listing id we do
-  // not have, which is what would produce a modal whose submit 403s.
+  // No listing row yet (in flight, 404, scope-gated) → render nothing. `children` appear
+  // when the data arrives and are never given a listing id we do not have, which is what
+  // would produce a review modal whose submit 403s.
   if (!detail || !canReview) return null;
   return <>{children(detail.id)}</>;
 }
