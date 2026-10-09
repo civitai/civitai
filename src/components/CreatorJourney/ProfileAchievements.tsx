@@ -1,6 +1,8 @@
+import type { SimpleGridProps } from '@mantine/core';
 import { Anchor, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
+import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
 import {
   accentVar,
   DEFAULT_ACCENT,
@@ -8,6 +10,7 @@ import {
   TierBadge,
 } from '~/components/CreatorJourney/tier-badge';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
@@ -27,28 +30,12 @@ function accentOfTrack(track: string) {
   return achievementTracks.find((t) => t.key === track)?.accent ?? DEFAULT_ACCENT;
 }
 
-export function AchievementTile({ achievement }: { achievement: Achievement }) {
-  const name = achievementName(achievement);
+export function AchievementCard({ achievement }: { achievement: Achievement }) {
   return (
-    <div
-      className="flex min-w-0 flex-col items-center gap-2 rounded-md bg-gray-0 p-3 text-center dark:bg-dark-6"
-      style={accentVar(accentOfTrack(achievement.track))}
-      title={achievement.description ?? undefined}
-    >
-      <TierBadge name={name} badgeUrl={achievement.badgeUrl} state="earned" size={64} />
-      <Text
-        size="sm"
-        fw={700}
-        lh={1.25}
-        fs={achievement.name ? undefined : 'italic'}
-        c={achievement.name ? undefined : 'dimmed'}
-      >
-        {name}
-      </Text>
-      <Text size="xs" c="dimmed">
-        {earnedLabel(achievement.achievedAt)}
-      </Text>
-    </div>
+    <EarnedBadgeCard
+      badge={{ ...achievement, name: achievementName(achievement) }}
+      accent={accentOfTrack(achievement.track)}
+    />
   );
 }
 
@@ -59,14 +46,19 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
   const accent = tierAccents[tier.key] ?? DEFAULT_ACCENT;
 
   return (
-    <div
-      className="flex flex-col items-center gap-2 rounded-lg border border-solid border-[color-mix(in_srgb,var(--cj-accent)_45%,transparent)] bg-gray-0 p-5 text-center dark:bg-dark-6"
-      style={{
-        ...accentVar(accent),
-        backgroundImage:
-          'radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--cj-accent) 25%, transparent), transparent 70%)',
-      }}
+    <SpotlightBorderCard
+      color={accent}
+      size={320}
+      style={accentVar(accent)}
+      faceClassName="flex flex-col items-center gap-2 p-5 text-center"
     >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-32 opacity-25"
+        style={{
+          background: 'radial-gradient(60% 100% at 50% 0%, var(--cj-accent) 0%, transparent 100%)',
+        }}
+      />
       <Text size="xs" tt="uppercase" fw={700} c="dimmed" className="tracking-wider">
         Creator Score tier
       </Text>
@@ -94,7 +86,7 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
           </Anchor>
         </Text>
       )}
-    </div>
+    </SpotlightBorderCard>
   );
 }
 
@@ -155,15 +147,15 @@ export function ProfileAchievementsList({ data }: { data: ProfileAchievements })
 
 export function AchievementGrid({
   achievements,
-  className,
+  cols = { base: 2, sm: 3, md: 4 },
 }: {
   achievements: Achievement[];
-  className?: string;
+  cols?: SimpleGridProps['cols'];
 }) {
   return (
-    <SimpleGrid cols={{ base: 2, xs: 3, sm: 4, md: 6 }} spacing="sm" className={className}>
+    <SimpleGrid cols={cols} spacing="sm">
       {achievements.map((achievement) => (
-        <AchievementTile key={achievement.key} achievement={achievement} />
+        <AchievementCard key={achievement.key} achievement={achievement} />
       ))}
     </SimpleGrid>
   );

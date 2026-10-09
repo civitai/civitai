@@ -46,7 +46,7 @@ export const CreatorJourneySection = ({ user }: ProfileSectionProps) => {
               <Text size="sm" fw={600} c="dimmed">
                 Latest achievements
               </Text>
-              <AchievementGrid achievements={latest} />
+              <AchievementGrid achievements={latest} cols={{ base: 2, sm: 3 }} />
             </div>
           )}
         </div>

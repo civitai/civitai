@@ -1,12 +1,5 @@
 import { Anchor, Card, Collapse, Loader, Stack, Text, Title, Tooltip } from '@mantine/core';
-import {
-  IconArrowRight,
-  IconCalendarCheck,
-  IconChevronDown,
-  IconCircleCheck,
-  IconLock,
-  IconTrendingUp,
-} from '@tabler/icons-react';
+import { IconArrowRight, IconChevronDown, IconCircleCheck, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { useDisclosure } from '@mantine/hooks';
@@ -16,6 +9,7 @@ import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { CreatorAchievements, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
 import { LinkedText, rewardLinks, unlockLinksFor } from '~/components/CreatorJourney/journey-links';
+import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
@@ -25,10 +19,7 @@ import {
   TierBadge,
   tierAccents,
 } from '~/components/CreatorJourney/tier-badge';
-import {
-  SpotlightBorderCard,
-  SpotlightDivider,
-} from '~/components/SpotlightCard/SpotlightBorderCard';
+import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { CREATOR_SHOWCASE_HREF } from '~/shared/constants/creator-journey.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
@@ -216,58 +207,6 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
 // Artless activity milestones get their own section; the shelf holds tiers and anything with art.
 export function isShelfBadge(badge: Pick<Journey['earned'][number], 'track' | 'badgeUrl'>) {
   return badge.track === 'score' || !!badge.badgeUrl;
-}
-
-function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {
-  const accent = tierAccents[badge.key] ?? DEFAULT_ACCENT;
-
-  return (
-    <SpotlightBorderCard
-      color={accent}
-      style={accentVar(accent)}
-      faceClassName="flex flex-col items-center gap-2 p-4 text-center"
-    >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-20"
-        style={{
-          background: 'radial-gradient(60% 100% at 50% 0%, var(--cj-accent) 0%, transparent 100%)',
-        }}
-      />
-      <TierBadge name={badge.name} badgeUrl={badge.badgeUrl} state="earned" size={96} />
-      <Text fw={800} size="lg" lh={1.2}>
-        {badge.name}
-      </Text>
-      {badge.track === 'score' && badge.threshold != null ? (
-        <div className="flex flex-col items-center">
-          <div className="flex items-center gap-1">
-            <IconTrendingUp size={16} className="shrink-0 text-[var(--cj-accent)]" />
-            <Text fw={700} className="tabular-nums">
-              {numberWithCommas(badge.threshold)}
-            </Text>
-          </div>
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600} className="tracking-wide">
-            Creator Score
-          </Text>
-        </div>
-      ) : (
-        badge.description && (
-          <Text size="xs" c="dimmed">
-            {badge.description}
-          </Text>
-        )
-      )}
-      <div className="mt-auto flex w-full flex-col items-center gap-2">
-        <SpotlightDivider />
-        <div className="flex items-center gap-1.5">
-          <IconCalendarCheck size={14} className="shrink-0 text-gray-6 dark:text-dark-2" />
-          <Text size="xs" c="dimmed">
-            {earnedLabel(badge.achievedAt)}
-          </Text>
-        </div>
-      </div>
-    </SpotlightBorderCard>
-  );
 }
 
 function HeroBadge({ tier, earned }: { tier: CreatorScoreTier | null; earned: boolean }) {
