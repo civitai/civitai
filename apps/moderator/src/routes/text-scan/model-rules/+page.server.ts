@@ -28,7 +28,7 @@ const querySchema = z.object({
   status: z.enum(['all', 'enabled', 'disabled']).catch('all'),
   mode: z.enum(MATCH_MODES).catch('all'),
   rule: positiveInt.optional().catch(undefined),
-  cursor: positiveInt.optional().catch(undefined),
+  cursor: z.string().max(64).optional().catch(undefined),
 });
 
 export const load: PageServerLoad = async ({ url }) => {

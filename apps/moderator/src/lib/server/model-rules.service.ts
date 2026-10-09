@@ -15,15 +15,13 @@ import { recordModActivity } from './mod-activity';
 import { getRedis } from './redis';
 import { usersByIds } from './users.service';
 
-// Owns the Model rows of ModerationRule and the shared Redis key the main app reads them through.
-// Image rules share the table and are never read or written here: every statement names
-// `entityType = 'Model'`.
+// Image rules share the ModerationRule table: every statement here must name `entityType = 'Model'`.
 
 const MODEL_RULES_KEY = REDIS_KEYS.CACHES.MOD_RULES.MODELS as RedisKeyTemplateCache;
 const ACTIVITY_ENTITY = 'moderationRule';
 
-/** Returns false rather than throwing: the row is already committed, and a throw would report failure
- *  for a write that succeeded (same rule as `blocklist.service.ts`). */
+/** Returns false rather than throwing: the row is already committed, so a throw would report failure
+ *  for a write that succeeded (see `blocklist.service.ts`). */
 async function bustCache(): Promise<boolean> {
   try {
     await getRedis().del(MODEL_RULES_KEY);
@@ -231,15 +229,18 @@ export async function setModelRuleEnabled(
   return { cacheStale };
 }
 
-/** Converts every regex Model rule in place, keeping ids, `enabled`, `order` and `reason`. Idempotent:
- *  a second run finds nothing to convert. */
+/**
+ * Idempotent: a second run finds nothing to convert. A rule the conversion cannot carry faithfully
+ * (flagged, or an `Approve` rule, which meant "leave these alone") arrives disabled, so it acts on
+ * nothing until a person rewrites it.
+ */
 export async function convertLegacyModelRules(
   userId: number
 ): Promise<WriteResult & { count: number }> {
   const count = await dbWrite.transaction().execute(async (trx) => {
     const rows = await trx
       .selectFrom('ModerationRule')
-      .select(['id', 'definition', 'reason'])
+      .select(['id', 'definition', 'reason', 'action'])
       .where('entityType', '=', 'Model')
       .forUpdate()
       .execute();
@@ -247,13 +248,21 @@ export async function convertLegacyModelRules(
     let converted = 0;
     for (const row of rows) {
       if (isSemanticDefinition(row.definition)) continue;
+      const conversion = convertLegacyModelRule(row.definition, row.reason);
+      const needsAttention = !!conversion.needsAttention || row.action === 'Approve';
       const definition: SemanticModelRule = {
-        ...convertLegacyModelRule(row.definition, row.reason),
+        ...conversion,
+        ...(needsAttention ? { needsAttention: true } : {}),
         updatedById: userId,
       };
       await trx
         .updateTable('ModerationRule')
-        .set({ definition, action: 'Block', updatedAt: new Date() })
+        .set({
+          definition,
+          action: 'Block',
+          updatedAt: new Date(),
+          ...(needsAttention ? { enabled: false } : {}),
+        })
         .where('id', '=', row.id)
         .where('entityType', '=', 'Model')
         .executeTakeFirstOrThrow();
@@ -292,9 +301,9 @@ export type ModelRuleMatchRow = {
 };
 
 /**
- * Newest first by row id (a model's row is created on its first scan; a rescan updates it in place).
- * `entityType IN (...)` is what keeps this an index scan on (entityType, entityId) rather than a walk of
- * the whole table; the label and rule filters then apply to that small slice.
+ * Ordered by verdict time; the cursor is the last row's `updatedAt` as Postgres prints it, so it
+ * round-trips without a timezone conversion. Keep `entityType IN (...)`: it keeps this on the
+ * (entityType, entityId) index instead of a table walk.
  */
 export async function getModelRuleMatches({
   mode,
@@ -304,9 +313,9 @@ export async function getModelRuleMatches({
 }: {
   mode: MatchMode;
   ruleId?: number;
-  cursor?: number;
+  cursor?: string;
   limit: number;
-}): Promise<{ items: ModelRuleMatchRow[]; nextCursor?: number }> {
+}): Promise<{ items: ModelRuleMatchRow[]; nextCursor?: string }> {
   let query = dbRead
     .selectFrom('EntityModeration as em')
     .leftJoin('Model as m', 'm.id', 'em.entityId')
@@ -315,10 +324,12 @@ export async function getModelRuleMatches({
       'em.entityType',
       'em.entityId',
       'em.updatedAt',
+      sql<string>`em."updatedAt"::text`.as('updatedAtText'),
       'em.result',
       'm.name as modelName',
     ])
     .where('em.entityType', 'in', ENTITY_TYPES[mode])
+    .where('em.status', '=', 'Succeeded')
     .where(sql<boolean>`'modelRules' = ANY(em."triggeredLabels")`);
   if (ruleId !== undefined)
     query = query.where(
@@ -326,13 +337,18 @@ export async function getModelRuleMatches({
         { ruleId },
       ])}::jsonb`
     );
-  if (cursor !== undefined) query = query.where('em.id', '<', cursor);
+  const after = parseMatchCursor(cursor);
+  if (after)
+    query = query.where(
+      sql<boolean>`(em."updatedAt", em.id) < (${after.updatedAt}::timestamp, ${after.id})`
+    );
 
   const rows = await query
+    .orderBy('em.updatedAt', 'desc')
     .orderBy('em.id', 'desc')
     .limit(limit + 1)
     .execute();
-  const page = takePage(rows, limit, (r) => r.id);
+  const page = takePage(rows, limit, (r) => `${r.updatedAtText}|${r.id}`);
   return {
     items: page.items.map((r) => ({
       id: r.id,
@@ -344,4 +360,9 @@ export async function getModelRuleMatches({
     })),
     nextCursor: page.nextCursor,
   };
+}
+
+function parseMatchCursor(cursor: string | undefined) {
+  const match = cursor?.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\|(\d+)$/);
+  return match ? { updatedAt: match[1], id: Number(match[2]) } : undefined;
 }

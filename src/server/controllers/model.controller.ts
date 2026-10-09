@@ -879,7 +879,8 @@ export const publishModelHandler = async ({
       meta: modelRulesCleared ? { ...meta, modelRulesCleared } : meta,
       republishing,
     });
-    if (!isModerator) scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedModel.id });
+    if (!isModerator)
+      scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedModel.id });
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');

@@ -13,8 +13,8 @@ export type SemanticModelRule = {
 export const DEFAULT_RULE_DESCRIPTION = 'Takedown request';
 export const LIKENESS_RULE_DESCRIPTION = 'Real person who has claimed their likeness';
 
-// The regex-era reasons repeat one sentence per likeness claim. It is sent to the scan with every rule,
-// so it is shortened there; the full sentence stays as the internal note.
+// Likeness reasons repeat one sentence per claim and ship in the prompt with every rule, so they are
+// shortened there; the full text stays as the internal note.
 const LIKENESS_REASON = /has claimed their (digital )?likeness/i;
 
 const descriptionFor = (reason: string | null | undefined) => {
@@ -29,11 +29,12 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 export const isSemanticDefinition = (definition: unknown): definition is SemanticModelRule =>
   isRecord(definition) && definition.type === 'semantic';
 
-/** Comma- or newline-separated, trimmed, deduped case-insensitively, first spelling kept. */
+// One per line, never split on commas: a name can contain one ("Doe, Jane"), and splitting it would
+// turn one alias into two far broader ones on an unrelated save.
 export function parseAliases(raw: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const part of raw.split(/[,\n]/)) {
+  for (const part of raw.split('\n')) {
     const alias = part.replace(/\s+/g, ' ').trim();
     const key = alias.toLowerCase();
     if (!alias || seen.has(key)) continue;
@@ -111,7 +112,6 @@ function expand(body: string): string[] {
   return result;
 }
 
-/** `/body/flags` or a bare string. */
 const matchBody = (match: string): string => {
   if (match.startsWith('/')) {
     const end = match.lastIndexOf('/');
@@ -139,6 +139,16 @@ function literalsOf(match: string): { body: string; literals: string[] | null } 
   }
 }
 
+function isAnyOfContent(definition: unknown): boolean {
+  if (!isRecord(definition)) return false;
+  if (definition.type === 'content') return true;
+  return (
+    definition.type === 'or' &&
+    Array.isArray(definition.rules) &&
+    definition.rules.every(isAnyOfContent)
+  );
+}
+
 function collectMatches(definition: unknown, out: string[] = []): string[] {
   if (!isRecord(definition)) return out;
   if (definition.type === 'content' && typeof definition.match === 'string')
@@ -148,9 +158,9 @@ function collectMatches(definition: unknown, out: string[] = []): string[] {
 }
 
 /**
- * A regex Model rule as a semantic one, for the rule list and the LLM prompt. A pattern that does not
- * reduce to plain text keeps its raw body as the subject and is flagged for a person to rewrite.
- * A semantic definition comes back unchanged.
+ * A pattern that does not reduce to plain text keeps its raw body as the subject and is flagged
+ * `needsAttention` for a person to rewrite. So is any rule whose meaning a subject and aliases cannot
+ * carry: an `and`, or a tag or property condition.
  */
 export function convertLegacyModelRule(
   definition: unknown,
@@ -160,7 +170,7 @@ export function convertLegacyModelRule(
 
   const matches = collectMatches(definition);
   const parsed = matches.map(literalsOf);
-  let needsAttention = parsed.some((p) => p.literals === null);
+  let needsAttention = parsed.some((p) => p.literals === null) || !isAnyOfContent(definition);
 
   let subject: string;
   const first = parsed[0];
@@ -192,7 +202,6 @@ export function convertLegacyModelRule(
   };
 }
 
-/** Case-insensitive match over what a moderator searches by. */
 export function ruleMatchesText(
   rule: { subject: string; description: string; aliases: readonly string[] },
   query: string
@@ -206,7 +215,6 @@ export function ruleMatchesText(
 
 export type RuleMatch = { ruleId: number; subject: string | null; reason: string | null };
 
-/** The matched rules of an `EntityModeration.result`, each with its subject from the snapshot. */
 export function parseRuleMatches(result: unknown): RuleMatch[] {
   if (!isRecord(result)) return [];
   const labels = result.labels;

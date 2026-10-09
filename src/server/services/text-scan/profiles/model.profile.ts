@@ -35,7 +35,6 @@ export async function loadModelScanSubjects(
       poi: true,
       minor: true,
       modelVersions: {
-        // Public-only: a draft version's text is not public, so it must not take the model down.
         ...(publicOnly ? { where: { status: { in: PUBLIC_STATUSES } } } : {}),
         select: { name: true, description: true, trainedWords: true },
         orderBy: { index: 'asc' },

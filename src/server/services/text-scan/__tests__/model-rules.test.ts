@@ -28,8 +28,8 @@ const rule = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => vi.clearAllMocks());
 
 describe('getModelRulesForPrompt', () => {
-  it('returns enabled semantic rules and skips rows still holding a regex definition', async () => {
-    dbMock.dbRead.moderationRule.findMany.mockResolvedValue([
+  it('returns enabled semantic rules, skipping regex rows and rules awaiting review', async () => {
+    dbMock.dbWrite.moderationRule.findMany.mockResolvedValue([
       {
         id: 4,
         order: null,
@@ -42,12 +42,18 @@ describe('getModelRulesForPrompt', () => {
         updatedAt: new Date(6000),
         definition: { type: 'or', rules: [{ type: 'content', match: '/x/gi', target: ['name'] }] },
       },
+      {
+        id: 6,
+        order: null,
+        updatedAt: new Date(7000),
+        definition: { type: 'semantic', subject: '(?:x|y)+', needsAttention: true },
+      },
     ]);
 
     await expect(getModelRulesForPrompt()).resolves.toEqual([
       { id: 4, subject: 'Jane Doe', description: 'Likeness claim', aliases: [], updatedAt: 5000 },
     ]);
-    expect(dbMock.dbRead.moderationRule.findMany).toHaveBeenCalledWith(
+    expect(dbMock.dbWrite.moderationRule.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { entityType: 'Model', enabled: true } })
     );
   });

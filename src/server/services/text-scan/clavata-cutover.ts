@@ -11,7 +11,10 @@ import {
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
-export type CutoverEntityType = Exclude<TextScanEntityType, 'Challenge' | 'Crucible' | 'ModelRules'>;
+export type CutoverEntityType = Exclude<
+  TextScanEntityType,
+  'Challenge' | 'Crucible' | 'ModelRules'
+>;
 
 type ClavataTarget = {
   clavataKey: string;

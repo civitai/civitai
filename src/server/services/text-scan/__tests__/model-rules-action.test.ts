@@ -42,7 +42,12 @@ describe('applyModelRulesTextScan', () => {
     expect(sql).toContain("availability <> 'Private'");
     expect(sql).toContain('"deletedAt" IS NULL');
     expect(sql).toContain("meta->'modelRules'->>'workflowId'");
-    const modelRules = { ruleIds: [3, 4], workflowId: 'wf-1', textHash: 'h1', at: expect.any(String) };
+    const modelRules = {
+      ruleIds: [3, 4],
+      workflowId: 'wf-1',
+      textHash: 'h1',
+      at: expect.any(String),
+    };
     expect(unpublishModelById).toHaveBeenCalledWith({
       id: 7,
       userId: -1,

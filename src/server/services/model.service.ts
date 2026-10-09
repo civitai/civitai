@@ -5381,7 +5381,6 @@ export const publishPrivateModel = async ({
       `;
     }
   });
-  // Private -> Public is the moment the rules start to apply.
   if (publishVersions) scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
 
   const updatedImageIds = await dbRead.image.findMany({

@@ -60,7 +60,7 @@
   </div>
   <div>
     <Label for="rule-aliases" class="text-xs text-dark-2">
-      Aliases (separate with commas or new lines)
+      Aliases (one per line)
     </Label>
     <Textarea id="rule-aliases" name="aliases" rows={3} value={rule?.aliases.join('\n') ?? ''} />
   </div>

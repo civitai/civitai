@@ -59,7 +59,7 @@ describe('convertLegacyModelRule', () => {
       type: 'or',
       rules: [
         content(String.raw`/(?:\b|\s)Jane[\s\-_]*Doe(?:\b|\s)/gmi`),
-        { type: 'and', rules: [content('/JD Handle/i'), content('/jane doe/i')] },
+        { type: 'or', rules: [content('/JD Handle/i'), content('/jane doe/i')] },
         content('/(?:\\b|\\s)JD Handle(?:\\b|\\s)/'),
       ],
     };
@@ -76,6 +76,22 @@ describe('convertLegacyModelRule', () => {
       'Jane Doe has claimed their digital likeness on Civitai, posting content of them is not allowed'
     );
     expect(out.description).toBe('Real person who has claimed their likeness');
+  });
+
+  it('flags a rule whose meaning a subject and aliases cannot carry', () => {
+    const andRule = {
+      type: 'and',
+      rules: [
+        { type: 'content', match: '/(?:\\b|\\s)Foo(?:\\b|\\s)/gmi', target: ['name'] },
+        { type: 'property', condition: "$.modelVersion.baseModel === 'X'" },
+      ],
+    };
+    expect(convertLegacyModelRule(andRule, null)).toMatchObject({
+      subject: 'Foo',
+      needsAttention: true,
+    });
+    const tagRule = { type: 'or', rules: [{ type: 'tag', tags: ['x'], match: 'any' }] };
+    expect(convertLegacyModelRule(tagRule, null).needsAttention).toBe(true);
   });
 
   it('reads escaped punctuation as literal text', () => {
@@ -118,14 +134,18 @@ describe('convertLegacyModelRule', () => {
 
 describe('parseAliases', () => {
   it('splits on commas and newlines, trims and dedupes case-insensitively', () => {
-    expect(parseAliases('Foo,  bar \n foo\n\nBAZ  qux, ')).toEqual(['Foo', 'bar', 'BAZ qux']);
+    expect(parseAliases('Foo  \n foo\n\nBAZ  qux \nDoe, Jane')).toEqual([
+      'Foo',
+      'BAZ qux',
+      'Doe, Jane',
+    ]);
   });
 });
 
 describe('modelRuleFormSchema', () => {
   it('requires a subject and parses aliases', () => {
     expect(modelRuleFormSchema.safeParse({ subject: '  ' }).success).toBe(false);
-    expect(modelRuleFormSchema.parse({ subject: ' A ', aliases: 'b, c' })).toEqual({
+    expect(modelRuleFormSchema.parse({ subject: ' A ', aliases: 'b\nc' })).toEqual({
       subject: 'A',
       description: '',
       aliases: ['b', 'c'],

@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -12,6 +12,7 @@ export const semanticModelRuleSchema = z.object({
   subject: z.string().trim().min(1),
   description: z.string().trim().default(''),
   aliases: z.array(z.string().trim().min(1)).default([]),
+  needsAttention: z.boolean().optional(),
 });
 
 export type ModelRuleForPrompt = {
@@ -27,15 +28,17 @@ export async function getModelRulesForPrompt(): Promise<ModelRuleForPrompt[]> {
   return fetchThroughCache(
     REDIS_KEYS.CACHES.MOD_RULES.MODELS,
     async () => {
-      const rows = await dbRead.moderationRule.findMany({
+      // Primary: the moderator app busts this key right after its write, and a replica read here
+      // would cache the pre-write rules for the whole TTL.
+      const rows = await dbWrite.moderationRule.findMany({
         where: { entityType: EntityType.Model, enabled: true },
         select: { id: true, definition: true, updatedAt: true, order: true },
         orderBy: [{ order: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
       });
       return rows.flatMap((row) => {
-        // Rows still holding a regex definition are skipped until a moderator converts them.
+        // A regex definition, or a converted rule a person has not reviewed yet, never reaches the scan.
         const parsed = semanticModelRuleSchema.safeParse(row.definition);
-        if (!parsed.success) return [];
+        if (!parsed.success || parsed.data.needsAttention) return [];
         const { subject, description, aliases } = parsed.data;
         return [{ id: row.id, subject, description, aliases, updatedAt: row.updatedAt.getTime() }];
       });
@@ -62,7 +65,12 @@ export function modelRulesFingerprint(rules: ModelRuleForPrompt[]) {
   return hashContent(rules.map((rule) => `${rule.id}:${rule.updatedAt}`).join(','));
 }
 
-export type ModelRuleSnapshot = { id: number; subject: string; description: string; aliases: string[] };
+export type ModelRuleSnapshot = {
+  id: number;
+  subject: string;
+  description: string;
+  aliases: string[];
+};
 
 /**
  * Read by id from the primary, not from the cache, and enabled only: a rule disabled after the
