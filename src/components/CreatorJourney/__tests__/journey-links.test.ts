@@ -102,6 +102,8 @@ describe('journey ladder links', () => {
     expect(internal).not.toMatch(/target=/);
     expect(isAppPath('/crucibles')).toBe(true);
     expect(isAppPath('//evil.example/x')).toBe(false);
+    // A protocol-relative href leaves the site, so it must render as an external link.
+    expect(render('Leave', [{ href: '//evil.example/x' }])).toMatch(/target="_blank"/);
   });
 
   it('links phrases in text order whatever order the links are listed, skipping an overlap', () => {
