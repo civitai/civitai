@@ -2,7 +2,8 @@ import { APP_BLOCK_FEEDBACK_AREA } from '~/shared/constants/feedback.constants';
 
 /**
  * The ONE SQL statement of which app feedback a listing's developer may see, shared by every raw
- * read of it: the owner inbox list and New counts (`app-feedback.service.ts`) and the owner digest
+ * read of it: the owner inbox list, its New counts and the editor's has-any check that decides
+ * whether the Feedback tab shows (`app-feedback.service.ts`), and the owner digest
  * (`app-feedback.notifications.ts`). Aliases: `f` = "Feedback", `u` = the reporter's "User".
  *
  * Plain SQL text, not `Prisma.Sql`, because the notification runner takes a raw string; the

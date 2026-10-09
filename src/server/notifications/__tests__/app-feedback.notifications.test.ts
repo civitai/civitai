@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ALL_EDITOR_TABS, resolveEditorTab } from '~/components/Apps/appListingEditorTabs';
 import { NotificationCategory } from '~/server/common/enums';
 import {
   APP_FEEDBACK_DIGEST_TYPE,
@@ -123,6 +124,13 @@ describe('owner digest — copy and destination', () => {
     expect(
       render('app-feedback-new', { appListingId: LISTING_ID, appName: APP_NAME, count: 1 })?.url
     ).toBe('/apps/listing/apl_01JZFEEDBACK/edit?tab=feedback');
+  });
+
+  it('the link names a real editor tab, so it survives the ?tab= sanitiser instead of falling back', () => {
+    const tab = new URL(appFeedbackInboxHref(LISTING_ID), 'https://example.test').searchParams.get(
+      'tab'
+    );
+    expect(resolveEditorTab(tab, ALL_EDITOR_TABS)).toBe('feedback');
   });
 
   it('a malformed row with no listing id links to the owner\'s apps, never to "undefined"', () => {

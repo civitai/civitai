@@ -1155,7 +1155,12 @@ describe('hasAnyAppFeedbackForListing — authz parity with listForListing', () 
     const listQ = lastQuery();
     const hasAnyWhere = norm(hasAnyQ.sql).match(/WHERE (.*?) \) AS "hasAny"/)![1];
     expect(hasAnyWhere).toBe(norm(listQ.sql).match(/WHERE (.*?) ORDER BY/)![1]);
-    expect(hasAnyQ.values).toEqual(['app-block', PARENT]);
+    // The shared owner-visibility SQL (app-feedback-visibility.ts), the same text the digest reads:
+    // its values are code constants inlined in the text, so only the seat listing id is bound.
+    expect(hasAnyWhere).toBe(
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?)`
+    );
+    expect(hasAnyQ.values).toEqual([PARENT]);
     // Selects a constant, never a column, and stops at the first match.
     expect(norm(hasAnyQ.sql)).toMatch(/^SELECT EXISTS \( SELECT 1 FROM "Feedback" f JOIN/);
   });

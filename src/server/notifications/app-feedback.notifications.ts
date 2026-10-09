@@ -38,17 +38,13 @@ import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants'
 export const APP_FEEDBACK_DIGEST_TYPE = 'app-feedback-new';
 export const APP_FEEDBACK_STATUS_TYPE = 'app-feedback-status';
 
-export const APP_FEEDBACK_EDITOR_TAB = 'feedback';
-
 /**
- * The owner inbox for a listing.
- *
- * @ai: switch to `listingEditHref(appListingId, 'feedback')` and drop APP_FEEDBACK_EDITOR_TAB once
- * the owner inbox change adds `feedback` to `EditorTab`. Until then `resolveEditorTab` sends the
- * unknown tab to the default one, so the link opens the listing's editor. The test pins the URL.
+ * The owner inbox for a listing: the listing editor's Feedback tab. If every row the digest
+ * counted has since been hidden, the editor offers no Feedback tab and `?tab=feedback` falls back
+ * like any other tab the caller cannot open.
  */
 export function appFeedbackInboxHref(appListingId: string): string {
-  return `${listingEditHref(appListingId)}?tab=${APP_FEEDBACK_EDITOR_TAB}`;
+  return listingEditHref(appListingId, 'feedback');
 }
 
 // ---------------------------------------------------------------------------------------------
