@@ -44,14 +44,22 @@ describe('parseBuildSignals', () => {
     }
   );
 
-  it('boundaries: a 64-letter reason and a 63-char run id are accepted, one more is not', () => {
-    const ok = parseBuildSignals({ failedReason: 'R'.repeat(64), runId: 'r'.repeat(63) });
+  it('boundaries: a 64-letter reason and a 253-char run id are accepted, one more is not', () => {
+    const ok = parseBuildSignals({ failedReason: 'R'.repeat(64), runId: 'r'.repeat(253) });
     expect(ok).toEqual({
-      signals: { failedReason: 'R'.repeat(64), runId: 'r'.repeat(63) },
+      signals: { failedReason: 'R'.repeat(64), runId: 'r'.repeat(253) },
       dropped: [],
     });
-    const over = parseBuildSignals({ failedReason: 'R'.repeat(65), runId: 'r'.repeat(64) });
+    const over = parseBuildSignals({ failedReason: 'R'.repeat(65), runId: 'r'.repeat(254) });
     expect(over).toEqual({ signals: {}, dropped: ['failedReason', 'runId'] });
+  });
+
+  it('a real 75-char review-lane run name (41-char slug) is accepted, not silently dropped', () => {
+    // app-blocks-review-<slug>-<sha8>-<6hex> with the longest slug the trigger allows.
+    const runId = `app-blocks-review-${'a'.repeat(41)}-0123abcd-9f8e7d`;
+    expect(runId).toHaveLength(75);
+    expect(parseBuildSignals({ runId })).toEqual({ signals: { runId }, dropped: [] });
+    expect(parseRunId(runId)).toBe(runId);
   });
 
   it.each([

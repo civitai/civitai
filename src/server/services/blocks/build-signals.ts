@@ -25,13 +25,15 @@ export type PipelineStatus = (typeof PIPELINE_STATUSES)[number];
  *
  * `failedReason` is a Tekton reason word (`TaskRunTimeout`, `Failed`, ...): letters only.
  * `runId` is the pipeline run's name; it is stored for the stale-run guard and never
- * rendered.
+ * rendered. Bounded at 253 (the Kubernetes object-name limit), not 63: a run name embeds
+ * the slug, so a label-length bound would silently drop it for long slugs and switch the
+ * guard off for those apps.
  */
 const FIELD_SCHEMAS = {
   failedStep: z.enum(BUILD_FAILED_STEPS),
   pipelineStatus: z.enum(PIPELINE_STATUSES),
   failedReason: z.string().regex(/^[A-Za-z]{1,64}$/),
-  runId: z.string().regex(/^[a-z0-9-]{1,63}$/),
+  runId: z.string().regex(/^[a-z0-9-]{1,253}$/),
 } as const;
 
 export type BuildSignalField = keyof typeof FIELD_SCHEMAS;

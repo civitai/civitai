@@ -139,6 +139,20 @@ describe('recordBuildTriggered', () => {
     });
   });
 
+  it('records a 75-char review run name — the guard must not go silently inactive for long slugs', async () => {
+    const runName = `app-blocks-review-${'a'.repeat(41)}-0123abcd-9f8e7d`;
+    expect(
+      await recordBuildTriggered({
+        mode: 'review',
+        publishRequestId: 'p',
+        slug: 's',
+        sha: SHA,
+        runName,
+      })
+    ).toBe(true);
+    expect(db.createMany.mock.calls.at(-1)?.[0].data[0].runId).toBe(runName);
+  });
+
   it.each(['', undefined, 'Not_A_Run'])(
     'does not record an invalid run name (%j)',
     async (runName) => {
