@@ -221,13 +221,7 @@ describe('readTotals', () => {
     // ... and the reader saw the old cut before the swap, the new one after.
     const cuts = [OLD, NEW, NEW, NEW];
     const redis = { ...fake.redis, get: vi.fn(async () => String(cuts.shift())) };
-    const result = await readTotals(
-      EVENT,
-      'hat',
-      ['a'],
-      NOW,
-      redis as unknown as PointsReadRedis
-    );
+    const result = await readTotals(EVENT, 'hat', ['a'], NOW, redis as unknown as PointsReadRedis);
     expect(result).toEqual({ a: 16 });
     expect(redis.get).toHaveBeenCalledTimes(4);
   });

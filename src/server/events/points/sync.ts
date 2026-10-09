@@ -1,9 +1,18 @@
 import { chunk } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
 import type { EventScoring } from '~/server/events/base.event';
-import { flagAudienceAmong, getEventScoringPhase, type GatedEvent } from '~/server/events/event-access';
+import {
+  flagAudienceAmong,
+  getEventScoringPhase,
+  type GatedEvent,
+} from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
-import { encodeHat, entityKey, eventPointKeys, eventPointsWindow } from '~/server/events/points/keys';
+import {
+  encodeHat,
+  entityKey,
+  eventPointKeys,
+  eventPointsWindow,
+} from '~/server/events/points/keys';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';

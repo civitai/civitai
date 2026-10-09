@@ -66,7 +66,9 @@ export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now
 }
 
 // Totals per hat, team and owner: the final days from the snapshot plus the recomputed rows.
-export function refereeTotals(rows: Pick<RefereeRow, 'userId' | 'cosmeticId' | 'claimKey' | 'team' | 'points'>[]) {
+export function refereeTotals(
+  rows: Pick<RefereeRow, 'userId' | 'cosmeticId' | 'claimKey' | 'team' | 'points'>[]
+) {
   const totals: Record<TotalScope, Map<string, number>> = {
     hat: new Map(),
     team: new Map(),
@@ -253,7 +255,10 @@ async function finalDayTotals(event: RefereeEvent, window: Window) {
   `;
 }
 
-export type RefereeRedis = Pick<typeof sysRedis, 'get' | 'hGetAll' | 'del' | 'hSet' | 'multi' | 'sAdd'>;
+export type RefereeRedis = Pick<
+  typeof sysRedis,
+  'get' | 'hGetAll' | 'del' | 'hSet' | 'multi' | 'sAdd'
+>;
 
 const TMP_SUFFIX = ':next';
 
@@ -275,7 +280,9 @@ export async function resetLiveBase(
   const settledKeys: ReturnType<typeof keys.live>[] = [];
   if (oldCutBucket)
     for (let b = oldCutBucket; b < newCutBucket; b++) settledKeys.push(keys.live(b, 'hat'));
-  const settled = await Promise.all(settledKeys.map(async (key) => (await redis.hGetAll(key)) ?? {}));
+  const settled = await Promise.all(
+    settledKeys.map(async (key) => (await redis.hGetAll(key)) ?? {})
+  );
   const changed = oldCutBucket
     ? changedHats(oldHatBase, settled, totals.hat)
     : [...totals.hat.keys()];

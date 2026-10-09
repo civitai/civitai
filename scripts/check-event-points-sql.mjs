@@ -27,7 +27,6 @@ if (mutant) {
   sql = one(sql, a, b);
 }
 
-
 // Owner 10 wears hat 7 on images 100-199 and a bought copy, hat 9, on images 200-299. Owner 11 (banned)
 // wears hat 8 on image 500.
 const H10 = [10, 7, 'claimed', 'Yellow'];

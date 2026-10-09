@@ -378,12 +378,9 @@ describe('when the ledger write fails', () => {
       },
     });
     await engine.awardEventPoints([reaction(1)]);
-    expect(logError).toHaveBeenCalledWith(
-      'ledger',
-      'eventPoints.insertLedger',
-      expect.any(Error),
-      { rows: 1 }
-    );
+    expect(logError).toHaveBeenCalledWith('ledger', 'eventPoints.insertLedger', expect.any(Error), {
+      rows: 1,
+    });
     fail = false;
     await engine.awardEventPoints([reaction(1)]);
     expect(ledger.map((r) => r.actorId)).toEqual([1]);

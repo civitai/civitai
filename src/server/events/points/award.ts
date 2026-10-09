@@ -270,7 +270,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       );
       const firsts: NonNullable<Awaited<ReturnType<typeof awardOne>>>[] = [];
       for (const result of results) {
-        if (result.status === 'rejected') deps.logError('redis', 'eventPoints.award', result.reason);
+        if (result.status === 'rejected')
+          deps.logError('redis', 'eventPoints.award', result.reason);
         else if (result.value) firsts.push(result.value);
       }
       if (!firsts.length) return;
