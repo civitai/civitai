@@ -195,8 +195,15 @@ describe('Your hats card wears its hat', () => {
         ended: false,
       })
     );
-    // The hat reaches past the picture's corner, so nothing between it and the grid may clip.
-    expect(el.querySelector('[data-testid="my-hat"]')!.className).not.toContain('overflow');
+    // The hat reaches past the picture's corner, so nothing from the picture up may clip it.
+    const clipping: string[] = [];
+    for (
+      let node = el.querySelector('[data-testid="thumb"]')!.parentElement;
+      node && node !== el;
+      node = node.parentElement
+    )
+      if (/overflow-(hidden|clip|auto|scroll)/.test(node.className)) clipping.push(node.className);
+    expect(clipping).toEqual([]);
     expect(thumbProps).toHaveBeenLastCalledWith(
       expect.objectContaining({ hat: { url: 'u' }, allowance: 12, className: 'rounded-t-[7px]' })
     );
