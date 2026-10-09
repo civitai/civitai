@@ -42,8 +42,10 @@ import {
   removePostTagSchema,
   removeResourceFromPostImageInput,
   reorderPostImagesSchema,
+  scheduleBatchSchema,
   updatePostCollectionTagIdInput,
   updatePostImageSchema,
+  validateBatchScheduleSchema,
 } from './../schema/post.schema';
 import { addPostImage, getPostEditDetail, getPostImageIds } from './../services/post.service';
 import {
@@ -53,6 +55,7 @@ import {
   shiftPlannerPosts,
   unschedulePlannerPosts,
 } from './../services/post-planner.service';
+import { scheduleBatch, validateBatchSchedule } from './../services/post-batch.service';
 import { guardedProcedure, isFlagProtected, publicProcedure, verifiedProcedure } from './../trpc';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -254,6 +257,17 @@ export const postRouter = router({
     .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
     .use(isFlagProtected('postPlanner'))
     .mutation(({ ctx, input }) => shiftPlannerPosts({ ...input, user: ctx.user })),
+  validateBatchSchedule: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(validateBatchScheduleSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .query(({ ctx, input }) => validateBatchSchedule({ input, user: ctx.user })),
+  scheduleBatch: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(scheduleBatchSchema)
+    .use(isFlagProtected('batchPostScheduling'))
+    .use(rateLimit({ limit: 30, period: CacheTTL.hour }))
+    .mutation(({ ctx, input }) => scheduleBatch({ input, ctx })),
   enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
     enqueueJobs([
       {

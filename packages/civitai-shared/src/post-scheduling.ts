@@ -12,6 +12,9 @@ export const POST_BATCH_MAX_IMAGES = 500;
 /** Posts created per chunked `scheduleBatch` call (docs/batch-scheduling-plan.md); the client sends a
  *  batch as a sequence of these. */
 export const POST_BATCH_CHUNK_POSTS = 10;
+/** Images one `scheduleBatch` call may attach in total: `addPostImage` creates the image, its
+ *  resources and busts caches per image, so a full chunk of 20-image posts would run too long. */
+export const POST_BATCH_CHUNK_MAX_IMAGES = 60;
 export const POST_SCHEDULE_JITTER_MAX_MINUTES = 9;
 /**
  * The spacing floors under which jitter could pull two posts inside the gap: two adjacent dates

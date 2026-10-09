@@ -393,6 +393,11 @@ const featureFlags = createFeatureFlags({
   // The post planner (docs/batch-scheduling-planner-element.md): the `post.*` planner procedures,
   // their REST twins and both hosts. Creator Studio reads the same Flipt key.
   postPlanner: { availability: ['mod'], fliptKey: 'post-planner', displayName: 'Post planner' },
+  batchPostScheduling: {
+    availability: ['mod'],
+    fliptKey: 'batch-post-scheduling',
+    displayName: 'Batch post scheduling',
+  },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.

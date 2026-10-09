@@ -1,5 +1,10 @@
 import * as z from 'zod';
-import { CacheTTL, constants } from '~/server/common/constants';
+import {
+  POST_BATCH_CHUNK_MAX_IMAGES,
+  POST_BATCH_CHUNK_POSTS,
+  POST_BATCH_MAX_POSTS,
+} from '@civitai/shared/post-scheduling';
+import { CacheTTL, constants, POST_IMAGE_LIMIT, POST_TAG_LIMIT } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
@@ -360,5 +365,46 @@ export const plannerShiftSchema = z.object({
     .int()
     .refine((minutes) => minutes !== 0 && Math.abs(minutes) <= PLANNER_MAX_SHIFT_MINUTES, {
       message: 'Shift between 1 minute and 90 days in either direction',
+    }),
+});
+
+// Batch scheduling (docs/batch-scheduling-phase1-tech.md §2, §3). The composer validates the whole
+// batch up front, then sends it as chunks of complete posts.
+export type ValidateBatchScheduleInput = z.infer<typeof validateBatchScheduleSchema>;
+export const validateBatchScheduleSchema = z.object({
+  publishedAts: z.array(z.coerce.date()).max(POST_BATCH_MAX_POSTS),
+});
+
+// Only an upload key, like `post.addImage`: a batch is the first server path that writes
+// `Image.url` from the body, and an arbitrary URL would be served as-is.
+export const scheduleBatchImageSchema = addPostImageSchema
+  .omit({ postId: true, index: true, modelVersionId: true })
+  .extend({ url: z.string().uuid() });
+
+export const scheduleBatchPostSchema = z.object({
+  title: z.string().trim().max(255).nullish(),
+  publishedAt: z.coerce.date(),
+  images: z.array(scheduleBatchImageSchema).min(1).max(POST_IMAGE_LIMIT),
+});
+
+export type ScheduleBatchInput = z.infer<typeof scheduleBatchSchema>;
+export const scheduleBatchSchema = z.object({
+  /** One per chunk per attempt; the server refuses a repeat so a re-sent request cannot double-post. */
+  idempotencyKey: z.string().uuid().optional(),
+  modelVersionId: z.number().int().positive().nullish(),
+  tags: z.array(z.string().trim().min(1)).max(POST_TAG_LIMIT).default([]),
+  tools: z.array(z.number().int().positive()).default([]),
+  techniques: z.array(z.number().int().positive()).default([]),
+  posts: z
+    .array(scheduleBatchPostSchema)
+    .min(1)
+    .max(POST_BATCH_CHUNK_POSTS)
+    .superRefine((posts, ctx) => {
+      const imageCount = posts.reduce((count, post) => count + post.images.length, 0);
+      if (imageCount > POST_BATCH_CHUNK_MAX_IMAGES)
+        ctx.addIssue({
+          code: 'custom',
+          message: `One call can attach up to ${POST_BATCH_CHUNK_MAX_IMAGES} images; this one has ${imageCount}.`,
+        });
     }),
 });

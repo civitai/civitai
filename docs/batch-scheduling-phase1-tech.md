@@ -32,6 +32,7 @@ expect 0) and then closing against the two commits above. The only remaining ris
 client-side and happen before any post exists.
 
 Why not a client-orchestrated loop over `post.create` / `post.addImage` / `post.update`:
+
 - `post.create` carries `rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' })`
   (`post.router.ts`), which counts at creation. 200 creates in one sitting trips every tier; the loop
   fails halfway with 20–150 posts already made. The go-live-day cap cannot be expressed in that
@@ -41,6 +42,7 @@ Why not a client-orchestrated loop over `post.create` / `post.addImage` / `post.
 - 600+ round trips for 200 images.
 
 Why not fully atomic / one call for everything:
+
 - `addPostImage` (`post.service.ts`) fetches EXIF when meta is absent, enqueues ingestion inside
   `createImage`, runs `createImageResources`, and busts caches. The `no-io-in-transaction` guard forbids
   wrapping this in one transaction, and `createPostWithImagesHandler` documents the same conclusion.
@@ -48,6 +50,7 @@ Why not fully atomic / one call for everything:
   timeout. Chunk per call instead.
 
 Why not a 200-image "staging" post later split into N posts:
+
 - Moving `Image.postId` bypasses `addPostImage`'s `(postId,url)` idempotency guard, requires
   re-indexing `index`, recomputing `nsfwLevel` per post, re-busting `images-user` /
   `images-modelVersion` / post caches, and the sweep/anti-bump logic assumes images are created under
@@ -66,8 +69,9 @@ exist".
 ## 2. Data flow
 
 Client (`/posts/batch` page, new `src/components/Post/Batch/*`):
+
 1. Drop files → `useMediaUpload` under a `MediaUploadSettingsProvider settings={{ maxItems:
-   POST_BATCH_MAX_IMAGES }}` and a `FileUploadProvider`. `preprocessFile` parses meta client-side,
+POST_BATCH_MAX_IMAGES }}` and a `FileUploadProvider`. `preprocessFile` parses meta client-side,
    `auditMetaData` flags blocked meta, S3 upload via `/api/v1/image-upload/multipart`. `onComplete`
    yields `{ status, url (S3 key), index, metadata: {width,height,hash}, meta, type, mimeType }` with
    **no post id**. Store these in a new zustand store `useBatchComposerStore` as `UploadedMedia[]`.
@@ -78,16 +82,18 @@ Client (`/posts/batch` page, new `src/components/Post/Batch/*`):
 3. Preview: `trpc.post.validateBatchSchedule.useQuery({ publishedAts, postCount })` returns
    `{ ok, issues[], dailyLimit, perDay: {day, existing, incoming}[] }`. Issues render inline. Submit is
    disabled until `ok`.
-4. Submit: client sends `scheduleBatch` per chunk of 10 posts sequentially, with a progress bar;
+4. Submit: client sends `scheduleBatch` sequentially in chunks sized so the progress bar moves
+   about eight times (one post per call for a small batch, the 10-post cap for a large one);
    `created` post ids accumulate; on completion link to the planner (Phase 2) or the "Scheduled" view
    of the user's posts.
 
-Server (`scheduleBatchHandler` in `post.controller.ts`):
+Server (`scheduleBatch` in `src/server/services/post-batch.service.ts`):
+
 1. Zod: `scheduleBatchSchema` (section 8).
 2. Context load (one query each): the user's daily limit via new `getDailyPostLimit(user)`
    (extracted from `post.schema.ts` `dailyPostTiers` / `MEMBER_DAILY_POST_MULTIPLIER` / `hasReputation`
    / `isPaidMember`); existing `publishedAt` for `Post WHERE userId = ? AND publishedAt >=
-   start_of_today_utc`.
+start_of_today_utc`.
 3. `validateBatchSchedule(...)` pure function; `throwBadRequestError` with all issues if any.
 4. If `modelVersionId`: `canViewModelVersion` once up front so the batch fails before any write.
 5. For each post group, sequentially:
@@ -120,6 +126,7 @@ validateBatchSchedule({
 ```
 
 Rules (UTC days, matching the sweep's `startOfUtcDay` and the reward's daily dedup):
+
 - Window: every date in `[now + minLead, now + 3 months]`. `SchedulePostModal.tsx` hard-codes `3`
   today and should import the new constant.
 - Jitter guard: no date with `getUTCMinutes() === 0` (the generator never emits one; the validator
@@ -168,6 +175,7 @@ requires `(to - from) / (count - 1) ≥ 40` min; otherwise the generator returns
 dates. Base dates are computed in the user's local time and converted to UTC; cap days are UTC.
 
 Tests (deterministic `rng` fixtures, `vi.useFakeTimers`):
+
 - `every`: n dates, monotonic, spacing in `[every, every+9]`, none at :00, first ≥ start.
 - `spread`: first = from(+jitter), last ≤ to, spacing within tolerance.
 - `applyJitter`: never :00 across all 60 base minutes × fixed rng values.
@@ -201,7 +209,7 @@ when off (`createServerSideProps` already computes `features`, so it can also `n
   `/posts/create?modelId&modelVersionId` link is inside the reviewer's `UserResourceReviewComposite`
   card, not an owner control. Add "Promote this model" in the owner block, linking to
   `/posts/batch?modelId=…&modelVersionId=…`, rendered when `features.batchPostScheduling && isOwner &&
-  !deleted`.
+!deleted`.
 - **General page**: `src/pages/posts/batch.tsx`, mirroring `src/pages/posts/create.tsx`:
   `createServerSideProps` with login redirect, `postEditQuerySchema.parse(router.query)` for
   `modelId`/`modelVersionId`, the same `trpc.model.getVersions` select when only `modelId` is present,
@@ -224,14 +232,18 @@ when off (`createServerSideProps` already computes `features`, so it can also `n
 ## 8. Files to create / modify, tests, migration
 
 Create:
+
 - `packages/civitai-shared/src/post-scheduling.ts` (+ `package.json` export) — window constants,
   generators, jitter, validator, `getPostScheduleScope`, `getPostScheduleError`. `getDailyPostLimit`
   stays in the main app (`post.schema.ts`) because it reads session-user tiers.
 - `packages/civitai-shared/src/__tests__/post-scheduling.test.ts`.
-- `src/server/controllers/__tests__/post.controller.schedule-batch.test.ts` — whole-batch rejection
-  writes nothing; mid-chunk failure deletes post k and reports `created` for `<k`; tools/techniques
-  calls per post; `updatePostHandler` called with each date; moderator cap skip. Mock with
-  `importOriginal` spreads as in `post.controller.schedule.test.ts`.
+- `src/server/services/post-batch.service.ts` — `validateBatchSchedule`, `scheduleBatch`, shared
+  `loadBatchScheduleContext(user, now)`; sibling of `post-planner.service.ts`, the house style for
+  this feature (services take `{ input, ctx }` / `user`, the router calls them directly).
+- `src/server/services/__tests__/post-batch.service.test.ts` — whole-batch rejection writes nothing;
+  mid-chunk failure deletes post k and reports `created` for `<k`; tools/techniques calls per post;
+  `updatePostHandler` called with each date; moderator cap skip. Mock with `importOriginal` spreads
+  as in `post-planner.service.test.ts`.
 - `src/components/Post/Batch/BatchComposer.tsx`, `batch-composer.store.ts`, `BatchSchedulePreview.tsx`,
   plus the UX plan's `ScheduleBuilder`, `BatchReviewTable`, `BatchProgressModal`, `TitleTemplateInput`.
 - `src/components/Post/Batch/BatchComposer.browser.test.tsx` — preview dates have no :00 minute;
@@ -240,22 +252,21 @@ Create:
 - `docs/features/batch-post-scheduling.md` + index row in `docs/features/README.md`.
 
 Modify:
-- `src/server/common/constants.ts` — `POST_MAXIMUM_SCHEDULE_MONTHS = 3`, `POST_BATCH_MIN_GAP_MINUTES = 30`,
-  `POST_BATCH_MAX_POSTS`, `POST_BATCH_MAX_IMAGES`, `POST_BATCH_CHUNK_POSTS = 10` next to
-  `POST_IMAGE_LIMIT`.
+
+- `src/server/common/constants.ts` — re-exports the window constants from
+  `@civitai/shared/post-scheduling`, where `POST_BATCH_*` and `POST_MAXIMUM_SCHEDULE_MONTHS` live (PR A).
 - `src/server/schema/post.schema.ts` — `scheduleBatchSchema`, `validateBatchScheduleSchema`; export
   `getDailyPostLimit` or move the tier helpers so the util can import without pulling zod schemas.
-- `src/server/controllers/post.controller.ts` — `scheduleBatchHandler`, `validateBatchScheduleHandler`,
-  shared `loadBatchScheduleContext(userId)`.
 - `src/server/routers/post.router.ts` — `scheduleBatch: guardedProcedure.use(isFlagProtected(...))
-  .use(rateLimit({limit:30, period:CacheTTL.hour}))`, `validateBatchSchedule: protectedProcedure
-  .use(isFlagProtected(...)).query(...)`; both `.meta({ requiredScope: TokenScope.MediaWrite })`.
+.use(rateLimit({limit:30, period:CacheTTL.hour}))`, `validateBatchSchedule: protectedProcedure
+.use(isFlagProtected(...)).query(...)`; both `.meta({ requiredScope: TokenScope.MediaWrite })`.
+  One call also caps total images at `POST_BATCH_CHUNK_MAX_IMAGES` (60, R1) in `scheduleBatchSchema`.
 - `src/server/services/feature-flags.service.ts` — flag declaration.
 - `src/components/Post/EditV2/SchedulePostModal.tsx` — use `POST_MAXIMUM_SCHEDULE_MONTHS`.
 - `src/components/Model/ModelVersions/ModelVersionDetails.tsx` — owner "Promote this model" button.
 
-Lint-rules: `pnpm run test:lint-rules` (new module-scope constants; `no-io-in-transaction` — the handler
-must not open a transaction around service calls).
+Lint-rules: `pnpm run test:lint-rules` (new module-scope constants; `no-io-in-transaction` — the service
+must not open a transaction around the per-post calls).
 
 Migration: **none**.
 
