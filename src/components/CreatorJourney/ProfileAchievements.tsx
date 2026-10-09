@@ -1,5 +1,4 @@
-import type { SimpleGridProps } from '@mantine/core';
-import { Anchor, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Stack, Text, Title } from '@mantine/core';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
@@ -27,6 +26,9 @@ type Tier = ProfileAchievements['tiers'][number];
 type Achievement = ProfileAchievements['achievements'][number];
 
 export const SECRET_ACHIEVEMENT_LABEL = 'Secret achievement';
+
+/** The width of an earned-badge card on the journey page's shelf, so the profile's cards match it. */
+export const BADGE_CARD_GRID = 'grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,220px)]';
 
 const achievementName = (achievement: Achievement) => achievement.name ?? SECRET_ACHIEVEMENT_LABEL;
 
@@ -111,8 +113,31 @@ const achievementGroups = [
   { key: 'secret', title: 'Secret' },
 ];
 
-/** The Achievements tab: every earned tier and achievement, grouped by track. */
-export function ProfileAchievementsList({ data }: { data: ProfileAchievements }) {
+/**
+ * A held tier as an earned card. The threshold comes from the public ladder, not the profile payload,
+ * which carries no numbers; a tier the ladder masks shows none.
+ */
+function TierCard({ tier, threshold }: { tier: Tier; threshold?: number }) {
+  return (
+    <EarnedBadgeCard
+      badge={{ ...tier, track: 'score', threshold, description: null }}
+      accent={tierAccents[tier.key] ?? DEFAULT_ACCENT}
+    />
+  );
+}
+
+/** The Achievements tab: the highest tier, every earned tier, then each achievement by track. */
+export function ProfileAchievementsList({
+  data,
+  userId,
+}: {
+  data: ProfileAchievements;
+  userId: number;
+}) {
+  const { data: ladder } = trpc.creatorJourney.getLadder.useQuery();
+  const thresholds = new Map(ladder?.tiers.map((tier) => [tier.key, tier.threshold]));
+  const highest = data.tiers.at(-1);
+
   const known = new Set(achievementGroups.map((group) => group.key));
   const groups = [
     ...achievementGroups.map((group) => ({
@@ -124,32 +149,20 @@ export function ProfileAchievementsList({ data }: { data: ProfileAchievements })
 
   return (
     <Stack gap="xl">
-      {data.tiers.length > 0 && (
-        <Stack gap="sm">
-          <GroupTitle title="Creator Score" count={data.tiers.length} />
-          <div className="flex flex-wrap items-end gap-4">
-            {data.tiers.map((tier, index) => {
-              const highest = index === data.tiers.length - 1;
-              return (
-                <div
-                  key={tier.key}
-                  className="flex w-20 flex-col items-center gap-1.5 text-center"
-                  style={accentVar(tierAccents[tier.key] ?? DEFAULT_ACCENT)}
-                >
-                  <TierBadge
-                    name={tier.name}
-                    badgeUrl={tier.badgeUrl}
-                    state="earned"
-                    size={highest ? 72 : 56}
-                  />
-                  <Text size="sm" fw={highest ? 800 : 600}>
-                    {tier.name}
-                  </Text>
-                </div>
-              );
-            })}
+      {highest && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(220px,280px)_1fr]">
+          <div className="md:self-start">
+            <ProfileTierCard tier={highest} userId={userId} />
           </div>
-        </Stack>
+          <Stack gap="sm" className="min-w-0">
+            <GroupTitle title="Creator Score" count={data.tiers.length} />
+            <div className={BADGE_CARD_GRID}>
+              {[...data.tiers].reverse().map((tier) => (
+                <TierCard key={tier.key} tier={tier} threshold={thresholds.get(tier.key)} />
+              ))}
+            </div>
+          </Stack>
+        </div>
       )}
       {groups.map((group) => (
         <Stack key={group.key} gap="sm">
@@ -163,17 +176,17 @@ export function ProfileAchievementsList({ data }: { data: ProfileAchievements })
 
 export function AchievementGrid({
   achievements,
-  cols = { base: 2, sm: 3, md: 4 },
+  className = BADGE_CARD_GRID,
 }: {
   achievements: Achievement[];
-  cols?: SimpleGridProps['cols'];
+  className?: string;
 }) {
   return (
-    <SimpleGrid cols={cols} spacing="sm">
+    <div className={className}>
       {achievements.map((achievement) => (
         <AchievementCard key={achievement.key} achievement={achievement} />
       ))}
-    </SimpleGrid>
+    </div>
   );
 }
 

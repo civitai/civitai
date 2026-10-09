@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   } | null,
   shareable: undefined as boolean | undefined,
   shareQueries: [] as { input: unknown; enabled: boolean }[],
+  ladderTiers: [] as { key: string; threshold: number }[],
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),
@@ -30,6 +31,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         return { data: mocks.shareable };
       },
     },
+    'creatorJourney.getLadder': {
+      useQuery: () => ({ data: { unlocks: [], tiers: mocks.ladderTiers } }),
+    },
   }),
 }));
 // The site share popover needs the app's providers; what it is handed is what this file checks.
@@ -42,6 +46,8 @@ import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as Trpc from '~/utils/trpc';
 import {
   AchievementCard,
+  BADGE_CARD_GRID,
+  ProfileAchievementsList,
   ProfileTierCard,
   SECRET_ACHIEVEMENT_LABEL,
 } from '~/components/CreatorJourney/ProfileAchievements';
@@ -69,6 +75,7 @@ afterEach(() => {
   mocks.viewer = null;
   mocks.shareable = undefined;
   mocks.shareQueries = [];
+  mocks.ladderTiers = [];
 });
 
 describe('profile achievement cards', () => {
@@ -170,5 +177,65 @@ describe('profile tier card', () => {
     expect(shareLinks(card)).toEqual([]);
     expect(mocks.shareQueries.every((query) => !query.enabled)).toBe(true);
     expect(mocks.shareQueries.length).toBeGreaterThan(0);
+  });
+});
+
+describe('achievements tab', () => {
+  const tier = (key: string, name: string, achievedAt: Date | null) => ({
+    key,
+    name,
+    badgeUrl: null,
+    achievedAt,
+  });
+  const data = {
+    tiers: [
+      tier('score:spark', 'Spark', null),
+      tier('score:blaze', 'Blaze', EARNED),
+      tier('score:nova', 'Nova', null),
+    ],
+    achievements: [
+      {
+        key: 'create:models-25',
+        track: 'create',
+        name: '25 Models',
+        description: null,
+        badgeUrl: null,
+        achievedAt: EARNED,
+      },
+    ],
+  };
+  const grids = (el: HTMLElement) =>
+    [...el.querySelectorAll<HTMLElement>('div')].filter((div) => div.className === BADGE_CARD_GRID);
+  // Cards only: the hero above the grid also names the highest tier.
+  const cardOf = (el: HTMLElement, name: string) =>
+    grids(el)
+      .flatMap((grid) => [...grid.children] as HTMLElement[])
+      .find((card) => [...card.querySelectorAll('*')].some((node) => node.textContent === name));
+
+  // Ellie's review (2026-10-09): the tier list was bare badges; it reads like the journey page now.
+  it('heads the tab with the highest tier, then a card per tier with its threshold and date', () => {
+    mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
+    // Nova is masked on the public ladder, so it has no threshold to show.
+    mocks.ladderTiers = [
+      { key: 'score:spark', threshold: 100 },
+      { key: 'score:blaze', threshold: 10000 },
+    ];
+    const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+
+    expect(el.textContent).toContain('Creator Score tier');
+    expect(grids(el)[0].children).toHaveLength(3);
+    expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000');
+    expect(cardOf(el, 'Blaze')?.textContent).toContain('Earned Sep 28, 2026');
+    expect(cardOf(el, 'Spark')?.textContent).toContain('100');
+    // A backfilled tier has no observed date: plain "Earned", like the journey page.
+    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned$/);
+    expect(cardOf(el, 'Nova')?.textContent).not.toMatch(/\d/);
+  });
+
+  it('lays every card out at the journey shelf width, wrapping', () => {
+    mocks.viewer = null;
+    const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(grids(el)).toHaveLength(2);
+    expect(BADGE_CARD_GRID).toContain('sm:grid-cols-[repeat(auto-fill,220px)]');
   });
 });
