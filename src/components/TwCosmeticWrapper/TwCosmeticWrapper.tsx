@@ -2,6 +2,10 @@ import React, { useRef } from 'react';
 import clsx from 'clsx';
 import styles from './CosmeticWrapper.module.scss';
 import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
+import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { getEventDecorationClearLeft } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type Cosmetic = {
   url?: string;
@@ -22,16 +26,25 @@ export function TwCosmeticWrapper({
   children,
   className,
   cosmetic,
+  eventDecoration,
   style,
   ...props
 }: Omit<React.HTMLProps<HTMLDivElement>, 'children'> & {
   cosmetic?: Cosmetic;
+  /** Worn beside the frame. Drawn outside the card, which would crop it. */
+  eventDecoration?: EventDecorationData | null;
   children: React.ReactElement;
 }) {
   const styleRef = useRef<Record<string, unknown> | undefined>();
-  if (!cosmetic || !Object.keys(cosmetic).length) return children;
+  // A reader that predates event decorations can still hand one over as the frame.
+  if (isEventDecorationData(cosmetic)) {
+    eventDecoration ??= cosmetic;
+    cosmetic = undefined;
+  }
+  const hasFrame = !!cosmetic && !!Object.keys(cosmetic).length;
+  if (!hasFrame && !eventDecoration) return children;
 
-  const { cssFrame, texture, border, borderWidth, glow, type } = cosmetic;
+  const { cssFrame, texture, border, borderWidth, glow } = cosmetic ?? {};
 
   if (true) {
     styleRef.current = {};
@@ -47,9 +60,18 @@ export function TwCosmeticWrapper({
 
   return (
     <div
-      style={{ ...styleRef.current, ...style }}
+      style={{
+        ...styleRef.current,
+        ...(eventDecoration && {
+          '--event-decoration-clear-left': `${getEventDecorationClearLeft(eventDecoration)}px`,
+        }),
+        ...style,
+      }}
+      data-event-decoration={eventDecoration?.type}
       className={clsx(
-        styles.wrapper,
+        // Without a frame the wrapper only positions the decoration: the frame layout's
+        // `flex: 1` on the card would override the card's own height and collapse it.
+        hasFrame ? styles.wrapper : styles.decorationOnly,
         {
           [styles.border]: border,
           [styles.cssFrame]: cssFrame,
@@ -60,8 +82,9 @@ export function TwCosmeticWrapper({
       )}
       {...props}
     >
-      <CosmeticLights cosmetic={cosmetic as any} />
+      {hasFrame && <CosmeticLights cosmetic={cosmetic as any} />}
       {children}
+      {eventDecoration && <EventDecorationOverlay decoration={eventDecoration} />}
     </div>
   );
 }

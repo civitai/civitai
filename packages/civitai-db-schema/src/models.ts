@@ -553,6 +553,7 @@ export interface User {
   reports?: Report[];
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
+  feedbackOwnerStatus?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1452,6 +1453,28 @@ export interface ResourceInsight {
   stale: boolean;
 }
 
+export interface ResourceIntentCoocSnapshot {
+  id: string;
+  kind: string;
+  status: string;
+  contentHash: string | null;
+  specHash: string;
+  trainStart: Date;
+  trainEnd: Date;
+  seed: number;
+  pinnedUntil: Date | null;
+  builtAt: Date;
+  trainCreatedAtMin: Date | null;
+  trainCreatedAtMax: Date | null;
+  idsTried: number | null;
+  trainRows: number | null;
+  vocab: number | null;
+  models: number | null;
+  keptPairs: number | null;
+  payload: Buffer | null;
+  trainImageIds: Buffer | null;
+}
+
 export interface Post {
   id: number;
   nsfw: boolean;
@@ -1961,6 +1984,16 @@ export interface Feedback {
   handledAt: Date | null;
   bugId: number | null;
   bug?: Bug | null;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  appBlockVersion: string | null;
+  appBlockSha: string | null;
+  ownerStatus: string | null;
+  ownerStatusAt: Date | null;
+  ownerStatusById: number | null;
+  ownerStatusBy?: User | null;
+  ownerFlaggedAt: Date | null;
+  hiddenFromOwnerAt: Date | null;
 }
 
 export interface ApiKey {
@@ -2200,6 +2233,7 @@ export interface AppListing {
   ownershipTransfers?: AppOwnershipTransfer[];
   subListings?: AppSubListing[];
   subListingParent?: AppSubListingParent | null;
+  feedback?: Feedback[];
 }
 
 export interface AppListingScreenshot {

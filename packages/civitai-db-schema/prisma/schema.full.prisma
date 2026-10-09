@@ -471,6 +471,7 @@ model User {
   reports              Report[]
   feedback             Feedback[]
   feedbackHandled      Feedback[]                 @relation("FeedbackHandledBy")
+  feedbackOwnerStatus  Feedback[]                 @relation("FeedbackOwnerStatusBy")
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -1820,6 +1821,37 @@ model ResourceInsight {
   @@index([stale])
 }
 
+// One build of the resource-intent co-occurrence index (token -> model). Inserted when a build
+// starts ('building'), then set 'ready', 'failed' or 'duplicate' once; a DB trigger refuses any
+// change to a row that is no longer 'building' and sets `builtAt` itself. `contentHash` =
+// sha256(kind, NUL, payload) is the snapshot's identity (unique among ready rows) and is verified
+// on load. Pin rules are a DB CHECK. Written only through raw SQL in
+// src/server/services/resource-intent-cooc/store.ts. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentCoocSnapshot {
+  id                String    @id @default(uuid())
+  kind              String
+  status            String    @default("building")
+  contentHash       String?
+  specHash          String
+  trainStart        DateTime
+  trainEnd          DateTime
+  seed              Int
+  pinnedUntil       DateTime?
+  builtAt           DateTime  @default(now())
+  trainCreatedAtMin DateTime?
+  trainCreatedAtMax DateTime?
+  idsTried          Int?
+  trainRows         Int?
+  vocab             Int?
+  models            Int?
+  keptPairs         Int?
+  payload           Bytes?
+  trainImageIds     Bytes?
+
+  @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
+}
+
 enum ReviewReactions {
   Like
   Dislike
@@ -2569,9 +2601,37 @@ model Feedback {
   bugId       Int?
   bug         Bug?      @relation(fields: [bugId], references: [id], onDelete: SetNull)
 
+  /// The `app-block` area only: the `Feedback_app_columns_check` CHECK requires this and the seven app
+  /// columns below (appBlockVersion, appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById,
+  /// ownerFlaggedAt, hiddenFromOwnerAt) to be NULL unless `area` is 'app-block'; it requires nothing of
+  /// an app-block row. Always the PARENT listing, never a shadow revision. SetNull, not Cascade:
+  /// deleting a listing must not destroy the report for moderators.
+  appListingId        String?
+  appListing          AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
+  /// The block version live when the feedback was sent, stamped server-side. NULL for off-site apps.
+  appBlockVersion     String?
+  appBlockSha         String?
+
+  /// Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
+  /// columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise
+  /// one of FEEDBACK_OWNER_STATUSES (CHECK `Feedback_ownerStatus_check`).
+  ownerStatus         String?
+  ownerStatusAt       DateTime?
+  ownerStatusById     Int?
+  ownerStatusBy       User?       @relation("FeedbackOwnerStatusBy", fields: [ownerStatusById], references: [id], onDelete: SetNull)
+  /// The owner flagged this report as abusive, for moderators.
+  ownerFlaggedAt      DateTime?
+  /// A moderator hid this report from the developer. Which moderator is recorded by the
+  /// append-only ModActivity row written on each hide/unhide, not by a column here.
+  hiddenFromOwnerAt   DateTime?
+
   @@index([area, status, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
+  // The owner inbox. The migration creates this as a PARTIAL index
+  // (WHERE "appListingId" IS NOT NULL), which Prisma cannot express, so it stays a
+  // plain @@index here; the SQL in 20261011120000_feedback_app_listing is authoritative.
+  @@index([appListingId, createdAt(sort: Desc)], map: "Feedback_appListingId_createdAt_idx")
 }
 
 enum ApiKeyType {
@@ -3185,6 +3245,8 @@ model AppListing {
   ownershipTransfers AppOwnershipTransfer[]
   subListings        AppSubListing[]      @relation("AppSubListings")
   subListingParent   AppSubListingParent? @relation("AppSubListingParentSwitch")
+  // Private per-app feedback (`Feedback.area = 'app-block'`). Owner + moderators only.
+  feedback           Feedback[]
 
   // Marketplace read-path indexes (future P2 read path).
   @@index([status, kind], map: "app_listings_status_kind_idx")

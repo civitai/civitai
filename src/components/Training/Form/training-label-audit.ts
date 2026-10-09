@@ -33,7 +33,7 @@ export function auditTrainingLabels({
   let soft = false;
 
   const record = ({ blockedFor, triggers }: AuditedString) => {
-    // `isSoftBlock` is false for an empty trigger set, so the over-length refusal lands hard.
+    // `isSoftBlock` is false for an empty trigger set and for the hard `over_length` trigger.
     if (isSoftBlock(triggers)) soft = true;
     else hard = true;
     for (const word of blockedFor) {

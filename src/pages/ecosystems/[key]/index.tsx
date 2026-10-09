@@ -25,6 +25,8 @@ import {
 } from '~/shared/constants/ecosystem-seo.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import styles from './EcosystemPage.module.scss';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -373,6 +375,9 @@ export default function EcosystemPage({
               {data.featuredExamples.map((ex) => (
                 <div key={ex.imageId} className={styles.galleryCard}>
                   <div className={styles.galleryImage}>
+                    <ImpressionSentinel
+                      impressions={[{ entityType: 'Image', entityId: ex.imageId }]}
+                    />
                     <EdgeMedia
                       src={ex.url}
                       type={ex.type}
@@ -639,8 +644,10 @@ function ResourceCard({
   /** False for a checkpoint that isn't always hosted — the card links out instead of generating. */
   generatable?: boolean;
 }) {
+  // The cover is a URL without an image id here, so only the model is recorded.
+  const impressionRef = useTrackImpression([{ entityType: 'Model', entityId: modelId }]);
   return (
-    <Card withBorder padding="sm" radius="md" className="flex h-full flex-col">
+    <Card ref={impressionRef} withBorder padding="sm" radius="md" className="flex h-full flex-col">
       {imageUrl && (
         <Card.Section component={NextLink} href={modelUrl(modelId, versionId)}>
           <EdgeMedia

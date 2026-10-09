@@ -47,7 +47,7 @@ beforeAll(async () => {
   const db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY);
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text);
   `);
   for (const file of migrations) await db.exec(readFileSync(file, 'utf8'));
   seeded = (

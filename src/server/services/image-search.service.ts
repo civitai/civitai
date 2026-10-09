@@ -283,11 +283,15 @@ export async function runImageSearch(
     actor,
   } as unknown as Parameters<typeof getImagesFromFeedSearch>[0];
 
+  // A `feed:` cursor is a later page of a feed-served scroll. Clients walking whole
+  // back-catalogues spend nearly all their requests there, on images rarely read again, so those
+  // pages don't write the per-image caches; first pages, which pollers repeat, still do.
+  const cacheWriteBack = parseFeedCursor(cursor) === undefined;
   const fromFeedService =
     feedService && !useLegacyMethod
       ? await getImagesFromFeedServiceForRest(
           { ...searchQuery, headers: { src: '/api/v1/images' } },
-          dbQuery
+          { ...dbQuery, cacheWriteBack }
         )
       : undefined;
   const { items, nextCursor } = useLegacyMethod
@@ -296,7 +300,10 @@ export async function runImageSearch(
 
   let imageMetas: Record<number, { id: number; meta?: any }> = {};
   if (withMeta && items.length > 0) {
-    imageMetas = await imageMetaCache.fetch(items.map((img) => img.id));
+    imageMetas = await imageMetaCache.fetch(
+      items.map((img) => img.id),
+      { writeBack: !fromFeedService || cacheWriteBack }
+    );
   }
 
   const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);

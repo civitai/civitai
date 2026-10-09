@@ -82,7 +82,6 @@ import {
 } from '~/shared/constants/generation.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
 import { isDefined } from '~/utils/type-guards';
@@ -94,6 +93,7 @@ import { showWarningNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 import { hasTipEligibleSelection } from './creator-tip';
+import { FOOTER_RESET } from './footer-reset';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
 import { useSelectedResourceIds, type GenerationStore } from './store';
 
@@ -1004,17 +1004,7 @@ export function FormFooter({
   };
 
   const handleReset = () => {
-    const snap = store.getSnapshot().state as { output?: string };
-    const outputType = (snap.output ?? 'image') as 'image' | 'video' | 'audio' | 'model3d';
-
-    // clear only THIS output's buckets while preserving output preferences;
-    // other outputs' settings survive
-    store.prune(outputResetPredicate(outputType, { exclude: ['outputFormat', 'priority'] }));
-
-    if (outputType === 'video') store.set({ workflow: 'txt2vid' });
-    if (outputType === 'audio') store.set({ workflow: 'txt2music' });
-    if (outputType === 'model3d') store.set({ workflow: 'txt2model3d' });
-
+    store.reset(FOOTER_RESET);
     remixStore.clearRemix();
     clearWarning();
     setSubmitError(undefined);

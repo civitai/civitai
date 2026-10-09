@@ -21,6 +21,8 @@ import {
   type BlockTrainingActor,
 } from '../block-training-dataset.service';
 import { BLOCK_TRAINING_DATASET_MAX_ITEMS } from '~/server/schema/blocks/workflow.schema';
+import { BLOCK_TRAINING_CAPTION_MAX_CHARS } from '~/server/schema/blocks/training-dataset.schema';
+import { MAX_AUDIT_PROMPT_LENGTH, auditPromptEnriched } from '~/utils/metadata/audit';
 
 /**
  * The `kind:'training'` DATASET primitive: admission per image, server-derived
@@ -256,6 +258,89 @@ describe('prepareBlockTrainingDataset', () => {
       prepareBlockTrainingDataset({ actor: ACTOR, items, token: 'tok', auditCaptions: audit })
     ).rejects.toThrow(`at most ${BLOCK_TRAINING_DATASET_MAX_ITEMS}`);
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('prepareBlockTrainingDataset — caption audit stays under the audit length cap', () => {
+  // The REAL regex audit, not a mock: it hard-refuses any input over
+  // MAX_AUDIT_PROMPT_LENGTH, so a single join of a schema-valid caption set was refused
+  // for its size alone.
+  const calls: string[] = [];
+  const realAudit = vi.fn(async (text: string) => {
+    calls.push(text);
+    const { success, blockedFor } = auditPromptEnriched(text, undefined, false);
+    if (!success) throw new Error(`refused: ${blockedFor.join(', ')}`);
+  });
+  beforeEach(() => {
+    calls.length = 0;
+    realAudit.mockClear();
+  });
+
+  const FILLER = 'landscape photo of a mountain lake at sunrise, pine trees, mist, ';
+  // Ends in '.', never whitespace: the service trims captions, so a trailing space would
+  // silently shorten the fixture.
+  const caption = (len: number) =>
+    FILLER.repeat(Math.ceil(len / FILLER.length)).slice(0, len - 1) + '.';
+
+  async function prepare(captions: string[]) {
+    const rows = captions.map((_, i) => row({ id: i + 1, url: `k${i + 1}` }));
+    dbMock.dbRead.$queryRaw.mockResolvedValue(rows);
+    return prepareBlockTrainingDataset({
+      actor: ACTOR,
+      items: captions.map((c, i) => ({ imageId: i + 1, caption: c })),
+      token: 'tok',
+      auditCaptions: realAudit,
+    });
+  }
+
+  it.each([
+    [
+      '50 × 1000 (schema maximum)',
+      BLOCK_TRAINING_DATASET_MAX_ITEMS,
+      BLOCK_TRAINING_CAPTION_MAX_CHARS,
+    ],
+    ['50 × 400', BLOCK_TRAINING_DATASET_MAX_ITEMS, 400],
+  ])('a schema-valid %s caption set is not refused for its size', async (_l, n, len) => {
+    // The fixture really is over the cap when joined, or this test proves nothing.
+    expect(n * len + (n - 1)).toBeGreaterThan(MAX_AUDIT_PROMPT_LENGTH);
+    const out = await prepare(Array.from({ length: n }, () => caption(len)));
+    expect(out.count).toBe(n);
+    expect(calls.length).toBeGreaterThan(1);
+    for (const c of calls) expect(c.length).toBeLessThanOrEqual(MAX_AUDIT_PROMPT_LENGTH);
+    // Every caption is audited exactly once, whole and in order.
+    expect(calls.join('\n')).toBe(Array.from({ length: n }, () => caption(len)).join('\n'));
+  });
+
+  it('a banned caption late in a full set is still caught, before any import (positive control)', async () => {
+    const captions = Array.from({ length: BLOCK_TRAINING_DATASET_MAX_ITEMS }, () =>
+      caption(BLOCK_TRAINING_CAPTION_MAX_CHARS)
+    );
+    captions[48] = '13 year old, revealing outfit';
+    await expect(prepare(captions)).rejects.toThrow(/^refused: (?!Prompt exceeds)/);
+    expect(mockImageUpload).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+  });
+
+  it('packs a batch to EXACTLY the cap, and splits one character past it', async () => {
+    // 19 × 1000 + 18 separators = 19018; a 981-char 20th caption (+1 separator) lands
+    // the batch on exactly MAX_AUDIT_PROMPT_LENGTH.
+    const exact = MAX_AUDIT_PROMPT_LENGTH - 19 * 1000 - 19;
+    expect(exact).toBe(981);
+    const head = Array.from({ length: 19 }, () => caption(1000));
+    await prepare([...head, caption(exact), caption(10)]);
+    expect(calls.map((c) => c.length)).toEqual([MAX_AUDIT_PROMPT_LENGTH, 10]);
+
+    calls.length = 0;
+    await prepare([...head, caption(exact + 1), caption(10)]);
+    expect(calls.map((c) => c.length)).toEqual([19 * 1000 + 18, exact + 1 + 1 + 10]);
+  });
+
+  it('never splits a caption: one over the cap is audited alone and refused', async () => {
+    await expect(prepare(['a cat', caption(MAX_AUDIT_PROMPT_LENGTH + 5)])).rejects.toThrow(
+      'Prompt exceeds the maximum allowed length'
+    );
+    expect(calls.map((c) => c.length)).toEqual([5, MAX_AUDIT_PROMPT_LENGTH + 5]);
+    expect(mockImageUpload).not.toHaveBeenCalled();
   });
 });
 

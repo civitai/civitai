@@ -84,6 +84,8 @@ export type CrucibleEntryGridProps = {
   status: CrucibleStatus;
   /** Moderators only, while the crucible runs. */
   onRemoveEntry?: (entry: CrucibleEntryData) => void;
+  /** The viewer taking back one of their own entries, while the crucible runs. */
+  onWithdrawEntry?: (entry: CrucibleEntryData) => void;
 };
 
 /**
@@ -113,6 +115,7 @@ export function CrucibleEntryGrid({
   emptyMessage = 'No entries yet',
   onEntryClick,
   onRemoveEntry,
+  onWithdrawEntry,
   status,
 }: CrucibleEntryGridProps) {
   const currentUser = useCurrentUser();
@@ -183,7 +186,7 @@ export function CrucibleEntryGrid({
                 isUserEntry
                 showDetails={canSeeDetails(entry)}
                 onClick={() => openEntry(entry)}
-                onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
+                onRemove={onWithdrawEntry && (() => onWithdrawEntry(entry))}
               />
             ))}
           </SimpleGrid>

@@ -9,6 +9,11 @@ import {
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  assertEventShopItemPurchasable,
+  createEventShopItemVisibility,
+  isEventShopItemData,
+} from '~/server/events/event-shop-item';
 import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -800,10 +805,25 @@ export const getShopSectionsWithItems = async ({
       placement: 'asc',
     },
   });
-  const sold = await getSoldCounts(sections.flatMap((s) => s.items.map((i) => i.shopItem.id)));
+  // Event items (team hats) are filtered here rather than in the query: the
+  // viewer's team comes from the event, not the database.
+  const eventItemVisible = createEventShopItemVisibility({ userId });
+  const visibleSections = isModerator
+    ? sections
+    : await Promise.all(
+        sections.map(async (section) => {
+          const visible = await Promise.all(
+            section.items.map((item) => eventItemVisible(item.shopItem.cosmetic?.data))
+          );
+          return { ...section, items: section.items.filter((_, i) => visible[i]) };
+        })
+      );
+  const sold = await getSoldCounts(
+    visibleSections.flatMap((s) => s.items.map((i) => i.shopItem.id))
+  );
 
   return (
-    sections
+    visibleSections
       // Ensures we don't return empty sections (except the community hub)
       .filter((s) => s.items.length > 0 || (s.meta as CosmeticShopSectionMeta | null)?.communityHub)
       .map((section) => ({
@@ -969,6 +989,9 @@ export const purchaseCosmeticShopItem = async ({
         throw throwBadRequestError(`This ${noun} is not available`);
       }
     }
+
+    if (isEventShopItemData(shopItem.cosmetic.data))
+      await assertEventShopItemPurchasable({ userId, data: shopItem.cosmetic.data, payWith });
   }
 
   if (

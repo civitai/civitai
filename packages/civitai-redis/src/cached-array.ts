@@ -70,6 +70,23 @@ export type CachedLookupOptions<T extends object> = {
   compress?: boolean;
 };
 
+/** Per-call options for `fetch`. */
+export type CachedFetchOptions = {
+  /**
+   * `false` makes this call read-only against Redis: hits (Redis or L1) are served as usual,
+   * misses go to `lookupFn` and are returned without being cached, and stale entries are served
+   * as-is instead of being revalidated. It writes no L1 either, except on the degraded path (see
+   * backfillLocal).
+   *
+   * Misses still count in the miss metric, so a cache read this way can show a higher miss ratio
+   * while writing less; judge the effect by write volume, not miss ratio.
+   *
+   * For callers whose ids are unlikely to be read again soon (e.g. a cold back-catalogue walk),
+   * where the write only costs memory.
+   */
+  writeBack?: boolean;
+};
+
 /** The slice of the redis client this module needs. */
 type PackedClient = {
   packed: {
@@ -225,8 +242,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // returned object cannot corrupt the shared L1 instance.
     // 🔴 INVARIANT: shallow only protects TOP-LEVEL fields — nested refs are shared with the L1 copy,
     // so consumers MUST treat returned values as read-only for nested fields. `skip` lets a caller
-    // withhold ids the Redis layer itself deliberately did NOT cache (debounce window / dontCacheFn),
-    // so L1 never pins a value Redis chose not to persist.
+    // withhold ids the Redis layer itself deliberately did NOT cache (debounce window / dontCacheFn).
+    // While Redis is healthy L1 never pins a value Redis chose not to persist, and a writeBack:false
+    // fetch writes no L1 at all. The degraded path (Redis read failed) is the exception: it
+    // backfills even for writeBack:false, because the L1 is what bounds the DB herd then.
     function backfillLocal(items: T[], skip?: (x: T) => boolean) {
       if (!localCache) return;
       for (const x of items) {
@@ -344,7 +363,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       });
     }
 
-    async function fetch(ids: number[]) {
+    async function fetch(ids: number[], { writeBack = true }: CachedFetchOptions = {}) {
       if (!ids.length) return [] as T[];
       let distinctIds = [...new Set(ids)];
 
@@ -411,7 +430,9 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             cacheMisses.add(id);
             continue;
           }
-          if (staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
+          // A read-only fetch could not write a revalidated value back, so a stale entry is
+          // served as a hit.
+          if (writeBack && staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
             toRevalidate[id] = cached;
             continue;
           }
@@ -467,7 +488,12 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
 
         // finally: a throwing lookupFn must not leave its ids registered as in flight.
-        const releaseMissFill = trackMissFill(cacheMisses, debounced, dontCache);
+        // A read-only lookup is never cached, so like a debounce-window lookup it registers nothing.
+        const releaseMissFill = trackMissFill(
+          cacheMisses,
+          debounced,
+          writeBack ? dontCache : cacheMisses
+        );
         try {
           const dbResults: Record<string, T> = {};
           const lookupBatches = chunk([...cacheMisses], 10000);
@@ -484,7 +510,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             const result = dbResults[id];
             if (!result) {
               if (cacheNotFound) {
-                toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+                if (writeBack) toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
                 actualMisses++;
               }
               // When cacheNotFound=false, don't count as a miss since we don't cache it.
@@ -492,7 +518,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             }
             results.add(result as T);
             actualMisses++;
-            if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
+            if (writeBack && !dontCache.has(id) && !dontCacheFn?.(result))
+              toCache[id] = { ...result, cachedAt };
           }
 
           if (actualMisses > 0) metrics.miss(key, 'cachedArray', actualMisses);
@@ -562,10 +589,11 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
 
       // Backfill L1 with the FINAL shape (post-appendFn, cachedAt stripped) so a later L1 hit is
       // byte-identical to this return. Skip exactly what the Redis write skipped.
-      backfillLocal(
-        final,
-        (x) => dontCache.has(x[idKey] as unknown as number) || !!dontCacheFn?.(x)
-      );
+      if (writeBack)
+        backfillLocal(
+          final,
+          (x) => dontCache.has(x[idKey] as unknown as number) || !!dontCacheFn?.(x)
+        );
       return localCache ? [...l1Hits, ...final] : final;
     }
 
@@ -769,9 +797,9 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
   function createCachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
     const cachedArray = createCachedArray<T>(lookupOptions);
 
-    async function fetch(ids: number | number[]) {
+    async function fetch(ids: number | number[], options?: CachedFetchOptions) {
       if (!Array.isArray(ids)) ids = [ids];
-      const results = await cachedArray.fetch(ids);
+      const results = await cachedArray.fetch(ids, options);
       return Object.fromEntries(
         results.map((x) => [(x[lookupOptions.idKey] as number | string).toString(), x])
       ) as Record<string, T>;
@@ -788,12 +816,12 @@ export type CacheBuilders = ReturnType<typeof createCacheBuilders>;
 // Declared structurally rather than as ReturnType<…createCachedArray> — that instantiates the generic
 // at its `object` constraint, so every consumer's element type collapses to `object`.
 export type CachedArray<T extends object> = {
-  fetch(ids: number[]): Promise<T[]>;
+  fetch(ids: number[], options?: CachedFetchOptions): Promise<T[]>;
   bust(id: number | number[], options?: { debounceTime?: number }): Promise<void>;
   refresh(id: number | number[]): Promise<void>;
   update(id: number, updater: (current: T) => T): Promise<boolean>;
   flush(): Promise<void>;
 };
 export type CachedObject<T extends object> = Omit<CachedArray<T>, 'fetch'> & {
-  fetch(ids: number | number[]): Promise<Record<string, T>>;
+  fetch(ids: number | number[], options?: CachedFetchOptions): Promise<Record<string, T>>;
 };
