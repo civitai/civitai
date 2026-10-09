@@ -38,6 +38,8 @@ import {
 } from '~/server/services/buzz.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import { refreshEventDecorations } from '~/server/events/event-decoration-cache';
+import { cosmeticCache } from '~/server/redis/caches';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 
 export const events = [holiday2024, birthday2026];
 
@@ -79,6 +81,16 @@ function scoredEventFor(eventDef: EventDef, access: EventAccess) {
   const scoreFrom =
     access === 'preview' && eventDef.previewFrom ? eventDef.previewFrom : eventDef.startDate;
   return { ...scored, scoreFrom };
+}
+// The art of each team's join cosmetic. A team whose cosmetic is not found gets no url.
+async function getJoinHats(eventDef: EventDef) {
+  const ids = await Promise.all(eventDef.teams.map((team) => eventDef.getTeamCosmetic(team)));
+  const cosmetics = await cosmeticCache.fetch(ids.filter((id): id is number => !!id));
+  return eventDef.teams.map((team, i) => {
+    const id = ids[i];
+    const data = id ? (cosmetics[id]?.data as { url?: unknown } | undefined) : undefined;
+    return { team, url: typeof data?.url === 'string' ? data.url : null };
+  });
 }
 function findEventDef(event: string) {
   return events.find((x) => x.name === event);
@@ -335,6 +347,8 @@ export const eventEngine = {
       coverImage = banner?.url;
       coverImageUser = banner?.username;
     }
+    const decoration = getEventDecorationDefinition(event);
+    const teamHats = eventDef.join ? await getJoinHats(eventDef) : undefined;
 
     return {
       title: eventDef.title,
@@ -348,6 +362,21 @@ export const eventEngine = {
       reactionWeight: eventDef.scoring?.reactionWeight,
       joinable: !!eventDef.join,
       preview: access === 'preview',
+      previewFrom: eventDef.previewFrom,
+      page: eventDef.page,
+      // The fair-play rules the page explains, read from what the scoring job applies.
+      rules: eventDef.scoring && {
+        reactionWeight: eventDef.scoring.reactionWeight,
+        viewerOwnerDailyCap: eventDef.scoring.viewerOwnerDailyCap,
+        newAccountDays: eventDef.scoring.newAccountDays,
+      },
+      // Each team's join hat, for the page to show what joining gets you.
+      teamHats,
+      decoration: decoration && {
+        label: decoration.label,
+        entityTypes: decoration.entityTypes,
+        moveCooldownMs: decoration.moveCooldownMs,
+      },
     };
   },
   getTeamAccounts(event: string) {

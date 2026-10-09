@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
@@ -29,7 +30,11 @@ const { engine, scoring } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/events', () => ({ eventEngine: engine }));
-vi.mock('~/server/events/scoring/cosmetic-placement.service', () => scoring);
+// The real cosmeticScoreKey: the service joins scores to hats with it.
+vi.mock('~/server/events/scoring/cosmetic-placement.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...scoring,
+}));
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { fetch: vi.fn(async () => ({ 21: { name: 'Party Cap - Yellow' } })) },
   profilePictureCache: { fetch: vi.fn() },
@@ -39,6 +44,8 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({
   getCosmeticDetail: vi.fn(async ({ id }: { id: number }) => ({ id })),
 }));
+const { covers } = vi.hoisted(() => ({ covers: vi.fn() }));
+vi.mock('~/server/services/image.service', () => ({ getEntityCoverImage: covers }));
 vi.mock('~/server/services/user.service', () => ({
   cosmeticStatus: vi.fn(),
   getCosmeticsForUsers: vi.fn(),
@@ -57,6 +64,7 @@ beforeEach(() => {
   scoring.getEventStandings.mockResolvedValue({ teams: [], topCosmetics: [], topUsers: {} });
   scoring.getUserCosmeticScores.mockResolvedValue([]);
   scoring.getCosmeticScores.mockResolvedValue({});
+  covers.mockResolvedValue([]);
 });
 
 describe('scored reads are gated on what the viewer may read', () => {
@@ -189,5 +197,110 @@ describe('the other event reads are gated on the viewer too', () => {
     await service.getTeamScoreHistory({ event: 'birthday2026', viewer });
     expect(engine.getTeamScores).toHaveBeenCalledWith('birthday2026', 'preview');
     expect(engine.getTeamScoreHistory).toHaveBeenCalledWith({ event: 'birthday2026' }, 'preview');
+  });
+});
+
+describe('getMyEventHats', () => {
+  const user = { id: 9 };
+  const placedAt = '2026-11-12T10:00:00.000Z';
+  const hatData = { type: 'hat', event: 'birthday2026', team: 'Pink', url: 'u' };
+
+  beforeEach(() => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      {
+        cosmeticId: 31,
+        claimKey: 'claimed',
+        name: 'Party Cap',
+        data: hatData,
+        equippedToType: 'Image',
+        equippedToId: 500,
+        placedAt,
+      },
+      {
+        cosmeticId: 32,
+        claimKey: 'txn-9',
+        name: 'Crown',
+        data: hatData,
+        equippedToType: null,
+        equippedToId: null,
+        placedAt: null,
+      },
+    ]);
+    scoring.getCosmeticScores.mockResolvedValue({
+      '9:31:claimed': { points: 140, impressions: 90, anonImpressions: 10, reactions: 4 },
+    });
+    covers.mockResolvedValue([{ entityType: 'Image', entityId: 500, id: 77, url: 'img' }]);
+  });
+
+  it('refuses an event the caller may not read, and reads nothing', async () => {
+    engine.getReadableScoredEvent.mockImplementation(notStarted);
+    await expect(service.getMyEventHats({ event: 'birthday2026', user })).rejects.toThrow(
+      "That event doesn't exist"
+    );
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  // An unplaced hat has no score row; reading hats from the scores would drop it, and a hat you
+  // just bought would not appear until it had earned something.
+  it('lists every owned hat, placed or not, with its score and where it is', async () => {
+    const hats = await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(hats.map((h) => [h.cosmeticId, h.claimKey])).toEqual([
+      [31, 'claimed'],
+      [32, 'txn-9'],
+    ]);
+    expect(hats[0]).toMatchObject({
+      points: 140,
+      impressions: 100,
+      reactions: 4,
+      placedOn: { entityType: 'Image', entityId: 500, image: { id: 77 } },
+    });
+    expect(hats[1]).toMatchObject({ points: 0, placedOn: null, movableAt: null });
+  });
+
+  it('says when a placed hat may move again, from the event decoration cooldown', async () => {
+    const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(placed.movableAt).toEqual(new Date(Date.parse(placedAt) + 10 * 60 * 1000));
+  });
+
+  it("asks for the scores of exactly the caller's hats", async () => {
+    await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
+      { userId: 9, cosmeticId: 31, claimKey: 'claimed' },
+      { userId: 9, cosmeticId: 32, claimKey: 'txn-9' },
+    ]);
+  });
+});
+
+describe('getPlaceableEventContent', () => {
+  const user = { id: 9 };
+
+  it('refuses an event the caller may not read, and reads nothing', async () => {
+    engine.assertReadable.mockImplementation(notStarted);
+    await expect(service.getPlaceableEventContent({ event: 'birthday2026', user })).rejects.toThrow(
+      "That event doesn't exist"
+    );
+    expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it("reads only the caller's own content, of the types the event allows", async () => {
+    engine.assertReadable.mockReset().mockResolvedValue('open');
+    dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 1 }]);
+    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 2 }]);
+    dbMock.dbRead.article.findMany.mockResolvedValue([{ id: 3 }]);
+    const content = await service.getPlaceableEventContent({ event: 'birthday2026', user });
+
+    for (const read of [
+      dbMock.dbRead.image.findMany,
+      dbMock.dbRead.model.findMany,
+      dbMock.dbRead.article.findMany,
+    ])
+      expect(read).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ userId: 9 }) })
+      );
+    expect(content.map((c) => [c.entityType, c.entityId])).toEqual([
+      ['Image', 1],
+      ['Model', 2],
+      ['Article', 3],
+    ]);
   });
 });

@@ -1,7 +1,16 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { pack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { getEntityCoverImage } from '~/server/services/image.service';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
+import {
+  ArticleStatus,
+  CosmeticEntity,
+  ImageIngestionStatus,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { eventEngine } from '~/server/events';
 import type { EventViewer } from '~/server/events/event-access';
 import {
@@ -15,6 +24,7 @@ import { hSetWithTTL } from '~/server/redis/atomic';
 import type { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import type { CosmeticScoreKey } from '~/server/events/scoring/cosmetic-placement.service';
 import {
+  cosmeticScoreKey,
   getCosmeticScores,
   getEventStandings as getScoredEventStandings,
   getUserCosmeticScores,
@@ -267,8 +277,18 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
         ...Object.values(standings.topUsers).flatMap((x) => x.map((u) => u.userId)),
       ]),
     ];
-    const users = await userBasicCache.fetch(userIds);
-    return { ...standings, users };
+    const [users, cosmeticDetails] = await Promise.all([
+      userBasicCache.fetch(userIds),
+      cosmeticCache.fetch([...new Set(standings.topCosmetics.map((x) => x.cosmeticId))]),
+    ]);
+    // Name and art of each top cosmetic, so the page can show which hat earned it.
+    const cosmetics = Object.fromEntries(
+      Object.entries(cosmeticDetails).map(([id, c]) => {
+        const url = (c.data as { url?: unknown } | null)?.url;
+        return [id, { name: c.name, url: typeof url === 'string' ? url : null }];
+      })
+    );
+    return { ...standings, users, cosmetics };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -288,6 +308,157 @@ export async function getMyEventCosmeticScores({
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
+}
+
+type MyHatRow = {
+  cosmeticId: number;
+  claimKey: string;
+  name: string;
+  data: EventDecorationData;
+  equippedToType: CosmeticEntity | null;
+  equippedToId: number | null;
+  placedAt: string | null;
+};
+
+// Every decoration of this event the caller owns, where it is worn, when it may move again, and what
+// it has earned. Read from the primary: it is the caller's own state, read right after they buy or
+// move a hat, and a lagging replica would show the hat where it was.
+export async function getMyEventHats({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    const scored = await eventEngine.getReadableScoredEvent(event, user);
+    const definition = getEventDecorationDefinition(event);
+    const rows = await dbWrite.$queryRaw<MyHatRow[]>`
+      SELECT uc."cosmeticId", uc."claimKey", c.name, c.data,
+        uc."equippedToType", uc."equippedToId", uc.data->>'placedAt' AS "placedAt"
+      FROM "UserCosmetic" uc
+      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+      WHERE uc."userId" = ${user.id}
+        AND c.type = 'ContentDecoration'
+        AND c.data->>'event' = ${event}
+      ORDER BY uc."obtainedAt", uc."cosmeticId", uc."claimKey"
+    `;
+    const keys = rows.map((r) => ({
+      userId: user.id,
+      cosmeticId: r.cosmeticId,
+      claimKey: r.claimKey,
+    }));
+    const placed = rows
+      .filter((r) => r.equippedToType && r.equippedToId)
+      .map((r) => ({ entityType: r.equippedToType!, entityId: r.equippedToId! }));
+    const [scores, entities] = await Promise.all([
+      getCosmeticScores(scored, keys),
+      getPlaceableEntities(placed),
+    ]);
+
+    return rows.map((r) => {
+      const placedAt = r.placedAt ? new Date(r.placedAt) : null;
+      const score = scores[cosmeticScoreKey({ userId: user.id, ...r })];
+      const entity =
+        r.equippedToType && r.equippedToId
+          ? entities.find((e) => e.entityType === r.equippedToType && e.entityId === r.equippedToId)
+          : undefined;
+      return {
+        cosmeticId: r.cosmeticId,
+        claimKey: r.claimKey,
+        name: r.name,
+        data: r.data,
+        placedOn: entity ?? null,
+        placedAt,
+        movableAt:
+          placedAt && definition ? new Date(placedAt.getTime() + definition.moveCooldownMs) : null,
+        points: score?.points ?? 0,
+        impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
+        reactions: score?.reactions ?? 0,
+      };
+    });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+// The caller's own content a hat of this event can go on, newest first, per allowed type.
+export async function getPlaceableEventContent({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    await eventEngine.assertReadable(event, user);
+    const definition = getEventDecorationDefinition(event);
+    if (!definition) return [];
+    const types = new Set<CosmeticEntity>(definition.entityTypes);
+    const [images, models, articles] = await Promise.all([
+      types.has(CosmeticEntity.Image)
+        ? dbRead.image.findMany({
+            where: {
+              userId: user.id,
+              ingestion: ImageIngestionStatus.Scanned,
+              post: { publishedAt: { not: null } },
+            },
+            select: { id: true },
+            orderBy: { id: 'desc' },
+            take: PLACEABLE_PER_TYPE,
+          })
+        : [],
+      types.has(CosmeticEntity.Model)
+        ? dbRead.model.findMany({
+            where: { userId: user.id, status: ModelStatus.Published },
+            select: { id: true },
+            orderBy: { lastVersionAt: 'desc' },
+            take: PLACEABLE_PER_TYPE,
+          })
+        : [],
+      types.has(CosmeticEntity.Article)
+        ? dbRead.article.findMany({
+            where: { userId: user.id, status: ArticleStatus.Published },
+            select: { id: true },
+            orderBy: { publishedAt: 'desc' },
+            take: PLACEABLE_PER_TYPE,
+          })
+        : [],
+    ]);
+    return getPlaceableEntities([
+      ...images.map((x) => ({ entityType: CosmeticEntity.Image, entityId: x.id })),
+      ...models.map((x) => ({ entityType: CosmeticEntity.Model, entityId: x.id })),
+      ...articles.map((x) => ({ entityType: CosmeticEntity.Article, entityId: x.id })),
+    ]);
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+const PLACEABLE_PER_TYPE = 24;
+
+// Title and cover image for each entity, in the order given. An entity with no usable cover (still
+// scanning, or removed) is kept with a null image, so a worn hat never disappears from the list.
+async function getPlaceableEntities(entities: { entityType: CosmeticEntity; entityId: number }[]) {
+  if (!entities.length) return [];
+  const modelIds = entities.filter((e) => e.entityType === 'Model').map((e) => e.entityId);
+  const articleIds = entities.filter((e) => e.entityType === 'Article').map((e) => e.entityId);
+  const [covers, models, articles] = await Promise.all([
+    getEntityCoverImage({ entities }),
+    modelIds.length
+      ? dbRead.model.findMany({ where: { id: { in: modelIds } }, select: { id: true, name: true } })
+      : [],
+    articleIds.length
+      ? dbRead.article.findMany({
+          where: { id: { in: articleIds } },
+          select: { id: true, title: true },
+        })
+      : [],
+  ]);
+  return entities.map(({ entityType, entityId }) => {
+    const image = covers.find((c) => c.entityType === entityType && c.entityId === entityId);
+    const title =
+      entityType === 'Model'
+        ? models.find((m) => m.id === entityId)?.name
+        : entityType === 'Article'
+        ? articles.find((a) => a.id === entityId)?.title
+        : undefined;
+    return { entityType, entityId, title: title ?? null, image: image ?? null };
+  });
 }
 
 export async function getEventCosmeticScores({

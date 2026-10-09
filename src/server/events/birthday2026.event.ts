@@ -14,6 +14,39 @@ const name: (typeof REDIS_KEYS)['BIRTHDAY']['2026']['BASE'] = BIRTHDAY_2026_EVEN
 
 export const birthday2026 = createEvent(name, {
   title: "Civitai's 4th Birthday",
+  page: {
+    headline: 'Civitai turns 4. Pick up a hat.',
+    summary:
+      'Four colour teams. Put party hats on your images, models and articles, and every view and reaction they get scores for your team.',
+    steps: [
+      {
+        title: 'Join',
+        body: 'You land on one of four teams at random and get a free Party Cap in your colour. Your team is yours for the whole event.',
+      },
+      {
+        title: 'Hat your best work',
+        body: 'Each hat sits on one of your own posts at a time, alongside any frame. Move it whenever you like.',
+      },
+      {
+        title: 'Score for your team',
+        body: 'While your content wears a hat, its views and reactions count for your team. More hats on more content means more chances to score.',
+      },
+    ],
+    prize: {
+      title: 'Birthday 2026 Champion badge',
+      body: 'An animated badge in the winning colour, for every member of the winning team whose hats earned points.',
+    },
+    faq: [
+      {
+        question: 'What happens to my hats when the event ends?',
+        answer: 'They come off your content and stop scoring.',
+      },
+      {
+        question: 'Can I change teams?',
+        answer: 'No. Teams are assigned at random when you join and stay fixed.',
+      },
+    ],
+  },
   // Copies: consumers must never be able to mutate the shared constants.
   startDate: new Date(BIRTHDAY_2026_STARTS_AT.getTime()),
   endDate: new Date(BIRTHDAY_2026_ENDS_AT.getTime()),

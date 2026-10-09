@@ -22,6 +22,8 @@ import {
   getEventStandings,
   getMyEventCosmeticScores,
   getEventCosmeticScores,
+  getMyEventHats,
+  getPlaceableEventContent,
 } from '~/server/services/event.service';
 import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -121,6 +123,15 @@ export const eventRouter = router({
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) => getEventCosmeticScores({ ...input, viewer: ctx.user })),
+  // The caller's own hats and content: per user, so never cached.
+  getMyHats: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyEventHats({ user: ctx.user, ...input })),
+  getPlaceableContent: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getPlaceableEventContent({ user: ctx.user, ...input })),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)

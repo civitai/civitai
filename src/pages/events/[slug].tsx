@@ -74,12 +74,17 @@ export const getServerSideProps = createServerSideProps({
 
     const { event } = result.data;
     if (ssg) {
-      await Promise.all([
-        ssg.event.getTeamScores.prefetch({ event }),
-        ssg.event.getTeamScoreHistory.prefetch({ event }),
-        ssg.event.getCosmetic.prefetch({ event }),
-        ssg.event.getData.prefetch({ event }),
-      ]);
+      // The event's type decides which reads its page makes, so ask for it first.
+      const data = await ssg.event.getData.fetch({ event }).catch(() => undefined);
+      await Promise.all(
+        data?.scored
+          ? [ssg.event.getCosmetic.prefetch({ event }), ssg.event.getStandings.prefetch({ event })]
+          : [
+              ssg.event.getTeamScores.prefetch({ event }),
+              ssg.event.getTeamScoreHistory.prefetch({ event }),
+              ssg.event.getCosmetic.prefetch({ event }),
+            ]
+      );
     }
 
     return { props: { event } };
@@ -160,6 +165,15 @@ export default function EventPageDetails({
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;
+  if (eventData.scored)
+    return (
+      <>
+        <Meta title={`${eventData.title} | Civitai`} canonical={`/events/${event}`} />
+        <Container size="lg">
+          <ScoredEventSections event={event} data={eventData} />
+        </Container>
+      </>
+    );
 
   const handleFocusDonateInput = () => inputRef.current?.focus();
 
@@ -224,9 +238,6 @@ export default function EventPageDetails({
               {formatDate(eventData.endDate, 'MMMM D, YYYY')}
             </Text>
           </Stack>
-          {eventData.scored && (
-            <ScoredEventSections event={event} joined={!!eventCosmetic?.obtained} ended={ended} />
-          )}
           {sections.welcome && (
             <WelcomeCard event={event} about={aboutText} learnMore={learnMore} />
           )}
