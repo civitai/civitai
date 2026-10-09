@@ -106,7 +106,9 @@ const TASK_FAILED_REASON = 'Failed';
  *   This is the only `author` row, and every author-class row must require that evidence.
  * - build: a timeout is transient. Any other build failure stays `unknown`: a
  *   registry or network blip lands there too, and blaming the author for one would send
- *   them chasing a bug they don't have.
+ *   them chasing a bug they don't have. (The author UI may still attribute a build
+ *   failure to the author on TEXT evidence — a pre-check `ERROR:` first line — which is
+ *   applied in `describeBuildFailure`, not here.)
  * - scan: `unknown` FOR NOW. Whether a finding is in a platform-provided OS package or
  *   in the app's own dependencies is not in the callback yet, so neither side can be
  *   named. Split this row when that signal arrives.

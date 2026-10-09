@@ -157,6 +157,29 @@ describe('the build’s own report of the failed step: a positive class wins, un
     expect(d.excerpt).toBe(RECIPE_ERROR_EXCERPT);
   });
 
+  it('validate + unknown with an `ERROR:` excerpt stays NEUTRAL (the server withheld author)', () => {
+    const d = describeBuildFailure(RECIPE_ERROR_DETAIL, {
+      failedStep: 'validate',
+      failureClass: 'unknown',
+    });
+    expect(d.failureClass).toBe('unknown');
+    expect(d.guidance).toBe(UNKNOWN_FAILURE_GUIDANCE);
+    expect(d.failedStepLabel).toBe('manifest check');
+    expect(d.badge).toBe('failed at manifest check');
+  });
+
+  it('build + unknown with a SCAN-BLOCKED excerpt is neutral unknown, not scan wording', () => {
+    const d = describeBuildFailure(SCAN_BLOCKED_DETAIL, {
+      failedStep: 'build',
+      failureClass: 'unknown',
+    });
+    expect(d.failureClass).toBe('unknown');
+    expect(d.guidance).toBe(UNKNOWN_FAILURE_GUIDANCE);
+    expect(d.failedStepLabel).toBe('build');
+    expect(d.badge).toBe('failed at build');
+    expect(d.excerpt).toBe(SCAN_BLOCKED_EXCERPT);
+  });
+
   it('build + unknown with no recognisable excerpt stays neutral unknown, with the step', () => {
     const d = describeBuildFailure(NPM_TAIL_DETAIL, {
       failedStep: 'build',

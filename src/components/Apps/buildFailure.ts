@@ -21,9 +21,9 @@ import {
  *      of, the build the attempt row records.
  *   2. Otherwise, when the latest attempt reports which pipeline step failed and the class
  *      the server derived from it, a POSITIVE class (author / platform / transient, or a
- *      scan step) decides the cause. Deterministic: no log text. A class of `unknown`
- *      means no deterministic signal says either way, so rule 3 decides the cause and the
- *      reported step is still shown.
+ *      scan step) decides the cause. Deterministic: no log text. A class of `unknown` is
+ *      neutral, except that a BUILD-step failure defers to rule 3, which may attribute it
+ *      to the author on an `ERROR:` line. The reported step is shown either way.
  *   3. Otherwise (a pipeline or a row that predates the signals, no attempt row as new as
  *      the version's last deploy_state change, or the attempts table not applied yet) the
  *      cause is inferred from the TEXT of the stored detail.
@@ -132,11 +132,13 @@ function securityScan(
  * The cause from the build's own report of which step failed.
  *
  * A POSITIVE class (`author`, `platform`, `transient`) decides the cause outright, over
- * anything the excerpt says. `unknown` means no deterministic signal says either way, so
- * the TEXT rules decide the cause and guidance (`textCause`), and only the step label is
- * added. The one exception is `scan`: a scan failure classed `unknown` keeps the
- * security-scan wording, because the step itself is known even though whose component the
- * finding is in is not yet.
+ * anything the excerpt says. For `unknown` (no deterministic signal says either way):
+ * - `scan` keeps the security-scan wording: the step is known even though whose
+ *   component the finding is in is not yet;
+ * - `build` defers to the TEXT rules (`textCause`), but takes only an `author` verdict
+ *   from them (the recipe's `ERROR:` line); anything else is neutral unknown;
+ * - every other step is neutral unknown.
+ * The step label is shown in every case.
  */
 function fromSignals(
   step: BuildPipelineStep,
@@ -175,12 +177,15 @@ function fromSignals(
       };
     case 'unknown': {
       if (step === 'scan') return securityScan(excerpt, failedStepLabel);
+      // Only the BUILD step defers to the text: the recipe's author-facing `ERROR:` lines are
+      // printed there. Any other step stays neutral — for `validate` in particular the
+      // server withheld `author` on purpose (no evidence the step ran).
+      if (step !== 'build') return unknown(excerpt, failedStepLabel);
       const text = textCause();
-      return {
-        ...text,
-        failedStepLabel,
-        badge: text.failureClass === 'unknown' ? `failed at ${failedStepLabel}` : text.badge,
-      };
+      // ...and only an author/unknown verdict is taken from it. A scan-wording verdict would
+      // contradict the reported step (the scan runs after the build).
+      if (text.failureClass !== 'author') return unknown(excerpt, failedStepLabel);
+      return { ...text, failedStepLabel };
     }
   }
 }

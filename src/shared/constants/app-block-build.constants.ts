@@ -25,8 +25,10 @@ export type BuildPipelineStep = Exclude<BuildFailedStep, 'none'>;
  *   submit a new version.
  * - `platform`: something Civitai provides. The app is fine.
  * - `transient`: a temporary problem (a timeout, a failed publish after retries).
- * - `unknown`: no deterministic signal says either way. Shown neutrally, never as the
- *   author's fault.
+ * - `unknown`: no deterministic signal says either way. Shown neutrally, except that a
+ *   `build`-step failure defers to the text heuristic in `describeBuildFailure`, which
+ *   attributes it to the author when the excerpt's first line is a build pre-check
+ *   `ERROR:` message.
  */
 export const BUILD_FAILURE_CLASSES = ['author', 'platform', 'transient', 'unknown'] as const;
 export type BuildFailureClassSignal = (typeof BUILD_FAILURE_CLASSES)[number];
