@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import { createStore, useStore } from 'zustand';
 import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { Flags } from '~/shared/utils/flags';
@@ -127,6 +127,14 @@ export function useBrowsingSettings<T>(selector: (state: StoreState & StoreState
   const store = useContext(Context);
   if (!store) throw new Error('Missing ContentSettingsProvider');
   return useStore(store, selector);
+}
+
+const noSubscription = () => () => undefined;
+/** `autoplayGifs` for components that can mount outside the provider, where it reads true. */
+export function useAutoplayGifs() {
+  const store = useContext(Context);
+  const getSnapshot = () => store?.getState().autoplayGifs ?? true;
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, getSnapshot, getSnapshot);
 }
 
 type StoreState = {
