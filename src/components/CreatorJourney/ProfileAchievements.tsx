@@ -118,7 +118,12 @@ const achievementGroups = [
  * which carries no numbers; a tier the ladder masks shows none.
  */
 function TierCard({ tier, threshold }: { tier: Tier; threshold?: number }) {
-  return <EarnedBadgeCard badge={{ ...tier, track: 'score', threshold, description: null }} />;
+  return (
+    <EarnedBadgeCard
+      badge={{ ...tier, track: 'score', threshold, description: null }}
+      thresholdAsFloor
+    />
+  );
 }
 
 /** The Achievements tab: the highest tier, every earned tier, then each achievement by track. */

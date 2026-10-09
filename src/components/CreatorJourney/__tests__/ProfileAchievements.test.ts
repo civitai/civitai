@@ -238,9 +238,10 @@ describe('achievements tab', () => {
         ) ?? ''
     );
     expect(names).toEqual(['Nova', 'Blaze', 'Spark']);
-    expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000');
+    // A floor, not the creator's score (lead's call, 2026-10-09).
+    expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000+Creator Score');
     expect(cardOf(el, 'Blaze')?.textContent).toContain('Earned Sep 28, 2026');
-    expect(cardOf(el, 'Spark')?.textContent).toContain('100');
+    expect(cardOf(el, 'Spark')?.textContent).toContain('100+Creator Score');
     // A backfilled tier has no observed date: plain "Earned", like the journey page.
     expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned$/);
     expect(cardOf(el, 'Nova')?.textContent).not.toMatch(/\d/);
