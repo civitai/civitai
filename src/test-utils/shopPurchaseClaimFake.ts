@@ -118,6 +118,15 @@ export function shopPurchaseClaimFake() {
 export function installShopPurchaseClaimFake() {
   const fake = shopPurchaseClaimFake();
   const target = dbMock.dbWrite.cosmeticShopPurchaseClaim;
+  // Fresh call records (and once-queues) per test, so a call count means this test.
+  for (const fn of [
+    target.create,
+    target.findUnique,
+    target.update,
+    target.updateMany,
+    target.deleteMany,
+  ])
+    fn.mockReset();
   target.create.mockImplementation(fake.delegate.create as never);
   target.findUnique.mockImplementation(fake.delegate.findUnique as never);
   target.update.mockImplementation(fake.delegate.update as never);

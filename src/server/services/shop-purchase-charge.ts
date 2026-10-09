@@ -148,6 +148,15 @@ export async function claimShopPurchase(context: ShopChargeContext): Promise<Sho
   }
 }
 
+/** Whether a claim exists for this charge prefix, without writing one. */
+export async function shopPurchaseClaimExists(transactionId: string) {
+  const claim = await dbWrite.cosmeticShopPurchaseClaim.findUnique({
+    where: { transactionId },
+    select: { transactionId: true },
+  });
+  return !!claim;
+}
+
 // The buzz client retries every failure by default, including ones where the
 // first attempt may have landed. Its resend would then come back as this
 // request's own duplicate. Only a failure that never reached the ledger is
@@ -201,7 +210,7 @@ export async function chargeForShopPurchase<T extends Charge>(
   throw purchaseStateUnknown(context, 'ledger returned duplicate legs');
 }
 
-export async function releaseClaim(context: ShopChargeContext) {
+async function releaseClaim(context: ShopChargeContext) {
   try {
     // `attempts: 1`: a request that resumed this claim may have charged under it
     // before this one was declined, and its charge needs the claim to settle.

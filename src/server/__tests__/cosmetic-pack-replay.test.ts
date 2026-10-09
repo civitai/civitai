@@ -180,13 +180,16 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
 
   // The button showed a number; a pack re-priced or re-discounted since must
   // refuse rather than charge another one.
-  it('refuses when the amount due moved since the button rendered, before any claim', async () => {
+  // No claim is ever written with an amount the buyer did not confirm: a
+  // same-key request arriving later would resume it and charge that amount.
+  it('refuses when the amount due moved since the button rendered, writing no claim', async () => {
     await expect(buy(KEY, PRICE - 1)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: `The price changed to ${PRICE} Buzz. Check the new price and try again.`,
     });
     expect(spend).not.toHaveBeenCalled();
     expect(claims.rows.size).toBe(0);
+    expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).not.toHaveBeenCalled();
   });
 
   it('charges when the amount due matches the button (control)', async () => {
@@ -236,11 +239,29 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
         message: `The price changed to ${discounted} Buzz. Check the new price and try again.`,
       });
       expect(spend).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).not.toHaveBeenCalled();
     });
   });
 
   // The purchase changes the discount (the buyer now owns its members), so a
   // retry of the same key must be answered from its claim, not from the price.
+  // Request A checked its amount and wrote the claim; request B, same key, shows
+  // a different amount (the pack changed in between). B resumes A's checked claim.
+  it('a same-key request after a checked claim resumes it at the claimed amount', async () => {
+    spend.mockImplementationOnce(async () => {
+      // B arrives while A is charging.
+      const b = buy(KEY, PRICE - 1);
+      await expect(b).resolves.toBeDefined();
+      return legs(false);
+    });
+    spend.mockResolvedValue(legs(true));
+
+    await expect(buy(KEY, PRICE)).rejects.toThrow('already been completed');
+    expect(spend.mock.calls.map(([c]) => c.amount)).toEqual([PRICE, PRICE]);
+    expect(dbMock.dbWrite.cosmeticShopPurchaseClaim.create).toHaveBeenCalledTimes(2);
+    expect(claims.rows.get(TX)).toMatchObject({ status: 'paid', amount: PRICE });
+  });
+
   it('a retry of a completed purchase is completed, whatever amount it shows', async () => {
     seedClaim('paid');
 
