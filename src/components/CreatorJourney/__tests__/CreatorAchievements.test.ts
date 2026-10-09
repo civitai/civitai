@@ -4,7 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
-import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
+import { CreatorAchievements, measureHref } from '~/components/CreatorJourney/CreatorAchievements';
 import { buildActivityProgress } from '~/server/services/creator-journey.service';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -32,6 +32,9 @@ const definitions = [
   definition('community:crucible-votes-500', 500, '500 Votes'),
   definition('community:crucible-votes-1000', 1000, '1k Votes'),
   definition('community:crucible-votes-5000', 5000, '5k Votes'),
+  definition('compete:wins-1', 1, 'First Win'),
+  definition('compete:wins-5', 5, '5 Wins'),
+  definition('compete:wins-10', 10, '10 Wins'),
 ];
 
 let root: Root | undefined;
@@ -42,7 +45,8 @@ function render(
   followers = 87,
   models = 3,
   revenue = 0,
-  votes = 0
+  votes = 0,
+  wins = 0
 ) {
   const activity = buildActivityProgress(definitions, held, {
     models,
@@ -52,6 +56,7 @@ function render(
     reactions: 0,
     revenue,
     votes,
+    wins,
   });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -149,6 +154,23 @@ describe('Community track', () => {
   });
 });
 
+describe('Compete track', () => {
+  it('shows wins against each rung, under its own header, linked to the challenges', () => {
+    const el = render(new Map([['compete:wins-1', null]]), 87, 3, 0, 0, 3);
+    const header = [...el.querySelectorAll<HTMLElement>('*')].find(
+      (node) => node.childElementCount === 0 && node.textContent === 'Compete'
+    );
+    const competeTrack = header?.parentElement;
+    expect(competeTrack && tile(competeTrack, '5 Wins')).toBeTruthy();
+    expect(competeTrack?.textContent).toContain('Wins3');
+    expect(tile(el, 'First Win')?.dataset.state).toBe('earned');
+    expect(tile(el, '5 Wins')?.dataset.state).toBe('progress');
+    expect(tile(el, '5 Wins')?.textContent).toContain('3 / 5');
+    expect(tile(el, '10 Wins')?.textContent).toContain('10 wins');
+    expect(measureHref('wins')).toBe('/challenges');
+  });
+});
+
 describe('Achievements badge art', () => {
   it('shows the milestone art once it has some, the numbered hex until then', () => {
     const withArt = [{ ...definitions[0], cosmetic: { data: { url: 'first-model-art' } } }];
@@ -160,6 +182,7 @@ describe('Achievements badge art', () => {
       reactions: 0,
       revenue: 0,
       votes: 0,
+      wins: 0,
     });
     container = document.createElement('div');
     document.body.appendChild(container);

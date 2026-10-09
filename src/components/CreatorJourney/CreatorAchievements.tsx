@@ -24,6 +24,7 @@ export const achievementTracks = [
   },
   { key: 'earn', title: 'Earn', accent: '#7950f2', measures: ['revenue'] },
   { key: 'community', title: 'Community', accent: '#228be6', measures: ['votes'] },
+  { key: 'compete', title: 'Compete', accent: '#fa5252', measures: ['wins'] },
 ] as const satisfies ReadonlyArray<{
   key: string;
   title: string;
@@ -58,11 +59,13 @@ const measureCopy: Record<
     current: (n) => `${numberWithCommas(n)} cast`,
     unit: 'votes',
   },
+  wins: { label: 'Wins', current: (n) => numberWithCommas(n), unit: 'wins' },
 };
 
 /** Where a measure's work happens. Followers, downloads and reactions have no page of their own. */
 export function measureHref(measure: Measure, username?: string) {
   if (measure === 'votes') return '/crucibles';
+  if (measure === 'wins') return '/challenges';
   if (!username) return undefined;
   if (measure === 'models') return `/user/${username}/models`;
   if (measure === 'articles') return `/user/${username}/articles`;

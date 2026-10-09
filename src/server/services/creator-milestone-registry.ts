@@ -20,6 +20,7 @@ type DetectorParams = {
   userMetric: { metric: (typeof USER_METRICS)[number] };
   shopRevenue: Record<string, never>;
   judgeVotes: Record<string, never>;
+  competeWins: Record<string, never>;
 };
 
 export type MilestoneDetector = keyof DetectorParams;
@@ -38,6 +39,7 @@ const SCORE_TIERS_LAUNCHED_AT = new Date('2026-10-06T00:00:00Z');
 const ACTIVITY_LAUNCHED_AT = new Date('2026-10-07T00:00:00Z');
 const SHOP_LAUNCHED_AT = new Date('2026-10-08T00:00:00Z');
 const JUDGE_LAUNCHED_AT = new Date('2026-10-09T00:00:00Z');
+const COMPETE_LAUNCHED_AT = new Date('2026-10-10T00:00:00Z');
 
 const scoreTier = (): MilestoneRegistryEntry => ({
   detector: 'scoreSnapshot',
@@ -77,6 +79,12 @@ const judgeVotes = (): MilestoneRegistryEntry => ({
   launchedAt: JUDGE_LAUNCHED_AT,
 });
 
+const competeWins = (): MilestoneRegistryEntry => ({
+  detector: 'competeWins',
+  params: {},
+  launchedAt: COMPETE_LAUNCHED_AT,
+});
+
 export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = {
   ...Object.fromEntries(SCORE_TIERS.map((tier) => [scoreTierKey(tier.slug), scoreTier()])),
 
@@ -111,6 +119,13 @@ export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = 
   'community:crucible-votes-5000': judgeVotes(),
   'community:crucible-votes-10000': judgeVotes(),
   'community:crucible-votes-25000': judgeVotes(),
+
+  'compete:wins-1': competeWins(),
+  'compete:wins-5': competeWins(),
+  'compete:wins-10': competeWins(),
+  'compete:wins-25': competeWins(),
+  'compete:wins-50': competeWins(),
+  'compete:wins-100': competeWins(),
 };
 
 export type ActivityMeasure =
@@ -120,7 +135,8 @@ export type ActivityMeasure =
   | 'followers'
   | 'reactions'
   | 'revenue'
-  | 'votes';
+  | 'votes'
+  | 'wins';
 
 export const publishedEntityMeasures = {
   model: 'models',
@@ -147,6 +163,8 @@ export function activityMeasureOf(entry: MilestoneRegistryEntry): ActivityMeasur
       return 'revenue';
     case 'judgeVotes':
       return 'votes';
+    case 'competeWins':
+      return 'wins';
   }
 }
 

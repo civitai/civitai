@@ -6,7 +6,10 @@ import {
 } from '~/server/services/creator-milestone-registry';
 import type { QueryClickhouse } from '~/server/services/creator-milestone-stored';
 
-type ActivityEntry = Exclude<MilestoneRegistryEntry, { detector: 'scoreSnapshot' | 'judgeVotes' }>;
+type ActivityEntry = Exclude<
+  MilestoneRegistryEntry,
+  { detector: 'scoreSnapshot' | 'judgeVotes' | 'competeWins' }
+>;
 
 type DetectorGroupBase = {
   id: string;
@@ -95,6 +98,31 @@ export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchased
     WHERE NOT p.refunded AND m."createdById" IS NOT NULL
       AND m."createdById" IS DISTINCT FROM i."addedById"`;
 
+/**
+ * A win is a prize place in a contest someone else ran, one per contest: a place in a daily
+ * challenge, or in a community challenge or completed Crucible with at least 10 distinct entrants.
+ * Challenge wins are dated when the winner was recorded, which for community challenges can be days
+ * after they close; a Crucible's places are written within a minute of its end.
+ */
+export const COMPETE_MIN_ENTRANTS = 10;
+
+export const competeWinsSource = `SELECT cw."userId", cw."createdAt" AS at, 'challenge:' || cw."challengeId" AS contest
+    FROM "ChallengeWinner" cw
+    JOIN "Challenge" ch ON ch.id = cw."challengeId"
+    WHERE ch.source IN ('System', 'Mod')
+      OR (ch.source = 'User' AND ch."createdById" IS DISTINCT FROM cw."userId"
+        AND (SELECT count(DISTINCT ci."addedById") FROM "CollectionItem" ci
+          WHERE ci."collectionId" = ch."collectionId") >= ${COMPETE_MIN_ENTRANTS})
+    UNION ALL
+    SELECT ce."userId", c."endAt", 'crucible:' || c.id
+    FROM "CrucibleEntry" ce
+    JOIN "Crucible" c ON c.id = ce."crucibleId"
+    WHERE c.status = 'Completed' AND (c."prizePositions" -> ce.position::text) IS NOT NULL
+      AND ce."userId" <> c."userId"
+      AND (SELECT count(DISTINCT e."userId") FROM "CrucibleEntry" e
+        WHERE e."crucibleId" = c.id) >= ${COMPETE_MIN_ENTRANTS}
+    GROUP BY ce."userId", c.id`;
+
 const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m}"`).join(', ')}
     FROM "UserMetric" um WHERE um.timeframe = 'AllTime'`;
 
@@ -112,7 +140,9 @@ export const activityValuesSql = `SELECT
       WHERE s."userId" = $1), 0)::int AS reactions,
     -- Clamped: a bigint sum past int range would otherwise fail the whole page.
     least(coalesce((SELECT sum(s.amount) FROM (${shopSalesSource}) s WHERE s."userId" = $1), 0),
-      2147483647)::int AS revenue`;
+      2147483647)::int AS revenue,
+    -- Wins in Postgres only; the page adds the ledger's.
+    (SELECT count(*) FROM (${competeWinsSource}) s WHERE s."userId" = $1)::int AS wins`;
 
 function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
   switch (entry.detector) {
@@ -171,7 +201,12 @@ export function activityDetectorGroups(
 ): SqlDetectorGroup[] {
   const groups = new Map<string, SqlDetectorGroup>();
   for (const [key, entry] of Object.entries(registry)) {
-    if (entry.detector === 'scoreSnapshot' || entry.detector === 'judgeVotes') continue;
+    if (
+      entry.detector === 'scoreSnapshot' ||
+      entry.detector === 'judgeVotes' ||
+      entry.detector === 'competeWins'
+    )
+      continue;
     const watermarkId = [
       entry.detector,
       ...Object.values(entry.params),
@@ -201,7 +236,7 @@ export const judgeVoteCountSql = `SELECT count() AS votes FROM crucible_votes
 export const judgeVoteTotalsSql = (min: number) => `SELECT userId, count() AS votes
   FROM crucible_votes WHERE userId > 0 GROUP BY userId HAVING votes >= ${Math.trunc(min)}`;
 
-const JUDGE_QUERY_LIMITS = { max_execution_time: 60, max_result_rows: 1_000_000 };
+const CLICKHOUSE_QUERY_LIMITS = { max_execution_time: 60, max_result_rows: 1_000_000 };
 
 /** Judge ranks count Crucible votes, which only ClickHouse holds, so they are found row by row. */
 export function judgeVoteGroups(
@@ -232,7 +267,7 @@ export function judgeVoteGroups(
 
         const totals = (await queryClickhouse(judgeVoteTotalsSql(min), {
           readonly: '1',
-          ...JUDGE_QUERY_LIMITS,
+          ...CLICKHOUSE_QUERY_LIMITS,
         })) as { userId: unknown; votes: unknown }[];
         const userIds: number[] = [];
         const votes: number[] = [];
@@ -252,6 +287,86 @@ export function judgeVoteGroups(
           JOIN "CreatorMilestone" m ON m.key = ANY($3::text[]) AND v.votes >= m.threshold
           WHERE ${notHeld('v."userId"')}`,
           [userIds, votes, keys]
+        );
+        return found.result();
+      },
+    },
+  ];
+}
+
+/**
+ * Daily-challenge wins paid before the winners table existed (Nov 2024 to 2026-02-10) survive only as
+ * Buzz ledger payments in this description format. The current format ('Challenge Winner Prize #N:
+ * <title>') is left out: those wins are in the winners table. The date bound only prunes partitions.
+ */
+const LEDGER_WIN_FILTER = `date < '2026-03-01'
+    AND match(description, '^Challenge Winner Prize [0-9]+: [0-9]{4}-[0-9]{2}-[0-9]{2}$')`;
+
+export const ledgerWinsSql = `SELECT toAccountId AS userId,
+    formatDateTime(min(date), '%Y-%m-%d %H:%i:%S', 'UTC') AS at
+  FROM buzzTransactions
+  WHERE toAccountId > 0 AND ${LEDGER_WIN_FILTER}
+  GROUP BY toAccountId, description`;
+
+export const ledgerWinCountSql = `SELECT count() AS wins FROM (
+    SELECT description FROM buzzTransactions
+    WHERE toAccountId = {userId:Int32} AND ${LEDGER_WIN_FILTER}
+    GROUP BY description
+  )`;
+
+const LEDGER_AT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+/** Compete wins span Postgres and the ClickHouse ledger, so they are found row by row. */
+export function competeWinGroups(
+  queryClickhouse: QueryClickhouse,
+  registry: Record<string, MilestoneRegistryEntry> = creatorMilestoneRegistry
+): RowDetectorGroup[] {
+  const entries = Object.entries(registry).filter(([, entry]) => entry.detector === 'competeWins');
+  if (!entries.length) return [];
+  const [, first] = entries[0];
+  const keys = entries.map(([key]) => key);
+  const watermarkId = ['competeWins', first.launchedAt.toISOString()].join(':');
+  return [
+    {
+      id: `${watermarkId}:${first.silent ? 'silent' : 'announced'}`,
+      watermarkId,
+      keys,
+      launchedAt: first.launchedAt,
+      silent: !!first.silent,
+      timed: true,
+      candidates: async (readPg) => {
+        const ledger = (await queryClickhouse(ledgerWinsSql, {
+          readonly: '1',
+          ...CLICKHOUSE_QUERY_LIMITS,
+        })) as { userId: unknown; at: unknown }[];
+        const userIds: number[] = [];
+        const dates: string[] = [];
+        for (const row of ledger) {
+          const userId = Number(row.userId);
+          const at = typeof row.at === 'string' ? row.at : '';
+          if (!Number.isSafeInteger(userId) || userId <= 0 || !LEDGER_AT.test(at))
+            throw new Error('buzzTransactions returned a malformed challenge win');
+          userIds.push(userId);
+          dates.push(at);
+        }
+
+        // Each threshold is dated by the win that reached it. Ties on a date break by contest, so a
+        // re-run picks the same win.
+        const found = await readPg.cancellableQuery<MilestoneCandidateRow>(
+          `SELECT r."userId", m.key AS "milestoneKey", r.at AT TIME ZONE 'UTC' AS "achievedAt"
+          FROM (
+            SELECT s."userId", s.at,
+              row_number() OVER (PARTITION BY s."userId" ORDER BY s.at, s.contest) AS n
+            FROM (
+              ${competeWinsSource}
+              UNION ALL
+              SELECT l."userId", l.at, 'ledger:' || l.ord
+              FROM unnest($1::int[], $2::timestamp[]) WITH ORDINALITY AS l("userId", at, ord)
+            ) s
+          ) r
+          JOIN "CreatorMilestone" m ON m.key = ANY($3::text[]) AND m.threshold = r.n
+          WHERE ${notHeld('r."userId"')}`,
+          [userIds, dates, keys]
         );
         return found.result();
       },

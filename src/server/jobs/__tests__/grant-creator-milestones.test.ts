@@ -36,10 +36,16 @@ import {
 } from '~/server/jobs/grant-creator-milestones';
 import {
   activityDetectorGroups,
+  competeWinGroups,
   judgeVoteGroups,
+  ledgerWinsSql,
 } from '~/server/services/creator-milestone-detectors';
 
-const codeGroups = () => [...activityDetectorGroups(), ...judgeVoteGroups(queryClickhouse)];
+const codeGroups = () => [
+  ...activityDetectorGroups(),
+  ...judgeVoteGroups(queryClickhouse),
+  ...competeWinGroups(queryClickhouse),
+];
 
 beforeEach(() => {
   mocks.kv.clear();
@@ -157,6 +163,33 @@ describe('grant-creator-milestones', () => {
       'community:crucible-votes-10000',
       'community:crucible-votes-25000',
     ]);
+  });
+
+  it('runs the compete wins alongside the activity groups, reading the ledger from the real ClickHouse', async () => {
+    mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
+    await run();
+    const compete = mocks.runActivityGroup.mock.calls
+      .map(([group]) => group)
+      .find((group) => group.keys.includes('compete:wins-1'));
+    expect(compete.keys).toEqual([
+      'compete:wins-1',
+      'compete:wins-5',
+      'compete:wins-10',
+      'compete:wins-25',
+      'compete:wins-50',
+      'compete:wins-100',
+    ]);
+    mocks.clickhouseQuery.mockResolvedValue({ json: async () => [] });
+    const readPg = {
+      cancellableQuery: async () => ({ result: async () => [], cancel: vi.fn() }),
+    };
+    expect(await compete.candidates(readPg)).toEqual([]);
+    expect(mocks.clickhouseQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: ledgerWinsSql,
+        clickhouse_settings: expect.objectContaining({ readonly: '1' }),
+      })
+    );
   });
 
   // The nightly check reads these entries by key; a code group reported as stored is a false row.
