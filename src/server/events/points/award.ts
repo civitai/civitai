@@ -279,7 +279,10 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
             // other un-react or delete on the site writes nothing. Removing them from `seen` also lets
             // a later re-add count as a first again. Live totals keep the removed points until the
             // referee nets them out.
-            const keys = eventSeasonKeys(event.def.name, eventPointSeason(event.def.startDate, time));
+            const keys = eventSeasonKeys(
+              event.def.name,
+              eventPointSeason(event.def.startDate, time)
+            );
             const removed = await deps.redis.sRem(
               keys.seen(removal.type, removal.entityType, removal.entityId),
               String(removal.actorId)
@@ -327,7 +330,11 @@ function getEngine() {
     redis: sysRedis,
     insertLedger: async (rows) => {
       if (!clickhouse) return;
-      await clickhouse.insert({ table: EVENT_POINTS_LEDGER_TABLE, values: rows, format: 'JSONEachRow' });
+      await clickhouse.insert({
+        table: EVENT_POINTS_LEDGER_TABLE,
+        values: rows,
+        format: 'JSONEachRow',
+      });
     },
     loadScoredEvents,
     now: () => new Date(),

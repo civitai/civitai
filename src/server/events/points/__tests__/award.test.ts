@@ -147,7 +147,12 @@ describe('awardEventPoints', () => {
     await engine.awardEventPoints([reaction(1), reaction(1), reaction(1)]);
     expect(livePoints('hat', HAT_FIELD)).toBe(5);
     expect(ledger).toHaveLength(1);
-    expect(ledger[0]).toMatchObject({ type: 'reaction', actorId: 1, ownerId: OWNER, team: 'Yellow' });
+    expect(ledger[0]).toMatchObject({
+      type: 'reaction',
+      actorId: 1,
+      ownerId: OWNER,
+      team: 'Yellow',
+    });
   });
 
   it('caps what one person gives one creator in a day at 50 points, cutting the crossing action', async () => {

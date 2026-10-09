@@ -1,4 +1,4 @@
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead, type dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 

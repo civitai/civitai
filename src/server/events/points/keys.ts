@@ -8,14 +8,14 @@ export function eventPointKeys(event: string) {
   const root = `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}` as const;
   return {
     // type -> points one action is worth
-    weights: `${root}:weights`,
+    weights: `${root}:weights` as const,
     // `entityType:entityId` -> the hat it wears now (encodeHat). Written by the hat sync job; each app
     // server loads it once, then follows hatsLog.
-    hats: `${root}:hats`,
+    hats: `${root}:hats` as const,
     // Stream of changes to `hats` (fields k = entity key, v = encoded hat, '' when it came off).
-    hatsLog: `${root}:hats-log`,
+    hatsLog: `${root}:hats-log` as const,
     // hats whose total moved since the signals ticker last drained it
-    changed: `${root}:changed`,
+    changed: `${root}:changed` as const,
   } as const;
 }
 
@@ -26,8 +26,7 @@ export const eventPointSeason = (startDate: Date, now: Date): EventPointSeason =
   now < startDate ? 'preview' : 'live';
 
 export function eventSeasonKeys(event: string, season: EventPointSeason) {
-  const root =
-    `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:${season}` as const;
+  const root = `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:${season}` as const;
   return {
     // user ids that already earned `type` on this entity (per UTC day for once:'day' types)
     seen: (
@@ -35,15 +34,15 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
       entityType: EventPointEntityType,
       entityId: number,
       day?: string
-    ) => `${root}:seen:${type}:${entityType}:${entityId}${day ? `:${day}` : ''}`,
+    ) => `${root}:seen:${type}:${entityType}:${entityId}${day ? `:${day}` : ''}` as const,
     // person -> points given to this creator on this UTC day
-    cap: (day: string, ownerId: number) => `${root}:cap:${day}:${ownerId}`,
+    cap: (day: string, ownerId: number) => `${root}:cap:${day}:${ownerId}` as const,
     // exact totals as of the referee's last cut-off
-    base: (scope: TotalScope) => `${root}:base:${scope}`,
+    base: (scope: TotalScope) => `${root}:base:${scope}` as const,
     // points granted live in one 5-minute bucket
-    live: (bucket: number, scope: TotalScope) => `${root}:live:${bucket}:${scope}`,
+    live: (bucket: number, scope: TotalScope) => `${root}:live:${bucket}:${scope}` as const,
     // the bucket the referee last settled up to
-    cut: `${root}:cut`,
+    cut: `${root}:cut` as const,
   } as const;
 }
 export type TotalScope = 'hat' | 'team' | 'owner';

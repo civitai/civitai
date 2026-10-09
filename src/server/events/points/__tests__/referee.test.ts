@@ -40,7 +40,13 @@ describe('refereeWindow', () => {
   });
 });
 
-const row = (userId: number, cosmeticId: number, team: string, points: number, day = '2026-11-02') => ({
+const row = (
+  userId: number,
+  cosmeticId: number,
+  team: string,
+  points: number,
+  day = '2026-11-02'
+) => ({
   day,
   userId,
   cosmeticId,
@@ -99,7 +105,13 @@ describe('diffHats', () => {
           ['Image:4', 'd'],
         ])
       )
-    ).toEqual({ set: [['Image:2', 'B'], ['Image:4', 'd']], remove: ['Image:3'] });
+    ).toEqual({
+      set: [
+        ['Image:2', 'B'],
+        ['Image:4', 'd'],
+      ],
+      remove: ['Image:3'],
+    });
   });
 });
 

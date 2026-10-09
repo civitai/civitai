@@ -47,8 +47,7 @@ export type RefereeRow = {
 export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now: Date) {
   const start = season === 'preview' ? event.previewFrom ?? event.startDate : event.startDate;
   const end = season === 'preview' ? event.startDate : event.endDate;
-  const settled =
-    Math.floor((now.getTime() - SETTLE_LAG_MS) / LIVE_BUCKET_MS) * LIVE_BUCKET_MS;
+  const settled = Math.floor((now.getTime() - SETTLE_LAG_MS) / LIVE_BUCKET_MS) * LIVE_BUCKET_MS;
   const cut = new Date(Math.min(settled, end.getTime()));
   return { start, cut };
 }
@@ -64,7 +63,11 @@ export function refereeTotals(rows: RefereeRow[]) {
     totals[scope].set(key, (totals[scope].get(key) ?? 0) + points);
   for (const r of rows) {
     if (!r.points) continue;
-    add('hat', hatField({ ownerId: r.userId, cosmeticId: r.cosmeticId, claimKey: r.claimKey }), r.points);
+    add(
+      'hat',
+      hatField({ ownerId: r.userId, cosmeticId: r.cosmeticId, claimKey: r.claimKey }),
+      r.points
+    );
     add('team', r.team, r.points);
     add('owner', String(r.userId), r.points);
   }
@@ -185,7 +188,9 @@ async function resetLiveBase(
   if (oldCutBucket)
     for (let b = oldCutBucket; b < newCutBucket; b++)
       settled.push((await sysRedis.hGetAll(keys.live(b, 'hat'))) ?? {});
-  const changed = oldCutBucket ? changedHats(oldHatBase, settled, totals.hat) : [...totals.hat.keys()];
+  const changed = oldCutBucket
+    ? changedHats(oldHatBase, settled, totals.hat)
+    : [...totals.hat.keys()];
 
   const scopes: TotalScope[] = ['hat', 'team', 'owner'];
   for (const scope of scopes) {

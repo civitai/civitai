@@ -189,9 +189,12 @@ export const eventEngine = {
         const season = eventPointSeason(eventDef.startDate, now);
         const result = await runEventPointsReferee(scored, season, now);
         await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
-        logToAxiom({ type: 'info', name: 'event-points-referee', event: eventDef.name, ...result }).catch(
-          () => undefined
-        );
+        logToAxiom({
+          type: 'info',
+          name: 'event-points-referee',
+          event: eventDef.name,
+          ...result,
+        }).catch(() => undefined);
         continue;
       }
 

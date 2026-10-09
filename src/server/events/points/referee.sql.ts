@@ -62,7 +62,7 @@ WITH
     SELECT *,
       greatest(toInt64(0),
         least(toInt64({cap:UInt32}), running) - least(toInt64({cap:UInt32}), running - weight)
-      ) AS points
+      ) AS granted
     FROM (
       SELECT *,
         sum(weight) OVER (
@@ -76,13 +76,13 @@ WITH
 SELECT
   day,
   hat.1 AS userId, hat.2 AS cosmeticId, hat.3 AS claimKey, hat.4 AS team,
-  toUInt64(sum(points)) AS points,
-  toUInt64(countIf(type = 'view' AND points > 0)) AS views,
-  toUInt64(countIf(type = 'reaction' AND points > 0)) AS reactions,
-  toUInt64(countIf(type = 'comment' AND points > 0)) AS comments,
-  toUInt64(countIf(type = 'sticker' AND points > 0)) AS stickers,
-  toUInt64(countIf(type = 'remix' AND points > 0)) AS remixes,
-  toUInt64(countIf(type = 'modelLike' AND points > 0)) AS modelLikes
+  toUInt64(sum(granted)) AS points,
+  toUInt64(countIf(type = 'view' AND granted > 0)) AS views,
+  toUInt64(countIf(type = 'reaction' AND granted > 0)) AS reactions,
+  toUInt64(countIf(type = 'comment' AND granted > 0)) AS comments,
+  toUInt64(countIf(type = 'sticker' AND granted > 0)) AS stickers,
+  toUInt64(countIf(type = 'remix' AND granted > 0)) AS remixes,
+  toUInt64(countIf(type = 'modelLike' AND granted > 0)) AS modelLikes
 FROM credited
 GROUP BY day, hat
 ORDER BY day, userId, cosmeticId, claimKey

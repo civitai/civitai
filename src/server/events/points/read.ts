@@ -41,11 +41,7 @@ async function readTotals(event: PointsEvent, scope: TotalScope, fields: string[
 }
 
 // Live points per hat, keyed by hatField.
-export function getHatPoints(
-  event: PointsEvent,
-  hats: Omit<EventHat, 'team'>[],
-  now = new Date()
-) {
+export function getHatPoints(event: PointsEvent, hats: Omit<EventHat, 'team'>[], now = new Date()) {
   return readTotals(event, 'hat', [...new Set(hats.map(hatField))], now);
 }
 
