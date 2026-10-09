@@ -3,8 +3,9 @@
 
 export const BIRTHDAY_2026_EVENT = 'birthday2026';
 
-// Order is load-bearing: a user's team is a seeded PRNG index into this array. Renaming a team is
-// safe; reordering or inserting after launch reassigns every user.
+// A user's team is a seeded PRNG index into this array, so adding, removing or reordering teams
+// reassigns every user. Team names are also stored in cosmetic names, cached cosmetic ids, manual
+// team assignments and Discord role names: rename only before launch, or migrate all of those.
 export const BIRTHDAY_2026_TEAMS = ['Yellow', 'Blue', 'Pink', 'Green'] as const;
 export type Birthday2026Team = (typeof BIRTHDAY_2026_TEAMS)[number];
 
