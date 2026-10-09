@@ -9,10 +9,16 @@ import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
-import { CASH_SETTLED_ALIASES, TransactionType } from '~/shared/constants/buzz.constants';
+import {
+  CASH_SETTLED_ALIASES,
+  GENERATION_TIP_TRANSACTION_PREFIX,
+  TransactionType,
+} from '~/shared/constants/buzz.constants';
 import {
   creatorCompAmountPaidCounter,
   creatorCompCreatorsPaidCounter,
+  generationTipAmountPaidCounter,
+  generationTipCreatorsPaidCounter,
   licenseFeeAmountPaidCounter,
   licenseFeeCreatorsPaidCounter,
 } from '~/server/prom/client';
@@ -74,6 +80,108 @@ type ResourceRow = {
 
 const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
+
+type PayoutSource = 'compensation' | 'tip' | 'licenseFee';
+export type PayoutTransaction = {
+  fromAccountId: number;
+  toAccountId: number;
+  fromAccountType: BuzzAccountType;
+  toAccountType: BuzzAccountType;
+  amount: number;
+  description: string;
+  type: TransactionType;
+  externalTransactionId: string;
+  source: PayoutSource;
+};
+
+/**
+ * Payout dates from this day on pay generation tips in their own transaction. Earlier dates keep the
+ * combined transaction exactly: a retried run of a day already paid that way must only resend keys
+ * that already exist, because a new tip key would pay those tips a second time.
+ */
+export const GENERATION_TIP_TRANSACTION_START = new Date('2026-10-11T00:00:00Z');
+
+export function buildPayoutTransactions(
+  date: Date,
+  creatorsToPay: Record<number, ResourceRow[]>
+): PayoutTransaction[] {
+  const dateStr = formatDate(date, 'YYYY-MM-DD', true);
+  const dateLabel = formatDate(date, 'MMM D, YYYY', true);
+  const splitTips = date >= GENERATION_TIP_TRANSACTION_START;
+
+  // cashSettled rows arrive in tenths-of-a-penny; the cashSettled account
+  // ledger uses pennies, so we divide by 10 before minting.
+  return Object.entries(creatorsToPay)
+    .flatMap(([userIdStr, userRows]) => {
+      const userId = Number(userIdStr);
+      // Compensation plus tips, as one total: the comp transaction is what is left of its floor once
+      // the tips are paid, so splitting never changes what a creator receives.
+      const compTotals: Partial<Record<BuzzAccountType, number>> = {};
+      const tipTotals: Partial<Record<BuzzAccountType, number>> = {};
+      const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
+
+      for (const row of userRows) {
+        const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
+        const amount =
+          row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
+        if (row.source === 'licenseFee') {
+          licenseTotals[row.accountType] = (licenseTotals[row.accountType] || 0) + amount;
+          continue;
+        }
+        compTotals[row.accountType] = (compTotals[row.accountType] || 0) + amount;
+        if (splitTips && row.source === 'tip')
+          tipTotals[row.accountType] = (tipTotals[row.accountType] || 0) + amount;
+      }
+
+      const compTx = Object.entries(compTotals).map(([accountType, amount]) => ({
+        fromAccountId: 0,
+        toAccountId: userId,
+        fromAccountType: accountType as BuzzAccountType,
+        toAccountType: accountType as BuzzAccountType,
+        // Sum-then-floor once at the daily boundary (amounts arrive fractional from the query now that we no
+        // longer floor per row — required so sub-buzz license fees accumulate instead of flooring to 0).
+        amount: Math.floor(amount) - Math.floor(tipTotals[accountType as BuzzAccountType] ?? 0),
+        // Matches the "Generation compensation" channel label in Creator Studio. The externalTransactionId
+        // keeps its prefix — it's a dedup key.
+        description: `Generation compensation (${dateLabel})`,
+        type: TransactionType.Compensation,
+        externalTransactionId: `creator-tip-comp-${dateStr}-${userId}-${accountType}`,
+        source: 'compensation' as const,
+      }));
+
+      // Still `Compensation`, so bankable, peak and pool queries treat tips as before; ledger readers
+      // tell them apart by this externalTransactionId prefix.
+      const tipTx = Object.entries(tipTotals).map(([accountType, amount]) => ({
+        fromAccountId: 0,
+        toAccountId: userId,
+        fromAccountType: accountType as BuzzAccountType,
+        toAccountType: accountType as BuzzAccountType,
+        amount: Math.floor(amount),
+        description: `Generation tips (${dateLabel})`,
+        type: TransactionType.Compensation,
+        externalTransactionId: `${GENERATION_TIP_TRANSACTION_PREFIX}${dateStr}-${userId}-${accountType}`,
+        source: 'tip' as const,
+      }));
+
+      const licenseTx = Object.entries(licenseTotals).map(([accountType, amount]) => ({
+        fromAccountId: 0,
+        toAccountId: userId,
+        fromAccountType: accountType as BuzzAccountType,
+        toAccountType: accountType as BuzzAccountType,
+        // Fractional per-image fees (0.01/image, A2) accumulate across the day; settle the buzz total at
+        // this daily boundary by flooring. Sub-buzz remainder is dropped, not carried. FINANCE REVIEW: confirm
+        // floor vs round, and whether the sub-buzz remainder should roll over instead of being forfeited.
+        amount: Math.floor(amount),
+        description: `License fee payout (${dateLabel})`,
+        type: TransactionType.LicenseFee,
+        externalTransactionId: `license-fee-${dateStr}-${userId}-${accountType}`,
+        source: 'licenseFee' as const,
+      }));
+
+      return [...compTx, ...tipTx, ...licenseTx];
+    })
+    .filter((tx) => tx.amount > 0);
+}
 
 export async function runPayout(lastUpdate: Date) {
   if (!clickhouse) {
@@ -145,59 +253,7 @@ export async function runPayout(lastUpdate: Date) {
     return;
   }
 
-  // cashSettled rows arrive in tenths-of-a-penny; the cashSettled account
-  // ledger uses pennies, so we divide by 10 before minting.
-  const transactions = Object.entries(creatorsToPay)
-    .flatMap(([userIdStr, userRows]) => {
-      const userId = Number(userIdStr);
-      const compTotals: Partial<Record<BuzzAccountType, number>> = {};
-      const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
-
-      for (const row of userRows) {
-        const bucket = row.source === 'licenseFee' ? licenseTotals : compTotals;
-        const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
-        const amount =
-          row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
-        bucket[row.accountType] = (bucket[row.accountType] || 0) + amount;
-      }
-
-      const compTx = Object.entries(compTotals).map(([accountType, amount]) => ({
-        fromAccountId: 0,
-        toAccountId: userId,
-        fromAccountType: accountType as BuzzAccountType,
-        toAccountType: accountType as BuzzAccountType,
-        // Sum-then-floor once at the daily boundary (amounts arrive fractional from the query now that we no
-        // longer floor per row — required so sub-buzz license fees accumulate instead of flooring to 0).
-        // No-op for already-integer comp/tip amounts.
-        amount: Math.floor(amount),
-        // Since 2026-10-08 `tip`-source rows land in resourceCompensations and are paid inside this
-        // compensation transaction; the creator dashboard splits them out into a Tips tab. Matches the
-        // "Generation compensation" channel label in Creator Studio. The externalTransactionId keeps its
-        // prefix — it's a dedup key.
-        description: `Generation compensation (${formatDate(date, 'MMM D, YYYY', true)})`,
-        type: TransactionType.Compensation,
-        externalTransactionId: `creator-tip-comp-${dateStr}-${userId}-${accountType}`,
-        source: 'compensation' as const,
-      }));
-
-      const licenseTx = Object.entries(licenseTotals).map(([accountType, amount]) => ({
-        fromAccountId: 0,
-        toAccountId: userId,
-        fromAccountType: accountType as BuzzAccountType,
-        toAccountType: accountType as BuzzAccountType,
-        // Fractional per-image fees (0.01/image, A2) accumulate across the day; settle the buzz total at
-        // this daily boundary by flooring. Sub-buzz remainder is dropped, not carried. FINANCE REVIEW: confirm
-        // floor vs round, and whether the sub-buzz remainder should roll over instead of being forfeited.
-        amount: Math.floor(amount),
-        description: `License fee payout (${formatDate(date, 'MMM D, YYYY', true)})`,
-        type: TransactionType.LicenseFee,
-        externalTransactionId: `license-fee-${dateStr}-${userId}-${accountType}`,
-        source: 'licenseFee' as const,
-      }));
-
-      return [...compTx, ...licenseTx];
-    })
-    .filter((tx) => tx.amount > 0);
+  const transactions = buildPayoutTransactions(date, creatorsToPay);
 
   log(`Sample tx: ${transactions[0]?.externalTransactionId}`);
 
@@ -217,8 +273,8 @@ export async function runPayout(lastUpdate: Date) {
       processedBatches++;
       log(`Processed batch ${processedBatches}/${txBatches.length} (${batch.length} transactions)`);
 
-      // Track metrics per (source, accountType) so license payouts surface
-      // in their own counter without having to demux later.
+      // Track metrics per (source, accountType) so license payouts and tips surface
+      // in their own counters without having to demux later.
       const batchStats = batch.reduce(
         (acc, tx) => {
           const key = `${tx.source}:${tx.toAccountType}`;
@@ -237,7 +293,7 @@ export async function runPayout(lastUpdate: Date) {
         {} as Record<
           string,
           {
-            source: 'compensation' | 'licenseFee';
+            source: PayoutSource;
             accountType: BuzzAccountType;
             creators: Set<number>;
             amount: number;
@@ -249,6 +305,9 @@ export async function runPayout(lastUpdate: Date) {
         if (source === 'licenseFee') {
           licenseFeeCreatorsPaidCounter.inc({ account_type: accountType }, creators.size);
           licenseFeeAmountPaidCounter.inc({ account_type: accountType }, amount);
+        } else if (source === 'tip') {
+          generationTipCreatorsPaidCounter.inc({ account_type: accountType }, creators.size);
+          generationTipAmountPaidCounter.inc({ account_type: accountType }, amount);
         } else {
           creatorCompCreatorsPaidCounter.inc({ account_type: accountType }, creators.size);
           creatorCompAmountPaidCounter.inc({ account_type: accountType }, amount);

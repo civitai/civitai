@@ -41,7 +41,9 @@ const whereClause = (uid: number, from: string, to: string) =>
 
 const CURRENCY_LIST = BUZZ_CURRENCIES.map((c) => `'${c}'`).join(',');
 
-const SOURCE_EXPR = `multiIf(type = 'tip', 'tip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
+// Generation tips are paid as `compensation`; only the payout job's externalTransactionId prefix tells them
+// apart, so that arm must come before plain compensation. Tips paid before the split are inside compensation.
+export const SOURCE_EXPR = `multiIf(type = 'tip', 'tip', type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%', 'generationTip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
 
 async function fetchSummary({
   userId,
@@ -105,7 +107,7 @@ async function fetchSeries({
 
 // By-source × currency totals over the range — the /earnings source cards and the dashboard headline.
 export const getEarningsSummary = createCache({
-  name: 'earnings:summary',
+  name: 'earnings:summary:v2',
   fetch: fetchSummary,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -114,7 +116,7 @@ export const getEarningsSummary = createCache({
 export const getEarningsSeries = createCache({
   // Keys derive from the args, not the payload, so a stored value outlives a change to the returned shape. Bump
   // the suffix whenever that shape or the numbers change.
-  name: 'earnings:series:v2',
+  name: 'earnings:series:v3',
   fetch: fetchSeries,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
