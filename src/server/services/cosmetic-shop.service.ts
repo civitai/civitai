@@ -72,13 +72,11 @@ import {
 import {
   chargeForShopPurchase,
   chargeRetryOptions,
-  claimSettledElsewhere,
   claimShopPurchase,
   markClaimPaid,
   purchaseStateUnknown,
   refundCallOptions,
   refundClaimedCharge,
-  ShopPurchaseClaimSettledError,
 } from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
@@ -1381,9 +1379,6 @@ export const purchaseCosmeticShopItem = async ({
     // not refunded from here.
     if (idempotencyKey && isPrismaUniqueViolation(error))
       throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
-    // Another attempt with this key granted (or is refunding) the claim.
-    if (error instanceof ShopPurchaseClaimSettledError)
-      throw await claimSettledElsewhere({ ...chargeContext, error });
 
     // Charged and not fully refunded is "state unknown", logged for
     // reconciliation; only a refund known to cover the charge reaches the

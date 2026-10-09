@@ -252,7 +252,15 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
   it('a retry of a pending claim with mixed legs is unknown', async () => {
     seedClaim('pending');
-    mocks.createMultiTx.mockResolvedValue(legs(false, true));
+    mocks.createMultiTx.mockResolvedValue({
+      // The duplicate leg alone covers the claim; the new one is money moved now.
+      transactionIds: [
+        { transactionId: 'tx-new', accountType: 'blue', amount: 500, duplicate: false },
+        { transactionId: 'tx-dup', accountType: 'yellow', amount: PRICE, duplicate: true },
+      ],
+      totalAmount: PRICE + 500,
+      transactionCount: 2,
+    });
 
     await expectStateUnknown(purchase());
     nothingGrantedPaidOrRefunded();

@@ -206,8 +206,12 @@ async function releaseClaim(context: ShopChargeContext) {
   }
 }
 
-/** Thrown inside a grant transaction whose claim another attempt already settled. */
-export class ShopPurchaseClaimSettledError extends Error {
+/**
+ * Thrown inside a grant transaction whose claim another attempt already settled.
+ * It rolls the grant back and reaches the caller's refund path, where
+ * refundClaimedCharge finds the claim not pending and answers without refunding.
+ */
+class ShopPurchaseClaimSettledError extends Error {
   constructor() {
     super('shop purchase claim is no longer pending');
   }
@@ -230,7 +234,7 @@ export async function markClaimPaid(tx: Prisma.TransactionClient, transactionId:
  * The answer for an attempt whose claim another attempt settled first: granted
  * means the buyer has it; anything else is that attempt's to finish.
  */
-export async function claimSettledElsewhere(context: ShopChargeContext & { error?: unknown }) {
+async function claimSettledElsewhere(context: ShopChargeContext & { error?: unknown }) {
   const claim = await dbWrite.cosmeticShopPurchaseClaim.findUnique({
     where: { transactionId: context.transactionId },
     select: { status: true },

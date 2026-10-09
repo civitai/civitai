@@ -212,6 +212,24 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     expect(claims.rows.get(TX)?.status).toBe('pending');
   });
 
+  it('a retry of a pending claim with mixed legs is unknown', async () => {
+    seedClaim('pending');
+    spend.mockResolvedValue({
+      // The duplicate leg alone covers the claim; the new one is money moved now.
+      transactionIds: [
+        { transactionId: 'tx-new', accountType: 'blue', amount: 500, duplicate: false },
+        { transactionId: 'tx-dup', accountType: 'yellow', amount: PRICE, duplicate: true },
+      ],
+      totalAmount: PRICE + 500,
+      transactionCount: 2,
+    });
+
+    await expectStateUnknown(buy(KEY));
+    expect(createManyUserCosmetic).not.toHaveBeenCalled();
+    expect(refund).not.toHaveBeenCalled();
+    expect(claims.rows.get(TX)?.status).toBe('pending');
+  });
+
   it('another attempt granted the claim while this one charged: no second grant, no refund', async () => {
     seedClaim('pending');
     spend.mockImplementation(async () => {
