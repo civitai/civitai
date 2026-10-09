@@ -84,6 +84,9 @@ beforeEach(() => {
     caches.event[entity] = entityCache();
   }
   db.image.findUnique.mockResolvedValue({ userId: OWNER });
+  // clearAllMocks keeps resolved values; a lookup one test set must not answer the next.
+  for (const lookup of [db.model.findUnique, db.article.findUnique, db.post.findUnique])
+    lookup.mockReset().mockResolvedValue(null);
   db.userCosmetic.findMany.mockResolvedValue([]);
   db.userCosmetic.updateMany.mockResolvedValue({ count: 1 });
   db.$executeRaw.mockResolvedValue(1);
@@ -235,14 +238,14 @@ describe('placing an event decoration', () => {
   });
 
   // A cosmetic can be granted outside the event's own join and shop flows (claims, mod grants).
-  // The guards key on the cosmetic's data, not on how it was obtained, so every route is covered.
-  it('applies the event rules however the decoration was obtained', async () => {
-    db.userCosmetic.findFirst.mockResolvedValue({
-      ...hatRow(),
-      cosmetic: { type: 'ContentDecoration', source: 'Claim', data: HAT },
+  // The event rules must not depend on how it was obtained, so equip never reads the source: if
+  // you are adding it here, every grant route needs the same rules applied.
+  it('decides from the cosmetic itself, never from how it was obtained', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(db.userCosmetic.findFirst.mock.calls[0][0].select.cosmetic).toEqual({
+      select: { type: true, data: true },
     });
-    vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
-    await expectRefused(/while its event is running/);
   });
 
   it('leaves frames out of the event window and the cooldown record', async () => {
