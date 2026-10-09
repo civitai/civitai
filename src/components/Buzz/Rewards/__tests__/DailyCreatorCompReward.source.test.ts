@@ -122,12 +122,32 @@ describe('DailyCreatorCompReward source tabs', () => {
     Array.from(container.querySelectorAll<HTMLInputElement>('input[type="radio"]')).map(
       (input) => input.value
     );
+  const tabLabels = () =>
+    Array.from(container.querySelectorAll('label')).map((label) => label.textContent);
 
   it('offers a Tips tab to a creator who has tips', async () => {
     probeResults.tip = { resources: [{ id: 1 }] };
     await mount();
 
     expect(tabValues()).toEqual(['compensation', 'tip']);
+    expect(tabLabels()).toEqual(['Compensation', 'Tips']);
+  });
+
+  // The probe for the tab being shown is skipped, so only the selected-source term keeps that tab
+  // visible; without it a creator who reloads onto Tips could not switch back to it.
+  it('keeps the stored Tips tab and titles the panel Tips Earned', async () => {
+    window.localStorage.setItem(EARNINGS_SOURCE_STORAGE_KEY, JSON.stringify('tip'));
+    await mount();
+
+    expect(tabValues()).toEqual(['compensation', 'tip']);
+    expect(container.querySelector('h3')?.textContent).toBe('Tips Earned');
+  });
+
+  it('keeps the stored License Fees tab', async () => {
+    window.localStorage.setItem(EARNINGS_SOURCE_STORAGE_KEY, JSON.stringify('licenseFee'));
+    await mount();
+
+    expect(tabValues()).toEqual(['compensation', 'licenseFee']);
   });
 
   it('offers License Fees and Tips side by side when both have earnings', async () => {
