@@ -57,7 +57,12 @@ import {
 } from '~/utils/metadata/extract-source-metadata';
 import { isDefined } from '~/utils/type-guards';
 import { reportApplicationError } from '~/utils/application-error';
-import { boundedFileFields, isReadFailure, splitUnreadablePicks } from '~/utils/unreadable-pick';
+import {
+  boundedFileFields,
+  isPickSnapshot,
+  isReadFailure,
+  splitUnreadablePicks,
+} from '~/utils/unreadable-pick';
 import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
 import { isMediaHost } from '~/shared/utils/media-host';
 import { isCivitaiSiteUrl } from '~/utils/civitai-url';
@@ -237,7 +242,8 @@ const REPORTED_ERROR_NAMES = [
   'InvalidStateError',
 ];
 
-type PickedFileInfo = { type: string; size: number };
+/** `snapshot`: an in-memory copy taken at the pick, rather than the device's own file. */
+type PickedFileInfo = { type: string; size: number; snapshot: boolean };
 /** Whether a url was already in the form value, or arrived as a new card. */
 type ImageOrigin = 'value' | 'card';
 
@@ -263,20 +269,20 @@ function sourceKind(src: string | Blob | File) {
   if (typeof src !== 'string') return src instanceof File ? 'picked-file' : 'blob';
   if (src.startsWith('blob:')) return 'picked-file';
   if (src.startsWith('data:')) return 'data-url';
-  return /^https?:/i.test(src) ? 'url' : 'other';
+  return isRemoteUrl(src) ? 'url' : 'other';
 }
 
 const PICK_READ_STAGES: ImagePrepStage[] = ['dims', 'read-blob', 'decode', 'metadata'];
 
 /**
  * A later stage could not read a picked file, the way a photo-picker File fails once it turns
- * unreadable after the pick. The user is offered what an unreadable pick gets, not a dead end.
+ * unreadable after the pick. The caller also checks the file is still the device's own: an
+ * in-memory copy cannot become unreadable, so its failure is the image itself (corrupt, undecodable).
  */
 function isPickedFileReadFailure(error: unknown, src: string | Blob | File) {
   return (
     sourceKind(src) === 'picked-file' &&
     error instanceof ImagePrepError &&
-    !error.timedOut &&
     PICK_READ_STAGES.includes(error.stage) &&
     isReadFailure(error.cause)
   );
@@ -388,6 +394,14 @@ export function SourceImageUploadMultiple({
   // Always-current value ref for use in async callbacks to avoid stale closures
   const valueRef = useRef(value);
   valueRef.current = value;
+  const uploadsRef = useRef(uploads);
+  uploadsRef.current = uploads;
+
+  /** A picked file still backed by the device, so a failed read of it may be the picker's doing. */
+  function isDeviceBacked(src: string | Blob | File) {
+    if (src instanceof File) return !isPickSnapshot(src);
+    return typeof src === 'string' && pickedFilesRef.current.get(src)?.snapshot === false;
+  }
 
   useEffect(() => {
     const uploadingIds = trackedUploadingIdsRef.current;
@@ -726,10 +740,12 @@ export function SourceImageUploadMultiple({
       }
       if (unreadable.size) {
         const pickReadFailures = new Set(
-          [...failures].filter(([url, e]) => isPickedFileReadFailure(e, url)).map(([url]) => url)
+          [...failures]
+            .filter(([url, e]) => isPickedFileReadFailure(e, url) && isDeviceBacked(url))
+            .map(([url]) => url)
         );
         addUnreadablePicks(
-          uploads.filter(
+          uploadsRef.current.filter(
             (x) => x.status === 'queued' && x.slotIndex === undefined && pickReadFailures.has(x.url)
           ).length
         );
@@ -839,7 +855,7 @@ export function SourceImageUploadMultiple({
       origin: 'card',
     });
     trackedUploadingIdsRef.current.delete(id);
-    if (response.unreadablePick) {
+    if (response.pickReadFailure && isDeviceBacked(url)) {
       setUploads((items) => items.filter((x) => x.id !== id));
       addUnreadablePicks(1);
       return;
@@ -979,7 +995,7 @@ export function SourceImageUploadMultiple({
                     },
                   };
                 }
-                if (response.unreadablePick) unreadablePicks++;
+                if (response.pickReadFailure && isDeviceBacked(src)) unreadablePicks++;
                 else failure ??= response.blockedReason ?? 'Unexpected image upload error';
                 return null;
               })
@@ -1089,7 +1105,7 @@ export function SourceImageUploadMultiple({
     if (!count) return;
     setUnreadablePick((prev) => ({
       count: (prev?.count ?? 0) + count,
-      slotIndices: slotIndices ? [...(prev?.slotIndices ?? []), ...slotIndices] : undefined,
+      slotIndices: slotIndices ? [...(prev?.slotIndices ?? []), ...slotIndices] : prev?.slotIndices,
     }));
   }
 
@@ -1111,7 +1127,11 @@ export function SourceImageUploadMultiple({
       ...items.map((src) => {
         const url = typeof src !== 'string' ? URL.createObjectURL(src) : src;
         if (typeof src !== 'string')
-          pickedFilesRef.current.set(url, { type: src.type, size: src.size });
+          pickedFilesRef.current.set(url, {
+            type: src.type,
+            size: src.size,
+            snapshot: isPickSnapshot(src),
+          });
         return { status: 'queued' as const, url, id: getRandomId() };
       }),
     ]);
@@ -1205,25 +1225,44 @@ export function SourceImageUploadMultiple({
       }
     };
 
-    let unreadableItem: (typeof items)[number] | undefined;
     try {
-      // Resolve dimensions (cache-first) so we can detect whether cropping is needed.
-      const dimensioned = await Promise.all(
+      // Resolve dimensions (cache-first) so we can detect whether cropping is needed. A picked file
+      // that can no longer be read is set aside for the Files fallback; the others carry on.
+      const measured = await Promise.all(
         items.map(async (item) => {
           const cached = sourceMetadataStore.getMetadata(item.previewUrl);
-          const dims =
+          let dims =
             cached?.width && cached?.height
               ? { width: cached.width, height: cached.height }
-              : await prepStage('dims', () => getImageDimensions(item.previewUrl)).catch((e) => {
-                  if (isPickedFileReadFailure(e, item.src)) unreadableItem ??= item;
-                  throw e;
-                });
-          if (!cached?.width || !cached?.height) {
+              : undefined;
+          if (!dims) {
+            try {
+              dims = await prepStage('dims', () => getImageDimensions(item.previewUrl));
+            } catch (e) {
+              if (isPickedFileReadFailure(e, item.src) && isDeviceBacked(item.src))
+                return { unreadable: item };
+              throw e;
+            }
             sourceMetadataStore.setMetadata(item.previewUrl, dims);
           }
-          return { ...item, width: dims.width, height: dims.height };
+          return { dimensioned: { ...item, width: dims.width, height: dims.height } };
         })
       );
+      const unreadableItems = measured.flatMap((m) => (m.unreadable ? [m.unreadable] : []));
+      if (unreadableItems.length) {
+        const ids = new Set(unreadableItems.map((x) => x.uploadId));
+        setUploads((prev) => prev.filter((x) => !x.id || !ids.has(x.id)));
+        for (const { uploadId } of unreadableItems) {
+          setImageUploading(uploadId, false);
+          trackedUploadingIdsRef.current.delete(uploadId);
+        }
+        addUnreadablePicks(
+          unreadableItems.length,
+          unreadableItems.map((x) => x.slotIndex)
+        );
+      }
+      const dimensioned = measured.flatMap((m) => (m.dimensioned ? [m.dimensioned] : []));
+      if (!dimensioned.length) return;
 
       // If cropping is required, open the crop modal and await the user's
       // crops as a promise. The crop modal operates entirely on blob URLs in
@@ -1281,7 +1320,7 @@ export function SourceImageUploadMultiple({
           const response = await uploadOrchestratorImage(src, uploadId, undefined, {
             origin: 'card',
           });
-          if (response.unreadablePick) {
+          if (response.pickReadFailure && isDeviceBacked(src)) {
             setUploads((prev) => prev.filter((item) => item.id !== uploadId));
             addUnreadablePicks(1, [slotIndex]);
             return null;
@@ -1337,8 +1376,7 @@ export function SourceImageUploadMultiple({
       cleanupTracking();
     } catch (e) {
       // The browser's own text for an image it could not read is not shown.
-      if (unreadableItem) addUnreadablePicks(1, [unreadableItem.slotIndex]);
-      else setError(e instanceof ImagePrepError ? IMAGE_PREP_ERROR : (e as Error).message);
+      setError(e instanceof ImagePrepError ? IMAGE_PREP_ERROR : (e as Error).message);
       setUploads((prev) => prev.filter((x) => !x.id || !itemIds.has(x.id)));
       cleanupTracking();
     }
@@ -2170,7 +2208,7 @@ export async function uploadOrchestratorImage(
         url: src,
         ...originalSize,
         available: true,
-        unreadablePick: false,
+        pickReadFailure: false,
         type: 'image',
         id: '',
       };
@@ -2240,7 +2278,7 @@ export async function uploadOrchestratorImage(
       });
     }
 
-    return { ...blob, ...resizedSize, unreadablePick: false };
+    return { ...blob, ...resizedSize, pickReadFailure: false };
   } catch (e) {
     setImageUploading(id, false);
     const error = e as Error;
@@ -2253,7 +2291,7 @@ export async function uploadOrchestratorImage(
       url: typeof src === 'string' ? src : URL.createObjectURL(src),
       ...originalSize,
       available: false,
-      unreadablePick: isPickedFileReadFailure(error, src),
+      pickReadFailure: isPickedFileReadFailure(error, src),
       // A local preparation failure shows fixed text; the upload's own failures and size
       // validation keep their messages.
       blockedReason:

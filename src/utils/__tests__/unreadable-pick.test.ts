@@ -117,9 +117,16 @@ describe('splitUnreadablePicks', () => {
     const { readable, unreadable, replacements } = await splitUnreadablePicks([ok1, bad, ok2], {
       maxBytes: MAX_BYTES,
     });
-    expect(readable).toEqual([ok1, ok2]);
-    expect(unreadable).toEqual([{ file: bad, error }]);
-    expect([...replacements.keys()]).toEqual([ok1, ok2]);
+    // Not images, so kept as they are; compared by identity (toEqual finds any two Files equal).
+    expect(readable).toHaveLength(2);
+    expect(readable[0]).toBe(ok1);
+    expect(readable[1]).toBe(ok2);
+    expect(unreadable).toHaveLength(1);
+    expect(unreadable[0].file).toBe(bad);
+    expect(unreadable[0].error).toBe(error);
+    expect([...replacements.keys()]).toHaveLength(2);
+    expect(replacements.get(ok1)).toBe(ok1);
+    expect(replacements.get(ok2)).toBe(ok2);
   });
 
   it('replaces a readable image with its in-memory copy', async () => {
@@ -128,6 +135,29 @@ describe('splitUnreadablePicks', () => {
     expect(readable).toHaveLength(1);
     expect(readable[0]).not.toBe(photo);
     expect(replacements.get(photo)).toBe(readable[0]);
+  });
+});
+
+describe('splitUnreadablePicks concurrency', () => {
+  it('reads at most four images in full at once, and still reads them all', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const files = Array.from({ length: 9 }, (_, i) => {
+      const file = new File([`photo ${i}`], `p${i}.jpg`, { type: 'image/jpeg' });
+      const read = file.arrayBuffer.bind(file);
+      file.arrayBuffer = async () => {
+        peak = Math.max(peak, ++inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight--;
+        return read();
+      };
+      return file;
+    });
+    const { readable } = await splitUnreadablePicks(files, { maxBytes: MAX_BYTES });
+    expect(peak).toBe(4);
+    expect(await Promise.all(readable.map((f) => f.text()))).toEqual(
+      files.map((_, i) => `photo ${i}`)
+    );
   });
 });
 
@@ -152,14 +182,22 @@ describe('snapshotPick', () => {
   it('does not read an image over the size limit in full: it is probed and kept', async () => {
     const big = imageFile(new Uint8Array(MAX_BYTES + 1));
     const fullRead = vi.spyOn(big, 'arrayBuffer');
-    expect(await snapshotPick(big, { maxBytes: MAX_BYTES })).toEqual({ file: big });
+    const { file } = await snapshotPick(big, { maxBytes: MAX_BYTES });
+    expect(file).toBe(big);
     expect(fullRead).not.toHaveBeenCalled();
+  });
+
+  it('reads an image of exactly the size limit in full', async () => {
+    const atLimit = imageFile(new Uint8Array(MAX_BYTES));
+    const { file } = await snapshotPick(atLimit, { maxBytes: MAX_BYTES });
+    expect(file).not.toBe(atLimit);
+    expect(file?.size).toBe(MAX_BYTES);
   });
 
   it('only probes a file that is not an image', async () => {
     const video = new File(['v'], 'v.mp4', { type: 'video/mp4' });
     const fullRead = vi.spyOn(video, 'arrayBuffer');
-    expect(await snapshotPick(video, { maxBytes: MAX_BYTES })).toEqual({ file: video });
+    expect((await snapshotPick(video, { maxBytes: MAX_BYTES })).file).toBe(video);
     expect(fullRead).not.toHaveBeenCalled();
   });
 
@@ -167,21 +205,21 @@ describe('snapshotPick', () => {
     const error = new DOMException('could not be read', 'NotReadableError');
     const photo = imageFile('x');
     photo.arrayBuffer = () => Promise.reject(error);
-    expect(await snapshotPick(photo, { maxBytes: MAX_BYTES })).toEqual({ error });
+    const result = await snapshotPick(photo, { maxBytes: MAX_BYTES });
+    expect(result.file).toBeUndefined();
+    expect(result.error).toBe(error);
   });
 
   it('keeps the original for any other read failure', async () => {
     const photo = imageFile('x');
     photo.arrayBuffer = () => Promise.reject(new DOMException('denied', 'SecurityError'));
-    expect(await snapshotPick(photo, { maxBytes: MAX_BYTES })).toEqual({ file: photo });
+    expect((await snapshotPick(photo, { maxBytes: MAX_BYTES })).file).toBe(photo);
   });
 
   it('keeps the original when the full read does not settle in time', async () => {
     const photo = imageFile('x');
     photo.arrayBuffer = () => new Promise<ArrayBuffer>(() => undefined);
-    expect(await snapshotPick(photo, { maxBytes: MAX_BYTES, timeoutMs: 5 })).toEqual({
-      file: photo,
-    });
+    expect((await snapshotPick(photo, { maxBytes: MAX_BYTES, timeoutMs: 5 })).file).toBe(photo);
   });
 });
 

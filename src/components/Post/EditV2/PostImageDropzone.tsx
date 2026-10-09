@@ -23,6 +23,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { downloadGeneratorImages } from '~/utils/generator-import';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { isPickSnapshot } from '~/utils/unreadable-pick';
 
 const max = POST_IMAGE_LIMIT;
 
@@ -72,7 +73,8 @@ export function PostImageDropzone({
   const submittedUrlsRef = useRef(new Set<string>());
 
   // #region [upload images]
-  // Files from the dropzone, so a read failure is shown there only for a pick, not an import.
+  // Dropped files still backed by the device. Only their read failures are shown as unreadable
+  // picks: an import, or an in-memory copy taken at the pick, fails only on its own content.
   const pickedFilesRef = useRef(new WeakSet<File>());
   const [unreadablePicks, setUnreadablePicks] = useState(0);
   const { files, canAdd, error, upload, progress, loading } = useMediaUpload<{ postId: number }>({
@@ -156,7 +158,7 @@ export function PostImageDropzone({
   }
 
   const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
-    for (const { file } of args) pickedFilesRef.current.add(file);
+    for (const { file } of args) if (!isPickSnapshot(file)) pickedFilesRef.current.add(file);
     setUnreadablePicks(0);
     handleUpload(args);
   };

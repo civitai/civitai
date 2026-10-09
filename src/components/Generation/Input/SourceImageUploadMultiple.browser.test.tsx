@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import {
   chooseFiles,
   makeFilesExpireAfterFirstRead,
+  makeFullReadsFail,
   makeSlowFilesStall,
   makeUnreadableFilesFail,
 } from '../../../../test/unreadable-files';
@@ -1007,6 +1008,10 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     renderWithProviders(<PendingHarness />);
     await pickFiles(1);
     await expectFailedCard(PREP_ERROR, 'encode broke');
+    expect(document.body.textContent).not.toContain('Choose it from Files instead.');
+    expect(reports()).toEqual([
+      ['source image prep failed: encode', 'picked-file image/jpeg <5MB NotReadableError'],
+    ]);
   });
 
   test('dims-after-encode: the re-encoded image cannot be read', async () => {
@@ -1684,8 +1689,10 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
   const PREP_ERROR =
     "Couldn't read this image on your device. Try a different file or a screenshot.";
   let expiry: ReturnType<typeof makeFilesExpireAfterFirstRead> | undefined;
+  let restoreFullReads = () => undefined as void;
 
   beforeEach(() => {
+    restoreFullReads = makeFullReadsFail();
     uploads = [];
     events = [];
     lastValue = [];
@@ -1708,6 +1715,7 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
       .mockImplementation(async () => new Blob(['jpeg'], { type: 'image/jpeg' }));
   });
   afterEach(() => {
+    restoreFullReads();
     expiry?.restore();
     expiry = undefined;
     vi.mocked(resizeImage)
@@ -1783,10 +1791,14 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
   }
 
+  // Picks still backed by the device: their pick-time copy was not taken (here its read failed some
+  // other way; a read that times out goes the same way), so a later read can be refused.
+  const devicePick = (name: string) => imageFile(`uncopied-${name}`);
+
   test('its dimensions cannot be read: the Files fallback is offered, and a file from it uploads', async () => {
     mocks.getImageDimensions.mockRejectedValueOnce(imageLoadError());
     renderWithProviders(<PendingHarness max={3} />);
-    await chooseFiles(dropzoneInput(), [imageFile('photo-0.jpg')]);
+    await chooseFiles(dropzoneInput(), [devicePick('0.jpg')]);
 
     await expectFilesFallbackOffered();
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
@@ -1802,6 +1814,22 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
     expect(page.getByText(PICK_MESSAGE).elements()).toHaveLength(0);
   });
 
+  test('two picks whose dimensions cannot be read are counted together', async () => {
+    mocks.getImageDimensions.mockRejectedValue(imageLoadError());
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [devicePick('0.jpg'), devicePick('1.jpg')]);
+
+    await expect
+      .element(
+        page.getByText(
+          "Your phone's photo picker gave us 2 files we can't open. Choose them from Files instead.",
+          { exact: true }
+        )
+      )
+      .toBeVisible();
+    expect(document.body.textContent).not.toContain(LOAD_ERROR);
+  });
+
   test.each([
     ['read-blob', new TypeError('Failed to fetch'), 'TypeError'],
     ['decode', imageLoadError(), 'Error'],
@@ -1813,7 +1841,7 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
         new ImagePrepError(stage, false, 'read broke', { cause })
       );
       renderWithProviders(<PendingHarness max={3} />);
-      await chooseFiles(dropzoneInput(), [imageFile('photo-0.jpg')]);
+      await chooseFiles(dropzoneInput(), [devicePick('0.jpg')]);
 
       await expectFilesFallbackOffered();
       expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
@@ -1823,10 +1851,39 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
     }
   );
 
+  test('the upload of a cropped pick cannot read it: the Files fallback is offered', async () => {
+    mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
+    vi.mocked(resizeImage).mockRejectedValueOnce(
+      new ImagePrepError('read-blob', false, 'read broke', { cause: new TypeError('x') })
+    );
+    renderWithProviders(<PendingHarness max={3} aspectRatios={['1:1']} />);
+    await chooseFiles(dropzoneInput(), [devicePick('0.jpg')]);
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    const { onConfirm, images } = mocks.dialogTrigger.mock.calls[0][0].props;
+    void onConfirm([{ src: images[0].url }]);
+
+    await expectFilesFallbackOffered();
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+  });
+
+  test('a copy taken at the pick that cannot be decoded keeps its error: the image itself is bad', async () => {
+    vi.mocked(resizeImage).mockRejectedValueOnce(
+      new ImagePrepError('decode', false, 'decode broke', { cause: imageLoadError() })
+    );
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('photo-0.jpg')]);
+
+    await expect.element(page.getByText(PREP_ERROR, { exact: true })).toBeVisible();
+    expect(page.getByText(PICK_MESSAGE).elements()).toHaveLength(0);
+    expect(reports()).toEqual([
+      ['source image prep failed: decode', 'picked-file image/jpeg <5MB Error'],
+    ]);
+  });
+
   test('into a slot: the Files fallback is offered, and a file from it fills that slot', async () => {
     mocks.getImageDimensions.mockRejectedValueOnce(imageLoadError());
     renderWithProviders(<SlotHarness />);
-    await chooseFiles(dropzoneInput(), [imageFile('photo-0.jpg')]);
+    await chooseFiles(dropzoneInput(), [devicePick('0.jpg')]);
 
     await expectFilesFallbackOffered();
     expect(filesFallbackInput().multiple).toBe(false);
@@ -1838,11 +1895,55 @@ describe('SourceImageUploadMultiple — a picked file that turns unreadable afte
     await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
   });
 
+  test('into a slot, the upload cannot read it: the Files fallback is offered for that slot', async () => {
+    vi.mocked(resizeImage).mockRejectedValueOnce(
+      new ImagePrepError('read-blob', false, 'read broke', { cause: new TypeError('x') })
+    );
+    renderWithProviders(<SlotHarness />);
+    await chooseFiles(dropzoneInput(), [devicePick('0.jpg')]);
+
+    await expectFilesFallbackOffered();
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-1.jpg')]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    const uploaded = await loadableImageUrl();
+    uploads[0].resolve({ url: uploaded, available: true });
+    await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
+  });
+
+  test('two slots, one unreadable: the other still uploads, and only the unreadable one is offered', async () => {
+    mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
+      if (unreadableUrls.has(src as string)) throw imageLoadError();
+      return { width: 1024, height: 1024 };
+    });
+    const unreadableUrls = new Set<string>();
+    const { createObjectURL } = URL;
+    URL.createObjectURL = (obj: Blob | MediaSource) => {
+      const url = createObjectURL.call(URL, obj);
+      if (obj instanceof File && obj.name.startsWith('uncopied')) unreadableUrls.add(url);
+      return url;
+    };
+    onTestFinished(() => {
+      URL.createObjectURL = createObjectURL;
+    });
+    renderWithProviders(<SlotHarness />);
+    await chooseFiles(dropzoneInput(), [imageFile('photo-0.jpg'), devicePick('1.jpg')]);
+
+    // The other slot's upload is still in flight, so only the message is checked here.
+    await expect.element(page.getByText(PICK_MESSAGE, { exact: true })).toBeVisible();
+    expect(filesFallbackInput().multiple).toBe(false);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    const uploaded = await loadableImageUrl();
+    uploads[0].resolve({ url: uploaded, available: true });
+    await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
+  });
+
   test('off Android: a neutral message and no Files chooser', async () => {
     mocks.android = false;
     mocks.getImageDimensions.mockRejectedValueOnce(imageLoadError());
     renderWithProviders(<PendingHarness max={3} />);
-    await chooseFiles(dropzoneInput(), [imageFile('photo-0.jpg')]);
+    await chooseFiles(dropzoneInput(), [devicePick('0.jpg')]);
 
     await expect
       .element(

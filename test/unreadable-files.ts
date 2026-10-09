@@ -42,6 +42,23 @@ export function makeSlowFilesStall() {
 }
 
 /**
+ * A File named `uncopied…` fails its full `arrayBuffer()` read with an error other than
+ * NotReadableError, so the pick-time copy is not taken and the pick goes on as the device's own
+ * file (as it does when that read times out). Sliced parts read normally.
+ */
+export function makeFullReadsFail() {
+  const { arrayBuffer } = Blob.prototype;
+  Blob.prototype.arrayBuffer = function (this: Blob) {
+    return this instanceof File && this.name.startsWith('uncopied')
+      ? Promise.reject(new DOMException('The operation was aborted', 'AbortError'))
+      : arrayBuffer.call(this);
+  };
+  return () => {
+    Blob.prototype.arrayBuffer = arrayBuffer;
+  };
+}
+
+/**
  * Files made by the returned `expiringFile` read once and then turn unreadable, the way some
  * photo-picker Files do seconds after the pick: the first read succeeds, and after it every read
  * rejects with NotReadableError and every blob: url made for the file fails to load. A copy of its

@@ -1,5 +1,9 @@
+import pLimit from 'p-limit';
+
 /** How long a pick's read at pick time may take before the pick is treated as readable. */
 export const UNREADABLE_PROBE_TIMEOUT_MS = 3_000;
+/** Full pick-time reads in flight at once, so a large multi-file pick is not all in memory twice. */
+const SNAPSHOT_CONCURRENCY = 4;
 
 type PickRead<T> =
   | { status: 'read'; value: T }
@@ -47,6 +51,13 @@ export async function probeUnreadablePick(
   return result.status === 'unreadable' ? result.error : undefined;
 }
 
+const snapshots = new WeakSet<File>();
+
+/** Whether `file` is an in-memory copy taken at the pick, so no later read of it can be refused. */
+export function isPickSnapshot(file: File) {
+  return snapshots.has(file);
+}
+
 /**
  * A picker File can also turn unreadable seconds after the pick, once a first read has succeeded.
  * So an image is read in full now and replaced by an in-memory copy that later stages read instead.
@@ -63,9 +74,12 @@ export async function snapshotPick(
   const result = await readWithin(() => file.arrayBuffer(), timeoutMs);
   if (result.status === 'unreadable') return { error: result.error };
   if (result.status === 'unknown') return { file };
-  return {
-    file: new File([result.value], file.name, { type: file.type, lastModified: file.lastModified }),
-  };
+  const copy = new File([result.value], file.name, {
+    type: file.type,
+    lastModified: file.lastModified,
+  });
+  snapshots.add(copy);
+  return { file: copy };
 }
 
 /**
@@ -73,8 +87,11 @@ export async function snapshotPick(
  * use in place of each readable pick, in order; `replacements` maps a pick to the same.
  */
 export async function splitUnreadablePicks(files: File[], options: { maxBytes: number }) {
+  const limit = pLimit(SNAPSHOT_CONCURRENCY);
   const picks = await Promise.all(
-    files.map(async (original) => ({ original, ...(await snapshotPick(original, options)) }))
+    files.map((original) =>
+      limit(async () => ({ original, ...(await snapshotPick(original, options)) }))
+    )
   );
   const replacements = new Map<File, File>();
   const unreadable: { file: File; error: DOMException }[] = [];
