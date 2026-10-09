@@ -373,6 +373,7 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).toContain('Stats unavailable');
     expect(popover()!.textContent).toContain('See the birthday event');
+    expect(popover()!.textContent).not.toContain('Team hat');
   });
 
   it('says there is nothing to show when the hat is not there now', () => {
@@ -390,6 +391,8 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.querySelector('.mantine-Skeleton-root')).not.toBeNull();
     expect(popover()!.textContent).not.toContain('Stats unavailable');
+    // No event eyebrow above the skeleton either.
+    expect(popover()!.textContent).not.toContain('Team hat');
   });
 });
 

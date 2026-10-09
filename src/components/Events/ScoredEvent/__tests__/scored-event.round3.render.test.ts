@@ -153,7 +153,12 @@ describe('Your hats cards', () => {
     const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
     expect(stats.parentElement!.className).toBe('@container');
     expect(stats.className.split(' ')).toEqual(
-      expect.arrayContaining(['flex', 'flex-col', '@[13rem]:grid'])
+      expect.arrayContaining([
+        'flex',
+        'flex-col',
+        '@[13rem]:grid',
+        '@[13rem]:grid-cols-[auto_minmax(0,1fr)]',
+      ])
     );
     expect(
       [...stats.querySelectorAll<HTMLElement>('[data-way]')].slice(0, 2).map((w) => w.textContent)
@@ -169,7 +174,9 @@ describe('Your hats cards', () => {
     const cells = [...stats.querySelectorAll<HTMLElement>('[data-way]')];
     // Two 28px cells and a 6px gap: 62px.
     expect(cells.every((c) => c.className.split(' ').includes('h-7'))).toBe(true);
-    expect(points.className.split(' ')).toContain('@[13rem]:min-w-[62px]');
+    expect(points.className.split(' ')).toEqual(
+      expect.arrayContaining(['@[13rem]:min-w-[62px]', '@[13rem]:flex-col'])
+    );
   });
 
   it('puts Move on the picture of a worn hat, not under the card', () => {
@@ -179,7 +186,8 @@ describe('Your hats cards', () => {
     expect(picture.contains(move)).toBe(true);
     expect(move.className).toContain('absolute');
     // No line saying what it's on: the picture shows it (Justin, 2026-10-09).
-    expect(card.textContent).not.toMatch(/On your|Not on anything/);
+    expect(card.textContent).toContain('Party Cap - Blue');
+    expect(card.textContent).not.toMatch(/\bOn\b|Not on anything/);
   });
 
   it('shows an unworn hat on its own art, with Place it on the picture', () => {
@@ -188,7 +196,8 @@ describe('Your hats cards', () => {
     expect(srcs(card)).toEqual(['hat-art']);
     const place = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Place it')!;
     expect(place.parentElement!.contains(card.querySelector('img'))).toBe(true);
-    expect(card.textContent).not.toMatch(/On your|Not on anything/);
+    expect(card.textContent).toContain('Party Cap - Blue');
+    expect(card.textContent).not.toMatch(/\bOn\b|Not on anything/);
   });
 
   // Justin and Ellie, 2026-10-09: hats are kept after the event, so they can still be moved and
