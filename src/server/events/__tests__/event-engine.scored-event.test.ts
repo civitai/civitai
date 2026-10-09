@@ -446,3 +446,26 @@ describe('scoring behind the flag', () => {
     expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('getEventData: what the scored-event page reads', () => {
+  const live = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + HOUR);
+
+  // The page names a winner only once this has passed; before it, late data can still reorder the
+  // standings.
+  it('says when the result is final: the end plus the scoring finalize window', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    const data = await eventEngine.getEventData(BIRTHDAY_2026_EVENT, { id: 7 }, live);
+    expect(data.finalAt).toEqual(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 24 * HOUR));
+  });
+
+  it("carries the birthday's hero art and accent headline", async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    const { page } = await eventEngine.getEventData(BIRTHDAY_2026_EVENT, { id: 7 }, live);
+    expect(page).toMatchObject({
+      headline: 'Civitai turns 4.',
+      headlineAccent: 'Pick up a hat.',
+      heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
+      dates: 'Nov 11 to Nov 25',
+    });
+  });
+});

@@ -153,6 +153,11 @@ describe('hero team block (A6)', () => {
     expect(block.textContent).toBe("You're onTeam Blue#2Rank10512Team points140Your hats");
     expect(el.textContent).not.toContain('Join and get your free hat');
   });
+
+  // Positive control for the negative above: the same hero without a team offers the join.
+  it('offers the join to a visitor with no team', () => {
+    expect(hero().textContent).toContain('Join and get your free hat');
+  });
 });
 
 describe('hero bulbs (A9)', () => {
@@ -179,11 +184,52 @@ describe('ended hero (A10)', () => {
     expect(el.textContent).not.toContain('Four colour teams.');
   });
 
+  it('shows the prize art when the event has it', () => {
+    const prize = { ...page.prize, imageUrl: 'prize-art' };
+    const el = hero({
+      ...over,
+      data: eventData({ ...over.data, page: { ...page, prize } }),
+      winner: 'Yellow',
+    });
+    expect(srcs(el.querySelector('[data-testid="hero-prize"]') as HTMLElement)).toEqual([
+      'prize-art',
+    ]);
+  });
+
   it('on a tie at the top keeps the headline, says so, and awards nothing', () => {
-    const el = hero(over);
+    const el = hero({ ...over, tie: true });
     expect(el.querySelector('h1')!.textContent).toBe('Civitai turns 4.Pick up a hat.');
     expect(el.textContent).toContain('The final standings are a tie at the top.');
     expect(el.querySelector('[data-testid="hero-prize"]')).toBeNull();
+  });
+
+  it('while the final scores are tallied, names nobody and says so', () => {
+    const el = hero({ ...over, finalizing: true });
+    expect(el.querySelector('h1')!.textContent).toBe('Civitai turns 4.Pick up a hat.');
+    expect(el.textContent).toContain('Final scores are being tallied.');
+    expect(el.textContent).not.toContain('tie');
+    expect(el.querySelector('[data-testid="hero-prize"]')).toBeNull();
+  });
+
+  it('with no result to report, claims no tie', () => {
+    const el = hero(over);
+    expect(el.textContent).not.toContain('tie at the top');
+    expect(el.textContent).not.toContain('being tallied');
+  });
+
+  it('offers no join after the end', () => {
+    expect(hero(over).textContent).not.toContain('Join and get your free hat');
+  });
+});
+
+describe('hero headline with fewer than two team colours', () => {
+  // A gradient of one colour or none would render the accent as transparent text.
+  it('draws the accent as plain text', () => {
+    const el = hero({ data: eventData({ teams: ['Yellow', 'Teal'] }) });
+    const accent = el.querySelector('h1 span') as HTMLElement;
+    expect(accent.textContent).toBe('Pick up a hat.');
+    expect(accent.style.backgroundImage).toBe('');
+    expect(accent.className).not.toContain('text-transparent');
   });
 });
 

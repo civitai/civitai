@@ -28,14 +28,20 @@ export function ScoredEventHero({
   teamPoints,
   points,
   ended,
+  finalizing,
   winner,
+  tie,
   teamHats,
   onJoin,
   joining,
 }: {
   data: EventData;
-  /** The team strictly ahead once the event has ended; scores settle for a day after the end. */
+  /** Ended, but scores are still taking late data, so no result yet. */
+  finalizing?: boolean;
+  /** The team strictly ahead on the settled standings. */
   winner?: string;
+  /** The settled standings are tied for first. */
+  tie?: boolean;
   teamHats?: { team: string; url: string | null }[];
   /** The viewer's team once they have joined. */
   team?: string;
@@ -68,6 +74,7 @@ export function ScoredEventHero({
             src={page.heroImage}
             width={1600}
             className="absolute inset-0 size-full object-cover object-right"
+            fetchPriority="high"
             alt=""
           />
           <div className="absolute inset-0 bg-gradient-to-b from-transparent from-50% to-white @md:bg-gradient-to-r @md:from-white @md:from-35% @md:via-white/80 @md:via-50% @md:to-transparent @md:to-70% dark:to-dark-6 dark:@md:from-dark-6 dark:@md:via-dark-6/80" />
@@ -134,14 +141,17 @@ export function ScoredEventHero({
             ) : (
               <>
                 {page?.headline ?? data.title}
-                {page?.headlineAccent && (
-                  <span
-                    className="block bg-clip-text text-transparent"
-                    style={{ backgroundImage: `linear-gradient(90deg, ${colors.join(', ')})` }}
-                  >
-                    {page.headlineAccent}
-                  </span>
-                )}
+                {page?.headlineAccent &&
+                  (colors.length > 1 ? (
+                    <span
+                      className="block bg-clip-text text-transparent"
+                      style={{ backgroundImage: `linear-gradient(90deg, ${colors.join(', ')})` }}
+                    >
+                      {page.headlineAccent}
+                    </span>
+                  ) : (
+                    <span className="block">{page.headlineAccent}</span>
+                  ))}
               </>
             )}
           </Title>
@@ -155,8 +165,9 @@ export function ScoredEventHero({
         {ended ? (
           <Stack gap="xs">
             <Text size="sm" c="dimmed">
-              {!winner && 'The final standings are a tie at the top. '}Ended{' '}
+              {tie && 'The final standings are a tie at the top. '}Ended{' '}
               {formatDate(data.endDate, 'MMMM D')}.
+              {finalizing && ' Final scores are being tallied.'}
             </Text>
             {winner && page?.prize && (
               <Group gap="md" wrap="nowrap" data-testid="hero-prize">

@@ -18,15 +18,19 @@ const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let cosmetic: unknown;
-const hats = [{ cosmeticId: 31, claimKey: 'claimed', points: 5 }];
+const hats = [
+  { cosmeticId: 31, claimKey: 'claimed', points: 5 },
+  { cosmeticId: 32, claimKey: 'txn-1', points: 7 },
+];
+type Team = { team: string; score: number; rank: number };
+const PINK_THIRD: Team[] = [{ team: 'Pink', score: 4200, rank: 3 }];
+let teams: Team[] | undefined = PINK_THIRD;
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     'event.getCosmetic': { useQuery: () => ({ data: cosmetic }) },
     'event.getStandings': {
-      useQuery: () => ({
-        data: { teams: [{ team: 'Pink', score: 4200, rank: 3 }], teamHats: [], topCosmetics: [] },
-      }),
+      useQuery: () => ({ data: teams && { teams, teamHats: [], topCosmetics: [] } }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1 }) },
   }),
@@ -63,10 +67,20 @@ let root: ReturnType<typeof createRoot> | undefined;
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
+  teams = PINK_THIRD;
 });
 
 const DAY = 24 * 60 * 60 * 1000;
-function sections({ joined, ended }: { joined: boolean; ended: boolean }) {
+function sections({
+  joined,
+  ended,
+  finalized = true,
+}: {
+  joined: boolean;
+  ended: boolean;
+  /** Past the end plus the finalize window; only meaningful once ended. */
+  finalized?: boolean;
+}) {
   cosmetic = joined
     ? { obtained: true, cosmetic: { data: { team: 'Pink' } } }
     : { obtained: false };
@@ -76,6 +90,7 @@ function sections({ joined, ended }: { joined: boolean; ended: boolean }) {
     teams: ['Pink'],
     startDate: new Date(now - 3 * DAY),
     endDate: new Date(ended ? now - DAY : now + DAY),
+    finalAt: new Date(ended ? (finalized ? now - DAY / 2 : now + DAY / 2) : now + 2 * DAY),
   } as unknown as React.ComponentProps<typeof ScoredEventSections>['data'];
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -131,6 +146,50 @@ describe('ScoredEventSections order', () => {
 
   it("hands the hero the player's team, its rank and its points", () => {
     sections({ joined: true, ended: false });
-    expect(heroProps).toMatchObject({ team: 'Pink', rank: 3, teamPoints: 4200, points: 5 });
+    expect(heroProps).toMatchObject({ team: 'Pink', rank: 3, teamPoints: 4200, points: 12 });
+    expect(heroProps).toMatchObject({ ended: false, finalizing: false });
+    expect(heroProps.winner).toBeUndefined();
+  });
+});
+
+describe('ScoredEventSections: the result the hero announces', () => {
+  const lead: Team[] = [
+    { team: 'Yellow', score: 30, rank: 1 },
+    { team: 'Pink', score: 20, rank: 2 },
+  ];
+  const result = () => ({ winner: heroProps.winner, tie: heroProps.tie });
+
+  // Scores keep taking late data for a day after the end, so the leader then is not the winner.
+  it('names no winner while the final scores are being tallied', () => {
+    teams = lead;
+    sections({ joined: true, ended: true, finalized: false });
+    expect(heroProps).toMatchObject({ ended: true, finalizing: true });
+    expect(result()).toEqual({ winner: undefined, tie: undefined });
+  });
+
+  it('names the team strictly ahead once the result is final', () => {
+    teams = lead;
+    sections({ joined: true, ended: true });
+    expect(heroProps).toMatchObject({ ended: true, finalizing: false });
+    expect(result()).toEqual({ winner: 'Yellow', tie: undefined });
+  });
+
+  it('calls a tie for first a tie, not a win', () => {
+    teams = [lead[0], { ...lead[1], score: 30, rank: 1 }];
+    sections({ joined: true, ended: true });
+    expect(result()).toEqual({ winner: undefined, tie: true });
+  });
+
+  // A missing standings read is not a tie.
+  it('claims nothing without standings', () => {
+    teams = undefined;
+    sections({ joined: true, ended: true });
+    expect(result()).toEqual({ winner: undefined, tie: undefined });
+  });
+
+  it('claims nothing while the event is live', () => {
+    teams = lead;
+    sections({ joined: true, ended: false });
+    expect(result()).toEqual({ winner: undefined, tie: undefined });
   });
 });

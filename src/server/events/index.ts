@@ -359,6 +359,10 @@ export const eventEngine = {
       title: eventDef.title,
       startDate: eventDef.startDate,
       endDate: eventDef.endDate,
+      // Scores keep taking late data until then; the winner is decided on the standings after it.
+      finalAt: eventDef.scoring
+        ? new Date(eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs)
+        : undefined,
       teams: eventDef.teams,
       cosmeticName: eventDef.cosmeticName,
       coverImage,

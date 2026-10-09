@@ -18,10 +18,12 @@ import { scoredSectionOrder } from '~/components/Events/ScoredEvent/scored-event
 
 type EventData = RouterOutput['event']['getData'];
 
-// The team strictly ahead of the rest; none on a tie for first.
-function leader(teams?: { team: string; score: number }[]) {
-  if (!teams?.length || (teams[1] && teams[1].score === teams[0].score)) return undefined;
-  return teams[0].team;
+// The final result once scores have settled: the team strictly ahead, or a tie for first. None
+// while the standings are missing.
+function result(teams?: { team: string; score: number }[]) {
+  if (!teams?.length) return {};
+  if (teams[1] && teams[1].score === teams[0].score) return { tie: true };
+  return { winner: teams[0].team };
 }
 
 /**
@@ -33,7 +35,9 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
   const currentUser = useCurrentUser();
   const teamColor = useTeamColor();
   const utils = trpc.useUtils();
-  const ended = data.endDate < new Date();
+  const now = new Date();
+  const ended = data.endDate < now;
+  const finalizing = ended && !!data.finalAt && now < data.finalAt;
 
   const { data: eventCosmetic } = trpc.event.getCosmetic.useQuery(
     { event },
@@ -101,7 +105,8 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         teamPoints={myStanding?.score}
         points={points}
         ended={ended}
-        winner={ended ? leader(standings?.teams) : undefined}
+        finalizing={finalizing}
+        {...(ended && !finalizing ? result(standings?.teams) : {})}
         teamHats={standings?.teamHats}
         onJoin={handleJoin}
         joining={equipping}
