@@ -117,13 +117,3 @@ export function getReleasedEventDecoration(entityType: CosmeticEntity, now = new
     (x) => isEventDecorationReleased(x, now) && x.entityTypes.includes(entityType)
   );
 }
-
-/**
- * Whether a viewer with this access to an event (see event-access.ts) may wear and see its
- * decorations. Owned hats are kept after the event like any other cosmetic: they stay on content
- * and can still be moved, they only stop scoring and stop being sold. Buying and scoring do not
- * read this.
- */
-export function canWearEventDecorations(access: string | undefined) {
-  return access === 'preview' || access === 'open' || access === 'ended';
-}

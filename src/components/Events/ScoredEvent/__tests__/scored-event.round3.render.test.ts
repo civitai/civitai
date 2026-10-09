@@ -161,6 +161,14 @@ describe('Your hats cards', () => {
     expect(el.querySelector('[data-testid="get-another-hat"]')).toBeNull();
   });
 
+  it('keeps the move cooldown once the event has ended', () => {
+    const el = cards([hat({ placedOn: placed, moveCooldownLeftMs: 5 * 60 * 1000 })], true);
+    const move = el.querySelector<HTMLButtonElement>('button')!;
+    expect(move.textContent).toBe('Move');
+    expect(move.disabled).toBe(true);
+    expect(el.textContent).toContain('Can move in 5 min');
+  });
+
   // Rows of equal height, so the card is a hat card's size even alone on its row.
   it('sizes every grid row alike', () => {
     const grid = cards([hat({})]).querySelector<HTMLElement>('[data-testid="my-hats-grid"]')!;

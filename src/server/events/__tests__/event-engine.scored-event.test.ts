@@ -235,11 +235,16 @@ describe('end-of-event cleanup', () => {
   });
 
   it('does nothing for holiday2024 on any day after its grace window, including birthday cleanup day', async () => {
-    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
+    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
     await eventEngine.dailyReset(birthdayCleanup);
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
     expect(mockCreateNotification).not.toHaveBeenCalled();
+    // ...while the birthday event itself was cleaned up on this same run (positive control).
+    const winnerFlags = dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
+      (sql as TemplateStringsArray).join('?').includes('{winner}')
+    );
+    expect(winnerFlags.map(([, id]) => id)).toEqual([23]);
   });
 
   it('positive control: holiday2024 cleanup does run inside its own grace window, with real cosmetic ids', async () => {

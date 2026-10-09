@@ -1,10 +1,9 @@
 import type { EventViewer } from '~/server/events/event-access';
-import { getEventAccess } from '~/server/events/event-access';
+import { canWearEventDecorations, getEventAccess } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
 import { logToAxiom } from '~/server/logging/client';
 import type { EventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import {
-  canWearEventDecorations,
   EVENT_DECORATION_DEFINITIONS,
   isEventDecorationReleased,
 } from '~/shared/constants/event-decoration.constants';

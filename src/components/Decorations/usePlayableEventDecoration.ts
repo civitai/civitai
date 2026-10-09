@@ -1,7 +1,5 @@
-import {
-  canWearEventDecorations,
-  getReleasedEventDecoration,
-} from '~/shared/constants/event-decoration.constants';
+import { canWearEventDecorations } from '~/shared/constants/event-access.constants';
+import { getReleasedEventDecoration } from '~/shared/constants/event-decoration.constants';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
@@ -16,5 +14,5 @@ export function usePlayableEventDecoration(entityType: CosmeticEntity) {
     { event: definition?.event ?? '' },
     { enabled: !!definition, staleTime: 5 * 60 * 1000 }
   );
-  return definition && canWearEventDecorations(access) ? definition : undefined;
+  return definition && access && canWearEventDecorations(access) ? definition : undefined;
 }

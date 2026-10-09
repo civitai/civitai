@@ -118,8 +118,8 @@ export const eventEngine = {
         if (alreadyCleanedUp) continue;
 
         // A scored event's cosmetics stay on content: owners keep them after the event (see
-        // canWearEventDecorations). Its winner waits until scoring has finished taking late data,
-        // so it is decided on the final standings.
+        // canWearEventDecorations). Its winner waits until scoring has finished taking late
+        // data, so it is decided on the final standings.
         if (
           eventDef.scoring &&
           now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs
