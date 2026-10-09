@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import styles from './CosmeticWrapper.module.scss';
 import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
 import { EventDecorationOverlay } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
-import { getEventDecorationClearLeft } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import { getEventDecorationClearLeftCss } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
@@ -63,7 +63,7 @@ export function TwCosmeticWrapper({
       style={{
         ...styleRef.current,
         ...(eventDecoration && {
-          '--event-decoration-clear-left': `${getEventDecorationClearLeft(eventDecoration)}px`,
+          '--event-decoration-clear-left': getEventDecorationClearLeftCss(eventDecoration),
         }),
         ...style,
       }}

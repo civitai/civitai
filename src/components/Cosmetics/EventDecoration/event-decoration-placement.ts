@@ -2,23 +2,26 @@ import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
 /**
- * Where a hat sits on a card. Grids clip anything drawn more than ITEM_BLEED outside a card
- * (virtual masonry's paint containment, home-block overflow), so every placement is solved
- * backwards from that budget rather than tuned by eye.
+ * Where a hat sits on a card. `corner` is worn on the top-left corner of a feed card; `inside` is
+ * the same hat kept within the card, for containers that clip at the card's edge (carousels).
  */
-export type HatPlacement = 'corner' | 'top' | 'inside';
+export type HatPlacement = 'corner' | 'inside';
 export const DEFAULT_HAT_PLACEMENT: HatPlacement = 'corner';
 
 /**
- * `size` is the longer side of the hat's visible pixels, in CSS px. `overhang` is how far those
- * pixels reach past the edge they hang off; negative keeps the hat inside the card.
+ * The worn look, chosen by eye on real feed cards. The hat leans along a line through the card's
+ * corner, so the corner sits inside it like a head; `onCard` is the share of the hat's height
+ * (brim to top) that sits inside the card. `grow` is the hover scale, about the brim.
  */
-const PLACEMENTS: Record<HatPlacement, { size: number; tilt: number; overhang: number }> = {
-  corner: { size: 34, tilt: -18, overhang: ITEM_BLEED },
-  top: { size: 30, tilt: 0, overhang: ITEM_BLEED },
-  // For containers that clip at the card's edge with no bleed at all (carousels).
-  inside: { size: 34, tilt: -18, overhang: -4 },
-};
+export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
+
+/**
+ * How far past the card's top and left edges the hat may reach at rest. Containers crop whatever
+ * a card paints further out (virtual masonry's paint containment, home blocks' overflow), so a
+ * hat that would reach further is moved into the card until it fits. A container with less room
+ * than the feed declares it as `--event-decoration-allowance` (see EventDecorationOverlay).
+ */
+export const HAT_ALLOWANCE: Record<HatPlacement, number> = { corner: ITEM_BLEED, inside: -2 };
 
 // The art convention when a cosmetic says nothing about its own fit: a 128x160 canvas, hat drawn
 // upright, nothing below y=156.
@@ -31,34 +34,49 @@ const isNumbers = (value: unknown, length: number): value is number[] =>
   value.every((x) => typeof x === 'number' && Number.isFinite(x));
 
 /**
- * The hat's box, in px from the card's top-left corner. `corner` leans out of the top-left
- * corner; `top` stands upright on the middle of the top edge; `inside` sits in the top-left
- * corner without leaving the card. The art's visible pixels reach exactly the placement's
- * overhang past the edge, whatever its shape, because the solve uses the art's own bounds.
+ * The hat's box, in px from the card's top-left corner, rotated about the middle of its brim.
+ * Sizing and the overhang solve use the art's own brim and outline when its fit gives them, so
+ * every design is worn at the same size and none is cropped.
  */
-export function getHatLayout(placement: HatPlacement, fit?: EventDecorationFit) {
-  const defaults = PLACEMENTS[placement];
+export function getHatLayout(
+  placement: HatPlacement,
+  fit?: EventDecorationFit,
+  allowance = HAT_ALLOWANCE[placement]
+) {
   const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
   const [left, top, right, bottom] =
     isNumbers(fit?.bounds, 4) && fit.bounds[2] > fit.bounds[0] && fit.bounds[3] > fit.bounds[1]
       ? fit.bounds
       : DEFAULT_BOUNDS;
-  const size = typeof fit?.size === 'number' && fit.size > 0 ? fit.size : defaults.size;
-  const tilt = placement !== 'top' && typeof fit?.tilt === 'number' ? fit.tilt : defaults.tilt;
-
-  const scale = size / Math.max(right - left, bottom - top);
-  // The hat rests on its bottom-centre: that is the point that sits on the card.
-  const anchor = { x: (left + right) / 2, y: bottom };
-
-  const rad = (tilt * Math.PI) / 180;
-  const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
-  const points = [
+  const [brimLeft, brimRight, brimY] =
+    isNumbers(fit?.brim, 3) && fit.brim[1] > fit.brim[0] ? fit.brim : [left, right, bottom];
+  const artOutline =
+    Array.isArray(fit?.outline) &&
+    fit.outline.length >= 3 &&
+    fit.outline.every((point) => isNumbers(point, 2))
+      ? fit.outline
+      : undefined;
+  const outline = artOutline ?? [
     [left, top],
     [right, top],
     [left, bottom],
     [right, bottom],
-  ].map(([x, y]) => {
-    const [dx, dy] = [(x - anchor.x) * scale, (y - anchor.y) * scale];
+  ];
+  const brimWidth = typeof fit?.size === 'number' && fit.size > 0 ? fit.size : HAT_LOOK.brim;
+  const tilt =
+    typeof fit?.tilt === 'number' && Number.isFinite(fit.tilt) ? fit.tilt : HAT_LOOK.tilt;
+
+  const scale = brimWidth / (brimRight - brimLeft);
+  const pivot = { x: (brimLeft + brimRight) / 2, y: brimY };
+  const rad = (tilt * Math.PI) / 180;
+  const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
+
+  // The brim's middle sits on the line from the corner along the hat's lean, far enough in that
+  // `onCard` of the hat's height is inside the card.
+  const heightAboveBrim = (brimY - Math.min(...outline.map(([, y]) => y))) * scale;
+  const inset = HAT_LOOK.onCard * heightAboveBrim;
+  const points = outline.map(([x, y]) => {
+    const [dx, dy] = [(x - pivot.x) * scale, (y - pivot.y) * scale];
     return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
   });
   const minX = Math.min(...points.map((p) => p.x));
@@ -66,37 +84,65 @@ export function getHatLayout(placement: HatPlacement, fit?: EventDecorationFit) 
   const maxX = Math.max(...points.map((p) => p.x));
   const maxY = Math.max(...points.map((p) => p.y));
 
-  const anchorY = -defaults.overhang - minY;
-  // `top` is centred horizontally by CSS, so only its vertical position is solved here.
-  const anchorX = placement === 'top' ? 0 : -defaults.overhang - minX;
+  const pivotX = Math.max(-sin * inset, -allowance - minX);
+  const pivotY = Math.max(cos * inset, -allowance - minY);
 
   return {
     width: canvasW * scale,
     height: canvasH * scale,
     tilt,
-    /** Box position of the unrotated element; rotation is about the anchor. */
-    left: anchorX - anchor.x * scale,
-    top: anchorY - anchor.y * scale,
-    origin: `${anchor.x * scale}px ${anchor.y * scale}px`,
-    /** Visible extent on the card, for whatever has to keep clear of the hat. */
+    /** Box position of the unrotated element; rotation and hover growth are about the brim. */
+    left: pivotX - pivot.x * scale,
+    top: pivotY - pivot.y * scale,
+    origin: `${pivot.x * scale}px ${pivot.y * scale}px`,
+    /** The art's own outline (or its bounds), so clicks beside the hat reach what is under it. */
+    hitArea: `polygon(${(
+      artOutline ?? [
+        [left, top],
+        [right, top],
+        [right, bottom],
+        [left, bottom],
+      ]
+    )
+      .map(([x, y]) => `${x * scale}px ${y * scale}px`)
+      .join(', ')})`,
+    /** Visible extent on the card at rest, for whatever has to keep clear of the hat. */
     reach: {
-      left: anchorX + minX,
-      top: anchorY + minY,
-      right: anchorX + maxX,
-      bottom: anchorY + maxY,
+      left: pivotX + minX,
+      top: pivotY + minY,
+      right: pivotX + maxX,
+      bottom: pivotY + maxY,
     },
   };
 }
 
 /**
+ * How far a container with less room moves a corner hat in, as CSS: only CSS can read the
+ * container's `--event-decoration-allowance`. `reach` is the hat's edge with no room limit.
+ */
+export const hatShiftCss = (reach: number) =>
+  `max(0px, -1 * var(--event-decoration-allowance, ${HAT_ALLOWANCE.corner}px) - ${reach}px)`;
+
+/**
  * How much of the card's top-left a decoration covers, for corner content (the moderator's
- * browsing-level chip, the creator's avatar) to step clear of. Exposed to CSS as
- * `--event-decoration-clear-left`.
+ * browsing-level chip, the creator's avatar) to step clear of.
  */
 export function getEventDecorationClearLeft(
   decoration: { type: string; fit?: EventDecorationFit },
+  placement = DEFAULT_HAT_PLACEMENT,
+  allowance?: number
+) {
+  if (decoration.type !== 'hat') return 0;
+  return Math.ceil(getHatLayout(placement, decoration.fit, allowance).reach.right) + 4;
+}
+
+/** `--event-decoration-clear-left` for a card: follows a corner hat its container moves in. */
+export function getEventDecorationClearLeftCss(
+  decoration: { type: string; fit?: EventDecorationFit },
   placement = DEFAULT_HAT_PLACEMENT
 ) {
-  if (decoration.type !== 'hat' || placement === 'top') return 0;
-  return Math.ceil(getHatLayout(placement, decoration.fit).reach.right) + 4;
+  if (decoration.type !== 'hat' || placement !== 'corner')
+    return `${getEventDecorationClearLeft(decoration, placement)}px`;
+  const { reach } = getHatLayout('corner', decoration.fit, Infinity);
+  return `calc(${Math.ceil(reach.right) + 4}px + ${hatShiftCss(reach.left)})`;
 }
