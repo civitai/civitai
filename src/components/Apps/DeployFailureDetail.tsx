@@ -2,6 +2,7 @@ import { Alert, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 
 import { describeBuildFailure } from '~/components/Apps/buildFailure';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 
 /**
  * Why an approved version failed to go live, for the APP'S OWN TEAM.
@@ -18,13 +19,16 @@ import { describeBuildFailure } from '~/components/Apps/buildFailure';
  */
 export function DeployFailureDetail({
   detail,
+  signals,
   testId,
 }: {
   detail: string | null | undefined;
+  /** The latest build attempt's failed step and class, when the build reported them. */
+  signals?: BuildAttemptSignals | null;
   /** Prefix for this block's test ids; the excerpt gets `<testId>-excerpt`. */
   testId: string;
 }) {
-  const failure = describeBuildFailure(detail);
+  const failure = describeBuildFailure(detail, signals);
   const isAuthors = failure.failureClass === 'author';
   return (
     <Alert
@@ -36,6 +40,11 @@ export function DeployFailureDetail({
       data-failure-class={failure.failureClass}
     >
       <Stack gap={6}>
+        {failure.failedStepLabel && (
+          <Text size="sm" fw={500} data-testid={`${testId}-step`}>
+            Failed at: {failure.failedStepLabel}
+          </Text>
+        )}
         <Text size="sm">{failure.guidance}</Text>
         {failure.excerpt && (
           // Plain <pre>, not <Code block>: the wrap, the height cap and the both-axis

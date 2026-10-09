@@ -320,6 +320,20 @@ export type AppBlock = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppBlockBuildAttempt = {
+  id: Generated<number>;
+  publish_request_id: string | null;
+  slug: string;
+  sha: string;
+  run_id: string | null;
+  mode: string;
+  status: string;
+  failed_step: string | null;
+  failed_reason: string | null;
+  failure_class: string | null;
+  pipeline_status: string | null;
+  created_at: Generated<Timestamp>;
+};
 export type AppBlockPublishRequest = {
   id: string;
   app_block_id: string | null;
@@ -5012,6 +5026,7 @@ export type DB = {
   AnswerReaction: AnswerReaction;
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
+  app_block_build_attempts: AppBlockBuildAttempt;
   app_block_publish_requests: AppBlockPublishRequest;
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;

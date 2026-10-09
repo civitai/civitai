@@ -11,9 +11,19 @@ import {
   waitForReviewHostReachable,
 } from '~/server/services/blocks/apps-pipeline.service';
 import {
+  isSupersededRun,
+  recordBuildAttempt,
+} from '~/server/services/blocks/build-attempts.service';
+import { deriveFailureClass, parseBuildSignals } from '~/server/services/blocks/build-signals';
+import {
   markReviewPreviewState,
   parseReviewDetail,
 } from '~/server/services/blocks/publish-request.service';
+import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
+import {
+  BUILD_STEP_LABELS,
+  isBuildPipelineStep,
+} from '~/shared/constants/app-block-build.constants';
 
 /**
  * POST /api/internal/blocks/review-build-callback  (MOD REVIEW SANDBOX, #2831)
@@ -62,6 +72,8 @@ type CallbackBody = {
   imageRef?: string;
   status?: string;
   ts?: unknown;
+  // OPTIONAL structured signals, read and validated by `parseBuildSignals` (same contract
+  // as the production build-callback; an invalid one is dropped, never fatal).
 };
 
 const TS_TOLERANCE_SECONDS = 300;
@@ -77,7 +89,10 @@ export function checkCallbackTimestamp(
     return { ok: false, reason: 'ts present but not a finite number' };
   }
   if (Math.abs(nowSec - ts) > TS_TOLERANCE_SECONDS) {
-    return { ok: false, reason: `ts skew ${Math.abs(nowSec - ts)}s exceeds ${TS_TOLERANCE_SECONDS}s` };
+    return {
+      ok: false,
+      reason: `ts skew ${Math.abs(nowSec - ts)}s exceeds ${TS_TOLERANCE_SECONDS}s`,
+    };
   }
   return { ok: true };
 }
@@ -264,14 +279,63 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  const { signals, dropped } = parseBuildSignals(body as Record<string, unknown>);
+  if (dropped.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[review-build-callback] dropped invalid optional field(s) ${dropped.join(', ')} for ${
+        body.publishRequestId
+      }`
+    );
+  }
+
   const succeeded = (body.status ?? '').toLowerCase() === 'succeeded';
   if (!succeeded) {
+    const failureClass = signals.failedStep
+      ? deriveFailureClass(signals.failedStep, signals.failedReason)
+      : null;
+    const attempt = {
+      mode: 'review' as const,
+      status: 'failed' as const,
+      publishRequestId: body.publishRequestId,
+      slug: body.slug,
+      sha: body.sha,
+      runId: signals.runId,
+      failedStep: signals.failedStep,
+      failedReason: signals.failedReason,
+      failureClass,
+      pipelineStatus: signals.pipelineStatus,
+    };
+    recordAppBlockBuildOutcome({
+      mode: 'review',
+      outcome: 'failed',
+      failedStep: signals.failedStep ?? 'unreported',
+      failureClass: failureClass ?? 'unknown',
+    });
+    // Stale-run guard, as in the production callback: a "Rebuild preview" of the same sha
+    // starts a new run, and a late failure from the old one must not flip it to failed.
+    if (
+      await isSupersededRun({
+        mode: 'review',
+        slug: body.slug,
+        sha: body.sha,
+        runId: signals.runId,
+      })
+    ) {
+      await recordBuildAttempt(attempt);
+      res.status(200).json({ ok: true, applied: false, reason: 'superseded run' });
+      return;
+    }
     await markReviewPreviewState(
       body.publishRequestId,
       'preview-failed',
-      { ...baseDetail, error: `review build ${String(body.status ?? 'failed').slice(0, 60)}` },
+      {
+        ...baseDetail,
+        error: reviewBuildFailureError(body.status, signals.failedStep, failureClass),
+      },
       { requireActivePreview: true }
     );
+    await recordBuildAttempt(attempt);
     res.status(200).json({ ok: true, applied: false, reason: 'review build failed' });
     return;
   }
@@ -290,6 +354,22 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   await markReviewPreviewState(body.publishRequestId, 'preview-deploying', baseDetail, {
     requireActivePreview: true,
   });
+  await recordBuildAttempt({
+    mode: 'review',
+    status: 'succeeded',
+    publishRequestId: body.publishRequestId,
+    slug: body.slug,
+    sha: body.sha,
+    runId: signals.runId,
+    failedStep: signals.failedStep,
+    pipelineStatus: signals.pipelineStatus,
+  });
+  recordAppBlockBuildOutcome({
+    mode: 'review',
+    outcome: 'succeeded',
+    failedStep: 'none',
+    failureClass: 'none',
+  });
 
   let applyJob: { name: string };
   try {
@@ -304,6 +384,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // it here or a transient k8s hiccup would wedge same-sha retries for the full
     // TTL (symmetrical with the watcher's clear-on-failed below).
     await clearReviewApplyMark(body.publishRequestId, body.sha);
+    recordReviewApplyFailure();
     await markReviewPreviewState(
       body.publishRequestId,
       'preview-failed',
@@ -362,6 +443,7 @@ export async function watchReviewApplyJob(args: {
         // (mirror the failed branch below) so a same-sha rebuild isn't
         // suppressed within the TTL window.
         await clearReviewApplyMark(args.publishRequestId, args.sha);
+        recordReviewApplyFailure();
         await markReviewPreviewState(
           args.publishRequestId,
           'preview-failed',
@@ -381,6 +463,7 @@ export async function watchReviewApplyJob(args: {
       if (outcome === 'failed') {
         await clearReviewApplyMark(args.publishRequestId, args.sha);
       }
+      recordReviewApplyFailure();
       await markReviewPreviewState(
         args.publishRequestId,
         'preview-failed',
@@ -399,4 +482,32 @@ export async function watchReviewApplyJob(args: {
       }`
     );
   }
+}
+
+/**
+ * The moderator-visible `error` for a failed review build.
+ *
+ * With a reported step it names the step and the derived class: structured values, never
+ * build-log bytes. Without one it is byte-identical to the text before the step signal
+ * existed, so an older pipeline changes nothing.
+ */
+export function reviewBuildFailureError(
+  status: string | undefined,
+  failedStep: string | undefined,
+  failureClass: string | null
+): string {
+  if (isBuildPipelineStep(failedStep) && failureClass) {
+    return `review build failed at ${BUILD_STEP_LABELS[failedStep]} (${failureClass})`;
+  }
+  return `review build ${String(status ?? 'failed').slice(0, 60)}`;
+}
+
+/** The review image built but its deploy did not go live: a platform-class failure. */
+function recordReviewApplyFailure(): void {
+  recordAppBlockBuildOutcome({
+    mode: 'review',
+    outcome: 'failed',
+    failedStep: 'apply',
+    failureClass: deriveFailureClass('apply'),
+  });
 }

@@ -2,6 +2,12 @@ import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
+import {
+  BUILD_STEP_LABELS,
+  isBuildFailureClassSignal,
+  isBuildPipelineStep,
+  type BuildAttemptSignals,
+} from '~/shared/constants/app-block-build.constants';
 
 /**
  * Pure adapters + merge for the UNIFIED moderator review lists (/apps/review).
@@ -169,7 +175,21 @@ export type ReviewRowDeploy = {
   reviewedAt: Date | null;
   /** The publish-request id — the ONLY argument `blocks.retriggerBuild` takes. */
   publishRequestId: string;
+  /** The latest build attempt's failed step + class (failed rows only), or null. */
+  buildSignals?: BuildAttemptSignals | null;
 };
+
+/**
+ * "security scan · unknown" for a moderator's failed-deploy chip, from the latest build
+ * attempt's structured signals; `null` when the build reported no step (or a value outside
+ * the shared lists). Never derived from the build-log excerpt, which moderators do not get.
+ */
+export function failedBuildSummary(signals: BuildAttemptSignals | null | undefined): string | null {
+  const step = signals?.failedStep;
+  const cls = signals?.failureClass;
+  if (!isBuildPipelineStep(step) || !isBuildFailureClassSignal(cls)) return null;
+  return `${BUILD_STEP_LABELS[step]} · ${cls}`;
+}
 // NOTE: `deployDetail` is deliberately NOT projected here, and
 // `listApprovedRequests` does not select it either. It carries the
 // TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes), which
@@ -212,6 +232,7 @@ export function onsiteRequestToUnifiedRow(
           ),
           reviewedAt: toOptionalDate(reviewedAt),
           publishRequestId: req.id,
+          buildSignals: (req as { buildSignals?: BuildAttemptSignals | null }).buildSignals ?? null,
         }
       : undefined;
   const mds = (req.manifestDiffSummary ?? {}) as ManifestDiffSummary;

@@ -832,3 +832,52 @@ describe('🔴 the failure detail reaches the app’s team, and only for a faile
     ).toBeNull();
   });
 });
+
+describe('the latest build attempt’s step + class ride along with the failure detail', () => {
+  it('a failed approved version carries its latest attempt’s signals; no other row does', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'v_failed',
+        deployState: 'failed',
+        deployDetail: 'Build None',
+        submittedAt: new Date('2026-06-02T00:00:00Z'),
+      }),
+      blockReq({
+        id: 'v_live',
+        deployState: 'live',
+        submittedAt: new Date('2026-06-01T00:00:00Z'),
+      }),
+    ]);
+    mockDb.appBlockBuildAttempt.findMany.mockImplementation(async () => [
+      { publishRequestId: 'v_failed', failedStep: 'scan', failureClass: 'unknown' },
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    expect(out.map((e) => [e.id, e.buildSignals])).toEqual([
+      ['v_failed', { failedStep: 'scan', failureClass: 'unknown' }],
+      ['v_live', null],
+    ]);
+    // Only the failed approved version is looked up.
+    expect(mockDb.appBlockBuildAttempt.findMany.mock.calls[0][0].where.publishRequestId).toEqual({
+      in: ['v_failed'],
+    });
+  });
+
+  it('TABLE MISSING: history still loads, with no signals', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({ id: 'v_failed', deployState: 'failed', deployDetail: 'Build None' }),
+    ]);
+    mockDb.appBlockBuildAttempt.findMany.mockImplementation(async () => {
+      throw new Error('The table `public.app_block_build_attempts` does not exist');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    expect(out[0]).toMatchObject({
+      id: 'v_failed',
+      deployDetail: 'Build None',
+      buildSignals: null,
+    });
+    warn.mockRestore();
+  });
+});

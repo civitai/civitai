@@ -2,6 +2,7 @@ import { createHmac } from 'crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
+import type * as BuildAttemptsService from '~/server/services/blocks/build-attempts.service';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — coverage for POST
@@ -25,6 +26,8 @@ const {
   mockFindUnique,
   mockSetNx,
   mockRedisDel,
+  mockSuperseded,
+  mockRecordAttempt,
 } = vi.hoisted(() => {
   const SECRET = 'test-build-callback-secret';
   return {
@@ -53,8 +56,17 @@ const {
     // replay-guard primitive — true = newly set (first callback → run apply).
     mockSetNx: vi.fn(async () => true),
     mockRedisDel: vi.fn(async () => undefined),
+    // The stale-run guard's answer (its own logic is covered with an in-memory table in
+    // the production build-callback suite and the service suite).
+    mockSuperseded: vi.fn(async () => false),
+    mockRecordAttempt: vi.fn(async () => true),
   };
 });
+vi.mock('~/server/services/blocks/build-attempts.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuildAttemptsService>()),
+  isSupersededRun: mockSuperseded,
+  recordBuildAttempt: mockRecordAttempt,
+}));
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/env/server', () => ({
@@ -127,12 +139,17 @@ function makeReqRes(body: string, sig?: string) {
       return this;
     },
   };
-  return { req: stream, res: res as unknown as NextApiResponse & { statusCode: number; body: any } };
+  return {
+    req: stream,
+    res: res as unknown as NextApiResponse & { statusCode: number; body: any },
+  };
 }
 
 describe('expectedReviewImageRef (pure)', () => {
   it('binds to the review-prefixed image', () => {
-    expect(expectedReviewImageRef(SLUG, SHA)).toBe(`ghcr.io/civitai/app-block-review-${SLUG}:${SHA}`);
+    expect(expectedReviewImageRef(SLUG, SHA)).toBe(
+      `ghcr.io/civitai/app-block-review-${SLUG}:${SHA}`
+    );
   });
 });
 
@@ -226,12 +243,9 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(mockTriggerApplyReview).toHaveBeenCalledWith(
       expect.objectContaining({ slug: SLUG, sha: SHA, publishRequestId: PUBREQ })
     );
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-deploying',
-      expect.anything(),
-      { requireActivePreview: true }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-deploying', expect.anything(), {
+      requireActivePreview: true,
+    });
   });
 
   it('replay guard: a duplicate success callback short-circuits before the apply', async () => {
@@ -240,7 +254,10 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     const { req, res } = makeReqRes(goodBody());
     await handler(req, res);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toMatchObject({ applied: false, reason: 'duplicate callback (replay-guarded)' });
+    expect(res.body).toMatchObject({
+      applied: false,
+      reason: 'duplicate callback (replay-guarded)',
+    });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
   });
 
@@ -258,12 +275,9 @@ describe('POST /api/internal/blocks/review-build-callback', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ applied: false });
     expect(mockTriggerApplyReview).not.toHaveBeenCalled();
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-failed',
-      expect.anything(),
-      { requireActivePreview: true }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-failed', expect.anything(), {
+      requireActivePreview: true,
+    });
   });
 
   it('torn-down mid-build → aborts: no apply, no state write, no resurrection', async () => {
@@ -333,12 +347,10 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       baseDetail,
     });
     expect(mockWaitReachable).toHaveBeenCalledWith(HOST);
-    expect(mockMarkPreview).toHaveBeenCalledWith(
-      PUBREQ,
-      'preview-live',
-      baseDetail,
-      { requireActivePreview: true, expectedSha: SHA }
-    );
+    expect(mockMarkPreview).toHaveBeenCalledWith(PUBREQ, 'preview-live', baseDetail, {
+      requireActivePreview: true,
+      expectedSha: SHA,
+    });
     // Not marked failed, and the dedup slot is NOT freed on the happy path.
     expect(mockMarkPreview).toHaveBeenCalledTimes(1);
     expect(mockRedisDel).not.toHaveBeenCalled();
@@ -438,5 +450,89 @@ describe('watchReviewApplyJob (reachability gate)', () => {
       { sha: SHA },
       { requireActivePreview: true, expectedSha: SHA }
     );
+  });
+});
+
+describe('review-build-callback — structured signals', () => {
+  const RUN = 'app-blocks-review-my-app-aaaaaaaa-111111';
+  const failBody = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      mode: 'review',
+      slug: SLUG,
+      sha: SHA,
+      publishRequestId: PUBREQ,
+      imageRef: expectedReviewImageRef(SLUG, SHA),
+      status: 'None',
+      ...over,
+    });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFlag.enabled = true;
+    mockSuperseded.mockResolvedValue(false);
+  });
+
+  const errorWritten = () =>
+    (mockMarkPreview.mock.calls.at(-1) as unknown as [string, string, { error?: string }])[2].error;
+
+  it('ABSENT signals: the moderator error is byte-identical to before', async () => {
+    const { req, res } = makeReqRes(failBody());
+    await handler(req, res);
+    expect(res.body).toEqual({ ok: true, applied: false, reason: 'review build failed' });
+    expect(errorWritten()).toBe('review build None');
+    expect(mockRecordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: 'review',
+        status: 'failed',
+        publishRequestId: PUBREQ,
+        failedStep: undefined,
+        failureClass: null,
+      })
+    );
+  });
+
+  it('a reported step names the step and class (structured, no build output)', async () => {
+    const { req, res } = makeReqRes(failBody({ failedStep: 'scan', runId: RUN }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(errorWritten()).toBe('review build failed at security scan (unknown)');
+    expect(mockRecordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: RUN, failedStep: 'scan', failureClass: 'unknown' })
+    );
+  });
+
+  it('an invalid field is dropped; the failure is still written', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { req, res } = makeReqRes(failBody({ failedStep: 'deploy' }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(errorWritten()).toBe('review build None');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('dropped invalid optional field(s) failedStep')
+    );
+    warn.mockRestore();
+  });
+
+  it('a failure from a SUPERSEDED run leaves the newer preview alone', async () => {
+    mockSuperseded.mockResolvedValue(true);
+    const { req, res } = makeReqRes(failBody({ failedStep: 'build', runId: RUN }));
+    await handler(req, res);
+    expect(res.body).toEqual({ ok: true, applied: false, reason: 'superseded run' });
+    expect(mockSuperseded).toHaveBeenCalledWith({
+      mode: 'review',
+      slug: SLUG,
+      sha: SHA,
+      runId: RUN,
+    });
+    expect(mockMarkPreview).not.toHaveBeenCalled();
+    expect(mockRecordAttempt).toHaveBeenCalledWith(expect.objectContaining({ runId: RUN }));
+  });
+
+  it('the preview failure is written even when the attempt write fails (table missing)', async () => {
+    mockRecordAttempt.mockResolvedValueOnce(false);
+    const { req, res } = makeReqRes(failBody({ failedStep: 'build', runId: RUN }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(errorWritten()).toBe('review build failed at build (unknown)');
   });
 });

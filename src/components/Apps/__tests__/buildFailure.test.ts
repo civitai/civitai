@@ -5,6 +5,7 @@ import {
   describeBuildFailure,
   PLATFORM_FAILURE_GUIDANCE,
   SECURITY_SCAN_GUIDANCE,
+  TRANSIENT_FAILURE_GUIDANCE,
   UNKNOWN_FAILURE_GUIDANCE,
 } from '~/components/Apps/buildFailure';
 import {
@@ -140,4 +141,89 @@ describe('🔴 what the author is never told', () => {
 
 it('a hostile excerpt passes through unchanged — escaping is the renderer’s job', () => {
   expect(describeBuildFailure(HOSTILE_DETAIL).excerpt).toBe(HOSTILE_EXCERPT);
+});
+
+describe('the build’s own report of the failed step wins over the text', () => {
+  it('a reported step + class decide the cause even when the excerpt reads like the author’s', () => {
+    // The excerpt alone would be classed `author` (first line `ERROR:`).
+    const d = describeBuildFailure(RECIPE_ERROR_DETAIL, {
+      failedStep: 'build',
+      failureClass: 'unknown',
+    });
+    expect(d.failureClass).toBe('unknown');
+    expect(d.failedStepLabel).toBe('build');
+    expect(d.badge).toBe('failed at build');
+    expect(d.guidance).toBe(UNKNOWN_FAILURE_GUIDANCE);
+    expect(d.excerpt).toBe(RECIPE_ERROR_EXCERPT);
+  });
+
+  it('…and against a scan excerpt, a clone failure is ours', () => {
+    const d = describeBuildFailure(SCAN_BLOCKED_DETAIL, {
+      failedStep: 'clone',
+      failureClass: 'platform',
+    });
+    expect(d.failureClass).toBe('platform');
+    expect(d.failedStepLabel).toBe('fetching the source');
+    expect(d.guidance).toBe(PLATFORM_FAILURE_GUIDANCE);
+  });
+
+  it.each([
+    ['validate', 'author', 'author', AUTHOR_FAILURE_GUIDANCE, 'manifest check'],
+    ['clone', 'platform', 'platform', PLATFORM_FAILURE_GUIDANCE, 'fetching the source'],
+    ['push', 'transient', 'transient', TRANSIENT_FAILURE_GUIDANCE, 'publishing the image'],
+    ['build', 'transient', 'transient', TRANSIENT_FAILURE_GUIDANCE, 'build'],
+    ['build', 'unknown', 'unknown', UNKNOWN_FAILURE_GUIDANCE, 'build'],
+    // The step is known even while whose component the finding is in is not.
+    ['scan', 'unknown', 'security-scan', SECURITY_SCAN_GUIDANCE, 'security scan'],
+  ] as const)('%s + %s → %s', (failedStep, failureClass, expected, guidance, label) => {
+    const d = describeBuildFailure(BUILD_NONE_DETAIL, { failedStep, failureClass });
+    expect(d.failureClass).toBe(expected);
+    expect(d.guidance).toBe(guidance);
+    expect(d.failedStepLabel).toBe(label);
+  });
+
+  it('the civitai-side details still win: a deploy failure after a built image', () => {
+    const d = describeBuildFailure(DEPLOY_TIMED_OUT_DETAIL, {
+      failedStep: 'scan',
+      failureClass: 'unknown',
+    });
+    expect(d.badge).toBe('deploy failed');
+    expect(d.failedStepLabel).toBeNull();
+    const r = describeBuildFailure(RETRIGGER_FAILED_AUTHOR_DETAIL, {
+      failedStep: 'scan',
+      failureClass: 'unknown',
+    });
+    expect(r.badge).toBe('rebuild failed');
+  });
+
+  it('the text heuristic is the fallback when no usable signal is stored', () => {
+    for (const signals of [
+      undefined,
+      null,
+      { failedStep: null, failureClass: null },
+      { failedStep: 'none', failureClass: 'unknown' },
+      { failedStep: 'scan', failureClass: null },
+      { failedStep: 'apply', failureClass: 'platform' },
+      { failedStep: 'scan', failureClass: 'whoever' },
+    ]) {
+      expect(
+        describeBuildFailure(SCAN_BLOCKED_DETAIL, signals).failureClass,
+        JSON.stringify(signals)
+      ).toBe('security-scan');
+      expect(
+        describeBuildFailure(RECIPE_ERROR_DETAIL, signals).failureClass,
+        JSON.stringify(signals)
+      ).toBe('author');
+    }
+  });
+
+  it('a signal-classed failure never tells a non-author to resubmit, nor shows "Build None"', () => {
+    for (const failureClass of ['platform', 'transient', 'unknown'] as const) {
+      const d = describeBuildFailure(BUILD_NONE_DETAIL, { failedStep: 'build', failureClass });
+      expect(rendered(d)).not.toMatch(/Build None/);
+      expect(/submit a new version/i.test(d.guidance) && !/don't need to/i.test(d.guidance)).toBe(
+        false
+      );
+    }
+  });
 });
