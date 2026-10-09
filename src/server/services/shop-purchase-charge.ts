@@ -1,8 +1,10 @@
+import { randomUUID } from 'crypto';
 import { isSafeToRetry } from '@civitai/buzz';
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { getMultiAccountTransactionsByPrefix } from '~/server/services/buzz.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
 import { PURCHASE_ALREADY_COMPLETED_MESSAGE } from '~/shared/constants/cosmetic-shop.constants';
@@ -42,7 +44,6 @@ export const PURCHASE_STATE_UNKNOWN_MESSAGE =
 
 /** The Axiom event name for a purchase that needs reconciling by hand. */
 export const PURCHASE_STATE_UNKNOWN_LOG_NAME = 'shop-purchase-state-unknown';
-
 
 export const SHOP_PURCHASE_CLAIM_STATUS = {
   pending: 'pending',
@@ -90,51 +91,106 @@ export type ShopPurchaseClaim = {
   resumed: boolean;
 };
 
-/**
- * Claims `transactionId` for this purchase before it is charged. Resolves with
- * the claim to charge under, or throws the answer for a key that is already
- * settled. `amount` is only used when the claim is new.
- */
-export async function claimShopPurchase(context: ShopChargeContext): Promise<ShopPurchaseClaim> {
-  const { transactionId, userId, shopItemId, amount } = context;
-  try {
-    await dbWrite.cosmeticShopPurchaseClaim.create({
-      data: { transactionId, userId, shopItemId, amount, status: CLAIM.pending },
-    });
-    return { transactionId, amount, resumed: false };
-  } catch (error) {
-    if (!isPrismaUniqueViolation(error)) throw error;
-  }
+export type ExistingShopPurchaseClaim = {
+  userId: number;
+  shopItemId: number;
+  amount: number;
+  status: string;
+};
 
-  const existing = await dbWrite.cosmeticShopPurchaseClaim.findUnique({
+/**
+ * The charge prefix for one purchase intent. With the buyer's key it is the
+ * same on every retry, which is what lets a retry find its claim.
+ */
+export function shopPurchaseTransactionId(
+  kind: 'item' | 'pack',
+  userId: number,
+  shopItemId: number,
+  idempotencyKey: string | undefined
+) {
+  // `v2`: claims began with this prefix, so no key used under it has ledger
+  // history from before there was a claim to account for it.
+  const prefix = kind === 'pack' ? 'cosmetic-pack-v2' : 'cosmetic-purchase-v2';
+  return `${prefix}-${userId}-${shopItemId}-${idempotencyKey ?? randomUUID()}`;
+}
+
+/** The claim an earlier request with this key made, if any. */
+export async function findShopPurchaseClaim(
+  transactionId: string
+): Promise<ExistingShopPurchaseClaim | null> {
+  return dbWrite.cosmeticShopPurchaseClaim.findUnique({
     where: { transactionId },
     select: { userId: true, shopItemId: true, amount: true, status: true },
   });
-  // Deleted between the insert and this read: another attempt under this key
-  // was declined, so nothing is charged under it.
-  if (!existing) throw throwBadRequestError('This purchase could not be started. Try again.');
+}
+
+export type ShopPurchaseStart = {
+  transactionId: string;
+  /** The claim an earlier request with this key made, pending if present. */
+  existingClaim: ExistingShopPurchaseClaim | null;
+  /** The charge context of that pending claim, for runPurchaseChecks. */
+  pendingClaim: ShopChargeContext | null;
+  /**
+   * Whether money may have moved under the pending claim. Only then does it
+   * stand in for today's stock, sale window and price: a claim with nothing
+   * charged under it vouches for nothing, however long it has been pending.
+   */
+  chargedBefore: boolean;
+};
+
+/**
+ * The start of every shop purchase: its charge prefix, and the claim an earlier
+ * request with the same key left, read before any of the purchase's checks. A
+ * settled claim is answered here. `amount` is today's price, for the context of
+ * that answer.
+ */
+export async function beginShopPurchase({
+  kind,
+  userId,
+  shopItemId,
+  idempotencyKey,
+  amount,
+}: {
+  kind: 'item' | 'pack';
+  userId: number;
+  shopItemId: number;
+  idempotencyKey: string | undefined;
+  amount: number;
+}): Promise<ShopPurchaseStart> {
+  const transactionId = shopPurchaseTransactionId(kind, userId, shopItemId, idempotencyKey);
+  const existingClaim = idempotencyKey ? await findShopPurchaseClaim(transactionId) : null;
+  assertClaimUnsettled({ userId, shopItemId, transactionId, amount }, existingClaim);
+  if (!existingClaim)
+    return { transactionId, existingClaim, pendingClaim: null, chargedBefore: false };
+
+  const pendingClaim = { userId, shopItemId, transactionId, amount: existingClaim.amount };
+  let legs: unknown[];
+  try {
+    legs = await getMultiAccountTransactionsByPrefix(transactionId);
+  } catch (error) {
+    throw purchaseStateUnknown({ ...pendingClaim, error }, 'ledger read failed on resume');
+  }
+  return { transactionId, existingClaim, pendingClaim, chargedBefore: legs.length > 0 };
+}
+
+/**
+ * Throws the answer for a key whose claim is settled, so it is given before any
+ * of the purchase's checks: a buyer whose purchase completed is told so even if
+ * the item has since sold out. Returns for a pending claim, or none.
+ */
+export function assertClaimUnsettled(
+  context: ShopChargeContext,
+  existing: ExistingShopPurchaseClaim | null
+) {
+  if (!existing) return;
   // The prefix names the buyer and the item, so this is not reachable through a
   // client key. Refused rather than charged under someone else's claim.
-  if (existing.userId !== userId || existing.shopItemId !== shopItemId)
+  if (existing.userId !== context.userId || existing.shopItemId !== context.shopItemId)
     throw throwBadRequestError('This purchase is not available');
 
   switch (existing.status) {
-    case CLAIM.pending: {
-      // Counted so the request that created the claim cannot release it on a
-      // decline while this one may be charging under it (see releaseClaim).
-      const { count } = await dbWrite.cosmeticShopPurchaseClaim.updateMany({
-        where: { transactionId, status: CLAIM.pending },
-        data: { attempts: { increment: 1 } },
-      });
-      // Settled or released since the read: nothing is charged from here, and
-      // the next retry reads the settled status.
-      if (count !== 1)
-        throw purchaseStateUnknown(
-          { ...context, amount: existing.amount },
-          'claim changed on resume'
-        );
-      return { transactionId, amount: existing.amount, resumed: true };
-    }
+    case CLAIM.pending:
+      return;
     case CLAIM.paid:
       throw throwBadRequestError(PURCHASE_ALREADY_COMPLETED_MESSAGE);
     case CLAIM.refunded:
@@ -147,6 +203,87 @@ export async function claimShopPurchase(context: ShopChargeContext): Promise<Sho
         `retry of a ${existing.status} claim`
       );
   }
+}
+
+/**
+ * The purchase's own checks, for a request that may be resuming a pending
+ * claim. A refusal is then answered as state unknown rather than a 4xx: the
+ * earlier attempt may have charged, and a 4xx tells the client to drop the key
+ * that would find that charge.
+ */
+export async function runPurchaseChecks<T>(
+  pending: ShopChargeContext | null,
+  checks: () => Promise<T>
+): Promise<T> {
+  if (!pending) return checks();
+  try {
+    return await checks();
+  } catch (error) {
+    throw purchaseStateUnknown({ ...pending, error }, 'refused while a claim is pending');
+  }
+}
+
+/**
+ * Resumes a pending claim at the amount it claimed. When money moved under it,
+ * the checks a new purchase makes against today's state (stock, sale window,
+ * today's price) were made by the request that created the claim; refused now,
+ * a retry would be told nothing was charged when it was. Without a charge the
+ * caller runs them again (see beginShopPurchase).
+ *
+ * `expectedAmount` is the price this request's buyer confirmed. The claim's
+ * amount was confirmed by the request that wrote it and is never changed, so a
+ * different one is not charged: this request's buyer never agreed to it.
+ */
+export async function resumeShopPurchase(
+  context: ShopChargeContext,
+  existing: ExistingShopPurchaseClaim,
+  expectedAmount?: number
+): Promise<ShopPurchaseClaim> {
+  assertClaimUnsettled(context, existing);
+  const { transactionId } = context;
+  const claimed = { ...context, amount: existing.amount };
+
+  // Unknown, not a refusal: the claim may already be charged.
+  if (expectedAmount !== undefined && expectedAmount !== existing.amount)
+    throw purchaseStateUnknown(claimed, 'expected amount differs from the claim');
+
+  // Counted so the request that created the claim cannot release it on a
+  // decline while this one may be charging under it (see releaseClaim).
+  const { count } = await dbWrite.cosmeticShopPurchaseClaim.updateMany({
+    where: { transactionId, status: CLAIM.pending },
+    data: { attempts: { increment: 1 } },
+  });
+  // Settled or released since the read: nothing is charged from here, and
+  // the next retry reads the settled status.
+  if (count !== 1) throw purchaseStateUnknown(claimed, 'claim changed on resume');
+  return { transactionId, amount: existing.amount, resumed: true };
+}
+
+/**
+ * Claims `transactionId` for a new purchase before it is charged, at
+ * `context.amount`, which the caller has already checked against what the buyer
+ * confirmed. If another request with this key claimed it first, that claim is
+ * resumed instead, and `expectedAmount` is checked against it.
+ */
+export async function claimShopPurchase(
+  context: ShopChargeContext,
+  expectedAmount?: number
+): Promise<ShopPurchaseClaim> {
+  const { transactionId, userId, shopItemId, amount } = context;
+  try {
+    await dbWrite.cosmeticShopPurchaseClaim.create({
+      data: { transactionId, userId, shopItemId, amount, status: CLAIM.pending },
+    });
+    return { transactionId, amount, resumed: false };
+  } catch (error) {
+    if (!isPrismaUniqueViolation(error)) throw error;
+  }
+
+  const existing = await findShopPurchaseClaim(transactionId);
+  // Deleted between the insert and this read: another attempt under this key
+  // was declined, so nothing is charged under it.
+  if (!existing) throw throwBadRequestError('This purchase could not be started. Try again.');
+  return resumeShopPurchase(context, existing, expectedAmount);
 }
 
 // The buzz client retries every failure by default, including ones where the
@@ -183,7 +320,10 @@ export async function chargeForShopPurchase<T extends Charge>(
     if (status === 409)
       throw purchaseStateUnknown({ ...context, error }, 'ledger reported the id as taken');
     // Only a claim no other request has resumed is released: see releaseClaim.
-    if (isDecline(status)) await releaseClaim(context);
+    // One that stays is another attempt's to settle, and that attempt may have
+    // charged, so this decline is not an answer for the key.
+    if (isDecline(status) && !(await releaseClaim(context)))
+      throw await answerFromClaim({ ...context, error }, 'declined while the claim is');
     throw error;
   }
 
@@ -202,13 +342,15 @@ export async function chargeForShopPurchase<T extends Charge>(
   throw purchaseStateUnknown(context, 'ledger returned duplicate legs');
 }
 
+/** False when the claim stays because another request resumed it or settled it. */
 async function releaseClaim(context: ShopChargeContext) {
   try {
     // `attempts: 1`: a request that resumed this claim may have charged under it
     // before this one was declined, and its charge needs the claim to settle.
-    await dbWrite.cosmeticShopPurchaseClaim.deleteMany({
+    const { count } = await dbWrite.cosmeticShopPurchaseClaim.deleteMany({
       where: { transactionId: context.transactionId, status: CLAIM.pending, attempts: 1 },
     });
+    return count === 1;
   } catch (error) {
     // Left pending, a retry resumes it and the ledger declines again; nothing
     // is lost by not deleting it.
@@ -219,6 +361,7 @@ async function releaseClaim(context: ShopChargeContext) {
       ...context,
       error: error instanceof Error ? error.message : error,
     });
+    return true;
   }
 }
 
@@ -247,16 +390,14 @@ export async function markClaimPaid(tx: Prisma.TransactionClient, transactionId:
 }
 
 /**
- * The answer for an attempt whose claim another attempt settled first: granted
- * means the buyer has it; anything else is that attempt's to finish.
+ * The answer for an attempt whose claim another attempt holds or settled first
+ * (a decline it could not release, a refund it could not mark): granted means
+ * the buyer has it; anything else is that attempt's to finish.
  */
-async function claimSettledElsewhere(context: ShopChargeContext & { error?: unknown }) {
-  const claim = await dbWrite.cosmeticShopPurchaseClaim.findUnique({
-    where: { transactionId: context.transactionId },
-    select: { status: true },
-  });
+async function answerFromClaim(context: ShopChargeContext & { error?: unknown }, reason: string) {
+  const claim = await findShopPurchaseClaim(context.transactionId);
   if (claim?.status === CLAIM.paid) return throwBadRequestError(PURCHASE_ALREADY_COMPLETED_MESSAGE);
-  return purchaseStateUnknown(context, `claim settled elsewhere as ${claim?.status ?? 'missing'}`);
+  return purchaseStateUnknown(context, `${reason} ${claim?.status ?? 'missing'}`);
 }
 
 /**
@@ -284,7 +425,7 @@ export async function refundClaimedCharge(
     );
   }
   // Another attempt of this claim settled it: the charge is theirs.
-  if (marked !== 1) throw await claimSettledElsewhere(context);
+  if (marked !== 1) throw await answerFromClaim(context, 'claim settled elsewhere as');
 
   await refundShopCharge(refund, context);
 

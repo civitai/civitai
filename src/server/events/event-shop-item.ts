@@ -1,5 +1,5 @@
 import type { EventViewer, GatedEvent } from '~/server/events/event-access';
-import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
+import { canPlayEvent, canReadEvent, getEventAccess } from '~/server/events/event-access';
 import { loadEvents as loadRegisteredEvents } from '~/server/events/load-events';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -48,11 +48,19 @@ export async function assertEventShopItemPurchasable({
   isModerator,
   data,
   payWith,
+  resumingClaim = false,
 }: {
   userId: number;
   isModerator?: boolean;
   data: EventItemData;
   payWith?: 'default' | 'blue-first';
+  /**
+   * A retry of a purchase whose claim was charged. The event's window is a sale
+   * window like the listing's own, and was checked when the claim was made, so
+   * an event that has since ended still sells it; the flag (the kill switch),
+   * the team and payment rules still apply.
+   */
+  resumingClaim?: boolean;
 }) {
   if (!eventItemPaymentAllowed(payWith))
     throw throwBadRequestError("This item can't be bought with Blue Buzz");
@@ -61,7 +69,8 @@ export async function assertEventShopItemPurchasable({
     throw throwBadRequestError('This item is not available right now');
   });
   const event = events.find((e) => e.name === data.event);
-  if (!event || !(await isPlayableFor(event, { id: userId, isModerator }, new Date())))
+  const access = event && (await getEventAccess(event, { id: userId, isModerator }, new Date()));
+  if (!access || !(resumingClaim ? canReadEvent(access) : canPlayEvent(access)))
     throw throwBadRequestError('This item is not available');
 
   if (data.team === undefined) return;
