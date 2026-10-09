@@ -58,13 +58,18 @@ const WORN: Record<string, Record<number, ReturnType<typeof hat>>> = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.$queryRaw.mockResolvedValue([row(11, 'Image', 11), row(50, 'Model', 2)]);
+  dbMock.dbRead.$queryRaw.mockResolvedValue([
+    row(11, 'Image', 11),
+    row(50, 'Model', 2),
+    row(60, 'Collection', 9),
+  ]);
   decorations.mockImplementation(async ({ entity }: { entity: string }) => WORN[entity] ?? {});
 });
 
 const entities = [
   { entityType: 'Image', entityId: 11 },
   { entityType: 'Model', entityId: 2 },
+  { entityType: 'Collection', entityId: 9 },
 ];
 
 describe('getEntityCoverImage event decorations', () => {
@@ -73,6 +78,15 @@ describe('getEntityCoverImage event decorations', () => {
     expect(covers.map((c) => [c.entityType, c.entityId, c.eventDecoration?.name])).toEqual([
       ['Image', 11, 'on image 11'],
       ['Model', 2, 'on model 2'],
+      ['Collection', 9, undefined],
+    ]);
+  });
+
+  it('looks each entity up by its own id, and skips what cannot wear a hat', async () => {
+    await getEntityCoverImage({ entities });
+    expect(decorations.mock.calls.map(([arg]) => [arg.entity, arg.ids])).toEqual([
+      ['Image', [11]],
+      ['Model', [2]],
     ]);
   });
 
