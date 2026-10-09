@@ -118,6 +118,11 @@ export async function resolveAppFeedbackTarget(
   if (!scopeAdmitsListingKind(scope, access.kind as StoreListingKind)) return refuse('scope');
 
   if (access.role !== null) return refuse('self');
+  // 🔴 `status` ONLY — the per-listing `visibility` level (private / moderators / testers) is
+  // DELIBERATELY not consulted. Operator decision, 2026-10-08: an approved app that is unlisted
+  // or tester-only is still runnable by slug, and the people running it are exactly the ones
+  // whose feedback its developer wants. Not an oversight; do not add a visibility gate here
+  // without asking. Pinned by the "non-public visibility" test in app-feedback.service.test.ts.
   if (listing.status !== 'approved') return refuse('not_approved');
 
   try {
@@ -177,6 +182,27 @@ function refusalError(reason: AppFeedbackRefusal): TRPCError {
   }
 }
 
+export const APP_FEEDBACK_BLOCKED_CONTENT_MESSAGE =
+  'Your feedback includes a link or wording that is not allowed. Remove it and try again.';
+
+/**
+ * The comment content filter, with feedback's own refusal text. The shared filter words its
+ * refusals for comments ("Comment blocked by content filter", "invalid urls: …"), which reads as a
+ * bug inside an app's feedback modal. Every refusal it makes is a BAD_REQUEST (both of its match
+ * callbacks go through `throwBadRequestError`), so the remap keys on the CODE, never on the
+ * wording — a later rewording of the shared message cannot slip past it. Anything else (a DB or
+ * cache failure inside the filter) propagates untouched. Moderators are exempt, as on comments.
+ */
+async function throwOnBlockedFeedbackContent(message: string, isModerator: boolean) {
+  try {
+    await throwOnBlockedCommentContent(message, { isModerator });
+  } catch (err) {
+    if (err instanceof TRPCError && err.code === 'BAD_REQUEST')
+      throw new TRPCError({ code: 'BAD_REQUEST', message: APP_FEEDBACK_BLOCKED_CONTENT_MESSAGE });
+    throw err;
+  }
+}
+
 export async function createAppFeedback({
   user,
   input,
@@ -188,7 +214,7 @@ export async function createAppFeedback({
   if (!resolved.ok) throw refusalError(resolved.reason);
   const { appListingId, appBlockVersion, appBlockSha } = resolved.target;
 
-  await throwOnBlockedCommentContent(input.message, { isModerator: !!user.isModerator });
+  await throwOnBlockedFeedbackContent(input.message, !!user.isModerator);
 
   // Primary: the counted rows are this user's own, written moments ago. Count-then-insert is not
   // atomic; the procedure's per-user rateLimit bounds the overshoot (moderators skip it).

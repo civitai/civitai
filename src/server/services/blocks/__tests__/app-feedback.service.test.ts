@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as BlockCheck from '~/server/services/block-check.service';
+import type * as ListingVisibility from '~/server/services/blocks/app-listing-visibility.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as FeedbackService from '~/server/services/feedback.service';
 import type { SessionUser } from '~/types/session';
@@ -22,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   resolveStoreVisibilityScope: vi.fn(),
   throwIfBlockedByOwners: vi.fn(),
   throwOnBlockedCommentContent: vi.fn(),
+  readListingVisibility: vi.fn(),
+  readListingVisibilityMany: vi.fn(),
 }));
 
 vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
@@ -35,6 +38,11 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
 vi.mock('~/server/services/block-check.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlockCheck>()),
   throwIfBlockedByOwners: mocks.throwIfBlockedByOwners,
+}));
+vi.mock('~/server/services/blocks/app-listing-visibility.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ListingVisibility>()),
+  readListingVisibility: mocks.readListingVisibility,
+  readListingVisibilityMany: mocks.readListingVisibilityMany,
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Blocklist>()),
@@ -207,6 +215,8 @@ beforeEach(() => {
   mocks.resolveStoreVisibilityScope.mockResolvedValue('full');
   mocks.throwIfBlockedByOwners.mockResolvedValue(undefined);
   mocks.throwOnBlockedCommentContent.mockResolvedValue(undefined);
+  mocks.readListingVisibility.mockResolvedValue({ available: true, visibility: null });
+  mocks.readListingVisibilityMany.mockResolvedValue(new Map());
   dbMock.dbWrite.feedback.count.mockResolvedValue(0);
   dbMock.dbWrite.feedback.create.mockResolvedValue({ id: 555 });
   dbMock.dbWrite.feedback.updateMany.mockResolvedValue({ count: 1 });
@@ -322,6 +332,29 @@ describe('resolveAppFeedbackTarget', () => {
     SEATS = [{ appListingId: PARENT, userId: EDITOR, status: 'pending' }];
     expect(await resolveAppFeedbackTarget(user(EDITOR), page)).toMatchObject({ ok: true });
   });
+
+  // 🔴 OPERATOR DECISION (2026-10-08), not an oversight: an APPROVED app whose per-listing
+  // visibility level hides it from the store (unlisted / tester-only / moderators) is still
+  // runnable by slug, and its runners may send feedback. A visibility gate added to the resolver
+  // reads these levels and fails here.
+  it.each(['private', 'testers', 'moderators'] as const)(
+    'admits a stranger on an approved listing whose visibility is %s (non-public visibility)',
+    async (visibility) => {
+      const read = { available: true, visibility };
+      mocks.readListingVisibility.mockResolvedValue(read);
+      mocks.readListingVisibilityMany.mockResolvedValue(new Map([[PARENT, read]]));
+      const res = await resolveAppFeedbackTarget(user(REPORTER), page);
+      expect(res).toEqual({
+        ok: true,
+        target: {
+          appListingId: PARENT,
+          appName: 'Cool App',
+          appBlockVersion: '1.4.2',
+          appBlockSha: 'sha-parent-91c',
+        },
+      });
+    }
+  );
 
   it('refuses a listing that is not approved', async () => {
     STATUS[PARENT] = { ...STATUS[PARENT], status: 'removed' };
@@ -441,13 +474,32 @@ describe('createAppFeedback', () => {
     );
   });
 
-  it('writes nothing when the content check rejects', async () => {
-    mocks.throwOnBlockedCommentContent.mockRejectedValue(
-      new TRPCError({ code: 'BAD_REQUEST', message: 'Comment blocked by content filter' })
-    );
-    await expect(createAppFeedback({ user: user(REPORTER), input })).rejects.toMatchObject({
-      message: 'Comment blocked by content filter',
-    });
+  // Both shapes the shared filter throws today: the pattern half and the link half.
+  it.each([
+    ['a pattern hit', 'Comment blocked by content filter'],
+    ['a link hit', 'invalid urls: bad.example'],
+  ])(
+    'refuses %s with feedback wording, never the comment wording, and writes nothing',
+    async (_label, filterMessage) => {
+      mocks.throwOnBlockedCommentContent.mockRejectedValue(
+        new TRPCError({ code: 'BAD_REQUEST', message: filterMessage })
+      );
+      const err = await createAppFeedback({ user: user(REPORTER), input }).catch((e) => e);
+      expect(err).toBeInstanceOf(TRPCError);
+      expect(err.code).toBe('BAD_REQUEST');
+      expect(err.message).toBe(
+        'Your feedback includes a link or wording that is not allowed. Remove it and try again.'
+      );
+      expect(err.message).not.toMatch(/comment|invalid urls/i);
+      expect(dbMock.dbWrite.feedback.count).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('lets a non-refusal failure inside the content check propagate untouched', async () => {
+    const boom = new Error('pattern cache unavailable');
+    mocks.throwOnBlockedCommentContent.mockRejectedValue(boom);
+    await expect(createAppFeedback({ user: user(REPORTER), input })).rejects.toBe(boom);
     expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
   });
 
