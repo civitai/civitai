@@ -98,12 +98,16 @@ export const birthday2026 = createEvent(name, {
   join: { claimKey: 'claimed', design: 'basic' },
   badgePrefix: 'Birthday 2026',
   scoring: {
-    reactionWeight: 10,
-    anonFloor: 10,
-    anonRatio: 1,
-    botSessionEntityLimit: 1500,
+    capPerActorPerOwnerPerDay: 50,
+    types: {
+      view: { weight: 1, once: 'day', entities: ['Image', 'Model', 'Article'] },
+      reaction: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
+      comment: { weight: 5, once: 'event', entities: ['Image', 'Article'] },
+      sticker: { weight: 10, once: 'event', entities: ['Image'] },
+      remix: { weight: 25, once: 'event', entities: ['Image'] },
+      modelLike: { weight: 5, once: 'event', entities: ['Model'] },
+    },
     newAccountDays: 7,
-    viewerOwnerDailyCap: 50,
     finalizeAfterMs: 24 * 60 * 60 * 1000,
   },
 });

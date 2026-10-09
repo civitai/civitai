@@ -46,6 +46,9 @@ export type EventPointAction = {
   time?: Date;
   // Id of the source row (reaction, comment, placement, review), so a later removal can net it out.
   sourceId?: string;
+  // The actor's account, when the caller already has it (the session user). Lets the live total skip
+  // new and banned accounts at once; without it they are only dropped by the hourly referee.
+  actor?: { createdAt?: Date | null; bannedAt?: Date | null };
 };
 
 // A removal nets out an earlier action by its sourceId. It writes a ledger row only; live totals
