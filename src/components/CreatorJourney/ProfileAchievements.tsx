@@ -27,7 +27,7 @@ type Achievement = ProfileAchievements['achievements'][number];
 
 export const SECRET_ACHIEVEMENT_LABEL = 'Secret achievement';
 
-/** The width of an earned-badge card on the journey page's shelf, so the profile's cards match it. */
+/** Cards about as wide as the journey page's shelf (four across its 960px container), wrapping. */
 export const BADGE_CARD_GRID = 'grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,220px)]';
 
 const achievementName = (achievement: Achievement) => achievement.name ?? SECRET_ACHIEVEMENT_LABEL;
@@ -118,12 +118,7 @@ const achievementGroups = [
  * which carries no numbers; a tier the ladder masks shows none.
  */
 function TierCard({ tier, threshold }: { tier: Tier; threshold?: number }) {
-  return (
-    <EarnedBadgeCard
-      badge={{ ...tier, track: 'score', threshold, description: null }}
-      accent={tierAccents[tier.key] ?? DEFAULT_ACCENT}
-    />
-  );
+  return <EarnedBadgeCard badge={{ ...tier, track: 'score', threshold, description: null }} />;
 }
 
 /** The Achievements tab: the highest tier, every earned tier, then each achievement by track. */

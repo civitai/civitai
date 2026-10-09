@@ -64,6 +64,9 @@ describe('profile Creator Journey section', () => {
     );
     const grid = heading?.nextElementSibling as HTMLElement | undefined;
     expect(grid?.children).toHaveLength(5);
+    // The newest five; the server sends them newest first.
+    expect(grid?.textContent).toContain('50 Models');
+    expect(grid?.textContent).not.toContain('100 Models');
     expect(grid?.className.split(' ')).toEqual(
       expect.arrayContaining(['@[480px]:grid-cols-3', '@[760px]:grid-cols-5'])
     );

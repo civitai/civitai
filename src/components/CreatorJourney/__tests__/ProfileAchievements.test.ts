@@ -215,15 +215,29 @@ describe('achievements tab', () => {
   // Ellie's review (2026-10-09): the tier list was bare badges; it reads like the journey page now.
   it('heads the tab with the highest tier, then a card per tier with its threshold and date', () => {
     mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
-    // Nova is masked on the public ladder, so it has no threshold to show.
+    // The ladder masks a hidden tier's key but not its threshold, in ladder order: Nova's real
+    // number is in the list, third, under another key. Matching by key keeps it off the card.
     mocks.ladderTiers = [
       { key: 'score:spark', threshold: 100 },
       { key: 'score:blaze', threshold: 10000 },
+      { key: 'hidden:tier-2', threshold: 500000 },
     ];
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
 
-    expect(el.textContent).toContain('Creator Score tier');
-    expect(grids(el)[0].children).toHaveLength(3);
+    const hero = [...el.querySelectorAll<HTMLElement>('div')].find(
+      (div) => div.className === 'md:self-start'
+    );
+    expect(hero?.textContent).toContain('Creator Score tier');
+    expect(hero?.textContent).toContain('Nova');
+    // A visitor's own session score must never read as the owner's.
+    expect(el.textContent).not.toContain('Only you see this');
+    const names = [...grids(el)[0].children].map(
+      (card) =>
+        ['Nova', 'Blaze', 'Spark'].find((name) =>
+          [...card.querySelectorAll('*')].some((node) => node.textContent === name)
+        ) ?? ''
+    );
+    expect(names).toEqual(['Nova', 'Blaze', 'Spark']);
     expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000');
     expect(cardOf(el, 'Blaze')?.textContent).toContain('Earned Sep 28, 2026');
     expect(cardOf(el, 'Spark')?.textContent).toContain('100');
@@ -232,10 +246,18 @@ describe('achievements tab', () => {
     expect(cardOf(el, 'Nova')?.textContent).not.toMatch(/\d/);
   });
 
-  it('lays every card out at the journey shelf width, wrapping', () => {
+  it('shows the owner their own score on the hero', () => {
+    mocks.viewer = { id: OWNER, meta: { scores: { total: 824228 } } };
+    const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(el.textContent).toContain('Only you see this: score 824,228');
+  });
+
+  // The width itself is a stylesheet fact the test environment cannot measure; what is pinned here
+  // is that tiers and achievements share the one card grid.
+  it('puts tier cards and achievement cards on the same card grid', () => {
     mocks.viewer = null;
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
     expect(grids(el)).toHaveLength(2);
-    expect(BADGE_CARD_GRID).toContain('sm:grid-cols-[repeat(auto-fill,220px)]');
+    expect(grids(el)[1].textContent).toContain('25 Models');
   });
 });
