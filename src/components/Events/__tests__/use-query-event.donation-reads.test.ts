@@ -22,14 +22,21 @@ const query = (name: string) => ({
     return { data: name === 'getData' ? eventData : undefined, isLoading: false };
   },
 });
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    event: Object.fromEntries(
-      ['getData', 'getCosmetic', 'getUserRank', ...DONATION_READS].map((n) => [n, query(n)])
+// Only the reads under test are spied; any other procedure the hook gains answers inertly.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy(
+      Object.fromEntries(
+        ['getData', 'getCosmetic', 'getUserRank', ...DONATION_READS].map((n) => [
+          `event.${n}`,
+          query(n),
+        ])
+      )
     ),
-  },
-}));
+  };
+});
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1 }) }));
 
 const { useQueryEvent } = await import('~/components/Events/events.utils');

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as DecorationConstants from '~/shared/constants/event-decoration.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
@@ -53,9 +54,7 @@ const { covers, decorations } = vi.hoisted(() => ({
   },
 }));
 vi.mock('~/shared/constants/event-decoration.constants', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('~/shared/constants/event-decoration.constants')
-  >();
+  const actual = await importOriginal<typeof DecorationConstants>();
   decorations.real = actual.getEventDecorationDefinition;
   decorations.getEventDecorationDefinition.mockImplementation(actual.getEventDecorationDefinition);
   return { ...actual, getEventDecorationDefinition: decorations.getEventDecorationDefinition };
