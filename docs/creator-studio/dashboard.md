@@ -31,8 +31,8 @@ All scoped to `locals.user.id`. **No monetization writes on this page.**
 
 - **Earnings summary** — ClickHouse via `@civitai/clickhouse`, from **daily aggregates / materialized views**, never
   the buzz service (too slow) ([plan §7.6](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)):
-  recent-window total + split by `source` — `orchestration.resourceCompensations` covers **comp / licenseFee only**
-  (tips + access/cosmetic come from other tables — see [earnings.md](earnings.md) / A5).
+  recent-window total + split by `source` — `orchestration.resourceCompensations` covers **comp / licenseFee / tip** (tip
+  since 2026-10-08; access/cosmetic come from other tables — see [earnings.md](earnings.md) / A5).
 - **⚠ Owner-keyed rollup dependency** — those tables are keyed by `modelVersionId`, **not** the creator's `userId`, so
   a per-creator total and the "top-earning models" widget need the **owner-keyed earnings rollup** MV
   ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views)). Until it lands, the
@@ -40,7 +40,7 @@ All scoped to `locals.user.id`. **No monetization writes on this page.**
 - **CP cash** — `creatorProgram.getCash` / `getBanked` / `getCompensationPool` ([plan §5.2](../creator-studio-plan.md#52-reuse-existing-main-app-endpointsservices))
   for pending/settled figures. Not ClickHouse.
 - **Member `tier`** — `CustomerSubscription → Product.metadata.tier` (via `@civitai/db` kysely) to decide member vs
-  upsell rendering. *(Tier vs full-CP gate is a pending confirm — [plan §9](../creator-studio-plan.md#9-decisions--open-questions).)*
+  upsell rendering. _(Tier vs full-CP gate is a pending confirm — [plan §9](../creator-studio-plan.md#9-decisions--open-questions).)_
 - **Headline counts** — model/version count from `@civitai/db` kysely; period earnings from the rollup above.
 
 ## Actions (writes)
@@ -61,7 +61,7 @@ CTA here would only **link** to `/earnings` or `/settings`, not perform the acti
 
 ## Gating
 
-Any logged-in user can access `/`. Nothing on this page is member-gated to *view* — earnings and CP cash show for
+Any logged-in user can access `/`. Nothing on this page is member-gated to _view_ — earnings and CP cash show for
 everyone who has them. The member vs non-member split only changes whether the upsell card renders. Exact member bar
 pending ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
 
@@ -81,6 +81,6 @@ pending ([plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
   [/earnings](earnings.md) and just link out?
 - **"Top-earning models" widget** — depends on the owner-keyed rollup ([plan §7.6 gap #1](../creator-studio-plan.md#76-clickhouse-analytics--materialized-views));
   v1 or fast-follow? Fallback if the MV isn't ready at launch.
-- **Overlap with `/earnings`** — what is *unique* to the dashboard vs a condensed preview of earnings? Risk of two
+- **Overlap with `/earnings`** — what is _unique_ to the dashboard vs a condensed preview of earnings? Risk of two
   places showing the same numbers that can drift.
 - **New-creator empty state** — copy + which CTA (upload on main app vs set a fee on `/models`).

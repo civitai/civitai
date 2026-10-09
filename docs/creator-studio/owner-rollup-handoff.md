@@ -19,7 +19,7 @@ columns that exist (`daily_user_resource`, `userModelDownloads`) are the **gener
 looking up all of a creator's `modelVersionId`s and querying `WHERE modelVersionId IN (…)` — which balloons for
 prolific creators.
 
-**What changed:** this was assumed to apply to *earnings* too. It does not. Creators are paid via **buzz
+**What changed:** this was assumed to apply to _earnings_ too. It does not. Creators are paid via **buzz
 transactions**, and `default.buzzTransactions` is keyed by `toAccountId` — which **is** the creator's `userId`
 (verified 1:1, see below). Earnings were never actually missing an owner key; we were reading the wrong table.
 
@@ -27,25 +27,25 @@ transactions**, and `default.buzzTransactions` is keyed by `toAccountId` — whi
 
 ### Part 1 — `/earnings` + dashboard: read `default.buzzTransactions` directly. No dictionary.
 
-**Justin's D2 answer (2026-07-14):** *"You'll probably use buzz transactions for all of it, actually, because
-they get their money given to them through buzz transactions."* Confirmed against live data — **all five earnings
+**Justin's D2 answer (2026-07-14):** _"You'll probably use buzz transactions for all of it, actually, because
+they get their money given to them through buzz transactions."_ Confirmed against live data — **all five earnings
 sources are already in `default.buzzTransactions`, already keyed by the creator.**
 
-| Source | Filter (`toAccountId = <creatorId>` in all cases) |
-|---|---|
-| Tip | `type = 'tip'` |
-| Generation compensation | `type = 'compensation'` |
-| License fee | `type = 'licenseFee'` — ⚠️ **currently `'27'`, see the blocker below** |
-| Access sale (early access) | `type = 'purchase' AND externalTransactionId LIKE 'early-access-%'` |
-| Cosmetic sale | `type = 'sell'` |
+| Source                     | Filter (`toAccountId = <creatorId>` in all cases)                      |
+| -------------------------- | ---------------------------------------------------------------------- |
+| Tip                        | `type = 'tip'`                                                         |
+| Generation compensation    | `type = 'compensation'`                                                |
+| License fee                | `type = 'licenseFee'` — ⚠️ **currently `'27'`, see the blocker below** |
+| Access sale (early access) | `type = 'purchase' AND externalTransactionId LIKE 'early-access-%'`    |
+| Cosmetic sale              | `type = 'sell'`                                                        |
 
 Why this works:
 
 - **`toAccountId` is the creator's `userId`, 1:1.** Verified two independent ways: 1,791/1,791 `purchase` rows
   carrying `details.userId` match `toAccountId`; 22,310/22,310 `tip` rows match `toAccountId ∈
-  details.targetUserIds`.
+details.targetUserIds`.
 - **The table already has an owner-keyed projection.** `PROJECTION byToAccount (SELECT * ORDER BY toAccountId,
-  date, fromAccountId, transactionId)`. The base table's `ORDER BY` leads with `date`, so a `toAccountId` filter
+date, fromAccountId, transactionId)`. The base table's `ORDER BY` leads with `date`, so a `toAccountId` filter
   would full-scan — the projection is what makes this a point lookup. **Use it; do not add a new MV until it is
   proven too slow.**
 - **`toAccountType` carries the currency** as `LowCardinality(String)`, lowercase: `yellow`, `blue`, `green`,
@@ -54,7 +54,7 @@ Why this works:
 **This deletes a large amount of previously-planned work — for the by-source totals only:** no
 `AggregatingMergeTree`, no backfill, and no A1 dependency blocking the `/earnings` **source cards + time-series**
 or the dashboard's headline totals. **It does not delete the dictionary** — see Part 2; anything broken out
-*per model* still needs it, and Justin confirmed those tiles ship.
+_per model_ still needs it, and Justin confirmed those tiles ship.
 
 #### Gotchas that will bite whoever writes these queries
 
@@ -67,7 +67,7 @@ or the dashboard's headline totals. **It does not delete the dictionary** — se
 - **Cosmetic revenue is `type = 'sell'`, not `'purchase'`.** Cosmetics are two-legged: the buyer's `purchase`
   goes to the bank (`toAccountId: 0`, `externalTransactionId` `cosmetic-purchase-…`), then a separate `sell` leg
   forwards ~70% to `cosmetic.createdById`. The creator-facing row is the `sell`.
-- **`details` is a JSON *string*.** Every entity extraction costs a `JSONExtract` at query time. There are no
+- **`details` is a JSON _string_.** Every entity extraction costs a `JSONExtract` at query time. There are no
   `entityType`/`entityId` columns.
 - **Amounts here are integers and that is correct.** See "Precision" below.
 
@@ -93,14 +93,14 @@ doc. Do not attempt the MV surgery from this workstream — it has a data-loss f
 > no CDC, no staleness question. Shipped and deployed — see
 > [licensing-fee-owner-stamping.md](licensing-fee-owner-stamping.md). Read the rest of this section as history.
 
-**Justin (2026-07-14), on top-earning models:** *"That's going to have to be driven by the resource compensation
+**Justin (2026-07-14), on top-earning models:** _"That's going to have to be driven by the resource compensation
 table… So we are going to need the dictionary for that one to map to the user so we can get all of the model
-versions that are associated with them."*
+versions that are associated with them."_
 
 So this half of the original design stands, and **Koen's CDC work stays on the critical path**. It covers the
 per-model usage/earnings table on `/analytics` **and** the dashboard's "top-earning models" tile — both are
 genuinely `modelVersionId`-keyed and **cannot** be answered from `buzzTransactions`, because a
-compensation/licenseFee transaction is a daily per-creator *aggregate* that does not carry `modelVersionId`.
+compensation/licenseFee transaction is a daily per-creator _aggregate_ that does not carry `modelVersionId`.
 
 The two halves coexist: **by-source totals** read `buzzTransactions` (free, today); **per-model breakdowns** read
 `resourceCompensations` through the dictionary (needs the CDC build). They will not tie out to the buzz exactly —
@@ -115,13 +115,13 @@ one is accrual, the other settlement (see Precision) — so do not present them 
 > ⚠️ **Do not source a dictionary from Postgres directly.** The two existing Postgres-sourced dictionaries
 > (`default.model_names`, `default.model_file_sizes`) have **hardcoded IPs**, and `model_names` is **dead in prod
 > right now** — `dictGet` on it returns `Connection refused`. A CDC-mirror-backed dictionary has no external
-> network dependency at read time. (Also: a dictionary inside an *insert-path* MV turns a dead dict into halted
+> network dependency at read time. (Also: a dictionary inside an _insert-path_ MV turns a dead dict into halted
 > ingestion. This one is read-path only, which is safer, but the lesson stands.)
 
 ## D1 — the MV key must carry currency → **ANSWERED: yes**
 
-**Justin (2026-07-14):** *"The account type is what we need. That'll allow us to distinguish what's yellow versus
-green versus cash versus whatever. And you would use the `toAccountType`."*
+**Justin (2026-07-14):** _"The account type is what we need. That'll allow us to distinguish what's yellow versus
+green versus cash versus whatever. And you would use the `toAccountType`."_
 
 Confirmed and adopted. To be precise about why this was a real question rather than a data-availability one: the
 currency existing on the row does not help if the aggregate sums it away. Any rollup **must** carry
@@ -133,8 +133,8 @@ composite `(toAccountId, toAccountType)` is the real owner key — one user hold
 
 **Two wrinkles worth knowing:**
 
-- 🔴 **Access sales always credit yellow, and that is a confirmed bug** (Justin, 2026-07-14: *"That's wrong. It
-  should pay whatever the person paid in… If a buyer spends green, the creator should get green."*).
+- 🔴 **Access sales always credit yellow, and that is a confirmed bug** (Justin, 2026-07-14: _"That's wrong. It
+  should pay whatever the person paid in… If a buyer spends green, the creator should get green."_).
   `earlyAccessPurchase` (`src/server/services/model-version.service.ts:1777`) omits `toAccountType`, so
   `buzz.service.ts:652` defaults it to `'yellow'`. Buyers may spend green or yellow (blue is rejected).
   **Fix = pass the buyer's `buzzType` through as `toAccountType`.** Note it is **forward-only**: every access sale
@@ -144,18 +144,18 @@ composite `(toAccountId, toAccountType)` is the real owner key — one user hold
 
 ### Label history — a non-issue at v1, but do not extend the window without reading this
 
-**Justin (2026-07-14):** *"I think we already capped the history… the furthest we go back with the analytics is
-90 days, so it should be okay."* Correct — a 90-day window starts well after the last label change (2025-08-26),
+**Justin (2026-07-14):** _"I think we already capped the history… the furthest we go back with the analytics is
+90 days, so it should be okay."_ Correct — a 90-day window starts well after the last label change (2025-08-26),
 so **none of the below affects v1**. It only bites if someone later widens the window or builds an all-time view.
 
 `orchestration.resourceCompensations.accountType` has a label history (this affects `/analytics`, not the
 `buzzTransactions` read path):
 
-| Era | Labels | Meaning |
-|---|---|---|
-| 2024-08-01 → 2025-07-14 | `User` | **catch-all: yellow AND blue combined** |
+| Era                     | Labels                | Meaning                                     |
+| ----------------------- | --------------------- | ------------------------------------------- |
+| 2024-08-01 → 2025-07-14 | `User`                | **catch-all: yellow AND blue combined**     |
 | 2025-07-15 → 2025-08-26 | `User` + `Generation` | split; `User` = yellow, `Generation` = blue |
-| 2025-08-26 → now | `Yellow` + `Blue` | rename of the above (one-day cutover) |
+| 2025-08-26 → now        | `Yellow` + `Blue`     | rename of the above (one-day cutover)       |
 
 So `User`/`Yellow` and `Generation`/`Blue` are the **same currencies renamed**, not double-labelling — verified by
 a clean one-day cutover on 2025-08-26 (`User` 25,203→0, `Yellow` 16,308→23,908) with no sustained overlap, and no
@@ -166,9 +166,9 @@ prevents this; keep the cap, or normalize the eras before lifting it.
 
 ## D2 — the `source` filter spans more than this MV → **ANSWERED: use buzz transactions for all of it**
 
-**Justin (2026-07-14):** *"You're not going to be using resource compensations for all of those… things like
+**Justin (2026-07-14):** _"You're not going to be using resource compensations for all of those… things like
 access sale, cosmetic sale, those sorts of things… essentially, we will be looking at the buzz transactions, not
-resource compensation."*
+resource compensation."_
 
 Adopted — see Part 1 for the canonical filter table. The single canonical `source` label set for `/earnings` is
 therefore **derived from `buzzTransactions.type`**, not invented: `tip`, `compensation`, `licenseFee`,
@@ -179,18 +179,18 @@ exists.
 **Corrections this forces elsewhere (both now applied):**
 
 - **A5 said access/cosmetic "currently ride the generic purchase type, so we need a distinct type/flag."** Half
-  wrong: on the *buyer's* leg both are `purchase`, but on the *creator's receiving* leg — the only side earnings
+  wrong: on the _buyer's_ leg both are `purchase`, but on the _creator's receiving_ leg — the only side earnings
   cares about — cosmetic is already `sell` and access is `purchase` + a stable `early-access-` prefix. **No new
-  type/flag is needed and no schema change is required.** A distinct type would be *cleaner*, not *blocking*.
-- **`earnings.md` claimed `resourceCompensations` carries a `tip` source.** It does not — the only real `source`
-  values are `compensation`, `compensation_recovered_20260507`, and `licenseFee`. Tips are
-  `buzzTransactions.type = 'tip'`.
+  type/flag is needed and no schema change is required.** A distinct type would be _cleaner_, not _blocking_.
+- **`resourceCompensations` carries a `tip` source since 2026-10-08.** Before that the only `source` values were
+  `compensation`, `compensation_recovered_20260507` and `licenseFee`. `deliver-creator-compensation` pays `tip`
+  rows inside its `compensation` transaction.
 
 ## Precision — resolved, and the earlier "must NOT FLOOR" note was wrong
 
-**Justin (2026-07-14):** *"The buzz transactions are at settlement point. I believe that the resource
+**Justin (2026-07-14):** _"The buzz transactions are at settlement point. I believe that the resource
 compensations are fractional. We make buzz transactions once a day to settle up, essentially. So those are not
-fractional."*
+fractional."_
 
 That is the whole answer, and it makes the previous version of this doc's requirement incorrect:
 
@@ -202,7 +202,7 @@ That is the whole answer, and it makes the previous version of this doc's requir
 
 So `/earnings` reading integer amounts is **correct** — it reports what the creator was actually paid. Accrued
 and paid will differ slightly by design (the sub-buzz remainder is dropped at the daily boundary; the job flags
-this in-code as needing finance review). Only a *forecasting* view would want raw fractional accrual.
+this in-code as needing finance review). Only a _forecasting_ view would want raw fractional accrual.
 
 ## Launch fallback (Option B) — now only relevant to `/analytics`
 
@@ -218,8 +218,8 @@ Neither is a Creator Studio bug, but both change what the numbers mean. Do not d
    stay yellow.
 2. **Cosmetic creator payouts are best-effort — a sale can succeed while the creator is never credited.**
    `cosmetic-shop.service.ts` (`purchaseCosmeticShopItem`'s payout block) wraps the bank→creator `sell` leg in `withRetries(..., 3)` and a catch that
-   only logs to Axiom; the in-code comment says *"we don't want to fail the purchase if this fails. We can divide
-   the funds later if needed."* So the platform keeps the buyer's buzz and the creator silently gets nothing.
+   only logs to Axiom; the in-code comment says _"we don't want to fail the purchase if this fails. We can divide
+   the funds later if needed."_ So the platform keeps the buyer's buzz and the creator silently gets nothing.
    **`/earnings` will under-report cosmetic revenue with no signal**, because a failed payout leaves **no row** —
    the only trace is an Axiom log line with nothing durable tying it to a creator or amount. Justin's call
    (2026-07-14) is that failing the purchase would be worse, which is right — but until there is a durable
@@ -263,7 +263,7 @@ not open work**; kept for the audit context:
       warning above). Staleness tolerance for the owner lookup (ownership rarely changes)?
       **Attribution is settled (Justin, 2026-07-14): historical earnings follow the new owner** if a version is
       transferred. That is what a point-in-time `dictGet` does naturally, so no extra work — but it means a
-      creator's past earnings totals *change* when a model moves. Rows whose `modelVersionId` is absent from the
+      creator's past earnings totals _change_ when a model moves. Rows whose `modelVersionId` is absent from the
       dictionary are dropped.
 - [ ] **Layout** — `ownerUserId` UInt32, `source` LowCardinality, ordering key, `PARTITION BY toYYYYMM(date)`,
       TTL (likely none — financial history).
