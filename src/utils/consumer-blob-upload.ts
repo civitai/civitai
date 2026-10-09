@@ -24,6 +24,14 @@ const PRESIGN_TIMEOUT_MS = 15_000;
 // still processing.
 const RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const MAX_ATTEMPTS = 2;
+// Waits between presign retries on a 5xx, network error or timeout. An orchestrator restart
+// once made presign fail for ~32 s, longer than the single ~1–2 s retry could cover. With
+// fast failures the last try starts ~40 s in, past an outage of that length. Up to 1 s of
+// jitter is added to each wait so clients that failed together do not retry together.
+const PRESIGN_RETRY_DELAYS_MS = [2_000, 6_000, 12_000, 20_000];
+// No new presign try may start later than this after the first one. Matters only when tries
+// end in the 15 s timeout: without it, five timed-out tries plus the waits would take ~2 min.
+const PRESIGN_RETRY_BUDGET_MS = 50_000;
 
 /** Shown when an upload is refused because the user is signed out. */
 export const SIGN_IN_TO_UPLOAD_MESSAGE = 'Sign in to upload images.';
@@ -85,6 +93,31 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
     );
   } finally {
     watchdog.clear();
+  }
+}
+
+/**
+ * Presigns, retrying a 5xx, network error or timeout on `PRESIGN_RETRY_DELAYS_MS` within
+ * `PRESIGN_RETRY_BUDGET_MS`, and throws the last error once it gives up. A 429 is thrown
+ * at once, so the caller's Retry-After handling stays as it was. A 400/401/403 is not
+ * retryable and is also thrown at once.
+ *
+ * There is no abort signal to honour: `uploadConsumerBlob` takes none.
+ */
+async function getConsumerBlobUploadUrlWithRetry() {
+  const startedAt = Date.now();
+  for (let retry = 0; ; retry++) {
+    try {
+      return await getConsumerBlobUploadUrl();
+    } catch (e) {
+      if (!(e instanceof ConsumerBlobUploadError) || !e.retryable || e.failure?.status === 429)
+        throw e;
+      const delay = PRESIGN_RETRY_DELAYS_MS[retry];
+      if (delay === undefined) throw e;
+      const wait = delay + Math.random() * 1000;
+      if (Date.now() - startedAt + wait > PRESIGN_RETRY_BUDGET_MS) throw e;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
   }
 }
 
@@ -153,8 +186,10 @@ function postBlob(uploadUrl: string, data: Blob, contentType: string) {
 
 /**
  * Uploads a blob/file to the orchestrator using a presigned URL, directly from the browser.
- * Retries once, with a fresh presigned URL, on a network error, 429, 5xx or a stall before the
- * body is fully sent.
+ * The upload is retried once, with a fresh presigned URL, on a network error, 429, 5xx or a
+ * stall before the body is fully sent. Presigning retries a 5xx, network error or timeout on
+ * its own, for up to ~50 s (`getConsumerBlobUploadUrlWithRetry`). A presign 429 still gets
+ * one retry after its Retry-After.
  *
  * @throws Error if file exceeds 64MB, has unsupported content type, or the upload fails
  */
@@ -173,9 +208,11 @@ export async function uploadConsumerBlob(data: Blob | File): Promise<UploadConsu
   }
 
   for (let attempt = 1; ; attempt++) {
+    let presigned = false;
     try {
       // Re-presigned per attempt: nothing says a used upload URL can be reused.
-      const { uploadUrl } = await getConsumerBlobUploadUrl();
+      const { uploadUrl } = await getConsumerBlobUploadUrlWithRetry();
+      presigned = true;
       return await postBlob(uploadUrl, data, contentType);
     } catch (e) {
       if (!(e instanceof ConsumerBlobUploadError)) throw e;
@@ -186,6 +223,9 @@ export async function uploadConsumerBlob(data: Blob | File): Promise<UploadConsu
         resolveStack: false,
       });
       if (!e.retryable || attempt >= MAX_ATTEMPTS) throw e;
+      // A presign failure other than a 429 reaches here only after the presign retries ran
+      // out, so one more attempt would only repeat them.
+      if (!presigned && e.failure?.status !== 429) throw e;
       const delay = getPartRetryDelay(e.failure ?? { status: null }, attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }

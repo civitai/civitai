@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const { getConsumerBlobUploadUrl } = vi.hoisted(() => ({ getConsumerBlobUploadUrl: vi.fn() }));
+const { logToAxiom } = loggingMock;
 
 // Hand-listed: the real package cannot load in the node test environment (directory imports).
 vi.mock('@civitai/client', () => ({
@@ -40,7 +42,7 @@ async function call() {
       return res;
     },
   } as unknown as NextApiResponse;
-  await handler({ method: 'GET' } as NextApiRequest, res, {}, 'token');
+  await handler({ method: 'GET' } as NextApiRequest, res, { id: 42 }, 'secret-token');
   return out;
 }
 
@@ -50,6 +52,10 @@ const { getConsumerBlobUploadUrlService } = await import(
 
 const upstream = (status: number, error?: unknown) =>
   getConsumerBlobUploadUrl.mockResolvedValueOnce({ data: undefined, error, response: { status } });
+
+beforeEach(() => logToAxiom.mockClear());
+const logged = () =>
+  logToAxiom.mock.calls.map((c) => (c as unknown[])[0] as Record<string, unknown>);
 
 describe('GET /api/orchestrator/getConsumerBlobUploadUrl', () => {
   it('returns the presign on success', async () => {
@@ -90,6 +96,66 @@ describe('GET /api/orchestrator/getConsumerBlobUploadUrl', () => {
   it('reports an unreachable upstream as a 502', async () => {
     getConsumerBlobUploadUrl.mockRejectedValueOnce(new TypeError('fetch failed'));
     expect((await call()).status).toBe(502);
+  });
+});
+
+describe('presign failure logging', () => {
+  it('logs an upstream 5xx as a bounded warning before answering 502', async () => {
+    upstream(503, { detail: 'upstream down', status: 503 });
+    expect((await call()).status).toBe(502);
+    expect(logged()).toEqual([
+      {
+        type: 'warning',
+        name: 'consumer-blob-presign-failed',
+        userId: 42,
+        code: 'SERVICE_UNAVAILABLE',
+        errorName: 'TRPCError',
+        errorMessage: 'Generation services are temporarily unavailable. Please try again.',
+        // TRPCError wraps a non-Error cause in an Error that carries its fields.
+        causeName: 'Error',
+        causeCode: undefined,
+        causeStatus: 503,
+        causeMessage: '',
+        causeDetail: 'upstream down',
+      },
+    ]);
+  });
+
+  it('logs an unreachable upstream with its cause, and never the token', async () => {
+    const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    getConsumerBlobUploadUrl.mockRejectedValueOnce(new TypeError('fetch failed', { cause }));
+    expect((await call()).status).toBe(502);
+    expect(logged()).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        errorName: 'TypeError',
+        errorMessage: 'fetch failed',
+        causeName: 'Error',
+        causeCode: 'ECONNREFUSED',
+        causeMessage: 'connect ECONNREFUSED',
+      }),
+    ]);
+    expect(JSON.stringify(logged())).not.toContain('secret-token');
+  });
+
+  it('truncates a long cause message such as an upstream error page', async () => {
+    getConsumerBlobUploadUrl.mockRejectedValueOnce(
+      new Error('bad gateway', { cause: `<!DOCTYPE html>${'x'.repeat(5_000)}` })
+    );
+    await call();
+    expect((logged()[0].causeMessage as string).length).toBe(300);
+  });
+
+  it.each([
+    [401, 403],
+    [403, 403],
+    [400, 400],
+    [429, 429],
+    [404, 400],
+  ])('does not log an expected upstream %i (answered %i)', async (upstreamStatus, answered) => {
+    upstream(upstreamStatus, { detail: 'x' });
+    expect((await call()).status).toBe(answered);
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });
 
