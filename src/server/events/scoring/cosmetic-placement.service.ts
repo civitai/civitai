@@ -44,6 +44,11 @@ export type CosmeticScore = CosmeticScoreKey & {
   impressions: number;
   anonImpressions: number;
   reactions: number;
+  // TEMP stub of the core PR's columns; the reads below do not return them yet.
+  comments: number;
+  stickers: number;
+  remixes: number;
+  modelLikes: number;
 };
 
 export type EventStandings = {
