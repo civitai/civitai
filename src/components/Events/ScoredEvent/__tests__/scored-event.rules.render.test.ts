@@ -129,6 +129,25 @@ describe('How it works', () => {
       '25per remix',
       '0for your own views and reactions',
     ]);
+    // Each way wears the icon and colour it has in the popover and on the hat cards (SCORE_WAYS).
+    expect(
+      [...tiles.children].map((t) => {
+        const icon = t.querySelector<HTMLElement>('.mantine-ThemeIcon-root')!;
+        return `${
+          icon
+            .querySelector('svg')
+            ?.getAttribute('class')
+            ?.match(/tabler-icon-([\w-]+)/)?.[1]
+        } ${icon.style.getPropertyValue('--ti-color')}`;
+      })
+    ).toEqual([
+      'eye var(--mantine-color-blue-light-color)',
+      'heart var(--mantine-color-pink-light-color)',
+      'message-circle var(--mantine-color-green-light-color)',
+      'sticker var(--mantine-color-yellow-light-color)',
+      'hierarchy var(--mantine-color-violet-light-color)',
+      'ban var(--mantine-color-gray-light-color)',
+    ]);
   });
 
   it('lists the fairness rules with the event numbers, the cooldown only when there is one', () => {

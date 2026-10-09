@@ -306,6 +306,7 @@ describe('a hatted feed card', () => {
     expect(popover()!.textContent).toContain('Worn by');
     expect(popover()!.textContent).not.toContain('Your hat');
     expect(moveButton()).toBeUndefined();
+    expect(popover()!.textContent).not.toMatch(/\bMove\b/);
   });
 
   it("calls the viewer's own hat theirs and offers to move it", () => {
@@ -417,13 +418,22 @@ describe('a hat not worn on content', () => {
 // ways that make them up, each way has its icon, and moving your hat is a badge.
 describe('the popover layout', () => {
   const stats = () => popover()!.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+  // Each way's figure, then a visible label of icon and word; and which icon, in which colour.
   const ways = () =>
-    [...stats().querySelectorAll<HTMLElement>('[data-way]')].map((w) => [
-      w.dataset.way,
-      w.textContent,
-      // The icon comes before the word.
-      w.querySelector('svg') ? 'icon' : 'no icon',
-    ]);
+    [...stats().querySelectorAll<HTMLElement>('[data-way]')].map((w) => {
+      const [figure, label] = [...w.children];
+      const icon = label.querySelector('svg')!;
+      return [
+        w.dataset.way,
+        figure.textContent,
+        label.textContent,
+        `${icon.getAttribute('class')?.match(/tabler-icon-([\w-]+)/)?.[1]} ${icon.getAttribute(
+          'stroke'
+        )}`,
+        // The popover has room for the words: no tooltip stands in for them.
+        w.title,
+      ];
+    });
 
   it('shows the points on their own, then views, reactions, comments and remixes', () => {
     renderCard();
@@ -433,10 +443,10 @@ describe('the popover layout', () => {
     );
     // Comments and remixes score from scoring v2 on: until the server sends them, a dash, not a 0.
     expect(ways()).toEqual([
-      ['views', '56.8kviews', 'icon'],
-      ['reactions', '12reactions', 'icon'],
-      ['comments', '–comments', 'icon'],
-      ['remixes', '–remixes', 'icon'],
+      ['views', '56.8k', 'views', 'eye var(--mantine-color-blue-5)', ''],
+      ['reactions', '12', 'reactions', 'heart var(--mantine-color-pink-5)', ''],
+      ['comments', '–', 'comments', 'message-circle var(--mantine-color-green-5)', ''],
+      ['remixes', '–', 'remixes', 'hierarchy var(--mantine-color-violet-5)', ''],
     ]);
   });
 
@@ -448,9 +458,13 @@ describe('the popover layout', () => {
     };
     renderCard();
     clickHat();
-    expect(ways().slice(2)).toEqual([
-      ['comments', '3comments', 'icon'],
-      ['remixes', '0remixes', 'icon'],
+    expect(
+      ways()
+        .slice(2)
+        .map(([way, figure]) => [way, figure])
+    ).toEqual([
+      ['comments', '3'],
+      ['remixes', '0'],
     ]);
   });
 
@@ -483,7 +497,10 @@ describe('the popover layout', () => {
     clickHat();
     const arrow = popover()!.querySelector<HTMLElement>('.mantine-Popover-arrow');
     expect(arrow).not.toBeNull();
-    expect(arrow!.style.left).not.toBe('5px');
+    // Centred, Mantine positions the arrow from the measured target (`arrowX`), which happy-dom
+    // cannot measure, so `left` is unset. Pinned to the side it is a fixed offset ('5px' by default,
+    // or whatever `arrowOffset` says). Real centring is only visible in a browser.
+    expect([arrow!.style.left, arrow!.style.width]).toEqual(['', '10px']);
   });
 });
 
