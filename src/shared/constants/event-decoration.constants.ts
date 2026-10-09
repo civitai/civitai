@@ -36,12 +36,28 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
   },
 ];
 
+/**
+ * How one piece of art sits on a card, for art that differs from the default convention
+ * (128x160 canvas, drawn upright, visible pixels down to y=156). Coordinates are canvas px.
+ */
+export type EventDecorationFit = {
+  /** [width, height] of the image file. */
+  canvas?: [number, number];
+  /** [left, top, right, bottom] of the visible pixels. The hat rests on the bottom-centre. */
+  bounds?: [number, number, number, number];
+  /** Longer side of the visible pixels on a card, in CSS px. */
+  size?: number;
+  /** Degrees; negative leans left. Ignored where the placement stands the hat upright. */
+  tilt?: number;
+};
+
 export type EventDecorationData = {
   type: string;
   event: string;
   url: string;
   team?: string;
   design?: string;
+  fit?: EventDecorationFit;
 };
 
 /** The SQL twin of this test is `(data->>'event') IS NOT NULL`; keep the two in step. */

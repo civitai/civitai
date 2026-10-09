@@ -117,7 +117,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                       aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
                       ...(image.eventDecoration && {
                         '--event-decoration-clear-left': `${getEventDecorationClearLeft(
-                          image.eventDecoration.data.type,
+                          image.eventDecoration.data,
                           'inside'
                         )}px`,
                       }),

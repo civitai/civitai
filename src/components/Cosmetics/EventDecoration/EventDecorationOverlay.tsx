@@ -7,7 +7,10 @@ import {
   DEFAULT_HAT_PLACEMENT,
   getHatLayout,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
-import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import type {
+  EventDecorationData,
+  EventDecorationFit,
+} from '~/shared/constants/event-decoration.constants';
 import styles from './EventDecorationOverlay.module.scss';
 
 /**
@@ -22,15 +25,24 @@ export function EventDecorationOverlay({
   decoration: EventDecorationData;
   placement?: HatPlacement;
 }) {
-  if (decoration.type === 'hat') return <CardHat url={decoration.url} placement={placement} />;
+  if (decoration.type === 'hat')
+    return <CardHat url={decoration.url} fit={decoration.fit} placement={placement} />;
   return null;
 }
 
 const CONFETTI_COLORS = ['#fab005', '#228be6', '#e64980', '#40c057', '#fd7e14', '#be4bdb'];
 const CONFETTI_PIECES = 14;
 
-function CardHat({ url, placement }: { url: string; placement: HatPlacement }) {
-  const layout = getHatLayout(placement);
+function CardHat({
+  url,
+  fit,
+  placement,
+}: {
+  url: string;
+  fit?: EventDecorationFit;
+  placement: HatPlacement;
+}) {
+  const layout = getHatLayout(placement, fit);
   const [burst, setBurst] = useState(0);
 
   return (
@@ -44,7 +56,7 @@ function CardHat({ url, placement }: { url: string; placement: HatPlacement }) {
         top: layout.top,
         width: layout.width,
         height: layout.height,
-        transform: `rotate(${layout.rotateDeg}deg)`,
+        transform: `rotate(${layout.tilt}deg)`,
         transformOrigin: layout.origin,
         ...(placement === 'top' && { marginLeft: -layout.width / 2 }),
       }}

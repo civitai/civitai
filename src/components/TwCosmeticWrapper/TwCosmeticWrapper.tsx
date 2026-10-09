@@ -63,13 +63,15 @@ export function TwCosmeticWrapper({
       style={{
         ...styleRef.current,
         ...(eventDecoration && {
-          '--event-decoration-clear-left': `${getEventDecorationClearLeft(eventDecoration.type)}px`,
+          '--event-decoration-clear-left': `${getEventDecorationClearLeft(eventDecoration)}px`,
         }),
         ...style,
       }}
       data-event-decoration={eventDecoration?.type}
       className={clsx(
-        styles.wrapper,
+        // Without a frame the wrapper only positions the decoration: the frame layout's
+        // `flex: 1` on the card would override the card's own height and collapse it.
+        hasFrame ? styles.wrapper : styles.decorationOnly,
         {
           [styles.border]: border,
           [styles.cssFrame]: cssFrame,
