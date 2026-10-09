@@ -155,6 +155,30 @@ describe('PlaceHatModal tiles', () => {
       expect.arrayContaining(['pl-6', 'pt-6', '[--event-decoration-grow:1]'])
     );
   });
+
+  // A browser drops real clicks inside a disabled button, so the wearing tile is no button at all
+  // and its hat bursts. The real-click check is PlaceHatModal.wearing-hat.browser.test.tsx, which
+  // no CI job runs; this pins the structure in the unit suite.
+  it('keeps the hat on the wearing tile out of any button', () => {
+    placeable = [
+      { entityType: 'Image', entityId: 500, title: null, image: null },
+      { entityType: 'Image', entityId: 501, title: null, image: null },
+    ];
+    const placedOn = { entityType: 'Image', entityId: 500 } as MyHat['placedOn'];
+    const worn = hat({ placedOn, data: { type: 'hat', event: 'birthday2026', url: 'u' } as never });
+    const modal = render(
+      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: worn, myHats: [worn] })
+    );
+    // EventContentThumb (which draws the hat) is mocked here; its tile is what must not be a button.
+    const wearing = [...modal.querySelectorAll('p')].find(
+      (p) => p.textContent === 'Wearing this hat now'
+    )!;
+    expect(wearing.closest('button')).toBeNull();
+    const tiles = [...modal.querySelectorAll('button')].filter(
+      (b) => !b.hasAttribute('data-event-decoration')
+    );
+    expect(tiles).toHaveLength(1);
+  });
 });
 
 describe('MyEventHats cooldown', () => {
