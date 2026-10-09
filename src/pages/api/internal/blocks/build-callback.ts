@@ -338,18 +338,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       failedStep: signals.failedStep,
       failedReason: signals.failedReason,
       failureClass,
-      pipelineStatus: signals.pipelineStatus,
     };
 
     // Stale-run guard. Failure callbacks are re-sent until one gets a 2xx, so one can land
     // after a moderator has re-triggered the build. A failure from the OLDER run must not
-    // flip the newer run's `building` to `failed`, nor mark the commit red under it. Only
-    // the history row is kept. Enforce-if-present: no `runId`, or no recorded trigger for
-    // it, proceeds exactly as before (see `isSupersededRun`).
+    // flip the newer run's `building` to `failed`, nor mark the commit red under it; it is
+    // logged and acknowledged, and writes nothing. Enforce-if-present: no `runId`, or no
+    // recorded trigger for it, proceeds exactly as before (see `isSupersededRun`).
     if (
       await isSupersededRun({ mode: 'build', slug: body.slug, sha: body.sha, runId: signals.runId })
     ) {
-      await recordBuildAttempt({ ...attempt, status: 'superseded' });
       // eslint-disable-next-line no-console
       console.warn(
         `[build-callback] ignoring a failure from a superseded run for ${
@@ -380,8 +378,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     // After the deploy_state write, and best-effort: a missing attempts table (its
     // migration is applied by hand) costs the history row, never the state above.
     await recordBuildAttempt(attempt);
-    // Counted only once the failure is APPLIED: a superseded run's late report is history,
-    // not a build outcome, and must not move a failure-rate alert.
+    // Counted only once the failure is APPLIED: a superseded run's late report is ignored,
+    // and must not move a failure-rate alert.
     recordAppBlockBuildOutcome({
       mode: 'build',
       outcome: 'failed',
@@ -427,7 +425,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     sha: body.sha,
     runId: signals.runId,
     failedStep: signals.failedStep,
-    pipelineStatus: signals.pipelineStatus,
   });
   recordAppBlockBuildOutcome({
     mode: 'build',

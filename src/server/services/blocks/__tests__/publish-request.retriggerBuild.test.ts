@@ -53,7 +53,7 @@ const {
     })),
     mockSetCommitStatus: vi.fn(async () => undefined),
     // The build-attempts table: the trigger-time row the stale-run guard keys on.
-    mockAttemptCreateMany: vi.fn(async () => ({ count: 1 })),
+    mockAttemptCreateMany: vi.fn(async () => ({ id: 1 })),
     limiter: {
       acquire: vi.fn(async () => mockRedis.nxResult),
       release: vi.fn(async () => undefined),
@@ -70,7 +70,7 @@ vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: {
     appBlockPublishRequest: { findUnique: mockDbWriteFindUnique, updateMany: mockUpdateMany },
-    appBlockBuildAttempt: { createMany: mockAttemptCreateMany },
+    appBlockBuildAttempt: { create: mockAttemptCreateMany },
   },
 }));
 vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
@@ -676,21 +676,18 @@ describe('retriggerBuild — records the run it started, for the stale-run guard
     expect(mockAttemptCreateMany).toHaveBeenCalledTimes(1);
     expect(mockAttemptCreateMany.mock.calls[0]).toEqual([
       {
-        data: [
-          {
-            publishRequestId: REQ_ID,
-            slug: 'my-app',
-            sha: SHA,
-            runId: 'app-blocks-my-app-aaaaaaaa-222222',
-            mode: 'build',
-            status: 'triggered',
-            failedStep: null,
-            failedReason: null,
-            failureClass: null,
-            pipelineStatus: null,
-          },
-        ],
-        skipDuplicates: true,
+        data: {
+          publishRequestId: REQ_ID,
+          slug: 'my-app',
+          sha: SHA,
+          runId: 'app-blocks-my-app-aaaaaaaa-222222',
+          mode: 'build',
+          status: 'triggered',
+          failedStep: null,
+          failedReason: null,
+          failureClass: null,
+        },
+        select: { id: true },
       },
     ]);
     // Ordering: once the row reads 'building', the new run must already be the latest.

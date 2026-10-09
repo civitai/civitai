@@ -11,9 +11,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // The canonical shared DB mock (registered for every file by the test setup), not a
 // per-file mock of the client module.
 const db = {
-  createMany: dbMock.dbWrite.appBlockBuildAttempt.createMany,
+  create: dbMock.dbWrite.appBlockBuildAttempt.create,
   findFirst: dbMock.dbWrite.appBlockBuildAttempt.findFirst,
-  updateMany: dbMock.dbWrite.appBlockBuildAttempt.updateMany,
   findMany: dbMock.dbRead.appBlockBuildAttempt.findMany,
   requestFindFirst: dbMock.dbWrite.appBlockPublishRequest.findFirst,
 };
@@ -36,12 +35,12 @@ beforeEach(() => {
   // Reset implementations too: a case below that makes the table "missing" must not leak.
   for (const fn of Object.values(db)) fn.mockReset();
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-  db.createMany.mockResolvedValue({ count: 1 });
+  db.create.mockResolvedValue({ id: 1 });
   db.requestFindFirst.mockResolvedValue({ id: 'pubreq_A' });
 });
 
 describe('recordBuildAttempt', () => {
-  it('resolves the approved request for a build-mode row and writes with skipDuplicates', async () => {
+  it('resolves the approved request for a build-mode row and appends one row', async () => {
     expect(
       await recordBuildAttempt({
         mode: 'build',
@@ -55,41 +54,24 @@ describe('recordBuildAttempt', () => {
       where: { slug: 's', forgejoCommitSha: SHA, status: 'approved' },
       select: { id: true },
     });
-    expect(db.createMany).toHaveBeenCalledWith({
-      data: [
-        {
-          publishRequestId: 'pubreq_A',
-          slug: 's',
-          sha: SHA,
-          runId: 'r-1',
-          mode: 'build',
-          status: 'failed',
-          failedStep: null,
-          failedReason: null,
-          failureClass: null,
-          pipelineStatus: null,
-          createdAt: expect.any(Date),
-        },
-      ],
-      skipDuplicates: true,
+    expect(db.create).toHaveBeenCalledWith({
+      data: {
+        publishRequestId: 'pubreq_A',
+        slug: 's',
+        sha: SHA,
+        runId: 'r-1',
+        mode: 'build',
+        status: 'failed',
+        failedStep: null,
+        failedReason: null,
+        failureClass: null,
+        createdAt: expect.any(Date),
+      },
+      select: { id: true },
     });
-    expect(db.updateMany).not.toHaveBeenCalled();
   });
 
-  it('an absorbed duplicate OUTCOME row is re-stamped; a trigger row is not app-stamped', async () => {
-    db.createMany.mockResolvedValue({ count: 0 });
-    await recordBuildAttempt({
-      mode: 'build',
-      status: 'failed',
-      slug: 's',
-      sha: SHA,
-      runId: 'r-1',
-    });
-    expect(db.updateMany).toHaveBeenCalledWith({
-      where: { mode: 'build', runId: 'r-1', status: 'failed' },
-      data: { createdAt: expect.any(Date) },
-    });
-    vi.mocked(db.updateMany).mockClear();
+  it('an outcome row is app-stamped; a trigger row is not', async () => {
     await recordBuildTriggered({
       mode: 'build',
       publishRequestId: 'p',
@@ -97,8 +79,7 @@ describe('recordBuildAttempt', () => {
       sha: SHA,
       runName: 'r-2',
     });
-    expect(db.createMany.mock.calls.at(-1)?.[0].data[0]).not.toHaveProperty('createdAt');
-    expect(db.updateMany).not.toHaveBeenCalled();
+    expect(db.create.mock.calls.at(-1)?.[0].data).not.toHaveProperty('createdAt');
   });
 
   it('uses a given publish request id and does not look one up', async () => {
@@ -110,11 +91,11 @@ describe('recordBuildAttempt', () => {
       publishRequestId: 'pubreq_R',
     });
     expect(db.requestFindFirst).not.toHaveBeenCalled();
-    expect(db.createMany.mock.calls[0][0].data[0].publishRequestId).toBe('pubreq_R');
+    expect(db.create.mock.calls[0][0].data.publishRequestId).toBe('pubreq_R');
   });
 
   it('TABLE MISSING → false, never throws', async () => {
-    db.createMany.mockRejectedValue(missingTable());
+    db.create.mockRejectedValue(missingTable());
     await expect(
       recordBuildAttempt({ mode: 'build', status: 'failed', slug: 's', sha: SHA })
     ).resolves.toBe(false);
@@ -132,7 +113,7 @@ describe('recordBuildTriggered', () => {
         runName: 'app-blocks-s-aaaaaaaa-111111',
       })
     ).toBe(true);
-    expect(db.createMany.mock.calls[0][0].data[0]).toMatchObject({
+    expect(db.create.mock.calls[0][0].data).toMatchObject({
       status: 'triggered',
       runId: 'app-blocks-s-aaaaaaaa-111111',
       publishRequestId: 'pubreq_A',
@@ -150,7 +131,7 @@ describe('recordBuildTriggered', () => {
         runName,
       })
     ).toBe(true);
-    expect(db.createMany.mock.calls.at(-1)?.[0].data[0].runId).toBe(runName);
+    expect(db.create.mock.calls.at(-1)?.[0].data.runId).toBe(runName);
   });
 
   it.each(['', undefined, 'Not_A_Run'])(
@@ -165,7 +146,7 @@ describe('recordBuildTriggered', () => {
           runName,
         })
       ).toBe(false);
-      expect(db.createMany).not.toHaveBeenCalled();
+      expect(db.create).not.toHaveBeenCalled();
     }
   );
 });
@@ -247,7 +228,7 @@ describe('latestBuildAttemptSignals', () => {
       where: {
         publishRequestId: { in: ['p1', 'p2', 'p3'] },
         mode: 'build',
-        // Not 'triggered' (no outcome) and not 'superseded' (an old run's ignored report).
+        // Outcomes only: trigger rows are not outcomes.
         status: { in: ['succeeded', 'failed'] },
       },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],

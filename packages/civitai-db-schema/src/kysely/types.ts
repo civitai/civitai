@@ -331,7 +331,6 @@ export type AppBlockBuildAttempt = {
   failed_step: string | null;
   failed_reason: string | null;
   failure_class: string | null;
-  pipeline_status: string | null;
   created_at: Generated<Timestamp>;
 };
 export type AppBlockPublishRequest = {

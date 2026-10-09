@@ -13,8 +13,10 @@
 // per-app; per-app attribution is in the build attempt rows. The reachable label sets
 // are enumerated in `REACHABLE_SERIES` and seeded at 0: 2 modes x 11 = 22 series per pod.
 //
-// HOW TO READ IT: prom-client counters live in the pod heap and reset on restart. Count
-// with `sum(increase(civitai_app_block_builds_total{...}[1h]))`, never a bare `sum()`.
+// HOW TO READ IT: a per-pod counter that lives in the pod heap and resets on restart. Read
+// it with a range function across pods, e.g.
+// `sum(max_over_time(civitai_app_block_builds_total{...}[1h]))`, so pods replaced inside the
+// window still count; never a bare `sum()` (live pods only) or `rate()` of one child.
 //
 // Same registry rules as the neighbouring modules: get-or-create against the DEFAULT
 // registry (the one `/api/metrics` serves), and import only from the request graph.

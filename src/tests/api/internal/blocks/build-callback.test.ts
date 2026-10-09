@@ -29,8 +29,7 @@ const {
   attempts,
 } = vi.hoisted(() => {
   /**
-   * An in-memory `app_block_build_attempts`: rows, its partial unique index on
-   * (mode, run_id, status) honoured by `skipDuplicates`, and newest-first `findFirst`.
+   * An in-memory `app_block_build_attempts`: append-only rows and newest-first `findFirst`.
    * `missing` makes every call throw the way Prisma does before the migration is applied.
    */
   const attempts = {
@@ -48,48 +47,12 @@ const {
         { code: 'P2021' }
       );
     },
-    createMany: vi.fn(
-      async ({
-        data,
-        skipDuplicates,
-      }: {
-        data: Record<string, unknown>[];
-        skipDuplicates?: boolean;
-      }) => {
-        if (attempts.missing) attempts.fail();
-        let count = 0;
-        for (const d of data) {
-          const dup =
-            d.runId != null &&
-            attempts.rows.some(
-              (r) => r.mode === d.mode && r.runId === d.runId && r.status === d.status
-            );
-          if (dup) {
-            if (skipDuplicates) continue;
-            throw new Error('unique violation');
-          }
-          attempts.rows.push({ ...d, id: attempts.rows.length + 1 });
-          count++;
-        }
-        return { count };
-      }
-    ),
-    updateMany: vi.fn(
-      async ({
-        where,
-        data,
-      }: {
-        where: Record<string, unknown>;
-        data: Record<string, unknown>;
-      }) => {
-        if (attempts.missing) attempts.fail();
-        const hits = attempts.rows.filter((r) =>
-          Object.entries(where).every(([k, v]) => r[k] === v)
-        );
-        for (const r of hits) Object.assign(r, data);
-        return { count: hits.length };
-      }
-    ),
+    create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      if (attempts.missing) attempts.fail();
+      const row = { ...data, id: attempts.rows.length + 1 };
+      attempts.rows.push(row);
+      return { id: row.id };
+    }),
     findFirst: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
       if (attempts.missing) attempts.fail();
       const hits = attempts.rows
@@ -141,8 +104,7 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: {
     appBlock: { update: mockAppBlockUpdate },
     appBlockBuildAttempt: {
-      createMany: attempts.createMany,
-      updateMany: attempts.updateMany,
+      create: attempts.create,
       findFirst: attempts.findFirst,
     },
     // Resolves the build attempt's publish_request_id from (slug, sha).
@@ -809,7 +771,6 @@ describe('build-callback handler — structured signals and build attempts', () 
         failedReason: null,
         // No step reported → no class stored, so the UI keeps its text fallback.
         failureClass: null,
-        pipelineStatus: null,
         createdAt: expect.any(Date),
       },
     ]);
@@ -837,7 +798,6 @@ describe('build-callback handler — structured signals and build attempts', () 
         failedStep: 'build',
         failedReason: 'TaskRunTimeout',
         failureClass: 'transient',
-        pipelineStatus: 'Failed',
       }),
     ]);
   });
@@ -860,9 +820,10 @@ describe('build-callback handler — structured signals and build attempts', () 
         status: 'succeeded',
         failedStep: 'none',
         failureClass: null,
-        pipelineStatus: 'Succeeded',
       }),
     ]);
+    // pipelineStatus is accepted and validated, but deliberately not persisted.
+    expect(callbackRows()[0]).not.toHaveProperty('pipelineStatus');
   });
 
   it('an INVALID field is dropped and logged; the callback and the valid fields go through', async () => {
@@ -899,7 +860,7 @@ describe('build-callback handler — structured signals and build attempts', () 
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'failed', 'Build None');
     // Both table calls were attempted and threw — this is the path under test, not a no-op.
     expect(attempts.findFirst).toHaveBeenCalled();
-    expect(attempts.createMany).toHaveBeenCalled();
+    expect(attempts.create).toHaveBeenCalled();
     expect(attempts.rows).toEqual([]);
     warn.mockRestore();
   });
@@ -911,7 +872,7 @@ describe('build-callback handler — structured signals and build attempts', () 
     await invoke(signedReq({ ...validSuccessBody(), runId: RUN_OLD }), res);
     expect(res._body).toMatchObject({ ok: true, applied: true });
     expect(mockMarkDeploy).toHaveBeenCalledWith(SLUG, SHA, 'deploying');
-    expect(attempts.createMany).toHaveBeenCalled();
+    expect(attempts.create).toHaveBeenCalled();
     warn.mockRestore();
   });
 
@@ -924,11 +885,9 @@ describe('build-callback handler — structured signals and build attempts', () 
     expect(res._body).toEqual({ ok: true, applied: false, reason: 'superseded run' });
     expect(mockMarkDeploy).not.toHaveBeenCalled();
     expect(mockSetCommitStatus).not.toHaveBeenCalled();
-    // History still records what the old run reported — as `superseded`, which the
-    // latest-outcome read never returns, so it cannot relabel the newer run's result.
-    expect(callbackRows()).toEqual([
-      expect.objectContaining({ runId: RUN_OLD, status: 'superseded', failedStep: 'scan' }),
-    ]);
+    // An ignored failure writes no attempt row, so it can never become a version's
+    // "latest outcome" and relabel the newer run's result.
+    expect(callbackRows()).toEqual([]);
   });
 
   it('RUN-ID GUARD: the CURRENT run’s failure is applied', async () => {
@@ -955,30 +914,24 @@ describe('build-callback handler — structured signals and build attempts', () 
     }
   });
 
-  it('a repeated delivery of the same failure adds no second row', async () => {
-    for (let i = 0; i < 3; i++) {
-      await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
-    }
-    expect(callbackRows()).toHaveLength(1);
-    // The dedup is the DB's partial unique index; what the code owns is asking for it.
-    for (const [arg] of attempts.createMany.mock.calls) expect(arg.skipDuplicates).toBe(true);
-  });
-
-  it('a re-delivered failure re-stamps its row, so it stays as new as the deploy_state it rewrote', async () => {
+  it('a repeated delivery appends one row per delivery, each newer than the last', async () => {
     await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
-    const first = (callbackRows()[0].createdAt as Date).getTime();
     await new Promise((r) => setTimeout(r, 5));
     await invoke(signedReq(failBody({ failedStep: 'push', runId: RUN_OLD })), makeRes());
-    expect(callbackRows()).toHaveLength(1);
-    expect((callbackRows()[0].createdAt as Date).getTime()).toBeGreaterThan(first);
+    const rows = callbackRows();
+    expect(rows).toHaveLength(2);
+    // The newest row is what the freshness rule reads, and it is newer than the first.
+    expect((rows[1].createdAt as Date).getTime()).toBeGreaterThan(
+      (rows[0].createdAt as Date).getTime()
+    );
   });
 
   it('ORDER: the deploy_state write precedes the attempt row (the freshness rule depends on it)', async () => {
     await invoke(signedReq(failBody({ failedStep: 'scan', runId: RUN_OLD })), makeRes());
     expect(mockMarkDeploy).toHaveBeenCalledTimes(1);
-    expect(attempts.createMany).toHaveBeenCalledTimes(1);
+    expect(attempts.create).toHaveBeenCalledTimes(1);
     expect(mockMarkDeploy.mock.invocationCallOrder[0]).toBeLessThan(
-      attempts.createMany.mock.invocationCallOrder[0]
+      attempts.create.mock.invocationCallOrder[0]
     );
   });
 

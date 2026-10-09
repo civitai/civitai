@@ -533,9 +533,8 @@ describe('review-build-callback — structured signals', () => {
       runId: RUN,
     });
     expect(mockMarkPreview).not.toHaveBeenCalled();
-    expect(mockRecordAttempt).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: RUN, status: 'superseded' })
-    );
+    // An ignored failure writes no attempt row.
+    expect(mockRecordAttempt).not.toHaveBeenCalled();
   });
 
   it('the preview failure is written even when the attempt write reports failure', async () => {

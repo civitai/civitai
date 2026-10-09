@@ -2198,7 +2198,6 @@ export interface AppBlockBuildAttempt {
   failedStep: string | null;
   failedReason: string | null;
   failureClass: string | null;
-  pipelineStatus: string | null;
   createdAt: Date;
 }
 

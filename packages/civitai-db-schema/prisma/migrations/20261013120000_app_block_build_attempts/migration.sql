@@ -5,18 +5,18 @@
 --   * status 'triggered'  — civitai started a run (approve, moderator retrigger,
 --                           or a review preview), with the run id the build
 --                           service returned;
---   * status 'succeeded' / 'failed' — a build callback for that run, with the
---                           optional failed step, the build service's reason, its
---                           whole-run status, and the failure class civitai
---                           derived from them;
---   * status 'superseded' — a failure callback from an OLDER run that arrived
---                           after a newer run was started. Kept as history; it
---                           did not change deploy_state.
+--   * status 'succeeded' / 'failed' — an applied build callback for that run,
+--                           with the optional failed step, the build service's
+--                           reason, and the failure class civitai derived.
 --
 -- app_block_publish_requests keeps ONE mutable deploy_state per version, so it
 -- cannot say which run a callback belongs to or what happened on earlier runs.
--- This table can, and the build callbacks use it to drop a late failure from an
--- OLDER run instead of letting it overwrite a newer run's 'building'.
+-- This table can, and the build callbacks use the 'triggered' rows to ignore a
+-- late failure from an OLDER run instead of letting it overwrite a newer run's
+-- 'building'. An ignored failure writes no row.
+--
+-- Append-only: a callback delivered more than once appends one row per
+-- delivery. Readers take the newest row per publish request.
 --
 -- Applied MANUALLY per environment; nothing auto-applies it. The application
 -- tolerates the table being absent: every read and write of it is best-effort,
@@ -46,12 +46,11 @@ CREATE TABLE IF NOT EXISTS "app_block_build_attempts" (
   "failed_step"        TEXT,
   "failed_reason"      TEXT,
   "failure_class"      TEXT,
-  "pipeline_status"    TEXT,
   "created_at"         TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
   CONSTRAINT "app_block_build_attempts_mode_check"
     CHECK ("mode" IN ('build', 'review')),
   CONSTRAINT "app_block_build_attempts_status_check"
-    CHECK ("status" IN ('triggered', 'succeeded', 'failed', 'superseded'))
+    CHECK ("status" IN ('triggered', 'succeeded', 'failed'))
 );
 
 -- Latest attempt for a publish request (History tab, moderator Approved tab).
@@ -61,12 +60,5 @@ CREATE INDEX IF NOT EXISTS "app_block_build_attempts_request_idx"
 -- Latest triggered run for a version (the stale-run guard in the build callbacks).
 CREATE INDEX IF NOT EXISTS "app_block_build_attempts_version_idx"
   ON "app_block_build_attempts" ("mode", "slug", "sha", "created_at" DESC);
-
--- A callback can be delivered more than once. Its writes use ON CONFLICT DO
--- NOTHING, so a repeat delivery for the same run and outcome adds no row. Rows
--- without a run id (older pipelines) are not deduplicated.
-CREATE UNIQUE INDEX IF NOT EXISTS "app_block_build_attempts_run_status_key"
-  ON "app_block_build_attempts" ("mode", "run_id", "status")
-  WHERE "run_id" IS NOT NULL;
 
 COMMIT;

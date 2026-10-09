@@ -94,7 +94,7 @@ const {
     },
     mockDbWrite: {
       // approveRequest records the run its trigger started (the stale-run guard's key).
-      appBlockBuildAttempt: { createMany: vi.fn<DelegateMock>(async () => ({ count: 1 })) },
+      appBlockBuildAttempt: { create: vi.fn<DelegateMock>(async () => ({ id: 1 })) },
       // `updateMany` added (no-trust-on-push fix): approveRequest now supersedes
       // any stray pending review request the git-push webhook may have parked for
       // the slug while racing the approve commit.
@@ -1542,24 +1542,22 @@ describe('approveRequest', () => {
 
     // The run the trigger started is recorded (the stale-run guard's key) BEFORE the
     // 'building' write, under the run name the trigger returned.
-    expect(mockDbWrite.appBlockBuildAttempt.createMany).toHaveBeenCalledWith({
-      data: [
-        expect.objectContaining({
-          publishRequestId: 'pubreq_1',
-          slug: 'hello',
-          sha: 'commit_sha_abc',
-          runId: 'pipelinerun-mock',
-          mode: 'build',
-          status: 'triggered',
-        }),
-      ],
-      skipDuplicates: true,
+    expect(mockDbWrite.appBlockBuildAttempt.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        publishRequestId: 'pubreq_1',
+        slug: 'hello',
+        sha: 'commit_sha_abc',
+        runId: 'pipelinerun-mock',
+        mode: 'build',
+        status: 'triggered',
+      }),
+      select: { id: true },
     });
     const buildingWrite = mockDbWrite.appBlockPublishRequest.updateMany.mock.calls.findIndex(
       (c: unknown[]) =>
         (c[0] as { data?: { deployState?: string } }).data?.deployState === 'building'
     );
-    expect(mockDbWrite.appBlockBuildAttempt.createMany.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mockDbWrite.appBlockBuildAttempt.create.mock.invocationCallOrder[0]).toBeLessThan(
       mockDbWrite.appBlockPublishRequest.updateMany.mock.invocationCallOrder[buildingWrite]
     );
 

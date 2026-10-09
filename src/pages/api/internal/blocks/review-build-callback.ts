@@ -304,7 +304,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       failedStep: signals.failedStep,
       failedReason: signals.failedReason,
       failureClass,
-      pipelineStatus: signals.pipelineStatus,
     };
     // Stale-run guard, as in the production callback: a "Rebuild preview" of the same sha
     // starts a new run, and a late failure from the old one must not flip it to failed.
@@ -316,7 +315,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
         runId: signals.runId,
       })
     ) {
-      await recordBuildAttempt({ ...attempt, status: 'superseded' });
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[review-build-callback] ignoring a failure from a superseded run for ${body.publishRequestId}`
+      );
       res.status(200).json({ ok: true, applied: false, reason: 'superseded run' });
       return;
     }
@@ -364,7 +366,6 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     sha: body.sha,
     runId: signals.runId,
     failedStep: signals.failedStep,
-    pipelineStatus: signals.pipelineStatus,
   });
   recordAppBlockBuildOutcome({
     mode: 'review',

@@ -46,7 +46,7 @@ const {
       update: vi.fn(async () => ({})),
     },
     // previewRequest records the review run it started (the stale-run guard's key).
-    appBlockBuildAttempt: { createMany: vi.fn(async () => ({ count: 1 })) },
+    appBlockBuildAttempt: { create: vi.fn(async () => ({ id: 1 })) },
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb({})),
     appListing: { updateMany: vi.fn(async () => ({ count: 0 })) },
     appListingModerationEvent: { create: vi.fn(async () => ({})) },
@@ -216,18 +216,16 @@ describe('previewRequest', () => {
     });
     mockTriggerReviewBuild.mockResolvedValue({ name: 'app-blocks-review-my-app-aaaaaaaa-111111' });
     await previewRequest({ publishRequestId: PUBREQ, modUserId: 99 });
-    expect(mockDbWrite.appBlockBuildAttempt.createMany).toHaveBeenCalledWith({
-      data: [
-        expect.objectContaining({
-          publishRequestId: PUBREQ,
-          slug: 'my-app',
-          sha: SHA,
-          runId: 'app-blocks-review-my-app-aaaaaaaa-111111',
-          mode: 'review',
-          status: 'triggered',
-        }),
-      ],
-      skipDuplicates: true,
+    expect(mockDbWrite.appBlockBuildAttempt.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        publishRequestId: PUBREQ,
+        slug: 'my-app',
+        sha: SHA,
+        runId: 'app-blocks-review-my-app-aaaaaaaa-111111',
+        mode: 'review',
+        status: 'triggered',
+      }),
+      select: { id: true },
     });
   });
 

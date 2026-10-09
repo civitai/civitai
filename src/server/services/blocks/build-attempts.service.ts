@@ -21,11 +21,7 @@ import type {
  */
 
 export type BuildAttemptMode = 'build' | 'review';
-/**
- * `superseded` = a failure callback the stale-run guard ignored: kept as history, never
- * read back as a version's latest outcome.
- */
-export type BuildAttemptStatus = 'triggered' | 'succeeded' | 'failed' | 'superseded';
+export type BuildAttemptStatus = 'triggered' | 'succeeded' | 'failed';
 
 export type BuildAttemptRow = {
   mode: BuildAttemptMode;
@@ -42,7 +38,6 @@ export type BuildAttemptRow = {
   failedStep?: BuildFailedStep | null;
   failedReason?: string | null;
   failureClass?: BuildFailureClassSignal | null;
-  pipelineStatus?: string | null;
 };
 
 function warn(what: string, err: unknown): void {
@@ -55,15 +50,10 @@ function warn(what: string, err: unknown): void {
 /**
  * Append one attempt row. Returns whether the write went through.
  *
- * Duplicate deliveries are absorbed by the table's partial unique index on
- * `(mode, run_id, status)`: `skipDuplicates` turns the insert into `ON CONFLICT DO
- * NOTHING`, so a repeated callback for the same run and outcome adds no row.
- *
- * 🔴 BUT A REPEAT OUTCOME ROW IS RE-STAMPED. A re-delivered failure rewrites
- * `deploy_updated_at` before reaching here; left at its first-delivery time, the existing
- * row would then look older than the transition it describes and the freshness rule in
- * {@link latestBuildAttemptSignals} would hide it. So for an outcome row whose insert was
- * absorbed, `created_at` moves to now: on an outcome row it means "last reported".
+ * Plain append, no dedupe: a callback delivered more than once appends one row per
+ * delivery. That is what keeps the freshness rule in {@link latestBuildAttemptSignals}
+ * right for a re-delivered failure: the delivery rewrites `deploy_updated_at` and then
+ * appends a row stamped just after it.
  */
 export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean> {
   try {
@@ -80,30 +70,21 @@ export async function recordBuildAttempt(row: BuildAttemptRow): Promise<boolean>
     // the caller wrote just before (the freshness rule compares the two). Trigger rows
     // take the schema's `@default(now())`: they are only ordered against each other.
     const stampedAt = row.status === 'triggered' ? undefined : new Date();
-    const { count } = await dbWrite.appBlockBuildAttempt.createMany({
-      data: [
-        {
-          publishRequestId,
-          slug: row.slug,
-          sha: row.sha,
-          runId: row.runId ?? null,
-          mode: row.mode,
-          status: row.status,
-          failedStep: row.failedStep ?? null,
-          failedReason: row.failedReason ?? null,
-          failureClass: row.failureClass ?? null,
-          pipelineStatus: row.pipelineStatus ?? null,
-          ...(stampedAt ? { createdAt: stampedAt } : {}),
-        },
-      ],
-      skipDuplicates: true,
+    await dbWrite.appBlockBuildAttempt.create({
+      data: {
+        publishRequestId,
+        slug: row.slug,
+        sha: row.sha,
+        runId: row.runId ?? null,
+        mode: row.mode,
+        status: row.status,
+        failedStep: row.failedStep ?? null,
+        failedReason: row.failedReason ?? null,
+        failureClass: row.failureClass ?? null,
+        ...(stampedAt ? { createdAt: stampedAt } : {}),
+      },
+      select: { id: true },
     });
-    if (count === 0 && stampedAt && row.runId) {
-      await dbWrite.appBlockBuildAttempt.updateMany({
-        where: { mode: row.mode, runId: row.runId, status: row.status },
-        data: { createdAt: stampedAt },
-      });
-    }
     return true;
   } catch (err) {
     warn(`attempt write (mode=${row.mode}, status=${row.status}, slug=${row.slug})`, err);
@@ -191,8 +172,8 @@ export async function isSupersededRun(args: {
  * no such attempt is absent from the map; the map is empty when the table is missing.
  *
  * Two rules keep an older run's report off a newer failure:
- * - Only `succeeded` / `failed` rows count. Trigger rows are not outcomes, and a
- *   `superseded` row is an old run's late callback the guard already ignored.
+ * - Only `succeeded` / `failed` rows count; trigger rows are not outcomes. (A late failure
+ *   the stale-run guard ignored writes no row at all.)
  * - The row must be at least as new as the request's `deployUpdatedAt`. A callback
  *   writes `deploy_state` first and its attempt row second, so the row for the failure
  *   on screen is never older than it. Any later transition (a failed deploy of the built
