@@ -59,7 +59,11 @@ export async function getAccessToken({ id }: GetByIdInput) {
   // a 400 (a real bad-request / client error, not a transient outage).
   let response: Response;
   try {
-    response = await withSignals(() => fetch(`${env.SIGNALS_ENDPOINT}/users/${id}/accessToken`));
+    // Own lane: a reconnect storm of token mints must not crowd out signal
+    // pushes on the shared 'default' lane (the circuit breaker stays shared).
+    response = await withSignals(() => fetch(`${env.SIGNALS_ENDPOINT}/users/${id}/accessToken`), {
+      lane: 'token',
+    });
   } catch (err) {
     logSignalsFailSoft(
       err instanceof SignalsCallTimeoutError ? `circuit-${err.reason}` : 'fetch-failed',

@@ -84,6 +84,9 @@ beforeEach(() => {
     caches.event[entity] = entityCache();
   }
   db.image.findUnique.mockResolvedValue({ userId: OWNER });
+  // clearAllMocks keeps resolved values; a lookup one test set must not answer the next.
+  for (const lookup of [db.model.findUnique, db.article.findUnique, db.post.findUnique])
+    lookup.mockReset().mockResolvedValue(null);
   db.userCosmetic.findMany.mockResolvedValue([]);
   db.userCosmetic.updateMany.mockResolvedValue({ count: 1 });
   db.$executeRaw.mockResolvedValue(1);
@@ -169,6 +172,7 @@ describe('placing an event decoration', () => {
 
   it('is refused on a content type its event does not allow', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    db.post.findUnique.mockResolvedValue({ userId: OWNER });
     await expect(
       equipCosmeticToEntity({
         userId: OWNER,
@@ -233,6 +237,17 @@ describe('placing an event decoration', () => {
     expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
   });
 
+  // A cosmetic can be granted outside the event's own join and shop flows (claims, mod grants).
+  // The event rules must not depend on how it was obtained, so equip never reads the source: if
+  // you are adding it here, every grant route needs the same rules applied.
+  it('decides from the cosmetic itself, never from how it was obtained', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(db.userCosmetic.findFirst.mock.calls[0][0].select.cosmetic).toEqual({
+      select: { type: true, data: true },
+    });
+  });
+
   it('leaves frames out of the event window and the cooldown record', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(frameRow());
     vi.setSystemTime(BIRTHDAY_2026_ENDS_AT);
@@ -245,6 +260,76 @@ describe('placing an event decoration', () => {
       equippedToType: 'Image',
       equippedAt: BIRTHDAY_2026_ENDS_AT,
     });
+  });
+});
+
+// A cosmetic awarded for one entity (forId/forType) goes on that entity only: the id AND the type
+// must both match, as the decoration picker already requires.
+describe('a cosmetic locked to one entity', () => {
+  const lockedTo = (forId: number, forType: string) => ({ ...frameRow(), forId, forType });
+
+  it.each([
+    ['another entity of the same type', IMAGE + 1, 'Image'],
+    ['the same id on another type', IMAGE, 'Model'],
+  ])('is refused on %s', async (_, forId, forType) => {
+    db.userCosmetic.findFirst.mockResolvedValue(lockedTo(forId, forType));
+    await expect(equipHat()).rejects.toThrow(/cannot equip this cosmetic to this entity/);
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('is allowed on the entity it is locked to', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(lockedTo(IMAGE, 'Image'));
+    await equipHat();
+    expect(db.userCosmetic.updateMany.mock.calls.at(-1)![0].data).toMatchObject({
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+  });
+});
+
+describe('equipping any decoration requires owning the content', () => {
+  it.each([
+    ['a frame', frameRow],
+    ['an event decoration', () => hatRow()],
+  ])('refuses %s on content owned by someone else', async (_, row) => {
+    db.userCosmetic.findFirst.mockResolvedValue(row());
+    db.image.findUnique.mockResolvedValue({ userId: OWNER + 1 });
+
+    await expect(equipHat()).rejects.toThrow(/your own content/);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  // The image here belongs to the wearer, so only a lookup against the target's own table can
+  // refuse: a lookup hard-wired to images would let these through.
+  it.each([
+    ['Model', () => db.model.findUnique],
+    ['Article', () => db.article.findUnique],
+  ] as const)('looks the owner up in the %s table', async (equippedToType, lookup) => {
+    db.userCosmetic.findFirst.mockResolvedValue(frameRow());
+    lookup().mockResolvedValue({ userId: OWNER + 1 });
+
+    await expect(
+      equipCosmeticToEntity({
+        userId: OWNER,
+        cosmeticId: 1,
+        claimKey: 'tx-1',
+        equippedToId: 42,
+        equippedToType,
+      })
+    ).rejects.toThrow(/your own content/);
+    expect(lookup()).toHaveBeenCalledWith({ where: { id: 42 }, select: { userId: true } });
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reads the owner from the primary, by the target entity', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(frameRow());
+    await equipHat();
+    expect(db.image.findUnique).toHaveBeenCalledWith({
+      where: { id: IMAGE },
+      select: { userId: true },
+    });
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -285,6 +370,11 @@ describe('getEventDecorationsForEntity', () => {
     await expect(getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).resolves.toEqual({
       [IMAGE]: { id: 1 },
     });
+  });
+
+  it('passes the write-back choice through to the cache', async () => {
+    await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image', writeBack: false });
+    expect(caches.event.Image.fetch).toHaveBeenCalledWith([IMAGE], { writeBack: false });
   });
 
   it('skips the read between events and for types no event allows', async () => {

@@ -10,10 +10,9 @@
  * where the detail action matrix is actually pinned, mirroring
  * `appListingCardView`.
  *
- * DARK / parallel-run: consumed by the mod-only `/apps/store-preview/<slug>`
- * detail surface (`AppListingDetailBody`) AND by `MySubmissionsList`'s owner
- * "open the running app" affordance, which reuses this same matrix. Both
- * callsites already degrade gracefully to text when an action carries no href.
+ * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
+ * detail surface (`AppListingDetailBody`), which degrades gracefully to text when
+ * an action carries no href.
  *
  * 🔴 `/apps/[appBlockId]` IS RETIRED (#3493) — nothing here may link to it.
  * It is now a `getServerSideProps`-only route with two terminal branches (see

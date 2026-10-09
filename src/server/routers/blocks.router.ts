@@ -2886,9 +2886,10 @@ export const blocksRouter = router({
    * `retriggerBuildSchema` and the service's supersede guard.
    *
    * MOD-ONLY IS A DELIBERATE CHOICE, not an oversight: owner self-service would
-   * need its own abuse controls and a build-capacity budget. The owner instead
-   * gets the real build-failure reason on /apps/my-submissions plus a
-   * "contact a moderator" affordance.
+   * need its own abuse controls and a build-capacity budget. The app's team instead
+   * sees the failure on the listing's History tab (`ListingHistoryPanel`): a
+   * headline, a best-effort cause, the build-log excerpt, and — for anything that
+   * is not their code to fix — guidance to contact us rather than resubmit.
    */
   retriggerBuild: moderatorProcedure
     .use(enforceAppBlocksFlag)

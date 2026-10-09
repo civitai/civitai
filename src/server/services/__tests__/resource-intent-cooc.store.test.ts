@@ -527,8 +527,10 @@ describe('cooc served snapshot', () => {
   it('retention protects exactly the row latestReadySnapshotId serves (random tables)', async () => {
     let x = 3;
     const rnd = () => (x = (x * 1103515245 + 12345) >>> 0) / 2 ** 32;
+    // One database, emptied per trial: a PGlite boot per trial puts this case near the test timeout.
+    const { db, sql } = await freshDb();
     for (let trial = 0; trial < 25; trial++) {
-      const { db, sql } = await freshDb();
+      await db.exec(`DELETE FROM "ResourceIntentCoocSnapshot"`);
       const n = 1 + Math.floor(rnd() * 8);
       const hashToId = new Map<string, string>();
       for (let i = 0; i < n; i++) {

@@ -182,9 +182,9 @@ exists.
   wrong: on the *buyer's* leg both are `purchase`, but on the *creator's receiving* leg — the only side earnings
   cares about — cosmetic is already `sell` and access is `purchase` + a stable `early-access-` prefix. **No new
   type/flag is needed and no schema change is required.** A distinct type would be *cleaner*, not *blocking*.
-- **`earnings.md` claimed `resourceCompensations` carries a `tip` source.** It does not — the only real `source`
-  values are `compensation`, `compensation_recovered_20260507`, and `licenseFee`. Tips are
-  `buzzTransactions.type = 'tip'`.
+- **`resourceCompensations` carries a `tip` source since 2026-10-08.** Before that the only `source` values were
+  `compensation`, `compensation_recovered_20260507` and `licenseFee`. `deliver-creator-compensation` pays `tip`
+  rows inside its `compensation` transaction.
 
 ## Precision — resolved, and the earlier "must NOT FLOOR" note was wrong
 

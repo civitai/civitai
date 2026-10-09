@@ -1,3 +1,4 @@
+import { getPrimaryShade, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import type { EventInput } from '~/server/schema/event.schema';
 import dayjs from '~/shared/utils/dayjs';
@@ -110,3 +111,11 @@ export const useQueryEventContributors = ({ event }: { event: string }) => {
 
   return { contributors, loading: isLoading };
 };
+
+// A team's colour is the Mantine palette named after it; undefined for a team with no palette.
+export function useTeamColor() {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+  return (team: string): string | undefined =>
+    theme.colors[team.toLowerCase()]?.[getPrimaryShade(theme, colorScheme)];
+}

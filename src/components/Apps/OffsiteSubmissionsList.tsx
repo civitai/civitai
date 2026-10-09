@@ -1,14 +1,4 @@
-import {
-  Anchor,
-  Badge,
-  Button,
-  Card,
-  Code,
-  Group,
-  Stack,
-  Table,
-  Text,
-} from '@mantine/core';
+import { Anchor, Badge, Button, Card, Code, Group, Stack, Table, Text } from '@mantine/core';
 import {
   IconExternalLink,
   IconEye,
@@ -37,7 +27,7 @@ import {
 } from '~/components/Apps/ownerListingModals';
 import { republishSuccessMessage } from '~/components/Apps/listingPublishingActions';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
-import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
+import { ReviewerNotesButton } from '~/components/Apps/ReviewerNotesButton';
 import {
   ListingProblemsIndicator,
   type ListingProblem,
@@ -53,7 +43,11 @@ import {
   type SubmissionAccessors,
   type SubmissionGroup,
 } from '~/components/Apps/submissionsTable';
-import { StatusSections, SubmissionSearch, VersionToggle } from '~/components/Apps/submissionsTableUi';
+import {
+  StatusSections,
+  SubmissionSearch,
+  VersionToggle,
+} from '~/components/Apps/submissionsTableUi';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -240,10 +234,7 @@ function OffsiteRow({
   // are historical, and a REMOVED listing is not editable (the service FORBIDs it),
   // so exclude it here even though its request status is still `approved`.
   const canEdit =
-    !nested &&
-    isEditableOffsiteStatus(s.status) &&
-    !!s.appListingId &&
-    listingStatus !== 'removed';
+    !nested && isEditableOffsiteStatus(s.status) && !!s.appListingId && listingStatus !== 'removed';
   const canWithdraw = isWithdrawableOffsiteStatus(s.status);
   // Owner takedown affordances live ONLY on the latest row with a real listing id.
   const showOwner = !nested && !!s.appListingId;
@@ -255,9 +246,7 @@ function OffsiteRow({
   // (it would just open to "No moderation history yet.").
   const canViewHistory =
     showOwner &&
-    (ownerState === 'owner-hidden' ||
-      ownerState === 'mod-removed' ||
-      !!s.lastModerationAction);
+    (ownerState === 'owner-hidden' || ownerState === 'mod-removed' || !!s.lastModerationAction);
 
   const renderActions = () => {
     const hasAny =
@@ -425,7 +414,8 @@ export function OffsiteSubmissionsList({
       showSuccessNotification({ message: republishSuccessMessage(data, 'offsite') });
       await invalidateSubmissions();
     },
-    onError: (e) => showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),
+    onError: (e) =>
+      showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),
   });
 
   const owner: OwnerControls = {

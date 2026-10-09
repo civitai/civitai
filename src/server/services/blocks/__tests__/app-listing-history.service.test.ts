@@ -50,6 +50,7 @@ const mockWriteDb = dbMock.dbWrite;
 void mockWriteDb;
 
 const {
+  authorFailureDetail,
   listListingHistory,
   listMyOrphanedSubmissions,
   blockRequestWhereForListing,
@@ -113,6 +114,7 @@ const blockReq = (over: Record<string, unknown> & { id: string }) => ({
   rejectionReason: null,
   approvalNotes: null,
   deployState: null,
+  deployDetail: null,
   deployUpdatedAt: null,
   ...over,
 });
@@ -748,5 +750,85 @@ describe('🔴 the orphan read scans wider than it displays', () => {
     expect(await listMyOrphanedSubmissions({ userId: OWNER })).toHaveLength(
       ORPHANED_SUBMISSIONS_LIMIT
     );
+  });
+});
+
+describe('🔴 the failure detail reaches the app’s team, and only for a failed approved version', () => {
+  /**
+   * The History tab is the only author surface that explains a failed build. The detail is
+   * projected ONLY for `approved` + `failed`: on other rows the same column holds moderator
+   * data (a review-sandbox JSON blob on a pending row, "re-triggered by moderator #id" on a
+   * re-fired build), which no collaborator's browser should receive.
+   */
+  const EXCERPT = 'Build None\n\nERROR: no package-lock.json is committed.';
+  const SANDBOX_JSON = '{"sha":"abc123","host":"preview-host.example","error":null}';
+  const RETRIGGERED = 'Build re-triggered by moderator #7 at 2026-10-08T19:00:00.000Z';
+
+  it('the block query selects deployDetail', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    const select = mockDb.appBlockPublishRequest.findMany.mock.calls[0][0].select;
+    expect(select.deployDetail).toBe(true);
+  });
+
+  it('a failed approved version carries its detail — to a SEATED collaborator too', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appCollaborator.findFirst.mockImplementation(async () => ({ userId: SEAT }));
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({ id: 'v_failed', deployState: 'failed', deployDetail: EXCERPT }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: SEAT });
+    expect(out[0]).toMatchObject({ id: 'v_failed', deployDetail: EXCERPT });
+  });
+
+  it('no other row carries it, whatever the column holds', async () => {
+    mockDb.appListing.findUnique.mockImplementation(async () => onsiteListing());
+    mockDb.appBlockPublishRequest.findMany.mockImplementation(async () => [
+      blockReq({
+        id: 'v_sandbox',
+        status: 'pending',
+        deployState: 'preview-live',
+        deployDetail: SANDBOX_JSON,
+        submittedAt: new Date('2026-06-03T00:00:00Z'),
+      }),
+      blockReq({
+        id: 'v_rebuilding',
+        deployState: 'building',
+        deployDetail: RETRIGGERED,
+        submittedAt: new Date('2026-06-02T00:00:00Z'),
+      }),
+      blockReq({
+        id: 'v_failed_pending',
+        status: 'pending',
+        deployState: 'failed',
+        deployDetail: EXCERPT,
+        submittedAt: new Date('2026-06-01T00:00:00Z'),
+      }),
+    ]);
+    mockDb.appListingPublishRequest.findMany.mockImplementation(async () => [
+      listingReq({ id: 'l_edit', submittedAt: new Date('2026-05-30T00:00:00Z') }),
+    ]);
+    const out = await listListingHistory({ appListingId: 'apl_main', userId: OWNER });
+    expect(out.map((e) => [e.id, e.deployDetail])).toEqual([
+      ['v_sandbox', null],
+      ['v_rebuilding', null],
+      ['v_failed_pending', null],
+      ['l_edit', null],
+    ]);
+  });
+
+  it('authorFailureDetail is the whole rule', () => {
+    expect(
+      authorFailureDetail({ status: 'approved', deployState: 'failed', deployDetail: 'x' })
+    ).toBe('x');
+    expect(
+      authorFailureDetail({ status: 'approved', deployState: 'live', deployDetail: 'x' })
+    ).toBeNull();
+    expect(
+      authorFailureDetail({ status: 'rejected', deployState: 'failed', deployDetail: 'x' })
+    ).toBeNull();
+    expect(
+      authorFailureDetail({ status: 'approved', deployState: 'failed', deployDetail: null })
+    ).toBeNull();
   });
 });

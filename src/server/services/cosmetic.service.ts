@@ -27,6 +27,7 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import {
   getEventDecorationDefinition,
   getLiveEventDecorationEntityTypes,
@@ -239,19 +240,18 @@ export async function equipCosmeticToEntity({
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&
-    userCosmetic.forId !== equippedToId &&
-    userCosmetic.forType !== equippedToType
+    (userCosmetic.forId !== equippedToId || userCosmetic.forType !== equippedToType)
   ) {
     throw new Error('You cannot equip this cosmetic to this entity');
   }
+  if ((await getEntityOwnerId(equippedToType, equippedToId, dbWrite)) !== userId)
+    throw throwAuthorizationError('You can only decorate your own content');
   const now = new Date();
   let updated: { count: number } | undefined;
   if (eventDecoration) {
     const { moveCooldownMs } = await assertCanPlaceEventDecoration({
       decoration: eventDecoration,
       placedAt: getPlacedAt(userCosmetic.data),
-      userId,
-      equippedToId,
       equippedToType,
       now,
     });
@@ -368,12 +368,15 @@ export async function getCosmeticsForEntity({
 export async function getEventDecorationsForEntity({
   ids,
   entity,
+  writeBack,
 }: {
   ids: number[];
   entity: CosmeticEntity;
+  /** false on pages nobody revisits, so a walk does not fill Redis with misses. */
+  writeBack?: boolean;
 }): Promise<Record<number, WithClaimKey<EventDecorationCosmetic>>> {
   if (ids.length === 0 || !getLiveEventDecorationEntityTypes().has(entity)) return {};
-  return await eventDecorationEntityCaches[entity].fetch(ids);
+  return await eventDecorationEntityCaches[entity].fetch(ids, { writeBack });
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
@@ -393,22 +396,17 @@ function getPlacedAt(userData: unknown) {
 }
 
 /**
- * An event decoration counts toward its owner's team score, so it may only go on content the
- * wearer owns, of a type its event allows, while that event runs, and not again
- * within the event's cooldown.
+ * An event decoration counts toward its owner's team score, so it may only go on a type its event
+ * allows, while that event runs, and not again within the event's cooldown.
  */
 async function assertCanPlaceEventDecoration({
   decoration,
   placedAt,
-  userId,
-  equippedToId,
   equippedToType,
   now,
 }: {
   decoration: EventDecorationData;
   placedAt: Date | undefined;
-  userId: number;
-  equippedToId: number;
   equippedToType: CosmeticEntity;
   now: Date;
 }) {
@@ -424,20 +422,6 @@ async function assertCanPlaceEventDecoration({
       `This was moved recently. You can move it again at ${readyAt.toISOString()}`
     );
 
-  const where = { id: equippedToId };
-  const select = { userId: true } as const;
-  const owner =
-    equippedToType === 'Image'
-      ? await dbWrite.image.findUnique({ where, select })
-      : equippedToType === 'Model'
-      ? await dbWrite.model.findUnique({ where, select })
-      : equippedToType === 'Article'
-      ? await dbWrite.article.findUnique({ where, select })
-      : equippedToType === 'Post'
-      ? await dbWrite.post.findUnique({ where, select })
-      : null; // No owner lookup for this type yet: refuse rather than guess.
-  if (!owner || owner.userId !== userId)
-    throw throwAuthorizationError('You can only decorate your own content');
   return definition;
 }
 

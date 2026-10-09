@@ -87,9 +87,26 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     const index = Math.floor(number * definition.teams.length);
     return definition.teams[index];
   }
-  function getTeamCosmetic(team: string) {
-    const name = `${definition.cosmeticName} - ${team}`;
-    return getCosmetic(name);
+  // A join event finds its team cosmetic by data (event, team, design), so cosmetic names stay
+  // display-only. Older events find it by the name "<cosmeticName> - <team>".
+  async function getTeamCosmetic(team: string) {
+    if (!definition.join) return getCosmetic(`${definition.cosmeticName} - ${team}`);
+
+    const field = `${name}:${definition.join.design}:${team}`;
+    const cached = await redis.hGet(REDIS_KEYS.COSMETICS.IDS, field);
+    if (cached) return Number(cached);
+    const [cosmetic] = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Cosmetic"
+      WHERE type = 'ContentDecoration'
+        AND data->>'event' = ${name}
+        AND data->>'team' = ${team}
+        AND data->>'design' = ${definition.join.design}
+      ORDER BY id
+      LIMIT 1
+    `;
+    if (!cosmetic) return;
+    await redis.hSet(REDIS_KEYS.COSMETICS.IDS, field, cosmetic.id.toString());
+    return cosmetic.id;
   }
   async function getUserCosmeticId(userId: number) {
     return getTeamCosmetic(await getUserTeam(userId));
@@ -208,12 +225,36 @@ export type BuzzEventContext = {
   db: PrismaClient;
 };
 
+// Scores a team by the impressions and reactions on content wearing that team's event cosmetics.
+// See src/server/events/scoring/cosmetic-placement.sql.ts for how each parameter is applied.
+export type CosmeticPlacementScoring = {
+  reactionWeight: number;
+  // Signed-out viewers per day are capped at max(anonFloor, signed viewers x anonRatio), per entity
+  // and again per cosmetic owner.
+  anonFloor: number;
+  anonRatio: number;
+  // A signed-out session that saw more distinct entities than this in a day is treated as a bot.
+  botSessionEntityLimit: number;
+  // Accounts registered less than this many days before the event starts do not count as viewers.
+  newAccountDays: number;
+  // Most entities one viewer can credit to one cosmetic owner per day.
+  viewerOwnerDailyCap: number;
+  // Scoring keeps running this long past endDate for late data; the winner is decided after it.
+  finalizeAfterMs: number;
+};
+
 type HolidayEventDefinition = {
   title: string;
   startDate: Date;
   endDate: Date;
-  teams: string[];
-  bankIndex: number;
+  teams: readonly string[];
+  // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
+  bankIndex?: number;
+  scoring?: CosmeticPlacementScoring;
+  // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
+  // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
+  // behaviour.
+  join?: { claimKey: string; design: string };
   cosmeticName: string;
   badgePrefix: string;
   coverImage?: string;

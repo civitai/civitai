@@ -1,5 +1,6 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
+import { LinkedText } from '~/components/CreatorJourney/journey-links';
 import { accentVar, HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
@@ -59,6 +60,16 @@ const measureCopy: Record<
   },
 };
 
+/** Where a measure's work happens. Followers, downloads and reactions have no page of their own. */
+export function measureHref(measure: Measure, username?: string) {
+  if (measure === 'votes') return '/crucibles';
+  if (!username) return undefined;
+  if (measure === 'models') return `/user/${username}/models`;
+  if (measure === 'articles') return `/user/${username}/articles`;
+  if (measure === 'revenue') return `/user/${username}/shop`;
+  return undefined;
+}
+
 const accentOf = (measure: Measure) =>
   tracks.find((track) => (track.measures as readonly Measure[]).includes(measure))?.accent ??
   tracks[0].accent;
@@ -67,7 +78,13 @@ export function earnedLabel(achievedAt: Date | null) {
   return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned';
 }
 
-export function CreatorAchievements({ activity }: { activity: Activity }) {
+export function CreatorAchievements({
+  activity,
+  username,
+}: {
+  activity: Activity;
+  username?: string;
+}) {
   if (activity.milestones.length === 0) return null;
   const { closestNext } = activity;
 
@@ -89,6 +106,7 @@ export function CreatorAchievements({ activity }: { activity: Activity }) {
               measure={measure}
               milestones={activity.milestones.filter((m) => m.measure === measure)}
               next={nextOf(activity.milestones, measure)}
+              href={measureHref(measure, username)}
             />
           ))}
         </Stack>
@@ -112,7 +130,7 @@ function ClosestNext({ milestone }: { milestone: Milestone }) {
       style={accentVar(accent)}
       faceClassName="flex items-center gap-4 p-4"
     >
-      <MilestoneBadge milestone={milestone} state="progress" size={56} />
+      <MilestoneBadge milestone={milestone} state="progress" size={72} />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <Text size="xs" tt="uppercase" fw={700} className="tracking-wider text-[var(--cj-accent)]">
           Closest next
@@ -136,10 +154,12 @@ function MeasureRow({
   measure,
   milestones,
   next,
+  href,
 }: {
   measure: Measure;
   milestones: Milestone[];
   next: Milestone | undefined;
+  href?: string;
 }) {
   if (milestones.length === 0) return null;
   const copy = measureCopy[measure];
@@ -148,7 +168,7 @@ function MeasureRow({
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-[96px_1fr] sm:gap-3">
       <div className="sm:pt-2">
         <Text size="sm" fw={600}>
-          {copy.label}
+          {href ? <LinkedText text={copy.label} links={[{ href }]} /> : copy.label}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
           {copy.current(milestones[0].current)}
@@ -182,7 +202,7 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
         state === 'locked' && 'opacity-60'
       )}
     >
-      <MilestoneBadge milestone={milestone} state={state} size={34} />
+      <MilestoneBadge milestone={milestone} state={state} size={48} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <Text size="sm" fw={700} truncate>
           {milestone.name}

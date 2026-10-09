@@ -12,7 +12,7 @@ import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
  * **Publishing** tab (`/apps/listing/<appListingId>/edit?tab=publishing`).
  *
  * 🔴 WHY A LEDGER AND NOT JUST A FIX. PR #4154 consolidated `/apps/my-submissions` into
- * `/apps/mine` and orphaned `MySubmissionsList`, which was the only surface carrying the
+ * `/apps/mine` and orphaned `MySubmissionsList` (since deleted), which was the only surface carrying the
  * owner **Unpublish** / **Republish** controls. The new page body contained zero
  * occurrences of `unpublish`. The gap was DISCLOSED in that PR and then reviewed three
  * times without being caught, because every round asked "is the new page correct?" and
