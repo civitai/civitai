@@ -131,7 +131,19 @@ describe('getProfileAchievements', () => {
       where: { id: OWNER },
       select: { bannedAt: true, deletedAt: true, profile: { select: { privacySettings: true } } },
     });
-    expect(JSON.stringify(result)).not.toMatch(/threshold|score"|100000/);
+    // Exact shapes, so any field added to the public payload has to be added here on purpose.
+    expect(Object.keys(result).sort()).toEqual(['achievements', 'tiers']);
+    for (const tier of result.tiers)
+      expect(Object.keys(tier).sort()).toEqual(['achievedAt', 'badgeUrl', 'key', 'name']);
+    for (const achievement of result.achievements)
+      expect(Object.keys(achievement).sort()).toEqual([
+        'achievedAt',
+        'badgeUrl',
+        'description',
+        'key',
+        'name',
+        'track',
+      ]);
   });
 
   it('reads only the owner’s earned rows', async () => {
@@ -140,6 +152,41 @@ describe('getProfileAchievements', () => {
       userId: OWNER,
     });
     expect(dbMock.dbRead.creatorMilestone.findMany).not.toHaveBeenCalled();
+  });
+
+  // The section shows the first six as "Latest achievements", and the mock cannot sort, so the
+  // query's own order is what is pinned: newest first, then a stable tiebreak for same-night grants.
+  it('asks for the newest first', async () => {
+    await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+    expect(dbMock.dbRead.userCreatorMilestone.findMany.mock.calls[0][0]?.orderBy).toEqual([
+      { achievedAt: 'desc' },
+      { milestoneKey: 'asc' },
+    ]);
+  });
+
+  it('keeps the order it was given for achievements', async () => {
+    const older = row({ key: 'reach:followers-1000', track: 'reach', name: '1k Followers' });
+    given([MODELS, older]);
+    const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+    expect(result.achievements.map((a) => a.key)).toEqual([
+      'create:models-25',
+      'reach:followers-1000',
+    ]);
+  });
+
+  it('leaves the date off a silently granted achievement', async () => {
+    const backfilled = row({
+      key: 'create:models-1',
+      track: 'create',
+      name: 'First Model',
+      observed: false,
+    });
+    given([MODELS, backfilled]);
+    const result = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
+    expect(result.achievements.map((a) => [a.key, a.achievedAt])).toEqual([
+      ['create:models-25', OBSERVED],
+      ['create:models-1', null],
+    ]);
   });
 
   it('leaves the date off a silently granted badge', async () => {

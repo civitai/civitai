@@ -79,10 +79,13 @@ type DefinitionWithArt = MilestoneDefinition & { cosmetic?: { data: unknown } | 
 
 const withArt = { ...milestoneSelect, cosmetic: { select: { data: true } } } as const;
 
+const badgeArtUrl = (cosmetic: { data: unknown } | null | undefined) =>
+  (cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null;
+
 // A masked milestone's art would give it away as surely as its name.
 function visibleBadgeUrl(milestone: DefinitionWithArt, visible: MilestoneDefinition) {
   if (visible !== milestone) return null;
-  return (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null;
+  return badgeArtUrl(milestone.cosmetic);
 }
 
 function toTier(milestone: DefinitionWithArt, earned: boolean, index: number): CreatorScoreTier {
@@ -375,7 +378,7 @@ export async function getProfileAchievements({
     .map((row) => ({
       key: row.milestone.key,
       name: row.milestone.name,
-      badgeUrl: (row.milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null,
+      badgeUrl: badgeArtUrl(row.milestone.cosmetic),
       achievedAt: achievedAtIsObserved(row) ? row.achievedAt : null,
     }));
 
@@ -390,7 +393,7 @@ export async function getProfileAchievements({
         track: milestone.hidden ? 'secret' : milestone.track,
         name: secret ? null : milestone.name,
         description: secret ? null : milestone.description,
-        badgeUrl: (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null,
+        badgeUrl: badgeArtUrl(milestone.cosmetic),
         achievedAt: achievedAtIsObserved(row) ? row.achievedAt : null,
       };
     });

@@ -1,5 +1,6 @@
 import { Anchor, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
+import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import {
   accentVar,
   DEFAULT_ACCENT,
@@ -8,11 +9,9 @@ import {
 } from '~/components/CreatorJourney/tier-badge';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 
 type ProfileAchievements = RouterOutput['creatorJourney']['getProfileAchievements'];
@@ -20,22 +19,6 @@ type Tier = ProfileAchievements['tiers'][number];
 type Achievement = ProfileAchievements['achievements'][number];
 
 export const SECRET_ACHIEVEMENT_LABEL = 'Secret achievement';
-const SECRET_ACCENT = '#868e96';
-
-export function useProfileAchievements(userId: number | undefined) {
-  const features = useFeatureFlags();
-  const enabled = features.creatorJourney && !!userId;
-  const { data, isLoading } = trpc.creatorJourney.getProfileAchievements.useQuery(
-    { userId: userId ?? 0 },
-    { enabled }
-  );
-  const count = (data?.tiers.length ?? 0) + (data?.achievements.length ?? 0);
-  return {
-    data: enabled ? data : undefined,
-    count: enabled ? count : 0,
-    isLoading: enabled && isLoading,
-  };
-}
 
 const achievementName = (achievement: Achievement) => achievement.name ?? SECRET_ACHIEVEMENT_LABEL;
 

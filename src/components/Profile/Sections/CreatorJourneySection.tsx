@@ -1,11 +1,8 @@
 import { Button, Text } from '@mantine/core';
 import clsx from 'clsx';
 import { IconArrowRight, IconTrophy } from '@tabler/icons-react';
-import {
-  AchievementGrid,
-  ProfileTierCard,
-  useProfileAchievements,
-} from '~/components/CreatorJourney/ProfileAchievements';
+import { AchievementGrid, ProfileTierCard } from '~/components/CreatorJourney/ProfileAchievements';
+import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection } from '~/components/Profile/ProfileSection';

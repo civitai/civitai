@@ -14,7 +14,7 @@ import {
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useProfileAchievements } from '~/components/CreatorJourney/ProfileAchievements';
+import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';

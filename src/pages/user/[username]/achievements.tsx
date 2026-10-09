@@ -1,10 +1,8 @@
 import { Center, Loader, Text } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { Page } from '~/components/AppLayout/Page';
-import {
-  ProfileAchievementsList,
-  useProfileAchievements,
-} from '~/components/CreatorJourney/ProfileAchievements';
+import { ProfileAchievementsList } from '~/components/CreatorJourney/ProfileAchievements';
+import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
