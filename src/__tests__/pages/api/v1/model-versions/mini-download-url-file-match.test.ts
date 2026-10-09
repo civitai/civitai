@@ -812,6 +812,15 @@ describe('evictable', () => {
     expect(byDefault.body.evictable).toBe(false);
     expect(byFileId.body.evictable).toBe(false);
   });
+
+  // Promotion pins a version WITHOUT writing NotEvictable, so the pin lifts when the auction job
+  // drops the version from CoveredCheckpoint. Setting the flag instead would outlive the promotion.
+  it('a promoted version is not evictable, and becomes evictable again once not promoted', async () => {
+    const promoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: true });
+    const demoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: false });
+    expect(promoted.body.evictable).toBe(false);
+    expect(demoted.body.evictable).toBe(true);
+  });
 });
 
 describe('additionalResourceCharge', () => {
