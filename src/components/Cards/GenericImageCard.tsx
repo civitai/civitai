@@ -18,6 +18,20 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 const isCosmeticEntity = (value?: string): value is CosmeticEntity =>
   !!value && (Object.values(CosmeticEntity) as string[]).includes(value);
 
+/**
+ * The content this card's hat is worn on: the entity the card stands for, as getEntityCoverImage
+ * sends that entity's hat, not its cover image's. Anything that cannot wear one falls back to the image.
+ */
+export function getGenericCardWornOn(
+  imageId: number,
+  entityType?: string,
+  entityId?: number
+): EventDecorationEntity {
+  return entityId && isCosmeticEntity(entityType)
+    ? { entityType, entityId }
+    : { entityType: CosmeticEntity.Image, entityId: imageId };
+}
+
 export function GenericImageCard({
   image,
   entityType,
@@ -75,12 +89,6 @@ export function GenericImageCard({
   const impressions: ImpressionTarget[] = [{ entityType: 'Image', entityId: image.id }];
   if (entityId && isImpressionEntityType(entityType)) impressions.push({ entityType, entityId });
 
-  // The server sends the hat of the entity this card stands for (getEntityCoverImage), not its cover's.
-  const wornOn: EventDecorationEntity =
-    entityId && isCosmeticEntity(entityType)
-      ? { entityType, entityId }
-      : { entityType: CosmeticEntity.Image, entityId: image.id };
-
   const cardContent = (
     <FeedCard
       impressions={impressions}
@@ -90,7 +98,7 @@ export function GenericImageCard({
       href={disabled ? undefined : url}
       frameDecoration={image.cosmetic}
       eventDecoration={image.eventDecoration?.data}
-      eventDecorationOn={wornOn}
+      eventDecorationOn={getGenericCardWornOn(image.id, entityType, entityId)}
       aspectRatio="portrait"
       useCSSAspectRatio
     >
