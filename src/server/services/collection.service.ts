@@ -17,6 +17,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
@@ -2150,7 +2151,7 @@ export const getCollectionItemsByCollectionId = async ({
 // Who authored the entity itself. `removeCollectionItem` lets an author pull their own work out of
 // any collection, so the flag below has to account for them or the action is authorized on the
 // server and missing from the UI.
-async function getEntityOwnerId({
+async function getCollectionItemOwnerId({
   modelId,
   imageId,
   articleId,
@@ -2163,27 +2164,11 @@ async function getEntityOwnerId({
   postId?: number;
   model3dId?: number;
 }): Promise<number | null> {
-  const select = { userId: true };
-  if (modelId) {
-    const model = await dbRead.model.findUnique({ where: { id: modelId }, select });
-    return model?.userId ?? null;
-  }
-  if (imageId) {
-    const image = await dbRead.image.findUnique({ where: { id: imageId }, select });
-    return image?.userId ?? null;
-  }
-  if (postId) {
-    const post = await dbRead.post.findUnique({ where: { id: postId }, select });
-    return post?.userId ?? null;
-  }
-  if (articleId) {
-    const article = await dbRead.article.findUnique({ where: { id: articleId }, select });
-    return article?.userId ?? null;
-  }
-  if (model3dId) {
-    const model3d = await dbRead.model3D.findUnique({ where: { id: model3dId }, select });
-    return model3d?.userId ?? null;
-  }
+  if (modelId) return getEntityOwnerId('Model', modelId);
+  if (imageId) return getEntityOwnerId('Image', imageId);
+  if (postId) return getEntityOwnerId('Post', postId);
+  if (articleId) return getEntityOwnerId('Article', articleId);
+  if (model3dId) return getEntityOwnerId('Model3D', model3dId);
   return null;
 }
 
@@ -2207,7 +2192,13 @@ export const getUserCollectionItemsByItem = async ({
 
   if (userCollections.length === 0) return [];
 
-  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId, model3dId });
+  const entityOwnerId = await getCollectionItemOwnerId({
+    modelId,
+    imageId,
+    articleId,
+    postId,
+    model3dId,
+  });
   const ownsEntity = entityOwnerId !== null && entityOwnerId === userId;
 
   const collectionItems = await dbRead.collectionItem.findMany({

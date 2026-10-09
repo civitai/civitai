@@ -169,6 +169,7 @@ describe('placing an event decoration', () => {
 
   it('is refused on a content type its event does not allow', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    db.post.findUnique.mockResolvedValue({ userId: OWNER });
     await expect(
       equipCosmeticToEntity({
         userId: OWNER,
@@ -248,6 +249,30 @@ describe('placing an event decoration', () => {
   });
 });
 
+describe('equipping any decoration requires owning the content', () => {
+  it.each([
+    ['a frame', frameRow],
+    ['an event decoration', () => hatRow()],
+  ])('refuses %s on content owned by someone else', async (_, row) => {
+    db.userCosmetic.findFirst.mockResolvedValue(row());
+    db.image.findUnique.mockResolvedValue({ userId: OWNER + 1 });
+
+    await expect(equipHat()).rejects.toThrow(/your own content/);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.userCosmetic.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reads the owner from the primary, by the target entity', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(frameRow());
+    await equipHat();
+    expect(db.image.findUnique).toHaveBeenCalledWith({
+      where: { id: IMAGE },
+      select: { userId: true },
+    });
+    expect(dbMock.dbRead.image.findUnique).not.toHaveBeenCalled();
+  });
+});
+
 describe('taking a decoration off refreshes the event decoration cache too', () => {
   it('on unequip', async () => {
     await unequipCosmetic({
@@ -285,6 +310,11 @@ describe('getEventDecorationsForEntity', () => {
     await expect(getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).resolves.toEqual({
       [IMAGE]: { id: 1 },
     });
+  });
+
+  it('passes the write-back choice through to the cache', async () => {
+    await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image', writeBack: false });
+    expect(caches.event.Image.fetch).toHaveBeenCalledWith([IMAGE], { writeBack: false });
   });
 
   it('skips the read between events and for types no event allows', async () => {
