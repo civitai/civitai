@@ -18,12 +18,10 @@ import { scoredSectionOrder } from '~/components/Events/ScoredEvent/scored-event
 
 type EventData = RouterOutput['event']['getData'];
 
-// The final result once scores have settled: the team strictly ahead, or a tie for first. None
-// while the standings are missing.
-function result(teams?: { team: string; score: number }[]) {
-  if (!teams?.length) return {};
-  if (teams[1] && teams[1].score === teams[0].score) return { tie: true };
-  return { winner: teams[0].team };
+// The rank-1 team, as the end-of-event job decides it: ranks are unique, so a tie on points still
+// has one winner, and the page must not announce a result the prize payout contradicts.
+function winnerOf(teams?: { team: string; rank: number }[]) {
+  return teams?.find((t) => t.rank === 1)?.team;
 }
 
 /**
@@ -37,7 +35,6 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
   const utils = trpc.useUtils();
   const now = new Date();
   const ended = data.endDate < now;
-  const finalizing = ended && !!data.finalAt && now < data.finalAt;
 
   const { data: eventCosmetic } = trpc.event.getCosmetic.useQuery(
     { event },
@@ -49,6 +46,12 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     : undefined;
 
   const { data: standings } = trpc.event.getStandings.useQuery({ event });
+  // Scores take late data until finalAt, and the standings snapshot is hourly: the result is final
+  // only once a snapshot taken after finalAt is on the page.
+  const finalizing =
+    ended &&
+    !!data.finalAt &&
+    (now < data.finalAt || (!!standings && standings.updatedAt < data.finalAt));
   const { data: hats = [], dataUpdatedAt: hatsFetchedAt } = trpc.event.getMyHats.useQuery(
     { event },
     { enabled: joined }
@@ -106,7 +109,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         points={points}
         ended={ended}
         finalizing={finalizing}
-        {...(ended && !finalizing ? result(standings?.teams) : {})}
+        winner={ended && !finalizing ? winnerOf(standings?.teams) : undefined}
         teamHats={standings?.teamHats}
         onJoin={handleJoin}
         joining={equipping}

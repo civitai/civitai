@@ -30,7 +30,6 @@ export function ScoredEventHero({
   ended,
   finalizing,
   winner,
-  tie,
   teamHats,
   onJoin,
   joining,
@@ -38,10 +37,8 @@ export function ScoredEventHero({
   data: EventData;
   /** Ended, but scores are still taking late data, so no result yet. */
   finalizing?: boolean;
-  /** The team strictly ahead on the settled standings. */
+  /** The rank-1 team on the settled standings. */
   winner?: string;
-  /** The settled standings are tied for first. */
-  tie?: boolean;
   teamHats?: { team: string; url: string | null }[];
   /** The viewer's team once they have joined. */
   team?: string;
@@ -165,8 +162,7 @@ export function ScoredEventHero({
         {ended ? (
           <Stack gap="xs">
             <Text size="sm" c="dimmed">
-              {tie && 'The final standings are a tie at the top. '}Ended{' '}
-              {formatDate(data.endDate, 'MMMM D')}.
+              Ended {formatDate(data.endDate, 'MMMM D')}.
               {finalizing && ' Final scores are being tallied.'}
             </Text>
             {winner && page?.prize && (

@@ -196,25 +196,19 @@ describe('ended hero (A10)', () => {
     ]);
   });
 
-  it('on a tie at the top keeps the headline, says so, and awards nothing', () => {
-    const el = hero({ ...over, tie: true });
-    expect(el.querySelector('h1')!.textContent).toBe('Civitai turns 4.Pick up a hat.');
-    expect(el.textContent).toContain('The final standings are a tie at the top.');
-    expect(el.querySelector('[data-testid="hero-prize"]')).toBeNull();
-  });
-
   it('while the final scores are tallied, names nobody and says so', () => {
     const el = hero({ ...over, finalizing: true });
     expect(el.querySelector('h1')!.textContent).toBe('Civitai turns 4.Pick up a hat.');
     expect(el.textContent).toContain('Final scores are being tallied.');
-    expect(el.textContent).not.toContain('tie');
     expect(el.querySelector('[data-testid="hero-prize"]')).toBeNull();
   });
 
-  it('with no result to report, claims no tie', () => {
+  it('with no result to report, says only that it ended', () => {
     const el = hero(over);
-    expect(el.textContent).not.toContain('tie at the top');
+    expect(el.querySelector('h1')!.textContent).toBe('Civitai turns 4.Pick up a hat.');
+    expect(el.textContent).toMatch(/Ended [A-Z][a-z]+ \d+\./);
     expect(el.textContent).not.toContain('being tallied');
+    expect(el.querySelector('[data-testid="hero-prize"]')).toBeNull();
   });
 
   it('offers no join after the end', () => {

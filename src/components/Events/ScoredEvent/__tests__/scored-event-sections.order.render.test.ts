@@ -25,12 +25,15 @@ const hats = [
 type Team = { team: string; score: number; rank: number };
 const PINK_THIRD: Team[] = [{ team: 'Pink', score: 4200, rank: 3 }];
 let teams: Team[] | undefined = PINK_THIRD;
+let snapshotAt = new Date();
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     'event.getCosmetic': { useQuery: () => ({ data: cosmetic }) },
     'event.getStandings': {
-      useQuery: () => ({ data: teams && { teams, teamHats: [], topCosmetics: [] } }),
+      useQuery: () => ({
+        data: teams && { teams, teamHats: [], topCosmetics: [], updatedAt: snapshotAt },
+      }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1 }) },
   }),
@@ -68,6 +71,7 @@ afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
   teams = PINK_THIRD;
+  snapshotAt = new Date();
 });
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -157,39 +161,51 @@ describe('ScoredEventSections: the result the hero announces', () => {
     { team: 'Yellow', score: 30, rank: 1 },
     { team: 'Pink', score: 20, rank: 2 },
   ];
-  const result = () => ({ winner: heroProps.winner, tie: heroProps.tie });
 
   // Scores keep taking late data for a day after the end, so the leader then is not the winner.
   it('names no winner while the final scores are being tallied', () => {
     teams = lead;
     sections({ joined: true, ended: true, finalized: false });
     expect(heroProps).toMatchObject({ ended: true, finalizing: true });
-    expect(result()).toEqual({ winner: undefined, tie: undefined });
+    expect(heroProps.winner).toBeUndefined();
   });
 
-  it('names the team strictly ahead once the result is final', () => {
+  // The standings snapshot is hourly; one taken before finalAt can predate the last scoring run.
+  it('keeps tallying until a standings snapshot from after the final run is on the page', () => {
+    teams = lead;
+    snapshotAt = new Date(Date.now() - DAY);
+    sections({ joined: true, ended: true });
+    expect(heroProps).toMatchObject({ ended: true, finalizing: true });
+    expect(heroProps.winner).toBeUndefined();
+  });
+
+  it('names the rank-1 team once the result is final', () => {
     teams = lead;
     sections({ joined: true, ended: true });
-    expect(heroProps).toMatchObject({ ended: true, finalizing: false });
-    expect(result()).toEqual({ winner: 'Yellow', tie: undefined });
+    expect(heroProps).toMatchObject({ ended: true, finalizing: false, winner: 'Yellow' });
   });
 
-  it('calls a tie for first a tie, not a win', () => {
-    teams = [lead[0], { ...lead[1], score: 30, rank: 1 }];
+  // Ranks are unique, so the payout crowns one team even on equal points; the page names the same
+  // team rather than announcing a tie the payout contradicts.
+  it('on equal points names the same rank-1 team the payout does', () => {
+    teams = [
+      { team: 'Pink', score: 30, rank: 2 },
+      { team: 'Yellow', score: 30, rank: 1 },
+    ];
     sections({ joined: true, ended: true });
-    expect(result()).toEqual({ winner: undefined, tie: true });
+    expect(heroProps.winner).toBe('Yellow');
   });
 
-  // A missing standings read is not a tie.
   it('claims nothing without standings', () => {
     teams = undefined;
     sections({ joined: true, ended: true });
-    expect(result()).toEqual({ winner: undefined, tie: undefined });
+    expect(heroProps).toMatchObject({ ended: true, finalizing: false });
+    expect(heroProps.winner).toBeUndefined();
   });
 
   it('claims nothing while the event is live', () => {
     teams = lead;
     sections({ joined: true, ended: false });
-    expect(result()).toEqual({ winner: undefined, tie: undefined });
+    expect(heroProps.winner).toBeUndefined();
   });
 });
