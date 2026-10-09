@@ -24,7 +24,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: makeTrpcProxy({
     'event.getCosmetic': { useQuery: () => ({ data: cosmetic }) },
     'event.getStandings': {
-      useQuery: () => ({ data: { teams: [], teamHats: [], topCosmetics: [] } }),
+      useQuery: () => ({
+        data: { teams: [{ team: 'Pink', score: 4200, rank: 3 }], teamHats: [], topCosmetics: [] },
+      }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1 }) },
   }),
@@ -36,8 +38,12 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   useMutateEvent: () => ({ activateCosmetic: vi.fn(), equipping: false }),
 }));
 const marker = (name: string) => () => React.createElement('section', { 'data-section': name });
+let heroProps: Record<string, unknown> = {};
 vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
-  ScoredEventHero: marker('hero'),
+  ScoredEventHero: (props: Record<string, unknown>) => {
+    heroProps = props;
+    return React.createElement('section', { 'data-section': 'hero' });
+  },
 }));
 vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({ MyEventHats: marker('hats') }));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: marker('shop') }));
@@ -118,5 +124,10 @@ describe('ScoredEventSections order', () => {
       'topHats',
       'hats',
     ]);
+  });
+
+  it("hands the hero the player's team, its rank and its points", () => {
+    sections({ joined: true, ended: false });
+    expect(heroProps).toMatchObject({ team: 'Pink', rank: 3, teamPoints: 4200, points: 5 });
   });
 });
