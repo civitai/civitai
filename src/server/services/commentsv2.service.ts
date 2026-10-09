@@ -281,7 +281,7 @@ export async function isViewerContentOwner({
  * A moderator locks a single `Thread` row, but a reply lives in a child thread of its own, so a
  * check against the target row alone leaves every reply below a locked thread writable. The chain
  * is walked through `Thread.commentId -> CommentV2.threadId`, which is derived from the stored
- * rows; `parentThreadId` is written from request input, so it cannot decide this.
+ * rows; older rows took `parentThreadId` from request input, so it cannot decide this.
  *
  * 🔴 The walk FAILS CLOSED. `Thread.commentId` is `onDelete: SetNull` and deleting a comment does
  * not clean up the thread hanging off it, so a deleted comment leaves an orphan whose surviving
@@ -323,7 +323,9 @@ export const upsertComment = async ({
   userId,
   entityType,
   entityId,
-  parentThreadId,
+  // Destructured to keep it out of `data`; ancestry comes from the parent comment, since the client
+  // value can be a stale cached null.
+  parentThreadId: _clientParentThreadId,
   isModerator,
   track,
   ...data
@@ -357,6 +359,7 @@ export const upsertComment = async ({
   let thread: { id: number; locked: boolean } | null = null;
   // One read of the row being edited, for both the lock and the sticker charge below.
   let previous: { threadId: number; content: string } | null = null;
+  let parentCommentThreadId: number | undefined;
   if (data.id) {
     previous = await dbWrite.commentV2.findUnique({
       where: { id: data.id },
@@ -371,17 +374,14 @@ export const upsertComment = async ({
     });
     // A reply's own thread row is created lazily, so on the first reply to a comment there is no
     // thread yet to carry the ancestors — walk from the parent comment's thread instead.
-    const anchorThreadId =
-      thread?.id ??
-      (entityType === 'comment'
-        ? (
-            await dbWrite.commentV2.findUnique({
-              where: { id: entityId },
-              select: { threadId: true },
-            })
-          )?.threadId
-        : undefined);
-    await throwIfThreadChainLocked(anchorThreadId);
+    if (!thread && entityType === 'comment')
+      parentCommentThreadId = (
+        await dbWrite.commentV2.findUnique({
+          where: { id: entityId },
+          select: { threadId: true },
+        })
+      )?.threadId;
+    await throwIfThreadChainLocked(thread?.id ?? parentCommentThreadId);
   }
 
   // An edit that adds stickers must pay for the ones it added, or posting an
@@ -401,16 +401,21 @@ export const upsertComment = async ({
     const created = await dbWrite.$transaction(async (tx) => {
       const chargedStickers = await chargeStickers(tx);
       if (!thread) {
-        const parentThread = parentThreadId
-          ? await tx.thread.findUnique({ where: { id: parentThreadId } })
-          : undefined;
+        // A NULL root drops the reply from the notification queries (INNER JOIN on it) and 404s
+        // its permalink.
+        const parentThread = parentCommentThreadId
+          ? await tx.thread.findUnique({
+              where: { id: parentCommentThreadId },
+              select: { id: true, rootThreadId: true },
+            })
+          : null;
 
         try {
           thread = await tx.thread.create({
             data: {
               [`${entityType}Id`]: entityId,
-              parentThreadId: parentThread?.id ?? parentThreadId,
-              rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? parentThreadId,
+              parentThreadId: parentThread?.id ?? null,
+              rootThreadId: parentThread ? parentThread.rootThreadId ?? parentThread.id : null,
             },
             select: { id: true, locked: true, rootThreadId: true, parentThreadId: true },
           });
