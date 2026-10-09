@@ -48,7 +48,7 @@ vi.mock('~/server/db/client', () => ({
         userCosmeticShopPurchases: { create: vi.fn() },
         userCosmeticShopPurchaseCosmetic: { createMany: vi.fn() },
         cosmeticShopItem: { update: vi.fn() },
-        cosmeticShopPurchaseClaim: claims.delegate,
+        cosmeticShopPurchaseClaim: claims.txDelegate,
       }),
     userCosmeticShopPurchases: { update: vi.fn() },
   },

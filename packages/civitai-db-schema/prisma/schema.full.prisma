@@ -5301,6 +5301,8 @@ model CosmeticShopPurchaseClaim {
   amount        Int
   /// pending | refunding | refunded | paid (text + CHECK, not an enum).
   status        String
+  /// Requests that have charged under this claim: 1 for the one that created it, +1 per resume.
+  attempts      Int      @default(1)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @default(now()) @updatedAt
 

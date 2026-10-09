@@ -86,7 +86,7 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
     fn({
       userCosmeticShopPurchases: { create: mocks.purchasesCreate },
       userCosmetic: { create: mocks.userCosmeticCreate },
-      cosmeticShopPurchaseClaim: claims.delegate,
+      cosmeticShopPurchaseClaim: claims.txDelegate,
     })
   )
 );
@@ -681,6 +681,7 @@ describe('purchaseCosmeticShopItem repeat purchases', () => {
       userId: BUYER_ID,
       shopItemId: SHOP_ITEM_ID,
       amount: 1,
+      attempts: 1,
       status: 'paid',
     });
 

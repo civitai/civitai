@@ -119,8 +119,22 @@ export async function claimShopPurchase(context: ShopChargeContext): Promise<Sho
     throw throwBadRequestError('This purchase is not available');
 
   switch (existing.status) {
-    case CLAIM.pending:
+    case CLAIM.pending: {
+      // Counted so the request that created the claim cannot release it on a
+      // decline while this one may be charging under it (see releaseClaim).
+      const { count } = await dbWrite.cosmeticShopPurchaseClaim.updateMany({
+        where: { transactionId, status: CLAIM.pending },
+        data: { attempts: { increment: 1 } },
+      });
+      // Settled or released since the read: nothing is charged from here, and
+      // the next retry reads the settled status.
+      if (count !== 1)
+        throw purchaseStateUnknown(
+          { ...context, amount: existing.amount },
+          'claim changed on resume'
+        );
       return { transactionId, amount: existing.amount, resumed: true };
+    }
     case CLAIM.paid:
       throw throwBadRequestError(PURCHASE_ALREADY_COMPLETED_MESSAGE);
     case CLAIM.refunded:
@@ -168,8 +182,8 @@ export async function chargeForShopPurchase<T extends Charge>(
     const status = getBuzzApiStatus(error);
     if (status === 409)
       throw purchaseStateUnknown({ ...context, error }, 'ledger reported the id as taken');
-    // A resumed claim stays: its earlier attempt may still have charged.
-    if (isDecline(status) && !claim.resumed) await releaseClaim(context);
+    // Only a claim no other request has resumed is released: see releaseClaim.
+    if (isDecline(status)) await releaseClaim(context);
     throw error;
   }
 
@@ -190,8 +204,10 @@ export async function chargeForShopPurchase<T extends Charge>(
 
 async function releaseClaim(context: ShopChargeContext) {
   try {
+    // `attempts: 1`: a request that resumed this claim may have charged under it
+    // before this one was declined, and its charge needs the claim to settle.
     await dbWrite.cosmeticShopPurchaseClaim.deleteMany({
-      where: { transactionId: context.transactionId, status: CLAIM.pending },
+      where: { transactionId: context.transactionId, status: CLAIM.pending, attempts: 1 },
     });
   } catch (error) {
     // Left pending, a retry resumes it and the ledger declines again; nothing

@@ -14,7 +14,7 @@ let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
   claims.rollbackOnThrow(() =>
     fn({
-      cosmeticShopPurchaseClaim: claims.delegate,
+      cosmeticShopPurchaseClaim: claims.txDelegate,
       $executeRaw: (...a: unknown[]) => executeRaw(...a),
       userCosmetic: {
         findMany: (...a: unknown[]) => ownedFindMany(...a),

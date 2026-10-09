@@ -2510,6 +2510,10 @@ export type CosmeticShopPurchaseClaim = {
    * pending | refunding | refunded | paid (text + CHECK, not an enum).
    */
   status: string;
+  /**
+   * Requests that have charged under this claim: 1 for the one that created it, +1 per resume.
+   */
+  attempts: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
 };

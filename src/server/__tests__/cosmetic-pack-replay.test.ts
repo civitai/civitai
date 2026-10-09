@@ -32,7 +32,7 @@ dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promi
       userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
       userCosmeticShopPurchaseCosmetic: { createMany: vi.fn() },
       cosmeticShopItem: { update: vi.fn() },
-      cosmeticShopPurchaseClaim: claims.delegate,
+      cosmeticShopPurchaseClaim: claims.txDelegate,
     })
   )
 );
@@ -100,8 +100,15 @@ const buy = (idempotencyKey?: string) =>
 
 const TX = `cosmetic-pack-v2-${BUYER}-7001-${KEY}`;
 // A claim an earlier attempt with this key left behind.
-const seedClaim = (status: string, amount = PRICE) =>
-  claims.rows.set(TX, { transactionId: TX, userId: BUYER, shopItemId: 7001, amount, status });
+const seedClaim = (status: string, { amount = PRICE }: { amount?: number } = {}) =>
+  claims.rows.set(TX, {
+    transactionId: TX,
+    userId: BUYER,
+    shopItemId: 7001,
+    amount,
+    attempts: 1,
+    status,
+  });
 
 const legs = (duplicate?: boolean, amount = PRICE) => ({
   transactionIds: [
@@ -194,7 +201,7 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
   });
 
   it('a retry of a pending claim charges the claimed amount, not today’s price', async () => {
-    seedClaim('pending', PRICE - 500);
+    seedClaim('pending', { amount: PRICE - 500 });
     spend.mockResolvedValue(legs(false, PRICE - 500));
 
     await buy(KEY);
@@ -271,6 +278,30 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     expect(stateUnknownLogged()).toBe(false);
     expect(refund).not.toHaveBeenCalled();
     expect(claims.rows.has(TX)).toBe(false);
+  });
+
+  it('a decline after another request resumed the claim keeps it for that request', async () => {
+    spend.mockImplementation(async () => {
+      claims.rows.get(TX)!.attempts = 2;
+      throw ledgerError(400, 'BAD_REQUEST');
+    });
+
+    await expect(buy(KEY)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(claims.rows.get(TX)?.status).toBe('pending');
+  });
+
+  it('another attempt settled the claim before this one could refund: no refund', async () => {
+    spend.mockResolvedValue(legs(false));
+    purchaseCreate.mockRejectedValue(new Error('db down'));
+    dbMock.dbWrite.cosmeticShopPurchaseClaim.updateMany.mockImplementation((async (
+      args: Parameters<typeof claims.delegate.updateMany>[0]
+    ) => {
+      claims.rows.get(TX)!.status = 'paid';
+      return claims.delegate.updateMany(args);
+    }) as never);
+
+    await expect(buy(KEY)).rejects.toThrow('This purchase has already been completed');
+    expect(refund).not.toHaveBeenCalled();
   });
 
   it('a decline on a resumed claim keeps it: the earlier attempt may have charged', async () => {

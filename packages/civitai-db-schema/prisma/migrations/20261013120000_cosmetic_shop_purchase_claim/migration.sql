@@ -17,12 +17,14 @@ CREATE TABLE IF NOT EXISTS "CosmeticShopPurchaseClaim" (
   "shopItemId"    INTEGER      NOT NULL,
   "amount"        INTEGER      NOT NULL,
   "status"        TEXT         NOT NULL,
+  "attempts"      INTEGER      NOT NULL DEFAULT 1,
   "createdAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt"     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "CosmeticShopPurchaseClaim_pkey" PRIMARY KEY ("transactionId"),
   CONSTRAINT "CosmeticShopPurchaseClaim_status_check"
     CHECK ("status" IN ('pending', 'refunding', 'refunded', 'paid')),
-  CONSTRAINT "CosmeticShopPurchaseClaim_amount_check" CHECK ("amount" > 0)
+  CONSTRAINT "CosmeticShopPurchaseClaim_amount_check" CHECK ("amount" > 0),
+  CONSTRAINT "CosmeticShopPurchaseClaim_attempts_check" CHECK ("attempts" >= 1)
 );
 
 -- Reconciliation reads claims left in pending or refunding past a cutoff.

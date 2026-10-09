@@ -3231,6 +3231,7 @@ export interface CosmeticShopPurchaseClaim {
   shopItemId: number;
   amount: number;
   status: string;
+  attempts: number;
   createdAt: Date;
   updatedAt: Date;
 }
