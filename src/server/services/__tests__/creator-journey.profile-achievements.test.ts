@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getProfileAchievements } from '~/server/services/creator-journey.service';
@@ -183,4 +185,16 @@ describe('getProfileAchievements', () => {
     const owner = await getProfileAchievements({ userId: OWNER, viewerId: OWNER });
     expect(owner.tiers.map((t) => t.name)).toEqual(['Mythic']);
   });
+});
+
+// Owner means the signed-in viewer is the profile's user. Pinned by text because the procedure needs the
+// whole tRPC context; any other source for viewerId (the input, a header) would unmask every secret.
+it('takes the viewer from the session, never from the input', () => {
+  const router = readFileSync(
+    join(process.cwd(), 'src/server/routers/creator-journey.router.ts'),
+    'utf8'
+  );
+  const calls = router.match(/getProfileAchievements\([^)]*\)/g);
+  // The session's id goes last, so nothing in the input can override it.
+  expect(calls).toEqual(['getProfileAchievements({ ...input, viewerId: ctx.user?.id })']);
 });
