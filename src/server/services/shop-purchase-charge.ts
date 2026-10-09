@@ -2,7 +2,7 @@ import { isSafeToRetry } from '@civitai/buzz';
 import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
-import { withRetries } from '~/server/utils/errorHandling';
+import { sleep } from '~/server/utils/errorHandling';
 
 /**
  * Charging for a shop purchase whose external transaction id may have been used
@@ -61,9 +61,9 @@ export function purchaseStateUnknown(
 // retried.
 export const chargeRetryOptions = { shouldRetry: isSafeToRetry };
 
-// Refunds are retried by refundShopCharge, briefly and a bounded number of
-// times, so the client's own retry is off and each attempt has a deadline: a
-// purchase request waits on this before it answers.
+// refundShopCharge decides when a refund may be resent, so the client's own
+// retry is off, and each attempt has a deadline: a purchase request waits on
+// this before it answers.
 export const refundCallOptions = { retries: 0, timeoutMs: 10_000 };
 const REFUND_ATTEMPTS = 3;
 const REFUND_RETRY_DELAY_MS = 250;
@@ -89,31 +89,39 @@ export async function chargeForShopPurchase<T extends Charge>(
 }
 
 /**
- * Reverses this request's charge after a failed grant, retrying failures. A
- * refund is safe to resend: one the ledger already holds comes back as a 409,
- * which counts as refunded (as it does for the other refund callers). Resolves
- * only when the whole amount is known to be back, so the caller may answer with
- * a refusal; anything less is "state unknown".
+ * A refund attempt may be resent only when it is known to have finished: the
+ * ledger answered with a server error (a landed refund then comes back as 409),
+ * or the connection never opened. A timeout or a dropped connection may leave
+ * the first attempt still running, and a resend would overlap it.
+ */
+function refundAttemptFinished(error: unknown) {
+  const status = getBuzzApiStatus(error);
+  if (status !== undefined) return status >= 500;
+  return isSafeToRetry(error);
+}
+
+/**
+ * Reverses this request's charge after a failed grant. A refund the ledger
+ * already holds comes back as a 409, which counts as refunded (as it does for
+ * the other refund callers). Resolves only when the whole amount is known to be
+ * back, so the caller may answer with a refusal; anything less is "state
+ * unknown".
  */
 export async function refundShopCharge(
   refund: () => Promise<{ totalRefunded: number }>,
   context: ShopChargeContext & { error?: unknown }
 ) {
-  let refunded: { totalRefunded: number } | 'already-refunded';
-  try {
-    refunded = await withRetries(
-      () =>
-        refund().catch((refundError: unknown) => {
-          if (getBuzzApiStatus(refundError) === 409) return 'already-refunded' as const;
-          throw refundError;
-        }),
-      REFUND_ATTEMPTS - 1,
-      REFUND_RETRY_DELAY_MS
-    );
-  } catch (refundError) {
-    throw purchaseStateUnknown({ ...context, refundError }, 'refund failed');
+  let refunded: { totalRefunded: number } | undefined;
+  for (let attempt = 1; !refunded; attempt++) {
+    try {
+      refunded = await refund();
+    } catch (refundError) {
+      if (getBuzzApiStatus(refundError) === 409) return;
+      if (attempt >= REFUND_ATTEMPTS || !refundAttemptFinished(refundError))
+        throw purchaseStateUnknown({ ...context, refundError }, 'refund failed');
+      await sleep(REFUND_RETRY_DELAY_MS);
+    }
   }
-  if (refunded === 'already-refunded') return;
   // Not `<`: the response is schema-checked upstream, but a missing total must
   // still never read as covered here.
   if (!(refunded.totalRefunded >= context.amount))

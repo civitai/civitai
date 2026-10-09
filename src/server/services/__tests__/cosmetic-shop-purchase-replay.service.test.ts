@@ -323,8 +323,23 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   it('a refund that fails after a charge is reported as unknown', async () => {
     mocks.createMultiTx.mockResolvedValue(legs(false));
     mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
-    mocks.refundMultiTx.mockRejectedValue(new Error('ledger down'));
+    mocks.refundMultiTx.mockRejectedValue(ledgerError(503, 'INTERNAL_SERVER_ERROR'));
 
     await expectStateUnknown(purchase());
+    // The ledger answered each time, so each attempt had finished: resent.
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(3);
+  });
+
+  // A timed-out attempt may still be running at the ledger: resending would
+  // overlap it, so it is not resent.
+  it('a refund attempt that timed out is not resent: state unknown', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+    mocks.refundMultiTx.mockRejectedValue(
+      new DOMException('The operation timed out.', 'TimeoutError')
+    );
+
+    await expectStateUnknown(purchase());
+    expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
   });
 });

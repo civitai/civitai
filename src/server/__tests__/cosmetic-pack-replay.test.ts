@@ -228,11 +228,22 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
   it('a refund that fails after a charge is reported as unknown', async () => {
     spend.mockResolvedValue(legs(false));
     purchaseCreate.mockRejectedValue(new Error('db down'));
-    refund.mockRejectedValue(new Error('ledger down'));
+    refund.mockRejectedValue(ledgerError(503, 'INTERNAL_SERVER_ERROR'));
 
     await expectStateUnknown(buy(KEY));
-    // Three attempts, then "state unknown".
+    // The ledger answered each time: three attempts, then "state unknown".
     expect(refund).toHaveBeenCalledTimes(3);
+  });
+
+  // A timed-out attempt may still be running at the ledger: resending would
+  // overlap it, so it is not resent.
+  it('a refund attempt that timed out is not resent: state unknown', async () => {
+    spend.mockResolvedValue(legs(false));
+    purchaseCreate.mockRejectedValue(new Error('db down'));
+    refund.mockRejectedValue(new DOMException('The operation timed out.', 'TimeoutError'));
+
+    await expectStateUnknown(buy(KEY));
+    expect(refund).toHaveBeenCalledTimes(1);
   });
 
   it('without a key, still charges under a fresh random id (control)', async () => {

@@ -1,3 +1,5 @@
+import { BuzzApiError } from '@civitai/buzz';
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
@@ -781,7 +783,16 @@ describe('purchaseCosmeticPack — when the grant fails', () => {
 
   it('refunds, retries the refund, and logs when the write transaction throws', async () => {
     purchaseCreate.mockRejectedValue(new Error('write failed'));
-    refund.mockRejectedValueOnce(new Error('buzz down')).mockResolvedValue({});
+    // A ledger 5xx: the attempt finished, so it may be resent.
+    refund
+      .mockRejectedValueOnce(
+        new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'buzz down',
+          cause: new BuzzApiError(503, 'Service Unavailable'),
+        })
+      )
+      .mockResolvedValue({ totalRefunded: 6300 });
     await expect(
       purchaseCosmeticPack({
         userId: BUYER,
