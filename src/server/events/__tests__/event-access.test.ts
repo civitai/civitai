@@ -56,6 +56,8 @@ beforeEach(() => {
 describe('the preview: base off, before the start', () => {
   it('lets testers and moderators play, and nobody else see it', async () => {
     expect(await access(TESTER, PREVIEW)).toBe('preview');
+    // The event's own flag is the one asked.
+    expect(new Set(testerFlag.asked)).toEqual(new Set(['birthday-2026']));
     expect(await access(MOD, JUST_BEFORE_START)).toBe('preview');
     expect(await access(PUBLIC_USER, PREVIEW)).toBe('closed');
     expect(await access(ANON, PREVIEW)).toBe('closed');
@@ -154,6 +156,7 @@ describe('what the jobs score', () => {
       testerFlag.reset(state);
       expect(await getEventScoringPhase(event, DURING)).toEqual(everyone);
       expect(await getEventScoringPhase(event, AFTER)).toEqual(everyone);
+      expect(testerFlag.asked).toEqual([]);
     }
   });
 

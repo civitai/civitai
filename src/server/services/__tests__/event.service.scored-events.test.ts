@@ -166,6 +166,15 @@ describe('the other event reads are gated on the viewer too', () => {
   } as const;
 
   for (const [name, [read, downstream]] of Object.entries(reads)) {
+    // Control for the refusal below: the same read goes through for a viewer who may read it.
+    it(`${name} reads for a viewer who may`, async () => {
+      engine.assertReadable.mockReset().mockResolvedValue('open');
+      engine.getTopContributors.mockResolvedValue({ allTime: [], day: [], teams: {} });
+      engine.getUserData.mockResolvedValue({ team: 'Blue' });
+      await read();
+      expect(downstream).toHaveBeenCalledTimes(1);
+    });
+
     it(`${name} refuses when the viewer may not read it, and reads nothing`, async () => {
       engine.assertReadable.mockImplementation(notStarted);
       await expect(read()).rejects.toThrow("That event doesn't exist");
