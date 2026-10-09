@@ -4,8 +4,8 @@
   opacity: 0.75;
 
   :global(button[data-event-decoration]) {
-    opacity: 0.8;
-    filter: grayscale(1);
+    opacity: 0.85;
+    filter: grayscale(1) brightness(1.8);
     pointer-events: none;
   }
 }

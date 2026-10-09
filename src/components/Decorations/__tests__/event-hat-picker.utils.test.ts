@@ -6,7 +6,9 @@ import {
 } from '~/components/Decorations/event-hat-picker.utils';
 
 const minutes = (m: number) => m * 60_000;
-const here = { entityType: 'Image', entityId: 10, joinCosmeticId: 1, elapsedMs: 0 };
+const fetchedAt = 1_800_000_000_000;
+const here = { entityType: 'Image', entityId: 10, joinCosmeticId: 1, now: fetchedAt, fetchedAt };
+const later = (ms: number) => ({ ...here, now: fetchedAt + ms });
 
 const hat = (
   cosmeticId: number,
@@ -32,7 +34,7 @@ describe('getHatState', () => {
   it('counts the server cooldown down by the time since the hats arrived, rounding up', () => {
     const cooling = hat(5, { entityType: 'Image', entityId: 99 }, minutes(8));
     expect(getHatState(cooling, here)).toEqual({ kind: 'cooldown', minutes: 8 });
-    expect(getHatState(cooling, { ...here, elapsedMs: minutes(2.8) })).toEqual({
+    expect(getHatState(cooling, later(minutes(2.8)))).toEqual({
       kind: 'cooldown',
       minutes: 6,
     });
@@ -47,7 +49,7 @@ describe('getHatState', () => {
 
   it('frees a hat once its cooldown has run out since the hats arrived', () => {
     const moved = hat(5, { entityType: 'Image', entityId: 99, title: 'Neon alley' }, minutes(3));
-    expect(getHatState(moved, { ...here, elapsedMs: minutes(3) })).toEqual({
+    expect(getHatState(moved, later(minutes(3)))).toEqual({
       kind: 'elsewhere',
       entityType: 'Image',
       title: 'Neon alley',
@@ -89,6 +91,8 @@ describe('pickDefaultHat', () => {
   it('falls back to a worn hat that can move, then to the first', () => {
     expect(pickDefaultHat([cooling, worn], here)).toBe(worn);
     expect(pickDefaultHat([cooling], here)).toBe(cooling);
+    const alsoCooling = hat(6, { entityType: 'Image', entityId: 97 }, minutes(7));
+    expect(pickDefaultHat([cooling, alsoCooling], here)).toBe(cooling);
   });
 
   it('has nothing to open on with no hats', () => {

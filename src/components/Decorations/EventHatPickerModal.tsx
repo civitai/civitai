@@ -22,7 +22,6 @@ import {
   getHatState,
   pickDefaultHat,
 } from '~/components/Decorations/event-hat-picker.utils';
-import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
@@ -34,13 +33,17 @@ import {
   SpotlightSurface,
 } from '~/components/SpotlightCard/SpotlightBorderCard';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import classes from './EventHatPickerModal.module.scss';
 
 type MyHat = RouterOutput['event']['getMyHats'][number];
-export type Props = Pick<CardDecorationModalProps, 'entityType' | 'entityId' | 'image'>;
+export type Props = Pick<CardDecorationModalProps, 'entityType' | 'entityId' | 'image'> & {
+  /** Fixed when the menu opens the picker, so the event window closing meanwhile cannot blank it. */
+  event: string;
+};
 
 const NEUTRAL = 'var(--mantine-color-blue-5)';
 const PREVIEW_WIDTH = 200;
@@ -51,29 +54,27 @@ const PREVIEW_WIDTH = 200;
  * one. The equip is the same mutation the event page uses, so ownership, the event window and the
  * move cooldown are enforced in one place.
  */
-export default function EventHatPickerModal({ entityType, entityId, image }: Props) {
+export default function EventHatPickerModal({ entityType, entityId, image, event }: Props) {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
   const teamColor = useTeamColor();
-  const definition = usePlayableEventDecoration(entityType);
-  const event = definition?.event ?? '';
+  const definition = getEventDecorationDefinition(event);
 
-  const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery(
-    { event },
-    { enabled: !!event }
-  );
+  const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery({
+    event,
+  });
   const {
     data: hats = [],
     isLoading: loadingHats,
     dataUpdatedAt: hatsFetchedAt,
-  } = trpc.event.getMyHats.useQuery({ event }, { enabled: !!event });
+  } = trpc.event.getMyHats.useQuery({ event });
   // Re-reads the clock every half minute, so a cooling hat unlocks while the picker is open.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
-  const { data: standings } = trpc.event.getStandings.useQuery({ event }, { enabled: !!event });
+  const { data: standings } = trpc.event.getStandings.useQuery({ event });
   const { equip, isLoading: equipping } = useEquipContentDecoration();
   const { activateCosmetic, equipping: joining } = useMutateEvent();
 
@@ -86,7 +87,8 @@ export default function EventHatPickerModal({ entityType, entityId, image }: Pro
     entityType,
     entityId,
     joinCosmeticId: eventCosmetic?.cosmetic?.id,
-    elapsedMs: now - hatsFetchedAt,
+    now,
+    fetchedAt: hatsFetchedAt,
   };
 
   const [selectedKey, setSelectedKey] = useState<string>();
@@ -251,7 +253,7 @@ export default function EventHatPickerModal({ entityType, entityId, image }: Pro
                 <Stat
                   icon={<IconTrophy size={18} />}
                   value={`#${rank}`}
-                  label={`Team ${team}`}
+                  label="team rank"
                   color={color}
                 />
               )}

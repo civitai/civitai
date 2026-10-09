@@ -31,7 +31,7 @@ export function AddEventDecorationMenuItem(props: CardDecorationModalProps) {
       }).catch(() => null); // error is handled in the custom hook
     } else {
       const { entityType, entityId, image } = props;
-      openEventHatPicker({ props: { entityType, entityId, image } });
+      openEventHatPicker({ props: { entityType, entityId, image, event: definition.event } });
     }
   };
 

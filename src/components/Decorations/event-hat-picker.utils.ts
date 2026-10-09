@@ -16,8 +16,8 @@ export type HatState =
 
 /**
  * Where a hat stands for the content the picker is open on. The cooldown is what the server said was
- * left (on its own clock) less the time since the hats arrived, so nothing here re-derives the ten
- * minutes or trusts the browser's clock against the server's.
+ * left (on its own clock) less the time since the hats arrived (both ends on the browser's clock), so
+ * nothing here re-derives the ten minutes or compares the browser's clock with the server's.
  */
 export function getHatState(
   hat: PickerHat,
@@ -25,18 +25,21 @@ export function getHatState(
     entityType,
     entityId,
     joinCosmeticId,
-    elapsedMs,
+    now,
+    fetchedAt,
   }: {
     entityType: string;
     entityId: number;
     joinCosmeticId?: number;
-    /** Since the hats arrived, on the browser's clock. */
-    elapsedMs: number;
+    /** Browser clock, ms. */
+    now: number;
+    /** When the hats arrived, on the browser's clock (the query's dataUpdatedAt). */
+    fetchedAt: number;
   }
 ): HatState {
   if (hat.placedOn?.entityType === entityType && hat.placedOn.entityId === entityId)
     return { kind: 'here' };
-  const minutes = minutesUntilMovable(hat.moveCooldownLeftMs, elapsedMs);
+  const minutes = minutesUntilMovable(hat.moveCooldownLeftMs, now - fetchedAt);
   if (minutes > 0) return { kind: 'cooldown', minutes };
   if (hat.placedOn)
     return {

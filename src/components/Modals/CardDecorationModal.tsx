@@ -176,7 +176,9 @@ export default function CardDecorationModal({
                     </Paper>
                   </Group>
                 )}
-              <PreviewCard image={image} decoration={selectedItem} />
+              <div className="pt-4">
+                <PreviewCard image={image} decoration={selectedItem} />
+              </div>
               <Button
                 radius="xl"
                 type="submit"
