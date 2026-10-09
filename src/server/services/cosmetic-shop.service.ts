@@ -825,7 +825,7 @@ export const getShopSectionsWithItems = async ({
   });
   // Event items (team hats) are filtered here rather than in the query: the
   // viewer's team comes from the event, not the database.
-  const eventItemVisible = createEventShopItemVisibility({ userId });
+  const eventItemVisible = createEventShopItemVisibility({ userId, isModerator });
   // The event page's shelf is the viewer's own colour, moderators included.
   const shown =
     isModerator && !event
