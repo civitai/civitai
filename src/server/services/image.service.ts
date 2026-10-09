@@ -2955,9 +2955,6 @@ export async function getImagesFromFeedServiceForRest(
       userId,
       tags: input.tags,
       excludedTagIds: input.excludedTagIds,
-      // Clients walk whole back-catalogues here; those images are rarely read again, so
-      // caching them only costs memory.
-      cacheWriteBack: false,
     },
     'rest'
   );

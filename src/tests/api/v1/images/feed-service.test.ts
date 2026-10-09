@@ -695,7 +695,7 @@ const rawRow = (id: number) => ({
   publishedAt: new Date(FEED_CREATED_AT),
 });
 
-describe('per-image caches on the REST feed path read through without writing back', () => {
+describe('per-image caches on a REST feed continuation page read through without writing back', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.restFlagOn.mockReturnValue(true);
@@ -713,14 +713,25 @@ describe('per-image caches on the REST feed path read through without writing ba
     vi.restoreAllMocks();
   });
 
-  it('passes writeBack:false to image-resources, tag-ids and image-meta on a feed-served page', async () => {
+  it('passes writeBack:false to image-resources, tag-ids and image-meta on a feed: cursor page', async () => {
     const { options } = cacheFetchOptions();
-    const res = await get({ withMeta: 'true' });
+    const res = await get({ cursor: 'feed:17:5', withMeta: 'true' });
     expect(res.statusCode).toBe(200);
     expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
     expect(options('imageResources')).toEqual([{ writeBack: false }]);
     expect(options('tagIds')).toEqual([{ writeBack: false }]);
     expect(options('imageMeta')).toEqual([{ writeBack: false }]);
+  });
+
+  it('keeps writing back on a feed-served first page', async () => {
+    const { options } = cacheFetchOptions();
+    const res = await get({ withMeta: 'true' });
+    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+    expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(1);
+    for (const name of ['imageResources', 'tagIds', 'imageMeta'] as const) {
+      expect(options(name)).toHaveLength(1);
+      expect(options(name)[0]?.writeBack).not.toBe(false);
+    }
   });
 
   it('[invariant on the pre-change code] keeps writing back image-meta when the search path serves', async () => {

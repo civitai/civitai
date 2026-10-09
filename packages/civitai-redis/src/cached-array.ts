@@ -73,10 +73,16 @@ export type CachedLookupOptions<T extends object> = {
 /** Per-call options for `fetch`. */
 export type CachedFetchOptions = {
   /**
-   * `false` makes this call read-only against the cache: it never writes Redis or the L1. Hits
-   * are served as usual, misses go to `lookupFn` and are returned without being cached, and stale
-   * entries are served as-is instead of being revalidated. For callers whose ids are unlikely to
-   * be read again soon (e.g. a cold back-catalogue walk), where the write only costs memory.
+   * `false` makes this call read-only against Redis: hits (Redis or L1) are served as usual,
+   * misses go to `lookupFn` and are returned without being cached, and stale entries are served
+   * as-is instead of being revalidated. It writes no L1 either, except on the degraded path (see
+   * backfillLocal).
+   *
+   * Misses still count in the miss metric, so a cache read this way can show a higher miss ratio
+   * while writing less; judge the effect by write volume, not miss ratio.
+   *
+   * For callers whose ids are unlikely to be read again soon (e.g. a cold back-catalogue walk),
+   * where the write only costs memory.
    */
   writeBack?: boolean;
 };
@@ -236,8 +242,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // returned object cannot corrupt the shared L1 instance.
     // 🔴 INVARIANT: shallow only protects TOP-LEVEL fields — nested refs are shared with the L1 copy,
     // so consumers MUST treat returned values as read-only for nested fields. `skip` lets a caller
-    // withhold ids the Redis layer itself deliberately did NOT cache (debounce window / dontCacheFn),
-    // so L1 never pins a value Redis chose not to persist.
+    // withhold ids the Redis layer itself deliberately did NOT cache (debounce window / dontCacheFn).
+    // While Redis is healthy L1 never pins a value Redis chose not to persist, and a writeBack:false
+    // fetch writes no L1 at all. The degraded path (Redis read failed) is the exception: it
+    // backfills even for writeBack:false, because the L1 is what bounds the DB herd then.
     function backfillLocal(items: T[], skip?: (x: T) => boolean) {
       if (!localCache) return;
       for (const x of items) {
@@ -398,7 +406,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         // Backfill L1 even during a wedge (short TTL; helps bound the DB herd) and merge any ids
         // already served from L1 before the read failed. Honor dontCacheFn (dontCache is a Redis-hit
         // concept, not reachable on this path).
-        if (writeBack) backfillLocal(degraded, dontCacheFn ? (x) => !!dontCacheFn(x) : undefined);
+        backfillLocal(degraded, dontCacheFn ? (x) => !!dontCacheFn(x) : undefined);
         return localCache ? [...l1Hits, ...degraded] : degraded;
       }
       const cacheArray = cacheResults.filter((x) => x !== null) as T[];

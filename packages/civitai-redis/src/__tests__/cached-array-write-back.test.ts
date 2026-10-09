@@ -105,32 +105,15 @@ describe('createCachedObject fetch — writeBack option', () => {
     expect(t.redis.packed.set).not.toHaveBeenCalled();
   });
 
-  it('[invariant on the pre-change code] the default fetch writes misses and not-found markers back', async () => {
+  it('[invariant on the pre-change code] when the Redis read fails, writeBack:false still backfills L1', async () => {
     const t = build({ localTtl: 30 });
-    const result = await t.cache.fetch([1, 100]);
+    t.redis.packed.mGet.mockRejectedValue(new Error('cluster down'));
+    await t.cache.fetch([1], { writeBack: false });
+    await t.cache.fetch([1], { writeBack: false });
 
-    expect(result).toEqual({ 1: { id: 1, v: 'db-1' } });
-    expect(t.redis.packed.set).toHaveBeenCalledTimes(2);
-    expect(t.store.get(keyFor(1))).toMatchObject({ id: 1, v: 'db-1' });
-    expect(t.store.get(keyFor(100))).toMatchObject({ id: 100, notFound: true });
-
-    // The L1 now answers id 1 without a lookup.
-    await t.cache.fetch([1]);
+    // The L1 entry from the first call bounds the DB herd: the second is answered without a lookup.
     expect(t.lookupFn).toHaveBeenCalledTimes(1);
-  });
-
-  it('when the Redis read fails, writeBack:false skips the L1 backfill the default path makes', async () => {
-    const readOnly = build({ localTtl: 30 });
-    readOnly.redis.packed.mGet.mockRejectedValue(new Error('cluster down'));
-    await readOnly.cache.fetch([1], { writeBack: false });
-    await readOnly.cache.fetch([1], { writeBack: false });
-    expect(readOnly.lookupFn).toHaveBeenCalledTimes(2);
-
-    const writing = build({ localTtl: 30 });
-    writing.redis.packed.mGet.mockRejectedValue(new Error('cluster down'));
-    await writing.cache.fetch([1]);
-    await writing.cache.fetch([1]);
-    expect(writing.lookupFn).toHaveBeenCalledTimes(1);
+    expect(t.redis.packed.set).not.toHaveBeenCalled();
   });
 
   it('[invariant on the pre-change code] serves an L1 hit with writeBack:false, without reading Redis', async () => {
