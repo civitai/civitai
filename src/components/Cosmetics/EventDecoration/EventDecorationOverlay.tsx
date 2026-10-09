@@ -105,8 +105,16 @@ function CardHat({
         e.preventDefault();
         e.stopPropagation();
         setBurst((x) => x + 1);
-        setOpened((x) => !x);
+        if (wornOn) setOpened((x) => !x);
       }}
+      onKeyDown={(e) => {
+        // The popover's own Escape handler sits on its dropdown, but a click leaves focus here.
+        if (e.key !== 'Escape' || !opened) return;
+        e.stopPropagation();
+        setOpened(false);
+      }}
+      // A Mantine Modal around the card closes on Escape from a window listener unless told not to.
+      data-mantine-stop-propagation={opened || undefined}
     >
       <EdgeMedia
         src={url}
