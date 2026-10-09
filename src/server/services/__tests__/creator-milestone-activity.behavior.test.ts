@@ -166,7 +166,7 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, "createdById" int);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, "createdById" int);
     CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "addedById" int);
     CREATE TABLE "UserCosmeticShopPurchases" (
       "buzzTransactionId" text PRIMARY KEY, "cosmeticId" int, "shopItemId" int NOT NULL,
