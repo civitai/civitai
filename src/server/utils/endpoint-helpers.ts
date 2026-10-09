@@ -494,11 +494,16 @@ export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
     }
   }
 
+  return requestCarriesQueryToken(req);
+}
+
+/**
+ * `req.query` is Next's parse, and `getServerAuthSession` reads `req.url`
+ * directly, so both are read or the predicate can silently narrow.
+ */
+export function requestCarriesQueryToken(req: NextApiRequest): boolean {
   if (hasNonEmpty((req.query as Record<string, unknown> | undefined)?.token)) return true;
 
-  // Same fallback rationale as the raw `Cookie` header above: `req.query` is
-  // Next's parse, and `getServerAuthSession` reads `req.url` directly, so the two
-  // reads must both be covered or the predicate can silently narrow.
   const queryString = req.url?.split('?')[1];
   if (queryString && hasNonEmpty(new URLSearchParams(queryString).get('token'))) return true;
 

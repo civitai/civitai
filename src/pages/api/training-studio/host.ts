@@ -9,6 +9,7 @@ import {
 } from '~/server/services/feature-flags.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -23,6 +24,7 @@ import { Flags } from '~/shared/utils/flags';
  * banned → onboarded → muted → email-verified) plus the page's feature flag — keep them in step.
  */
 export default AuthedEndpoint(async (req, res, user) => {
+  if (!requireFullScopeSession(req, res)) return;
   if (user.bannedAt)
     return res
       .status(403)
