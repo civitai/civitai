@@ -1,5 +1,6 @@
 import { Button } from '@mantine/core';
 import { IconThumbUp } from '@tabler/icons-react';
+import type { ReactNode } from 'react';
 
 import { useCanReviewListing } from '~/components/Apps/ReviewListingButton';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -98,17 +99,38 @@ export function ChromeReviewMenuItem({
   slug: string | undefined;
   onOpenReview: (appListingId: string) => void;
 }) {
-  const features = useOptionalFeatureFlags();
-  if (!slug || !hasAppsStoreAccess(features)) return null;
-  return <ChromeReviewMenuItemBody slug={slug} onOpenReview={onOpenReview} />;
+  return (
+    <ChromeReviewEligible slug={slug}>
+      {(appListingId) => (
+        <ChromeReviewMenuItemLabelled appListingId={appListingId} onOpenReview={onOpenReview} />
+      )}
+    </ChromeReviewEligible>
+  );
 }
 
-function ChromeReviewMenuItemBody({
+/**
+ * Renders `children` with the listing id only for a viewer the review gate admits. Shared by the
+ * ⋮ item and the feedback modal's "Rate this app" link, so the two cannot offer review to
+ * different viewers.
+ */
+export function ChromeReviewEligible({
   slug,
-  onOpenReview,
+  children,
+}: {
+  slug: string | undefined;
+  children: (appListingId: string) => ReactNode;
+}) {
+  const features = useOptionalFeatureFlags();
+  if (!slug || !hasAppsStoreAccess(features)) return null;
+  return <ChromeReviewEligibleBody slug={slug}>{children}</ChromeReviewEligibleBody>;
+}
+
+function ChromeReviewEligibleBody({
+  slug,
+  children,
 }: {
   slug: string;
-  onOpenReview: (appListingId: string) => void;
+  children: (appListingId: string) => ReactNode;
 }) {
   const { detail } = useChromeListingDetail(slug);
   // `creator` is the listing owner chip; a self-review is 403'd server-side, so the
@@ -123,7 +145,7 @@ function ChromeReviewMenuItemBody({
   // appears when the data arrives; it is never rendered against a listing id we do
   // not have, which is what would produce a modal whose submit 403s.
   if (!detail || !canReview) return null;
-  return <ChromeReviewMenuItemLabelled appListingId={detail.id} onOpenReview={onOpenReview} />;
+  return <>{children(detail.id)}</>;
 }
 
 function ChromeReviewMenuItemLabelled({

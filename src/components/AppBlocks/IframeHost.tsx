@@ -28,6 +28,9 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
+import { AppFeedbackModal, ChromeFeedbackMenuItem } from './ChromeFeedbackEntry';
+import { resolveAppFeedbackRequest } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
@@ -447,6 +450,10 @@ export function AppBlockChrome({
   // only when there is something to review: an id is what the entry point resolved
   // and handed up, so there is no window in which the modal exists without one.
   const [reviewListingId, setReviewListingId] = useState<string | null>(null);
+  // The feedback modal's target, `null` while closed — owned here for the same reason as
+  // `reviewListingId`.
+  const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
+  const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -746,6 +753,9 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
+      {/* Private feedback to the developer. Unlike the review item it also works on the model
+          slot (no slug there): eligibility is asked of the server by AppBlock id. */}
+      <ChromeFeedbackMenuItem request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -941,6 +951,18 @@ export function AppBlockChrome({
           appListingId={reviewListingId}
           opened
           onClose={() => setReviewListingId(null)}
+        />
+      )}
+      {feedbackTarget && feedbackRequest && (
+        <AppFeedbackModal
+          request={feedbackRequest}
+          target={feedbackTarget}
+          slug={slug}
+          onClose={() => setFeedbackTarget(null)}
+          onOpenReview={(appListingId) => {
+            setFeedbackTarget(null);
+            setReviewListingId(appListingId);
+          }}
         />
       )}
     </>
