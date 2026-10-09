@@ -3,6 +3,7 @@ import {
   IconArrowLeft,
   IconCoin,
   IconHistory,
+  IconMessage2,
   IconPhoto,
   IconRocket,
   IconSettings,
@@ -13,6 +14,7 @@ import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppCollaboratorsPanel } from '~/components/Apps/AppCollaboratorsPanel';
+import { AppFeedbackInboxPanel } from '~/components/Apps/AppFeedbackInboxPanel';
 import { AppEarningsPanel } from '~/components/Apps/AppEarningsPanel';
 import type { EditorTab } from '~/components/Apps/appListingEditorTabs';
 import {
@@ -93,6 +95,7 @@ const TAB_ICONS: Record<EditorTab, typeof IconSettings> = {
   collaborators: IconUsers,
   publishing: IconRocket,
   history: IconHistory,
+  feedback: IconMessage2,
 };
 
 /**
@@ -309,6 +312,12 @@ export default function AppListingEditPage() {
             {tabs.includes('history') ? (
               <Tabs.Panel value="history" pt="md" data-testid="apps-edit-panel-history">
                 <ListingHistoryPanel appListingId={context.appListingId} />
+              </Tabs.Panel>
+            ) : null}
+
+            {tabs.includes('feedback') ? (
+              <Tabs.Panel value="feedback" pt="md" data-testid="apps-edit-panel-feedback">
+                <AppFeedbackInboxPanel appListingId={context.appListingId} kind={context.kind} />
               </Tabs.Panel>
             ) : null}
 

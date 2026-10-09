@@ -3,6 +3,7 @@ import { page, userEvent } from 'vitest/browser';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as MantineHooks from '@mantine/hooks';
 import type { MyAppRow } from '~/components/Apps/myAppsView';
 import type { OrphanedSubmissionRow } from './MyAppsBody';
@@ -42,6 +43,8 @@ const mocks = vi.hoisted(() => ({
   orphansError: null as string | null,
   orphansLoading: false,
   appBlocksFlag: true,
+  /** What `appFeedback.countNewForMyListings` resolves to. */
+  feedbackCounts: undefined as Record<string, number> | undefined,
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -52,47 +55,27 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    useUtils: () => ({
-      appListings: {
-        listingHistory: { invalidate: vi.fn() },
-        listMine: { invalidate: vi.fn() },
-        listMyOrphanedSubmissions: { invalidate: vi.fn() },
-      },
-    }),
-    appListings: {
-      listMine: {
-        useQuery: () => ({ data: mocks.rows, isLoading: false, error: null }),
-      },
-      listingHistory: {
-        useQuery: (input: { appListingId: string }, opts: { enabled: boolean }) => {
-          mocks.historyCalls.push({ input, enabled: opts.enabled });
-          return { data: [], isLoading: false, error: null };
-        },
-      },
-      listMyOrphanedSubmissions: {
-        useQuery: () => ({
-          data: mocks.orphans,
-          isLoading: mocks.orphansLoading,
-          error: mocks.orphansError ? { message: mocks.orphansError } : null,
-        }),
-      },
-      withdrawExternalRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
-      // The restored owner takedown pair. Present here so the CONTAINER block below mounts
-      // at all — the mutation hooks run unconditionally on render, so an absent entry is a
-      // `Cannot read properties of undefined` at mount, not a missing assertion. What these
-      // two procedures are actually CALLED WITH is asserted in
-      // `MyAppsBody.authorActions.browser.test.tsx`, which owns the ledger.
-      republishOwnListing: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
-      unpublishOwnListing: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
-      listMyListingModerationEvents: {
-        useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
+  trpc: makeTrpcProxy({
+    'appListings.listMine': {
+      useQuery: () => ({ data: mocks.rows, isLoading: false, error: null }),
+    },
+    'appListings.listingHistory': {
+      useQuery: (input: { appListingId: string }, opts: { enabled: boolean }) => {
+        mocks.historyCalls.push({ input, enabled: opts.enabled });
+        return { data: [], isLoading: false, error: null };
       },
     },
-    blocks: {
-      withdrawPublishRequest: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+    'appListings.listMyOrphanedSubmissions': {
+      useQuery: () => ({
+        data: mocks.orphans,
+        isLoading: mocks.orphansLoading,
+        error: mocks.orphansError ? { message: mocks.orphansError } : null,
+      }),
     },
-  },
+    'appFeedback.countNewForMyListings': {
+      useQuery: () => ({ data: mocks.feedbackCounts, isLoading: false, error: null }),
+    },
+  }),
 }));
 
 vi.mock('@mantine/hooks', async (importOriginal) => ({
@@ -146,6 +129,7 @@ beforeEach(() => {
   mocks.orphansError = null;
   mocks.orphansLoading = false;
   mocks.appBlocksFlag = true;
+  mocks.feedbackCounts = undefined;
 });
 
 /* ------------------------------------------------------------------ *
@@ -1612,5 +1596,52 @@ describe('MyAppsBody (container) — the orphan query’s LOADING state reaches 
     mocks.orphansLoading = false;
     renderWithProviders(<MyAppsBody />);
     await expect.element(page.getByTestId('apps-mine-empty')).toBeInTheDocument();
+  });
+});
+
+describe('the new-feedback badge links each row to its own Feedback tab', () => {
+  test('a row with new feedback carries the count and links to ITS inbox; others carry none', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[
+          row({ appListingId: 'apl_fb', status: 'approved' }),
+          row({ appListingId: 'apl_quiet', status: 'pending', role: 'editor' }),
+        ]}
+        newFeedbackCounts={{ apl_fb: 4 }}
+      />
+    );
+    const badge = page.getByTestId('apps-mine-feedback-apl_fb');
+    await expect.element(badge).toHaveTextContent('4 new feedback');
+    expect(badge.element().getAttribute('href')).toBe('/apps/listing/apl_fb/edit?tab=feedback');
+    expect(page.getByTestId('apps-mine-feedback-apl_quiet').elements()).toHaveLength(0);
+  });
+
+  test('a collaborator row gets its badge too — editors read the inbox', async () => {
+    renderWithProviders(
+      <MyAppsBodyView
+        rows={[row({ appListingId: 'apl_seat', role: 'editor', status: 'draft' })]}
+        newFeedbackCounts={{ apl_seat: 1 }}
+        compact
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-mine-feedback-apl_seat'))
+      .toHaveTextContent('1 new feedback');
+  });
+
+  test('the container feeds the count query into the rows', async () => {
+    mocks.rows = [row({ appListingId: 'apl_live', status: 'approved' })];
+    mocks.feedbackCounts = { apl_live: 9 };
+    renderWithProviders(<MyAppsBody />);
+    await expect
+      .element(page.getByTestId('apps-mine-feedback-apl_live'))
+      .toHaveTextContent('9 new feedback');
+  });
+
+  test('no counts (still loading or failed) renders no badge and still renders the row', async () => {
+    mocks.rows = [row({ appListingId: 'apl_live', status: 'approved' })];
+    renderWithProviders(<MyAppsBody />);
+    await expect.element(page.getByTestId('apps-mine-row-apl_live')).toBeInTheDocument();
+    expect(page.getByTestId('apps-mine-feedback-apl_live').elements()).toHaveLength(0);
   });
 });

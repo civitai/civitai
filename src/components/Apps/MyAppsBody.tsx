@@ -20,10 +20,13 @@ import {
   IconApps,
   IconChevronDown,
   IconChevronRight,
+  IconMessage2,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCallback, useMemo, useState } from 'react';
 
+import type { NewFeedbackBadge } from '~/components/Apps/appFeedbackInbox';
+import { newFeedbackBadge } from '~/components/Apps/appFeedbackInbox';
 import { ListingCoverThumb, ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import { ListingProblemsIndicator } from '~/components/Apps/ListingProblemsIndicator';
 import { showModRemovedNotice } from '~/components/Apps/listingPublishingActions';
@@ -200,7 +203,13 @@ function ListingName({ row }: { row: MyAppRow }) {
  * `MyAppsBody.browser.test.tsx`'s "no row shape renders a kind badge", so a future
  * "helpfully restore the badge" change is visible rather than silent.
  */
-function StatusBadges({ row }: { row: MyAppRow }) {
+function StatusBadges({
+  row,
+  newFeedback,
+}: {
+  row: MyAppRow;
+  newFeedback: NewFeedbackBadge | null;
+}) {
   return (
     /*
      * 🔴 THIS ROW MAY WRAP, AND THAT IS THE STRUCTURAL HALF OF A LAYOUT FIX — NOT A
@@ -273,6 +282,19 @@ function StatusBadges({ row }: { row: MyAppRow }) {
       <span data-testid={`apps-mine-problems-${row.appListingId}`}>
         <ListingProblemsIndicator problems={row.problems ?? []} />
       </span>
+      {newFeedback && (
+        <Badge
+          component={Link}
+          href={newFeedback.href}
+          variant="light"
+          color="blue"
+          leftSection={<IconMessage2 size={12} />}
+          style={{ cursor: 'pointer' }}
+          data-testid={`apps-mine-feedback-${row.appListingId}`}
+        >
+          {newFeedback.label}
+        </Badge>
+      )}
     </Group>
   );
 }
@@ -320,6 +342,7 @@ type RowRenderProps = {
   group: 'active' | 'inactive';
   /** Open the row's image viewer at the image that was clicked. */
   onOpenMedia?: (row: MyAppRow, which: MyAppMediaKind) => void;
+  newFeedback: NewFeedbackBadge | null;
 };
 
 function rowTestId(group: 'active' | 'inactive', appListingId: string): string {
@@ -350,7 +373,7 @@ function AppTableRow(props: RowRenderProps) {
         </Table.Td>
         <Table.Td>
           <Stack gap={4} align="flex-start">
-            <StatusBadges row={row} />
+            <StatusBadges row={row} newFeedback={props.newFeedback} />
             <ModRemovedNotice row={row} />
           </Stack>
         </Table.Td>
@@ -388,7 +411,7 @@ function AppCardRow(props: RowRenderProps) {
           </Stack>
           <ListingCover row={row} onOpenMedia={props.onOpenMedia} />
         </Group>
-        <StatusBadges row={row} />
+        <StatusBadges row={row} newFeedback={props.newFeedback} />
         <ModRemovedNotice row={row} />
         <Text size="xs" c="dimmed">
           Updated {formatWhen(row.updatedAt)}
@@ -475,6 +498,8 @@ export type MyAppsBodyViewProps = {
   /** Is the orphan read still in flight? An empty result mid-stream is not an empty set. */
   orphanedLoading?: boolean;
   onWithdrawOrphan?: (row: OrphanedSubmissionRow) => void;
+  /** `appFeedback.countNewForMyListings`: `{ [appListingId]: new-feedback count }`. */
+  newFeedbackCounts?: Readonly<Record<string, number>>;
 };
 
 export function MyAppsBodyView({
@@ -488,6 +513,7 @@ export function MyAppsBodyView({
   orphanedError = null,
   orphanedLoading = false,
   onWithdrawOrphan,
+  newFeedbackCounts,
 }: MyAppsBodyViewProps) {
   const [inactiveOpen, setInactiveOpen] = useState(false);
   const [inactivePage, setInactivePage] = useState(1);
@@ -541,8 +567,9 @@ export function MyAppsBodyView({
       row,
       group,
       onOpenMedia: openMedia,
+      newFeedback: newFeedbackBadge(newFeedbackCounts, row),
     }),
-    [openMedia]
+    [openMedia, newFeedbackCounts]
   );
 
   /**
@@ -921,6 +948,11 @@ export function MyAppsBody() {
     retry: false,
   });
 
+  // A failed count only costs the badge; the rows above it are the page.
+  const feedbackCountsQuery = trpc.appFeedback.countNewForMyListings.useQuery(undefined, {
+    retry: false,
+  });
+
   const utils = trpc.useUtils();
   const withdrawVersion = trpc.blocks.withdrawPublishRequest.useMutation({
     onSuccess: () => {
@@ -952,6 +984,7 @@ export function MyAppsBody() {
       onWithdrawOrphan={onWithdrawOrphan}
       withdrawing={withdrawVersion.isPending}
       withdrawEnabled={!!features?.appBlocks}
+      newFeedbackCounts={feedbackCountsQuery.data}
     />
   );
 }

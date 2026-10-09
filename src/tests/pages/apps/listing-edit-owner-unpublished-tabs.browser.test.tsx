@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 import { useRouter } from 'next/router';
 import { capabilitiesForKind } from '~/shared/constants/app-capabilities.constants';
 import type * as TrpcModule from '~/utils/trpc';
@@ -117,6 +118,13 @@ vi.mock('~/components/Apps/ListingPublishingPanel', () => ({
 vi.mock('~/components/Apps/ListingHistoryPanel', () => ({
   ListingHistoryPanel: () => <div data-testid="stub-history" />,
 }));
+vi.mock('~/components/Apps/AppFeedbackInboxPanel', () => ({
+  AppFeedbackInboxPanel: ({ appListingId, kind }: { appListingId: string; kind: string }) => (
+    <div data-testid="stub-feedback">
+      {appListingId}/{kind}
+    </div>
+  ),
+}));
 
 // Spread the REAL module and override only `trpc` (per `local-rules/no-wholesale-module-mock`):
 // a hand-written replacement silently drops any export a transitive importer needs, and the
@@ -125,18 +133,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({}),
-      appListings: {
-        getAuthoringContext: {
-          useQuery: () => ({
-            data: state.context,
-            isLoading: state.context == null,
-            error: null,
-          }),
-        },
+    trpc: makeTrpcProxy({
+      'appListings.getAuthoringContext': {
+        useQuery: () => ({
+          data: state.context,
+          isLoading: state.context == null,
+          error: null,
+        }),
       },
-    },
+    }),
   };
 });
 
@@ -191,7 +196,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     await expect.element(page.getByTestId('apps-edit-tab-media')).toBeInTheDocument();
     // Order is asserted too — the strip is what the owner scans, and `details` must be the
     // landing tab (a bare `/edit` resolves to DEFAULT_EDITOR_TAB when it is allowed).
-    expect(renderedTabs()).toEqual(['details', 'media', 'publishing', 'history']);
+    expect(renderedTabs()).toEqual(['details', 'media', 'publishing', 'history', 'feedback']);
   });
 
   test('🔴 a MODERATOR-DELISTED listing renders NEITHER — same payload, one field apart', async () => {
@@ -206,7 +211,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     expect(page.getByTestId('apps-edit-tab-media').elements()).toHaveLength(0);
     // 🔴 The Forgejo-write surface, named. Accepting an invite still mints repo `write`.
     expect(page.getByTestId('apps-edit-tab-collaborators').elements()).toHaveLength(0);
-    expect(renderedTabs()).toEqual(['publishing', 'history']);
+    expect(renderedTabs()).toEqual(['publishing', 'history', 'feedback']);
   });
 
   test('🔴 a removed listing with NO moderation event fails closed', async () => {
@@ -214,7 +219,7 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
     renderWithProviders(<AppListingEditPage />);
 
     await expect.element(page.getByTestId('apps-edit-tab-publishing')).toBeInTheDocument();
-    expect(renderedTabs()).toEqual(['publishing', 'history']);
+    expect(renderedTabs()).toEqual(['publishing', 'history', 'feedback']);
   });
 
   test('🔴 the repair state does NOT open Collaborators, Manifest or Earnings', async () => {
@@ -258,6 +263,26 @@ describe('🔴 the page hands `lastModerationAction` to the tab derivation', () 
       'collaborators',
       'publishing',
       'history',
+      'feedback',
     ]);
+  });
+});
+
+describe('the Feedback tab mounts the inbox for THIS listing', () => {
+  test('`?tab=feedback` for a seated EDITOR on a moderator-delisted app opens the inbox', async () => {
+    openListing('feedback');
+    state.context = contextFor({ role: 'editor', kind: 'offsite', lastModerationAction: 'other' });
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('stub-feedback')).toHaveTextContent('apl_repair/offsite');
+    expect(renderedTabs()).toEqual(['history', 'feedback']);
+  });
+
+  test('a bare `/edit` does not mount it (control: the panel is tab-scoped)', async () => {
+    state.context = contextFor({ status: 'approved', lastModerationAction: null });
+    renderWithProviders(<AppListingEditPage />);
+
+    await expect.element(page.getByTestId('apps-edit-panel-details')).toBeInTheDocument();
+    expect(page.getByTestId('stub-feedback').elements()).toHaveLength(0);
   });
 });

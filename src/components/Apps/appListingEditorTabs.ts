@@ -33,7 +33,8 @@ export type EditorTab =
   | 'earnings'
   | 'collaborators'
   | 'publishing'
-  | 'history';
+  | 'history'
+  | 'feedback';
 
 /** The tab a bare `/edit` (no `?tab=`) lands on. Always in the allowed set. */
 export const DEFAULT_EDITOR_TAB: EditorTab = 'details';
@@ -55,6 +56,7 @@ export const ALL_EDITOR_TABS: EditorTab[] = [
   'collaborators',
   'publishing',
   'history',
+  'feedback',
 ];
 
 /** What the caller sees on each tab. Rendered in this order. */
@@ -66,6 +68,7 @@ export const EDITOR_TAB_LABELS: Readonly<Record<EditorTab, string>> = Object.fre
   collaborators: 'Collaborators',
   publishing: 'Publishing',
   history: 'History',
+  feedback: 'Feedback',
 });
 
 /** The inputs the tab set is derived from. Nothing else may influence it. */
@@ -310,6 +313,11 @@ export function isOwnerUnpublishedTabContext(
  *                       page can reach. It is also what keeps the set non-empty: an editor
  *                       on a `removed` listing gets `['history']`, never `[]`, so
  *                       `resolveEditorTab`'s `allowed[0]` fallback always has an answer.
+ *
+ *   - `feedback`      — ALWAYS, like `history`, and LAST so no narrowed set's landing tab moves.
+ *                       `appFeedback.listForListing` / `setOwnerStatus` / `flagAbusive` authorize
+ *                       through `resolveListingAccess` (owner OR accepted seat) and read no
+ *                       status or kind: reports about a since-delisted app stay readable.
  */
 export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const tabs: EditorTab[] = [];
@@ -354,6 +362,7 @@ export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
   const canSetLevel = isVisibilityEligibleListingStatus(ctx.status);
   if (ctx.role === 'owner' && (canPublish || canSetLevel)) tabs.push('publishing');
   tabs.push('history');
+  tabs.push('feedback');
   return tabs;
 }
 
