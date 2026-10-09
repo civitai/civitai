@@ -5,7 +5,7 @@ import config from '../../../../vitest.config.mts';
 
 /**
  * `sharp` 0.32.6 segfaults a `worker_threads` worker at teardown once it has run a libvips
- * operation, which is why the six test files that call it are routed to their own `forks`
+ * operation, which is why the test files that call it are routed to their own `forks`
  * project. The failure has no failing test attached to it — the suite passes, the summary
  * prints, and then the process dies on an exit code — so nothing else in the suite notices
  * when the routing breaks.
