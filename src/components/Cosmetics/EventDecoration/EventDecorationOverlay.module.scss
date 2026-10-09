@@ -1,0 +1,66 @@
+.hat {
+  position: absolute;
+  z-index: 11;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.45));
+  transition: scale 120ms ease;
+
+  &:hover {
+    scale: 1.08;
+  }
+
+  &:focus-visible {
+    outline: 2px solid theme('colors.blue.5');
+    outline-offset: 2px;
+  }
+}
+
+.centred {
+  left: 50%;
+}
+
+.art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.confetti {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  pointer-events: none;
+
+  & > span {
+    position: absolute;
+    width: 5px;
+    height: 7px;
+    border-radius: 1px;
+    animation: confetti 700ms ease-out forwards;
+  }
+}
+
+@keyframes confetti {
+  from {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translate(var(--dx), var(--dy)) rotate(260deg);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hat {
+    transition: none;
+  }
+  .confetti {
+    display: none;
+  }
+}

@@ -5,6 +5,7 @@ import { ElementInView, useElementInView } from '~/components/IntersectionObserv
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import styles from './AspectRatioCard.module.scss';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type AspectRatio = keyof typeof aspectRatioMap;
 const aspectRatioMap = {
@@ -26,6 +27,7 @@ export type AspectRatioCardProps = {
    */
   aspectRatio?: AspectRatio | number;
   cosmetic?: ContentDecorationCosmetic['data'];
+  eventDecoration?: EventDecorationData | null;
   className?: string;
   header?: React.ReactNode;
   footer?: React.ReactNode;
@@ -38,6 +40,7 @@ export type AspectRatioCardProps = {
 export function AspectRatioCard({
   aspectRatio = 'portrait',
   cosmetic,
+  eventDecoration,
   className,
   header,
   footer,
@@ -54,6 +57,7 @@ export function AspectRatioCard({
       impressions={impressions}
       component={CosmeticCard}
       cosmetic={cosmetic}
+      eventDecoration={eventDecoration}
       cosmeticStyle={cosmetic ? wrapperStyle : undefined}
       style={!cosmetic ? wrapperStyle : undefined}
       className={clsx(className)}

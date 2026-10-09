@@ -162,7 +162,11 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import {
   imageSelect,
@@ -181,7 +185,10 @@ import {
   getCollectionIdsForImages,
 } from '~/server/services/collection-media-index';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import {
   getVisibleModel3DIdForPost,
   getVisibleModel3DIds,
@@ -2574,6 +2581,7 @@ const getAllImagesUncaptured = async (
     imageMetrics,
     imageMeta,
     imageResources,
+    eventDecorations,
   ] = await withSpan('image:getAllImages:parallelFetch', () =>
     Promise.all([
       userId ? getUserReactionsForImages({ imageIds, userId }) : undefined,
@@ -2597,6 +2605,9 @@ const getAllImagesUncaptured = async (
       includeBaseModel
         ? imageResourcesCache.fetch(imageIds, { writeBack: cacheWriteBack })
         : undefined,
+      // Not behind `include: ['cosmetics']`: every surface that shows the image (the model page
+      // carousel asks for no includes) must show the hat it is scored for. Empty between events.
+      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
     ])
   );
 
@@ -2660,6 +2671,7 @@ const getAllImagesUncaptured = async (
         availability?: Availability;
         nsfwLevel: NsfwLevel;
         cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+        eventDecoration?: WithClaimKey<EventDecorationCosmetic> | null;
         metadata: ImageMetadata | VideoMetadata | null;
         onSite: boolean;
         modelVersionIds?: number[];
@@ -2722,6 +2734,7 @@ const getAllImagesUncaptured = async (
         tags: tagsByImageId?.get(i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
+        eventDecoration: eventDecorations?.[i.id] ?? null,
         thumbnailUrl: thumbnail?.url,
         judgeScore,
       };
@@ -3144,6 +3157,7 @@ export const getAllImagesIndex = async (
     imageMetrics,
     tagIdsVar,
     tagsVar,
+    imageEventDecorations,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
       // These enrichment fetches are independent (each takes pre-computed
@@ -3171,6 +3185,8 @@ export const getAllImagesIndex = async (
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
+      // Unconditional for the same reason as in getAllImages.
+      getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
     ])
   );
 
@@ -3254,6 +3270,7 @@ export const getAllImagesIndex = async (
         stats: toImageV2Stats(metrics),
         reactions,
         cosmetic: imageCosmetics?.[sr.id] ?? null,
+        eventDecoration: imageEventDecorations?.[sr.id] ?? null,
         // TODO fix below
         availability: Availability.Public,
         tags: tagsByImageId?.get(sr.id) ?? [],
@@ -7038,11 +7055,16 @@ export const getEntityCoverImage = async ({
     tagsVar = await getImageTagsForImages(imageIds);
   }
 
-  const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
+  const imageIds = images.map((i) => i.id);
+  const [cosmetics, eventDecorations] = await Promise.all([
+    getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }),
+    getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
+  ]);
 
   return attachTagsToImages(images, tagsVar).map((i) => ({
     ...i,
     cosmetic: cosmetics[i.id],
+    eventDecoration: eventDecorations[i.id] ?? null,
   }));
 };
 

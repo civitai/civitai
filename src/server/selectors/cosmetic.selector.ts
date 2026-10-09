@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type { TextProps } from '@mantine/core';
 import type { CosmeticEntity, MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({
   id: true,
@@ -74,6 +75,11 @@ export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'
     texture?: { url: string; size: { width: number; height: number } };
   };
 };
+/** A `ContentDecoration` that belongs to an event and is worn beside, not instead of, a frame. */
+export type EventDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'> & {
+  data: EventDecorationData;
+};
+
 export type ProfileBackgroundCosmetic = BadgeCosmetic & {
   data: { textColor?: string; backgroundColor?: string; offset?: string; type?: MediaType };
 };

@@ -88,6 +88,10 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
     () => data.images.find((i) => isDefined(i.cosmetic))?.cosmetic,
     [data.images]
   );
+  const eventDecoration = useMemo(
+    () => data.images.find((i) => isDefined(i.eventDecoration))?.eventDecoration?.data,
+    [data.images]
+  );
   const cosmeticData = useMemo(() => {
     if (!cosmetic?.data && !pinned) return undefined;
     return {
@@ -110,6 +114,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
     <TwCosmeticWrapper
       className="w-full"
       cosmetic={cosmeticData}
+      eventDecoration={eventDecoration}
       style={cosmeticData ? { height } : undefined}
     >
       <>
@@ -194,7 +199,12 @@ function ImagesAsPostsCardHeader({
 
   return (
     <Paper
-      p="xs"
+      py="xs"
+      pr="xs"
+      // Steps the avatar clear of an event decoration sitting on the corner.
+      style={{
+        paddingLeft: 'max(var(--mantine-spacing-xs), var(--event-decoration-clear-left, 0px))',
+      }}
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',
