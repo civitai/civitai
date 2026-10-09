@@ -199,36 +199,26 @@ beforeEach(() => {
 });
 
 describe('ReviewQueuePage — App feedback tab', () => {
-  test('a moderator gets the tab, with the flagged count on its label', async () => {
+  test('the tab shows the flagged count on its label', async () => {
     state.flaggedCount = 3;
-    renderWithProviders(<ReviewQueuePage canMonitorAppFeedback />);
+    renderWithProviders(<ReviewQueuePage />);
     await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
     await expect.element(page.getByTestId('app-feedback-flagged-count')).toHaveTextContent('3');
   });
 
   test('no badge when nothing flagged is waiting', async () => {
-    renderWithProviders(<ReviewQueuePage canMonitorAppFeedback />);
+    renderWithProviders(<ReviewQueuePage />);
     await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
     expect(page.getByTestId('app-feedback-flagged-count').elements()).toHaveLength(0);
   });
 
-  test('?tab=app-feedback opens it for a moderator', async () => {
+  test('?tab=app-feedback opens it', async () => {
     routerState().query = { tab: 'app-feedback' };
-    renderWithProviders(<ReviewQueuePage canMonitorAppFeedback />);
+    renderWithProviders(<ReviewQueuePage />);
     await expect
       .element(page.getByRole('tab', { name: /App feedback/ }))
       .toHaveAttribute('aria-selected', 'true');
     await expect.element(page.getByTestId('app-feedback-mod-queue')).toBeInTheDocument();
-  });
-
-  test('without it: no tab, and ?tab=app-feedback lands on Pending', async () => {
-    routerState().query = { tab: 'app-feedback' };
-    renderWithProviders(<ReviewQueuePage />);
-    await expect
-      .element(page.getByRole('tab', { name: /Pending/ }))
-      .toHaveAttribute('aria-selected', 'true');
-    expect(page.getByRole('tab', { name: /App feedback/ }).elements()).toHaveLength(0);
-    expect(page.getByTestId('app-feedback-mod-queue').elements()).toHaveLength(0);
   });
 });
 

@@ -9,16 +9,6 @@ import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import type { FeedbackOwnerStatus } from '~/shared/constants/feedback.constants';
 import { moderatorFeedbackReportPath } from '~/shared/constants/moderator-app';
 
-/**
- * Mirrors `moderatorProcedure`, which every `appFeedback.mod*` procedure requires — deliberately
- * not the page gate `isAppReviewer`, so the tab can never be shown to someone the server refuses.
- */
-export function canMonitorAppFeedback(
-  user: { isModerator?: boolean | null } | null | undefined
-): boolean {
-  return user?.isModerator === true;
-}
-
 export type AppFeedbackHiddenFilter = (typeof APP_FEEDBACK_HIDDEN_FILTERS)[number];
 
 export type AppFeedbackModFilters = {
@@ -255,44 +245,6 @@ export const APP_FEEDBACK_HIDE_COPY = {
     done: 'Visible to the developer again',
   },
 } as const;
-
-type HideableRow = {
-  id: number;
-  hiddenFromOwnerAt: Date | null;
-  hiddenByModeratorUsername: string | null;
-};
-
-/**
- * The loaded pages with one row's hidden state set from a successful write, used instead of a
- * refetch: `modList` reads a replica, which can still serve the pre-write row and flip the button
- * back. A row that no longer matches the list's hidden filter is dropped. Who hid it is unknown
- * until the next real read.
- */
-export function patchHiddenInPages<D extends { pages: { items: HideableRow[] }[] }>(
-  data: D | undefined,
-  {
-    id,
-    hidden,
-    filter,
-    now,
-  }: { id: number; hidden: boolean; filter: AppFeedbackHiddenFilter; now: Date }
-): D | undefined {
-  if (!data) return data;
-  const dropped = (filter === 'visible' && hidden) || (filter === 'hidden' && !hidden);
-  return {
-    ...data,
-    pages: data.pages.map((page) => ({
-      ...page,
-      items: page.items.flatMap((item) => {
-        if (item.id !== id) return [item];
-        if (dropped) return [];
-        return [
-          { ...item, hiddenFromOwnerAt: hidden ? now : null, hiddenByModeratorUsername: null },
-        ];
-      }),
-    })),
-  };
-}
 
 export const APP_FEEDBACK_HIDE_CONFLICT_MESSAGE =
   'Another moderator already changed this report. The list has been refreshed.';

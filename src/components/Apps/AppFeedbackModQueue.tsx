@@ -25,7 +25,6 @@ import {
   appFeedbackHideErrorView,
   appFeedbackModFiltersToQuery,
   parseAppFeedbackModFilters,
-  patchHiddenInPages,
   toAppFeedbackModRowView,
   toModListInput,
   type AppFeedbackHiddenFilter,
@@ -234,8 +233,7 @@ export function AppFeedbackModQueue() {
   };
 
   const utils = trpc.useUtils();
-  const listInput = toModListInput(filters);
-  const list = trpc.appFeedback.modList.useInfiniteQuery(listInput, {
+  const list = trpc.appFeedback.modList.useInfiniteQuery(toModListInput(filters), {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     retry: false,
   });
@@ -253,20 +251,8 @@ export function AppFeedbackModQueue() {
         message: APP_FEEDBACK_HIDE_COPY[data.hidden ? 'hide' : 'unhide'].done,
       });
       setPending(null);
-      // Every other cached filter view goes stale and refetches on its next visit, by which time
-      // the replica has usually caught up. The one on screen is patched, which also clears its
-      // stale mark; in-flight fetches matching its input are cancelled first so none overwrites it.
-      await utils.appFeedback.modList.invalidate(undefined, { refetchType: 'none' });
-      await utils.appFeedback.modList.cancel(listInput);
-      utils.appFeedback.modList.setInfiniteData(listInput, (prev) =>
-        patchHiddenInPages(prev, {
-          id: data.id,
-          hidden: data.hidden,
-          filter: listInput.hidden,
-          now: new Date(),
-        })
-      );
-      await utils.appFeedback.modCountFlagged.invalidate();
+      // `modList` and `modCountFlagged` read the primary, so the refetch shows this write.
+      await refresh();
     },
     onError: (error) => {
       const view = appFeedbackHideErrorView(error);
@@ -294,9 +280,8 @@ export function AppFeedbackModQueue() {
         <Checkbox
           label="Listing deleted"
           checked={filters.listingDeleted}
-          onChange={(e) =>
-            setFilters({ listingDeleted: e.currentTarget.checked, appListingId: null })
-          }
+          // Clearing the app filter is `appFeedbackModFiltersToQuery`'s job, not repeated here.
+          onChange={(e) => setFilters({ listingDeleted: e.currentTarget.checked })}
         />
         <Select
           label="Developer status"

@@ -14,13 +14,9 @@ const m = vi.hoisted(() => ({
   listInputs: [] as Record<string, unknown>[],
   calls: [] as Record<string, unknown>[],
   invalidated: [] as string[],
-  /** Every cache call, in order, with whether it targeted all keys or one. */
-  events: [] as string[],
-  cancelInputs: [] as unknown[],
   fail: null as null | { message: string; data: { code: string } },
   errors: [] as string[],
   successes: [] as string[],
-  patched: [] as { input: unknown; updater: (prev: unknown) => unknown }[],
 }));
 
 vi.mock('~/utils/notifications', async (importOriginal) => ({
@@ -31,13 +27,9 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const invalidator = (name: string) => ({
-    invalidate: (_input?: unknown, filters?: { refetchType?: string }) => {
-      m.invalidated.push(filters?.refetchType ? `${name}:${filters.refetchType}` : name);
-      m.events.push(
-        `invalidate ${name} ${_input === undefined ? 'all' : 'one'}${
-          filters?.refetchType ? ` ${filters.refetchType}` : ''
-        }`
-      );
+    invalidate: (...args: unknown[]) => {
+      // Any argument would narrow or soften the refetch; the queue must invalidate plainly.
+      m.invalidated.push(args.length ? `${name}:${JSON.stringify(args)}` : name);
       return Promise.resolve();
     },
   });
@@ -78,18 +70,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       {
         useUtils: () => ({
           appFeedback: {
-            modList: {
-              ...invalidator('modList'),
-              cancel: (input: unknown) => {
-                m.events.push(`cancel modList ${input === undefined ? 'all' : 'one'}`);
-                m.cancelInputs.push(input);
-                return Promise.resolve();
-              },
-              setInfiniteData: (input: unknown, updater: (prev: unknown) => unknown) => {
-                m.events.push('patch modList');
-                m.patched.push({ input, updater });
-              },
-            },
+            modList: invalidator('modList'),
             modCountFlagged: invalidator('modCountFlagged'),
           },
         }),
@@ -147,12 +128,9 @@ beforeEach(() => {
   m.listInputs = [];
   m.calls = [];
   m.invalidated = [];
-  m.events = [];
-  m.cancelInputs = [];
   m.fail = null;
   m.errors = [];
   m.successes = [];
-  m.patched = [];
   router.query = { tab: 'app-feedback' };
   router.replace.mockClear();
 });
@@ -209,6 +187,17 @@ describe('AppFeedbackModQueue', () => {
     });
   });
 
+  test('ticking "Listing deleted" clears the app filter', async () => {
+    router.query = { tab: 'app-feedback', app: 'apl_live' };
+    renderWithProviders(<AppFeedbackModQueue />);
+    await userEvent.click(page.getByLabelText('Listing deleted'));
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace.mock.calls[0][0].query).toStrictEqual({
+      tab: 'app-feedback',
+      listingDeleted: '1',
+    });
+  });
+
   test('unticking a filter removes its param', async () => {
     router.query = { tab: 'app-feedback', flagged: '1' };
     renderWithProviders(<AppFeedbackModQueue />);
@@ -216,49 +205,19 @@ describe('AppFeedbackModQueue', () => {
     expect(router.replace.mock.calls[0][0].query).toStrictEqual({ tab: 'app-feedback' });
   });
 
-  test('Hide asks first, then sends hidden=true, patches the row and refreshes only the badge', async () => {
+  test('Hide asks first, then sends hidden=true and refetches the list and the badge', async () => {
     m.rows = [row(), row({ id: 502 })];
     renderWithProviders(<AppFeedbackModQueue />);
     await userEvent.click(page.getByRole('button', { name: 'Hide from developer' }).first());
     expect(m.calls).toHaveLength(0);
+    expect(m.invalidated).toStrictEqual([]);
     await userEvent.click(page.getByTestId('app-feedback-confirm'));
     expect(m.calls).toStrictEqual([{ id: 501, hidden: true }]);
     expect(m.successes).toStrictEqual(['Hidden from the developer']);
-    // The list is patched, not refetched: a replica read could still serve the unhidden row.
-    await vi.waitFor(() => expect(m.patched).toHaveLength(1));
-    expect(m.patched[0].input).toStrictEqual(m.listInputs.at(-1));
-    const next = m.patched[0].updater({ pages: [{ items: m.rows }], pageParams: [null] }) as {
-      pages: { items: { id: number; hiddenFromOwnerAt: Date | null }[] }[];
-    };
-    expect(next.pages[0].items.map((i) => [i.id, i.hiddenFromOwnerAt !== null])).toStrictEqual([
-      [501, true],
-      [502, false],
-    ]);
-    // Other cached filter views are marked stale without a refetch; the badge refetches.
-    // Order matters: stale-marking after the patch would leave the visible view stale too, and
-    // an in-flight fetch must be cancelled before the patch or its replica result overwrites it.
+    // A plain refetch is enough: `modList` and `modCountFlagged` read the primary.
     await vi.waitFor(() =>
-      expect(m.events).toStrictEqual([
-        'invalidate modList all none',
-        'cancel modList one',
-        'patch modList',
-        'invalidate modCountFlagged all',
-      ])
+      expect([...m.invalidated].sort()).toStrictEqual(['modCountFlagged', 'modList'])
     );
-    expect(m.cancelInputs).toStrictEqual([m.listInputs.at(-1)]);
-  });
-
-  test('hiding under the "visible" filter drops the row from that list', async () => {
-    router.query = { tab: 'app-feedback', hidden: 'visible' };
-    m.rows = [row(), row({ id: 502 })];
-    renderWithProviders(<AppFeedbackModQueue />);
-    await userEvent.click(page.getByRole('button', { name: 'Hide from developer' }).first());
-    await userEvent.click(page.getByTestId('app-feedback-confirm'));
-    await vi.waitFor(() => expect(m.patched).toHaveLength(1));
-    const next = m.patched[0].updater({ pages: [{ items: m.rows }], pageParams: [null] }) as {
-      pages: { items: { id: number }[] }[];
-    };
-    expect(next.pages[0].items.map((i) => i.id)).toStrictEqual([502]);
   });
 
   test('a hidden row offers Unhide and says who hid it', async () => {
@@ -271,6 +230,9 @@ describe('AppFeedbackModQueue', () => {
     await userEvent.click(page.getByTestId('app-feedback-confirm'));
     expect(m.calls).toStrictEqual([{ id: 501, hidden: false }]);
     expect(m.successes).toStrictEqual(['Visible to the developer again']);
+    await vi.waitFor(() =>
+      expect([...m.invalidated].sort()).toStrictEqual(['modCountFlagged', 'modList'])
+    );
   });
 
   test('a conflict shows the conflict copy and refetches', async () => {
@@ -283,7 +245,7 @@ describe('AppFeedbackModQueue', () => {
     await vi.waitFor(() =>
       expect([...m.invalidated].sort()).toStrictEqual(['modCountFlagged', 'modList'])
     );
-    expect(m.patched).toHaveLength(0);
+    expect(m.successes).toStrictEqual([]);
   });
 
   test('any other failure shows the server message and does not refetch', async () => {

@@ -14,7 +14,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ActivePreviewsPanel } from '~/components/Apps/ActivePreviewsPanel';
 import { AppFeedbackModQueue } from '~/components/Apps/AppFeedbackModQueue';
-import { canMonitorAppFeedback } from '~/components/Apps/appFeedbackModView';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
 import { SubListingReviewQueue } from '~/components/Apps/SubListingReviewQueue';
 // The off-site review MODAL is now PAGE-OWNED (lifted here) so a single instance is
@@ -71,8 +70,7 @@ import { trpc } from '~/utils/trpc';
  *  - Reports  — off-site listing report queue + mod takedown actions (unchanged).
  *  - Manage listings — the full all-status lifecycle table (reset/relist/claim/purge).
  *  - Sub-listings — store items inside apps, and staged edits to them.
- *  - App feedback — users' private feedback to app developers, with hide/unhide (gated on
- *               `isModerator`, not the page gate).
+ *  - App feedback — users' private feedback to app developers, with hide/unhide.
  *
  * Both review modals are PAGE-OWNED (lifted here): the on-site `OnsiteReviewModal`
  * and the off-site `OffsiteReviewModal`. The unified list + the management table
@@ -100,7 +98,7 @@ export const getServerSideProps = createServerSideProps({
     if (!isAppReviewer(session.user)) {
       return { notFound: true };
     }
-    return { props: { canMonitorAppFeedback: canMonitorAppFeedback(session.user) } };
+    return { props: {} };
   },
 });
 
@@ -115,18 +113,8 @@ const TAB_VALUES = [
 ] as const;
 type TabValue = (typeof TAB_VALUES)[number];
 
-export function isTabValue(v: unknown): v is TabValue {
+function isTabValue(v: unknown): v is TabValue {
   return (TAB_VALUES as readonly unknown[]).includes(v);
-}
-
-/** A tab the viewer cannot see falls back to `pending` rather than mounting a refused panel. */
-export function resolveReviewTab(
-  value: unknown,
-  { appFeedback }: { appFeedback: boolean }
-): TabValue {
-  if (!isTabValue(value)) return 'pending';
-  if (value === 'app-feedback' && !appFeedback) return 'pending';
-  return value;
 }
 
 /** Rows fetched per source per page (bounded by each proc's schema at ≤100). Mod
@@ -267,20 +255,17 @@ export function AppFeedbackFlaggedBadge() {
   );
 }
 
-export default function ReviewQueuePage({
-  canMonitorAppFeedback: showAppFeedback = false,
-}: {
-  canMonitorAppFeedback?: boolean;
-}) {
+export default function ReviewQueuePage() {
   const features = useFeatureFlags();
   const router = useRouter();
 
   // Sync active tab with `?tab=` so deep-links land on the right view. Shallow
   // routing so the page query doesn't re-trigger getServerSideProps.
-  const tab: TabValue = useMemo(
-    () => resolveReviewTab(router.query.tab, { appFeedback: showAppFeedback }),
-    [router.query.tab, showAppFeedback]
-  );
+  const tab: TabValue = useMemo(() => {
+    const qt = router.query.tab;
+    if (typeof qt === 'string' && isTabValue(qt)) return qt;
+    return 'pending';
+  }, [router.query.tab]);
 
   const setTab = (next: TabValue) => {
     void router.replace(
@@ -401,15 +386,13 @@ export default function ReviewQueuePage({
             >
               Sub-listings
             </Tabs.Tab>
-            {showAppFeedback && (
-              <Tabs.Tab
-                value="app-feedback"
-                leftSection={<IconMessage2 size={14} />}
-                rightSection={<AppFeedbackFlaggedBadge />}
-              >
-                App feedback
-              </Tabs.Tab>
-            )}
+            <Tabs.Tab
+              value="app-feedback"
+              leftSection={<IconMessage2 size={14} />}
+              rightSection={<AppFeedbackFlaggedBadge />}
+            >
+              App feedback
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
@@ -456,11 +439,9 @@ export default function ReviewQueuePage({
             <AppListingsModerationTable openOffsiteReview={openOffsiteReview} />
           </Tabs.Panel>
 
-          {showAppFeedback && (
-            <Tabs.Panel value="app-feedback" pt="md">
-              <AppFeedbackModQueue />
-            </Tabs.Panel>
-          )}
+          <Tabs.Panel value="app-feedback" pt="md">
+            <AppFeedbackModQueue />
+          </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>
 

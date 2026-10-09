@@ -1,35 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { modListAppFeedbackSchema } from '~/server/schema/app-feedback.schema';
 import {
   APP_FEEDBACK_HIDE_CONFLICT_MESSAGE,
   DEFAULT_APP_FEEDBACK_MOD_FILTERS,
   appFeedbackHideErrorView,
   appFeedbackModFiltersToQuery,
-  canMonitorAppFeedback,
   parseAppFeedbackModFilters,
-  patchHiddenInPages,
   toAppFeedbackModRowView,
   toModListInput,
   type AppFeedbackModFilters,
   type AppFeedbackModRow,
 } from '~/components/Apps/appFeedbackModView';
-
-// The page gate widened to everyone: the tab must still follow `moderatorProcedure`, not it.
-vi.mock('~/shared/utils/app-blocks-access', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  isAppReviewer: () => true,
-}));
-
-describe('canMonitorAppFeedback', () => {
-  it('is true only for a moderator, whatever the review-page gate says', () => {
-    expect(canMonitorAppFeedback({ isModerator: true })).toBe(true);
-    expect(canMonitorAppFeedback({ isModerator: false })).toBe(false);
-    expect(canMonitorAppFeedback({ isModerator: null })).toBe(false);
-    expect(canMonitorAppFeedback({})).toBe(false);
-    expect(canMonitorAppFeedback(null)).toBe(false);
-    expect(canMonitorAppFeedback(undefined)).toBe(false);
-  });
-});
 
 describe('toModListInput', () => {
   it('sends no filter keys at the defaults', () => {
@@ -139,6 +120,16 @@ describe('filter query string', () => {
     const f = parseAppFeedbackModFilters({ app: 'apl_D', listingDeleted: '1' });
     expect(f.appListingId).toBeNull();
     expect(f.listingDeleted).toBe(true);
+  });
+
+  it('"listing deleted" writes no listing id to the query', () => {
+    expect(
+      appFeedbackModFiltersToQuery({
+        ...DEFAULT_APP_FEEDBACK_MOD_FILTERS,
+        appListingId: 'apl_F',
+        listingDeleted: true,
+      })
+    ).toMatchObject({ app: undefined, listingDeleted: '1' });
   });
 
   it('round-trips, and clears a default back to no param', () => {
@@ -280,61 +271,6 @@ describe('toAppFeedbackModRowView', () => {
     expect(view.appLabel).toBe('apl_live');
     expect(view.ownerLabel).toBe('#12');
     expect(view.triageStatus).toBe('escalated');
-  });
-});
-
-describe('patchHiddenInPages', () => {
-  const at = new Date('2026-10-09T12:00:00Z');
-  const item = (id: number, hiddenFromOwnerAt: Date | null) => ({
-    id,
-    hiddenFromOwnerAt,
-    hiddenByModeratorUsername: hiddenFromOwnerAt ? 'mod-m' : null,
-    message: `m${id}`,
-  });
-  const data = {
-    pages: [{ items: [item(1, null)], nextCursor: 1 }, { items: [item(2, null), item(3, at)] }],
-    pageParams: [null, 1],
-  };
-
-  it('hides only the written row, on whichever page it is', () => {
-    const next = patchHiddenInPages(data, { id: 2, hidden: true, filter: 'all', now: at })!;
-    expect(next.pages[1].items[0]).toStrictEqual({
-      id: 2,
-      hiddenFromOwnerAt: at,
-      hiddenByModeratorUsername: null,
-      message: 'm2',
-    });
-    expect(next.pages[0].items[0]).toBe(data.pages[0].items[0]);
-    expect(next.pages[1].items[1]).toBe(data.pages[1].items[1]);
-    expect(next.pageParams).toBe(data.pageParams);
-  });
-
-  it('unhides, clearing who hid it', () => {
-    const next = patchHiddenInPages(data, { id: 3, hidden: false, filter: 'all', now: at })!;
-    expect(next.pages[1].items[1]).toMatchObject({
-      hiddenFromOwnerAt: null,
-      hiddenByModeratorUsername: null,
-    });
-  });
-
-  it('leaves an unloaded list alone', () => {
-    expect(
-      patchHiddenInPages(undefined, { id: 1, hidden: true, filter: 'all', now: at })
-    ).toBeUndefined();
-  });
-
-  it('drops the row from a list filtered to the state it just left', () => {
-    const ids = (d: typeof data | undefined) => d!.pages.flatMap((p) => p.items.map((i) => i.id));
-    expect(
-      ids(patchHiddenInPages(data, { id: 2, hidden: true, filter: 'visible', now: at }))
-    ).toStrictEqual([1, 3]);
-    expect(
-      ids(patchHiddenInPages(data, { id: 3, hidden: false, filter: 'hidden', now: at }))
-    ).toStrictEqual([1, 2]);
-    // Control: the matching filter keeps it.
-    expect(
-      ids(patchHiddenInPages(data, { id: 2, hidden: true, filter: 'hidden', now: at }))
-    ).toStrictEqual([1, 2, 3]);
   });
 });
 
