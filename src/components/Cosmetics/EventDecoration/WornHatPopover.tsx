@@ -1,8 +1,10 @@
-import { Anchor, Badge, Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
+import { Badge, Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
+import { IconArrowsMove } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { HatStats } from '~/components/Events/ScoredEvent/HatStats';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -10,7 +12,6 @@ import { getEventDecorationDefinition } from '~/shared/constants/event-decoratio
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const PlaceHatModal = dynamic(() => import('~/components/Events/ScoredEvent/PlaceHatModal'), {
@@ -52,10 +53,13 @@ export function WornHatPopover({
       opened={opened}
       onChange={onChange}
       position="bottom-start"
-      width={280}
+      width={300}
       radius="md"
       shadow="md"
       withArrow
+      // The arrow points at the hat. Mantine's default pins it 5px from the dropdown's start edge.
+      arrowPosition="center"
+      arrowSize={10}
     >
       <Popover.Target>{children}</Popover.Target>
       {/* Portalled, but React still bubbles its clicks to the card underneath. */}
@@ -146,13 +150,21 @@ function WornHatDetails({
         )}
       </Group>
       {mine ? (
-        <Group gap="xs">
-          <Text size="sm" fw={600}>
+        <Group gap={6}>
+          <Badge color="gray" variant="light" radius="sm">
             Your hat
-          </Text>
-          <Anchor component="button" type="button" size="sm" onClick={move}>
-            Move it
-          </Anchor>
+          </Badge>
+          <Badge
+            component="button"
+            type="button"
+            onClick={move}
+            variant="light"
+            radius="xl"
+            leftSection={<IconArrowsMove size={12} />}
+            className="cursor-pointer"
+          >
+            Move
+          </Badge>
         </Group>
       ) : hat.owner ? (
         <Group gap={6} wrap="nowrap">
@@ -168,24 +180,7 @@ function WornHatDetails({
           />
         </Group>
       ) : null}
-      <Group grow gap="xs">
-        <WornHatStat value={hat.points} label="points" />
-        <WornHatStat value={hat.impressions} label="views" />
-        <WornHatStat value={hat.reactions} label="reactions" />
-      </Group>
+      <HatStats stats={hat} color={hat.team ? teamColor(hat.team) : undefined} />
     </>
-  );
-}
-
-function WornHatStat({ value, label }: { value: number; label: string }) {
-  return (
-    <Stack gap={0} align="center" className="rounded-md bg-gray-1 py-1.5 dark:bg-dark-5">
-      <Text fw={800} className="tabular-nums" lh={1.2}>
-        {abbreviateNumber(value)}
-      </Text>
-      <Text size="xs" c="dimmed">
-        {label}
-      </Text>
-    </Stack>
   );
 }

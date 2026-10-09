@@ -3,8 +3,8 @@ import {
   IconCheck,
   IconConfetti,
   IconEye,
+  IconBan,
   IconHanger,
-  IconHeart,
   IconMessageQuestion,
   IconScale,
   IconTrophy,
@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
+import { SCORE_WAYS } from '~/components/Events/ScoredEvent/HatStats';
 import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
 import { describeEntityTypes } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { RouterOutput } from '~/types/router';
@@ -79,13 +80,9 @@ export function EventRules({ data }: { data: EventData }) {
         <SimpleGrid cols={{ base: 1, md: 2 }} spacing="sm">
           <RuleCard icon={IconEye} title="How points add up">
             <div className="grid grid-cols-3 gap-2" data-testid="event-points">
-              <PointTile value="1" label="per view in a feed" />
-              <PointTile
-                value={String(rules.reactionWeight)}
-                label="per reaction"
-                icon={<IconHeart size={16} />}
-              />
-              <PointTile value="0" label="for your own views and reactions" />
+              {pointTiles(rules).map((tile) => (
+                <PointTile key={tile.label} {...tile} />
+              ))}
             </div>
             <Text size="xs" c="dimmed">
               Hats go on your own {wearsOn}. Models score views only: reactions aren&apos;t counted
@@ -212,14 +209,35 @@ function RuleCard({
   );
 }
 
-function PointTile({ value, label, icon }: { value: string; label: string; icon?: ReactNode }) {
+type Rules = NonNullable<EventData['rules']> &
+  // Scoring v2's ways to score. A tile shows once the event's rules carry its weight.
+  Partial<Record<'commentWeight' | 'stickerWeight' | 'remixWeight', number>>;
+type PointTileProps = { value: number; label: string; icon: Icon; color: string };
+
+/** One tile per way to score, from the weights the scoring job applies. Views are always 1. */
+function pointTiles(rules: Rules): PointTileProps[] {
+  const way = (key: keyof typeof SCORE_WAYS, value: number | undefined, label: string) =>
+    value === undefined ? [] : [{ value, label, ...SCORE_WAYS[key] }];
+  return [
+    ...way('views', 1, 'per view in a feed'),
+    ...way('reactions', rules.reactionWeight, 'per reaction'),
+    ...way('comments', rules.commentWeight, 'per comment'),
+    ...way('stickers', rules.stickerWeight, 'per sticker'),
+    ...way('remixes', rules.remixWeight, 'per remix'),
+    { value: 0, label: 'for your own views and reactions', icon: IconBan, color: 'gray' },
+  ];
+}
+
+function PointTile({ value, label, icon: TileIcon, color }: PointTileProps) {
   return (
-    <Stack gap={2} className="rounded-lg bg-gray-0 px-3 py-2 dark:bg-dark-5">
-      <Group gap={4} wrap="nowrap">
+    <Stack gap={4} className="rounded-lg bg-gray-0 px-3 py-2 dark:bg-dark-5">
+      <Group gap={8} wrap="nowrap">
+        <ThemeIcon size={26} radius="xl" variant="light" color={color} className="shrink-0">
+          <TileIcon size={15} />
+        </ThemeIcon>
         <Text fw={900} className="text-3xl tabular-nums leading-none">
           {value}
         </Text>
-        {icon}
       </Group>
       <Text size="xs" c="dimmed" lh={1.3}>
         {label}

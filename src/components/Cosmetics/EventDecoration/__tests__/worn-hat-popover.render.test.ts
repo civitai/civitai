@@ -125,6 +125,8 @@ const hatButton = () =>
   document.querySelector<HTMLButtonElement>('button[data-event-decoration="hat"]')!;
 const popover = () => document.querySelector<HTMLElement>('[data-testid="worn-hat-popover"]');
 const clickHat = () => act(() => hatButton().click());
+const moveButton = () =>
+  [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move');
 const enabledFlags = () =>
   wornHat.useQuery.mock.calls.map(([, opts]) => (opts as { enabled: boolean }).enabled);
 
@@ -303,7 +305,8 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).toContain('Worn by');
     expect(popover()!.textContent).not.toContain('Your hat');
-    expect(popover()!.textContent).not.toContain('Move it');
+    expect(moveButton()).toBeUndefined();
+    expect(popover()!.textContent).not.toMatch(/\bMove\b/);
   });
 
   it("calls the viewer's own hat theirs and offers to move it", () => {
@@ -311,7 +314,7 @@ describe('a hatted feed card', () => {
     renderCard();
     clickHat();
     expect(popover()!.textContent).toContain('Your hat');
-    expect(popover()!.textContent).toContain('Move it');
+    expect(moveButton()).toBeDefined();
     expect(popover()!.textContent).not.toContain('Worn by');
   });
 
@@ -337,7 +340,7 @@ describe('a hatted feed card', () => {
     renderCard();
     clickHat();
     await act(async () => {
-      [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move it')!.click();
+      moveButton()!.click();
     });
     expect(myHats.fetch).toHaveBeenCalledWith({ event: 'birthday2026' });
     expect(dialogs.trigger).toHaveBeenCalledTimes(1);
@@ -356,7 +359,7 @@ describe('a hatted feed card', () => {
     renderCard();
     clickHat();
     await act(async () => {
-      [...popover()!.querySelectorAll('button')].find((b) => b.textContent === 'Move it')!.click();
+      moveButton()!.click();
     });
     expect(dialogs.trigger).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledTimes(1);
@@ -408,5 +411,112 @@ describe('a hat not worn on content', () => {
     });
     expect(outerKeyDown).toHaveBeenCalledTimes(1);
     expect(hatButton().getAttribute('data-mantine-stop-propagation')).toBeNull();
+  });
+});
+
+// The Ellie review (2026-10-09): the arrow points at the hat, the points stand apart from the four
+// ways that make them up, each way has its icon, and moving your hat is a badge.
+describe('the popover layout', () => {
+  const stats = () => popover()!.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+  // Each way's figure, then a visible label of icon and word; and which icon, in which colour.
+  const ways = () =>
+    [...stats().querySelectorAll<HTMLElement>('[data-way]')].map((w) => {
+      const [figure, label] = [...w.children];
+      const icon = label.querySelector('svg')!;
+      return [
+        w.dataset.way,
+        figure.textContent,
+        label.textContent,
+        `${icon.getAttribute('class')?.match(/tabler-icon-([\w-]+)/)?.[1]} ${icon.getAttribute(
+          'stroke'
+        )}`,
+        // The popover has room for the words: no tooltip stands in for them.
+        w.title,
+      ];
+    });
+
+  it('shows the points on their own, then views, reactions, comments and remixes', () => {
+    renderCard();
+    clickHat();
+    expect(stats().querySelector('[data-testid="hat-stat-points"]')?.textContent).toBe(
+      '1.2kpoints'
+    );
+    // Comments and remixes score from scoring v2 on: until the server sends them, a dash, not a 0.
+    expect(ways()).toEqual([
+      ['views', '56.8k', 'views', 'eye var(--mantine-color-blue-5)', ''],
+      ['reactions', '12', 'reactions', 'heart var(--mantine-color-pink-5)', ''],
+      ['comments', '–', 'comments', 'message-circle var(--mantine-color-green-5)', ''],
+      ['remixes', '–', 'remixes', 'hierarchy var(--mantine-color-violet-5)', ''],
+    ]);
+  });
+
+  it('shows comments and remixes once the server counts them', () => {
+    wornHat.result = {
+      data: { ...WORN, comments: 3, remixes: 0 },
+      isLoading: false,
+      isError: false,
+    };
+    renderCard();
+    clickHat();
+    expect(
+      ways()
+        .slice(2)
+        .map(([way, figure]) => [way, figure])
+    ).toEqual([
+      ['comments', '3'],
+      ['remixes', '0'],
+    ]);
+  });
+
+  it("colours the points in the hat's team colour", () => {
+    renderCard();
+    clickHat();
+    const figure = stats().querySelector<HTMLElement>('[data-testid="hat-stat-points"] p')!;
+    // Team Blue's colour, as the team badge beside the name shows it.
+    expect(figure.style.color).toBe('#228be6');
+  });
+
+  it('labels your hat, and offers the move, as badges', () => {
+    viewer.current = { id: 9 };
+    renderCard();
+    clickHat();
+    const badges = [...popover()!.querySelectorAll('.mantine-Badge-root')].map((b) => [
+      b.tagName,
+      b.textContent,
+    ]);
+    expect(badges).toEqual([
+      ['DIV', 'Blue'],
+      ['DIV', 'Your hat'],
+      ['BUTTON', 'Move'],
+    ]);
+  });
+
+  // Mantine pins the arrow 5px from the dropdown's start edge unless told to follow the target.
+  it('points its arrow at the hat, not at the corner of the dropdown', () => {
+    renderCard();
+    clickHat();
+    const arrow = popover()!.querySelector<HTMLElement>('.mantine-Popover-arrow');
+    expect(arrow).not.toBeNull();
+    // Centred, Mantine positions the arrow from the measured target (`arrowX`), which happy-dom
+    // cannot measure, so `left` is unset. Pinned to the side it is a fixed offset ('5px' by default,
+    // or whatever `arrowOffset` says). Real centring is only visible in a browser.
+    expect([arrow!.style.left, arrow!.style.width]).toEqual(['', '10px']);
+  });
+});
+
+// Positive control for the arrow arm: the same popover without `arrowPosition="center"` does pin it
+// at 5px in this environment, so that arm can fail.
+describe('a start-aligned popover left at its default arrow', () => {
+  it('pins the arrow 5px in', async () => {
+    const { Popover } = await import('@mantine/core');
+    render(
+      React.createElement(
+        Popover,
+        { opened: true, position: 'bottom-start', withArrow: true },
+        React.createElement(Popover.Target, null, React.createElement('button', null, 'hat')),
+        React.createElement(Popover.Dropdown, { 'data-testid': 'worn-hat-popover' }, 'x')
+      )
+    );
+    expect(popover()!.querySelector<HTMLElement>('.mantine-Popover-arrow')!.style.left).toBe('5px');
   });
 });

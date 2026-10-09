@@ -97,6 +97,59 @@ describe('How it works', () => {
     ]);
   });
 
+  // Ellie review (2026-10-09): the coloured icon first, then the number, the words under them.
+  it('leads each tile with its icon, then the number, with the words underneath', () => {
+    const tiles = render().querySelector('[data-testid="event-points"]')!;
+    const shape = [...tiles.children].map((t) => {
+      const [top, words] = [...t.children];
+      const [icon, figure] = [...top.children];
+      return [
+        icon.className.includes('mantine-ThemeIcon-root'),
+        figure.textContent,
+        words.textContent,
+      ];
+    });
+    expect(shape).toEqual([
+      [true, '1', 'per view in a feed'],
+      [true, '10', 'per reaction'],
+      [true, '0', 'for your own views and reactions'],
+    ]);
+  });
+
+  // Scoring v2 adds its weights to the rules; each becomes a tile with no change here.
+  it('adds a tile for each way to score the rules carry a weight for', () => {
+    const tiles = render({
+      rules: { ...rules, reactionWeight: 5, commentWeight: 5, stickerWeight: 10, remixWeight: 25 },
+    }).querySelector('[data-testid="event-points"]')!;
+    expect([...tiles.children].map((t) => t.textContent)).toEqual([
+      '1per view in a feed',
+      '5per reaction',
+      '5per comment',
+      '10per sticker',
+      '25per remix',
+      '0for your own views and reactions',
+    ]);
+    // Each way wears the icon and colour it has in the popover and on the hat cards (SCORE_WAYS).
+    expect(
+      [...tiles.children].map((t) => {
+        const icon = t.querySelector<HTMLElement>('.mantine-ThemeIcon-root')!;
+        return `${
+          icon
+            .querySelector('svg')
+            ?.getAttribute('class')
+            ?.match(/tabler-icon-([\w-]+)/)?.[1]
+        } ${icon.style.getPropertyValue('--ti-color')}`;
+      })
+    ).toEqual([
+      'eye var(--mantine-color-blue-light-color)',
+      'heart var(--mantine-color-pink-light-color)',
+      'message-circle var(--mantine-color-green-light-color)',
+      'sticker var(--mantine-color-yellow-light-color)',
+      'hierarchy var(--mantine-color-violet-light-color)',
+      'ban var(--mantine-color-gray-light-color)',
+    ]);
+  });
+
   it('lists the fairness rules with the event numbers, the cooldown only when there is one', () => {
     const fair = (el: HTMLElement) =>
       [...el.querySelectorAll('ul > li')].map((li) => li.textContent);

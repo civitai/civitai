@@ -209,7 +209,9 @@ export function ScoredEventHero({
         {team ? (
           <Group
             gap="lg"
-            className="max-w-full rounded-lg border border-solid px-4 py-3 @sm:w-fit"
+            // A step darker than the hero and part-transparent, so it stands out and the art behind
+            // doesn't show through the text.
+            className="max-w-full rounded-lg border border-solid bg-gray-1/80 px-4 py-3 backdrop-blur-sm @sm:w-fit dark:bg-dark-7/70"
             style={{ borderColor: teamColor(team) }}
             data-testid="hero-team"
           >
