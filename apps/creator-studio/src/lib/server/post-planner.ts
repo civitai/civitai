@@ -8,6 +8,13 @@ export function postPlannerEnabled(user: SessionUser): Promise<boolean> {
   return modFallbackFlagEnabled(POST_PLANNER_FLAG, user);
 }
 
+/** 🔴 Must stay the main app's `batchPostScheduling` fliptKey: the composer lives there. */
+export const BATCH_POST_SCHEDULING_FLAG = 'batch-post-scheduling';
+
+export function batchComposerEnabled(user: SessionUser): Promise<boolean> {
+  return modFallbackFlagEnabled(BATCH_POST_SCHEDULING_FLAG, user);
+}
+
 // Every planner read and write is owned by the main app (ownership, release fan-out, reindex, the
 // guards on publishing). This app only forwards the creator's session cookie to the REST twin.
 export function callPlanner<T>(

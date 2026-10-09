@@ -1,5 +1,5 @@
-export { CivitaiPostPlanner } from './civitai-post-planner.js';
-export * from './host.js';
+export { CivitaiPostPlanner } from './civitai-post-planner';
+export * from './host';
 export {
   defaultView,
   localDayKey,
@@ -7,4 +7,4 @@ export {
   stepAnchor,
   visibleRange,
   weekDays,
-} from './model/calendar.js';
+} from './model/calendar';

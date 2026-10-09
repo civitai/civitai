@@ -1,10 +1,10 @@
 import type { CivitaiSegmentedControl } from '@civitai/components/civitai-segmented-control';
 import type { CivitaiSelect } from '@civitai/components/civitai-select';
 import { css, html, nothing, type TemplateResult } from 'lit';
-import type { PlannerHost, PlannerLocation, PlannerView } from '../host.js';
-import { formatRangeLabel, stepAnchor } from '../model/calendar.js';
-import type { Filters } from '../model/posts.js';
-import type { PlannerActions } from './props.js';
+import type { PlannerHost, PlannerLocation, PlannerView } from '../host';
+import { formatRangeLabel, stepAnchor } from '../model/calendar';
+import type { Filters } from '../model/posts';
+import type { PlannerActions } from './props';
 
 const VIEWS: { value: PlannerView; label: string }[] = [
   { value: 'day', label: 'Day' },

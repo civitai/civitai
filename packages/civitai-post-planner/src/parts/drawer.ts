@@ -4,11 +4,11 @@ import {
 } from '@civitai/shared/post-scheduling';
 import { css, html, nothing, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
-import { hostLink, type PlannerHost, type PlannerPost, type PlannerPostDetail } from '../host.js';
-import { formatDateTime, localDayKey, toTimeInput } from '../model/calendar.js';
-import { releaseScopeLabel } from '../model/messages.js';
-import { renderMediaStrip } from './media-strip.js';
-import type { PlannerActions } from './props.js';
+import { hostLink, type PlannerHost, type PlannerPost, type PlannerPostDetail } from '../host';
+import { formatDateTime, localDayKey, toTimeInput } from '../model/calendar';
+import { releaseScopeLabel } from '../model/messages';
+import { renderMediaStrip } from './media-strip';
+import type { PlannerActions } from './props';
 
 export interface DrawerProps {
   host: PlannerHost;

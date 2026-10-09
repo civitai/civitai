@@ -13,12 +13,12 @@ Done when: Phase 1 is merged and switched on for creators, or Justin decides not
 
 ## 1. State of play (2026-10-06)
 
-| Phase | Scope | State |
-|-------|-------|-------|
-| 0 | Fix stale image `sortAt` on reschedule | **Fixed on main** since June (`820f4ecedc`, `b5f8f4047d`): `updatePost` → `afterPostPublish` reindexes the post's images. Bug ticket 868k68g0z is still `pending review`; needs a prod verification query and closing. |
-| 1 | Batch composer in the main app, behind a flag | **Not started.** Technical plan ready; no code. |
-| 2 | Planner (calendar of scheduled posts, drag to reschedule) | **First pass exists**, built by the foreman agent in Creator Studio, uncommitted, reviewed below. Ships as a Web Component in both apps (decided 2026-10-06; see the element plan). |
-| 3 | Saved presets | Not started; Phase 1 leaves hooks (UX plan §5). |
+| Phase | Scope                                                     | State                                                                                                                                                                                                                  |
+| ----- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Fix stale image `sortAt` on reschedule                    | **Fixed on main** since June (`820f4ecedc`, `b5f8f4047d`): `updatePost` → `afterPostPublish` reindexes the post's images. Bug ticket 868k68g0z is still `pending review`; needs a prod verification query and closing. |
+| 1     | Batch composer in the main app, behind a flag             | **Not started.** Technical plan ready; no code.                                                                                                                                                                        |
+| 2     | Planner (calendar of scheduled posts, drag to reschedule) | **First pass exists**, built by the foreman agent in Creator Studio, uncommitted, reviewed below. Ships as a Web Component in both apps (decided 2026-10-06; see the element plan).                                    |
+| 3     | Saved presets                                             | Not started; Phase 1 leaves hooks (UX plan §5).                                                                                                                                                                        |
 
 The first pass was built out of order: the agent that ran on the feature request built Phase 2 before
 Phase 1 existed, in Creator Studio, on a `main` from 2026-10-02. It lives in the worktree
@@ -38,7 +38,8 @@ Seven review lanes ran: the foreman's own correctness, intent, perf, reuse and t
 svelte correctness, idiom and abstraction reviews on 2026-10-06. Consolidated:
 
 **Keep regardless of where the planner ends up**
-- The release semantics: a post on a Scheduled model version moves the *release* (whole model if the
+
+- The release semantics: a post on a Scheduled model version moves the _release_ (whole model if the
   model is unpublished, else the version), a drop on a release post opens the panel instead of
   committing, publish-now takes a confirm step. These were the hardest decisions and they are right.
 - `post-reschedule.ts` (window rules stricter than `post.update`, which silently publishes
@@ -47,13 +48,14 @@ svelte correctness, idiom and abstraction reviews on 2026-10-06. Consolidated:
 - The refusal to move an unpublished model whose other versions are also scheduled.
 
 **Must fix if the Creator Studio page ships**
+
 1. A partial write is reported as a plain failure and the page never refreshes: the endpoint answers
-   409 *after* the release moved; a 30 s `callMainApp` timeout answers 502 after the write landed.
+   409 _after_ the release moved; a 30 s `callMainApp` timeout answers 502 after the write landed.
    `handleResult` must `invalidateAll()` on failure/error and word 409/502 as "may have gone through".
 2. `Post` has no `(userId, publishedAt)` index; the month query filters a 44-day `publishedAt` range
    by user. Confirm with `pg_indexes` + `EXPLAIN` on the replica; add `CREATE INDEX CONCURRENTLY` by
    hand if missing. Phase 1's cap query is bounded by today so it does not need it; the planner does.
-3. `MAX_POSTS = 500` truncates silently, and the cut falls on the *future* end of the range, which is
+3. `MAX_POSTS = 500` truncates silently, and the cut falls on the _future_ end of the range, which is
    the part the page exists for. Fetch `+1` and show a notice, or order from the end of the range.
 4. The client decides drop-commits-vs-panel from `post.release`, read from the replica; the server
    recomputes the scope from the primary. A stale replica lets a drop move a whole release with no
@@ -110,6 +112,7 @@ jitter, never :00.
 ## 4. Sequencing
 
 **Now, in parallel with Phase 1**
+
 - Verify Phase 0 in prod (stale `sortAt` count over the last 14 days of reschedules, expect 0), then
   close 868k68g0z against the two commits. Blocked on the replica tunnel as of 2026-10-06.
 - Tell Justin the planner decision on 868mcqb8t and get his call on decisions 2–6. Phase 1 does not
@@ -117,6 +120,7 @@ jitter, never :00.
 - The foreman worktree stays until PR F has ported what it needs; nothing in it is committed.
 
 **Phase 1 — composer** (tech plan §9; ~1.5–2 weeks, four flag-dark PRs on `main`)
+
 - PR A: schedule generators, jitter, validator, `getDailyPostLimit`, constants, tests, in
   `@civitai/shared/post-scheduling` so the element and the Creator Studio server import the same code.
 - PR B: `post.validateBatchSchedule` + `post.scheduleBatch`, flag `batchPostScheduling` at `['mod']`.
@@ -126,6 +130,7 @@ jitter, never :00.
 - Rollout: Flipt flag with an `isMember` rule, dogfood as mods, widen.
 
 **Phase 2 — planner element** (element plan §5, UX plan §4; ~2.5–3 weeks, four flag-dark PRs)
+
 - PR E, main-app server: `post.getScheduled`, `post.getPlannerDetail` (everything the drawer shows),
   `post.reschedule` (with the first pass's release-move logic and an `expectedScope` check),
   `post.publishNow`, `post.unschedule`, `post.shiftSchedule`;
@@ -139,8 +144,8 @@ jitter, never :00.
   the `routes/api/planner/*` proxy routes; release posts amber and excluded from bulk moves.
 - PR G, the element: Week and Day as hour grids with drag-to-time, the Shift ± dialog and
   move-to-day, a compact phone toolbar, the file split, browser-mode tests.
-- PR H, main app: the `/user/schedule` host page with the React binding, the posts tab's "Open
-  planner" entry, the composer success CTA, a Creator Studio dashboard tile.
+- PR H, main app: the `/user/schedule` host page over the planner REST twins, the posts tab's "Open
+  planner" entry, the composer's "Open calendar" CTA. Still open: a Creator Studio dashboard tile.
 - Bulk publish-now and drafts on the calendar come later.
 
 **Phase 3 — presets** (~1 week, migration applied by hand): named presets of resources, tools,
@@ -149,10 +154,10 @@ techniques, tags, title template; used in the composer and the post editor. Phas
 
 ## 5. Open items with closing conditions
 
-| Item | Closes when | Who checks |
-|------|-------------|------------|
-| Phase 0 verification | Prod query shows 0 stale images for reschedules in the last 14 days; 868k68g0z set to complete | Luis |
-| Scope decisions 2–6 | Justin confirms or amends them on 868mcqb8t | Justin |
-| `Post(userId, publishedAt)` index | `pg_indexes` shows it, or EXPLAIN shows the month query is already cheap | Luis, before PR E |
-| First-pass worktree | Deleted once PR F has ported its UI, query and endpoint logic | Luis |
-| Kit gaps to upstream | `civitai-drawer`, `civitai-date-input` and a calendar grid proposed to `civitai/civitai-app-starters` once the planner's versions settle, or a decision to keep them in the package | Luis, after PR G |
+| Item                              | Closes when                                                                                                                                                                         | Who checks        |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Phase 0 verification              | Prod query shows 0 stale images for reschedules in the last 14 days; 868k68g0z set to complete                                                                                      | Luis              |
+| Scope decisions 2–6               | Justin confirms or amends them on 868mcqb8t                                                                                                                                         | Justin            |
+| `Post(userId, publishedAt)` index | `pg_indexes` shows it, or EXPLAIN shows the month query is already cheap                                                                                                            | Luis, before PR E |
+| First-pass worktree               | Deleted once PR F has ported its UI, query and endpoint logic                                                                                                                       | Luis              |
+| Kit gaps to upstream              | `civitai-drawer`, `civitai-date-input` and a calendar grid proposed to `civitai/civitai-app-starters` once the planner's versions settle, or a decision to keep them in the package | Luis, after PR G  |

@@ -1,7 +1,7 @@
 // Pure date helpers for the planner. Days are the VIEWER's local days (posts are scheduled in local
 // time and read in local time); the publish sweep's UTC day only matters for the cap badge, which is
 // labelled as such. Keys are `YYYY-MM-DD` strings so they survive serialisation and map lookups.
-import type { PlannerPost, PlannerView } from '../host.js';
+import type { PlannerPost, PlannerView } from '../host';
 
 const DAY_MS = 86_400_000;
 const pad = (n: number) => String(n).padStart(2, '0');

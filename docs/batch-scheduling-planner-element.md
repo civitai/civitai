@@ -39,8 +39,7 @@ ships the Civitai design system as Lit 3 custom elements. Facts the plan relies 
   design-system elements do, and composes them: `civitai-segmented-control` for Day · Week · Month ·
   Agenda, `civitai-button`/`-button-group`, `civitai-select`, `civitai-checkbox`, `civitai-badge` for
   the `n/cap` counts and release markers, `civitai-tooltip`, `civitai-menu`/`-menu-item` for row
-  actions, `civitai-confirm-dialog` for publish-now and unschedule, `civitai-toast-region` for the undo
-  toast, `civitai-image` for covers (its `blocked`/`pending` states cover the browsing-level blur),
+  actions, `civitai-confirm-dialog` for publish-now and unschedule, `civitai-image` for covers (its `blocked`/`pending` states cover the browsing-level blur),
   `civitai-text-input`/`civitai-number-input` in the drawer and the shift dialog, `civitai-alert` for
   the truncated notice and the release caveat, `civitai-text`/`-stack`/`-group`/`-card` for structure.
 - **What it draws itself** (nothing in the kit covers it): the month grid, the week and day hour
@@ -142,6 +141,8 @@ interface PlannerHost {
   };
   hrefFor(loc: PlannerLocation): string;
   navigate(loc: PlannerLocation): Promise<void>;
+  /** Confirmations and refusals, shown with the host's own notification UI. */
+  notify(notice: { message: string; color?: 'error' | 'success' }): void;
   /** Relative = same-tab in-host navigation; http(s) = new tab; any other scheme is dropped.
    *  `nsfwLevel` lets a host that splits domains by maturity (civitai.com / civitai.red) pick the right one. */
   editPostUrl(post: { id: number; nsfwLevel: number }): string;
@@ -172,7 +173,8 @@ the element already updates its own view optimistically and reverts on a rejecte
   main app owns the read query as well as the writes, so Creator Studio carries no Kysely read of its
   own. The proxy forwards only the hub's session cookies, whitelists the read parameters, and takes
   writes only as same-origin `application/json`; which actions are reads comes from the contract. A `409` reaches the element as the server's message; the element
-  toasts it and reloads the range.
+  hands it to `host.notify` and reloads the range. Toasts are the host's own (sonner in the Studio,
+  Mantine notifications in the main app); the element renders none.
 - `<html data-theme="dark" class="dark">` in `app.html` is the app's posture for every element.
 
 ### Main app (`/user/schedule`)

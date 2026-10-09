@@ -1,5 +1,5 @@
 import { css, html, type TemplateResult } from 'lit';
-import type { PlannerActions } from './props.js';
+import type { PlannerActions } from './props';
 
 export interface BulkBarProps {
   selectedIds: ReadonlySet<number>;

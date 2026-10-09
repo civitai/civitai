@@ -1,13 +1,19 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
-import type { PlannerHost } from '../host.js';
+import type { PlannerHost } from '../host';
 
 export interface HeaderProps {
   host: PlannerHost;
   scheduledCount: number;
   dailyLimit: number | null;
+  modelVersionId?: number;
 }
 
-export function renderHeader({ host, scheduledCount, dailyLimit }: HeaderProps): TemplateResult {
+export function renderHeader({
+  host,
+  scheduledCount,
+  dailyLimit,
+  modelVersionId,
+}: HeaderProps): TemplateResult {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const parts = [
     `${scheduledCount} queued in view`,
@@ -22,7 +28,7 @@ export function renderHeader({ host, scheduledCount, dailyLimit }: HeaderProps):
         <div class="stat">${parts.join(' · ')}</div>
       </div>
       ${composer
-        ? html`<civitai-button variant="filled" href=${host.composerUrl!({})}
+        ? html`<civitai-button variant="filled" href=${host.composerUrl!({ modelVersionId })}
             >+ Schedule a batch</civitai-button
           >`
         : nothing}

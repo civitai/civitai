@@ -1,8 +1,8 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
-import type { PlannerPost } from '../host.js';
-import { formatTime } from '../model/calendar.js';
-import { thumb } from './media.js';
-import type { PostContext } from './props.js';
+import type { PlannerPost } from '../host';
+import { formatTime } from '../model/calendar';
+import { thumb } from './media';
+import type { PostContext } from './props';
 
 export function renderRow(post: PlannerPost, context: PostContext): TemplateResult {
   const { host, selectMode, selectedIds, pending, actions } = context;

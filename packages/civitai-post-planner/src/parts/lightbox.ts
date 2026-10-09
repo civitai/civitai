@@ -1,7 +1,7 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
-import type { PlannerHost, PlannerPostDetail } from '../host.js';
-import { mediaUrl, PG_LEVEL } from './media.js';
-import type { PlannerActions } from './props.js';
+import type { PlannerHost, PlannerPostDetail } from '../host';
+import { mediaUrl, PG_LEVEL } from './media';
+import type { PlannerActions } from './props';
 
 export interface LightboxProps {
   host: PlannerHost;

@@ -5,7 +5,7 @@ import {
   isPlannerReadAction,
   PLANNER_ACTIONS,
   plannerRequest,
-} from '../contract.js';
+} from '../contract';
 
 describe('the action table', () => {
   it('splits reads from writes by method', () => {

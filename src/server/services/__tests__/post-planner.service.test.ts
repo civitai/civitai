@@ -30,6 +30,9 @@ const {
   fetchStats: vi.fn(async () => ({})),
 }));
 
+vi.mock('~/server/services/post-schedule-lock', () => ({
+  withPostScheduleLock: (_userId: number, operation: () => Promise<unknown>) => operation(),
+}));
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   updatePost,
@@ -226,6 +229,55 @@ describe('reschedulePlannerPost — the expectedScope check', () => {
   });
 });
 
+describe('reschedulePlannerPost — spacing and cap against the creator’s other posts', () => {
+  it('refuses a target inside the gap of another scheduled post, writing nothing', async () => {
+    findUnique.mockResolvedValue(standalonePost);
+    findMany.mockResolvedValueOnce([{ publishedAt: new Date(target.getTime() + 20 * 60_000) }]);
+
+    await expect(
+      reschedulePlannerPost({ id: 11, target, expectedScope: 'post', ctx: ctxFor() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('too close') });
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ userId: 7, id: { notIn: [11] } }),
+      })
+    );
+    nothingMoved();
+  });
+
+  it('refuses a target on a day already at the daily limit, but not for a moderator', async () => {
+    const full = Array.from({ length: 20 }, (_, hour) => ({
+      publishedAt: new Date(
+        Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(), hour, 7)
+      ),
+    }));
+    const farFromAll = new Date(
+      Date.UTC(target.getUTCFullYear(), target.getUTCMonth(), target.getUTCDate(), 12, 37)
+    );
+    findUnique.mockResolvedValue(standalonePost);
+    findMany.mockResolvedValueOnce(full);
+
+    await expect(
+      reschedulePlannerPost({ id: 11, target: farFromAll, expectedScope: 'post', ctx: ctxFor() })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('daily limit'),
+    });
+    nothingMoved();
+
+    findMany.mockResolvedValueOnce(full);
+    updatePost.mockResolvedValueOnce({ id: 11, publishedAt: farFromAll });
+    await expect(
+      reschedulePlannerPost({
+        id: 11,
+        target: farFromAll,
+        expectedScope: 'post',
+        ctx: ctxFor({ ...OWNER, isModerator: true }),
+      })
+    ).resolves.toMatchObject({ scope: 'post' });
+  });
+});
+
 describe('reschedulePlannerPost — posts on a scheduled release', () => {
   // The procedures' ownership guards read through the lag router, which may pick either client.
   beforeEach(() => {
@@ -236,10 +288,26 @@ describe('reschedulePlannerPost — posts on a scheduled release', () => {
     }
   });
 
+  it('checks a release move against posts outside the release only', async () => {
+    findUnique.mockResolvedValueOnce(releasePost(ModelStatus.Published));
+    releaseMovesPostTo(target);
+
+    await reschedulePlannerPost({ id: 11, target, expectedScope: 'version', ctx: ctxFor() });
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userId: 7,
+          OR: [{ modelVersionId: null }, { modelVersionId: { not: 30 } }],
+        }),
+      })
+    );
+  });
+
   it('reschedules the whole model when the model has not gone live, with the procedure ctx', async () => {
     findUnique.mockResolvedValueOnce(releasePost(ModelStatus.Scheduled));
     releaseMovesPostTo(target);
-    findMany.mockResolvedValueOnce([{ id: 12 }, { id: 13 }]);
+    findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 12 }, { id: 13 }]);
     const ctx = ctxFor();
 
     const result = await reschedulePlannerPost({ id: 11, target, expectedScope: 'model', ctx });

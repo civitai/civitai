@@ -1,7 +1,8 @@
 // Pure post helpers: the derived lists and counts the element renders from its loaded range.
-import type { PlannerPost, PlannerPostDetail, PlannerScope } from '../host.js';
-import { PG_LEVEL } from '../parts/media.js';
-import { localDayKey } from './calendar.js';
+import type { PlannerPost, PlannerPostDetail, PlannerScope } from '../host';
+import { PG_LEVEL } from '../parts/media';
+import { validateBatchSchedule } from '@civitai/shared/post-scheduling';
+import { localDayKey } from './calendar';
 
 export type Filters = { scheduled: boolean; published: boolean; releases: boolean };
 
@@ -93,4 +94,30 @@ export function drawerPost(
   return detail && list
     ? { ...detail, publishedAt: list.publishedAt, release: list.release }
     : detail ?? list;
+}
+
+/** The spacing and daily-cap rules a move must pass, checked against the loaded range so a bad
+ *  drop is refused before the round trip. A release's own posts share its instant and are skipped.
+ *  The server re-checks against everything; this only covers what is on screen. */
+export function moveIssues(
+  posts: PlannerPost[],
+  moving: PlannerPost,
+  when: Date,
+  range: { dailyLimit: number; minGapMinutes: number } | null,
+  now: Date
+): string[] {
+  const neighbours = posts.filter(
+    (post) =>
+      post.id !== moving.id &&
+      isScheduled(post, now) &&
+      !(moving.release && post.modelVersionId === moving.modelVersionId)
+  );
+  const validation = validateBatchSchedule({
+    now,
+    publishedAts: [when],
+    existingPublishedAts: neighbours.map((post) => new Date(post.publishedAt)),
+    dailyLimit: range?.dailyLimit ?? Number.POSITIVE_INFINITY,
+    minGapMinutes: range?.minGapMinutes,
+  });
+  return validation.issues.map((issue) => issue.message);
 }

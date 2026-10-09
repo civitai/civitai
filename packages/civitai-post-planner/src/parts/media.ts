@@ -1,5 +1,5 @@
 import { html, type TemplateResult } from 'lit';
-import type { PlannerMedia } from '../host.js';
+import type { PlannerMedia } from '../host';
 
 /** Cloudflare Images delivery URL for a media key at a given width. */
 export function mediaUrl(imageLocation: string, key: string, width: number): string {

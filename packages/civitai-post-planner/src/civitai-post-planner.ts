@@ -1,7 +1,6 @@
 import '@civitai/components/register';
 import { CivitaiElement } from '@civitai/components/internals';
 import type { CivitaiConfirmDialog } from '@civitai/components/civitai-confirm-dialog';
-import type { CivitaiToastRegion } from '@civitai/components/civitai-toast-region';
 import { getPostScheduleError } from '@civitai/shared/post-scheduling';
 import {
   html,
@@ -19,7 +18,7 @@ import type {
   PlannerPostDetail,
   PlannerScope,
   ScheduledRange,
-} from './host.js';
+} from './host';
 import {
   defaultView,
   formatDateTime,
@@ -28,43 +27,39 @@ import {
   moveToDay,
   snapToFiveMinutes,
   visibleRange,
-} from './model/calendar.js';
-import {
-  messageOf,
-  releaseScopeLabel,
-  shiftedMessage,
-  unscheduledMessage,
-} from './model/messages.js';
+} from './model/calendar';
+import { messageOf, releaseScopeLabel, shiftedMessage, unscheduledMessage } from './model/messages';
 import {
   applyOverrides,
   countScheduled,
   countScheduledOn,
   drawerPost,
-  type Filters,
   hasMature,
   isScheduled,
   modelFilterOptions,
+  moveIssues,
   neighbours,
-  type Override,
   scopeOf,
+  type Filters,
+  type Override,
   visiblePosts,
-} from './model/posts.js';
-import { bulkBarStyles, renderBulkBar } from './parts/bulk-bar.js';
-import { chipStyles } from './parts/chip.js';
-import { drawerStyles, renderDrawer } from './parts/drawer.js';
-import { headerStyles, renderHeader } from './parts/header.js';
-import { legendStyles, renderLegend } from './parts/legend.js';
-import { lightboxStyles } from './parts/lightbox.js';
-import { shouldBlur } from './parts/media.js';
-import { mediaStripStyles } from './parts/media-strip.js';
-import { noticeStyles, renderNotice, renderTruncatedNotice, renderUndo } from './parts/notices.js';
-import type { PlannerActions, PostContext } from './parts/props.js';
-import { rowStyles } from './parts/row.js';
-import { renderToolbar, toolbarStyles } from './parts/toolbar.js';
-import { baseStyles } from './styles.js';
-import { renderView, viewStyles } from './views/index.js';
-import { listStyles } from './views/list.js';
-import { monthStyles } from './views/month.js';
+} from './model/posts';
+import { bulkBarStyles, renderBulkBar } from './parts/bulk-bar';
+import { chipStyles } from './parts/chip';
+import { drawerStyles, renderDrawer } from './parts/drawer';
+import { headerStyles, renderHeader } from './parts/header';
+import { legendStyles, renderLegend } from './parts/legend';
+import { lightboxStyles } from './parts/lightbox';
+import { shouldBlur } from './parts/media';
+import { mediaStripStyles } from './parts/media-strip';
+import { noticeStyles, renderNotice, renderTruncatedNotice, renderUndo } from './parts/notices';
+import type { PlannerActions, PostContext } from './parts/props';
+import { rowStyles } from './parts/row';
+import { renderToolbar, toolbarStyles } from './parts/toolbar';
+import { baseStyles } from './styles';
+import { renderView, viewStyles } from './views/index';
+import { listStyles } from './views/list';
+import { monthStyles } from './views/month';
 
 const UNDO_WINDOW_MS = 8_000;
 const SHOW_MATURE_KEY = 'civitai-post-planner:show-mature';
@@ -384,6 +379,11 @@ export class CivitaiPostPlanner extends CivitaiElement {
       this.#toast(refusal, 'error');
       return;
     }
+    const issues = moveIssues(this.#posts, post, when, this._range, this._now);
+    if (issues.length) {
+      this.#toast(issues.join(' '), 'error');
+      return;
+    }
     const expectedScope = scopeOf(post);
     const from = post.publishedAt;
     this.#setPending(post.id, true);
@@ -544,8 +544,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
   }
 
   #toast(message: string, color?: 'error' | 'success'): void {
-    const region = this.renderRoot.querySelector<CivitaiToastRegion>('civitai-toast-region');
-    region?.show({ message, color });
+    this.host?.notify({ message, color });
   }
 
   async #confirm(opts: {
@@ -705,6 +704,7 @@ export class CivitaiPostPlanner extends CivitaiElement {
             host,
             scheduledCount: countScheduled(posts, this._now),
             dailyLimit: this._range?.dailyLimit ?? null,
+            modelVersionId: loc.modelVersionId,
           })}
           ${renderToolbar({
             host,
@@ -748,7 +748,6 @@ export class CivitaiPostPlanner extends CivitaiElement {
         ${this._selectedId != null ? this.#drawer(host, posts) : nothing}
       </div>
       <div class="sr-only" role="status" aria-live="polite">${this._announcement}</div>
-      <civitai-toast-region></civitai-toast-region>
       <civitai-confirm-dialog></civitai-confirm-dialog>
     `;
   }

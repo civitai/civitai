@@ -1,5 +1,5 @@
 import { css, html, type TemplateResult } from 'lit';
-import type { PlannerPost, PlannerView } from '../host.js';
+import type { PlannerPost, PlannerView } from '../host';
 
 export function renderNotice(message: string): TemplateResult {
   return html`<div class="notice">${message}</div>`;

@@ -1,7 +1,7 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { repeat } from 'lit/directives/repeat.js';
-import { hostLink, type PlannerLocation, type PlannerPost } from '../host.js';
+import { hostLink, type PlannerLocation, type PlannerPost } from '../host';
 import {
   bucketByLocalDay,
   type CalendarDay,
@@ -9,10 +9,10 @@ import {
   formatRangeLabel,
   monthGrid,
   weeksOf,
-} from '../model/calendar.js';
-import { capColor, countScheduled } from '../model/posts.js';
-import { renderChip } from '../parts/chip.js';
-import type { PostContext } from '../parts/props.js';
+} from '../model/calendar';
+import { capColor, countScheduled } from '../model/posts';
+import { renderChip } from '../parts/chip';
+import type { PostContext } from '../parts/props';
 
 const MONTH_CHIPS_PER_CELL = 3;
 
@@ -68,7 +68,12 @@ function renderCell(day: CalendarDay, posts: PlannerPost[], props: MonthProps): 
     host.composerUrl &&
     day.key >= props.today;
   const quickAdd = canQuickAdd
-    ? hostLink(host.composerUrl!({ startAt: dayStart(day.key).toISOString() }))
+    ? hostLink(
+        host.composerUrl!({
+          startAt: dayStart(day.key).toISOString(),
+          modelVersionId: loc.modelVersionId,
+        })
+      )
     : null;
   const classes = [
     'cell',

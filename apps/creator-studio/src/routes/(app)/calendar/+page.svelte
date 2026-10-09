@@ -2,6 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import type {
     CivitaiPostPlanner,
     PlannerHost,
@@ -47,22 +48,38 @@
 
   // Absolute main-app URLs on purpose: the element opens anything non-relative in a new tab, which
   // is what a creator wants when hopping from the studio to the editor.
-  const makeHost = (): PlannerHost => ({
-    backend,
-    config: {
-      userId: data.userId,
-      imageLocation: data.imageLocation,
-      browsingLevel: data.browsingLevel,
-      showMature: data.showMature,
-      composerAvailable: false,
-    },
-    hrefFor,
-    navigate: (loc) => goto(hrefFor(loc), { keepFocus: true, noScroll: true }),
-    editPostUrl: (post) => civitaiUrl(`/posts/${post.id}/edit`, post),
-    viewPostUrl: (post) => civitaiUrl(`/posts/${post.id}`, post),
-    modelPageUrl: ({ modelId, modelVersionId, nsfwLevel }) =>
-      civitaiUrl(`/models/${modelId}?modelVersionId=${modelVersionId}`, { nsfwLevel }),
-  });
+  const makeHost = (): PlannerHost => {
+    const composerUrl = data.composerUrl;
+    return {
+      backend,
+      config: {
+        userId: data.userId,
+        imageLocation: data.imageLocation,
+        browsingLevel: data.browsingLevel,
+        showMature: data.showMature,
+        composerAvailable: !!composerUrl,
+      },
+      composerUrl: ({ startAt, modelVersionId }) => {
+        const params = new URLSearchParams();
+        if (startAt) params.set('startAt', startAt);
+        if (modelVersionId) params.set('modelVersionId', String(modelVersionId));
+        const query = params.toString();
+        return `${composerUrl ?? ''}${query ? `?${query}` : ''}`;
+      },
+      hrefFor,
+      navigate: (loc) => goto(hrefFor(loc), { keepFocus: true, noScroll: true }),
+      notify: ({ message, color }) =>
+        color === 'error'
+          ? toast.error(message)
+          : color === 'success'
+            ? toast.success(message)
+            : toast(message),
+      editPostUrl: (post) => civitaiUrl(`/posts/${post.id}/edit`, post),
+      viewPostUrl: (post) => civitaiUrl(`/posts/${post.id}`, post),
+      modelPageUrl: ({ modelId, modelVersionId, nsfwLevel }) =>
+        civitaiUrl(`/models/${modelId}?modelVersionId=${modelVersionId}`, { nsfwLevel }),
+    };
+  };
 
   let element = $state<CivitaiPostPlanner | undefined>();
   let defined = $state(false);

@@ -1,8 +1,8 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
-import type { PlannerHost, PlannerPost, PlannerPostDetail } from '../host.js';
-import { renderLightbox } from './lightbox.js';
-import { eyeIcon, mediaUrl, PG_LEVEL, thumb } from './media.js';
-import type { PlannerActions } from './props.js';
+import type { PlannerHost, PlannerPost, PlannerPostDetail } from '../host';
+import { renderLightbox } from './lightbox';
+import { eyeIcon, mediaUrl, PG_LEVEL, thumb } from './media';
+import type { PlannerActions } from './props';
 
 export interface MediaStripProps {
   host: PlannerHost;

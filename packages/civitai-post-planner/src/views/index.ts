@@ -1,9 +1,9 @@
 import { css, html, type TemplateResult } from 'lit';
-import type { PlannerLocation, PlannerPost } from '../host.js';
-import { addDays, monthGrid, weekDays } from '../model/calendar.js';
-import type { PostContext } from '../parts/props.js';
-import { renderList } from './list.js';
-import { renderMonth } from './month.js';
+import type { PlannerLocation, PlannerPost } from '../host';
+import { addDays, monthGrid, weekDays } from '../model/calendar';
+import type { PostContext } from '../parts/props';
+import { renderList } from './list';
+import { renderMonth } from './month';
 
 export interface ViewProps {
   loc: PlannerLocation;

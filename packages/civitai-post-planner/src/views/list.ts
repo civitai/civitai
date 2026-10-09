@@ -1,9 +1,9 @@
 import { css, html, nothing, type TemplateResult } from 'lit';
-import type { PlannerPost } from '../host.js';
-import { bucketByLocalDay, dayStart } from '../model/calendar.js';
-import { capColor, countScheduled } from '../model/posts.js';
-import type { PostContext } from '../parts/props.js';
-import { renderRow } from '../parts/row.js';
+import type { PlannerPost } from '../host';
+import { bucketByLocalDay, dayStart } from '../model/calendar';
+import { capColor, countScheduled } from '../model/posts';
+import type { PostContext } from '../parts/props';
+import { renderRow } from '../parts/row';
 
 export interface ListProps {
   dayKeys: string[];

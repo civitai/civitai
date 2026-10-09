@@ -16,6 +16,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { postStatCache, userPostCountCache } from '~/server/redis/caches';
 import { getDailyPostLimit } from '~/server/schema/post.schema';
 import { preventReplicationLagBatch } from '~/server/db/db-lag-helpers';
+import { withPostScheduleLock } from '~/server/services/post-schedule-lock';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { getPostEditDetail, getPostResources, updatePost } from '~/server/services/post.service';
 import {
@@ -291,7 +292,7 @@ async function getPublishCallers(): Promise<PublishCallers> {
  * `model.publish` / `modelVersion.publish`, which fan the date out to the owner's other
  * still-scheduled posts on that version — those are `movedPostIds`.
  */
-export async function reschedulePlannerPost({
+async function runReschedulePlannerPost({
   id,
   target,
   expectedScope,
@@ -315,6 +316,18 @@ export async function reschedulePlannerPost({
   // drop into a release move.
   if (scope !== expectedScope) throw throwConflictError(SCHEDULE_CHANGED_MESSAGE);
   const publishedAt = target === 'now' ? undefined : target;
+  // A release's posts all share its instant by design, so only the posts outside it count as
+  // neighbours; publishing now is the editor's own action and skips the spacing rules.
+  if (publishedAt)
+    await assertMovesFit({
+      targets: [publishedAt],
+      exclude:
+        scope === 'post'
+          ? { ids: [post.id] }
+          : { modelVersionId: (post.modelVersion as { id: number }).id },
+      user,
+      now,
+    });
 
   if (scope === 'post') {
     const requested = publishedAt ?? now;
@@ -427,7 +440,46 @@ async function afterPostsRescheduled(postIds: number[], userId: number) {
   await userPostCountCache.refresh(userId);
 }
 
-export async function shiftPlannerPosts({
+/** The batch spacing and daily-cap rules, applied to posts moving onto `targets`; the posts that
+ *  move are excluded from the neighbours they are checked against. Moderators skip the cap. */
+async function assertMovesFit({
+  targets,
+  exclude,
+  user,
+  now,
+}: {
+  targets: Date[];
+  exclude: { ids?: number[]; modelVersionId?: number };
+  user: SessionUser;
+  now: Date;
+}) {
+  const startOfTodayUtc = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  );
+  const others = await dbWrite.post.findMany({
+    where: {
+      userId: user.id,
+      publishedAt: { gte: startOfTodayUtc },
+      ...(exclude.ids ? { id: { notIn: exclude.ids } } : {}),
+      // `not` alone drops the rows whose version is null; standalone posts count as neighbours.
+      ...(exclude.modelVersionId
+        ? { OR: [{ modelVersionId: null }, { modelVersionId: { not: exclude.modelVersionId } }] }
+        : {}),
+    },
+    select: { publishedAt: true },
+  });
+  const validation = validateBatchSchedule({
+    now,
+    publishedAts: targets,
+    existingPublishedAts: others.map((other) => other.publishedAt as Date),
+    dailyLimit: user.isModerator ? Number.POSITIVE_INFINITY : getDailyPostLimit(user),
+    minGapMinutes: POST_BATCH_MIN_GAP_MINUTES,
+  });
+  if (!validation.ok)
+    throw throwBadRequestError(uniq(validation.issues.map((issue) => issue.message)).join(' '));
+}
+
+async function runShiftPlannerPosts({
   ids,
   deltaMinutes,
   user,
@@ -450,26 +502,13 @@ export async function shiftPlannerPosts({
     return refusal ? [refusal] : [];
   });
 
-  const startOfTodayUtc = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  );
-  const others = await dbWrite.post.findMany({
-    where: {
-      userId: user.id,
-      publishedAt: { gte: startOfTodayUtc },
-      id: { notIn: targets.map((target) => target.id) },
-    },
-    select: { publishedAt: true },
-  });
-  const validation = validateBatchSchedule({
-    now,
-    publishedAts: targets.map((target) => target.publishedAt),
-    existingPublishedAts: others.map((other) => other.publishedAt as Date),
-    dailyLimit: getDailyPostLimit(user),
-    minGapMinutes: POST_BATCH_MIN_GAP_MINUTES,
-  });
-  issues.push(...validation.issues.map((issue) => issue.message));
   if (issues.length) throw throwBadRequestError(uniq(issues).join(' '));
+  await assertMovesFit({
+    targets: targets.map((target) => target.publishedAt),
+    exclude: { ids: targets.map((target) => target.id) },
+    user,
+    now,
+  });
 
   const rows = await dbWrite.$queryRaw<{ id: number; publishedAt: Date }[]>`
     UPDATE "Post" p
@@ -494,4 +533,21 @@ export async function shiftPlannerPosts({
     );
 
   return { moved, skippedReleaseIds };
+}
+
+export function reschedulePlannerPost(args: {
+  id: number;
+  target: PostScheduleTarget;
+  expectedScope: PostScheduleScope;
+  ctx: ProtectedContext;
+}): Promise<MoveResult> {
+  return withPostScheduleLock(args.ctx.user.id, () => runReschedulePlannerPost(args));
+}
+
+export function shiftPlannerPosts(args: {
+  ids: number[];
+  deltaMinutes: number;
+  user: SessionUser;
+}): Promise<ShiftResult> {
+  return withPostScheduleLock(args.user.id, () => runShiftPlannerPosts(args));
 }

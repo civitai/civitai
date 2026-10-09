@@ -10,7 +10,7 @@ import type {
   ScheduledRange,
   ShiftResult,
   UnscheduleResult,
-} from './host.js';
+} from './host';
 
 export const PLANNER_REST_PATH = '/api/v1/posts/planner';
 

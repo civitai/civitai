@@ -98,6 +98,11 @@ export interface PlannerBackend {
   shift(req: { ids: number[]; deltaMinutes: number }): Promise<ShiftResult>;
 }
 
+export interface PlannerNotice {
+  message: string;
+  color?: 'error' | 'success';
+}
+
 export interface PlannerHost {
   backend: PlannerBackend;
   config: {
@@ -116,6 +121,8 @@ export interface PlannerHost {
   };
   hrefFor(loc: PlannerLocation): string;
   navigate(loc: PlannerLocation): Promise<void>;
+  /** Every confirmation and refusal the element wants shown, in the host's own notification UI. */
+  notify(notice: PlannerNotice): void;
   /** A host-relative URL is an in-host same-tab navigation; anything else opens in a new tab. The
    *  post's `nsfwLevel` rides along so a host that splits domains by maturity can pick the right one. */
   editPostUrl(post: { id: number; nsfwLevel: number }): string;

@@ -9,6 +9,7 @@ import {
   hasMature,
   isScheduled,
   modelFilterOptions,
+  moveIssues,
   neighbours,
   scopeOf,
   visiblePosts,
@@ -176,5 +177,33 @@ describe('drawerPost', () => {
     expect(drawerPost(list, null)).toBe(list);
     expect(drawerPost(null, detail)).toBe(detail);
     expect(drawerPost(null, null)).toBeNull();
+  });
+});
+
+describe('moveIssues', () => {
+  const range = { dailyLimit: 2, minGapMinutes: 30 };
+
+  it('refuses a drop inside the gap of a neighbour and a day at the cap, ignoring the moving post itself', () => {
+    const moving = post(at(10, 9), 1);
+    const others = [post(at(12, 9), 2), post(at(12, 13), 3)];
+    expect(
+      moveIssues([moving, ...others], moving, new Date(2026, 9, 12, 9, 20), range, now)
+    ).toEqual([expect.stringContaining('too close'), expect.stringContaining('daily limit')]);
+    expect(
+      moveIssues([moving, ...others], moving, new Date(2026, 9, 13, 9, 20), range, now)
+    ).toEqual([]);
+  });
+
+  it('skips the posts of the release being moved', () => {
+    const release = { scope: 'version' as const, modelName: 'M', versionName: 'v1' };
+    const moving = post(at(10, 9), 1, { modelVersionId: 30, release });
+    const sibling = post(at(10, 9), 2, { modelVersionId: 30, release });
+    const other = post(at(12, 9), 3);
+    expect(
+      moveIssues([moving, sibling, other], moving, new Date(2026, 9, 12, 9, 10), range, now)
+    ).toEqual([expect.stringContaining('too close')]);
+    expect(
+      moveIssues([moving, sibling, other], moving, new Date(2026, 9, 14, 9, 10), range, now)
+    ).toEqual([]);
   });
 });

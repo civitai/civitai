@@ -1,5 +1,5 @@
-import type { PlannerHost, PlannerLocation, PlannerPost } from '../host.js';
-import type { Filters } from '../model/posts.js';
+import type { PlannerHost, PlannerLocation, PlannerPost } from '../host';
+import type { Filters } from '../model/posts';
 
 /** Every state change a view or part can ask the element for. Render functions never hold the element. */
 export interface PlannerActions {
