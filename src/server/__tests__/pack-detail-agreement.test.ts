@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { shopPurchaseClaimFake } from '~/test-utils/shopPurchaseClaimFake';
 
 /**
  * The quote and the charge, against the same fixture.
@@ -19,6 +20,8 @@ const componentGroupBy = vi.fn();
 const ownedFindMany = vi.fn();
 const spend = vi.fn();
 
+const claims = shopPurchaseClaimFake();
+
 vi.mock('~/server/db/client', () => ({
   dbRead: {
     cosmeticShopItem: {
@@ -32,6 +35,9 @@ vi.mock('~/server/db/client', () => ({
   },
   dbWrite: {
     userCosmetic: { findMany: (...a: unknown[]) => ownedFindMany(...a) },
+    cosmeticShopPurchaseClaim: {
+      create: (...a: Parameters<typeof claims.delegate.create>) => claims.delegate.create(...a),
+    },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         $executeRaw: vi.fn(),
@@ -42,6 +48,7 @@ vi.mock('~/server/db/client', () => ({
         userCosmeticShopPurchases: { create: vi.fn() },
         userCosmeticShopPurchaseCosmetic: { createMany: vi.fn() },
         cosmeticShopItem: { update: vi.fn() },
+        cosmeticShopPurchaseClaim: claims.txDelegate,
       }),
     userCosmeticShopPurchases: { update: vi.fn() },
   },

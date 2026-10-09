@@ -2,12 +2,14 @@ import {
   firstPublishCardSchema,
   legendStatusSchema,
   milestoneShareSchema,
+  profileAchievementsSchema,
 } from '~/server/schema/creator-journey.schema';
 import {
   getCreatorJourney,
   getCreatorScoreLadder,
   getFirstPublishCard,
   getLegendStatus,
+  getProfileAchievements,
 } from '~/server/services/creator-journey.service';
 import { getCreatorShowcase } from '~/server/services/creator-showcase.service';
 import { isMilestoneShareable } from '~/server/services/creator-milestone-share.service';
@@ -22,6 +24,10 @@ export const creatorJourneyRouter = router({
     .use(isFlagProtected('creatorJourney'))
     .input(legendStatusSchema)
     .query(({ input }) => getLegendStatus(input.userId)),
+  getProfileAchievements: publicProcedure
+    .use(isFlagProtected('creatorJourney'))
+    .input(profileAchievementsSchema)
+    .query(({ input, ctx }) => getProfileAchievements({ ...input, viewerId: ctx.user?.id })),
   getShowcase: publicProcedure
     .use(isFlagProtected('creatorJourney'))
     .query(() => getCreatorShowcase()),

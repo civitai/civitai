@@ -9,6 +9,7 @@ import type {
   AppFeedbackTarget,
   CreateAppFeedbackInput,
   FlagAppFeedbackInput,
+  HasAnyAppFeedbackForListingInput,
   ListAppFeedbackForListingInput,
   ModListAppFeedbackInput,
   ModSetAppFeedbackHiddenInput,
@@ -409,6 +410,34 @@ export async function listAppFeedbackForListing({
     items: page.map(toOwnerFeedbackDto),
     nextCursor: rows.length > input.limit ? page[page.length - 1].id : undefined,
   };
+}
+
+/**
+ * Does this listing have ANY row its owner may see? Decides whether the editor offers a Feedback
+ * tab at all (operator decision, 2026-10-09: no tab, and no empty inbox, until the first row).
+ *
+ * Same authorization as {@link listAppFeedbackForListing} (`resolveInboxListingId`, so a caller
+ * with no role gets the same FORBIDDEN and learns nothing about the listing) and the same
+ * visibility predicate ({@link ownerVisibleSql}), so the tab appears exactly when the list it
+ * opens would return a row. `EXISTS` stops at the first match.
+ */
+export async function hasAnyAppFeedbackForListing({
+  userId,
+  input,
+}: {
+  userId: number;
+  input: HasAnyAppFeedbackForListingInput;
+}): Promise<{ hasAny: boolean }> {
+  const seatListingId = await resolveInboxListingId(input.appListingId, userId);
+  const rows = await dbRead.$queryRaw<Array<{ hasAny: boolean }>>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1
+      FROM "Feedback" f
+      JOIN "User" u ON u.id = f."userId"
+      WHERE ${Prisma.join(ownerVisibleSql([seatListingId]), ' AND ')}
+    ) AS "hasAny"
+  `);
+  return { hasAny: rows[0]?.hasAny === true };
 }
 
 export async function setAppFeedbackOwnerStatus({

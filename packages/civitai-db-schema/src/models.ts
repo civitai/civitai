@@ -2187,6 +2187,20 @@ export interface AppBlockPublishRequest {
   updatedAt: Date;
 }
 
+export interface AppBlockBuildAttempt {
+  id: number;
+  publishRequestId: string | null;
+  slug: string;
+  sha: string;
+  runId: string | null;
+  mode: string;
+  status: string;
+  failedStep: string | null;
+  failedReason: string | null;
+  failureClass: string | null;
+  createdAt: Date;
+}
+
 export interface AppListing {
   id: string;
   serialId: number;
@@ -3252,6 +3266,17 @@ export interface UserCosmeticShopPurchases {
   refunded: boolean;
   meta: JsonValue | null;
   components?: UserCosmeticShopPurchaseCosmetic[];
+}
+
+export interface CosmeticShopPurchaseClaim {
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  amount: number;
+  status: string;
+  attempts: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface UserCosmeticShopPurchaseCosmetic {

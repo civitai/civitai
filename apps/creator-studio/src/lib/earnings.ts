@@ -3,6 +3,7 @@
 
 export const EARNINGS_SOURCES = [
   'compensation',
+  'generationTip',
   'tip',
   'licenseFee',
   'accessSale',
@@ -12,6 +13,7 @@ export type EarningsSource = (typeof EARNINGS_SOURCES)[number];
 
 export const SOURCE_LABEL: Record<EarningsSource, string> = {
   compensation: 'Generation compensation',
+  generationTip: 'Generation tips',
   tip: 'Tips',
   licenseFee: 'License fees',
   accessSale: 'Access sales',
@@ -21,6 +23,7 @@ export const SOURCE_LABEL: Record<EarningsSource, string> = {
 // Per-source line colors for the earnings trend chart (distinct hues; not the buzz-currency palette).
 export const SOURCE_COLOR: Record<EarningsSource, string> = {
   compensation: '#4dabf7',
+  generationTip: '#ffd43b',
   tip: '#f59f00',
   licenseFee: '#40c057',
   accessSale: '#9775fa',

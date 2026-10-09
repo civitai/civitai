@@ -174,6 +174,55 @@ describe('A — a failed version says what happened and whose move it is', () =>
   });
 });
 
+describe('A2 — the build’s reported step and class, when the attempt history has them', () => {
+  test('the step is named and the deterministic class wins over the excerpt’s wording', async () => {
+    // The excerpt alone reads as the author's (first line `ERROR:`); the build reported a
+    // clone failure, which is ours.
+    renderEntries([
+      version({
+        id: 'v_sig',
+        deployDetail: RECIPE_ERROR_DETAIL,
+        buildSignals: { failedStep: 'clone', failureClass: 'platform' },
+      }),
+    ]);
+    const block = failureBlock('v_sig');
+    await expect
+      .element(page.getByTestId('apps-history-failure-v_sig-step'))
+      .toHaveTextContent('Failed at: fetching the source');
+    expect(block.element().getAttribute('data-failure-class')).toBe('platform');
+    // The platform guidance, not the author's "fix the error, then submit" (the excerpt's own
+    // last line still says that, which is why this matches the guidance phrase exactly).
+    await expect
+      .element(block)
+      .toHaveTextContent(/This is a problem on our side, not with your app/);
+    expect(block.element().textContent).not.toContain('Fix the error below');
+    await expect
+      .element(page.getByTestId('apps-history-deploy-v_sig'))
+      .toHaveTextContent(/failed at fetching the source/);
+    // The owner still sees the excerpt.
+    expect(excerptBlock('v_sig').element().textContent).toBe(RECIPE_ERROR_EXCERPT);
+  });
+
+  test('a scan failure shows "Failed at: security scan"', async () => {
+    renderEntries([
+      version({
+        id: 'v_scan2',
+        deployDetail: SCAN_BLOCKED_DETAIL,
+        buildSignals: { failedStep: 'scan', failureClass: 'unknown' },
+      }),
+    ]);
+    await expect
+      .element(page.getByTestId('apps-history-failure-v_scan2-step'))
+      .toHaveTextContent('Failed at: security scan');
+  });
+
+  test('without signals there is no step line (older rows keep the text fallback)', async () => {
+    renderEntries([version({ id: 'v_old', deployDetail: SCAN_BLOCKED_DETAIL })]);
+    await expect.element(failureBlock('v_old')).toBeInTheDocument();
+    expect(page.getByTestId('apps-history-failure-v_old-step').elements()).toHaveLength(0);
+  });
+});
+
 describe('🔴 A — the excerpt is tenant bytes, rendered as literal text', () => {
   test('markup, a terminal escape and a 5000-char line render as characters, not elements', async () => {
     renderEntries([version({ id: 'v_bad', deployDetail: HOSTILE_DETAIL })]);
