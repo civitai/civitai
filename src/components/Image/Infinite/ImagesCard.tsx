@@ -98,8 +98,17 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   }, [cosmetic, height]);
 
   return (
-    <TwCosmeticWrapper cosmetic={cosmetic} style={cosmetic ? { height } : undefined}>
-      <ElementInView component={TwCard} style={twCardStyle} className="border">
+    <TwCosmeticWrapper
+      cosmetic={cosmetic}
+      eventDecoration={image.eventDecoration?.data}
+      style={cosmetic ? { height } : undefined}
+    >
+      <ElementInView
+        component={TwCard}
+        style={twCardStyle}
+        className="border"
+        impressions={[{ entityType: 'Image', entityId: image.id }]}
+      >
         <ImageGuard2 image={image}>
           {(safe) => (
             <>
@@ -144,7 +153,8 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     revealStickers={contextProps.revealStickers}
                   />
                 )}
-                <div className="absolute left-2 top-2">
+                {/* Steps clear of an event decoration sitting on the corner. */}
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
                     {safe &&

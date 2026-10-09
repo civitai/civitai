@@ -917,6 +917,15 @@ export const IMPRESSION_SURFACES = [
   'bounties',
   'search',
   'user',
+  'hubs',
+  'challenges',
+  '3d-models',
+  'ecosystems',
+  'tag',
+  'tools',
+  'comics',
+  'crucibles',
+  'events',
   'other',
 ] as const;
 export type ImpressionSurface = (typeof IMPRESSION_SURFACES)[number];

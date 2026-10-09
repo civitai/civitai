@@ -18,6 +18,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { AspectRatioCard } from './AspectRatioCard';
 import cardStyles from './AspectRatioCard.module.scss';
 import styles from './AspectRatioImageCard.module.scss';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type ContentTypeProps =
   | {
@@ -52,6 +53,8 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   aspectRatio?: 'portrait' | 'landscape' | 'square' | number;
   onClick?: React.MouseEventHandler;
   cosmetic?: ContentDecorationCosmetic['data'];
+  /** Worn beside the frame; see TwCosmeticWrapper. */
+  eventDecoration?: EventDecorationData | null;
   className?: string;
   image?: ImageProps;
   header?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
@@ -94,6 +97,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   aspectRatio = 'portrait',
   onClick,
   cosmetic,
+  eventDecoration,
   className,
   contentType,
   contentId,
@@ -132,6 +136,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
     <AspectRatioCard
       aspectRatio={aspectRatio}
       cosmetic={cosmetic}
+      eventDecoration={eventDecoration}
       className={className}
       impressions={impressions}
       render={({ inView }) => {

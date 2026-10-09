@@ -89,6 +89,45 @@ describe('canvas-utils — staged image preparation', () => {
     expect(out.size).toBeGreaterThan(0);
   });
 
+  // createImageElement releases the blob: url it made for a File once the image has loaded, so the
+  // url does not hold an in-memory copy of a pick; the loaded element must still draw its pixels.
+  test('an image read from a File keeps its pixels after the url made for it is released', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 8;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = 'rgb(200, 30, 60)';
+    ctx.fillRect(0, 0, 8, 8);
+    const png = await new Promise<Blob>((resolve) =>
+      canvas.toBlob((b) => resolve(b!), 'image/png')
+    );
+    const file = new File([png], 'photo.png', { type: 'image/png' });
+    const create = vi.spyOn(URL, 'createObjectURL');
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    try {
+      const out = await resizeImage(file, shrink);
+      const made = create.mock.calls.flatMap(([obj], i) =>
+        obj === file ? [create.mock.results[i].value as string] : []
+      );
+      expect(made).toHaveLength(1);
+      expect(revoke).toHaveBeenCalledWith(made[0]);
+
+      const img = await createImageBitmap(out);
+      const check = document.createElement('canvas');
+      check.width = img.width;
+      check.height = img.height;
+      const checkCtx = check.getContext('2d')!;
+      checkCtx.drawImage(img, 0, 0);
+      const [r, g, b] = checkCtx.getImageData(1, 1, 1, 1).data;
+      // JPEG is lossy: close to the source colour, and nowhere near blank.
+      expect(Math.abs(r - 200)).toBeLessThan(20);
+      expect(Math.abs(g - 30)).toBeLessThan(20);
+      expect(Math.abs(b - 60)).toBeLessThan(20);
+    } finally {
+      create.mockRestore();
+      revoke.mockRestore();
+    }
+  });
+
   test('a picked file that can no longer be read fails at read-blob', async () => {
     const url = URL.createObjectURL(await pngFile(8, 8));
     URL.revokeObjectURL(url);

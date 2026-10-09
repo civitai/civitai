@@ -12,6 +12,7 @@ import {
 import Router from 'next/router';
 import React from 'react';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
@@ -87,12 +88,20 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
         <>
           <AddToShowcaseMenuItem entityType="Image" entityId={imageId} />
           {isImage && (
-            <AddArtFrameMenuItem
-              entityType={CosmeticEntity.Image}
-              entityId={imageId}
-              image={image}
-              currentCosmetic={image.cosmetic}
-            />
+            <>
+              <AddArtFrameMenuItem
+                entityType={CosmeticEntity.Image}
+                entityId={imageId}
+                image={image}
+                currentCosmetic={image.cosmetic}
+              />
+              <AddEventDecorationMenuItem
+                entityType={CosmeticEntity.Image}
+                entityId={imageId}
+                image={image}
+                currentCosmetic={image.eventDecoration}
+              />
+            </>
           )}
         </>
       )}

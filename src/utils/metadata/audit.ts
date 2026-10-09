@@ -148,15 +148,30 @@ export function isOverLengthRefusal(triggers: PromptTrigger[]) {
 }
 
 /**
+ * True when there is nothing to audit: the prompt AND the negative prompt are both blank.
+ *
+ * This is the one predicate for the empty-input fast path — `auditPromptEnriched`,
+ * `classifyPromptServer` and `auditPromptServer` all skip on it. Keying the fast path on the prompt
+ * alone left a non-empty negative prompt unaudited whenever the prompt was empty.
+ */
+export function isBlankAuditInput(prompt?: string | null, negativePrompt?: string | null) {
+  return !prompt?.trim() && !negativePrompt?.trim();
+}
+
+/**
  * Enriched version of auditPrompt that returns structured trigger data alongside blockedFor.
  * Used server-side for UserBan records, moderator UI, and the false-positive allowlist system.
+ *
+ * An empty prompt does not skip the audit when the negative prompt is non-empty: the negative
+ * prompt then gets every check it gets beside a non-empty prompt, including the length cap.
  */
 export const auditPromptEnriched = (
   prompt: string,
   negativePrompt?: string,
   checkProfanity?: boolean
 ): EnrichedAuditResult => {
-  if (!prompt.trim().length) return { blockedFor: [], triggers: [], success: true };
+  if (isBlankAuditInput(prompt, negativePrompt))
+    return { blockedFor: [], triggers: [], success: true };
   // Block over-length input outright (#2727 M2). Truncating then scanning would let
   // a banned word buried past MAX_AUDIT_PROMPT_LENGTH evade the regex layer; a
   // prompt this long is anomalous so we refuse it rather than scan a truncated copy.

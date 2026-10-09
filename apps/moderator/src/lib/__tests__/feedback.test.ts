@@ -117,6 +117,7 @@ describe('feedbackAreaOptions', () => {
    */
   it('defaults its known areas to the shared registry the producer writes', () => {
     expect(feedbackAreaOptions([])).toEqual([
+      'app-block',
       'apps-marketplace',
       'bitdex-image-feed',
       'site-bug-report',

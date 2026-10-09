@@ -117,7 +117,10 @@ import {
   enqueueCollectionRebuild,
   getCollectionIdsForModelCascade,
 } from '~/server/services/collection-media-index';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
 import {
   getImagesForModelVersion,
@@ -1131,19 +1134,29 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, paidAccessGates] =
-    await withSpan('model:getAll:parallelFetch', () =>
-      Promise.all([
-        userBasicCache.fetch(userIds),
-        getProfilePicturesForUsers(userIds),
-        getCosmeticsForUsers(userIds),
-        dataForModelsCache.fetch(modelIds),
-        includeCosmetics
-          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-        getModelPaidAccessGates(modelIds),
-      ])
-    );
+  const [
+    userBasicData,
+    profilePictures,
+    userCosmetics,
+    modelData,
+    cosmetics,
+    paidAccessGates,
+    eventDecorations,
+  ] = await withSpan('model:getAll:parallelFetch', () =>
+    Promise.all([
+      userBasicCache.fetch(userIds),
+      getProfilePicturesForUsers(userIds),
+      getCosmeticsForUsers(userIds),
+      dataForModelsCache.fetch(modelIds),
+      includeCosmetics
+        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+      getModelPaidAccessGates(modelIds),
+      includeCosmetics
+        ? getEventDecorationsForEntity({ ids: modelIds, entity: 'Model' })
+        : undefined,
+    ])
+  );
   for (const model of models) {
     const gate = paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
@@ -1239,6 +1252,7 @@ export const getModelsRaw = async ({
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
+            eventDecoration: eventDecorations?.[model.id] ?? null,
             metricPrivacy: getMetaMetricPrivacy(meta),
           };
         })

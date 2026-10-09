@@ -1,5 +1,5 @@
 import { Button, Progress } from '@mantine/core';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
@@ -23,6 +23,7 @@ import { hideNotification, showNotification } from '@mantine/notifications';
 import { downloadGeneratorImages } from '~/utils/generator-import';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { isPickSnapshot } from '~/utils/unreadable-pick';
 
 const max = POST_IMAGE_LIMIT;
 
@@ -72,8 +73,19 @@ export function PostImageDropzone({
   const submittedUrlsRef = useRef(new Set<string>());
 
   // #region [upload images]
-  const { files, canAdd, error, upload, progress, loading } = useMediaUpload<{ postId: number }>({
+  // Dropped files still backed by the device. Only their read failures are shown as unreadable
+  // picks: an import, or an in-memory copy taken at the pick, fails only on its own content.
+  const pickedFilesRef = useRef(new WeakSet<File>());
+  const [unreadablePicks, setUnreadablePicks] = useState(0);
+  const { files, canAdd, remaining, error, upload, progress, loading } = useMediaUpload<{
+    postId: number;
+  }>({
     count: images.length,
+    onUnreadable: (file) => {
+      if (!pickedFilesRef.current.has(file)) return false;
+      setUnreadablePicks((n) => n + 1);
+      return true;
+    },
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
@@ -148,6 +160,8 @@ export function PostImageDropzone({
   }
 
   const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
+    for (const { file } of args) if (!isPickSnapshot(file)) pickedFilesRef.current.add(file);
+    setUnreadablePicks(0);
     handleUpload(args);
   };
 
@@ -216,6 +230,8 @@ export function PostImageDropzone({
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
+          unreadablePicks={unreadablePicks}
+          pickLimit={remaining}
           loading={createPostMutation.isPending || loading}
           className="rounded-lg"
         />
