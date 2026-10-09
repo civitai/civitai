@@ -322,6 +322,83 @@ export async function getLegendStatus(userId: number, source?: ShowcaseSource) {
 }
 
 /**
+ * Every Creator Journey milestone a user has earned, for their public profile. Unearned rows are never
+ * read, so nothing here can hint at one, and the score itself stays on the owner's journey page. An
+ * earned hidden milestone is still a secret to everyone but its owner: they get its art, never its name.
+ * Badges the owner hides on their profile are left out, and so is everything for a banned or deleted user.
+ */
+export async function getProfileAchievements({
+  userId,
+  viewerId,
+}: {
+  userId: number;
+  viewerId?: number;
+}) {
+  const [user, rows] = await Promise.all([
+    dbRead.user.findUnique({
+      where: { id: userId },
+      select: { bannedAt: true, deletedAt: true, profile: { select: { privacySettings: true } } },
+    }),
+    dbRead.userCreatorMilestone.findMany({
+      where: { userId },
+      select: {
+        achievedAt: true,
+        seenAt: true,
+        milestone: {
+          select: {
+            key: true,
+            track: true,
+            threshold: true,
+            hidden: true,
+            name: true,
+            description: true,
+            cosmeticId: true,
+            cosmetic: { select: { data: true } },
+          },
+        },
+      },
+      orderBy: [{ achievedAt: 'desc' }, { milestoneKey: 'asc' }],
+    }),
+  ]);
+  if (!user || user.bannedAt || user.deletedAt) return { tiers: [], achievements: [] };
+
+  const privacy = user.profile?.privacySettings as PrivacySettingsSchema | null | undefined;
+  const isOwner = viewerId === userId;
+  const shown = rows.filter((row) => isBadgeShownOnProfile(privacy, row.milestone.cosmeticId));
+  // A hidden tier is a secret like any other, so a visitor sees it with the secret achievements.
+  const isTier = (milestone: (typeof rows)[number]['milestone']) =>
+    milestone.track === 'score' && milestone.threshold != null && (!milestone.hidden || isOwner);
+
+  const tiers = shown
+    .filter(({ milestone }) => isTier(milestone))
+    .sort((a, b) => (a.milestone.threshold as number) - (b.milestone.threshold as number))
+    .map((row) => ({
+      key: row.milestone.key,
+      name: row.milestone.name,
+      badgeUrl: (row.milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null,
+      achievedAt: achievedAtIsObserved(row) ? row.achievedAt : null,
+    }));
+
+  const achievements = shown
+    .filter(({ milestone }) => !isTier(milestone))
+    .map((row, index) => {
+      const { milestone } = row;
+      const secret = milestone.hidden && !isOwner;
+      return {
+        // Keys can name the milestone, so a secret one is keyed by its place in this list.
+        key: secret ? `secret:${index}` : milestone.key,
+        track: milestone.hidden ? 'secret' : milestone.track,
+        name: secret ? null : milestone.name,
+        description: secret ? null : milestone.description,
+        badgeUrl: (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null,
+        achievedAt: achievedAtIsObserved(row) ? row.achievedAt : null,
+      };
+    });
+
+  return { tiers, achievements };
+}
+
+/**
  * Whether this is the owner's first-ever published model or article, published recently. Reads the
  * primary: the first call lands right after publish, when a replica can still show it unpublished, and
  * the client holds the answer for the session.
