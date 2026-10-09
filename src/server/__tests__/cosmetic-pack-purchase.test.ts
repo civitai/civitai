@@ -86,7 +86,7 @@ describe('assertPackPurchasable', () => {
   it('refuses a pack containing an event-gated member', async () => {
     const hat = foreign({
       type: CosmeticType.ContentDecoration,
-      data: { type: 'hat', event: 'birthday2026', team: 'Pink' },
+      data: { type: 'hat', event: 'any-event', team: 'any-team' },
     });
     await expect(call([member(), hat])).rejects.toThrow(/This pack is not available/);
   });

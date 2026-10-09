@@ -8,7 +8,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
  * rules are per event, not per cosmetic kind, so a later event reuses them.
  */
 
-export type ShopEvent = {
+type ShopEvent = {
   name: string;
   startDate: Date;
   endDate: Date;
@@ -35,7 +35,7 @@ function loadEvents(): Promise<ShopEvent[]> {
 
 // "Paid Buzz only": Blue is refused, the domain currency (green or yellow) is
 // accepted. Kept as one check so changing which currencies count is one line.
-export function eventItemPaymentAllowed(payWith: 'default' | 'blue-first' | undefined) {
+function eventItemPaymentAllowed(payWith: 'default' | 'blue-first' | undefined) {
   return (payWith ?? 'default') === 'default';
 }
 
@@ -48,20 +48,18 @@ export async function assertEventShopItemPurchasable({
   userId,
   data,
   payWith,
-  now = new Date(),
-  events,
 }: {
   userId: number;
   data: EventItemData;
   payWith?: 'default' | 'blue-first';
-  now?: Date;
-  events?: ShopEvent[];
 }) {
   if (!eventItemPaymentAllowed(payWith))
     throw throwBadRequestError("This item can't be bought with Blue Buzz");
 
-  const event = (events ?? (await loadEvents())).find((e) => e.name === data.event);
-  if (!event || now < event.startDate || now > event.endDate)
+  const now = new Date();
+  const event = (await loadEvents()).find((e) => e.name === data.event);
+  // endDate is exclusive.
+  if (!event || now < event.startDate || now >= event.endDate)
     throw throwBadRequestError('This item is not available');
 
   if (data.team === undefined) return;
@@ -80,18 +78,12 @@ export async function assertEventShopItemPurchasable({
  * viewers only for their own team. An item naming an unregistered event shows
  * to nobody.
  */
-export function createEventShopItemVisibility({
-  userId,
-  events,
-}: {
-  userId?: number;
-  events?: ShopEvent[];
-}) {
+export function createEventShopItemVisibility({ userId }: { userId?: number }) {
   const teams = new Map<string, Promise<string>>();
 
   return async (data: unknown) => {
     if (!isEventShopItemData(data)) return true;
-    const event = (events ?? (await loadEvents())).find((e) => e.name === data.event);
+    const event = (await loadEvents()).find((e) => e.name === data.event);
     if (!event) return false;
     if (data.team === undefined || !userId) return true;
 

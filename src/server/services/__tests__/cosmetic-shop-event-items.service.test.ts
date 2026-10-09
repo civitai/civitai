@@ -2,7 +2,7 @@ import type * as PromClient from '~/server/prom/client';
 import type * as RedisCaches from '~/server/redis/caches';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mocks, birthday } = vi.hoisted(() => {
+const { mocks } = vi.hoisted(() => {
   const mocks = {
     shopItemFindUnique: vi.fn(),
     shopItemUpdate: vi.fn(),
@@ -18,18 +18,25 @@ const { mocks, birthday } = vi.hoisted(() => {
     sectionFindMany: vi.fn(),
     getUserTeam: vi.fn(),
   };
-  // A stand-in for the registered event the hats name. Dates are set per test.
-  const birthday = {
-    name: 'birthday2026',
-    startDate: new Date('2026-11-11T00:00:00Z'),
-    endDate: new Date('2026-11-25T00:00:00Z'),
-    teams: ['Yellow', 'Blue', 'Pink', 'Green'],
-    getUserTeam: (userId: number) => mocks.getUserTeam(userId) as Promise<string>,
-  };
-  return { mocks, birthday };
+  return { mocks };
 });
 
-vi.mock('~/server/events', () => ({ events: [birthday] }));
+// A stand-in for the registered birthday event, built from the same constants
+// the real definition uses; only the team lookup is faked.
+vi.mock('~/server/events', async () => {
+  const c = await import('~/shared/constants/birthday2026.constants');
+  return {
+    events: [
+      {
+        name: c.BIRTHDAY_2026_EVENT,
+        startDate: c.BIRTHDAY_2026_STARTS_AT,
+        endDate: c.BIRTHDAY_2026_ENDS_AT,
+        teams: [...c.BIRTHDAY_2026_TEAMS],
+        getUserTeam: (userId: number) => mocks.getUserTeam(userId) as Promise<string>,
+      },
+    ],
+  };
+});
 vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
   dbReadFallbackCounter: { inc: vi.fn() },
@@ -56,6 +63,12 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 import { getShopSectionsWithItems, purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
+import {
+  BIRTHDAY_2026_ENDS_AT,
+  BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_STARTS_AT,
+  BIRTHDAY_2026_TEAMS,
+} from '~/shared/constants/birthday2026.constants';
 
 const fwd =
   (fn: (...a: unknown[]) => unknown) =>
@@ -79,10 +92,13 @@ dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unk
 const BUYER_ID = 1;
 const SHOP_ITEM_ID = 42;
 const PRICE = 1500;
-const DURING_EVENT = new Date('2026-11-15T12:00:00Z');
-const AFTER_EVENT = new Date('2026-11-26T00:00:00Z');
+const DURING_EVENT = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * 60 * 60 * 1000);
+// The end is exclusive: the first instant of ENDS_AT is already after the event.
+const AFTER_EVENT = BIRTHDAY_2026_ENDS_AT;
+const [, BLUE_TEAM, PINK_TEAM] = BIRTHDAY_2026_TEAMS;
+const UNREGISTERED_EVENT = 'not-a-registered-event';
 
-const hatData = (team: string, event = 'birthday2026') => ({
+const hatData = (team: string, event: string = BIRTHDAY_2026_EVENT) => ({
   type: 'hat',
   event,
   team,
@@ -90,7 +106,11 @@ const hatData = (team: string, event = 'birthday2026') => ({
   url: 'hat.png',
 });
 
-const hatRow = ({ team = 'Pink', event = 'birthday2026', meta = {} as object } = {}) => ({
+const hatRow = ({
+  team = PINK_TEAM as string,
+  event = BIRTHDAY_2026_EVENT as string,
+  meta = {} as object,
+} = {}) => ({
   id: SHOP_ITEM_ID,
   status: 'Published',
   listed: true,
@@ -99,7 +119,7 @@ const hatRow = ({ team = 'Pink', event = 'birthday2026', meta = {} as object } =
   availableFrom: null,
   availableTo: null,
   unitAmount: PRICE,
-  title: 'Cone Party Hat - Pink',
+  title: 'Cone Party Hat',
   meta,
   addedById: 999,
   cosmetic: { type: 'ContentDecoration', createdById: null, data: hatData(team, event) },
@@ -128,7 +148,7 @@ describe('buying an event-gated item (team hat)', () => {
     vi.setSystemTime(DURING_EVENT);
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.shopItemFindUnique.mockResolvedValue(hatRow());
-    mocks.getUserTeam.mockResolvedValue('Pink');
+    mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
     mocks.userCosmeticFindFirst.mockResolvedValue(null);
     mocks.userCosmeticCreate.mockImplementation(async ({ data }) => data);
     mocks.createMultiTx.mockImplementation(async ({ fromAccountTypes }) =>
@@ -154,7 +174,7 @@ describe('buying an event-gated item (team hat)', () => {
   });
 
   it("refuses another team's colour before any charge", async () => {
-    mocks.getUserTeam.mockResolvedValue('Blue');
+    mocks.getUserTeam.mockResolvedValue(BLUE_TEAM);
 
     await expect(purchase()).rejects.toThrow("You can only buy this in your own team's colour");
     expect(mocks.getUserTeam).toHaveBeenCalledWith(BUYER_ID);
@@ -194,7 +214,7 @@ describe('buying an event-gated item (team hat)', () => {
   });
 
   it('refuses an item naming an event that is not registered', async () => {
-    mocks.shopItemFindUnique.mockResolvedValue(hatRow({ event: 'birthday2025' }));
+    mocks.shopItemFindUnique.mockResolvedValue(hatRow({ event: UNREGISTERED_EVENT }));
 
     await expect(purchase()).rejects.toThrow('This item is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
@@ -247,16 +267,16 @@ describe('the shop lists event-gated items per viewer', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.getBlockedPairIds.mockResolvedValue([]);
-    mocks.getUserTeam.mockResolvedValue('Pink');
+    mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
     dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({}));
     mocks.sectionFindMany.mockResolvedValue([
       section(10, [
-        listedItem(PINK, hatData('Pink')),
-        listedItem(BLUE, hatData('Blue')),
-        listedItem(UNKNOWN_EVENT, hatData('Pink', 'birthday2025')),
+        listedItem(PINK, hatData(PINK_TEAM)),
+        listedItem(BLUE, hatData(BLUE_TEAM)),
+        listedItem(UNKNOWN_EVENT, hatData(PINK_TEAM, UNREGISTERED_EVENT)),
         listedItem(ORDINARY, { url: 'frame.png' }),
       ]),
-      section(20, [listedItem(BLUE + 10, hatData('Blue'))]),
+      section(20, [listedItem(BLUE + 10, hatData(BLUE_TEAM))]),
     ]);
   });
 
