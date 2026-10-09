@@ -74,11 +74,13 @@ const WORN = {
 let host: HTMLDivElement | undefined;
 let root: ReturnType<typeof createRoot> | undefined;
 const outerClick = vi.fn();
+const outerKeyDown = vi.fn();
 beforeEach(() => {
   wornHat.useQuery.mockReset().mockImplementation(() => wornHat.result);
   wornHat.result = { data: WORN, isLoading: false, isError: false };
   viewer.current = undefined;
   outerClick.mockReset();
+  outerKeyDown.mockReset();
   myHats.fetch.mockReset();
   dialogs.trigger.mockReset();
   notify.mockReset();
@@ -100,7 +102,7 @@ function render(element: React.ReactElement) {
         // No transitions, so the dropdown is there as soon as it opens.
         { env: 'test' },
         // Anything above the card that listens for clicks, like a feed's row handler.
-        React.createElement('div', { onClick: outerClick }, element)
+        React.createElement('div', { onClick: outerClick, onKeyDown: outerKeyDown }, element)
       )
     )
   );
@@ -197,7 +199,32 @@ describe('a hatted feed card', () => {
     expect(popover()!.textContent).toContain('1.2k');
   });
 
-  it('closes on Escape', () => {
+  // A click leaves focus on the hat, outside the dropdown that handles Escape itself.
+  it('closes on Escape pressed on the hat that opened it', () => {
+    renderCard();
+    hatButton().focus();
+    clickHat();
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    act(() => {
+      hatButton().dispatchEvent(escape);
+    });
+    expect(popover()).toBeNull();
+    expect(enabledFlags().at(-1)).toBe(false);
+    // Nothing else (a modal the card sits in) also takes this Escape.
+    expect(outerKeyDown).not.toHaveBeenCalled();
+  });
+
+  // With nothing open, Escape on a focused hat still reaches whatever is around the card.
+  it('leaves Escape alone while closed', () => {
+    renderCard();
+    hatButton().focus();
+    act(() => {
+      hatButton().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(outerKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on Escape inside the popover', () => {
     renderCard();
     clickHat();
     act(() => {

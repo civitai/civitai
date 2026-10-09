@@ -107,6 +107,12 @@ function CardHat({
         setBurst((x) => x + 1);
         setOpened((x) => !x);
       }}
+      onKeyDown={(e) => {
+        // The popover's own Escape handler sits on its dropdown, but a click leaves focus here.
+        if (e.key !== 'Escape' || !opened) return;
+        e.stopPropagation();
+        setOpened(false);
+      }}
     >
       <EdgeMedia
         src={url}
