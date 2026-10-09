@@ -30,10 +30,14 @@ export type EarningsPoint = { date: string; source: EarningsSource; total: numbe
 // `early-access-` for a timed window. Rows written before the split are all `early-access-`, whichever
 // product they were, so both must be matched here and neither can be dropped.
 const ACCESS_SALE_PREFIXES = `(externalTransactionId LIKE 'early-access-%' OR externalTransactionId LIKE 'permanent-access-%')`;
-// Only the creator's *receiving* rows count as earnings: tip / compensation / licenseFee (+ the `'27'` mislabel) /
-// cosmetic `sell`, plus `purchase` rows that are access sales (a bare `purchase` is mostly the creator
-// topping up their own buzz — see handoff doc §gotchas).
-const RECEIVING_TYPES = `(type IN ('tip','compensation','licenseFee','27','sell') OR (type = 'purchase' AND ${ACCESS_SALE_PREFIXES}))`;
+// A `tip` from account 0 is not from a user. Until 2025-10-13 the payout job paid generation tips that way, keyed
+// `creator-tip-`; every other one is a refund or manual credit (support tickets, generation refunds,
+// restitution) that support files as a tip, and is not earnings.
+const PRE_SPLIT_GENERATION_TIP = `(type = 'tip' AND fromAccountId = 0 AND externalTransactionId LIKE 'creator-tip-%')`;
+// Only the creator's *receiving* rows count as earnings: tips from users and the old generation tips /
+// compensation / licenseFee (+ the `'27'` mislabel) / cosmetic `sell`, plus `purchase` rows that are access sales
+// (a bare `purchase` is mostly the creator topping up their own buzz — see handoff doc §gotchas).
+const RECEIVING_TYPES = `(type IN ('compensation','licenseFee','27','sell') OR (type = 'tip' AND fromAccountId != 0) OR ${PRE_SPLIT_GENERATION_TIP} OR (type = 'purchase' AND ${ACCESS_SALE_PREFIXES}))`;
 // `from`/`to` are validated ISO dates (parseRange), so they're interpolated directly; the upper bound is
 // exclusive-next-day so it's inclusive of the whole `to` day.
 const whereClause = (uid: number, from: string, to: string) =>
@@ -42,8 +46,9 @@ const whereClause = (uid: number, from: string, to: string) =>
 const CURRENCY_LIST = BUZZ_CURRENCIES.map((c) => `'${c}'`).join(',');
 
 // Generation tips are paid as `compensation`; only the payout job's externalTransactionId prefix tells them
-// apart, so that arm must come before plain compensation. Tips paid before the split are inside compensation.
-export const SOURCE_EXPR = `multiIf(type = 'tip', 'tip', type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%', 'generationTip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
+// apart, so that arm must come before plain compensation. Tips paid between 2025-10-13 and the split are inside
+// compensation; tips paid before that are `tip` rows from account 0.
+export const SOURCE_EXPR = `multiIf(${PRE_SPLIT_GENERATION_TIP}, 'generationTip', type = 'tip', 'tip', type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%', 'generationTip', type = 'compensation', 'compensation', type IN ('licenseFee','27'), 'licenseFee', type = 'sell', 'cosmeticSale', 'accessSale')`;
 
 async function fetchSummary({
   userId,
@@ -107,7 +112,7 @@ async function fetchSeries({
 
 // By-source × currency totals over the range — the /earnings source cards and the dashboard headline.
 export const getEarningsSummary = createCache({
-  name: 'earnings:summary:v2',
+  name: 'earnings:summary:v3',
   fetch: fetchSummary,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -116,7 +121,7 @@ export const getEarningsSummary = createCache({
 export const getEarningsSeries = createCache({
   // Keys derive from the args, not the payload, so a stored value outlives a change to the returned shape. Bump
   // the suffix whenever that shape or the numbers change.
-  name: 'earnings:series:v3',
+  name: 'earnings:series:v4',
   fetch: fetchSeries,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -150,7 +155,7 @@ async function fetchMonthly({ userId }: { userId: number }): Promise<MonthlyEarn
 }
 
 export const getMonthlyEarnings = createCache({
-  name: 'earnings:monthly',
+  name: 'earnings:monthly:v2',
   fetch: fetchMonthly,
   ttlSeconds: 3600,
 }).get;
