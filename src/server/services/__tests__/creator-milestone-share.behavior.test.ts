@@ -24,6 +24,7 @@ import type * as MetricExcluded from '~/server/services/metric-excluded-users.se
 import type * as JourneyFlag from '~/server/services/creator-journey-flag.service';
 import {
   getMilestoneShareCard,
+  getShareableTierSlugs,
   isMilestoneShareable,
 } from '~/server/services/creator-milestone-share.service';
 import {
@@ -293,6 +294,51 @@ describe('profile og:image swap', () => {
     expect(milestoneOgEndpoint(CREATOR, 'legend', true)).toBe(
       `/api/og?type=milestone&id=${CREATOR}.legend`
     );
+  });
+});
+
+describe('journey page share buttons', () => {
+  const tierSlugs = (userId = CREATOR) => getShareableTierSlugs(userId, { pg, now: NOW });
+
+  // The button and the card read one rule. If they drift, a shared link previews the bare profile.
+  it('offers exactly the tiers whose card renders', async () => {
+    await addUser(CREATOR);
+    const hidden = await attachBadge('star');
+    await grant(CREATOR, 'kindle', 'later');
+    await grant(CREATOR, 'nova', 'silent');
+    await grant(CREATOR, 'star');
+    await grant(CREATOR, 'supernova');
+    await setPrivacy(CREATOR, { hiddenBadgeIds: [hidden] });
+
+    expect(await tierSlugs()).toEqual(['kindle', 'supernova']);
+    const perTier = [];
+    for (const { slug } of SCORE_TIERS)
+      if (await isMilestoneShareable({ userId: CREATOR, slug }, { pg, now: NOW }))
+        perTier.push(slug);
+    expect(perTier).toEqual(['kindle', 'supernova']);
+  });
+
+  it('offers nothing when the owner’s flag is off or the owner is muted', async () => {
+    const MUTED = 11;
+    await addUser(CREATOR);
+    await addUser(MUTED, { muted: true });
+    await grant(CREATOR, 'supernova');
+    await grant(MUTED, 'supernova');
+
+    expect(await tierSlugs(MUTED)).toEqual([]);
+    mocks.flagOn.mockResolvedValue(false);
+    expect(await tierSlugs(CREATOR)).toEqual([]);
+  });
+
+  it('checks the owner’s flag once, and not at all with nothing to share', async () => {
+    await addUser(CREATOR);
+    expect(await tierSlugs()).toEqual([]);
+    expect(mocks.flagOn).not.toHaveBeenCalled();
+
+    await grant(CREATOR, 'kindle');
+    await grant(CREATOR, 'supernova');
+    expect(await tierSlugs()).toEqual(['kindle', 'supernova']);
+    expect(mocks.flagOn).toHaveBeenCalledTimes(1);
   });
 });
 

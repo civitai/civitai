@@ -6,14 +6,39 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 
 const mocks = vi.hoisted(() => ({
-  viewer: null as { id: number; meta: { scores: { total: number } } } | null,
+  viewer: null as {
+    id: number;
+    username?: string;
+    meta: { scores: { total: number } };
+  } | null,
+  shareable: undefined as boolean | undefined,
+  shareQueries: [] as { input: unknown; enabled: boolean }[],
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUser>()),
   useCurrentUser: () => mocks.viewer,
 }));
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof Trpc>()),
+  trpc: {
+    creatorJourney: {
+      isMilestoneShareable: {
+        useQuery: (input: unknown, { enabled }: { enabled: boolean }) => {
+          mocks.shareQueries.push({ input, enabled });
+          return { data: enabled ? mocks.shareable : undefined };
+        },
+      },
+    },
+  },
+}));
+// The site share popover needs the app's providers; what it is handed is what this file checks.
+vi.mock('~/components/ShareButton/ShareButton', () => ({
+  ShareButton: ({ url, title, children }: { url: string; title: string; children: never }) =>
+    React.createElement('span', { 'data-share-url': url, 'data-share-title': title }, children),
+}));
 
 import type * as CurrentUser from '~/hooks/useCurrentUser';
+import type * as Trpc from '~/utils/trpc';
 import {
   AchievementCard,
   ProfileTierCard,
@@ -41,6 +66,8 @@ afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
   mocks.viewer = null;
+  mocks.shareable = undefined;
+  mocks.shareQueries = [];
 });
 
 describe('profile achievement cards', () => {
@@ -100,5 +127,47 @@ describe('profile tier card', () => {
     expect(card.textContent).toContain('Star');
     expect(card.textContent).not.toContain('Only you see this');
     expect(card.textContent).not.toContain('824,228');
+  });
+
+  const shareLinks = (card: HTMLElement) =>
+    [...card.querySelectorAll('[data-share-url]')].map((el) => ({
+      url: el.getAttribute('data-share-url'),
+      title: el.getAttribute('data-share-title'),
+      label: el.querySelector('button')?.getAttribute('aria-label'),
+    }));
+
+  it('offers the owner a share link to the tier card when it renders', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
+    mocks.shareable = true;
+    const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
+    expect(shareLinks(card)).toEqual([
+      {
+        url: '/user/maker?milestone=star',
+        title: 'I reached Star on Civitai',
+        label: 'Share Star',
+      },
+    ]);
+    expect(mocks.shareQueries.at(-1)).toEqual({
+      input: { userId: OWNER, slug: 'star' },
+      enabled: true,
+    });
+  });
+
+  it('offers no share link when the card would not render', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
+    mocks.shareable = false;
+    expect(
+      shareLinks(mount(React.createElement(ProfileTierCard, { tier, userId: OWNER })))
+    ).toEqual([]);
+  });
+
+  // Sharing someone else's tier is the site's ordinary profile share; this button is the owner's.
+  it('never offers a visitor the share link, nor asks the server', () => {
+    mocks.viewer = { id: OWNER + 1, username: 'visitor', meta: { scores: { total: 0 } } };
+    mocks.shareable = true;
+    const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
+    expect(shareLinks(card)).toEqual([]);
+    expect(mocks.shareQueries.every((query) => !query.enabled)).toBe(true);
+    expect(mocks.shareQueries.length).toBeGreaterThan(0);
   });
 });

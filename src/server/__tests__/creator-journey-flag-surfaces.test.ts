@@ -39,7 +39,7 @@ describe('Creator Journey flag gates', () => {
     expect(procedure).toContain('isMilestoneShareable(input)');
     expect(procedure).not.toContain('isFlagProtected');
     expect(read('src/server/services/creator-milestone-share.service.ts')).toMatch(
-      /if \(!\(await isCreatorJourneyOnFor\(\{ id: userId, isModerator: row\.isModerator \}\)\)\) return null;/
+      /if \(!\(await isCreatorJourneyOnFor\(\{ id: userId, isModerator: row\.isModerator \}\)\)\) return \[\];/
     );
   });
 

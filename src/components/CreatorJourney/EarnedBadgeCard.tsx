@@ -1,4 +1,5 @@
 import { Text } from '@mantine/core';
+import type { ReactNode } from 'react';
 import { IconCalendarCheck, IconTrendingUp } from '@tabler/icons-react';
 import { earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import {
@@ -24,7 +25,15 @@ export type EarnedBadge = {
 };
 
 /** An earned badge on a spotlight card: on the journey page shelf and the profile's achievements. */
-export function EarnedBadgeCard({ badge, accent }: { badge: EarnedBadge; accent?: string }) {
+export function EarnedBadgeCard({
+  badge,
+  accent,
+  action,
+}: {
+  badge: EarnedBadge;
+  accent?: string;
+  action?: ReactNode;
+}) {
   accent ??= tierAccents[badge.key] ?? DEFAULT_ACCENT;
 
   return (
@@ -40,6 +49,7 @@ export function EarnedBadgeCard({ badge, accent }: { badge: EarnedBadge; accent?
           background: 'radial-gradient(60% 100% at 50% 0%, var(--cj-accent) 0%, transparent 100%)',
         }}
       />
+      {action && <div className="absolute right-2 top-2">{action}</div>}
       <TierBadge name={badge.name} badgeUrl={badge.badgeUrl} state="earned" size={96} />
       <Text fw={800} size="lg" lh={1.2}>
         {badge.name}
