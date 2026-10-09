@@ -169,3 +169,39 @@ export function visibilityPostApprovalPrompt(
     visibility
   )} — so most people cannot find it in the store. Set it to Everyone when you are ready.`;
 }
+
+/** The store badge for a restricted listing: a short label plus the tooltip explaining it. */
+export type VisibilityBadge = { label: string; tooltip: string };
+
+/**
+ * The badge a store card or detail page shows for a listing's RESTRICTED audience, or
+ * `null` to show nothing.
+ *
+ * Takes the viewer-scoped `restrictedAudience` from the DTO, never the raw level: the server
+ * has already decided whether this viewer may know it (`restrictedAudienceForViewer`), so a
+ * `null` here covers unset, `public`, and "this viewer is not told".
+ *
+ * 🔴 `private` IS LABELLED "Unlisted", NOT {@link visibilityLevelLabel}'s "Private". The
+ * owner's selector names the setting; this badge describes the listing to someone looking
+ * at it, and "Private" would claim an access control the system does not enforce — anyone
+ * with the URL can still open it. See {@link visibilityLevelDescription}, which is reused
+ * as the tooltip so the copy is spelled once.
+ */
+export function visibilityBadgeFor(
+  restrictedAudience: AppListingVisibility | null
+): VisibilityBadge | null {
+  // Typed as the FULL level set, not just the restricted subset, so `public` is handled by
+  // an explicit branch rather than by falling out of a switch with no case — a `public`
+  // that reached here at runtime must render nothing, never `undefined`.
+  if (restrictedAudience === null || restrictedAudience === 'public') return null;
+  // No `default`: the switch is exhaustive over the remaining levels, so a new restricted
+  // level is a compile error here rather than a silently missing badge.
+  switch (restrictedAudience) {
+    case 'testers':
+      return { label: 'Testers only', tooltip: visibilityLevelDescription('testers') };
+    case 'moderators':
+      return { label: 'Moderators only', tooltip: visibilityLevelDescription('moderators') };
+    case 'private':
+      return { label: 'Unlisted', tooltip: visibilityLevelDescription('private') };
+  }
+}

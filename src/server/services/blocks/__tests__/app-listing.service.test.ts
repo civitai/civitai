@@ -244,6 +244,9 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         // `number | null`, and the null-vs-zero suite below pins which is which.
         'openCount',
         'recommend',
+        // 🔴 VIEWER-SCOPED and DERIVED — never the raw `visibility` column, which stays off
+        // every public DTO. `null` unless the caller derived it for this viewer.
+        'restrictedAudience',
         'reviewCount',
         'slug',
         'tagline',
@@ -475,6 +478,9 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'kindData',
         'name',
         'recommend',
+        // 🔴 VIEWER-SCOPED and DERIVED — never the raw `visibility` column, which stays off
+        // every public DTO. `null` unless the caller derived it for this viewer.
+        'restrictedAudience',
         'reviewCount',
         // 🔴 DETAIL-ONLY BY DECISION, like `sourceRepoUrl` — the card allowlist above
         // asserts its ABSENCE. The pre-launch permission disclosure: the app's APPROVED
@@ -913,10 +919,14 @@ describe('listAvailableListings — query building + pagination', () => {
       limit: 20,
     });
     expect(items).toHaveLength(1);
-    // Exactly ONE $queryRaw (the id page) — the mean re-read was skipped.
-    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    // Exactly TWO $queryRaw: the id page, then the live per-page visibility-level read for
+    // the restricted-audience badge (which runs only once the page has rows). A mean
+    // re-read would be a third — and would come FIRST, consuming the queued id page.
+    expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    const idPage = mockDbRead.$queryRaw.mock.calls[0]?.[0] as { sql: string; values: unknown[] };
+    expect(idPage.sql).toContain('sort_key');
     // The pinned mean 0.25 is bound into the Bayesian key (C*m term).
-    expect(capturedValues()).toContain(0.25);
+    expect(idPage.values).toContain(0.25);
   });
 
   it('sort=top-rated with a crafted out-of-range mean cursor does NOT 500', async () => {

@@ -392,6 +392,18 @@ function applyStoreGates(
   return { scope: narrowStoreScope(rawScope), floor: applyAudienceFloor(ctx) };
 }
 
+/**
+ * The viewer the store reads use for the viewer-scoped `restrictedAudience` field. Read
+ * from the server-stamped session only — `isModerator` is the same flag
+ * `resolveViewerAudienceFloor` trusts.
+ */
+function listingViewerFromCtx(ctx: { user?: { id: number; isModerator?: boolean | null } }): {
+  userId: number | null;
+  isModerator: boolean;
+} {
+  return { userId: ctx.user?.id ?? null, isModerator: ctx.user?.isModerator === true };
+}
+
 /** Map a `SubListingError` (duck-typed, so the service stays a lazy import) to TRPC. */
 function mapSubListingError(err: unknown): TRPCError {
   if (err instanceof TRPCError) return err;
@@ -1899,6 +1911,7 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        viewer: listingViewerFromCtx(ctx),
         // Opt-in AND flag: a `ListingCard`-only caller (the related rail) must never receive a
         // `SubListingCard` just because the viewer has the flag.
         includeSubListings:
@@ -2018,6 +2031,7 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        viewer: listingViewerFromCtx(ctx),
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;

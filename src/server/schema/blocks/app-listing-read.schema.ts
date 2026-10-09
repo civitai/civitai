@@ -2,6 +2,7 @@ import * as z from 'zod';
 
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
+import type { RestrictedListingAudience } from '~/shared/utils/app-listing-visibility';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH schemas + public DTOs.
@@ -283,6 +284,20 @@ export type ListingCard = {
    * than needing a backfill.
    */
   openCount: number | null;
+  /**
+   * The listing's RESTRICTED audience as THIS VIEWER may know it, for the store badge
+   * ("Testers only" / "Moderators only" / "Unlisted") — or `null`, which renders nothing.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION — A DERIVED, VIEWER-SCOPED VALUE, NOT THE `visibility`
+   * COLUMN. The raw level is an owner-only setting (see `ListingVisibilityMenuModal`), so it
+   * is never projected. This is set only for the owner, a moderator, or a viewer whose cohort
+   * the level already admits — `restrictedAudienceForViewer` is the one rule. `null` covers
+   * unset, `public`, the manual-apply column being absent, and "this viewer is not told".
+   *
+   * Not served by the public REST `GET /api/v1/apps` — its handler strips it (the field is
+   * always `null` there, and adding it would change a documented contract for nothing).
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   kindData: ListingCardKindData;
 };
 
@@ -313,6 +328,21 @@ export type SubListingCard = {
 };
 
 export type StoreGridItem = ListingCard | SubListingCard;
+
+/**
+ * Drop the viewer-scoped fields from a store DTO before it crosses the public REST boundary.
+ *
+ * `GET /api/v1/apps` and `/api/v1/apps/{slug}` are a hand-documented published contract and
+ * always read as an anonymous, floor-`public` viewer, so `restrictedAudience` is `null` there
+ * by construction. Serving a key that can only ever be `null` would change the documented
+ * response shape for nothing, so both handlers strip it.
+ */
+export function withoutViewerScopedFields<T extends { restrictedAudience: unknown }>(
+  dto: T
+): Omit<T, 'restrictedAudience'> {
+  const { restrictedAudience: _viewerScoped, ...rest } = dto;
+  return rest;
+}
 
 export type ListingGalleryScreenshot = {
   url: string;
@@ -574,6 +604,13 @@ export type ListingDetail = {
    * the MANUAL-APPLY migration is outstanding.
    */
   betaMessage: string | null;
+  /**
+   * Same viewer-scoped restricted audience as `ListingCard.restrictedAudience`, for the
+   * detail header's badge. 🔴 `private` admits no cohort, so it may reach only the owner and
+   * moderators — `restrictedAudienceForViewer` decides, not this read's caller.
+   * Stripped from the public REST `GET /api/v1/apps/{slug}` response, like the card's.
+   */
+  restrictedAudience: RestrictedListingAudience | null;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;

@@ -270,6 +270,7 @@ function base(over: Partial<ListingCard>): ListingCard {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     openCount: 0,
+    restrictedAudience: null,
     kindData: {
       kind: 'onsite',
       appBlockId: 'blk-1',
@@ -752,8 +753,9 @@ describe('AppListingCard', () => {
    * NARROWING OF THE CLAIM, NOT A SUBSTITUTION OF CONVENIENCE. This suite used to
    * measure two cards' `a[href^="/user/"]` chips. The store card no longer renders
    * an author chip at all, and the recommend rollup left the meta block in the same
-   * change — so the only content still positioned by the title's height is the two
-   * conditional badges and the tagline. The action row and the stats line below it
+   * change — so the only content still positioned by the title's height is the
+   * conditional badge row (Beta / restricted-visibility / owner Incomplete) and the
+   * tagline. The action row and the stats line below it
    * are bottom-pinned by `mt="auto"`, so measuring THEM would pass with the
    * reservation deleted and would be a guard on nothing. The tagline is the
    * shallowest thing the reservation still moves, so it is what this measures.
@@ -2164,5 +2166,76 @@ describe('AppListingCard — the beta badge', () => {
     renderWithProviders(<AppListingCard card={card as never} canOpenPage />);
     await expect.element(page.getByTestId('apps-listing-card-beta')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('this must never render on a card');
+  });
+});
+
+/**
+ * The RESTRICTED-VISIBILITY badge ("Testers only" / "Moderators only" / "Unlisted").
+ *
+ * The label/tooltip decisions are pinned in the BLOCKING unit tier
+ * (`__tests__/listingVisibilityCopy.test.ts` → `visibilityBadgeFor`); this suite pins only
+ * that the card renders what that function returns, where, and that it does not add a
+ * stacked row to the meta block. Absences are read off `querySelector` / `textContent`
+ * (the `.not.toBeInTheDocument()` matcher is inert here — civitai/civitai#4197), each
+ * after a positive control.
+ */
+describe('AppListingCard — the restricted-visibility badge', () => {
+  test.each([
+    ['testers', 'Testers only'],
+    ['moderators', 'Moderators only'],
+    ['private', 'Unlisted'],
+  ] as const)('restrictedAudience=%s renders "%s"', async (restrictedAudience, label) => {
+    renderWithProviders(<AppListingCard card={base({ restrictedAudience })} canOpenPage />);
+    const badge = page.getByTestId('apps-listing-card-visibility');
+    await expect.element(badge).toBeInTheDocument();
+    expect(badge.element().textContent).toBe(label);
+  });
+
+  test('renders NO badge when restrictedAudience is null', async () => {
+    renderWithProviders(<AppListingCard card={base({ restrictedAudience: null })} canOpenPage />);
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    expect(document.querySelector('[data-testid="apps-listing-card-visibility"]')).toBeNull();
+    for (const label of ['Testers only', 'Moderators only', 'Unlisted']) {
+      expect(document.body.textContent).not.toContain(label);
+    }
+  });
+
+  test('🔴 shares ONE line with the Beta badge — the meta block grows no stacked row', async () => {
+    renderWithProviders(
+      <Sized width={494} card={base({ isBeta: true, restrictedAudience: 'testers' })} />
+    );
+    const beta = page.getByTestId('apps-listing-card-beta');
+    const vis = page.getByTestId('apps-listing-card-visibility');
+    await expect.element(beta).toBeInTheDocument();
+    await expect.element(vis).toBeInTheDocument();
+    // Same wrapping row element, and the same visual line at a width with room for both.
+    const row = page.getByTestId('apps-listing-card-badges').element();
+    expect(beta.element().closest('[data-testid="apps-listing-card-badges"]')).toBe(row);
+    expect(vis.element().closest('[data-testid="apps-listing-card-badges"]')).toBe(row);
+    expect(sameLine(beta.element(), vis.element()), 'Beta and the visibility badge wrapped').toBe(
+      true
+    );
+  });
+
+  test('🔴 adding the visibility badge beside Beta does not move the TAGLINE', async () => {
+    // The relationship the title reservation protects is "the tagline sits at one y". A
+    // second badge stacked as its own row would push it down by a badge height; in the
+    // shared row it must not move at all.
+    renderWithProviders(
+      <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+        <Sized width={494} card={base({ slug: 'one', name: 'One', isBeta: true })} />
+        <Sized
+          width={494}
+          card={base({ slug: 'two', name: 'Two', isBeta: true, restrictedAudience: 'moderators' })}
+        />
+      </div>
+    );
+    await expect.element(page.getByTestId('apps-listing-card-visibility')).toBeInTheDocument();
+    const taglines = Array.from(document.querySelectorAll('p, div')).filter(
+      (el) => el.children.length === 0 && el.textContent === 'A handy app'
+    );
+    expect(taglines, 'expected one tagline per card').toHaveLength(2);
+    const [a, b] = taglines.map((el) => el.getBoundingClientRect().top);
+    expect(Math.abs(a - b), 'the visibility badge pushed the tagline down').toBeLessThan(1);
   });
 });

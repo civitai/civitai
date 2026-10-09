@@ -176,6 +176,31 @@ export async function readListingVisibilityMany(
 }
 
 /**
+ * {@link readListingVisibilityMany} on a RENDERING path — the store badge. Degrades to an
+ * EMPTY map (every badge `null`) on ANY error, not just the missing column, because a
+ * cosmetic label must not 500 the store grid; the same posture as
+ * `readListingBetaManyForRender`.
+ *
+ * 🔴 NEVER USE THIS FOR AN ADMISSION DECISION. An empty map means "show no badge"; on a gate
+ * it would read as "every level unset", which is the pre-feature rule and not fail-closed
+ * for a restricted `approved` listing. Admission keeps the propagating readers above.
+ *
+ * The missing-column case is swallowed silently inside `readListingVisibilityMany`, so what
+ * reaches the log here is a real fault (connection, timeout, permission), at fault rate.
+ */
+export async function readListingVisibilityManyForRender(
+  listingIds: readonly string[],
+  db: VisibilityReadClient
+): Promise<Map<string, ListingVisibilityRead>> {
+  try {
+    return await readListingVisibilityMany(listingIds, db);
+  } catch (err) {
+    noteDegradedVisibilityRead(err);
+    return new Map();
+  }
+}
+
+/**
  * Record that a read fell back to the pre-feature predicate, without letting the recording
  * break the page.
  *
