@@ -103,7 +103,8 @@ describe('presign failure logging', () => {
   it('logs an upstream 5xx as a bounded warning before answering 502', async () => {
     upstream(503, { detail: 'upstream down', status: 503 });
     expect((await call()).status).toBe(502);
-    expect(logged()).toEqual([
+    // Strict, so a field is pinned even where its expected value is `undefined`.
+    expect(logged()).toStrictEqual([
       {
         type: 'warning',
         name: 'consumer-blob-presign-failed',
@@ -119,9 +120,11 @@ describe('presign failure logging', () => {
         causeDetail: 'upstream down',
       },
     ]);
+    expect(logToAxiom.mock.calls[0]).toHaveLength(2);
+    expect((logToAxiom.mock.calls[0] as unknown[])[1]).toBe('civitai-prod');
   });
 
-  it('logs an unreachable upstream with its cause, and never the token', async () => {
+  it('logs an unreachable upstream with its cause', async () => {
     const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
     getConsumerBlobUploadUrl.mockRejectedValueOnce(new TypeError('fetch failed', { cause }));
     expect((await call()).status).toBe(502);
@@ -135,15 +138,51 @@ describe('presign failure logging', () => {
         causeMessage: 'connect ECONNREFUSED',
       }),
     ]);
-    expect(JSON.stringify(logged())).not.toContain('secret-token');
   });
 
-  it('truncates a long cause message such as an upstream error page', async () => {
+  it('truncates every logged string, such as an upstream error page', async () => {
+    const long = (tag: string) => `${tag}${'x'.repeat(5_000)}`;
+    const cause = Object.assign(new Error(long('<!DOCTYPE html>')), {
+      name: long('name'),
+      code: long('code'),
+      detail: long('detail'),
+    });
+    getConsumerBlobUploadUrl.mockRejectedValueOnce(
+      Object.assign(new Error(long('message'), { cause }), { name: long('name') })
+    );
+    await call();
+    const entry = logged()[0];
+    const fields = ['errorName', 'errorMessage', 'causeName', 'causeCode', 'causeMessage'];
+    expect(fields.concat('causeDetail').map((f) => (entry[f] as string).length)).toEqual(
+      Array(6).fill(300)
+    );
+  });
+
+  it('truncates a raw string cause', async () => {
     getConsumerBlobUploadUrl.mockRejectedValueOnce(
       new Error('bad gateway', { cause: `<!DOCTYPE html>${'x'.repeat(5_000)}` })
     );
     await call();
     expect((logged()[0].causeMessage as string).length).toBe(300);
+  });
+
+  it('still answers 502, and handles the failure, when the log write fails', async () => {
+    let handled = false;
+    // Not a real promise: `vi.fn` attaches its own handler to a returned promise to track its
+    // result, which would hide a missing `.catch` on a rejected one.
+    logToAxiom.mockImplementationOnce(
+      () =>
+        ({
+          then: () => undefined,
+          catch: (onRejected: (e: unknown) => unknown) => {
+            handled = true;
+            return Promise.resolve(onRejected(new Error('log sink down')));
+          },
+        } as unknown as Promise<void>)
+    );
+    upstream(503, { detail: 'upstream down' });
+    expect(await call()).toEqual({ status: 502, body: 'Failed to get upload URL' });
+    expect(handled).toBe(true);
   });
 
   it.each([

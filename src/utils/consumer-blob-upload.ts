@@ -100,7 +100,8 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
  * Presigns, retrying a 5xx, network error or timeout on `PRESIGN_RETRY_DELAYS_MS` within
  * `PRESIGN_RETRY_BUDGET_MS`, and throws the last error once it gives up. A 429 is thrown
  * at once, so the caller's Retry-After handling stays as it was. A 400/401/403 is not
- * retryable and is also thrown at once.
+ * retryable and is also thrown at once. A Retry-After on a 5xx is not read: the presign
+ * route never sends one, so the schedule applies.
  *
  * There is no abort signal to honour: `uploadConsumerBlob` takes none.
  */

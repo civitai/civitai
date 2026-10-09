@@ -146,6 +146,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -294,15 +295,18 @@ describe('uploadConsumerBlob', () => {
   it.each(['http-502', 'network-error'] as const)(
     'rides out a ~35 s presign outage (%s) and uploads with no failure report',
     async (as) => {
-      // Four failures span the first three waits plus the fourth: ~2+6+12+20 s.
+      const start = Date.now();
+      // Four failures: the fifth try, after waits of 2+6+12+20 s, succeeds.
       presignOutage = { failures: 4, as };
+      vi.spyOn(Math, 'random').mockReturnValue(0);
       const result = track(uploadConsumerBlob(jpeg()));
-      await vi.advanceTimersByTimeAsync(0);
-      expect(presignCount).toBe(1);
-      // No retry before the first 2 s wait.
-      await vi.advanceTimersByTimeAsync(1_999);
-      expect(presignCount).toBe(1);
-      await vi.advanceTimersByTimeAsync(PRESIGN_WAITS_MS.reduce((a, b) => a + b) - 1_999);
+      // The try count just before and at each cumulative wait boundary, with no jitter.
+      const counts: number[] = [];
+      for (const at of [1_999, 2_000, 7_999, 8_000, 19_999, 20_000, 39_999, 40_000]) {
+        await vi.advanceTimersByTimeAsync(at - Date.now() + start);
+        counts.push(presignCount);
+      }
+      expect(counts).toEqual([1, 2, 2, 3, 3, 4, 4, 5]);
 
       expect(presignCount).toBe(5);
       expect(FakeXHR.instances).toHaveLength(1);
@@ -381,9 +385,20 @@ describe('uploadConsumerBlob', () => {
     expect(kinds()).toEqual(['consumer blob upload failed: presign-timeout']);
   });
 
+  it('adds up to 1 s of jitter to each presign wait', async () => {
+    presignOutage = { failures: 1, as: 'http-502' };
+    vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(2_998);
+    expect(presignCount).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(presignCount).toBe(2);
+  });
+
   it('runs the presign retries again for the second attempt after a body failure', async () => {
     const result = track(uploadConsumerBlob(jpeg()));
     await vi.advanceTimersByTimeAsync(0);
+    // `failures` counts from the first presign: this fails the second (the first retry's) only.
     presignOutage = { failures: 2, as: 'http-502' };
     FakeXHR.instances[0].respond(503, 'unavailable');
     await vi.advanceTimersByTimeAsync(BACKOFF_MS + PRESIGN_WAITS_MS[0]);
