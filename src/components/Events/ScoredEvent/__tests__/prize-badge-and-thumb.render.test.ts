@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 import { MantineProvider } from '@mantine/core';
-import type * as MantineHooks from '@mantine/hooks';
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import type { act as actType } from 'react-dom/test-utils';
@@ -8,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The prize badge's URL (only an optimized, sized variant keeps the animation and transparency;
- * autoplay off gets the still file) and the "Your hats" thumbnail passing its own width to the hat.
+ * autoplay off gets the still file) and the "Your hats" thumbnail wearing a feed card's hat.
  */
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -19,23 +18,16 @@ vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useAutoplayGifs: () => autoplay,
 }));
-let measured = 0;
-// A callback ref, so a test sees which element the size is measured on.
-const measuredRef = vi.fn();
-vi.mock('@mantine/hooks', async (importOriginal) => ({
-  ...(await importOriginal<typeof MantineHooks>()),
-  useElementSize: () => ({ ref: measuredRef, width: measured, height: 0 }),
-}));
 const overlay = vi.fn();
 vi.mock('~/components/Cosmetics/EventDecoration/EventDecorationOverlay', () => ({
   EventDecorationOverlay: (props: Record<string, unknown>) => {
     overlay(props);
-    return React.createElement('div', { 'data-testid': 'hat' });
+    return React.createElement('button', { 'data-testid': 'hat' });
   },
 }));
 
 const { PrizeBadge } = await import('~/components/Events/ScoredEvent/PrizeBadge');
-const { getEventDecorationClearLeft } = await import(
+const { getEventDecorationClearLeftCss, HAT_PLAIN_CARD_NUDGE } = await import(
   '~/components/Cosmetics/EventDecoration/event-decoration-placement'
 );
 const { EventContentThumb } = await import('~/components/Events/ScoredEvent/EventContentThumb');
@@ -46,9 +38,7 @@ afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
   autoplay = true;
-  measured = 0;
   overlay.mockClear();
-  measuredRef.mockClear();
 });
 
 function render(element: React.ReactElement) {
@@ -83,36 +73,53 @@ describe('PrizeBadge', () => {
   });
 });
 
-describe('EventContentThumb hat size', () => {
+describe('EventContentThumb wears its hat as a feed card does', () => {
   const hat = { type: 'hat', url: 'hat-url' } as React.ComponentProps<
     typeof EventContentThumb
   >['hat'];
-  const thumb = () =>
-    render(React.createElement(EventContentThumb, { entityType: 'Image', image: null, hat }));
+  const thumb = (props: Record<string, unknown> = {}) =>
+    render(
+      React.createElement(EventContentThumb, { entityType: 'Image', image: null, hat, ...props })
+    );
+  const wrapperOf = (el: HTMLElement) =>
+    [...el.children].find((c) => c.tagName === 'DIV') as HTMLElement;
 
-  it("gives the hat the thumbnail's measured width, so it shrinks to fit", () => {
-    measured = 171;
-    const el = thumb();
-    expect(el.querySelector('[data-testid="hat"]')).not.toBeNull();
-    expect(overlay).toHaveBeenLastCalledWith(
-      expect.objectContaining({ placement: 'inside', cardWidth: 171 })
-    );
-    // The width is the thumbnail's own: the measuring ref is on its root.
-    const root = [...el.children].find((c) => c.tagName === 'DIV') as HTMLElement;
-    expect(measuredRef).toHaveBeenCalledWith(root);
-    // Corner content steps clear of the hat at its shrunk size, not a feed card's.
-    expect(root.style.getPropertyValue('--event-decoration-clear-left')).toBe(
-      `${getEventDecorationClearLeft(hat!, 'inside', undefined, 0, 171)}px`
-    );
-    expect(root.style.getPropertyValue('--event-decoration-clear-left')).not.toBe(
-      `${getEventDecorationClearLeft(hat!, 'inside')}px`
+  // Justin chose the feed card's hat over one shrunk to this smaller card: full size, at any width.
+  it("draws the feed's own hat on the corner, outside the clipped card", () => {
+    const wrapper = wrapperOf(thumb());
+    // The feed's own wrapper: it carries the hover-grow hook and holds the hat beside the card.
+    expect(wrapper.dataset.eventDecoration).toBe('hat');
+    const [card, worn] = [...wrapper.children] as HTMLElement[];
+    expect(card.className).toContain('overflow-hidden');
+    expect(worn.dataset.testid).toBe('hat');
+    expect(card.contains(worn)).toBe(false);
+    // No card width, so the hat is not shrunk; no room of its own, so it reaches as far as the
+    // feed's unless the container says otherwise.
+    expect(overlay.mock.lastCall?.[0]).toEqual({ decoration: hat, framed: false });
+    expect(wrapper.style.getPropertyValue('--event-decoration-allowance')).toBe('');
+    expect(wrapper.style.getPropertyValue('--event-decoration-clear-left')).toBe(
+      getEventDecorationClearLeftCss(hat!, undefined, HAT_PLAIN_CARD_NUDGE)
     );
   });
 
-  // A feed-sized hat for one frame would flash and overflow the small card.
-  it('draws no hat until the width is measured', () => {
-    measured = 0;
-    expect(thumb().querySelector('[data-testid="hat"]')).toBeNull();
+  // A hat really worn on this content opens its stats on click, as a feed card's does; a picker's
+  // candidates pass nothing, so a click there only bursts.
+  it('hands the hat the content it is worn on, and nothing when it is not', () => {
+    thumb({ wornOn: { entityType: 'Image', entityId: 9 } });
+    expect(overlay).toHaveBeenLastCalledWith(
+      expect.objectContaining({ wornOn: { entityType: 'Image', entityId: 9 } })
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    overlay.mockClear();
+    thumb();
+    expect(overlay.mock.lastCall?.[0].wornOn).toBeUndefined();
+  });
+
+  it('is a plain card with no hat', () => {
+    const card = wrapperOf(thumb({ hat: undefined }));
+    expect(card.dataset.eventDecoration).toBeUndefined();
+    expect(card.className).toContain('overflow-hidden');
     expect(overlay).not.toHaveBeenCalled();
   });
 });

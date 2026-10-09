@@ -36,6 +36,12 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof EventsUtils>()),
   useTeamColor: () => (team: string) => COLORS[team],
 }));
+// The site's Buzz colour: yellow on civitai.com, green on the green site.
+const buzzType = 'yellow';
+vi.mock('~/components/Buzz/useAvailableBuzz', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useAvailableBuzz: () => [buzzType],
+}));
 const trigger = vi.fn();
 vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger } }));
 vi.mock('~/components/CosmeticShop/CosmeticShopItemPreviewModal', () => ({

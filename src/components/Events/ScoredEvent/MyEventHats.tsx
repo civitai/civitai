@@ -1,6 +1,7 @@
 import { Button, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconArrowsMove, IconClock, IconHanger, IconPlus } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
@@ -10,12 +11,21 @@ import {
   EVENT_CARD_SURFACE,
   minutesUntilMovable,
 } from '~/components/Events/ScoredEvent/scored-event.utils';
+import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 type MyHat = RouterOutput['event']['getMyHats'][number];
 
-const CARD = `flex flex-col overflow-hidden rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
+// Not overflow-hidden: the worn hat sits on the picture's corner and reaches past the card, as on
+// a feed card. The picture rounds its own top corners to the card's (8px less the 1px border).
+const CARD = `flex flex-col rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
+const PICTURE_RADIUS = 'rounded-t-[7px]';
+// The room left of the first column is the page's gutter: the event page's lg Container's padding,
+// plus its margin once the scroll area (the nearest CSS container) is wider. A worn hat moves in
+// rather than reach past it.
+const HAT_ROOM =
+  'calc(max(0px, (100cqw - var(--container-size-lg)) / 2) + var(--mantine-spacing-md))';
 
 export function MyEventHats({
   event,
@@ -65,7 +75,7 @@ export function MyEventHats({
       <SimpleGrid
         cols={{ base: 2, md: 3, lg: 4 }}
         spacing="md"
-        style={{ gridAutoRows: '1fr' }}
+        style={{ gridAutoRows: '1fr', '--event-decoration-allowance': HAT_ROOM } as CSSProperties}
         data-testid="my-hats-grid"
       >
         {hats.map((hat) => {
@@ -83,10 +93,16 @@ export function MyEventHats({
                     entityType={hat.placedOn.entityType}
                     image={hat.placedOn.image}
                     hat={hat.data}
-                    className="rounded-none"
+                    className={PICTURE_RADIUS}
+                    wornOn={{
+                      entityType: hat.placedOn.entityType as CosmeticEntity,
+                      entityId: hat.placedOn.entityId,
+                    }}
                   />
                 ) : (
-                  <div className="grid aspect-[4/5] w-full place-items-center bg-gray-1 dark:bg-dark-7">
+                  <div
+                    className={`grid aspect-[4/5] w-full place-items-center bg-gray-1 dark:bg-dark-7 ${PICTURE_RADIUS}`}
+                  >
                     <HatArt
                       url={hat.data.url}
                       color={teamColor}

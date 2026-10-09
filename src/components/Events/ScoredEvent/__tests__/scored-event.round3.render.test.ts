@@ -34,6 +34,13 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof EventsUtils>()),
   useTeamColor: () => (team: string) => COLORS[team],
 }));
+// The site's Buzz colour: yellow on civitai.com, green on the green site.
+let buzzType: 'yellow' | 'green' = 'yellow';
+vi.mock('~/components/Buzz/useAvailableBuzz', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useAvailableBuzz: () => [buzzType],
+}));
+const thumbProps = vi.fn();
 vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: vi.fn() } }));
 vi.mock('~/components/CosmeticShop/CosmeticShopItemPreviewModal', () => ({
   CosmeticShopItemPreviewModal: () => null,
@@ -42,7 +49,10 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => React.createElement('img', { 'data-src': src }),
 }));
 vi.mock('~/components/Events/ScoredEvent/EventContentThumb', () => ({
-  EventContentThumb: () => React.createElement('div', { 'data-testid': 'thumb' }),
+  EventContentThumb: (props: Record<string, unknown>) => {
+    thumbProps(props);
+    return React.createElement('div', { 'data-testid': 'thumb' });
+  },
 }));
 vi.mock('react-chartjs-2', () => ({ Line: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
@@ -55,6 +65,7 @@ vi.mock('~/components/Metrics/AnimatedCount', () => ({
 }));
 
 const { MyEventHats } = await import('~/components/Events/ScoredEvent/MyEventHats');
+const { getBuzzCurrencyConfig } = await import('~/shared/constants/currency.constants');
 const { TeamHatShelf } = await import('~/components/Events/ScoredEvent/TeamHatShelf');
 const { TeamStandings } = await import('~/components/Events/ScoredEvent/TeamStandings');
 const { EventRules } = await import('~/components/Events/ScoredEvent/EventRules');
@@ -160,6 +171,57 @@ describe('Your hats cards', () => {
   });
 });
 
+describe('Your hats card wears its hat', () => {
+  it('on a card that does not clip it, with room for it in the grid', () => {
+    thumbProps.mockClear();
+    const el = render(
+      React.createElement(MyEventHats, {
+        event: 'birthday2026',
+        hats: [
+          {
+            cosmeticId: 31,
+            claimKey: 'c',
+            name: 'Cap',
+            data: { url: 'u' },
+            placedOn: { entityType: 'Image', entityId: 9, title: null, image: null },
+            moveCooldownLeftMs: 0,
+            points: 0,
+            impressions: 0,
+            reactions: 0,
+          },
+        ] as unknown as React.ComponentProps<typeof MyEventHats>['hats'],
+        fetchedAt: Date.now(),
+        teamColor: '#339af0',
+        ended: false,
+      })
+    );
+    // The hat reaches past the picture's corner, so nothing from the picture up may clip it.
+    const clipping: string[] = [];
+    for (
+      let node = el.querySelector('[data-testid="thumb"]')!.parentElement;
+      node && node !== el;
+      node = node.parentElement
+    )
+      if (/overflow-(hidden|clip|auto|scroll)/.test(node.className)) clipping.push(node.className);
+    expect(clipping).toEqual([]);
+    // The room is the page's gutter at every width: the Container's padding, plus its margin once
+    // the scroll area is wider than it.
+    expect(
+      el
+        .querySelector<HTMLElement>('[data-testid="my-hats-grid"]')!
+        .style.getPropertyValue('--event-decoration-allowance')
+    ).toBe('calc(max(0px, (100cqw - var(--container-size-lg)) / 2) + var(--mantine-spacing-md))');
+    expect(thumbProps.mock.lastCall?.[0]).not.toHaveProperty('allowance');
+    expect(thumbProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        hat: { url: 'u' },
+        className: 'rounded-t-[7px]',
+        wornOn: { entityType: 'Image', entityId: 9 },
+      })
+    );
+  });
+});
+
 describe('team shelf tiers', () => {
   const item = (id: number, title: string, unitAmount: number) => ({
     id,
@@ -232,6 +294,27 @@ describe('team shelf tiers', () => {
     const tile = el.querySelector<HTMLButtonElement>('button[data-tier]')!;
     expect(tile.disabled).toBe(true);
     expect(tile.getAttribute('aria-label')).toBe('Broken');
+  });
+
+  it("prices in the site's Buzz colour, yellow or green, not the team's", () => {
+    for (const type of ['yellow', 'green'] as const) {
+      buzzType = type;
+      const { color } = getBuzzCurrencyConfig(type);
+      const el = shelf(items);
+      const pills = [...el.querySelectorAll<HTMLElement>('[data-testid="tile-buy"]')];
+      expect(pills.map((p) => p.style.color)).toEqual(pills.map(() => color));
+      // The bolt on every pill and every tier divider is the currency's own icon in its colour.
+      const bolts = [
+        ...el.querySelectorAll(
+          '[data-testid="tile-buy"] svg, [data-testid="shelf-tier"] > div:first-child svg'
+        ),
+      ];
+      expect(bolts).toHaveLength(pills.length + 3);
+      bolts.forEach((b) => expect(b.getAttribute('stroke')).toBe(color));
+      act(() => root?.unmount());
+      host?.remove();
+    }
+    buzzType = 'yellow';
   });
 
   it('says Buy and the price on every tile that can be bought', () => {

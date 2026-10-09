@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { Center, Loader, Modal, SimpleGrid, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -65,7 +66,13 @@ export default function PlaceHatModal({
             You have nothing published that a hat can go on yet.
           </Text>
         ) : (
-          <SimpleGrid cols={{ base: 2, xs: 3, sm: 4 }} spacing="sm">
+          // Padded so a worn hat has room past the first row's and first column's corners. The
+          // modal crops what reaches further, so the hat does not grow on hover in here.
+          <SimpleGrid
+            cols={{ base: 2, xs: 3, sm: 4 }}
+            spacing="sm"
+            className="pl-6 pr-2 pt-6 [--event-decoration-grow:1]"
+          >
             {content.map((c) => {
               const other = wearer(c.entityType, c.entityId);
               const current =
@@ -75,23 +82,27 @@ export default function PlaceHatModal({
                   key={`${c.entityType}:${c.entityId}`}
                   disabled={equipping || current}
                   onClick={() => place(c.entityType, c.entityId)}
-                  className="flex flex-col gap-1 rounded-md p-1 hover:bg-gray-1 disabled:opacity-50 dark:hover:bg-dark-5"
+                  className={clsx(
+                    'flex flex-col gap-1 rounded-md p-1 hover:bg-gray-1 dark:hover:bg-dark-5',
+                    // The post wearing this hat can't be picked, but stays undimmed so its hat shows.
+                    !current && 'disabled:opacity-50'
+                  )}
                 >
                   <EventContentThumb
                     entityType={c.entityType}
                     image={c.image}
                     hat={(other?.data ?? (current ? hat.data : undefined)) as EventDecorationData}
                   />
-                  <Text size="xs" fw={600} lineClamp={1}>
-                    {c.title ?? `${c.entityType} #${c.entityId}`}
-                  </Text>
-                  <Text size="xs" c="dimmed" lineClamp={1}>
-                    {current
-                      ? 'Wearing this hat now'
-                      : other
-                      ? `Swaps off ${other.name}`
-                      : c.entityType}
-                  </Text>
+                  {c.title && (
+                    <Text size="xs" fw={600} lineClamp={1}>
+                      {c.title}
+                    </Text>
+                  )}
+                  {(current || other) && (
+                    <Text size="xs" c="dimmed" lineClamp={1}>
+                      {current ? 'Wearing this hat now' : `Swaps off ${other?.name}`}
+                    </Text>
+                  )}
                 </UnstyledButton>
               );
             })}

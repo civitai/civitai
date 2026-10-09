@@ -24,6 +24,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'cosmeticShop.getShop': { useQuery: () => ({ data: [], isLoading: false }) },
   }),
 }));
+// The site's Buzz colour: yellow on civitai.com, green on the green site.
+const buzzType = 'yellow';
+vi.mock('~/components/Buzz/useAvailableBuzz', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useAvailableBuzz: () => [buzzType],
+}));
 vi.mock('@mantine/core', async (importOriginal) => ({
   ...(await importOriginal<typeof MantineCore>()),
   Modal: () => null,
