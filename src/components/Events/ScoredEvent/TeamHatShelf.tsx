@@ -21,19 +21,24 @@ import { trpc } from '~/utils/trpc';
  * with the shop's own card, so buying here is buying in the shop.
  */
 export function TeamHatShelf({ event, team }: { event: string; team: string }) {
-  const { data: sections, isLoading } = trpc.cosmeticShop.getShop.useQuery({});
+  const { data: sections, isLoading } = trpc.cosmeticShop.getShop.useQuery({ event });
   const [price, setPrice] = useState('all');
 
   const items = useMemo(() => {
     const seen = new Map<number, CosmeticShopItemGetById>();
     for (const section of sections ?? [])
       for (const { shopItem } of section.items) {
-        const data = shopItem.cosmetic?.data as { event?: unknown } | null | undefined;
-        if (data?.event === event && !seen.has(shopItem.id))
+        const data = shopItem.cosmetic?.data as
+          | { event?: unknown; team?: unknown }
+          | null
+          | undefined;
+        // The shop shows moderators every colour; this shelf is the viewer's team only.
+        const forTeam = data?.team === undefined || data.team === team;
+        if (data?.event === event && forTeam && !seen.has(shopItem.id))
           seen.set(shopItem.id, shopItem as CosmeticShopItemGetById);
       }
     return [...seen.values()].sort((a, b) => a.unitAmount - b.unitAmount || a.id - b.id);
-  }, [sections, event]);
+  }, [sections, event, team]);
   const prices = [...new Set(items.map((i) => i.unitAmount))];
   const shown = price === 'all' ? items : items.filter((i) => i.unitAmount === Number(price));
 

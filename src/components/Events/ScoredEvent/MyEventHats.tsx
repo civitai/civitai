@@ -1,5 +1,6 @@
 import { Button, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
 import { IconArrowsMove, IconClock, IconEye, IconHeart, IconHanger } from '@tabler/icons-react';
+import { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
@@ -23,6 +24,12 @@ export function MyEventHats({
   ended: boolean;
 }) {
   const total = hats.reduce((sum, h) => sum + h.points, 0);
+  // Re-reads the clock every half minute, so a hat's Move button unlocks when its cooldown ends.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
   const openPicker = (hat: MyHat) =>
     dialogStore.trigger({
       component: PlaceHatModal,
@@ -46,7 +53,7 @@ export function MyEventHats({
 
       <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
         {hats.map((hat) => {
-          const wait = minutesUntilMovable(hat.movableAt);
+          const minutesLeft = minutesUntilMovable(hat.movableAt, now);
           return (
             <SpotlightBorderCard
               key={`${hat.cosmeticId}:${hat.claimKey}`}
@@ -123,15 +130,15 @@ export function MyEventHats({
                       leftSection={
                         hat.placedOn ? <IconArrowsMove size={16} /> : <IconHanger size={16} />
                       }
-                      disabled={wait > 0}
+                      disabled={minutesLeft > 0}
                       onClick={() => openPicker(hat)}
                     >
                       {hat.placedOn ? 'Move' : 'Place it'}
                     </Button>
-                    {wait > 0 && (
+                    {minutesLeft > 0 && (
                       <Text size="xs" c="dimmed">
-                        <IconClock size={12} className="inline align-[-1px]" /> Can move in {wait}{' '}
-                        min
+                        <IconClock size={12} className="inline align-[-1px]" /> Can move in{' '}
+                        {minutesLeft} min
                       </Text>
                     )}
                   </Group>

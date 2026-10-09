@@ -25,10 +25,15 @@ export function ScoredEventHero({
   rank,
   points,
   ended,
+  winner,
+  teamHats,
   onJoin,
   joining,
 }: {
   data: EventData;
+  /** The team strictly ahead once the event has ended; scores settle for a day after the end. */
+  winner?: string;
+  teamHats?: { team: string; url: string | null }[];
   /** The viewer's team once they have joined. */
   team?: string;
   rank?: number;
@@ -46,7 +51,7 @@ export function ScoredEventHero({
     <SpotlightSurface className="overflow-hidden rounded-xl border border-solid border-gray-3 bg-white dark:border-dark-4 dark:bg-dark-6">
       <SpotlightGlow color="light-dark(rgba(0,0,0,0.04), rgba(255,255,255,0.06))" size={600} />
       <div aria-hidden className="pointer-events-none absolute inset-0 hidden @md:block">
-        {data.teamHats?.map(
+        {teamHats?.map(
           (hat, i) =>
             hat.url && (
               <div
@@ -94,7 +99,14 @@ export function ScoredEventHero({
 
         <Text size="sm" c="dimmed">
           {ended ? (
-            <>Ended {formatDate(data.endDate, 'MMMM D')}. Final standings below.</>
+            <>
+              {winner && (
+                <Text component="span" fw={700} c={teamColor(winner)}>
+                  Team {winner} leads the final standings.{' '}
+                </Text>
+              )}
+              Ended {formatDate(data.endDate, 'MMMM D')}.
+            </>
           ) : started ? (
             <>
               <Text component="span" fw={700} c="var(--mantine-color-text)">

@@ -10,6 +10,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { engine, scoring } = vi.hoisted(() => ({
   engine: {
+    getJoinHats: vi.fn(async () => []),
     getReadableScoredEvent: vi.fn(),
     assertReadable: vi.fn(),
     isJoinEvent: vi.fn(),
@@ -44,7 +45,21 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({
   getCosmeticDetail: vi.fn(async ({ id }: { id: number }) => ({ id })),
 }));
-const { covers } = vi.hoisted(() => ({ covers: vi.fn() }));
+const { covers, decorations } = vi.hoisted(() => ({
+  covers: vi.fn(),
+  decorations: {
+    getEventDecorationDefinition: vi.fn(),
+    real: (() => undefined) as (event: string) => unknown,
+  },
+}));
+vi.mock('~/shared/constants/event-decoration.constants', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('~/shared/constants/event-decoration.constants')
+  >();
+  decorations.real = actual.getEventDecorationDefinition;
+  decorations.getEventDecorationDefinition.mockImplementation(actual.getEventDecorationDefinition);
+  return { ...actual, getEventDecorationDefinition: decorations.getEventDecorationDefinition };
+});
 vi.mock('~/server/services/image.service', () => ({ getEntityCoverImage: covers }));
 vi.mock('~/server/services/user.service', () => ({
   cosmeticStatus: vi.fn(),
@@ -65,6 +80,8 @@ beforeEach(() => {
   scoring.getUserCosmeticScores.mockResolvedValue([]);
   scoring.getCosmeticScores.mockResolvedValue({});
   covers.mockResolvedValue([]);
+  engine.assertReadable.mockReset();
+  decorations.getEventDecorationDefinition.mockImplementation(decorations.real);
 });
 
 describe('scored reads are gated on what the viewer may read', () => {
@@ -262,6 +279,17 @@ describe('getMyEventHats', () => {
     expect(placed.movableAt).toEqual(new Date(Date.parse(placedAt) + 10 * 60 * 1000));
   });
 
+  // The rows are the mock's, so pin what the query asks for: this caller, this event's decorations.
+  it("queries only this caller's decorations of this event", async () => {
+    await service.getMyEventHats({ event: 'birthday2026', user });
+    const [strings, ...values] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const sql = strings.join('?');
+    expect(sql).toContain(`WHERE uc."userId" = ?\n`);
+    expect(sql).toContain(`AND c.type = 'ContentDecoration'\n`);
+    expect(sql).toContain(`AND c.data->>'event' = ?\n`);
+    expect(values).toEqual([9, 'birthday2026']);
+  });
+
   it("asks for the scores of exactly the caller's hats", async () => {
     await service.getMyEventHats({ event: 'birthday2026', user });
     expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
@@ -273,6 +301,10 @@ describe('getMyEventHats', () => {
 
 describe('getPlaceableEventContent', () => {
   const user = { id: 9 };
+  // Braced: a function returned from beforeEach runs as teardown, and the mock is one.
+  beforeEach(() => {
+    engine.assertReadable.mockReset().mockResolvedValue('open');
+  });
 
   it('refuses an event the caller may not read, and reads nothing', async () => {
     engine.assertReadable.mockImplementation(notStarted);
@@ -282,25 +314,71 @@ describe('getPlaceableEventContent', () => {
     expect(dbMock.dbRead.image.findMany).not.toHaveBeenCalled();
   });
 
-  it("reads only the caller's own content, of the types the event allows", async () => {
-    engine.assertReadable.mockReset().mockResolvedValue('open');
-    dbMock.dbRead.image.findMany.mockResolvedValue([{ id: 1 }]);
-    dbMock.dbRead.model.findMany.mockResolvedValue([{ id: 2 }]);
-    dbMock.dbRead.article.findMany.mockResolvedValue([{ id: 3 }]);
-    const content = await service.getPlaceableEventContent({ event: 'birthday2026', user });
+  // Exactly what may wear a hat: the caller's own, published, scanned content. Equipping does not
+  // check publish state, so this list is the only place a draft is kept out.
+  it("reads only the caller's own published content", async () => {
+    await service.getPlaceableEventContent({ event: 'birthday2026', user });
+    expect(dbMock.dbRead.image.findMany.mock.calls[0][0].where).toEqual({
+      userId: 9,
+      ingestion: 'Scanned',
+      post: { publishedAt: { not: null } },
+    });
+    expect(dbMock.dbRead.model.findMany.mock.calls[0][0].where).toEqual({
+      userId: 9,
+      status: 'Published',
+    });
+    expect(dbMock.dbRead.article.findMany.mock.calls[0][0].where).toEqual({
+      userId: 9,
+      status: 'Published',
+    });
+  });
 
-    for (const read of [
-      dbMock.dbRead.image.findMany,
-      dbMock.dbRead.model.findMany,
-      dbMock.dbRead.article.findMany,
-    ])
-      expect(read).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ userId: 9 }) })
-      );
-    expect(content.map((c) => [c.entityType, c.entityId])).toEqual([
-      ['Image', 1],
-      ['Model', 2],
-      ['Article', 3],
+  it('reads only the content types the event decoration can be worn on', async () => {
+    decorations.getEventDecorationDefinition.mockReturnValueOnce({
+      ...decorations.real('birthday2026'),
+      entityTypes: ['Image'],
+    });
+    await service.getPlaceableEventContent({ event: 'birthday2026', user });
+    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.model.findMany).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.article.findMany).not.toHaveBeenCalled();
+  });
+
+  it('names each entity and keeps one with no usable cover', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValueOnce([{ id: 1 }]);
+    dbMock.dbRead.model.findMany
+      .mockResolvedValueOnce([{ id: 2 }])
+      .mockResolvedValueOnce([{ id: 2, name: 'Velvet LoRA' }]);
+    dbMock.dbRead.article.findMany
+      .mockResolvedValueOnce([{ id: 3 }])
+      .mockResolvedValueOnce([{ id: 3, title: 'Lighting notes' }]);
+    covers.mockResolvedValue([
+      { entityType: 'Image', entityId: 1, id: 101 },
+      { entityType: 'Article', entityId: 3, id: 103 },
     ]);
+    const content = await service.getPlaceableEventContent({ event: 'birthday2026', user });
+    expect(content.map((c) => [c.entityType, c.entityId, c.title, c.image?.id ?? null])).toEqual([
+      ['Image', 1, null, 101],
+      ['Model', 2, 'Velvet LoRA', null],
+      ['Article', 3, 'Lighting notes', 103],
+    ]);
+  });
+});
+
+describe('getEventStandings decoration', () => {
+  const viewer = { id: 1 };
+
+  it("returns each team's join hat art", async () => {
+    engine.getJoinHats.mockResolvedValueOnce([{ team: 'Yellow', url: 'cap-y' }]);
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(res.teamHats).toEqual([{ team: 'Yellow', url: 'cap-y' }]);
+  });
+
+  // The art is decoration: a failed lookup must cost the hats, never the standings.
+  it('still answers when the join hat lookup fails', async () => {
+    engine.getJoinHats.mockRejectedValueOnce(new Error('redis down'));
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(res.teamHats).toEqual([]);
+    expect(res.teams).toEqual([]);
   });
 });

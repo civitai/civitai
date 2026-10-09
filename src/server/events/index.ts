@@ -325,6 +325,12 @@ export const eventEngine = {
     // Purge leaderboard positions cache
     if (updated) await redis.purgeTags('leaderboard-positions');
   },
+  // Each team's join hat art, for the page to show what joining gets you. Ungated: callers check
+  // access first.
+  async getJoinHats(event: string) {
+    const eventDef = getEventDef(event);
+    return eventDef.join ? getJoinHats(eventDef) : [];
+  },
   async getEventData(event: string, viewer: EventViewer, now = new Date()) {
     const eventDef = getEventDef(event);
     const access = await this.assertReadable(event, viewer, now);
@@ -348,7 +354,6 @@ export const eventEngine = {
       coverImageUser = banner?.username;
     }
     const decoration = getEventDecorationDefinition(event);
-    const teamHats = eventDef.join ? await getJoinHats(eventDef) : undefined;
 
     return {
       title: eventDef.title,
@@ -370,8 +375,6 @@ export const eventEngine = {
         viewerOwnerDailyCap: eventDef.scoring.viewerOwnerDailyCap,
         newAccountDays: eventDef.scoring.newAccountDays,
       },
-      // Each team's join hat, for the page to show what joining gets you.
-      teamHats,
       decoration: decoration && {
         label: decoration.label,
         entityTypes: decoration.entityTypes,

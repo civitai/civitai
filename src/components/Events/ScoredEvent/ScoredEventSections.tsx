@@ -14,6 +14,12 @@ import { trpc } from '~/utils/trpc';
 
 type EventData = RouterOutput['event']['getData'];
 
+// The team strictly ahead of the rest; none on a tie for first.
+function leader(teams?: { team: string; score: number }[]) {
+  if (!teams?.length || (teams[1] && teams[1].score === teams[0].score)) return undefined;
+  return teams[0].team;
+}
+
 /**
  * The page of a scored event: what it is, where the teams stand, the viewer's hats and what they
  * earned, and the shop's event items. Everything event-specific comes from the event definition
@@ -59,6 +65,8 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         rank={rank}
         points={points}
         ended={ended}
+        winner={ended ? leader(standings?.teams) : undefined}
+        teamHats={standings?.teamHats}
         onJoin={handleJoin}
         joining={equipping}
       />

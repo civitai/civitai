@@ -483,6 +483,14 @@ describe('the shop lists event-gated items per viewer', () => {
       { section: 20, items: [BLUE + 10] },
     ]);
   });
+
+  // The event page's shelf: only that event's items, still per viewer, empty sections dropped.
+  it("asked for one event, lists only that event's items the viewer may see", async () => {
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK, TEAMLESS] },
+    ]);
+    expect(await listedIds({ event: UNREGISTERED_EVENT })).toEqual([]);
+  });
 });
 
 // Justin, 2026-10-09: before launch the event, the shop's hats included, is for testers and

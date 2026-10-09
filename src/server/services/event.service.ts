@@ -277,9 +277,11 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
         ...Object.values(standings.topUsers).flatMap((x) => x.map((u) => u.userId)),
       ]),
     ];
-    const [users, cosmeticDetails] = await Promise.all([
+    const [users, cosmeticDetails, teamHats] = await Promise.all([
       userBasicCache.fetch(userIds),
       cosmeticCache.fetch([...new Set(standings.topCosmetics.map((x) => x.cosmeticId))]),
+      // Decoration only: a failed lookup costs the hats, never the standings.
+      eventEngine.getJoinHats(event).catch(() => [] as { team: string; url: string | null }[]),
     ]);
     // Name and art of each top cosmetic, so the page can show which hat earned it.
     const cosmetics = Object.fromEntries(
@@ -288,7 +290,7 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
         return [id, { name: c.name, url: typeof url === 'string' ? url : null }];
       })
     );
-    return { ...standings, users, cosmetics };
+    return { ...standings, users, cosmetics, teamHats };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

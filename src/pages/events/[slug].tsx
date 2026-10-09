@@ -74,15 +74,17 @@ export const getServerSideProps = createServerSideProps({
 
     const { event } = result.data;
     if (ssg) {
-      // The event's type decides which reads its page makes, so ask for it first.
-      const data = await ssg.event.getData.fetch({ event }).catch(() => undefined);
+      // The event's type decides which reads its page makes; the cosmetic is read either way.
+      const [data] = await Promise.all([
+        ssg.event.getData.fetch({ event }).catch(() => undefined),
+        ssg.event.getCosmetic.prefetch({ event }),
+      ]);
       await Promise.all(
         data?.scored
-          ? [ssg.event.getCosmetic.prefetch({ event }), ssg.event.getStandings.prefetch({ event })]
+          ? [ssg.event.getStandings.prefetch({ event })]
           : [
               ssg.event.getTeamScores.prefetch({ event }),
               ssg.event.getTeamScoreHistory.prefetch({ event }),
-              ssg.event.getCosmetic.prefetch({ event }),
             ]
       );
     }
