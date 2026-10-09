@@ -7,7 +7,7 @@ import {
 } from '~/components/TrackView/impressionBuffer';
 import { __trackBufferTestHooks as trackHooks } from '~/components/TrackView/trackEventBuffer';
 import { __trackImpressionTestHooks as dwellHooks } from '~/components/TrackView/useTrackImpression';
-import { IMPRESSION_ENTITIES_MAX, trackImpressionSchema } from '~/server/schema/track.schema';
+import { IMPRESSION_ENTITIES_MAX, IMPRESSION_SURFACES } from '~/server/schema/track.schema';
 
 /**
  * Coverage for the impression coalescing layer.
@@ -240,16 +240,39 @@ describe('getImpressionSurface', () => {
     expect(getImpressionSurface(pathname)).toBe(expected);
   });
 
-  it('keeps a hub surface through the server parse rather than catching it to "other"', () => {
-    // The schema `.catch`es an unknown surface to 'other', so a surface the client
-    // emits but the server enum lacks is silently relabelled, not rejected.
-    const parsed = trackImpressionSchema.parse({
-      sessionKey: 'k',
-      surface: getImpressionSurface('/hubs/12'),
-      entities: [{ entityType: 'Image', entityId: 1 }],
-    });
-    expect(parsed.surface).toBe('hubs');
+  it('pins the surface list, so a page never falls to "other" unnoticed', () => {
+    // Removing a value is silent: its pages relabel to 'other' and every test
+    // derived from the list follows along. The literal is the assertion.
+    expect(IMPRESSION_SURFACES).toEqual([
+      'home',
+      'images',
+      'videos',
+      'posts',
+      'models',
+      'articles',
+      'collections',
+      'bounties',
+      'search',
+      'user',
+      'hubs',
+      'challenges',
+      '3d-models',
+      'ecosystems',
+      'tag',
+      'tools',
+      'comics',
+      'crucibles',
+      'events',
+      'other',
+    ]);
   });
+
+  it.each(IMPRESSION_SURFACES.filter((s) => s !== 'home' && s !== 'other'))(
+    'maps /%s/123 to its own surface',
+    (surface) => {
+      expect(getImpressionSurface(`/${surface}/123`)).toBe(surface);
+    }
+  );
 
   it('collapses anything unrecognised to "other" so the column cannot widen', () => {
     expect(getImpressionSurface('/some-new-page')).toBe('other');
@@ -258,18 +281,22 @@ describe('getImpressionSurface', () => {
 });
 
 describe('dwell timer surface', () => {
+  type State = Parameters<typeof dwellHooks.armDwell>[2];
+  const newState = (): State => ({ targets: [{ entityType: 'Image', entityId: 9 }], timer: null });
+  const registryFor = (element: Element, state: State) => ({
+    observer: { unobserve: () => undefined } as unknown as IntersectionObserver,
+    elements: new Map([[element, state]]),
+    intersecting: new Set([element]),
+  });
+
   it('labels an impression with the page the dwell STARTED on, not the one it ends on', () => {
     // Opening the image-detail dialog rewrites the URL to /images/<id> while the
     // feed underneath stays mounted and intersecting. A surface read when the
     // timer fires would credit a hub's cards to the /images feed.
     dom.win.location.pathname = '/hubs/12';
     const element = {} as Element;
-    const state = { targets: [{ entityType: 'Image' as const, entityId: 9 }], timer: null };
-    const registry = {
-      observer: { unobserve: () => undefined } as unknown as IntersectionObserver,
-      elements: new Map([[element, state]]),
-      intersecting: new Set([element]),
-    };
+    const state = newState();
+    const registry = registryFor(element, state);
 
     dwellHooks.armDwell(registry, element, state);
     dom.win.location.pathname = '/images/9';
@@ -279,5 +306,23 @@ describe('dwell timer surface', () => {
     const [event] = sentEvents();
     expect(event.data.surface).toBe('hubs');
     expect(event.data.entities).toEqual([{ entityType: 'Image', entityId: 9 }]);
+  });
+
+  it('keeps the first surface when a tab switch re-arms the dwell under the dialog', () => {
+    // Hidden tabs drop the timer and re-arm it on return. With the image-detail
+    // dialog open by then, a fresh read would say 'images'.
+    dom.win.location.pathname = '/hubs/12';
+    const element = {} as Element;
+    const state = newState();
+    const registry = registryFor(element, state);
+
+    dwellHooks.armDwell(registry, element, state);
+    dom.win.location.pathname = '/images/9';
+    dwellHooks.disarmDwell(state);
+    dwellHooks.armDwell(registry, element, state);
+    vi.advanceTimersByTime(dwellHooks.DWELL_MS);
+    flushImpressions();
+
+    expect(sentEvents()[0].data.surface).toBe('hubs');
   });
 });

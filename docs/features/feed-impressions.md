@@ -42,17 +42,25 @@ through `useTrackImpression`. A card reaches it in one of three ways:
   example gallery). The carousel viewport clips the slides the viewer has not
   swiped to, so they are not counted until they are shown.
 
-Coverage is enforced, not remembered: `feed-cards-track-impressions.test.ts`
-finds every card handed to a feed grid's `render` prop and fails unless it tracks
-or is on a short, commented exemption list (moderation tools, pickers, settings
-lists). Rendering a prop-dependent shell (`ElementInView`, `AspectRatioCard`,
-`FeedCard`) without passing `impressions` does not count.
+Coverage is enforced for feed grids: `feed-cards-track-impressions.test.ts`
+finds every card handed to a `MasonryColumns`/`MasonryGrid` `render` prop and
+fails unless that component (not merely its file) tracks, or is on a short,
+commented exemption list (moderation tools, pickers, settings lists, cards whose
+own entity is not an impression type). Rendering a shell that only tracks what it
+is given (`ElementInView`, `AspectRatioCard`, `AspectRatioImageCard`, `FeedCard`)
+does not count unless the card passes `impressions`/`impression`. Cards rendered
+any other way, such as a `.map()` into a plain grid or a carousel, are covered
+only by the named list in the same test, so a new one has to be added there.
 
 Until this guard existed, `ImagesCard` and the model gallery were untracked while
 this section claimed full coverage, so `images`-surface Image impressions before
 that change are a small fraction of the real number. Creator impression counts
 step up from the day it shipped; that step is the coverage fix, not a traffic
 change.
+
+**A blurred card still counts.** Tracking sits on the card, not on the media
+inside the browsing-level guard, so an image the viewer saw only as a blurred
+placeholder records an impression like any other. Every shell behaves this way.
 
 **The surface is where the dwell began.** It is the first path segment when the
 card became visible, not when its second elapsed: the image-detail dialog rewrites

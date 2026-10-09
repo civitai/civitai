@@ -5,7 +5,7 @@ import {
   getCurrentImpressionSurface,
   recordImpression,
 } from '~/components/TrackView/impressionBuffer';
-import type { ImpressionEntityType } from '~/server/schema/track.schema';
+import type { ImpressionEntityType, ImpressionSurface } from '~/server/schema/track.schema';
 
 export type ImpressionTarget = { entityType: ImpressionEntityType; entityId: number };
 
@@ -27,7 +27,13 @@ const DWELL_MS = 1000;
 // of warning. Reusing it here would count a screenful of cards ABOVE and BELOW
 // the viewport as seen, in both scroll directions. Impressions need their own
 // observer with no margin.
-type ElementState = { targets: ImpressionTarget[]; timer: ReturnType<typeof setTimeout> | null };
+type ElementState = {
+  targets: ImpressionTarget[];
+  timer: ReturnType<typeof setTimeout> | null;
+  // Where the card was first seen. Kept across a tab-hide re-arm, which can
+  // happen with the image-detail dialog open over the feed.
+  surface?: ImpressionSurface;
+};
 
 type Registry = {
   observer: IntersectionObserver;
@@ -43,7 +49,7 @@ let visibilityBound = false;
 function armDwell(registry: Registry, element: Element, state: ElementState) {
   if (state.timer !== null) return;
   // Where the card was when the dwell began, not when it ends — see recordImpression.
-  const surface = getCurrentImpressionSurface();
+  const surface = (state.surface ??= getCurrentImpressionSurface());
   state.timer = setTimeout(() => {
     state.timer = null;
     for (const target of state.targets)
@@ -196,4 +202,4 @@ export function useTrackImpression<T extends HTMLElement = HTMLDivElement>(
 }
 
 // Test-only, mirroring impressionBuffer's hooks. Not part of the runtime contract.
-export const __trackImpressionTestHooks = { armDwell, DWELL_MS };
+export const __trackImpressionTestHooks = { armDwell, disarmDwell, DWELL_MS };

@@ -11,11 +11,16 @@ import { join, relative, resolve, dirname } from 'node:path';
  * looks exactly like a tracked one that nobody scrolled past.
  *
  * So this guard starts from the GRIDS, not from a list of cards: it finds every
- * `render={…}` handed to a masonry/uniform grid, resolves the component, and
- * fails unless that component tracks, either directly or by rendering a shell
- * that does (AspectRatioImageCard, AspectRatioCard, FeedCard, ElementInView with
- * `impressions`). A new card dropped into a feed is caught here without anyone
- * remembering to add it to a list.
+ * `render={…}` handed to a component from `~/components/MasonryColumns` or
+ * `~/components/MasonryGrid`, resolves the card COMPONENT (not just its file),
+ * and fails unless that component tracks itself or renders a component that
+ * does. A shell that tracks only what its caller passes (ElementInView,
+ * AspectRatioCard, AspectRatioImageCard, FeedCard) never counts on its own: the
+ * card has to pass `impressions`/`impression`.
+ *
+ * Its reach is the grids' `render` prop. A feed built some other way (a `.map()`
+ * into a plain grid) is not seen here, which is what the named list at the
+ * bottom is for.
  *
  * It is a source scan, not a render: the component harness runs in no CI job,
  * and the unit project has no IntersectionObserver to drive.
@@ -24,16 +29,27 @@ import { join, relative, resolve, dirname } from 'node:path';
 const SRC = resolve(__dirname, '..', '..', '..');
 const toKey = (file: string) => relative(SRC, file).split('\\').join('/');
 
-// Text that means "this file reports impressions itself".
+// What "this component reports impressions itself" looks like. An empty or
+// undefined `impressions` records nothing, so it is not a marker.
 const DIRECT_MARKERS = [
   /\buseTrackImpression\b\s*(<[^>]*>)?\s*\(/,
-  /\bimpressions=\{/,
-  /\bimpression=\{/,
+  /\bimpressions?=\{(?!\s*(undefined|null|\[\s*\])\s*\})/,
   /<ImpressionSentinel\b/,
 ];
 
-// Grids that are not feeds, and the reason. Keep this short: every entry is a
-// place an impression can never be recorded.
+// Shells that track only what their caller passes. Rendering one proves
+// nothing; the caller must pass the prop, which is a marker in its own body.
+const PROP_DEPENDENT_SHELLS = new Set(
+  [
+    'components/IntersectionObserver/ElementInView.tsx',
+    'components/CardTemplates/AspectRatioCard.tsx',
+    'components/CardTemplates/AspectRatioImageCard.tsx',
+    'components/Cards/FeedCard.tsx',
+  ].map((path) => join(SRC, path))
+);
+
+// Grid cards that do not report impressions of their own, and why. Keep this
+// short and specific: every entry is a place the guard has stopped looking.
 const EXEMPT: Record<string, string> = {
   'components/Account/HiddenTagsSection.tsx:TagBadge': 'settings list of hidden tags',
   'components/Account/HiddenUsersSection.tsx:UserBadge': 'settings list of hidden users',
@@ -45,6 +61,11 @@ const EXEMPT: Record<string, string> = {
   'components/ResourceReview/ResourceReviewsGrid.tsx:ResourceReviewCard':
     'reviews are not an impression entity type',
   'components/Tool/ToolsInfinite.tsx:ToolCard': 'tools are not an impression entity type',
+  // These record their cover Image through AspectRatioImageCard's `image`, but
+  // pass no `impression` of their own: their entity is not an impression type.
+  'components/Challenge/Infinite/ChallengesInfinite.tsx:ChallengeCard': 'cover image only',
+  'components/Comics/ComicsInfinite.tsx:ComicCard': 'cover image only',
+  'components/Crucible/CruciblesInfinite.tsx:CrucibleCard': 'cover image only',
   // A caller-supplied card replaces ImagesCard; today only the challenge and
   // collection submission pickers pass one.
   'components/Image/Infinite/ImagesInfinite.tsx:MasonryItem': 'picker modals only',
@@ -59,6 +80,7 @@ const isGridCaller = (file: string, source: string) =>
   GRID_IMPORT.test(source) && !GRID_DIR.test(toKey(file));
 
 export type SourceTree = Map<string, string>; // absolute path -> contents
+type Component = { file: string; name: string };
 
 function walk(dir: string, out: SourceTree) {
   for (const name of readdirSync(dir)) {
@@ -71,6 +93,15 @@ function walk(dir: string, out: SourceTree) {
     }
   }
   return out;
+}
+
+// A marker in a comment tracks nothing. Keeps `'https://…'` inside strings.
+const stripComments = (source: string) =>
+  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
+
+function read(file: string, tree: SourceTree) {
+  if (!tree.has(file) && existsSync(file)) tree.set(file, readFileSync(file, 'utf-8'));
+  return stripComments(tree.get(file) ?? '');
 }
 
 function resolveModule(fromFile: string, spec: string, tree: SourceTree): string | undefined {
@@ -91,62 +122,75 @@ function resolveModule(fromFile: string, spec: string, tree: SourceTree): string
   return undefined;
 }
 
-/** The file that defines `name` as seen from `file`: an import, or `file` itself. */
-function resolveIdentifier(file: string, name: string, tree: SourceTree): string | undefined {
-  const source = tree.get(file) ?? '';
+/** The component `name` refers to inside `file`: an import, or a local definition. */
+function resolveComponent(file: string, name: string, tree: SourceTree): Component | undefined {
+  const source = read(file, tree);
   for (const m of source.matchAll(/import\s+(?:type\s+)?([^;]*?)\s+from\s+'([^']+)'/g)) {
     const clause = m[1];
     const named = clause.match(/\{([^}]*)\}/)?.[1] ?? '';
-    const locals = named
-      .split(',')
-      .map(
-        (s) =>
-          s
-            .trim()
-            .split(/\s+as\s+/)
-            .pop()!
-      )
-      .filter(Boolean);
+    for (const spec of named.split(',')) {
+      const [original, local = original] = spec.trim().split(/\s+as\s+/);
+      if (local === name) {
+        const target = resolveModule(file, m[2], tree);
+        return target ? { file: target, name: original } : undefined;
+      }
+    }
     const defaultName = clause
       .replace(/\{[^}]*\}/, '')
       .replace(/,/g, '')
       .trim();
-    if (locals.includes(name) || defaultName === name) return resolveModule(file, m[2], tree);
+    if (defaultName === name) {
+      const target = resolveModule(file, m[2], tree);
+      return target ? { file: target, name: 'default' } : undefined;
+    }
   }
-  const local = new RegExp(String.raw`(function|const|let)\s+${name}\b`);
-  return local.test(source) ? file : undefined;
+  return new RegExp(String.raw`(function|const|let)\s+${name}\b`).test(source)
+    ? { file, name }
+    : undefined;
 }
 
-function read(file: string, tree: SourceTree) {
-  if (!tree.has(file) && existsSync(file)) tree.set(file, readFileSync(file, 'utf-8'));
-  return tree.get(file) ?? '';
-}
+const TOP_LEVEL =
+  /\n(?=(export\s+)?(default\s+)?(async\s+)?(function|const|let|class|type|interface)\b)/g;
 
-// Shells that track only when their caller passes `impressions`. Rendering one
-// proves nothing, so they never count as coverage for the card that renders
-// them; the card has to pass the prop, which is a direct marker in its own file.
-const PROP_DEPENDENT_SHELLS = new Set(
-  [
-    'components/IntersectionObserver/ElementInView.tsx',
-    'components/CardTemplates/AspectRatioCard.tsx',
-    'components/Cards/FeedCard.tsx',
-  ].map((path) => join(SRC, path))
-);
+/** The source of one top-level component, so a sibling's marker cannot vouch for it. */
+function componentBody({ file, name }: Component, tree: SourceTree): string | undefined {
+  const source = read(file, tree);
+  const decl =
+    name === 'default'
+      ? /(^|\n)export\s+default\b/
+      : new RegExp(String.raw`(^|\n)(export\s+)?(default\s+)?(function|const|let)\s+${name}\b`);
+  const start = source.search(decl);
+  if (start === -1) return undefined;
+  TOP_LEVEL.lastIndex = start + 1;
+  const next = TOP_LEVEL.exec(source);
+  return source.slice(start, next ? next.index : source.length);
+}
 
 /**
- * Tracked directly, or renders a component that is. One level of indirection is
- * enough for every card today (ModelCard -> AspectRatioImageCard) and keeps a
- * card from passing because something far below it happens to track.
+ * Tracked in its own body, or renders a component that is. One level of
+ * indirection covers every card today (ImagesCard -> ImagesCardContent) and
+ * stops a card passing because something far below it tracks something else.
+ * `memo(X)` is followed without spending that level.
  */
-function isTracked(file: string, tree: SourceTree, depth = 1): boolean {
-  const source = read(file, tree);
-  if (DIRECT_MARKERS.some((re) => re.test(source))) return true;
+function isTracked(component: Component, tree: SourceTree, depth = 1): boolean {
+  const body = componentBody(component, tree);
+  if (body === undefined) return false;
+  const memoOf = body.match(/=\s*(?:React\.)?memo\(\s*([A-Z][\w$]*)/)?.[1];
+  if (memoOf) {
+    const inner = resolveComponent(component.file, memoOf, tree);
+    return !!inner && isTracked(inner, tree, depth);
+  }
+  if (DIRECT_MARKERS.some((re) => re.test(body))) return true;
   if (depth === 0) return false;
-  const tags = new Set(Array.from(source.matchAll(/<([A-Z][\w$]*)[\s/>]/g), (m) => m[1]));
+  return rendersTracked(component.file, body, tree, depth - 1);
+}
+
+function rendersTracked(file: string, jsx: string, tree: SourceTree, depth: number) {
+  const tags = new Set(Array.from(jsx.matchAll(/<([A-Z][\w$]*)[\s/>]/g), (m) => m[1]));
   for (const tag of tags) {
-    const target = resolveIdentifier(file, tag, tree);
-    if (!target || target === file || PROP_DEPENDENT_SHELLS.has(target)) continue;
-    if (isTracked(target, tree, depth - 1)) return true;
+    const child = resolveComponent(file, tag, tree);
+    if (!child || PROP_DEPENDENT_SHELLS.has(child.file)) continue;
+    if (isTracked(child, tree, depth)) return true;
   }
   return false;
 }
@@ -167,24 +211,36 @@ function renderExpressions(source: string): string[] {
   return out;
 }
 
+/** The cards a `render={…}` names: identifiers, or `<inline>` for anything else. */
+function renderTargets(expr: string): string[] {
+  const ids = /^[\w$]+(\s*\?\?\s*[\w$]+)*$/.test(expr)
+    ? expr
+        .split('??')
+        .map((s) => s.trim())
+        .filter((id) => /^[A-Z]/.test(id))
+    : [];
+  return ids.length ? ids : ['<inline>'];
+}
+
 /** `file:Card` for every grid card that does not report impressions. */
 export function findUntrackedFeedCards(tree: SourceTree, exempt = EXEMPT): string[] {
   const untracked = new Set<string>();
-  for (const [file, source] of tree) {
-    if (!isGridCaller(file, source)) continue;
-    for (const expr of renderExpressions(source)) {
-      const identifiers = /^[\w$]+(\s*\?\?\s*[\w$]+)*$/.test(expr)
-        ? expr.split('??').map((s) => s.trim())
-        : [];
-      // An inline function, or a callback defined in this file: the call site
-      // is what renders the card, so the call site is what must track.
-      const cards = identifiers.filter((id) => /^[A-Z]/.test(id));
-      const targets = cards.length ? cards : ['<inline>'];
-      for (const card of targets) {
+  for (const [file, raw] of tree) {
+    if (!isGridCaller(file, raw)) continue;
+    for (const expr of renderExpressions(stripComments(raw))) {
+      for (const card of renderTargets(expr)) {
         const key = `${toKey(file)}:${card}`;
         if (key in exempt) continue;
-        const target = card === '<inline>' ? file : resolveIdentifier(file, card, tree);
-        if (!target || !isTracked(target, tree)) untracked.add(key);
+        // An inline function must render a tracked card itself. A callback named
+        // in lowercase is opaque here, so it needs an exemption.
+        const tracked =
+          card === '<inline>'
+            ? /^\s*\(/.test(expr) && rendersTracked(file, expr, tree, 1)
+            : (() => {
+                const component = resolveComponent(file, card, tree);
+                return !!component && isTracked(component, tree);
+              })();
+        if (!tracked) untracked.add(key);
       }
     }
   }
@@ -217,81 +273,108 @@ describe('feed cards report impressions', () => {
 
   test('every exemption still names a real grid card', () => {
     // A stale exemption is a hole waiting for the next card with that name.
-    const tree = realTree();
     const live = new Set<string>();
-    for (const [file, source] of tree) {
+    for (const [file, source] of realTree()) {
       if (!isGridCaller(file, source)) continue;
-      for (const expr of renderExpressions(source)) {
-        const ids = /^[\w$]+(\s*\?\?\s*[\w$]+)*$/.test(expr)
-          ? expr
-              .split('??')
-              .map((s) => s.trim())
-              .filter((id) => /^[A-Z]/.test(id))
-          : [];
-        for (const id of ids.length ? ids : ['<inline>']) live.add(`${toKey(file)}:${id}`);
-      }
+      for (const expr of renderExpressions(stripComments(source)))
+        for (const card of renderTargets(expr)) live.add(`${toKey(file)}:${card}`);
     }
     expect(Object.keys(EXEMPT).filter((key) => !live.has(key))).toEqual([]);
   });
 
-  // Cards outside a grid's render prop, so the scan above cannot reach them.
+  // Feed cards outside a grid's render prop, which the scan above cannot reach.
+  // Each is checked in its OWN body: a sibling component's marker in the same
+  // file does not count.
   test.each([
-    'components/Image/Infinite/ImagesCard.tsx',
-    'components/Image/AsPosts/ImagesAsPostsCard.tsx',
-    'components/Post/Infinite/PostsCard.tsx',
-    'components/CreatorShop/Storefront/ModelShopCard.tsx',
-    'components/Model/ModelCarousel/ModelCarousel.tsx',
-    'pages/ecosystems/[key]/index.tsx',
-    'components/CardTemplates/AspectRatioImageCard.tsx',
-    'components/CardTemplates/AspectRatioCard.tsx',
-    'components/Cards/FeedCard.tsx',
-  ])('%s reports impressions itself', (path) => {
-    expect(isTracked(join(SRC, path), new Map(), 0)).toBe(true);
+    ['components/Image/Infinite/ImagesCard.tsx', 'ImagesCardContent'],
+    ['components/Image/AsPosts/ImagesAsPostsCard.tsx', 'ImagesAsPostsCardNoMemo'],
+    ['components/Image/AsPosts/ImagesAsPostsCard.tsx', 'PostCarouselSlide'],
+    ['components/Post/Infinite/PostsCard.tsx', 'PostsCard'],
+    ['components/CreatorShop/Storefront/ModelShopCard.tsx', 'ModelShopCard'],
+    ['components/Model/ModelCarousel/ModelCarousel.tsx', 'ModelCarouselContent'],
+    ['pages/ecosystems/[key]/index.tsx', 'ResourceCard'],
+    ['pages/ecosystems/[key]/index.tsx', 'default'],
+    ['components/CardTemplates/AspectRatioImageCard.tsx', 'AspectRatioImageCard'],
+    ['components/CardTemplates/AspectRatioCard.tsx', 'AspectRatioCard'],
+    ['components/Cards/FeedCard.tsx', 'FeedCard'],
+  ])('%s %s reports impressions itself', (path, name) => {
+    expect(isTracked({ file: join(SRC, path), name }, new Map(), 0)).toBe(true);
   });
 
   test('ElementInView forwards `impressions` to useTrackImpression', () => {
-    const source = readFileSync(
-      join(SRC, 'components/IntersectionObserver/ElementInView.tsx'),
-      'utf-8'
-    );
-    expect(source).toMatch(/useTrackImpression<[^>]*>\(impressions\)/);
+    const source = read(join(SRC, 'components/IntersectionObserver/ElementInView.tsx'), new Map());
+    expect(source).toMatch(/useTrackImpression\b[^;]*\(\s*impressions\s*\)/);
     expect(source).toMatch(/useMergedRef\([^)]*impressionRef/);
   });
 });
 
 describe('the guard can fail', () => {
-  const card = (body: string) => `export function Card() { return ${body}; }`;
+  const card = (body: string, imports = '') =>
+    `${imports}export function Card() { return ${body}; }\n`;
   const grid = (render: string) =>
     `import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';\n` +
     `import { Card } from './Card';\n` +
-    `export function Feed() { return <MasonryColumns render={${render}} />; }`;
+    `export function Feed() { return <MasonryColumns render={${render}} />; }\n`;
   const fixture = (cardSource: string, render = 'Card') =>
     new Map([
       [join(SRC, 'fixture/Feed.tsx'), grid(render)],
       [join(SRC, 'fixture/Card.tsx'), cardSource],
     ]);
+  const untracked = (cardSource: string, render?: string) =>
+    findUntrackedFeedCards(fixture(cardSource, render), {});
+  const tracking = `<div ref={useTrackImpression([{ entityType: 'Image', entityId: 1 }])} />`;
 
   test('an untracked card in a feed is reported by name', () => {
-    expect(findUntrackedFeedCards(fixture(card('<div />')), {})).toEqual(['fixture/Feed.tsx:Card']);
+    expect(untracked(card('<div />'))).toEqual(['fixture/Feed.tsx:Card']);
   });
 
   test('a card that tracks directly passes', () => {
-    const tracked = card(
-      `<div ref={useTrackImpression([{ entityType: 'Image', entityId: 1 }])} />`
-    );
-    expect(findUntrackedFeedCards(fixture(tracked), {})).toEqual([]);
+    expect(untracked(card(tracking))).toEqual([]);
   });
 
-  test('rendering ElementInView without `impressions` is not coverage', () => {
-    const shell =
-      `import { ElementInView } from '~/components/IntersectionObserver/ElementInView';\n` +
-      card('<ElementInView component="div" />');
-    expect(findUntrackedFeedCards(fixture(shell), {})).toEqual(['fixture/Feed.tsx:Card']);
+  test('a card that renders a tracked component passes, one level down', () => {
+    const source = card('<Inner />') + `function Inner() { return ${tracking}; }\n`;
+    expect(untracked(source)).toEqual([]);
+  });
+
+  test("a sibling component's tracking does not vouch for the card", () => {
+    const source = card('<div />') + `function Other() { return ${tracking}; }\n`;
+    expect(untracked(source)).toEqual(['fixture/Feed.tsx:Card']);
+  });
+
+  test.each([
+    ['ElementInView', '~/components/IntersectionObserver/ElementInView', '<ElementInView />'],
+    [
+      'AspectRatioImageCard',
+      '~/components/CardTemplates/AspectRatioImageCard',
+      '<AspectRatioImageCard image={x} />',
+    ],
+  ])('rendering %s without passing impressions is not coverage', (name, from, jsx) => {
+    expect(untracked(card(jsx, `import { ${name} } from '${from}';\n`))).toEqual([
+      'fixture/Feed.tsx:Card',
+    ]);
+  });
+
+  test.each(['impressions={[]}', 'impressions={undefined}'])(
+    '`%s` records nothing, so it is not a marker',
+    (prop) => {
+      expect(untracked(card(`<ElementInView ${prop} />`))).toEqual(['fixture/Feed.tsx:Card']);
+    }
+  );
+
+  test('a marker inside a comment is not a marker', () => {
+    expect(untracked(card('/* useTrackImpression([x]) */ <div />'))).toEqual([
+      'fixture/Feed.tsx:Card',
+    ]);
   });
 
   test('an inline render function that renders an untracked card is reported', () => {
-    expect(findUntrackedFeedCards(fixture(card('<div />'), '(p) => <Card {...p} />'), {})).toEqual([
+    expect(untracked(card('<div />'), '(p) => <Card {...p} />')).toEqual([
       'fixture/Feed.tsx:<inline>',
     ]);
+  });
+
+  test('a lowercase render callback is opaque, so it is reported', () => {
+    expect(untracked(card(tracking), 'renderItem')).toEqual(['fixture/Feed.tsx:<inline>']);
   });
 });

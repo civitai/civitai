@@ -30,9 +30,9 @@ type OwnProps = {
   initialInView?: boolean;
   /**
    * Entities this element presents, reported as feed impressions once it has been
-   * half visible for a second. Every feed card shell renders through this
-   * component or AspectRatioCard (which passes it here), so a new shell is
-   * tracked by passing one prop rather than by wiring its own observer.
+   * half visible for a second. A card that already renders through this component
+   * tracks with this prop; one that does not calls `useTrackImpression` on its own
+   * root rather than gaining a second `useInView` observer by wrapping in this.
    */
   impressions?: ImpressionTarget[];
 };
