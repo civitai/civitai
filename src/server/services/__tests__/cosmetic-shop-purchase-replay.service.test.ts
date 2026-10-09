@@ -58,6 +58,7 @@ vi.mock('~/server/services/cosmetic-pack.service', async (importOriginal) => ({
 
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
 import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
@@ -379,6 +380,32 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
 
     await expect(purchase()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mocks.refundMultiTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('another attempt settled the claim before this one could refund: no refund', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    mocks.purchasesCreate.mockRejectedValue(new Error('db down'));
+    dbMock.dbWrite.cosmeticShopPurchaseClaim.updateMany.mockImplementation((async (
+      args: Parameters<typeof claims.delegate.updateMany>[0]
+    ) => {
+      claims.rows.get(TX)!.status = 'paid';
+      return claims.delegate.updateMany(args);
+    }) as never);
+
+    await expect(purchase()).rejects.toThrow('This purchase has already been completed');
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+  });
+
+  // The grant committed, so the buyer has the cosmetic; a later step failing
+  // must not take their money back.
+  it('a failure after the grant committed never refunds', async () => {
+    mocks.createMultiTx.mockResolvedValue(legs(false));
+    vi.mocked(refreshOwnedStickerCache).mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(purchase()).rejects.toThrow('This purchase has already been completed');
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+    expect(claims.rows.get(TX)?.status).toBe('paid');
   });
 
   it("passes the buyer's key through to a pack purchase", async () => {
