@@ -43,6 +43,9 @@ const labelValidators: Record<TextScanLabel, z.ZodType> = {
   poi: z.object({ detected: z.boolean(), names: z.array(z.string()), reason: z.string() }),
   minor: z.object({ detected: z.boolean(), reason: z.string() }),
   scam: z.object({ detected: z.boolean(), reason: z.string() }),
+  modelRules: z.object({
+    matched: z.array(z.object({ ruleId: z.number().int(), reason: z.string() })),
+  }),
 };
 
 export function findChatCompletionStep(steps: unknown): ChatCompletionStepLike | undefined {

@@ -25,10 +25,28 @@ The scanned entities, and the fields and labels each scans, are the profiles in
 Public collections readable as Public or Unlisted → `nsfw`, a floor on the collection's rating)
 replaces Clavata only once Collection is cut over with `disableClavataFor`.
 
+### Model rules
+
+`ModelRules` is a second scan of a model, separate from `Model`, so it has its own rollout and its
+prompt changes never move the `Model` verdicts. It reads the same text as `Model` (name,
+description, version names and descriptions, trained words), but only for Published or Scheduled
+models, and it runs on publish and on every edit of a public model. Its one label, `modelRules`,
+asks which of the moderators' rules the model matches.
+
+The rules are the enabled `ModerationRule` rows with `entityType = Model` and a `semantic`
+definition (`subject`, `description`, `aliases`). They are appended to the `label:modelRules` prompt
+as a numbered list at scan time, so the rule text lives only in the database. Moderators manage them
+on the moderator app's `/text-scan/model-rules` page, which also lists recent matches. A verdict can
+only name rules the prompt listed, and it stores the matched rules as they read when the scan ran.
+When it is active, a match unpublishes the model for review (`needsReview`) with a notice that does
+not name the rule. A moderator who republishes the model approves those matches, so a later edit is
+not taken down for the same rule. Image moderation rules are separate and unchanged.
+
 ## Actions
 
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
-(the owner can appeal), or mute the account pending moderator review. Disputes, appeals and mute
+(the owner can appeal), mute the account pending moderator review, or, for `modelRules`, unpublish
+the model for review. Disputes, appeals and mute
 reviews go through the existing moderator queues; text scan adds no queue of its own.
 
 ## Modes

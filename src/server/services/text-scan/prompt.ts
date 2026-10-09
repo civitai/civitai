@@ -1,6 +1,11 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
+import {
+  modelRulesFingerprint,
+  renderModelRulesBlock,
+  type ModelRuleForPrompt,
+} from '~/server/services/text-scan/model-rules';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import {
   parseTextScanRollout,
@@ -111,7 +116,7 @@ export async function setTextScanRollout(
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };
 
-export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam))$/;
+export const TEXT_SCAN_PROMPT_KEY = /^(base|label:(nsfw|poi|minor|scam|modelRules))$/;
 
 export async function getActiveTextScanPrompts(): Promise<Record<string, ActiveTextScanPrompt>> {
   return fetchThroughCache(
@@ -169,31 +174,52 @@ export function composeUserMessage(subject: TextScanSubject, maxInputChars: numb
     .slice(0, maxInputChars);
 }
 
+/** Stands in for the rule set in `MissingTextScanPromptError`: no enabled rule is a missing prompt. */
+export const MODEL_RULES_SET_KEY = 'modelRules:rules';
+
 export function composeTextScanMessages({
   prompts,
   labels,
   subject,
   maxInputChars,
+  modelRules,
 }: {
   prompts: Record<string, ActiveTextScanPrompt>;
   labels: TextScanLabel[];
   subject: TextScanSubject;
   maxInputChars: number;
+  /** Required when `labels` includes `modelRules`. */
+  modelRules?: ModelRuleForPrompt[];
 }) {
   const keys = ['base', ...labels.map((label) => `label:${label}`)];
   // A blank row would compose an empty definition and be submitted everywhere; treat it as missing.
   const missing = keys.filter((key) => !prompts[key]?.content?.trim());
+  const scansRules = labels.includes('modelRules');
+  if (scansRules && !modelRules?.length) missing.push(MODEL_RULES_SET_KEY);
   if (missing.length) throw new MissingTextScanPromptError(missing);
 
-  const system = [
-    prompts.base.content,
-    ...labels.map((label) => `## Label: ${label}\n${prompts[`label:${label}`].content}`),
-  ].join('\n\n');
+  const labelSection = (label: TextScanLabel) => {
+    const section = `## Label: ${label}\n${prompts[`label:${label}`].content}`;
+    return label === 'modelRules' && modelRules
+      ? `${section}\n\n${renderModelRulesBlock(modelRules)}`
+      : section;
+  };
+  const system = [prompts.base.content, ...labels.map(labelSection)].join('\n\n');
 
   const promptIds: PromptIds = { base: prompts.base.id };
   for (const label of labels) promptIds[label] = prompts[`label:${label}`].id;
 
-  return { system, user: composeUserMessage(subject, maxInputChars), promptIds };
+  return {
+    system,
+    user: composeUserMessage(subject, maxInputChars),
+    promptIds,
+    ...(scansRules && modelRules
+      ? {
+          ruleIds: modelRules.map((rule) => rule.id),
+          rulesFingerprint: modelRulesFingerprint(modelRules),
+        }
+      : {}),
+  };
 }
 
 /** Uncapped and prompt-independent, unlike the dedup hash: appeal and re-file gates compare it. */

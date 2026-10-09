@@ -64,6 +64,8 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     minorHashAccepted: _accepted,
     textModeration: _textModeration,
     textScanFlags: _textScanFlags,
+    modelRules: _modelRules,
+    modelRulesCleared: _modelRulesCleared,
     ...rest
   } = meta;
 
@@ -88,6 +90,8 @@ const MODERATION_OWNED_META_KEYS = [
   'minorHashAccepted',
   'textModeration',
   'textScanFlags',
+  'modelRules',
+  'modelRulesCleared',
   'profanityMatches',
   'profanityEvaluation',
 ] as const satisfies readonly (keyof ModelMeta)[];

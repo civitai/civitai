@@ -7,6 +7,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getTextScanMode, textScanEmEntityType } from '~/server/services/text-scan/mode';
+import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -96,17 +97,21 @@ export function textScanContentHash({
   promptIds,
   model,
   thinking,
+  rulesFingerprint,
 }: {
   user: string;
   promptIds: PromptIds;
   model: string;
   thinking: boolean;
+  rulesFingerprint?: string;
 }) {
   const ids = Object.keys(promptIds)
     .sort()
     .map((key) => `${key}=${promptIds[key]}`)
     .join(',');
-  return hashContent(`${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}`);
+  // Appended only when present, so every existing row's hash is unchanged.
+  const rules = rulesFingerprint ? `\u0000rules=${rulesFingerprint}` : '';
+  return hashContent(`${user}\u0000${ids}\u0000${model}\u0000thinking=${thinking}${rules}`);
 }
 
 export function textScanExternalId({
@@ -182,6 +187,7 @@ async function clearStaleVerdict({
   for (const label of labels) {
     if (label === 'nsfw') output.nsfw = { level: 'none', reason: NO_TEXT_REASON };
     else if (label === 'poi') output.poi = { detected: false, names: [], reason: NO_TEXT_REASON };
+    else if (label === 'modelRules') output.modelRules = { matched: [] };
     else output[label] = { detected: false, reason: NO_TEXT_REASON };
   }
   const outcome = evaluateTextScan(output, subject.declared, labels);
@@ -235,7 +241,11 @@ export async function scanEntity({
     return { status: 'skipped', reason: 'too-short' };
   }
 
-  const [config, prompts] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
+  const [config, prompts, modelRules] = await Promise.all([
+    getTextScanConfig(),
+    getActiveTextScanPrompts(),
+    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+  ]);
 
   let composed: ReturnType<typeof composeTextScanMessages>;
   try {
@@ -244,6 +254,7 @@ export async function scanEntity({
       labels: profile.labels,
       subject,
       maxInputChars: config.maxInputChars,
+      modelRules,
     });
   } catch (e) {
     if (!(e instanceof MissingTextScanPromptError)) throw e;
@@ -256,6 +267,7 @@ export async function scanEntity({
     promptIds: composed.promptIds,
     model: config.model,
     thinking: config.thinking,
+    rulesFingerprint: composed.rulesFingerprint,
   });
 
   const emEntityType = textScanEmEntityType(entityType, mode);
@@ -311,6 +323,9 @@ export async function scanEntity({
     thinking: config.thinking,
     textHash: textScanTextHash(subject),
     ...(subject.meta ? { subjectMeta: subject.meta } : {}),
+    ...(composed.ruleIds
+      ? { ruleIds: composed.ruleIds, rulesFingerprint: composed.rulesFingerprint }
+      : {}),
   };
 
   // Before submit: a content-cache hit can call back before submitWorkflow returns.
@@ -405,4 +420,10 @@ export function scanEntityInBackground(args: {
       error: (e as Error).message,
     })
   );
+}
+
+/** Every Model scan trigger also checks the rules; the ModelRules profile skips models that are not public. */
+export function scanModelAndRules(modelId: number) {
+  scanEntityInBackground({ entityType: 'Model', entityId: modelId });
+  scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
 }

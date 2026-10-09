@@ -1,5 +1,6 @@
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import type { ModelRuleSnapshot } from '~/server/services/text-scan/model-rules';
 import type { PromptIds, TextScanOutcome, TextScanOutput } from '~/server/services/text-scan/types';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -11,6 +12,8 @@ export type TextScanResult = {
   /** `textScanTextHash` of the subject as submitted. */
   textHash?: string;
   meta?: Record<string, unknown>;
+  /** `ModelRules` scans only: the rule set the prompt carried, and the matched rules as they read then. */
+  modelRules?: { fingerprint?: string; snapshot: ModelRuleSnapshot[] };
 };
 
 type RowKey = { entityType: string; entityId: number };
@@ -75,6 +78,7 @@ export async function recordTextScanSuccess({
   model,
   textHash,
   meta,
+  modelRules,
 }: RowKey & {
   workflowId: string;
   marker?: string;
@@ -84,8 +88,17 @@ export async function recordTextScanSuccess({
   model: string;
   textHash?: string;
   meta?: Record<string, unknown>;
+  modelRules?: TextScanResult['modelRules'];
 }) {
-  const result: TextScanResult = { version: 1, labels: output, promptIds, model, textHash, meta };
+  const result: TextScanResult = {
+    version: 1,
+    labels: output,
+    promptIds,
+    model,
+    textHash,
+    meta,
+    ...(modelRules ? { modelRules } : {}),
+  };
   const updated = await dbWrite.entityModeration.updateMany({
     where: { entityType, entityId, workflowId: matchWorkflow(workflowId, marker) },
     data: {

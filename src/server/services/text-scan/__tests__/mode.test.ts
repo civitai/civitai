@@ -122,7 +122,7 @@ describe('rollout percentages', () => {
 });
 
 describe('isTextScanEntityType', () => {
-  it('covers 14 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(14));
+  it('covers 15 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(15));
 
   it.each([
     ['Post', true],

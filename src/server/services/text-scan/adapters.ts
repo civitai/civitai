@@ -1,4 +1,5 @@
 import { applyCollectionTextScan } from '~/server/services/text-scan/actions/collection';
+import { applyModelRulesTextScan } from '~/server/services/text-scan/actions/model-rules';
 import { createTextScanAdapter } from '~/server/services/text-scan/adapter';
 import { applyRatingFloor } from '~/server/services/text-scan/rated-entities';
 
@@ -17,5 +18,11 @@ export const bountyEntryTextScanAdapter = createTextScanAdapter('BountyEntry', {
 export const collectionTextScanAdapter = createTextScanAdapter('Collection', {
   applyTextScan: async (args) => {
     await applyCollectionTextScan(args);
+  },
+});
+
+export const modelRulesTextScanAdapter = createTextScanAdapter('ModelRules', {
+  applyTextScan: async (args) => {
+    await applyModelRulesTextScan(args);
   },
 });

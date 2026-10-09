@@ -48,3 +48,18 @@ describe('buildTextScanJsonSchema', () => {
     expect(b.properties.nsfw.required).toEqual(['level', 'reason']);
   });
 });
+
+describe('buildTextScanJsonSchema — modelRules', () => {
+  it('asks for a matched array of { ruleId, reason }', () => {
+    const schema = buildTextScanJsonSchema(['modelRules']) as any;
+    const rules = schema.properties.modelRules;
+    expect(rules.required).toEqual(['matched']);
+    expect(rules.additionalProperties).toBe(false);
+    expect(rules.properties.matched.items).toEqual({
+      type: 'object',
+      properties: { ruleId: { type: 'integer' }, reason: { type: 'string' } },
+      required: ['ruleId', 'reason'],
+      additionalProperties: false,
+    });
+  });
+});

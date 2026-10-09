@@ -105,6 +105,7 @@ import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -865,6 +866,8 @@ export const publishModelVersionHandler = async ({
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
     const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
+    if (!ctx.user.isModerator)
+      scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId });
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');

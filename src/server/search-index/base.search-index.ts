@@ -182,8 +182,8 @@ const accountForBatch = (
  *
  * `console.log`, NOT `console.error`, and that is a decision rather than an oversight: on the
  * queue-drain paths this number is nonzero by design. The Update queue legitimately carries ids
- * the index filters out — `model-scan-result` queues an Update for every scanned Draft model,
- * while `pullData` filters to Published — so an error-level line here would fire on every cron
+ * the index filters out — Draft models are queued for Update while `pullData` filters to
+ * Published — so an error-level line here would fire on every cron
  * run and train its reader to ignore it. This is a measurement; a caller that asked for a repair
  * reads the number out of `updateSync`'s return value instead.
  */

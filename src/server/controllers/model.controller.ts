@@ -165,7 +165,9 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { modelRulesClearedOnRepublish } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
@@ -870,7 +872,14 @@ export const publishModelHandler = async ({
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
-    const updatedModel = await publishModelById({ ...input, meta, republishing });
+    // A moderator republishing a model the rules took down has approved those matches.
+    const modelRulesCleared = isModerator ? modelRulesClearedOnRepublish(modelMeta) : undefined;
+    const updatedModel = await publishModelById({
+      ...input,
+      meta: modelRulesCleared ? { ...meta, modelRulesCleared } : meta,
+      republishing,
+    });
+    if (!isModerator) scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedModel.id });
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');

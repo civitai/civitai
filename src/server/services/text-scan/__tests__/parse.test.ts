@@ -56,3 +56,26 @@ describe('parseTextScanStep', () => {
     expect(result).toEqual({ ok: false, reason: 'missing_label', detail: 'poi' });
   });
 });
+
+describe('parseTextScanStep — modelRules', () => {
+  it('accepts an empty match list and a list of matches', () => {
+    const clean = { modelRules: { matched: [] } };
+    expect(parseTextScanStep(step(JSON.stringify(clean)), ['modelRules'])).toEqual({
+      ok: true,
+      output: clean,
+    });
+    const hit = { modelRules: { matched: [{ ruleId: 7, reason: 'Names the subject.' }] } };
+    expect(parseTextScanStep(step(JSON.stringify(hit)), ['modelRules'])).toEqual({
+      ok: true,
+      output: hit,
+    });
+  });
+
+  it('rejects a non-integer rule id', () => {
+    const bad = { modelRules: { matched: [{ ruleId: 'seven', reason: 'x' }] } };
+    expect(parseTextScanStep(step(JSON.stringify(bad)), ['modelRules'])).toMatchObject({
+      ok: false,
+      reason: 'malformed',
+    });
+  });
+});
