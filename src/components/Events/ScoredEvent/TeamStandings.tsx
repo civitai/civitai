@@ -261,27 +261,29 @@ export function TopHats({ standings }: { standings: Standings }) {
         color="orange"
         subtitle="The hats that have earned the most points so far."
       />
-      <Paper withBorder radius="md">
-        <Stack gap={0}>
-          {top.map((c, i) => {
-            const cosmetic = standings.cosmetics[c.cosmeticId];
-            return (
-              <Group
-                key={`${c.userId}:${c.cosmeticId}:${c.claimKey}`}
-                gap="md"
-                px="md"
-                py="sm"
-                wrap="nowrap"
-                className="border-0 border-b border-solid border-gray-2 last:border-b-0 dark:border-dark-4"
-              >
-                <Text fw={700} c="dimmed" w={20} ta="right">
+      {/* Card rows like the standings'. Two columns on a wide page, filled down: 1 to 5, then 6 to 10. */}
+      <div
+        className="grid gap-2 @md:grid-flow-col @md:grid-cols-2 @md:grid-rows-5 @md:gap-x-3"
+        data-testid="top-hats"
+      >
+        {top.map((c, i) => {
+          const cosmetic = standings.cosmetics[c.cosmeticId];
+          return (
+            <Paper
+              key={`${c.userId}:${c.cosmeticId}:${c.claimKey}`}
+              withBorder
+              radius="md"
+              className={EVENT_CARD_SURFACE}
+            >
+              <Group gap="sm" px="sm" py={10} wrap="nowrap">
+                <Text fw={800} fz={18} w={24} ta="center">
                   {i + 1}
                 </Text>
                 <div className="w-8 shrink-0">
                   {cosmetic?.url && <EdgeMedia src={cosmetic.url} width={64} alt="" />}
                 </div>
                 <Stack gap={0} className="min-w-0 flex-1">
-                  <Text fw={600} truncate>
+                  <Text fw={600} size="sm" truncate>
                     {cosmetic?.name ?? 'Hat'}
                   </Text>
                   <UserAvatar
@@ -292,14 +294,14 @@ export function TopHats({ standings }: { standings: Standings }) {
                     linkToProfile
                   />
                 </Stack>
-                <Text fw={700} c={teamColor(c.team)} className="tabular-nums">
+                <Text fw={800} c={teamColor(c.team)} className="tabular-nums">
                   {numberWithCommas(c.points)}
                 </Text>
               </Group>
-            );
-          })}
-        </Stack>
-      </Paper>
+            </Paper>
+          );
+        })}
+      </div>
     </Stack>
   );
 }

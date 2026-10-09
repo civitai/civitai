@@ -163,6 +163,14 @@ describe('hero team block (A6)', () => {
     expect(el.textContent).not.toContain('Join and get your free hat');
   });
 
+  // Ellie review (2026-10-09): a medium-opacity background, so the hero art doesn't show through.
+  it('sits on its own part-transparent background over the hero art', () => {
+    const block = hero({ team: 'Blue' }).querySelector('[data-testid="hero-team"]') as HTMLElement;
+    expect(block.className.split(' ')).toEqual(
+      expect.arrayContaining(['bg-gray-1/80', 'dark:bg-dark-7/70', 'backdrop-blur-sm'])
+    );
+  });
+
   // Positive control for the negative above: the same hero without a team offers the join.
   it('offers the join to a visitor with no team', () => {
     expect(hero().textContent).toContain('Join and get your free hat');

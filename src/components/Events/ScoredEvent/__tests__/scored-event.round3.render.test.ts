@@ -120,15 +120,28 @@ describe('Your hats cards', () => {
       })
     );
 
-  it('groups the three numbers in one strip, points first in the team colour', () => {
+  // The popover's layout (Ellie review, 2026-10-09): points on their own in the team colour, beside
+  // the four ways that make them up. A card has no room for the words, so each way is its icon
+  // and number, with the word kept for screen readers and the tooltip.
+  it('shows the points on their own in the team colour, then the four ways as icon and number', () => {
     const card = cards([hat({ placedOn: placed })]).querySelector('[data-testid="my-hat"]')!;
-    const strip = card.querySelector('[data-testid="hat-stats"]')!;
-    expect([...strip.children].map((s) => s.textContent)).toEqual([
-      '1.5kpoints',
-      '12views',
-      '3reactions',
+    const stats = card.querySelector('[data-testid="hat-stats"]')!;
+    const points = stats.querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
+    expect(points.textContent).toBe('1.5kpoints');
+    expect((points.firstElementChild as HTMLElement).style.color).toBe('#339af0');
+    expect(
+      [...stats.querySelectorAll<HTMLElement>('[data-way]')].map((w) => [
+        w.title,
+        w.firstElementChild?.tagName.toLowerCase(),
+        w.textContent,
+      ])
+    ).toEqual([
+      ['views', 'svg', '12views'],
+      ['reactions', 'svg', '3reactions'],
+      // Counted from scoring v2 on; a dash until then, never a 0 the post may not have.
+      ['comments', 'svg', '–comments'],
+      ['remixes', 'svg', '–remixes'],
     ]);
-    expect((strip.children[0].firstElementChild as HTMLElement).style.color).toBe('#339af0');
   });
 
   it('puts Move on the picture of a worn hat, not under the card', () => {

@@ -53,6 +53,7 @@ const NO_CONTENT = [
   'src/components/Cosmetics/EventDecoration/HatFitEditor.tsx',
   'src/components/Modals/CardDecorationModal.tsx',
   'src/components/Events/ScoredEvent/EventContentThumb.tsx',
+  'src/components/Shop/CosmeticSample.tsx',
 ];
 // Draw the hat for a card. These pass the content on; MasonryCard has none to pass (its one hatted
 // caller is the try-on preview).
