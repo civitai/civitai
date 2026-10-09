@@ -10,3 +10,16 @@ export const teamScoreHistorySchema = eventSchema.extend({
   window: z.enum(['hour', 'day', 'week', 'month', 'year']).optional(),
   start: z.date().optional(),
 });
+
+export type EventCosmeticScoresInput = z.infer<typeof eventCosmeticScoresSchema>;
+export const eventCosmeticScoresSchema = eventSchema.extend({
+  cosmetics: z
+    .array(
+      z.object({
+        userId: z.number().int().positive(),
+        cosmeticId: z.number().int().positive(),
+        claimKey: z.string().min(1).max(100),
+      })
+    )
+    .max(100),
+});

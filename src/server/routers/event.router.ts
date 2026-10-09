@@ -2,7 +2,11 @@ import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import type { EventInput } from '~/server/schema/event.schema';
-import { eventSchema, teamScoreHistorySchema } from '~/server/schema/event.schema';
+import {
+  eventCosmeticScoresSchema,
+  eventSchema,
+  teamScoreHistorySchema,
+} from '~/server/schema/event.schema';
 import {
   activateEventCosmetic,
   donate,
@@ -14,6 +18,9 @@ import {
   getEventContributors,
   getUserRank,
   getEventPartners,
+  getEventStandings,
+  getMyEventCosmeticScores,
+  getEventCosmeticScores,
 } from '~/server/services/event.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -72,6 +79,20 @@ export const eventRouter = router({
       })
     )
     .query(({ input }) => getEventContributors(input)),
+  getStandings: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(({ input }) => getEventStandings(input)),
+  getMyCosmeticScores: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyEventCosmeticScores({ userId: ctx.user.id, ...input })),
+  getCosmeticScores: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventCosmeticScoresSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(({ input }) => getEventCosmeticScores(input)),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
