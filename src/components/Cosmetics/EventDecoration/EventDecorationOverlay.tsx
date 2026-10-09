@@ -6,6 +6,7 @@ import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-
 import {
   DEFAULT_HAT_PLACEMENT,
   getHatLayout,
+  HAT_LOOK,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type {
   EventDecorationData,
@@ -50,16 +51,18 @@ function CardHat({
       type="button"
       aria-label="Party hat"
       data-event-decoration="hat"
-      className={clsx(styles.hat, placement === 'top' && styles.centred)}
-      style={{
-        left: placement === 'top' ? undefined : layout.left,
-        top: layout.top,
-        width: layout.width,
-        height: layout.height,
-        transform: `rotate(${layout.tilt}deg)`,
-        transformOrigin: layout.origin,
-        ...(placement === 'top' && { marginLeft: -layout.width / 2 }),
-      }}
+      className={clsx(styles.hat, placement === 'corner' && styles.grows)}
+      style={
+        {
+          left: layout.left,
+          top: layout.top,
+          width: layout.width,
+          height: layout.height,
+          transform: `rotate(${layout.tilt}deg)`,
+          transformOrigin: layout.origin,
+          '--hat-grow': HAT_LOOK.grow,
+        } as CSSProperties
+      }
       onClick={(e) => {
         // The card underneath is a link.
         e.preventDefault();

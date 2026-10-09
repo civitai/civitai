@@ -43,11 +43,15 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
 export type EventDecorationFit = {
   /** [width, height] of the image file. */
   canvas?: [number, number];
-  /** [left, top, right, bottom] of the visible pixels. The hat rests on the bottom-centre. */
+  /** [left, top, right, bottom] of the visible pixels. */
   bounds?: [number, number, number, number];
-  /** Longer side of the visible pixels on a card, in CSS px. */
+  /** [left, right, y] of the brim, the widest row the hat rests on. Defaults to the bounds' bottom edge. */
+  brim?: [number, number, number];
+  /** Convex outline of the visible pixels, as [x, y] points. Defaults to the bounds' corners. */
+  outline?: [number, number][];
+  /** Brim width on a card, in CSS px. */
   size?: number;
-  /** Degrees; negative leans left. Ignored where the placement stands the hat upright. */
+  /** Degrees; negative leans left. */
   tilt?: number;
 };
 

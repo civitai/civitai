@@ -3,6 +3,7 @@ import type { ColumnItem } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import styles from './MasonryColumnsVirtual.module.scss';
 import type {
   MasonryRenderItemProps,
   MasonryAdjustHeightFn,
@@ -133,6 +134,7 @@ function VirtualColumn<TData>({
       {rowVirtualizer.getVirtualItems().map((item) => (
         <div
           key={`${item.index}_${item.key}`}
+          className={styles.item}
           style={{
             position: 'absolute',
             top: 0,
