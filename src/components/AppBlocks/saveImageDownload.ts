@@ -24,7 +24,7 @@
  *                 ({@link classifySaveBytes}) — the filename only picks JSON over
  *                 plain text for text that parses as JSON — so only PNG / WebP /
  *                 JPEG / JSON / plain text can be saved, always under that type's
- *                 own extension. Rate-limited per host by {@link admitSaveBytes}.
+ *                 own extension. Rate-limited per host by {@link processSaveBytes}.
  */
 
 import { sniffImageFormat, type ImageMagicFormat } from '~/shared/utils/image-magic-bytes';
@@ -95,23 +95,44 @@ export const SAVE_BYTES_MAX_BYTES_PER_WINDOW = 100 * 1024 * 1024; // 100 MB
 /** One accepted `bytes` save: when it was admitted and how large it was. */
 export type SaveBytesWindowEntry = { at: number; size: number };
 
+/** The window's entries still inside {@link SAVE_BYTES_WINDOW_MS} of `now`. */
+function liveSaveBytesWindow(
+  recent: readonly SaveBytesWindowEntry[],
+  now: number
+): SaveBytesWindowEntry[] {
+  return recent.filter((e) => now - e.at < SAVE_BYTES_WINDOW_MS);
+}
+
+/**
+ * NON-recording check: would a save of `size` bytes fit in the window right now? True only if fewer
+ * than {@link SAVE_BYTES_MAX_PER_WINDOW} saves are live AND their total plus `size` stays within
+ * {@link SAVE_BYTES_MAX_BYTES_PER_WINDOW}. `size` is the raw `byteLength`, known before any decoding,
+ * so the host can refuse `busy` without classifying (which decodes + JSON-parses up to 50 MB on the
+ * main thread).
+ */
+export function saveBytesWindowHasRoom(
+  recent: readonly SaveBytesWindowEntry[],
+  now: number,
+  size: number
+): boolean {
+  const live = liveSaveBytesWindow(recent, now);
+  const total = live.reduce((sum, e) => sum + e.size, 0);
+  return live.length < SAVE_BYTES_MAX_PER_WINDOW && total + size <= SAVE_BYTES_MAX_BYTES_PER_WINDOW;
+}
+
 /**
  * Sliding-window limiter for `bytes` saves, pure so it is testable without timers. Drops entries
- * older than {@link SAVE_BYTES_WINDOW_MS}, then admits a save of `size` bytes only if fewer than
- * {@link SAVE_BYTES_MAX_PER_WINDOW} saves remain in the window AND their total plus `size` stays
- * within {@link SAVE_BYTES_MAX_BYTES_PER_WINDOW}. Returns the pruned list, with the new save
- * appended when admitted; the caller stores it back. A refused save is not recorded.
+ * older than {@link SAVE_BYTES_WINDOW_MS}, then admits (RECORDS) a save of `size` bytes only if
+ * {@link saveBytesWindowHasRoom}. Returns the pruned list, with the new save appended when
+ * admitted; the caller stores it back. A refused save is not recorded.
  */
 export function admitSaveBytes(
   recent: readonly SaveBytesWindowEntry[],
   now: number,
   size: number
 ): { ok: boolean; recent: SaveBytesWindowEntry[] } {
-  const live = recent.filter((e) => now - e.at < SAVE_BYTES_WINDOW_MS);
-  const total = live.reduce((sum, e) => sum + e.size, 0);
-  if (live.length >= SAVE_BYTES_MAX_PER_WINDOW || total + size > SAVE_BYTES_MAX_BYTES_PER_WINDOW) {
-    return { ok: false, recent: live };
-  }
+  const live = liveSaveBytesWindow(recent, now);
+  if (!saveBytesWindowHasRoom(live, now, size)) return { ok: false, recent: live };
   return { ok: true, recent: [...live, { at: now, size }] };
 }
 
@@ -426,18 +447,76 @@ export function forceSaveBytesExtension(filename: string, type: SaveBytesType): 
   return `${m ? m[1] : name}.${SAVE_BYTES_EXTENSION[type]}`;
 }
 
+/**
+ * Clean a block-supplied filename for a `bytes` save, BEFORE classification reads its `.json`
+ * suffix. Unlike a url/imageId save, the name is not a URL, so `?` and `#` are ordinary characters,
+ * not query/fragment delimiters: each is REPLACED with `_` instead of cutting the name there.
+ *
+ * The exact rule (the app-sdk mock mirrors it byte for byte), applied in order:
+ *   1. absent → `download`;
+ *   2. replace every `?` and `#` with `_`;
+ *   3. then {@link sanitizeDownloadFilename} unchanged, in its order: keep only the text after the
+ *      last `/` or `\`; collapse a repeated trailing extension (`.ext.ext…` → `.ext`, ext = the final
+ *      2–5 ASCII letters/digits, case-sensitive); THEN trim surrounding whitespace (so `a.md.md `
+ *      keeps both `.md`); an empty result → `download`. (Its `?`/`#` cut finds nothing left to cut.)
+ * Classification then sees THIS name: JSON needs it to end `.json` (case-insensitive) AND the text to
+ * parse. Finally {@link forceSaveBytesExtension}: delete every `\p{Cc}`/`\p{Cf}` character, trim,
+ * empty → `download`, then replace a trailing `.<1–5 ASCII letters/digits>` (with a non-empty base)
+ * by the classified type's extension, or append it when there is none.
+ *
+ * `issue#42.json` → `issue_42.json` (still `.json`, so JSON content saves as JSON);
+ * `data.json?v=2` → `data.json_v=2` (no longer ends in `.json`: text, saved `data.json_v=2.txt`).
+ */
+export function sanitizeSaveBytesFilename(name: string | undefined | null): string {
+  return sanitizeDownloadFilename((name ?? 'download').replace(/[?#]/g, '_'), 'download');
+}
+
+export type SaveBytesClassifier = (bytes: ArrayBuffer, filename?: string) => SaveBytesType | null;
+
 /** Size-cap, classify and name a `bytes` save — every refusal is the reply's error string. */
-export function prepareSaveBytes(req: {
-  bytes: ArrayBuffer;
-  filename?: string;
-}): { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string } {
+export function prepareSaveBytes(
+  req: { bytes: ArrayBuffer; filename?: string },
+  classify: SaveBytesClassifier = classifySaveBytes
+): { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string } {
   if (req.bytes.byteLength > SAVE_BYTES_MAX_BYTES) {
     return { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR };
   }
-  const filename = sanitizeDownloadFilename(req.filename, 'download');
-  const type = classifySaveBytes(req.bytes, filename);
+  const filename = sanitizeSaveBytesFilename(req.filename);
+  const type = classify(req.bytes, filename);
   if (!type) return { ok: false, error: SAVE_BYTES_TYPE_NOT_ALLOWED_ERROR };
   return { ok: true, type, filename: forceSaveBytesExtension(filename, type) };
+}
+
+export const SAVE_BYTES_BUSY_ERROR = 'busy';
+
+/**
+ * The whole host-side `bytes` decision, in the order that keeps a refused save cheap:
+ *   1. window pre-check ({@link saveBytesWindowHasRoom}, non-recording, on `byteLength` alone) —
+ *      once the window is full every further save is refused `busy` WITHOUT decoding/parsing it;
+ *   2. {@link prepareSaveBytes} (size cap, classify, name);
+ *   3. record it in the window ({@link admitSaveBytes}) — only a save that will download counts.
+ * Returns the outcome and the window to store back.
+ */
+export function processSaveBytes(
+  req: { bytes: ArrayBuffer; filename?: string },
+  recent: readonly SaveBytesWindowEntry[],
+  now: number,
+  classify: SaveBytesClassifier = classifySaveBytes
+): {
+  result: { ok: true; type: SaveBytesType; filename: string } | { ok: false; error: string };
+  recent: SaveBytesWindowEntry[];
+} {
+  const size = req.bytes.byteLength;
+  if (!saveBytesWindowHasRoom(recent, now, size)) {
+    return { result: { ok: false, error: SAVE_BYTES_BUSY_ERROR }, recent: [...recent] };
+  }
+  const prepared = prepareSaveBytes(req, classify);
+  if (!prepared.ok) return { result: prepared, recent: [...recent] };
+  const admitted = admitSaveBytes(recent, now, size);
+  if (!admitted.ok) {
+    return { result: { ok: false, error: SAVE_BYTES_BUSY_ERROR }, recent: admitted.recent };
+  }
+  return { result: prepared, recent: admitted.recent };
 }
 
 /** Build the Blob in the host frame with the CLASSIFIED type (never the caller's) and download it. */

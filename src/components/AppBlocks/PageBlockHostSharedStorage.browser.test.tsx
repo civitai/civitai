@@ -1128,6 +1128,78 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
+  test('SAVE_IMAGE bytes CROSS-FRAME: an ArrayBuffer posted from inside the opaque sandboxed iframe downloads; a Uint8Array is refused', async () => {
+    // Every other bytes test dispatches a same-realm MessageEvent, so its ArrayBuffer is the host
+    // realm's own and `instanceof ArrayBuffer` cannot fail. Here the block's script runs in the
+    // iframe (an opaque, unverified sandbox) and posts with parent.postMessage, so the buffer is
+    // structured-cloned across realms — the path a real block takes.
+    renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    const iframeEl = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    expect(iframeEl.getAttribute('sandbox')?.split(' ')).not.toContain('allow-same-origin');
+    const cw = iframeEl.contentWindow;
+
+    // The frame is cross-origin to us, so it reports what it receives by echoing to the parent.
+    const echoes: Array<{ origin: string; data: { type?: string; payload?: unknown } }> = [];
+    const onEcho = (e: MessageEvent) => {
+      const d = e.data as { __xfEcho?: { type?: string; payload?: unknown } } | null;
+      if (e.source === cw && d && d.__xfEcho) echoes.push({ origin: e.origin, data: d.__xfEcho });
+    };
+    window.addEventListener('message', onEcho);
+    try {
+      // Same contentWindow after the navigation, so the host's event.source pin still matches.
+      iframeEl.srcdoc =
+        `<script>
+        var sent = false;
+        function go() {
+          if (sent) return;
+          sent = true;
+          var png = new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48]);
+          parent.postMessage({ type: 'SAVE_IMAGE', payload: { requestId: 'rq_xf_ab', bytes: png.buffer.slice(0), filename: 'cross#1.png' } }, '*');
+          parent.postMessage({ type: 'SAVE_IMAGE', payload: { requestId: 'rq_xf_u8', bytes: new Uint8Array(png), filename: 'cross.png' } }, '*');
+        }
+        window.addEventListener('message', function (e) {
+          if (e.source !== parent) return;
+          parent.postMessage({ __xfEcho: e.data }, '*');
+          if (e.data && e.data.type === 'BLOCK_INIT') go();
+        });
+        parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
+        setTimeout(go, 300);
+      </` + `script>`;
+
+      await vi.waitFor(() => {
+        const results = Object.fromEntries(
+          echoes
+            .filter((m) => m.data.type === 'SAVE_IMAGE_RESULT')
+            .map((m) => {
+              const p = m.data.payload as { requestId: string };
+              return [p.requestId, m.data.payload];
+            })
+        );
+        expect(results).toEqual({
+          rq_xf_ab: { requestId: 'rq_xf_ab', ok: true },
+          rq_xf_u8: { requestId: 'rq_xf_u8', ok: false, error: 'invalid save-image request' },
+        });
+      });
+      // Positive control that the messages really came from the frame's realm: an opaque sandbox
+      // posts with origin 'null', which no same-realm dispatch in this file produces.
+      expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
+
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+      const [savedBytes, savedType, savedName] = mocks.saveBytesDownload.mock.calls[0];
+      expect(savedBytes).toBeInstanceOf(ArrayBuffer);
+      expect(Array.from(new Uint8Array(savedBytes as ArrayBuffer))).toEqual([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+      ]);
+      expect([savedType, savedName]).toEqual(['image/png', 'cross_1.png']);
+    } finally {
+      window.removeEventListener('message', onEcho);
+    }
+  });
+
   /** Every SAVE_IMAGE_RESULT payload received so far, keyed by requestId. */
   const saveResults = (replies: ReturnType<typeof listenForReply>) =>
     Object.fromEntries(

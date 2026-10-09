@@ -94,11 +94,10 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
-  admitSaveBytes,
   downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
-  prepareSaveBytes,
+  processSaveBytes,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
@@ -3609,7 +3608,7 @@ export function PageBlockHost({
   // synchronously in the message handler (single-threaded ⇒ check→increment before
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
-  // `bytes` saves are limited separately, over a rolling window (admitSaveBytes):
+  // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
   // they never await, so the in-flight count above would be released before the
   // next message and bound nothing. Same ref-not-state reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
@@ -3625,7 +3624,7 @@ export function PageBlockHost({
   //            a withheld/above-ceiling image (status !== 'visible', or omitted)
   //            can NEVER be saved.
   //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
-  //            is classified from the content (prepareSaveBytes) and only
+  //            is classified from the content (processSaveBytes) and only
   //            image/JSON/text can be saved, under the classified extension.
   //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
   //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
@@ -3644,23 +3643,15 @@ export function PageBlockHost({
       }
       if (req.kind === 'bytes') {
         try {
-          const prepared = prepareSaveBytes(req);
-          if (!prepared.ok) {
-            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: prepared.error });
+          // Window pre-check FIRST (on byteLength alone), then classify, then record: a save
+          // refused `busy` is never decoded/parsed on this main thread (processSaveBytes).
+          const { result, recent } = processSaveBytes(req, saveBytesWindowRef.current, Date.now());
+          saveBytesWindowRef.current = recent;
+          if (!result.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
             return;
           }
-          // Only a save that would actually download counts against the window.
-          const admitted = admitSaveBytes(
-            saveBytesWindowRef.current,
-            Date.now(),
-            req.bytes.byteLength
-          );
-          saveBytesWindowRef.current = admitted.recent;
-          if (!admitted.ok) {
-            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'busy' });
-            return;
-          }
-          downloadBytesAsBlob(req.bytes, prepared.type, prepared.filename);
+          downloadBytesAsBlob(req.bytes, result.type, result.filename);
           send('SAVE_IMAGE_RESULT', { requestId, ok: true });
         } catch (err) {
           send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });

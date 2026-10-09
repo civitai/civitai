@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   admitSaveBytes,
   CIVITAI_IMAGE_HOSTS,
@@ -7,12 +7,15 @@ import {
   forceSaveBytesExtension,
   isAllowedSaveImageUrl,
   prepareSaveBytes,
+  processSaveBytes,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
+  sanitizeSaveBytesFilename,
   SAVE_BYTES_MAX_BYTES,
   SAVE_BYTES_MAX_BYTES_PER_WINDOW,
   SAVE_BYTES_MAX_PER_WINDOW,
   SAVE_BYTES_WINDOW_MS,
+  saveBytesWindowHasRoom,
   type SaveBytesWindowEntry,
 } from './saveImageDownload';
 
@@ -442,10 +445,12 @@ describe('prepareSaveBytes', () => {
     expect(
       prepareSaveBytes({ bytes: textAb('<script>x()</script>'), filename: '../../evil.html' })
     ).toEqual({ ok: true, type: 'text/plain', filename: 'evil.txt' });
+    // `?` is not a delimiter in a bytes filename (sanitizeSaveBytesFilename): it becomes `_`, so
+    // `exe_x=1` is no longer an extension and the forced one is appended after it.
     expect(prepareSaveBytes({ bytes: JPEG, filename: 'C:\\tmp\\setup.exe?x=1' })).toEqual({
       ok: true,
       type: 'image/jpeg',
-      filename: 'setup.jpg',
+      filename: 'setup.exe_x=1.jpg',
     });
     expect(prepareSaveBytes({ bytes: textAb('{"a":1}'), filename: 'run.json.exe' })).toEqual({
       ok: true,
@@ -546,5 +551,127 @@ describe('admitSaveBytes (bytes rate limit over a rolling window)', () => {
     const big = [{ at: T0, size: 100 * MB }];
     expect(admitSaveBytes(big, T0 + 9_999, 1).ok).toBe(false);
     expect(admitSaveBytes(big, T0 + 10_000, 100 * MB).ok).toBe(true);
+  });
+});
+
+describe('sanitizeSaveBytesFilename (bytes filenames are not URLs)', () => {
+  it('replaces ? and # with _ instead of cutting the name there', () => {
+    expect(sanitizeSaveBytesFilename('issue#42.json')).toBe('issue_42.json');
+    expect(sanitizeSaveBytesFilename('data.json?v=2')).toBe('data.json_v=2');
+    expect(sanitizeSaveBytesFilename('dir/../a?b#c.json')).toBe('a_b_c.json');
+    expect(sanitizeSaveBytesFilename('?#')).toBe('__');
+    expect(sanitizeSaveBytesFilename(undefined)).toBe('download');
+  });
+
+  it('keeps the rest of the shared cleaning: path segments, duplicate extension, trim', () => {
+    expect(sanitizeSaveBytesFilename('C:\\x\\notes.txt.txt')).toBe('notes.txt');
+    // Trim runs AFTER the duplicate-extension collapse, so trailing space blocks the collapse.
+    expect(sanitizeSaveBytesFilename('  a.md.md  ')).toBe('a.md.md');
+    expect(sanitizeSaveBytesFilename('  ')).toBe('download');
+  });
+
+  it('leaves the url/imageId cleaner as it was (? and # still cut there)', () => {
+    expect(sanitizeDownloadFilename('issue#42.json', 'download')).toBe('issue');
+    expect(sanitizeDownloadFilename('data.json?v=2', 'download')).toBe('data.json');
+  });
+
+  it('runs BEFORE classification, so the .json suffix it leaves decides JSON vs text', () => {
+    const json = textAb('{"a":1}');
+    expect(prepareSaveBytes({ bytes: json, filename: 'issue#42.json' })).toEqual({
+      ok: true,
+      type: 'application/json',
+      filename: 'issue_42.json',
+    });
+    expect(prepareSaveBytes({ bytes: json, filename: 'data.json?v=2' })).toEqual({
+      ok: true,
+      type: 'text/plain',
+      filename: 'data.json_v=2.txt',
+    });
+    expect(prepareSaveBytes({ bytes: textAb('[1,2]'), filename: 'dir/../a?b#c.json' })).toEqual({
+      ok: true,
+      type: 'application/json',
+      filename: 'a_b_c.json',
+    });
+    expect(prepareSaveBytes({ bytes: textAb('plain words'), filename: '?#' })).toEqual({
+      ok: true,
+      type: 'text/plain',
+      filename: '__.txt',
+    });
+  });
+});
+
+describe('saveBytesWindowHasRoom (non-recording pre-check)', () => {
+  const MB = 1024 * 1024;
+  const T0 = 2_000_000;
+
+  it('checks count and byte total without recording anything', () => {
+    expect(saveBytesWindowHasRoom([], T0, 100 * MB)).toBe(true);
+    expect(saveBytesWindowHasRoom([], T0, 100 * MB + 1)).toBe(false);
+    const four = Object.freeze([1, 2, 3, 4].map((i) => ({ at: T0 + i, size: 7 * i })));
+    expect(saveBytesWindowHasRoom(four, T0 + 5, 13)).toBe(true);
+    expect(four).toHaveLength(4);
+    const five = [...four, { at: T0 + 5, size: 11 }];
+    // At the count limit, even a 1-byte save has no room…
+    expect(saveBytesWindowHasRoom(five, T0 + 6, 1)).toBe(false);
+    // …until the first entry leaves the window.
+    expect(saveBytesWindowHasRoom(five, T0 + 1 + SAVE_BYTES_WINDOW_MS, 1)).toBe(true);
+    // Byte limit with a single entry, so the count is not the reason.
+    const one = [{ at: T0, size: 90 * MB }];
+    expect(saveBytesWindowHasRoom(one, T0 + 3, 10 * MB)).toBe(true);
+    expect(saveBytesWindowHasRoom(one, T0 + 3, 10 * MB + 1)).toBe(false);
+  });
+});
+
+describe('processSaveBytes (pre-check → classify → record)', () => {
+  const MB = 1024 * 1024;
+  const T0 = 3_000_000;
+  const fullByCount = (): SaveBytesWindowEntry[] =>
+    [1, 2, 3, 4, 5].map((i) => ({ at: T0 + i, size: 100 + i }));
+
+  it('🔴 once the window is full, a save is busy and is NEVER classified (no decode/parse)', () => {
+    const classify = vi.fn(() => 'application/json' as const);
+    const byCount = processSaveBytes(
+      { bytes: textAb('{"big":true}'), filename: 'x.json' },
+      fullByCount(),
+      T0 + 9,
+      classify
+    );
+    expect(byCount.result).toEqual({ ok: false, error: 'busy' });
+    expect(byCount.recent).toHaveLength(5);
+
+    // Byte-full with ONE entry: only the total can refuse it.
+    const byBytes = processSaveBytes(
+      { bytes: new Uint8Array(11 * MB).fill(0x62).buffer },
+      [{ at: T0, size: 90 * MB }],
+      T0 + 4,
+      classify
+    );
+    expect(byBytes.result).toEqual({ ok: false, error: 'busy' });
+    expect(byBytes.recent).toEqual([{ at: T0, size: 90 * MB }]);
+
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it('classifies once and records an accepted save', () => {
+    const classify = vi.fn(() => 'text/plain' as const);
+    const bytes = textAb('seventeen bytes!!');
+    const r = processSaveBytes({ bytes, filename: 'n#1.md' }, [], T0 + 21, classify);
+    expect(r.result).toEqual({ ok: true, type: 'text/plain', filename: 'n_1.txt' });
+    expect(r.recent).toEqual([{ at: T0 + 21, size: 17 }]);
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(classify).toHaveBeenCalledWith(bytes, 'n_1.md');
+  });
+
+  it('a save refused by the classifier or the size cap is not recorded', () => {
+    const start = [{ at: T0 + 2, size: 33 }];
+    const refusedType = processSaveBytes({ bytes: GIF, filename: 'a.gif' }, start, T0 + 8);
+    expect(refusedType.result).toEqual({ ok: false, error: 'file type is not allowed' });
+    expect(refusedType.recent).toEqual(start);
+    const classify = vi.fn(() => 'text/plain' as const);
+    const overCap = new Uint8Array(SAVE_BYTES_MAX_BYTES + 1).fill(0x63).buffer;
+    const refusedSize = processSaveBytes({ bytes: overCap }, [], T0 + 9, classify);
+    expect(refusedSize.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
+    expect(refusedSize.recent).toEqual([]);
+    expect(classify).not.toHaveBeenCalled();
   });
 });
