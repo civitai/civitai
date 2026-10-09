@@ -18,12 +18,12 @@ import type * as MeiliClient from '~/server/meilisearch/client';
 // collect()-based gauges go blind.
 //
 // Vitest normally loads each module once, which hides this defect. Here `vi.resetModules()`
-// between two imports builds the second copy. Mocking `prom-client` with its own
-// implementation keeps one instance across the reset, so both copies share one registry the
-// way the externalized package does in production. The precondition test below checks that
-// sharing, so a harness that silently gave each copy its own registry cannot pass vacuously.
-
-vi.mock('prom-client', async (importOriginal) => await importOriginal());
+// between two imports builds the second copy. prom-client is a node_modules dependency that
+// Vitest externalizes, so Node's own module cache keeps ONE instance across the reset. That
+// matches the externalized package in production. Nothing in this file forces it. The
+// PRECONDITION test asserts the sharing by object identity, so a future harness change that gave
+// each copy its own registry fails there loudly rather than silently changing what this suite
+// models.
 
 // The REAL registration helpers. `~/server/prom/client` re-exports these from
 // @civitai/telemetry/client, and they are what client.ts calls. The global test setup stubs them
@@ -83,11 +83,54 @@ async function gaugeValue(name: string, backend: string): Promise<number | undef
  * Two copies of client.ts in evaluation order: the first stands for the API runtime, which
  * serves the Meili traffic, and the second for the SSR runtime, which evaluates later.
  */
-async function loadTwoCopies(): Promise<{ apiCopy: ClientModule; ssrCopy: ClientModule }> {
+type Registration = {
+  prom: PromClient;
+  gauge: ReturnType<PromClient['register']['getSingleMetric']>;
+  collect: unknown;
+};
+
+async function snapshotRegistration(): Promise<Registration> {
+  const prom = await loadPromClient();
+  const gauge = prom.register.getSingleMetric('civitai_app_meili_call_active');
+  return { prom, gauge, collect: (gauge as unknown as { collect?: unknown })?.collect };
+}
+
+async function loadTwoCopies(): Promise<{
+  apiCopy: ClientModule;
+  ssrCopy: ClientModule;
+  afterApi: Registration;
+  afterSsr: Registration;
+}> {
   const apiCopy = await import('~/server/meilisearch/client');
+  const afterApi = await snapshotRegistration();
   vi.resetModules();
   const ssrCopy = await import('~/server/meilisearch/client');
-  return { apiCopy, ssrCopy };
+  const afterSsr = await snapshotRegistration();
+  return { apiCopy, ssrCopy, afterApi, afterSsr };
+}
+
+/** Start `n` calls through `copy` that stay in flight until released. */
+function holdCalls(copy: ClientModule, n: number) {
+  const releases: Array<() => void> = [];
+  const pending = Array.from({ length: n }, () =>
+    copy.withMeili('search', () => new Promise<void>((resolve) => releases.push(resolve)))
+  );
+  return { releases, pending };
+}
+
+/**
+ * Release held calls one at a time until none are left. The LIVE arrays are passed, never a
+ * copy: a queued call only pushes its release once it gets a slot, so a snapshot taken before
+ * that would never release it.
+ */
+async function drain(holds: Array<ReturnType<typeof holdCalls>>) {
+  for (;;) {
+    const next = holds.find((h) => h.releases.length > 0);
+    if (!next) break;
+    next.releases.shift()!();
+    await vi.advanceTimersByTimeAsync(0);
+  }
+  await Promise.all(holds.flatMap((h) => h.pending));
 }
 
 function clearMeiliGlobals() {
@@ -110,16 +153,19 @@ afterEach(async () => {
 });
 
 describe('meili wrapper gauges with two module copies (the production load shape)', () => {
-  it('PRECONDITION: both copies register into ONE shared registry (else this suite proves nothing)', async () => {
-    const { apiCopy, ssrCopy } = await loadTwoCopies();
-    // Proves two distinct module instances were built...
+  it('PRECONDITION: two module copies share ONE prom-client and ONE gauge, and the second reassigns its collect', async () => {
+    const { apiCopy, ssrCopy, afterApi, afterSsr } = await loadTwoCopies();
+    // Two distinct module instances were built...
     expect(apiCopy).not.toBe(ssrCopy);
     expect(apiCopy.withMeili).not.toBe(ssrCopy.withMeili);
-    // ...and that they met in ONE registry. One registered metric with that name, not two
-    // registries each holding their own.
-    const client = await loadPromClient();
-    const names = (await client.register.getMetricsAsJSON()).map((m) => m.name);
-    expect(names.filter((n) => n === 'civitai_app_meili_call_active')).toHaveLength(1);
+    // ...over the SAME prom-client instance, so the same default registry...
+    expect(afterSsr.prom).toBe(afterApi.prom);
+    // ...where the second copy got the FIRST copy's gauge object back ("already registered")...
+    expect(afterApi.gauge).toBeTruthy();
+    expect(afterSsr.gauge).toBe(afterApi.gauge);
+    // ...and replaced its collect hook. That reassignment is the production mechanism.
+    expect(afterSsr.collect).toBeTypeOf('function');
+    expect(afterSsr.collect).not.toBe(afterApi.collect);
   });
 
   it('CONTROL: with ONE copy loaded, the harness observes live non-zero gauge values', async () => {
@@ -164,6 +210,24 @@ describe('meili wrapper gauges with two module copies (the production load shape
       await vi.advanceTimersByTimeAsync(0);
     }
     await Promise.all(pending);
+    expect(await gaugeValue('meili_call_active', 'search')).toBe(0);
+    expect(await gaugeValue('meili_call_queue_depth', 'search')).toBe(0);
+  });
+
+  it('both copies share ONE per-backend concurrency cap, and the gauges count calls from either copy', async () => {
+    const { apiCopy, ssrCopy } = await loadTwoCopies();
+
+    // Fill the cap (2) through the first copy, then call through the second copy. With a
+    // per-process cap the second copy's call has to queue. A private per-copy limiter would run
+    // it at once (active=3, queued=0).
+    const api = holdCalls(apiCopy, 2);
+    const ssr = holdCalls(ssrCopy, 1);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(await gaugeValue('meili_call_active', 'search')).toBe(2);
+    expect(await gaugeValue('meili_call_queue_depth', 'search')).toBe(1);
+
+    await drain([api, ssr]);
     expect(await gaugeValue('meili_call_active', 'search')).toBe(0);
     expect(await gaugeValue('meili_call_queue_depth', 'search')).toBe(0);
   });
