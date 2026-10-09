@@ -3,6 +3,7 @@ import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  activityMeasureOf,
   creatorMilestoneRegistry,
   isMilestoneAnnounced,
   milestoneKeysFor,
@@ -84,6 +85,30 @@ describe('creator milestone registry', () => {
         threshold: Number(rest.split('-').pop()),
       });
     }
+  });
+
+  // Product decision (2026-10-09): every visible ladder runs wood, bronze, silver, gold, diamond,
+  // one rung per metal, so every measure has exactly five rungs. Adding or dropping a rung means
+  // re-deciding the badge art for the whole ladder; change this only with that decision.
+  it('gives every activity measure exactly five rungs, one per badge metal', () => {
+    const rungs = new Map<string, number[]>();
+    for (const [key, entry] of Object.entries(creatorMilestoneRegistry)) {
+      const measure = activityMeasureOf(entry);
+      if (!measure) continue;
+      rungs.set(measure, [...(rungs.get(measure) ?? []), Number(key.split('-').pop())]);
+    }
+    expect(Object.fromEntries([...rungs].map(([measure, list]) => [measure, list.length]))).toEqual(
+      {
+        models: 5,
+        articles: 5,
+        downloads: 5,
+        followers: 5,
+        reactions: 5,
+        revenue: 5,
+        votes: 5,
+        wins: 5,
+      }
+    );
   });
 
   it('gives every definition a real launch date', () => {
