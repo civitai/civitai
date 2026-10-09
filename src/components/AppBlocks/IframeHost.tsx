@@ -755,11 +755,7 @@ export function AppBlockChrome({
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
       {/* Private feedback to the developer. Unlike the review item it also works on the model
           slot (no slug there): eligibility is asked of the server by AppBlock id. */}
-      <ChromeFeedbackMenuItem
-        request={feedbackRequest}
-        slug={slug}
-        onOpenFeedback={setFeedbackTarget}
-      />
+      <ChromeFeedbackMenuItem request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -958,14 +954,7 @@ export function AppBlockChrome({
         />
       )}
       {feedbackTarget && (
-        <AppFeedbackModal
-          target={feedbackTarget}
-          onClose={() => setFeedbackTarget(null)}
-          onOpenReview={(appListingId) => {
-            setFeedbackTarget(null);
-            setReviewListingId(appListingId);
-          }}
-        />
+        <AppFeedbackModal target={feedbackTarget} onClose={() => setFeedbackTarget(null)} />
       )}
     </>
   );

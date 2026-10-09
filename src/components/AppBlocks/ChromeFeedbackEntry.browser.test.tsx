@@ -29,11 +29,8 @@ const mocks = vi.hoisted(() => ({
   createResult: { kind: 'ok' } as { kind: 'ok' } | { kind: 'error'; message: string; code: string },
   /** When set, `create` waits on this before settling — holds the mutation pending. */
   createGate: null as Promise<void> | null,
+  /** `getAppDetail`'s answer — read only by the ⋮ menu's existing review item. */
   detail: null as unknown,
-  detailInputs: [] as unknown[],
-  /** Give each slug its own listing id, so which app a hand-off targeted is visible. */
-  detailIdFromSlug: false,
-  upsertReviewInputs: [] as unknown[],
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -46,7 +43,6 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { useMutation, useQuery } = await import('@tanstack/react-query');
-  const invalidate = vi.fn().mockResolvedValue(undefined);
   return {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy(
@@ -79,13 +75,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           useQuery: (input: unknown, opts?: Record<string, unknown>) =>
             useQuery({
               queryKey: [['appListings', 'getAppDetail'], { input, type: 'query' }],
-              queryFn: async () => {
-                mocks.detailInputs.push(input);
-                const slug = (input as { slug?: string }).slug;
-                return mocks.detail && mocks.detailIdFromSlug
-                  ? { ...(mocks.detail as object), id: `apl_${slug}`, slug }
-                  : mocks.detail;
-              },
+              queryFn: async () => mocks.detail,
               ...opts,
             }),
         },
@@ -97,20 +87,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               ...opts,
             }),
         },
-        'appListings.upsertReview': {
-          useMutation: () => ({
-            mutate: (input: unknown) => mocks.upsertReviewInputs.push(input),
-            isPending: false,
-          }),
-        },
       },
       {
         useUtils: () => ({
-          appListings: {
-            getMyReview: { invalidate },
-            listReviews: { invalidate },
-            getAppDetail: { invalidate },
-          },
           blocks: { listMyScopeGrants: { invalidate: vi.fn(async () => undefined) } },
         }),
       }
@@ -217,9 +196,6 @@ beforeEach(async () => {
   mocks.createResult = { kind: 'ok' };
   mocks.createGate = null;
   mocks.detail = null;
-  mocks.detailInputs = [];
-  mocks.detailIdFromSlug = false;
-  mocks.upsertReviewInputs = [];
   await page.viewport(1280, 900);
 });
 
@@ -386,8 +362,8 @@ describe('submitting', () => {
   }
 });
 
-describe('the "Rate this app" line', () => {
-  // Distinct from `eligible().appListingId`, so a hand-off of the wrong id is visible.
+describe('the ⋮ menu on the page host', () => {
+  // A listing the ⋮ review item will offer review for (signed in, not the owner, onsite).
   const reviewableDetail = {
     id: 'apl_DETAIL',
     slug: SLUG,
@@ -398,34 +374,14 @@ describe('the "Rate this app" line', () => {
     reviewCount: 0,
   };
 
-  test('page host, review-eligible viewer: it hands the LISTING id to the review modal', async () => {
-    mocks.eligibility = eligible({ appListingId: 'apl_ELIGIBILITY' });
+  test('page host: the ⋮ menu renders both "Rate this app" and "Send feedback to developer"', async () => {
     mocks.detail = reviewableDetail;
-    await openFeedbackModal();
-    await page.getByTestId('app-feedback-rate-app').click();
+    renderChrome();
+    await openOverflow();
     await expect
-      .element(page.getByText('Would you recommend this app to others?'))
-      .toBeInTheDocument();
-    await expect.element(modal()).not.toBeInTheDocument();
-    expect(mocks.detailInputs).toContainEqual({ slug: SLUG });
-    // Observed at the review modal's own submit: `getMyReview` is no witness, because the ⋮ menu's
-    // review label already queried it for the same id.
-    await page.getByRole('button', { name: 'Recommend', exact: true }).click();
-    await page.getByRole('button', { name: 'Post review' }).click();
-    expect(mocks.upsertReviewInputs).toHaveLength(1);
-    expect(mocks.upsertReviewInputs[0]).toMatchObject({ appListingId: 'apl_DETAIL' });
-  });
-
-  test('model slot has no slug, so the line is absent and no listing is fetched', async () => {
-    // A reviewable listing IS available, so only the missing slug can keep the line away.
-    mocks.detail = reviewableDetail;
-    await openFeedbackModal(SLOT_PROPS);
-    await expect.element(messageBox()).toBeInTheDocument();
-    // Two frames past the commit, so a mount-time query would have fired.
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    expect(mocks.detailInputs).toHaveLength(0);
-    expect(page.getByTestId('app-feedback-rate-app').elements()).toHaveLength(0);
+      .element(page.getByTestId('app-block-review-menu-item'))
+      .toHaveTextContent('Rate this app');
+    await expect.element(feedbackItem()).toHaveTextContent('Send feedback to developer');
   });
 });
 
@@ -434,16 +390,7 @@ describe('a reused host (app A → app B without remount)', () => {
     <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...PAGE_PROPS} slug={slug} />
   );
 
-  /** Opens the modal on app A, then moves the same host to app B. */
-  async function openOnAThenMoveToB() {
-    mocks.detailIdFromSlug = true;
-    mocks.detail = {
-      name: APP_NAME,
-      kind: 'onsite',
-      creator: { id: 4242, username: 'publisher', image: null },
-      recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
-      reviewCount: 0,
-    };
+  test('the open modal still sends to the app it was opened for', async () => {
     const view = await render(chrome('app-a'), { wrapper: ProdishProviders });
     await openOverflow();
     await expect.element(feedbackItem()).toBeInTheDocument();
@@ -453,27 +400,11 @@ describe('a reused host (app A → app B without remount)', () => {
     // the modal staying open is what shows it.
     await view.rerender(chrome('app-b'));
     await expect.element(modal()).toBeInTheDocument();
-    // Let any listing lookup the new props trigger settle (the mock resolves immediately).
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-  }
-
-  test('the open modal still sends to the app it was opened for', async () => {
-    await openOnAThenMoveToB();
     await typeAndSend('about app A');
     await expect.element(page.getByTestId('app-feedback-sent')).toBeInTheDocument();
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: 'app-a' }, message: 'about app A', context: { surface: 'page' } },
     ]);
-  });
-
-  test('its "Rate this app" link still reviews the app it was opened for', async () => {
-    await openOnAThenMoveToB();
-    await page.getByTestId('app-feedback-rate-app').click();
-    await page.getByRole('button', { name: 'Recommend', exact: true }).click();
-    await page.getByRole('button', { name: 'Post review' }).click();
-    expect(mocks.upsertReviewInputs).toHaveLength(1);
-    expect(mocks.upsertReviewInputs[0]).toMatchObject({ appListingId: 'apl_app-a' });
   });
 });
 

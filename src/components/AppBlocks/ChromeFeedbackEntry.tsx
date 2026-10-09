@@ -1,4 +1,4 @@
-import { Alert, Anchor, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import { Alert, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
 import { IconLock, IconMessage2 } from '@tabler/icons-react';
 import { useState } from 'react';
 
@@ -17,7 +17,6 @@ import {
   buildAppFeedbackCreateInput,
   canSubmitAppFeedback,
 } from './appFeedbackChrome';
-import { ChromeReviewEligible } from './ChromeReviewEntry';
 import { ChromeSurfaceItem } from './ChromeSurface';
 
 /**
@@ -34,19 +33,15 @@ import { ChromeSurfaceItem } from './ChromeSurface';
  */
 export type AppFeedbackModalTarget = {
   request: AppFeedbackRequest;
-  /** The store slug, for the "Rate this app" link. Absent on the model slot. */
-  slug: string | undefined;
   appName: string;
   appBlockVersion: string | null;
 };
 
 export function ChromeFeedbackMenuItem({
   request,
-  slug,
   onOpenFeedback,
 }: {
   request: AppFeedbackRequest | null;
-  slug: string | undefined;
   onOpenFeedback: (target: AppFeedbackModalTarget) => void;
 }) {
   const currentUser = useCurrentUser();
@@ -57,16 +52,14 @@ export function ChromeFeedbackMenuItem({
     request,
   });
   if (!entry) return null;
-  return <ChromeFeedbackMenuItemBody request={entry} slug={slug} onOpenFeedback={onOpenFeedback} />;
+  return <ChromeFeedbackMenuItemBody request={entry} onOpenFeedback={onOpenFeedback} />;
 }
 
 function ChromeFeedbackMenuItemBody({
   request,
-  slug,
   onOpenFeedback,
 }: {
   request: AppFeedbackRequest;
-  slug: string | undefined;
   onOpenFeedback: (target: AppFeedbackModalTarget) => void;
 }) {
   // `getEligibility` runs the same predicate as `appFeedback.create`, so the item is never offered
@@ -80,7 +73,7 @@ function ChromeFeedbackMenuItemBody({
   return (
     <ChromeSurfaceItem
       leftSection={<IconMessage2 size={14} stroke={1.5} />}
-      onClick={() => onOpenFeedback({ request, slug, appName, appBlockVersion })}
+      onClick={() => onOpenFeedback({ request, appName, appBlockVersion })}
       data-testid="app-block-feedback-menu-item"
     >
       Send feedback to developer
@@ -91,15 +84,13 @@ function ChromeFeedbackMenuItemBody({
 export function AppFeedbackModal({
   target,
   onClose,
-  onOpenReview,
 }: {
   target: AppFeedbackModalTarget;
   onClose: () => void;
-  onOpenReview: (appListingId: string) => void;
 }) {
   // Same viewport rule as `ReviewListingModal`: a modal IS the viewport.
   const isMobile = useIsMobile({ type: 'media' });
-  const { request, slug } = target;
+  const { request } = target;
   const [message, setMessage] = useState('');
   // Not `useFeedbackSubmission`: that hook attaches host-page diagnostics (session id, console
   // and network errors) to every submit, and none of that is collected for app feedback.
@@ -145,22 +136,6 @@ export function AppFeedbackModal({
               appear on the app&apos;s page. The developer will see your username.
             </Text>
           </Alert>
-          <ChromeReviewEligible slug={slug}>
-            {(appListingId) => (
-              <Text size="sm" c="dimmed">
-                Want to rate the app publicly?{' '}
-                <Anchor
-                  component="button"
-                  type="button"
-                  size="sm"
-                  onClick={() => onOpenReview(appListingId)}
-                  data-testid="app-feedback-rate-app"
-                >
-                  Rate this app
-                </Anchor>
-              </Text>
-            )}
-          </ChromeReviewEligible>
           <Textarea
             label="Your feedback"
             placeholder="What's working, what's broken, what you'd like…"
