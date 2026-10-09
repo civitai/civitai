@@ -170,12 +170,11 @@ export type ReviewRowDeploy = {
   /** The publish-request id — the ONLY argument `blocks.retriggerBuild` takes. */
   publishRequestId: string;
 };
-// NOTE: `deployDetail` is deliberately NOT projected here. It carries the
-// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes) and
-// the moderator queue never renders it — carrying it into this payload would be
-// dead data on a surface where a future renderer would have to re-derive the
-// escaping guarantees. The owner-facing /apps/my-submissions row is where the
-// excerpt is shown, and it reads it straight from its own query.
+// NOTE: `deployDetail` is deliberately NOT projected here, and
+// `listApprovedRequests` does not select it either. It carries the
+// TENANT-INFLUENCED build-log excerpt (sanitized, but author-authored bytes), which
+// only the app's own team sees: the listing's History tab reads it from
+// `appListings.listingHistory`.
 
 function toDate(d: string | Date): Date {
   return typeof d === 'string' ? new Date(d) : d;

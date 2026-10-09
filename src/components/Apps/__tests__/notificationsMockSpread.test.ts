@@ -40,9 +40,9 @@ import { describe, expect, it } from 'vitest';
  *
  * WHY A LEDGER AND NOT A REPO-WIDE RULE. Measured with the detector below: 44 test files
  * carry a non-spreading `~/utils/notifications` factory at `ba6ce2b835`; #5102 converted the
- * 5 in `FIXED_BY_5102` and #5358 four more, leaving the 35 in `TOLERATED`. A repo-wide "must spread" check would
- * be red on all 35 — and a permanently-red gate is worse than no gate, which is the whole
- * subject of #5102. So the tolerated set is enumerated instead, and the assertion is EQUALITY
+ * 5 in `FIXED_BY_5102` and #5358 four more, and two more went when their suites were deleted,
+ * leaving the 33 in `TOLERATED`. A repo-wide "must spread" check would be red on all 33 —
+ * and a permanently-red gate is worse than no gate, which is the whole subject of #5102. So the tolerated set is enumerated instead, and the assertion is EQUALITY
  * in both directions: adding a new wholesale factory fails this test, and converting one
  * without editing the ledger also fails it, so the count here stays true. Per the tier note
  * above, that failure is a red test someone has to read — it is not a merge gate, and this
@@ -51,8 +51,8 @@ import { describe, expect, it } from 'vitest';
  * WHY NOT `local-rules/no-wholesale-module-mock` INSTEAD. That rule is the detector used
  * below, but its registry in `.eslintrc.js` deliberately excludes `~/utils/notifications`:
  * its stated admission test needs ≥15 exported bindings AND zero existing violators, and this
- * module has 7 exports and 35 violators. Registering it is blocked on that second criterion —
- * converting the 35 — which is tracked in #5115 together with the question of whether an
+ * module has 7 exports and 33 violators. Registering it is blocked on that second criterion —
+ * converting the 33 — which is tracked in #5115 together with the question of whether an
  * export-count threshold is the right admission test at all. Deliberately not done here.
  *
  * Sibling guard, same defect class one module over:
@@ -95,9 +95,9 @@ const FIXED_BY_5102 = [
  * rather than as a failing assertion — the whole-file silent skip this guard exists to make
  * visible. It was noticed only because sibling files in the same run stayed green.
  *
- * 35 entries, of which 32 are `.browser.test.tsx` and 3 run in the node tier
+ * 33 entries, of which 30 are `.browser.test.tsx` and 3 run in the node tier
  * (`creator-announcement-mutations`, `useCFImageUpload`, `useFormStorage`). Both numbers get
- * quoted, so keep them apart: "32 browser suites left to convert" and "a 35-entry ledger" are
+ * quoted, so keep them apart: "30 browser suites left to convert" and "a 33-entry ledger" are
  * the same fact counted over different sets, not a discrepancy. Conversion is tracked in
  * #5115.
  */
@@ -118,8 +118,6 @@ const TOLERATED = [
   'src/components/Apps/ManifestEditForm.browser.test.tsx',
   'src/components/Apps/MessageAppOwnerModal.browser.test.tsx',
   'src/components/Apps/MyAppsBody.browser.test.tsx',
-  'src/components/Apps/MySubmissionsList.browser.test.tsx',
-  'src/components/Apps/MySubmissionsList.buildFailure.browser.test.tsx',
   'src/components/Apps/OffsiteSubmissionsList.browser.test.tsx',
   'src/components/Apps/ReportListingModal.browser.test.tsx',
   'src/components/Apps/ReviewActionBar.browser.test.tsx',

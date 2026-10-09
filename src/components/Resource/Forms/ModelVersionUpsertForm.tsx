@@ -1928,7 +1928,8 @@ export function ModelVersionUpsertForm({
                                 />
                                 <Text size="xs" c="yellow">
                                   With a license fee set, this version stops earning creator
-                                  compensation and tips — you earn through the license fee instead.
+                                  compensation — you earn through the license fee instead. It can
+                                  still receive creator tips.
                                 </Text>
                               </Group>
                             )}

@@ -34,6 +34,10 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
     procedures: ['getArea', 'create'],
     why: 'Both, together: the router already requires that whoever sees the prompt can submit.',
   },
+  'app-feedback.router.ts': {
+    procedures: ['create'],
+    why: 'Private app feedback, same posture as feedback.create: its eligibility query is not email-gated, so the submit must not be either.',
+  },
   'user.router.ts': {
     procedures: ['updateBrowsingMode'],
     why: 'A browsing preference, not a content action.',

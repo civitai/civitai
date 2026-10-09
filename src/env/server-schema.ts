@@ -553,15 +553,35 @@ export const serverSchema = z
     // Prod-required + non-empty: the app disables its auth gate on an empty token, so a blank value here
     // would produce an unauthenticated producer API. Fail-fast at monolith boot instead.
     NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
-    // Per-call signals timeout in ms. Calls wrapped via withSignals() fail
-    // fast with SignalsCallTimeoutError once exceeded, instead of hanging
-    // until Traefik's 30s router timeout fires. Default tuned for signals
-    // normal latency (higher than Meili due to Orleans grain init).
+    // Per-call signals deadline in ms, measured from withSignals() entry — it
+    // covers time spent queued for a concurrency slot as well as the call.
+    // Calls fail fast with SignalsCallTimeoutError once exceeded (a call that
+    // reaches its slot with less than half of it left is never started),
+    // instead of hanging until Traefik's
+    // 30s router timeout fires. Default tuned for signals normal latency
+    // (higher than Meili due to Orleans grain init).
     SIGNALS_CALL_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(5000),
-    // Per-pod cap on in-flight signals HTTP calls wrapped via withSignals().
-    // When saturated, additional calls fail fast with SignalsCallTimeoutError
-    // rather than queueing forever and pressuring the event loop.
+    // Per-pod cap on in-flight signals HTTP calls in withSignals()' 'default'
+    // lane (everything except getToken; the pod-wide cap adds
+    // SIGNALS_TOKEN_CALL_CONCURRENCY). Calls beyond it wait in a queue bounded
+    // by SIGNALS_CALL_MAX_QUEUE.
     SIGNALS_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+    // Per-pod cap on 'default'-lane calls waiting for a SIGNALS_CALL_CONCURRENCY slot. When
+    // full, further calls fail at 0ms with SignalsCallTimeoutError('concurrency')
+    // instead of piling up requests that can only time out. A queue-full
+    // rejection counts toward the circuit only when the window also holds a
+    // real backend failure, so a healthy burst is shed without opening it.
+    SIGNALS_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
+    // Separate lane (own limiter + queue) for signals.getToken / getAccessToken
+    // only, so a client reconnect storm cannot crowd out signal pushes. Defaults
+    // equal the shared limiter getToken used before (30 / 200), so getToken's
+    // bounds are unchanged; the 'default' lane keeps SIGNALS_CALL_*. The circuit
+    // breaker stays shared across lanes: token-lane queue-side failures never
+    // count toward it (they measure demand), but token-lane backend timeouts
+    // do — so a storm against a backend whose tail nears half the deadline can
+    // still open it for pushes. See src/server/signals/wrapper.ts.
+    SIGNALS_TOKEN_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+    SIGNALS_TOKEN_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
     // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
     // If `SIGNALS_CIRCUIT_TRIP_THRESHOLD` SignalsCallTimeoutErrors accumulate
     // within `SIGNALS_CIRCUIT_WINDOW_SECONDS`, the circuit OPENs and all calls

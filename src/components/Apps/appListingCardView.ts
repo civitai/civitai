@@ -237,7 +237,7 @@ export function getListingCta(
 // ---------------------------------------------------------------------------
 // Owner "Edit" deep-link (Item 2) — pure gating + href builders, shared by the
 // store card + detail. Mirrors the my-submissions edit gating
-// (`MySubmissionsList` `showEdit` / `OffsiteSubmissionsList` `canEdit`): the
+// (`OffsiteSubmissionsList` `canEdit`): the
 // owner can edit an app that is still editable (NOT mod-removed / rejected).
 // ---------------------------------------------------------------------------
 

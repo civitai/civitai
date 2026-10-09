@@ -66,6 +66,12 @@ const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 // get date options as month from start of year to now
 const CASH_COLOR = '#26a269';
 
+const SOURCE_TITLES: Record<CompensationSource, string> = {
+  compensation: 'Generation Buzz Earned',
+  licenseFee: 'License Fees Earned',
+  tip: 'Tips Earned',
+};
+
 const dateOptions = monthsUntilNow.reverse().map((month) => {
   const date = dayjs(month).startOf('month').add(15, 'day');
   return {
@@ -95,11 +101,22 @@ export function DailyCreatorCompReward({
   const resources = data?.resources ?? [];
   const hasPublishedResources = data?.hasPublishedResources ?? false;
 
+  // The probes decide which tabs to offer; each is skipped while its own tab is the one showing.
   const { data: licenseProbe } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, source: 'licenseFee' },
-    { enabled: !!features.buzz && sourceReady && source === 'compensation' }
+    { enabled: !!features.buzz && sourceReady && source !== 'licenseFee' }
+  );
+  const { data: tipProbe } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+    { date: selectedDate, source: 'tip' },
+    { enabled: !!features.buzz && sourceReady && source !== 'tip' }
   );
   const hasLicenseEarnings = (licenseProbe?.resources.length ?? 0) > 0 || source === 'licenseFee';
+  const hasTipEarnings = (tipProbe?.resources.length ?? 0) > 0 || source === 'tip';
+  const sourceOptions = [
+    { value: 'compensation', label: 'Compensation' },
+    ...(hasLicenseEarnings ? [{ value: 'licenseFee', label: 'License Fees' }] : []),
+    ...(hasTipEarnings ? [{ value: 'tip', label: 'Tips' }] : []),
+  ];
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
@@ -310,11 +327,9 @@ export function DailyCreatorCompReward({
           {/* Header — always padded */}
           <Stack gap={0} p="md" pb={0}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-xl font-bold">
-                {source === 'licenseFee' ? 'License Fees Earned' : 'Generation Buzz Earned'}
-              </h3>
+              <h3 className="text-xl font-bold">{SOURCE_TITLES[source]}</h3>
               <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
-                {hasLicenseEarnings && (
+                {sourceOptions.length > 1 && (
                   <SegmentedControl
                     className="shrink-0"
                     value={source}
@@ -323,10 +338,7 @@ export function DailyCreatorCompReward({
                       setSearch('');
                       setFilteredVersionIds([]);
                     }}
-                    data={[
-                      { value: 'compensation', label: 'Compensation' },
-                      { value: 'licenseFee', label: 'License Fees' },
-                    ]}
+                    data={sourceOptions}
                     size="xs"
                   />
                 )}

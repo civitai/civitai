@@ -64,7 +64,18 @@ import {
   getCosmeticArtworkUrl,
   queueCosmeticPerceptualHash,
 } from '~/server/services/cosmetic-phash.service';
-import { throwNotFoundError, withRetries } from '~/server/utils/errorHandling';
+import {
+  isPrismaUniqueViolation,
+  throwNotFoundError,
+  withRetries,
+} from '~/server/utils/errorHandling';
+import {
+  chargeForShopPurchase,
+  chargeRetryOptions,
+  purchaseStateUnknown,
+  refundCallOptions,
+  refundShopCharge,
+} from '~/server/services/shop-purchase-charge';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   CollectionType,
@@ -88,9 +99,10 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
  * is a new intent; anything else — including no response at all — means it might
  * have, so the idempotency key is held rather than reissued.
  *
- * ⚠️ So a refusal here must NOT be raised for an ambiguous failure. The two
- * below (`transactionCount`, and the post-charge grant failure) stay 500s
- * deliberately: the money may already have moved.
+ * ⚠️ So a refusal here must NOT be raised for an ambiguous failure. An empty
+ * `transactionCount` stays a 500, and so does any post-charge failure whose
+ * money state is unknown (see shop-purchase-charge.ts). A grant failure whose
+ * refund went through is a refusal: the money is back.
  */
 export const getShopItemById = async ({ id }: GetByIdInput) => {
   const shopItemFindArgs = {
@@ -1031,6 +1043,7 @@ export const purchaseCosmeticShopItem = async ({
     const members = await getPackMembers(shopItemId);
     return purchaseCosmeticPack({
       userId,
+      idempotencyKey,
       shopItem: {
         id: shopItem.id,
         title: shopItem.title,
@@ -1150,15 +1163,23 @@ export const purchaseCosmeticShopItem = async ({
     });
     if (alreadyProcessed) throw throwBadRequestError('This purchase has already been completed');
   }
-  const transaction = await createMultiAccountBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountTypes,
-    toAccountId: 0, // bank
-    amount: shopItem.unitAmount,
-    type: TransactionType.Purchase,
-    description: `Cosmetic purchase - ${shopItem.title}`,
-    externalTransactionIdPrefix: transactionId,
-  });
+  const chargeContext = { shopItemId, userId, transactionId, amount: shopItem.unitAmount };
+  const transaction = await chargeForShopPurchase(
+    () =>
+      createMultiAccountBuzzTransaction(
+        {
+          fromAccountId: userId,
+          fromAccountTypes,
+          toAccountId: 0, // bank
+          amount: shopItem.unitAmount,
+          type: TransactionType.Purchase,
+          description: `Cosmetic purchase - ${shopItem.title}`,
+          externalTransactionIdPrefix: transactionId,
+        },
+        chargeRetryOptions
+      ),
+    chargeContext
+  );
   if (!transaction.transactionCount) {
     throw new Error('There was an error creating the transaction');
   }
@@ -1346,12 +1367,30 @@ export const purchaseCosmeticShopItem = async ({
 
     return data;
   } catch (error) {
-    await refundMultiAccountTransaction({
-      externalTransactionIdPrefix: transactionId,
-      description: `Failed to purchase cosmetic - ${shopItem.title}`,
-    });
+    // With a client key, a unique violation here means a request with the same
+    // key recorded this purchase first; the prefix is shared with it, so it is
+    // not refunded from here.
+    if (idempotencyKey && isPrismaUniqueViolation(error))
+      throw purchaseStateUnknown({ ...chargeContext, error }, 'same key already recorded');
 
-    throw new Error('Failed to purchase cosmetic');
+    // Charged and not fully refunded is "state unknown", logged for
+    // reconciliation; only a refund known to cover the charge reaches the
+    // refusal below.
+    await refundShopCharge(
+      () =>
+        refundMultiAccountTransaction(
+          {
+            externalTransactionIdPrefix: transactionId,
+            description: `Failed to purchase cosmetic - ${shopItem.title}`,
+          },
+          refundCallOptions
+        ),
+      { ...chargeContext, error }
+    );
+
+    // Refunded, so nothing is charged: a refusal, which lets the client retry
+    // with a new key instead of replaying the refunded one.
+    throw throwBadRequestError('Failed to purchase cosmetic');
   }
 };
 

@@ -472,9 +472,7 @@ describe('getDetailPrimaryAction — off-site', () => {
    * callers that reach this view-model directly with a raw row
    * (`app-listing-actionable.service`; and the mod-review preview builder via
    * `buildListingDetailPreview` → `AppListingDetailBody`, which uses `?? null`)
-   * are documented in that predicate's docstring. (`MySubmissionsList` also
-   * calls it directly but hardcodes `kind: 'onsite'` and never reaches this
-   * branch — it is NOT an off-site caller.)
+   * are documented in that predicate's docstring.
    */
   it('🔴 the action ignores connectClientId entirely, empty string included', () => {
     const baseline = getDetailPrimaryAction(

@@ -1,4 +1,15 @@
-import { Alert, Badge, Button, Card, Code, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Code,
+  Group,
+  Modal,
+  Stack,
+  Text,
+  Textarea,
+} from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useState } from 'react';
 import { moderationActionChip } from '~/components/Apps/appListingModerationView';
@@ -9,9 +20,8 @@ import { trpc } from '~/utils/trpc';
 
 /**
  * Shared OWNER-control modals for the App Store my-submissions surfaces (W13
- * post-approval mgmt). Factored out of the P3 `OffsiteSubmissionsList` so the P4
- * on-site `MySubmissionsList` reuses the EXACT same confirm-gated unpublish flow +
- * moderation-history timeline (no fork-copy). Both are DUAL-KIND: they hit the
+ * post-approval mgmt), factored out of the P3 `OffsiteSubmissionsList`: the
+ * confirm-gated unpublish flow + moderation-history timeline. Both are DUAL-KIND: they hit the
  * widened `appListings.unpublishOwnListing` / `listMyListingModerationEvents` procs,
  * which handle on-site AND off-site listings server-side.
  *
@@ -62,7 +72,8 @@ export function OwnerUnpublishModal({
       setReason('');
       onClose();
     },
-    onError: (e) => showErrorNotification({ title: 'Unpublish failed', error: new Error(e.message) }),
+    onError: (e) =>
+      showErrorNotification({ title: 'Unpublish failed', error: new Error(e.message) }),
   });
 
   function close() {
@@ -162,7 +173,13 @@ export function OwnerModerationHistoryModal({
       onClose={onClose}
       title={
         <Text fw={600}>
-          Moderation history{target ? <> — <Code>{target.slug}</Code></> : null}
+          Moderation history
+          {target ? (
+            <>
+              {' '}
+              — <Code>{target.slug}</Code>
+            </>
+          ) : null}
         </Text>
       }
       size="lg"
