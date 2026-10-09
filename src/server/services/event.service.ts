@@ -12,6 +12,12 @@ import {
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import type { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
+import type { CosmeticScoreKey } from '~/server/events/scoring/cosmetic-placement.service';
+import {
+  getCosmeticScores,
+  getEventStandings as getScoredEventStandings,
+  getUserCosmeticScores,
+} from '~/server/events/scoring/cosmetic-placement.service';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
 
@@ -86,6 +92,17 @@ export async function getEventPartners({ event }: EventInput) {
 
 export async function activateEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
+    if (eventEngine.isJoinEvent(event)) {
+      const { cosmeticId, team } = await eventEngine.join(event, userId);
+      const cosmetic = await getCosmeticDetail({ id: cosmeticId });
+      await redis.hDel(
+        `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`,
+        userId.toString()
+      );
+      await eventEngine.queueAddRole({ event, team, userId });
+      return { cosmetic };
+    }
+
     // Get cosmetic
     const { cosmeticId, team } = await eventEngine.getUserData({ event, userId });
     if (!cosmeticId) throw new Error("You don't have a cosmetic for this event");
@@ -205,6 +222,46 @@ export async function getUserRank({ event, userId }: EventInput & { userId: numb
 
     const teamRankingIndex = teams[team].findIndex((x) => x.userId === userId);
     return teamRankingIndex >= 0 ? teamRankingIndex + 1 : null;
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function getEventStandings({ event }: EventInput) {
+  try {
+    const scored = eventEngine.getStartedScoredEvent(event);
+    const standings = await getScoredEventStandings(scored);
+    const userIds = [
+      ...new Set([
+        ...standings.topCosmetics.map((x) => x.userId),
+        ...Object.values(standings.topUsers).flatMap((x) => x.map((u) => u.userId)),
+      ]),
+    ];
+    const users = await userBasicCache.fetch(userIds);
+    return { ...standings, users };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function getMyEventCosmeticScores({ event, userId }: EventInput & { userId: number }) {
+  try {
+    const scored = eventEngine.getStartedScoredEvent(event);
+    const cosmetics = await getUserCosmeticScores(scored.name, userId);
+    const points = cosmetics.reduce((sum, x) => sum + x.points, 0);
+    return { points, cosmetics };
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function getEventCosmeticScores({
+  event,
+  cosmetics,
+}: EventInput & { cosmetics: CosmeticScoreKey[] }) {
+  try {
+    const scored = eventEngine.getStartedScoredEvent(event);
+    return await getCosmeticScores(scored.name, cosmetics);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

@@ -208,12 +208,32 @@ export type BuzzEventContext = {
   db: PrismaClient;
 };
 
+// Scores a team by the impressions and reactions on content wearing that team's event cosmetics.
+// See src/server/events/scoring/cosmetic-placement.sql.ts for how each parameter is applied.
+export type CosmeticPlacementScoring = {
+  reactionWeight: number;
+  // Signed-out viewers per entity per day are capped at max(anonFloor, signed viewers x anonRatio).
+  anonFloor: number;
+  anonRatio: number;
+  // A signed-out session that saw more distinct entities than this in a day is treated as a bot.
+  botSessionEntityLimit: number;
+  // Accounts registered less than this many days before the event starts do not count as viewers.
+  newAccountDays: number;
+  // Most entities one viewer can credit to one cosmetic owner per day.
+  viewerOwnerDailyCap: number;
+};
+
 type HolidayEventDefinition = {
   title: string;
   startDate: Date;
   endDate: Date;
-  teams: string[];
-  bankIndex: number;
+  teams: readonly string[];
+  // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
+  bankIndex?: number;
+  scoring?: CosmeticPlacementScoring;
+  // Joining grants the team's `<cosmeticName> - <team>` cosmetic under this claimKey, once per user,
+  // only inside the event window. Without it, activateCosmetic keeps the bank-event behaviour.
+  joinClaimKey?: string;
   cosmeticName: string;
   badgePrefix: string;
   coverImage?: string;
