@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { STICKER_TOPUP_MAX_QUANTITY } from '~/shared/utils/sticker-token';
 import { stickerPlacementRatings } from '~/shared/constants/cosmetic-flags.constants';
+import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 
 export type SetStickerPlacementRatingInput = z.infer<typeof setStickerPlacementRatingSchema>;
 export const setStickerPlacementRatingSchema = z.object({
@@ -58,4 +59,26 @@ export const cosmeticInputSchema = z.object({
   id: z.number(),
   claimKey: z.string(),
   // data: z.object({}).passthrough().nullable(),
+});
+
+const within = ([lo, hi]: readonly [number, number]) => z.number().min(lo).max(hi);
+
+/**
+ * A moderator's change to one event hat's placement. Only these fields can be set, so the art's
+ * measured shape (canvas, bounds, brim, outline) is never touched; `null` puts a field back to the
+ * default look.
+ */
+export type UpdateEventHatFitInput = z.infer<typeof updateEventHatFitSchema>;
+export const updateEventHatFitSchema = z.object({
+  id: z.number().int().positive(),
+  fit: z
+    .object({
+      size: within(HAT_FIT_LIMITS.size).nullable(),
+      tilt: within(HAT_FIT_LIMITS.tilt).nullable(),
+      depth: within(HAT_FIT_LIMITS.depth).nullable(),
+      grow: within(HAT_FIT_LIMITS.grow).nullable(),
+      offset: z.tuple([within(HAT_FIT_LIMITS.offset), within(HAT_FIT_LIMITS.offset)]).nullable(),
+    })
+    .partial()
+    .strict(),
 });

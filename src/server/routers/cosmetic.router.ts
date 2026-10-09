@@ -5,6 +5,7 @@ import {
   getPaginatedCosmeticsSchema,
   purchaseStickerUsesSchema,
   setStickerPlacementRatingSchema,
+  updateEventHatFitSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
   setStickerPlacementRating,
@@ -14,6 +15,7 @@ import {
   getPaginatedCosmetics,
   equipCosmeticToEntity,
   unequipCosmetic,
+  updateEventHatFit,
 } from '~/server/services/cosmetic.service';
 import {
   getStickerBalances,
@@ -90,6 +92,10 @@ export const cosmeticRouter = router({
   setStickerPlacementRating: moderatorProcedure
     .input(setStickerPlacementRatingSchema)
     .mutation(({ input }) => setStickerPlacementRating(input)),
+  // Takes effect on every card wearing the hat at once; the editor previews it first.
+  updateEventHatFit: moderatorProcedure
+    .input(updateEventHatFitSchema)
+    .mutation(({ input }) => updateEventHatFit(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)
