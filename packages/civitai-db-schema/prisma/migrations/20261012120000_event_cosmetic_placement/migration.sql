@@ -10,9 +10,11 @@
 -- Apply order: this file (any time before the deploy; it is inert until a Cosmetic row has
 -- data.event and data.team), then the ClickHouse table `event_cosmetic_placements`, then the deploy.
 --
--- 🔴 CREATE TRIGGER takes a SHARE ROW EXCLUSIVE lock on "UserCosmetic". The trigger statements set a
--- lock_timeout so a long-running reader makes them fail fast instead of queueing writes behind them;
--- re-run on timeout. Apply one statement at a time and read each result.
+-- 🔴 CREATE OR REPLACE TRIGGER takes a SHARE ROW EXCLUSIVE lock on "UserCosmetic" (blocks writes, not
+-- reads). Do not add a DROP TRIGGER: that takes ACCESS EXCLUSIVE, which queues every read of the table
+-- too, even when there is no trigger to drop. Each trigger statement sets a lock_timeout so a
+-- long-running reader makes it fail fast instead of queueing writes behind it; re-run on timeout.
+-- Apply one statement at a time and read each result.
 
 CREATE TABLE IF NOT EXISTS "EventCosmeticPlacement" (
   "id"            BIGSERIAL PRIMARY KEY,
@@ -119,9 +121,8 @@ $$;
 -- calls the function at all.
 DO $$
 BEGIN
-  SET LOCAL lock_timeout = '5s';
-  DROP TRIGGER IF EXISTS event_cosmetic_placement_insert ON "UserCosmetic";
-  CREATE TRIGGER event_cosmetic_placement_insert
+  SET LOCAL lock_timeout = '2s';
+  CREATE OR REPLACE TRIGGER event_cosmetic_placement_insert
     AFTER INSERT ON "UserCosmetic"
     FOR EACH ROW
     WHEN (NEW."equippedToId" IS NOT NULL)
@@ -130,9 +131,8 @@ END $$;
 
 DO $$
 BEGIN
-  SET LOCAL lock_timeout = '5s';
-  DROP TRIGGER IF EXISTS event_cosmetic_placement_update ON "UserCosmetic";
-  CREATE TRIGGER event_cosmetic_placement_update
+  SET LOCAL lock_timeout = '2s';
+  CREATE OR REPLACE TRIGGER event_cosmetic_placement_update
     AFTER UPDATE OF "equippedToId", "equippedToType", "userId", "cosmeticId", "claimKey" ON "UserCosmetic"
     FOR EACH ROW
     WHEN (
@@ -149,9 +149,8 @@ END $$;
 
 DO $$
 BEGIN
-  SET LOCAL lock_timeout = '5s';
-  DROP TRIGGER IF EXISTS event_cosmetic_placement_delete ON "UserCosmetic";
-  CREATE TRIGGER event_cosmetic_placement_delete
+  SET LOCAL lock_timeout = '2s';
+  CREATE OR REPLACE TRIGGER event_cosmetic_placement_delete
     AFTER DELETE ON "UserCosmetic"
     FOR EACH ROW
     WHEN (OLD."equippedToId" IS NOT NULL)

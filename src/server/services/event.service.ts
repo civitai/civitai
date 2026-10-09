@@ -57,6 +57,7 @@ const noCosmetic = {
 } as EventCosmetic;
 export async function getEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
+    eventEngine.assertStarted(event);
     const key = `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}` as const;
     // TODO optimize, let's cache this to avoid multiple queries
     let userStatus = await redis.packed.hGet<
@@ -93,13 +94,15 @@ export async function getEventPartners({ event }: EventInput) {
 export async function activateEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
     if (eventEngine.isJoinEvent(event)) {
-      const { cosmeticId, team } = await eventEngine.join(event, userId);
+      const { cosmeticId, team, joined } = await eventEngine.join(event, userId);
       const cosmetic = await getCosmeticDetail({ id: cosmeticId });
-      await redis.hDel(
-        `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`,
-        userId.toString()
-      );
-      await eventEngine.queueAddRole({ event, team, userId });
+      if (joined) {
+        await redis.hDel(
+          `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`,
+          userId.toString()
+        );
+        await eventEngine.queueAddRole({ event, team, userId });
+      }
       return { cosmetic };
     }
 

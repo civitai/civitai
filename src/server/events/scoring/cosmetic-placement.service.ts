@@ -1,9 +1,11 @@
+import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { CosmeticPlacementScoring, TeamScore } from '~/server/events/base.event';
 import { cosmeticPlacementDailyScoreSql } from '~/server/events/scoring/cosmetic-placement.sql';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { toUtcTimestamp as chDate } from '~/server/services/creator-milestone-exclusions';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
 export type ScoredEvent = {
@@ -35,6 +37,8 @@ export type CosmeticScore = CosmeticScoreKey & {
 
 export type EventStandings = {
   teams: TeamScore[];
+  // Cumulative points per team at the end of each scored UTC day.
+  history: { team: string; scores: { date: Date; score: number }[] }[];
   topCosmetics: CosmeticScore[];
   topUsers: Record<string, { userId: number; points: number }[]>;
   updatedAt: Date;
@@ -63,9 +67,6 @@ export function daysToScore(event: Pick<ScoredEvent, 'startDate' | 'endDate'>, n
   }
   return days;
 }
-
-// ClickHouse DateTime64 literal in UTC (the server and the placement columns are UTC).
-const chDate = (d: Date) => d.toISOString().replace('T', ' ').replace('Z', '');
 
 const syncWatermarkKey = (event: string) =>
   `${REDIS_KEYS.EVENT.CACHE}:${event}:placement-sync` as const;
@@ -128,6 +129,9 @@ async function scoreDay(event: ScoredEvent, window: { day: Date; start: Date; en
   const result = await clickhouse.query({
     query: cosmeticPlacementDailyScoreSql,
     format: 'JSONEachRow',
+    // A slow hour fails under these limits rather than at the socket timeout; the next run
+    // recomputes the whole day, so a failed hour loses nothing.
+    clickhouse_settings: { max_execution_time: 120, max_memory_usage: '8000000000' },
     query_params: {
       event: event.name,
       dayStart: chDate(window.start),
@@ -176,12 +180,6 @@ async function scoreDay(event: ScoredEvent, window: { day: Date; start: Date; en
   return rows.length;
 }
 
-function chunk<T>(items: T[], size: number) {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
 export async function runCosmeticPlacementScoring(event: ScoredEvent, now = new Date()) {
   const days = daysToScore(event, now);
   if (!days.length) return { synced: 0, scored: [] as number[] };
@@ -197,37 +195,58 @@ export async function runCosmeticPlacementScoring(event: ScoredEvent, now = new 
   return { synced, scored };
 }
 
+// Banned, deleted and leaderboard-excluded users drop out of every published standing. Their rows stay
+// in the table, so a reversal restores them.
 async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
-  const teamRows = await dbRead.$queryRaw<{ team: string; points: number }[]>`
-    SELECT team, sum(points)::int AS points
-    FROM "EventCosmeticScoreDaily" WHERE event = ${event.name}
-    GROUP BY team
+  const teamDays = await dbRead.$queryRaw<{ team: string; day: Date; points: number }[]>`
+    SELECT s.team, s.day, sum(s.points)::int AS points
+    FROM "EventCosmeticScoreDaily" s
+    JOIN "User" u ON u.id = s."userId"
+    WHERE s.event = ${event.name}
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards"
+    GROUP BY s.team, s.day
+    ORDER BY s.day
   `;
-  const byTeam = new Map(teamRows.map((r) => [r.team, r.points]));
+  const totals = new Map<string, number>();
+  const history = event.teams.map((team) => ({
+    team,
+    scores: [] as { date: Date; score: number }[],
+  }));
+  for (const { team, day, points } of teamDays) {
+    const total = (totals.get(team) ?? 0) + points;
+    totals.set(team, total);
+    history.find((h) => h.team === team)?.scores.push({ date: day, score: total });
+  }
   const teams: TeamScore[] = event.teams.map((team) => ({
     team,
-    score: byTeam.get(team) ?? 0,
+    score: totals.get(team) ?? 0,
     rank: 0,
   }));
   teams.sort((a, b) => b.score - a.score);
   teams.forEach((t, i) => (t.rank = i + 1));
 
   const topCosmetics = await dbRead.$queryRaw<CosmeticScore[]>`
-    SELECT "userId", "cosmeticId", "claimKey", team,
-      sum(points)::int AS points, sum(impressions)::int AS impressions,
-      sum("anonImpressions")::int AS "anonImpressions", sum(reactions)::int AS reactions
-    FROM "EventCosmeticScoreDaily" WHERE event = ${event.name}
-    GROUP BY "userId", "cosmeticId", "claimKey", team
+    SELECT s."userId", s."cosmeticId", s."claimKey", s.team,
+      sum(s.points)::int AS points, sum(s.impressions)::int AS impressions,
+      sum(s."anonImpressions")::int AS "anonImpressions", sum(s.reactions)::int AS reactions
+    FROM "EventCosmeticScoreDaily" s
+    JOIN "User" u ON u.id = s."userId"
+    WHERE s.event = ${event.name}
+      AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards"
+    GROUP BY s."userId", s."cosmeticId", s."claimKey", s.team
     ORDER BY points DESC
     LIMIT ${TOP_COSMETICS}
   `;
 
   const userRows = await dbRead.$queryRaw<{ team: string; userId: number; points: number }[]>`
     SELECT team, "userId", points FROM (
-      SELECT team, "userId", sum(points)::int AS points,
-        row_number() OVER (PARTITION BY team ORDER BY sum(points) DESC) AS rn
-      FROM "EventCosmeticScoreDaily" WHERE event = ${event.name}
-      GROUP BY team, "userId"
+      SELECT s.team, s."userId", sum(s.points)::int AS points,
+        row_number() OVER (PARTITION BY s.team ORDER BY sum(s.points) DESC) AS rn
+      FROM "EventCosmeticScoreDaily" s
+      JOIN "User" u ON u.id = s."userId"
+      WHERE s.event = ${event.name}
+        AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards"
+      GROUP BY s.team, s."userId"
     ) ranked
     WHERE rn <= ${TOP_USERS_PER_TEAM}
     ORDER BY team, points DESC
@@ -235,7 +254,7 @@ async function computeStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
   const topUsers: EventStandings['topUsers'] = {};
   for (const { team, userId, points } of userRows) (topUsers[team] ??= []).push({ userId, points });
 
-  return { teams, topCosmetics, topUsers, updatedAt: new Date() } satisfies EventStandings;
+  return { teams, history, topCosmetics, topUsers, updatedAt: new Date() } satisfies EventStandings;
 }
 
 async function refreshStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
@@ -244,6 +263,7 @@ async function refreshStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
   return standings;
 }
 
+// Served from the snapshot the hourly job writes; a miss (no run for 2h) recomputes once here.
 export async function getEventStandings(event: Pick<ScoredEvent, 'name' | 'teams'>) {
   const cached = await redis.packed.get<EventStandings>(standingsKey(event.name));
   if (cached) return cached;
@@ -251,20 +271,7 @@ export async function getEventStandings(event: Pick<ScoredEvent, 'name' | 'teams
 }
 
 export async function getTeamScoreHistory(event: Pick<ScoredEvent, 'name' | 'teams'>) {
-  const rows = await dbRead.$queryRaw<{ team: string; day: Date; points: number }[]>`
-    SELECT team, day, sum(points)::int AS points
-    FROM "EventCosmeticScoreDaily" WHERE event = ${event.name}
-    GROUP BY team, day ORDER BY day
-  `;
-  return event.teams.map((team) => {
-    let total = 0;
-    return {
-      team,
-      scores: rows
-        .filter((r) => r.team === team)
-        .map((r) => ({ date: r.day, score: (total += r.points) })),
-    };
-  });
+  return (await getEventStandings(event)).history;
 }
 
 export async function getUserCosmeticScores(event: string, userId: number) {
@@ -295,14 +302,6 @@ export async function getCosmeticScores(event: string, keys: CosmeticScoreKey[])
     GROUP BY s."userId", s."cosmeticId", s."claimKey", s.team
   `;
   return Object.fromEntries(rows.map((r) => [cosmeticScoreKey(r), r]));
-}
-
-export async function getUserEventPoints(event: string, userId: number) {
-  const [row] = await dbRead.$queryRaw<{ points: number | null }[]>`
-    SELECT sum(points)::int AS points FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event} AND "userId" = ${userId}
-  `;
-  return row?.points ?? 0;
 }
 
 // End of a scored event: take every one of its cosmetics off content. The placement trigger closes

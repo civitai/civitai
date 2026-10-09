@@ -1,30 +1,12 @@
-import {
-  Button,
-  Card,
-  getPrimaryShade,
-  Group,
-  Progress,
-  Stack,
-  Text,
-  Title,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Button, Card, Group, Progress, Stack, Text, Title } from '@mantine/core';
 import { IconChevronRight } from '@tabler/icons-react';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useMutateEvent } from '~/components/Events/events.utils';
+import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-function useTeamColor() {
-  const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('dark');
-  return (team: string) =>
-    theme.colors[team.toLowerCase()]?.[getPrimaryShade(theme, colorScheme)] ?? undefined;
-}
 
 // Team standings, the viewer's own points and cosmetics, and the top-scoring cosmetics. Scores are
 // recomputed hourly by the event engine; everything here reads that snapshot.

@@ -92,10 +92,24 @@ export const eventEngine = {
       // If the event is over, unequip the event cosmetics from all users
       if (eventDef.endDate < now) {
         // Check to see if we've already cleaned up this event
-        const alreadyCleanedUp = await redis.get(
-          `${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}`
-        );
+        const cleanupKey = `${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}` as const;
+        const alreadyCleanedUp = await redis.get(cleanupKey);
         if (alreadyCleanedUp) continue;
+
+        if (eventDef.scoring) {
+          // Phase 1, at the first reset after the end: take the cosmetics off content. Clears the
+          // placement itself, not only the equip timestamp, or the decoration stays rendered.
+          const unequipKey = `${cleanupKey}:unequip` as const;
+          if (!(await redis.get(unequipKey))) {
+            const entities = await unequipEventCosmetics(eventDef.name);
+            await refreshEventDecorations(entities);
+            await redis.set(unequipKey, 'true', { EX: 60 * 60 * 24 * 30 });
+          }
+          // Phase 2 waits until scoring has finished taking late data, so the winner is decided on
+          // the final standings.
+          if (now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs)
+            continue;
+        }
 
         // Get 1st place team
         const winner = scores.find(({ rank }) => rank === 1)?.team;
@@ -111,12 +125,7 @@ export const eventEngine = {
           `;
         }
 
-        if (eventDef.scoring) {
-          // Scored events place cosmetics on content: clear the placement itself, not only the
-          // equip timestamp, or the decoration stays rendered.
-          const entities = await unequipEventCosmetics(eventDef.name);
-          await refreshEventDecorations(entities);
-        } else {
+        if (!eventDef.scoring) {
           // Unequip all event cosmetics
           const cosmeticIds = [];
           for (const team of eventDef.teams) {
@@ -132,10 +141,9 @@ export const eventEngine = {
 
         await eventDef.onCleanup?.({ scores, db: dbWrite, winner, winnerCosmeticId });
 
-        // Mark cleanup as complete. Outlives the grace window, so it never runs twice.
-        await redis.set(`${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}`, `true`, {
-          EX: 60 * 60 * 24 * 30,
-        });
+        // Mark cleanup as complete, only after every step succeeded so a failure retries tomorrow.
+        // Outlives the grace window, so it never runs twice.
+        await redis.set(cleanupKey, `true`, { EX: 60 * 60 * 24 * 30 });
       } else {
         // If the event isn't over, run the daily reset
         if (eventDef.onDailyReset) {
@@ -156,9 +164,9 @@ export const eventEngine = {
 
       const scored = scoredEvent(eventDef);
       if (scored) {
-        // Keeps running for a day past the end so the last hours and late data are scored; the
-        // score query clips every window to endDate.
-        if (eventDef.endDate.getTime() + 24 * 60 * 60 * 1000 < now.getTime()) continue;
+        // Keeps running past the end so the last hours and late data are scored; the score query
+        // clips every window to endDate.
+        if (eventDef.endDate.getTime() + scored.scoring.finalizeAfterMs < now.getTime()) continue;
         await runCosmeticPlacementScoring(scored, now);
         continue;
       }
@@ -408,8 +416,9 @@ export const eventEngine = {
     const eventDef = getEventDef(event);
     const claimKey = eventDef.join?.claimKey;
     if (!claimKey) throw new Error('This event has no join');
-    if (now < eventDef.startDate || now >= eventDef.endDate)
-      throw new Error('This event is not running');
+    // Before the start the event reads as nonexistent, like every other route.
+    if (now < eventDef.startDate) throw new Error("That event doesn't exist");
+    if (now >= eventDef.endDate) throw new Error('This event is not running');
 
     // Strict: a degraded manual-assignment read refuses the join rather than granting the computed
     // team's colour to someone assigned by hand.
@@ -417,11 +426,12 @@ export const eventEngine = {
     const cosmeticId = await eventDef.getTeamCosmetic(team);
     if (!cosmeticId) throw new Error("This event's cosmetics are not set up yet");
 
-    const teamCosmeticIds: number[] = [];
+    const teamByCosmetic = new Map<number, string>();
     for (const t of eventDef.teams) {
       const id = await eventDef.getTeamCosmetic(t);
-      if (id) teamCosmeticIds.push(id);
+      if (id) teamByCosmetic.set(id, t);
     }
+    const teamCosmeticIds = [...teamByCosmetic.keys()];
 
     const inserted = await dbWrite.$executeRaw`
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt")
@@ -434,7 +444,22 @@ export const eventEngine = {
       ON CONFLICT DO NOTHING
     `;
 
-    return { team, cosmeticId, joined: inserted > 0 };
+    if (inserted > 0) return { team, cosmeticId, joined: true };
+
+    // Already joined. Report the cosmetic actually held, which differs from `team` when the user was
+    // reassigned after joining.
+    const [held] = await dbWrite.$queryRaw<{ cosmeticId: number }[]>`
+      SELECT "cosmeticId" FROM "UserCosmetic"
+      WHERE "userId" = ${userId} AND "claimKey" = ${claimKey}
+        AND "cosmeticId" = ANY(${teamCosmeticIds}::int[])
+      LIMIT 1
+    `;
+    const heldId = held?.cosmeticId ?? cosmeticId;
+    return { team: teamByCosmetic.get(heldId) ?? team, cosmeticId: heldId, joined: false };
+  },
+  // Scored-event and join reads before the start read as nonexistent.
+  assertStarted(event: string, now = new Date()) {
+    if (getEventDef(event).startDate > now) throw new Error("That event doesn't exist");
   },
   async getRewards(event: string) {
     const eventDef = events.find((x) => x.name === event);

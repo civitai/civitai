@@ -5,7 +5,6 @@ import {
   Center,
   Container,
   Divider,
-  getPrimaryShade,
   Grid,
   Group,
   Loader,
@@ -16,7 +15,6 @@ import {
   Text,
   ThemeIcon,
   Title,
-  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
@@ -48,7 +46,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EventContributors } from '~/components/Events/EventContributors';
 import { EventRewards } from '~/components/Events/EventRewards';
 import type { EventPartners } from '~/components/Events/events.utils';
-import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
+import { useMutateEvent, useQueryEvent, useTeamColor } from '~/components/Events/events.utils';
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
 import { ScoredEventSections } from '~/components/Events/ScoredEvent/ScoredEventSections';
@@ -114,7 +112,6 @@ export default function EventPageDetails({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('dark');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -131,6 +128,7 @@ export default function EventPageDetails({
   const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
   const cosmeticData = eventCosmetic?.data as { lights: number; upgradedLights: number };
 
+  const teamColor = useTeamColor();
   const datasets = useMemo(() => {
     const allDates = teamScoresHistory
       .flatMap((teamScore) => teamScore.scores.map((score) => score.date.getTime()))
@@ -139,7 +137,7 @@ export default function EventPageDetails({
 
     const datasets = teamScoresHistory.map(({ team, scores }) => {
       let lastMatchedIndex = 0;
-      const color = theme.colors[team.toLowerCase()][getPrimaryShade(theme, colorScheme)];
+      const color = teamColor(team);
 
       return {
         label: 'Buzz donated',
@@ -157,7 +155,7 @@ export default function EventPageDetails({
     });
 
     return datasets;
-  }, [teamScoresHistory, theme.colors, colorScheme]);
+  }, [teamScoresHistory, teamColor]);
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;

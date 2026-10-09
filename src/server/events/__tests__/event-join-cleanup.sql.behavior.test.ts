@@ -113,15 +113,16 @@ async function hats(userId: number) {
 }
 
 describe('join grant', () => {
-  it('grants one unequipped team hat, however many times it is called', async () => {
-    const results = await Promise.all([
-      eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT),
-      eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT),
-    ]);
-    await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
+  // Sequential repeats only. PGlite is one connection, so two truly concurrent joins cannot be
+  // reproduced here: that race is closed by the primary key plus ON CONFLICT DO NOTHING, which this
+  // file cannot observe (removing it leaves these tests green).
+  it('grants one unequipped team hat however many times it is called (sequentially)', async () => {
+    const results = [];
+    for (let i = 0; i < 3; i++)
+      results.push(await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT));
 
     expect(await hats(7)).toEqual([[HATS.Blue, 'claimed']]);
-    expect(results.filter((r) => r.joined)).toHaveLength(1);
+    expect(results.map((r) => r.joined)).toEqual([true, false, false]);
     const placed = await db.pg.query(`SELECT 1 FROM "EventCosmeticPlacement"`);
     expect(placed.rows).toHaveLength(0);
   });
@@ -131,7 +132,7 @@ describe('join grant', () => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Pink' });
     const again = await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
 
-    expect(again.joined).toBe(false);
+    expect(again).toEqual({ team: 'Blue', cosmeticId: HATS.Blue, joined: false });
     expect(await hats(7)).toEqual([[HATS.Blue, 'claimed']]);
   });
 

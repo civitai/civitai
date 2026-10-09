@@ -28,5 +28,6 @@ export const birthday2026 = createEvent(name, {
     botSessionEntityLimit: 1500,
     newAccountDays: 7,
     viewerOwnerDailyCap: 50,
+    finalizeAfterMs: 24 * 60 * 60 * 1000,
   },
 });

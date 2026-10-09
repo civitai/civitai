@@ -229,7 +229,8 @@ export type BuzzEventContext = {
 // See src/server/events/scoring/cosmetic-placement.sql.ts for how each parameter is applied.
 export type CosmeticPlacementScoring = {
   reactionWeight: number;
-  // Signed-out viewers per entity per day are capped at max(anonFloor, signed viewers x anonRatio).
+  // Signed-out viewers per day are capped at max(anonFloor, signed viewers x anonRatio), per entity
+  // and again per cosmetic owner.
   anonFloor: number;
   anonRatio: number;
   // A signed-out session that saw more distinct entities than this in a day is treated as a bot.
@@ -238,6 +239,8 @@ export type CosmeticPlacementScoring = {
   newAccountDays: number;
   // Most entities one viewer can credit to one cosmetic owner per day.
   viewerOwnerDailyCap: number;
+  // Scoring keeps running this long past endDate for late data; the winner is decided after it.
+  finalizeAfterMs: number;
 };
 
 type HolidayEventDefinition = {

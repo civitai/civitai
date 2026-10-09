@@ -58,22 +58,31 @@ async function grant(userId: number, cosmeticId: number, claimKey = 'claimed') {
   );
 }
 
-// Same two statements, in the same order, as equipCosmeticToEntity.
+// The writes equipCosmeticToEntity (src/server/services/cosmetic.service.ts) issues, in its order:
+// first move this instance onto the target (also stamping data.placedAt), then clear whatever else of
+// the same kind (event decoration or not) the user had on that target. Keep this in step with it.
 async function equip(
   userId: number,
   cosmeticId: number,
   claimKey: string,
-  type: 'Image' | 'Model' | 'Article',
+  type: 'Image' | 'Model' | 'Article' | 'Post',
   id: number
 ) {
   await db.pg.query(
-    `UPDATE "UserCosmetic" SET "equippedToId" = NULL, "equippedToType" = NULL, "equippedAt" = NULL
-     WHERE "userId" = $1 AND "equippedToId" = $2 AND "equippedToType" = $3::"CosmeticEntity"`,
-    [userId, id, type]
+    `UPDATE "UserCosmetic"
+     SET "equippedToId" = $4, "equippedToType" = $5::"CosmeticEntity", "equippedAt" = now(),
+         "data" = coalesce("data", '{}'::jsonb) || jsonb_build_object('placedAt', now()::text)
+     WHERE "userId" = $1 AND "cosmeticId" = $2 AND "claimKey" = $3`,
+    [userId, cosmeticId, claimKey, id, type]
   );
   await db.pg.query(
-    `UPDATE "UserCosmetic" SET "equippedToId" = $4, "equippedToType" = $5::"CosmeticEntity", "equippedAt" = now()
-     WHERE "userId" = $1 AND "cosmeticId" = $2 AND "claimKey" = $3`,
+    `UPDATE "UserCosmetic" uc
+     SET "equippedToId" = NULL, "equippedToType" = NULL, "equippedAt" = NULL
+     FROM "Cosmetic" c
+     WHERE c.id = uc."cosmeticId"
+       AND uc."userId" = $1 AND uc."equippedToId" = $4 AND uc."equippedToType" = $5::"CosmeticEntity"
+       AND NOT (uc."cosmeticId" = $2 AND uc."claimKey" = $3)
+       AND (c.data ? 'event') = (SELECT data ? 'event' FROM "Cosmetic" WHERE id = $2)`,
     [userId, cosmeticId, claimKey, id, type]
   );
 }
@@ -124,7 +133,7 @@ beforeEach(async () => {
       (${FRAME}, 'ContentDecoration', '{"type":"holiday-lights"}'),
       (${BADGE}, 'Badge', '{"event":"birthday2026","team":"Yellow"}');
     INSERT INTO "Image" VALUES (10, ${OWNER}), (11, ${OWNER}), (12, ${OTHER});
-    INSERT INTO "Model" VALUES (20, ${OWNER});
+    INSERT INTO "Model" VALUES (20, ${OWNER}), (10, ${OWNER});
     INSERT INTO "Article" VALUES (30, ${OWNER});
   `);
 });
@@ -225,6 +234,42 @@ describe('event_cosmetic_placement_log trigger', () => {
     await equip(OWNER, BADGE, 'claimed', 'Image', 11);
 
     expect(await placements()).toEqual([]);
+  });
+
+  it('keeps one open interval when the same cosmetic is re-equipped onto the same content', async () => {
+    await grant(OWNER, HAT);
+    await equip(OWNER, HAT, 'claimed', 'Image', 10);
+    await equip(OWNER, HAT, 'claimed', 'Image', 10);
+
+    const rows = await placements();
+    expect(rows.map((r) => [r.entityType, r.entityId, r.open])).toEqual([['Image', 10, true]]);
+  });
+
+  it('closes and reopens when only the entity TYPE changes (same id)', async () => {
+    await grant(OWNER, HAT);
+    await equip(OWNER, HAT, 'claimed', 'Image', 10);
+    await equip(OWNER, HAT, 'claimed', 'Model', 10);
+
+    const rows = await placements();
+    expect(rows.map((r) => [r.entityType, r.entityId, r.open])).toEqual([
+      ['Image', 10, false],
+      ['Model', 10, true],
+    ]);
+  });
+
+  it('records no owner for an entity type it cannot look up, so scoring never counts it', async () => {
+    await grant(OWNER, HAT);
+    await equip(OWNER, HAT, 'claimed', 'Post', 99);
+
+    expect((await placements()).map((r) => [r.entityType, r.entityOwnerId])).toEqual([
+      ['Post', null],
+    ]);
+  });
+
+  it('leaves no lock_timeout behind on the session that applied the migration', async () => {
+    // SET LOCAL ends with its DO block; a plain SET would leave 2s on a pooled connection.
+    const res = await db.pg.query<{ lock_timeout: string }>('SHOW lock_timeout');
+    expect(res.rows[0].lock_timeout).toBe('0');
   });
 
   it('opens no second interval when only equippedAt changes', async () => {

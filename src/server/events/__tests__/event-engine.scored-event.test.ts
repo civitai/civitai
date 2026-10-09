@@ -116,15 +116,31 @@ describe('event registration', () => {
     // launch, every participant changes team. Do not "update the expected values" to make it
     // pass: find out what moved the name, the seed or the array.
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
-    const teams = await Promise.all(
-      [1, 2, 3, 42, 1000, 123456].map((id) => birthday2026.getUserTeam(id))
-    );
+    const teams = await Promise.all(GOLDEN_USER_IDS.map((id) => birthday2026.getUserTeam(id)));
     expect(teams).toEqual(GOLDEN_TEAMS);
   });
 });
 
 // Recorded from the real assignment function on 2026-10-09, before launch; see the test above.
-const GOLDEN_TEAMS = ['Blue', 'Yellow', 'Blue', 'Pink', 'Pink', 'Pink'];
+const GOLDEN_USER_IDS = [1, 2, 3, 42, 1000, 123456, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+// The first six were recorded on 2026-10-09; ids 4-12 were added later so every team appears.
+const GOLDEN_TEAMS = [
+  'Blue',
+  'Yellow',
+  'Blue',
+  'Pink',
+  'Pink',
+  'Pink',
+  'Green',
+  'Blue',
+  'Blue',
+  'Yellow',
+  'Yellow',
+  'Green',
+  'Green',
+  'Green',
+  'Yellow',
+];
 
 describe('end-of-event cleanup', () => {
   // 🔴 Pins a deliberate decision: shipping the cleanup fix must not reach back and clean up
@@ -173,28 +189,60 @@ describe('end-of-event cleanup', () => {
     });
   });
 
-  it('clears placements of a scored event, refreshes the content caches and flags the winner', async () => {
-    await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR));
-
-    expect(mockScoring.unequipEventCosmetics).toHaveBeenCalledTimes(1);
-    expect(mockRefresh).toHaveBeenCalledWith('Image', [5]);
-    expect(mockRefresh).toHaveBeenCalledWith('Model', [6]);
-    const winnerUpdate = dbMock.dbWrite.$executeRaw.mock.calls.find(([sql]) =>
+  const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR); // Nov 27 00:00Z
+  const secondReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR); // Nov 28 00:00Z
+  const winnerUpdates = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
       (sql as TemplateStringsArray).join('?').includes('{winner}')
     );
-    expect(winnerUpdate?.[1]).toBe(23); // Pink won
-    expect((winnerUpdate?.[0] as TemplateStringsArray).join('?')).toContain("'true'::jsonb");
-    expect(redisMock.redis.set).toHaveBeenCalledWith(
-      `eventCleanup:${BIRTHDAY_2026_EVENT}`,
-      'true',
-      expect.anything()
+  const setKeys = () => redisMock.redis.set.mock.calls.map(([key]) => key);
+
+  it('phase 1: takes cosmetics off content at the first reset after the end, but decides no winner', async () => {
+    await eventEngine.dailyReset(firstReset);
+
+    expect(mockScoring.unequipEventCosmetics).toHaveBeenCalledTimes(1);
+    expect(mockRefresh).toHaveBeenCalledTimes(2);
+    expect(mockRefresh).toHaveBeenCalledWith('Image', [5]);
+    expect(mockRefresh).toHaveBeenCalledWith('Model', [6]);
+    // The last day is still being rescored with late data, so the winner waits.
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}:unequip`]);
+  });
+
+  it('phase 2: flags the winner once scoring has finished, without unequipping again', async () => {
+    redisMock.redis.get.mockImplementation(async (key: string) =>
+      key === `eventCleanup:${BIRTHDAY_2026_EVENT}:unequip` ? 'true' : null
     );
+    await eventEngine.dailyReset(secondReset);
+
+    expect(mockScoring.unequipEventCosmetics).not.toHaveBeenCalled();
+    const [update] = winnerUpdates();
+    expect(update?.[1]).toBe(23); // Pink won
+    expect((update?.[0] as TemplateStringsArray).join('?')).toContain("'true'::jsonb");
+    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
+  });
+
+  it('does not mark cleanup done when the unequip fails, so the next reset retries', async () => {
+    mockScoring.unequipEventCosmetics.mockRejectedValue(new Error('db down'));
+    await expect(eventEngine.dailyReset(secondReset)).rejects.toThrow('db down');
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+    expect(winnerUpdates()).toHaveLength(0);
+  });
+
+  it('refreshes caches in chunks of 1000 ids', async () => {
+    mockScoring.unequipEventCosmetics.mockResolvedValue(
+      Array.from({ length: 2500 }, (_, i) => ({ entityType: 'Image', entityId: i + 1 }))
+    );
+    await eventEngine.dailyReset(firstReset);
+    expect(mockRefresh.mock.calls.map(([, ids]) => ids.length)).toEqual([1000, 1000, 500]);
+    expect(mockRefresh.mock.calls.flatMap(([, ids]) => ids)).toHaveLength(2500);
   });
 
   it('does not clean up twice', async () => {
     redisMock.redis.get.mockResolvedValue('true');
-    await eventEngine.dailyReset(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR));
+    await eventEngine.dailyReset(secondReset);
     expect(mockScoring.unequipEventCosmetics).not.toHaveBeenCalled();
+    expect(winnerUpdates()).toHaveLength(0);
   });
 });
 
@@ -220,7 +268,7 @@ describe('scored event is inert before it starts', () => {
     ).toBe(BIRTHDAY_2026_EVENT);
   });
 
-  it('scores from start until a day past the end, then stops', async () => {
+  it('scores from start until finalizeAfterMs past the end, then stops', async () => {
     await eventEngine.updateLeaderboard(BIRTHDAY_2026_STARTS_AT);
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 23 * HOUR));
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 25 * HOUR));
@@ -233,9 +281,9 @@ describe('scored event is inert before it starts', () => {
 describe('join', () => {
   const join = (now: Date) => eventEngine.join(BIRTHDAY_2026_EVENT, 7, now);
 
-  it('is refused outside [STARTS_AT, ENDS_AT)', async () => {
+  it('is refused outside [STARTS_AT, ENDS_AT), reading as nonexistent before the start', async () => {
     await expect(join(new Date(BIRTHDAY_2026_STARTS_AT.getTime() - 1))).rejects.toThrow(
-      'This event is not running'
+      "That event doesn't exist"
     );
     await expect(join(BIRTHDAY_2026_ENDS_AT)).rejects.toThrow('This event is not running');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -253,9 +301,16 @@ describe('join', () => {
     expect(teamIds).toEqual([21, 22, 23, 24]);
   });
 
-  it('reports a repeat join as not joined', async () => {
+  it('reports a repeat join as not joined, with the cosmetic actually held', async () => {
+    // Joined as Blue, since reassigned to Pink by hand.
+    redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Pink' });
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
-    expect((await join(BIRTHDAY_2026_STARTS_AT)).joined).toBe(false);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ cosmeticId: 22 }]);
+    expect(await join(BIRTHDAY_2026_STARTS_AT)).toEqual({
+      team: 'Blue',
+      cosmeticId: 22,
+      joined: false,
+    });
   });
 });
 
