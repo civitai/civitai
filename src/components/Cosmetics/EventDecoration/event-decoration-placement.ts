@@ -1,4 +1,5 @@
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import { constants } from '~/server/common/constants';
 import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
@@ -20,7 +21,7 @@ export const HAT_LOOK = { brim: 40, tilt: -45, onCard: 0.47, grow: 1.4 };
  * The card width the look was chosen on (a feed card, and PreviewCard's default). A smaller card
  * that passes its width wears the hat scaled down to match; no card wears it larger.
  */
-export const HAT_LOOK_CARD_WIDTH = 320;
+export const HAT_LOOK_CARD_WIDTH = constants.cardSizes.image;
 
 /** How much a hat shrinks on a card this wide: 1 for a feed card, a wider one, or no width. */
 export function getHatCardScale(cardWidth?: number) {

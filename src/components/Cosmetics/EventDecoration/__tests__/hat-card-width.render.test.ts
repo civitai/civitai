@@ -26,6 +26,9 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
 }));
 
 const { PreviewCard } = await import('~/components/Modals/CardDecorationModal');
+const { EventDecorationOverlay } = await import(
+  '~/components/Cosmetics/EventDecoration/EventDecorationOverlay'
+);
 const { getEventDecorationClearLeftCss, getHatLayout, HAT_LOOK_CARD_WIDTH, HAT_PLAIN_CARD_NUDGE } =
   await import('~/components/Cosmetics/EventDecoration/event-decoration-placement');
 
@@ -89,5 +92,33 @@ describe('PreviewCard width', () => {
     const feed = getHatLayout('corner', undefined, Infinity, HAT_PLAIN_CARD_NUDGE).width;
     expect(hatWidth()).toBeCloseTo(feed, 6);
     expect(hatWidth(HAT_LOOK_CARD_WIDTH / 2)).toBeCloseTo(feed / 2, 6);
+  });
+});
+
+// A hat kept inside its card (carousels, the event page's thumbnails) shrinks by the same rule.
+describe('EventDecorationOverlay inside a card', () => {
+  const insideWidth = (cardWidth?: number) => {
+    act(() => root?.unmount());
+    host?.remove();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() =>
+      root!.render(
+        React.createElement(EventDecorationOverlay, {
+          decoration: hat,
+          placement: 'inside',
+          cardWidth,
+        })
+      )
+    );
+    const button = host.querySelector<HTMLElement>('button[data-event-decoration="hat"]');
+    return button ? parseFloat(button.style.width) : undefined;
+  };
+
+  it('halves the hat on a half-width card', () => {
+    const feed = insideWidth();
+    expect(feed).toBeCloseTo(getHatLayout('inside', undefined).width, 6);
+    expect(insideWidth(HAT_LOOK_CARD_WIDTH / 2)).toBeCloseTo(feed! / 2, 6);
   });
 });

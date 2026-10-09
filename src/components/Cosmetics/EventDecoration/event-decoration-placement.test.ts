@@ -13,6 +13,7 @@ import {
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { ITEM_BLEED } from '~/components/MasonryColumns/masonry.constants';
+import { constants } from '~/server/common/constants';
 import { HAT_FIT_LIMITS } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationFit } from '~/shared/constants/event-decoration.constants';
 
@@ -507,6 +508,16 @@ describe('a card narrower than a feed card', () => {
       expect(half.reach[side]).toBeCloseTo(feed.reach[side] / 2, 9);
     expect(half.tilt).toBe(feed.tilt);
     expect(half.grow).toBe(feed.grow);
+    // Rotation, hover growth and clicks follow the smaller hat too.
+    const px = (origin: string) => origin.split(' ').map(parseFloat);
+    const [ox, oy] = px(feed.origin);
+    const [hx, hy] = px(half.origin);
+    expect(hx).toBeCloseTo(ox / 2, 9);
+    expect(hy).toBeCloseTo(oy / 2, 9);
+    const numbers = (polygon: string) => (polygon.match(/-?[\d.]+(?=px)/g) ?? []).map(Number);
+    const feedHit = numbers(feed.hitArea);
+    expect(feedHit.length).toBeGreaterThan(0);
+    expect(numbers(half.hitArea)).toEqual(feedHit.map((n) => expect.closeTo(n / 2, 9)));
   });
 
   it("shrinks a hat's own size and offset with the card", () => {
@@ -519,9 +530,11 @@ describe('a card narrower than a feed card', () => {
   });
 
   it("keeps the container's room unscaled", () => {
-    const small = getHatLayout('corner', ART.civchan, 0, 0, HAT_LOOK_CARD_WIDTH / 2);
-    expect(small.reach.left).toBeGreaterThanOrEqual(-1e-9);
-    expect(small.reach.top).toBeGreaterThanOrEqual(-1e-9);
+    // Pushed out as far as a hat may go, so the container's 2px of room is what holds it.
+    const pushed = { ...ART.civchan, offset: [-12, -12] as [number, number] };
+    const small = getHatLayout('corner', pushed, 2, 0, HAT_LOOK_CARD_WIDTH / 2);
+    expect(small.reach.left).toBeCloseTo(-2, 9);
+    expect(small.reach.top).toBeCloseTo(-2, 9);
     const inside = getHatLayout('inside', ART.civchan, undefined, 0, HAT_LOOK_CARD_WIDTH / 2);
     expect(inside.reach.left).toBeCloseTo(2, 9);
     expect(inside.reach.top).toBeGreaterThanOrEqual(2 - 1e-9);
@@ -543,6 +556,7 @@ describe('a card narrower than a feed card', () => {
     expect(getHatCardScale(HAT_LOOK_CARD_WIDTH / 4)).toBe(0.25);
     expect(getHatCardScale(HAT_LOOK_CARD_WIDTH * 2)).toBe(1);
     expect(getHatCardScale()).toBe(1);
-    expect(HAT_LOOK_CARD_WIDTH).toBe(320);
+    // A feed card, and PreviewCard's default width, wear the look unscaled.
+    expect(HAT_LOOK_CARD_WIDTH).toBe(constants.cardSizes.image);
   });
 });
