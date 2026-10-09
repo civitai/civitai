@@ -553,6 +553,7 @@ export interface User {
   reports?: Report[];
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
+  feedbackOwnerStatus?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1983,6 +1984,16 @@ export interface Feedback {
   handledAt: Date | null;
   bugId: number | null;
   bug?: Bug | null;
+  appListingId: string | null;
+  appListing?: AppListing | null;
+  appBlockVersion: string | null;
+  appBlockSha: string | null;
+  ownerStatus: string | null;
+  ownerStatusAt: Date | null;
+  ownerStatusById: number | null;
+  ownerStatusBy?: User | null;
+  ownerFlaggedAt: Date | null;
+  hiddenFromOwnerAt: Date | null;
 }
 
 export interface ApiKey {
@@ -2222,6 +2233,7 @@ export interface AppListing {
   ownershipTransfers?: AppOwnershipTransfer[];
   subListings?: AppSubListing[];
   subListingParent?: AppSubListingParent | null;
+  feedback?: Feedback[];
 }
 
 export interface AppListingScreenshot {
