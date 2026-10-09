@@ -15,11 +15,14 @@ type MyHat = RouterOutput['event']['getMyHats'][number];
 export function MyEventHats({
   event,
   hats,
+  fetchedAt,
   teamColor,
   ended,
 }: {
   event: string;
   hats: MyHat[];
+  /** When `hats` arrived, on the browser's clock (the query's dataUpdatedAt). */
+  fetchedAt: number;
   teamColor: string;
   ended: boolean;
 }) {
@@ -53,7 +56,10 @@ export function MyEventHats({
 
       <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
         {hats.map((hat) => {
-          const minutesLeft = minutesUntilMovable(hat.movableAt, now);
+          const minutesLeft = minutesUntilMovable(
+            hat.moveCooldownLeftMs,
+            now.getTime() - fetchedAt
+          );
           return (
             <SpotlightBorderCard
               key={`${hat.cosmeticId}:${hat.claimKey}`}

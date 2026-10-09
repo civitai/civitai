@@ -41,7 +41,10 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     : undefined;
 
   const { data: standings } = trpc.event.getStandings.useQuery({ event });
-  const { data: hats = [] } = trpc.event.getMyHats.useQuery({ event }, { enabled: joined });
+  const { data: hats = [], dataUpdatedAt: hatsFetchedAt } = trpc.event.getMyHats.useQuery(
+    { event },
+    { enabled: joined }
+  );
   const { activateCosmetic, equipping } = useMutateEvent();
 
   const handleJoin = async () => {
@@ -74,7 +77,13 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
       {standings && <TeamStandings standings={standings} myTeam={team} />}
 
       {joined && hats.length > 0 && (
-        <MyEventHats event={event} hats={hats} teamColor={color} ended={ended} />
+        <MyEventHats
+          event={event}
+          hats={hats}
+          fetchedAt={hatsFetchedAt}
+          teamColor={color}
+          ended={ended}
+        />
       )}
 
       {!ended &&

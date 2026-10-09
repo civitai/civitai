@@ -16,6 +16,7 @@ export const birthday2026 = createEvent(name, {
   title: "Civitai's 4th Birthday",
   page: {
     headline: 'Civitai turns 4. Pick up a hat.',
+    dates: 'Nov 11 to Nov 25',
     summary:
       'Four colour teams. Put party hats on your images, models and articles, and every view and reaction they get scores for your team.',
     steps: [

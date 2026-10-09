@@ -83,7 +83,7 @@ export default function PlaceHatModal({
                     hat={(other?.data ?? (current ? hat.data : undefined)) as EventDecorationData}
                   />
                   <Text size="xs" fw={600} lineClamp={1}>
-                    {c.title ?? c.entityType}
+                    {c.title ?? `${c.entityType} #${c.entityId}`}
                   </Text>
                   <Text size="xs" c="dimmed" lineClamp={1}>
                     {current

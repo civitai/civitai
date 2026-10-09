@@ -249,6 +249,9 @@ export type CosmeticPlacementScoring = {
 // here, so the page cannot drift from the rules the scoring job applies.
 export type EventPageCopy = {
   headline: string;
+  // Shown verbatim on the hero's date badge, e.g. "Nov 11 to Nov 25"; without it the badge formats
+  // startDate and endDate in the viewer's timezone.
+  dates?: string;
   summary: string;
   steps: { title: string; body: string }[];
   prize: { title: string; body: string; imageUrl?: string };

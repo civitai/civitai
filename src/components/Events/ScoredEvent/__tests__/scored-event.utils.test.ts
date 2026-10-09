@@ -77,13 +77,17 @@ describe('describeEntityTypes', () => {
 });
 
 describe('minutesUntilMovable', () => {
-  const now = new Date('2026-11-12T10:00:00Z');
+  const MINUTE = 60_000;
   it('rounds a part minute up, so the button never says 0 while still locked', () => {
-    expect(minutesUntilMovable(new Date('2026-11-12T10:00:30Z'), now)).toBe(1);
-    expect(minutesUntilMovable(new Date('2026-11-12T10:07:00Z'), now)).toBe(7);
+    expect(minutesUntilMovable(30_000, 0)).toBe(1);
+    expect(minutesUntilMovable(10 * MINUTE, 3 * MINUTE)).toBe(7);
   });
   it('is 0 once the hat can move, or if it was never placed', () => {
-    expect(minutesUntilMovable(new Date('2026-11-12T09:59:00Z'), now)).toBe(0);
-    expect(minutesUntilMovable(null, now)).toBe(0);
+    expect(minutesUntilMovable(5 * MINUTE, 6 * MINUTE)).toBe(0);
+    expect(minutesUntilMovable(0, 0)).toBe(0);
+  });
+  // A browser clock that jumps backwards after the fetch must not add to the server's count.
+  it('never shows more than the server reported', () => {
+    expect(minutesUntilMovable(10 * MINUTE, -5 * MINUTE)).toBe(10);
   });
 });
