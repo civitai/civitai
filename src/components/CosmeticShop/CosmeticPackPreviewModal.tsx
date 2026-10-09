@@ -70,6 +70,9 @@ export const CosmeticPackPreviewModal = ({
         shopItemId: pack.id,
         viaShopUserId,
         payWith: acceptsBlue ? payWith : undefined,
+        // The number on the button. A pack re-priced, or a discount that changed,
+        // while the modal sat open must refuse rather than charge something else.
+        expectedUnitAmount: pack.amountDue,
       });
       dialog.onClose();
       // A pack buyer spent more Buzz on more things than a single purchase and

@@ -476,6 +476,7 @@ export const packOwnerResaleShares = async (
 export const purchaseCosmeticPack = async ({
   userId,
   idempotencyKey,
+  expectedAmount,
   shopItem,
   members,
   payWith = 'default',
@@ -485,6 +486,8 @@ export const purchaseCosmeticPack = async ({
   userId: number;
   /** The buyer's purchase intent. A replay is answered from its claim (shop-purchase-charge.ts). */
   idempotencyKey?: string;
+  /** The amount the buyer's button showed: the price after any discount. */
+  expectedAmount?: number;
   shopItem: {
     id: number;
     title: string;
@@ -559,6 +562,15 @@ export const purchaseCosmeticPack = async ({
     );
 
   if (amountDue <= 0) throw throwBadRequestError('You already own everything in this pack');
+
+  // The buyer confirmed a number on a button. A pack re-priced, or a discount
+  // that changed (a member bought or deleted since), must refuse rather than
+  // charge a number they never agreed to. Before the claim, so nothing is
+  // charged or recorded.
+  if (expectedAmount !== undefined && expectedAmount !== amountDue)
+    throw throwBadRequestError(
+      `The price changed to ${amountDue} Buzz. Check the new price and try again.`
+    );
 
   // The buyer's key when they sent one, so a retry of the same intent is
   // recognised; otherwise random rather than a timestamp: a pack is repeatable (a

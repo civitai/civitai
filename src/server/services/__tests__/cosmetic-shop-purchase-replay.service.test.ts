@@ -434,6 +434,7 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
   for (const [what, failure] of [
     ['an error with no ledger status', () => new TypeError('fetch failed')],
     ['a ledger 408', () => ledgerError(408, 'INTERNAL_SERVER_ERROR')],
+    ['a ledger 500', () => ledgerError(500, 'INTERNAL_SERVER_ERROR')],
     ['a ledger 503', () => ledgerError(503, 'INTERNAL_SERVER_ERROR')],
   ] as const) {
     it(`a charge failing with ${what} keeps the claim pending`, async () => {
@@ -620,12 +621,13 @@ describe('purchaseCosmeticShopItem with a previously used transaction id', () =>
       userId: BUYER_ID,
       shopItemId: SHOP_ITEM_ID,
       idempotencyKey: KEY,
+      expectedUnitAmount: 1234,
       buzzType: 'yellow',
       packsEnabled: true,
     });
 
     expect(mocks.purchaseCosmeticPack).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: BUYER_ID, idempotencyKey: KEY })
+      expect.objectContaining({ userId: BUYER_ID, idempotencyKey: KEY, expectedAmount: 1234 })
     );
   });
 

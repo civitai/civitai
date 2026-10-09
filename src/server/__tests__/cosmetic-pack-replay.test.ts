@@ -85,10 +85,11 @@ const member = {
   floorAmount: 1700,
 };
 
-const buy = (idempotencyKey?: string) =>
+const buy = (idempotencyKey?: string, expectedAmount?: number) =>
   purchaseCosmeticPack({
     userId: BUYER,
     idempotencyKey,
+    expectedAmount,
     shopItem: {
       id: 7001,
       title: 'A pack',
@@ -174,6 +175,24 @@ describe('purchaseCosmeticPack with an idempotency key', () => {
     // Positive control for the "pays nothing" assertions below.
     expect(createManyUserCosmetic).toHaveBeenCalled();
     expect(pay).toHaveBeenCalled();
+  });
+
+  // The button showed a number; a pack re-priced or re-discounted since must
+  // refuse rather than charge another one.
+  it('refuses when the amount due moved since the button rendered, before any claim', async () => {
+    await expect(buy(KEY, PRICE - 1)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `The price changed to ${PRICE} Buzz. Check the new price and try again.`,
+    });
+    expect(spend).not.toHaveBeenCalled();
+    expect(claims.rows.size).toBe(0);
+  });
+
+  it('charges when the amount due matches the button (control)', async () => {
+    spend.mockResolvedValue(legs(false));
+
+    await buy(KEY, PRICE);
+    expect(spend).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a replay of a key already paid, before any charge', async () => {

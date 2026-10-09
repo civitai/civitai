@@ -5,6 +5,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
+import { PURCHASE_ALREADY_COMPLETED_MESSAGE } from '~/shared/constants/cosmetic-shop.constants';
 
 /**
  * Charging for a shop purchase whose external transaction id may have been used
@@ -41,8 +42,6 @@ export const PURCHASE_STATE_UNKNOWN_MESSAGE =
 
 /** The Axiom event name for a purchase that needs reconciling by hand. */
 export const PURCHASE_STATE_UNKNOWN_LOG_NAME = 'shop-purchase-state-unknown';
-
-export const PURCHASE_ALREADY_COMPLETED_MESSAGE = 'This purchase has already been completed';
 
 export const SHOP_PURCHASE_CLAIM_STATUS = {
   pending: 'pending',

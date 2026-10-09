@@ -1046,6 +1046,7 @@ export const purchaseCosmeticShopItem = async ({
     return purchaseCosmeticPack({
       userId,
       idempotencyKey,
+      expectedAmount: expectedUnitAmount,
       shopItem: {
         id: shopItem.id,
         title: shopItem.title,
