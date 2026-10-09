@@ -14,6 +14,7 @@ import type * as EventsUtils from '~/components/Events/events.utils';
  */
 
 const act = (React as unknown as { act: typeof actType }).act;
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let queryEvent: ReturnType<typeof EventsUtils.useQueryEvent>;
 vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
@@ -132,5 +133,12 @@ describe('event page: donation sections never render for a scored event', () => 
     const { markers, about } = sectionsOnPage();
     expect(markers).toContain('welcome');
     expect(about).toBe(false);
+  });
+
+  it('donation event, ended, not equipped: about renders, welcome does not', () => {
+    setEvent({ scored: false, equipped: false, window: over });
+    const { markers, about } = sectionsOnPage();
+    expect(markers).not.toContain('welcome');
+    expect(about).toBe(true);
   });
 });
