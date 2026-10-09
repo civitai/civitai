@@ -39,7 +39,10 @@ describe('visibleNavBanners', () => {
   // after the first paint. One event strip, always, keeps the cap without that dependency. Raising
   // this cap needs the Buzz Bonus seeded on the server first.
   it('shows one event strip at most, so the Buzz Bonus can never reflow it', () => {
-    expect(MAX_EVENT_STRIPS).toBe(1);
+    expect(
+      MAX_EVENT_STRIPS,
+      'raising this needs the Buzz Bonus seeded on the server first, or it reflows the strips'
+    ).toBe(1);
     expect(visibleNavBanners([banner('a'), banner('b')], []).map((b) => b.id)).toEqual(['a']);
   });
 });
@@ -66,6 +69,18 @@ describe('the dismissed cookie', () => {
     expect(ids).toHaveLength(NAV_BANNERS_DISMISSED_MAX);
     expect(ids.at(-1)).toBe(`e${NAV_BANNERS_DISMISSED_MAX + 4}`);
     expect(ids[0]).toBe('e5');
+  });
+
+  it('keeps the newest ids from an oversized cookie', () => {
+    const ids = Array.from({ length: NAV_BANNERS_DISMISSED_MAX + 5 }, (_, i) => `e${i}`);
+    const parsed = parseNavBannersDismissed(JSON.stringify(ids));
+    expect(parsed).toHaveLength(NAV_BANNERS_DISMISSED_MAX);
+    expect(parsed[0]).toBe('e5');
+  });
+
+  it('reads a cookie past its hard caps as nothing dismissed', () => {
+    expect(parseNavBannersDismissed(JSON.stringify(Array(101).fill('e')))).toEqual([]);
+    expect(parseNavBannersDismissed(JSON.stringify(['x'.repeat(101)]))).toEqual([]);
   });
 
   it('does not repeat an id dismissed twice', () => {

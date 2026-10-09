@@ -12,6 +12,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 });
 
 const { getNavBanners } = await import('~/server/services/nav-banner.service');
+const { logToAxiom } = await import('~/server/logging/client');
 
 const TESTER = { id: 10 };
 const MOD = { id: 20, isModerator: true };
@@ -46,6 +47,12 @@ describe('the birthday banner, through the real access rule', () => {
     testerFlag.reset({ public: true });
     for (const viewer of [TESTER, PUBLIC_USER, ANON])
       expect(await birthdayIds(viewer, DURING)).toEqual(['event:birthday2026']);
+  });
+
+  it('hides when Flipt cannot be read, even for a tester during the event', async () => {
+    testerFlag.reset({ readable: false, testers: [TESTER.id] });
+    expect(await birthdayIds(TESTER, DURING)).toEqual([]);
+    expect(await birthdayIds(ANON, DURING)).toEqual([]);
   });
 
   it('hides for everyone once the event ends (results are not advertised in v1)', async () => {
@@ -106,6 +113,16 @@ describe('getNavBanners', () => {
     });
   });
 
+  it('falls back to the event title, and no image, when the event has no page copy', async () => {
+    const [banner] = await getNavBanners({
+      viewer: TESTER,
+      eventDefs: [event('e1', { banner: {} })],
+      getAccess: open,
+    });
+    expect(banner.title).toBe('e1 title');
+    expect(banner.image).toBeUndefined();
+  });
+
   it("lets the banner block override the page's title and image", async () => {
     const [banner] = await getNavBanners({
       viewer: TESTER,
@@ -142,5 +159,12 @@ describe('getNavBanners', () => {
       },
     });
     expect(result.map((b) => b.id)).toEqual(['event:fine']);
+    // Fails closed, but not silently.
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logToAxiom).mock.calls[0][0]).toMatchObject({
+      name: 'nav-banner',
+      event: 'broken',
+      message: 'flag has no Flipt key',
+    });
   });
 });
