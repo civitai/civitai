@@ -674,4 +674,23 @@ describe('processSaveBytes (pre-check → classify → record)', () => {
     expect(refusedSize.recent).toEqual([]);
     expect(classify).not.toHaveBeenCalled();
   });
+
+  it('🔴 an over-cap file is ALWAYS too-large, never busy — even when the window could not take it', () => {
+    // A file over the 100 MB window budget can never fit the window; answering `busy` would
+    // invite a retry that cannot succeed. The cap is checked before the window, on byteLength.
+    const classify = vi.fn(() => 'text/plain' as const);
+    const overWindow = new Uint8Array(SAVE_BYTES_MAX_BYTES_PER_WINDOW + MB).fill(0x63).buffer;
+    const empty = processSaveBytes({ bytes: overWindow }, [], T0 + 1, classify);
+    expect(empty.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
+
+    const overCap = new Uint8Array(SAVE_BYTES_MAX_BYTES + MB).fill(0x63).buffer;
+    const partlyFull = [{ at: T0, size: 50 * MB }];
+    const nearFull = processSaveBytes({ bytes: overCap }, partlyFull, T0 + 2, classify);
+    expect(nearFull.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
+    expect(nearFull.recent).toEqual(partlyFull);
+
+    const countFull = processSaveBytes({ bytes: overCap }, fullByCount(), T0 + 9, classify);
+    expect(countFull.result).toEqual({ ok: false, error: 'file exceeds the maximum save size' });
+    expect(classify).not.toHaveBeenCalled();
+  });
 });

@@ -490,11 +490,15 @@ export function prepareSaveBytes(
 export const SAVE_BYTES_BUSY_ERROR = 'busy';
 
 /**
- * The whole host-side `bytes` decision, in the order that keeps a refused save cheap:
- *   1. window pre-check ({@link saveBytesWindowHasRoom}, non-recording, on `byteLength` alone) —
+ * The whole host-side `bytes` decision, in the order that keeps a refused save cheap AND its error
+ * accurate:
+ *   1. the per-file size cap, on `byteLength` alone — FIRST, so an over-cap file always gets
+ *      `file exceeds the maximum save size`, never `busy` (a file over the window budget can
+ *      never fit the window, so answering `busy` would invite a retry that cannot succeed);
+ *   2. window pre-check ({@link saveBytesWindowHasRoom}, non-recording, on `byteLength` alone) —
  *      once the window is full every further save is refused `busy` WITHOUT decoding/parsing it;
- *   2. {@link prepareSaveBytes} (size cap, classify, name);
- *   3. record it in the window ({@link admitSaveBytes}) — only a save that will download counts.
+ *   3. {@link prepareSaveBytes} (classify, name; its own cap check is then a no-op);
+ *   4. record it in the window ({@link admitSaveBytes}) — only a save that will download counts.
  * Returns the outcome and the window to store back.
  */
 export function processSaveBytes(
@@ -507,6 +511,9 @@ export function processSaveBytes(
   recent: SaveBytesWindowEntry[];
 } {
   const size = req.bytes.byteLength;
+  if (size > SAVE_BYTES_MAX_BYTES) {
+    return { result: { ok: false, error: SAVE_BYTES_TOO_LARGE_ERROR }, recent: [...recent] };
+  }
   if (!saveBytesWindowHasRoom(recent, now, size)) {
     return { result: { ok: false, error: SAVE_BYTES_BUSY_ERROR }, recent: [...recent] };
   }
