@@ -380,8 +380,8 @@ function getPlacedAt(userData: unknown) {
 }
 
 /**
- * An event decoration counts toward its owner's team score, so unlike a frame it may only go on
- * content the wearer owns, of a type its event allows, while that event runs, and not again
+ * An event decoration counts toward its owner's team score, so it may only go on content the
+ * wearer owns, of a type its event allows, while that event runs, and not again
  * within the event's cooldown.
  */
 async function assertCanPlaceEventDecoration({
