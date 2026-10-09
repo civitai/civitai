@@ -355,8 +355,11 @@ export async function getMyEventHats({
       getPlaceableEntities(placed),
     ]);
 
+    const now = Date.now();
     return rows.map((r) => {
       const placedAt = r.placedAt ? new Date(r.placedAt) : null;
+      const movableAt =
+        placedAt && definition ? new Date(placedAt.getTime() + definition.moveCooldownMs) : null;
       const score = scores[cosmeticScoreKey({ userId: user.id, ...r })];
       const entity =
         r.equippedToType && r.equippedToId
@@ -369,8 +372,13 @@ export async function getMyEventHats({
         data: r.data,
         placedOn: entity ?? null,
         placedAt,
-        movableAt:
-          placedAt && definition ? new Date(placedAt.getTime() + definition.moveCooldownMs) : null,
+        movableAt,
+        // Measured on the server's clock and capped at the cooldown, so the page can count it down
+        // without comparing movableAt to a browser clock that may be minutes off.
+        moveCooldownLeftMs:
+          movableAt && definition
+            ? Math.min(definition.moveCooldownMs, Math.max(0, movableAt.getTime() - now))
+            : 0,
         points: score?.points ?? 0,
         impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
         reactions: score?.reactions ?? 0,

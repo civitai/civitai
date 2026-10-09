@@ -43,8 +43,11 @@ export function describeEntityTypes(types: readonly CosmeticEntity[]) {
   return `${nouns.slice(0, -1).join(', ')} and ${nouns[nouns.length - 1]}`;
 }
 
-/** Whole minutes until a hat may move again; 0 once it can. */
-export function minutesUntilMovable(movableAt: Date | null, now = new Date()) {
-  if (!movableAt) return 0;
-  return Math.max(0, Math.ceil((movableAt.getTime() - now.getTime()) / 60_000));
+/**
+ * Whole minutes until a hat may move again; 0 once it can. `cooldownLeftMs` is the server's count
+ * when the hats were fetched, and `elapsedMs` how long ago that was on the browser's own clock, so
+ * a browser clock that disagrees with the server's cannot lengthen the wait.
+ */
+export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
+  return Math.max(0, Math.ceil((cooldownLeftMs - Math.max(0, elapsedMs)) / 60_000));
 }

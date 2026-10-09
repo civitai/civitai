@@ -78,8 +78,11 @@ export function ScoredEventHero({
             </Badge>
           )}
           <Badge color="gray" variant="light" leftSection={<IconCalendarEvent size={14} />}>
-            {formatDate(data.startDate, 'MMM D')} to{' '}
-            {formatDate(new Date(data.endDate.getTime() - 1), 'MMM D')}
+            {page?.dates ??
+              `${formatDate(data.startDate, 'MMM D')} to ${formatDate(
+                new Date(data.endDate.getTime() - 1),
+                'MMM D'
+              )}`}
           </Badge>
         </Group>
 

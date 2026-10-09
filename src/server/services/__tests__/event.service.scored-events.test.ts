@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DecorationConstants from '~/shared/constants/event-decoration.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -276,6 +276,24 @@ describe('getMyEventHats', () => {
   it('says when a placed hat may move again, from the event decoration cooldown', async () => {
     const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
     expect(placed.movableAt).toEqual(new Date(Date.parse(placedAt) + 10 * 60 * 1000));
+  });
+
+  // The page counts down from this rather than comparing movableAt to the browser's clock, so it is
+  // measured on the server's clock and never longer than the cooldown.
+  describe('moveCooldownLeftMs', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+    it.each([
+      ['3 minutes after placing', '2026-11-12T10:03:00.000Z', 7 * 60 * 1000],
+      ['once the cooldown is over', '2026-11-12T10:15:00.000Z', 0],
+      ['when placedAt is ahead of this server', '2026-11-12T09:58:00.000Z', 10 * 60 * 1000],
+    ])('%s', async (_label, now, left) => {
+      vi.useFakeTimers({ now: new Date(now), toFake: ['Date'] });
+      const [placed, unplaced] = await service.getMyEventHats({ event: 'birthday2026', user });
+      expect(placed.moveCooldownLeftMs).toBe(left);
+      expect(unplaced.moveCooldownLeftMs).toBe(0);
+    });
   });
 
   // The rows are the mock's, so pin what the query asks for: this caller, this event's decorations.
