@@ -163,13 +163,17 @@ describe('team shelf (A3)', () => {
 
 describe('catalogue before joining (A5)', () => {
   const teams = ['Yellow', 'Blue', 'Pink', 'Green'];
-  // Design 5 comes in two colours only, so the pick must cycle within each design's own hats.
+  // Design 6 comes in three colours only, so the pick must cycle within each design's own hats
+  // (6 % 3 picks Yellow where 6 % 4 would pick Pink).
   const designs = Array.from({ length: 14 }, (_, i) => ({
     design: `d${i}`,
     name: `Design ${i}`,
-    hats: (i === 5 ? ['Yellow', 'Pink'] : teams).map((team) => ({ team, url: `d${i}-${team}` })),
+    hats: (i === 6 ? ['Yellow', 'Blue', 'Pink'] : teams).map((team) => ({
+      team,
+      url: `d${i}-${team}`,
+    })),
   }));
-  const picked = (i: number) => (i === 5 ? 'Pink' : teams[i % 4]);
+  const picked = (i: number) => (i === 6 ? 'Yellow' : teams[i % 4]);
   const preview = (onJoin = vi.fn()) =>
     render(
       React.createElement(HatCatalogPreview, { event: 'birthday2026', onJoin, joining: false })
@@ -188,7 +192,7 @@ describe('catalogue before joining (A5)', () => {
     expect(el.querySelector('h2')?.textContent).toBe('14 hats to collect');
     expect(el.textContent).toContain('Every design comes in all 4 team colours.');
     expect(el.textContent).toContain('and 2 more designs');
-    expect(el.textContent).not.toMatch(/Buzz|\d{3,} /);
+    expect(el.textContent).not.toMatch(/buzz|\d{3,} /i);
   });
 
   it('joins from its button', () => {
