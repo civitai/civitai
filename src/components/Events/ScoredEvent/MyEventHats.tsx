@@ -1,6 +1,7 @@
 import { Button, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconArrowsMove, IconClock, IconHanger, IconPlus } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
@@ -20,6 +21,11 @@ type MyHat = RouterOutput['event']['getMyHats'][number];
 // a feed card. The picture rounds its own top corners to the card's (8px less the 1px border).
 const CARD = `flex flex-col rounded-lg border border-solid border-gray-3 dark:border-dark-4 ${EVENT_CARD_SURFACE}`;
 const PICTURE_RADIUS = 'rounded-t-[7px]';
+// The room left of the first column is the page's gutter: the event page's lg Container's padding,
+// plus its margin once the scroll area (the nearest CSS container) is wider. A worn hat moves in
+// rather than reach past it.
+const HAT_ROOM =
+  'calc(max(0px, (100cqw - var(--container-size-lg)) / 2) + var(--mantine-spacing-md))';
 
 export function MyEventHats({
   event,
@@ -69,9 +75,7 @@ export function MyEventHats({
       <SimpleGrid
         cols={{ base: 2, md: 3, lg: 4 }}
         spacing="md"
-        style={{ gridAutoRows: '1fr' }}
-        // A phone's 16px gutter is less room than the feed's: the hat moves in rather than crops.
-        className="max-sm:[--event-decoration-allowance:16px]"
+        style={{ gridAutoRows: '1fr', '--event-decoration-allowance': HAT_ROOM } as CSSProperties}
         data-testid="my-hats-grid"
       >
         {hats.map((hat) => {

@@ -204,10 +204,13 @@ describe('Your hats card wears its hat', () => {
     )
       if (/overflow-(hidden|clip|auto|scroll)/.test(node.className)) clipping.push(node.className);
     expect(clipping).toEqual([]);
-    // A phone's 16px gutter is the grid's only room short of the feed's.
-    expect(el.querySelector('[data-testid="my-hats-grid"]')!.className).toContain(
-      'max-sm:[--event-decoration-allowance:16px]'
-    );
+    // The room is the page's gutter at every width: the Container's padding, plus its margin once
+    // the scroll area is wider than it.
+    expect(
+      el
+        .querySelector<HTMLElement>('[data-testid="my-hats-grid"]')!
+        .style.getPropertyValue('--event-decoration-allowance')
+    ).toBe('calc(max(0px, (100cqw - var(--container-size-lg)) / 2) + var(--mantine-spacing-md))');
     expect(thumbProps.mock.lastCall?.[0]).not.toHaveProperty('allowance');
     expect(thumbProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
