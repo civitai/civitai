@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as FeedPrimary from '~/server/services/feed-primary.service';
@@ -175,6 +175,7 @@ import {
   getImagesFromFeedServiceForRest,
 } from '~/server/services/image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imageMetaCache, imageResourcesCache, tagIdsForImagesCache } from '~/server/redis/caches';
 
 const FEED_CREATED_AT = '2026-01-01T00:00:00.000Z';
 const FEED_SORT_AT = '2026-03-01T12:00:00.000Z';
@@ -670,6 +671,85 @@ describe('/api/v1/images served by the feed service', () => {
         resultIds: [9, 5],
       })
     );
+  });
+});
+
+/** The second argument each per-image cache's fetch was called with, per call. */
+function cacheFetchOptions() {
+  const spies = {
+    imageResources: vi.spyOn(imageResourcesCache, 'fetch').mockResolvedValue({}),
+    tagIds: vi.spyOn(tagIdsForImagesCache, 'fetch').mockResolvedValue({}),
+    imageMeta: vi.spyOn(imageMetaCache, 'fetch').mockResolvedValue({}),
+  };
+  const options = (name: keyof typeof spies) => spies[name].mock.calls.map((call) => call[1]);
+  return { spies, options };
+}
+const rawRow = (id: number) => ({
+  ...row(id),
+  userId: 11,
+  type: 'image',
+  metadata: null,
+  meta: null,
+  hideMeta: false,
+  hasMeta: false,
+  publishedAt: new Date(FEED_CREATED_AT),
+});
+
+describe('per-image caches on the REST feed path read through without writing back', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.restFlagOn.mockReturnValue(true);
+    h.websiteFlagOn.mockReturnValue(false);
+    h.available.mockReturnValue(true);
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.meiliSearch.mockResolvedValue(MEILI_PAGE);
+    h.enforce.mockImplementation(async () => ({ emptyResult: false }));
+    h.rawQuery.mockReset();
+    h.rawQuery.mockResolvedValue({ rows: [rawRow(9), rawRow(5)] });
+    h.realHydrate = true;
+  });
+  afterEach(() => {
+    h.realHydrate = false;
+    vi.restoreAllMocks();
+  });
+
+  it('passes writeBack:false to image-resources, tag-ids and image-meta on a feed-served page', async () => {
+    const { options } = cacheFetchOptions();
+    const res = await get({ withMeta: 'true' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
+    expect(options('imageResources')).toEqual([{ writeBack: false }]);
+    expect(options('tagIds')).toEqual([{ writeBack: false }]);
+    expect(options('imageMeta')).toEqual([{ writeBack: false }]);
+  });
+
+  it('[invariant on the pre-change code] keeps writing back image-meta when the search path serves', async () => {
+    h.restFlagOn.mockReturnValue(false);
+    const { options } = cacheFetchOptions();
+    const res = await get({ withMeta: 'true' });
+    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
+    expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+    expect(options('imageMeta')).toHaveLength(1);
+    expect(options('imageMeta')[0]?.writeBack).not.toBe(false);
+  });
+
+  it('[invariant on the pre-change code] the website feed hydrate keeps writing back', async () => {
+    h.websiteFlagOn.mockReturnValue(true);
+    const { options } = cacheFetchOptions();
+    const r = await getAllImagesIndex({
+      sort: 'Newest',
+      period: 'Week',
+      browsingLevel: 1,
+      limit: 100,
+      include: ['tagIds'],
+      includeBaseModel: true,
+      user: { id: 42, isModerator: false },
+    } as unknown as Parameters<typeof getAllImagesIndex>[0]);
+    expect(r.source).toBe('feed');
+    expect(options('imageResources')).toHaveLength(1);
+    expect(options('tagIds')).toHaveLength(1);
+    for (const opts of [...options('imageResources'), ...options('tagIds')])
+      expect(opts?.writeBack).not.toBe(false);
   });
 });
 

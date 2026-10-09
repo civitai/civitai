@@ -296,7 +296,11 @@ export async function runImageSearch(
 
   let imageMetas: Record<number, { id: number; meta?: any }> = {};
   if (withMeta && items.length > 0) {
-    imageMetas = await imageMetaCache.fetch(items.map((img) => img.id));
+    // A feed-served page reads through without writing back, as its hydrate does.
+    imageMetas = await imageMetaCache.fetch(
+      items.map((img) => img.id),
+      { writeBack: !fromFeedService }
+    );
   }
 
   const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);
