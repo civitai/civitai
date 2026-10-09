@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { BlocklistType } from '~/server/common/enums';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
@@ -9,6 +10,7 @@ import type * as BlockCheck from '~/server/services/block-check.service';
 import type * as ListingVisibility from '~/server/services/blocks/app-listing-visibility.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as FeedbackService from '~/server/services/feedback.service';
+import type * as NotificationService from '~/server/services/notification.service';
 import type { SessionUser } from '~/types/session';
 import type { PGlite } from '@electric-sql/pglite';
 // The moderator spoke's harness: the REAL `Feedback` migrations (the manual-apply app-block one
@@ -34,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   throwOnBlockedCommentContent: vi.fn(),
   readListingVisibility: vi.fn(),
   readListingVisibilityMany: vi.fn(),
+  createNotification: vi.fn(),
 }));
 
 vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
@@ -52,6 +55,10 @@ vi.mock('~/server/services/blocks/app-listing-visibility.service', async (import
   ...(await importOriginal<typeof ListingVisibility>()),
   readListingVisibility: mocks.readListingVisibility,
   readListingVisibilityMany: mocks.readListingVisibilityMany,
+}));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: mocks.createNotification,
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Blocklist>()),
@@ -230,6 +237,7 @@ beforeEach(() => {
   dbMock.dbWrite.feedback.count.mockResolvedValue(0);
   dbMock.dbWrite.feedback.create.mockResolvedValue({ id: 555 });
   dbMock.dbWrite.feedback.updateMany.mockResolvedValue({ count: 1 });
+  mocks.createNotification.mockResolvedValue(undefined);
 });
 
 const page = { slug: 'cool-app' };
@@ -714,10 +722,10 @@ describe('listAppFeedbackForListing', () => {
     const q = lastQuery();
     const where = norm(q.sql).match(/WHERE (.*?) ORDER BY/)![1];
     expect(where).toBe(
-      'f.area = ? AND f."appListingId" IN (?) AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL'
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?)`
     );
     expect(norm(q.sql)).toMatch(/ORDER BY f\."createdAt" DESC, f\.id DESC LIMIT \?$/);
-    expect(q.values.slice(0, 2)).toEqual(['app-block', PARENT]);
+    expect(q.values.slice(0, 1)).toEqual([PARENT]);
   });
 
   it('maps the owner-status filter, `new` meaning NULL', async () => {
@@ -730,15 +738,7 @@ describe('listAppFeedbackForListing', () => {
     expect(norm(lastQuery().sql)).toContain(
       'AND f."ownerStatus" = ? AND (f."createdAt", f.id) < (SELECT c."createdAt", c.id FROM "Feedback" c WHERE c.id = ? AND c.area = ? AND c."appListingId" = ?) ORDER BY'
     );
-    expect(lastQuery().values).toEqual([
-      'app-block',
-      PARENT,
-      'wont_fix',
-      77,
-      'app-block',
-      PARENT,
-      51,
-    ]);
+    expect(lastQuery().values).toEqual([PARENT, 'wont_fix', 77, 'app-block', PARENT, 51]);
   });
 
   it('pages with one look-ahead row', async () => {
@@ -846,6 +846,102 @@ describe('owner writes', () => {
   });
 });
 
+describe('reporter notification on an owner status change', () => {
+  const REPORTER_ROW = { userId: REPORTER, appListing: { name: 'Cool App', slug: 'cool-app' } };
+  const set = (ownerStatus: 'acknowledged' | 'resolved' | 'wont_fix') =>
+    setAppFeedbackOwnerStatus({
+      userId: EDITOR,
+      input: { id: 901, appListingId: SHADOW, ownerStatus, expectedOwnerStatus: null },
+    });
+
+  beforeEach(() => {
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(REPORTER_ROW);
+  });
+
+  it('resolved → one notification to the reporter, keyed per (feedback, status) — literal', async () => {
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.createNotification).toHaveBeenCalledWith({
+      userId: REPORTER,
+      category: 'Update',
+      type: 'app-feedback-status',
+      key: 'app-feedback-status:901:resolved',
+      details: {
+        feedbackId: 901,
+        ownerStatus: 'resolved',
+        appName: 'Cool App',
+        appSlug: 'cool-app',
+      },
+    });
+  });
+
+  it("wont_fix → its own key, so it is not swallowed by an earlier 'resolved'", async () => {
+    await set('wont_fix');
+    expect(mocks.createNotification.mock.calls[0][0].key).toBe('app-feedback-status:901:wont_fix');
+  });
+
+  it('🔴 acknowledged sends nothing — and does not even look the reporter up', async () => {
+    await expect(set('acknowledged')).resolves.toEqual({ id: 901, ownerStatus: 'acknowledged' });
+    expect(dbMock.dbWrite.feedback.findFirst).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('🔴 re-reads the reporter on the primary under the owner-visibility predicate and the new status', async () => {
+    // The seat listing (the editor wrote via the SHADOW id), not hidden, reporter not banned, and
+    // still at the status just written. A moderator who hid the row since — or another writer who
+    // moved its status on — makes this read come back empty.
+    await set('resolved');
+    expect(dbMock.dbWrite.feedback.findFirst).toHaveBeenCalledWith({
+      where: {
+        area: 'app-block',
+        appListingId: PARENT,
+        hiddenFromOwnerAt: null,
+        user: { bannedAt: null },
+        id: 901,
+        ownerStatus: 'resolved',
+      },
+      select: { userId: true, appListing: { select: { name: true, slug: true } } },
+    });
+    expect(dbMock.dbRead.feedback.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a row hidden from the developer sends nothing', async () => {
+    // The visibility predicate is what hides it, so the re-read finds no row.
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(null);
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('a refused write (0 rows — e.g. already hidden) sends nothing', async () => {
+    dbMock.dbWrite.feedback.updateMany.mockResolvedValue({ count: 0 });
+    await expect(set('resolved')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(dbMock.dbWrite.feedback.findFirst).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('a failure to notify never fails the committed status change, and is logged', async () => {
+    loggingMock.logToAxiom.mockClear();
+    dbMock.dbWrite.feedback.findFirst.mockRejectedValue(new Error('primary blip'));
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(REPORTER_ROW);
+    mocks.createNotification.mockRejectedValue(new Error('notifications down'));
+    await expect(set('wont_fix')).resolves.toEqual({ id: 901, ownerStatus: 'wont_fix' });
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { name?: string; details?: unknown; message?: string })
+      .filter((entry) => entry.name === 'app-feedback-status-notify-failed');
+    expect(logged).toEqual([
+      expect.objectContaining({
+        details: { feedbackId: 901, ownerStatus: 'resolved' },
+        message: 'primary blip',
+      }),
+      expect.objectContaining({
+        details: { feedbackId: 901, ownerStatus: 'wont_fix' },
+        message: 'notifications down',
+      }),
+    ]);
+  });
+});
+
 describe('countNewAppFeedbackForMyListings', () => {
   it('runs no query for a user with no listings', async () => {
     expect(await countNewAppFeedbackForMyListings(REPORTER)).toEqual({});
@@ -862,9 +958,9 @@ describe('countNewAppFeedbackForMyListings', () => {
     expect(await countNewAppFeedbackForMyListings(OWNER)).toEqual({ [PARENT]: 4, [OFFSITE]: 1 });
     const q = lastQuery();
     expect(norm(q.sql).match(/WHERE (.*) GROUP BY/)![1]).toBe(
-      'f.area = ? AND f."appListingId" IN (?,?) AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."ownerStatus" IS NULL'
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?,?) AND f."ownerStatus" IS NULL`
     );
-    expect(q.values).toEqual(['app-block', PARENT, OFFSITE]);
+    expect(q.values).toEqual([PARENT, OFFSITE]);
   });
 });
 
@@ -1069,7 +1165,12 @@ describe('hasAnyAppFeedbackForListing — authz parity with listForListing', () 
     const listQ = lastQuery();
     const hasAnyWhere = norm(hasAnyQ.sql).match(/WHERE (.*?) \) AS "hasAny"/)![1];
     expect(hasAnyWhere).toBe(norm(listQ.sql).match(/WHERE (.*?) ORDER BY/)![1]);
-    expect(hasAnyQ.values).toEqual(['app-block', PARENT]);
+    // The shared owner-visibility SQL (app-feedback-visibility.ts), the same text the digest reads:
+    // its values are code constants inlined in the text, so only the seat listing id is bound.
+    expect(hasAnyWhere).toBe(
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?)`
+    );
+    expect(hasAnyQ.values).toEqual([PARENT]);
     // Selects a constant, never a column, and stops at the first match.
     expect(norm(hasAnyQ.sql)).toMatch(/^SELECT EXISTS \( SELECT 1 FROM "Feedback" f JOIN/);
   });

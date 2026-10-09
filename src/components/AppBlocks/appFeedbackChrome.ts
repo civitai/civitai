@@ -113,6 +113,10 @@ export function appFeedbackSentWithLine(
     : 'Nothing else is collected with your message.';
 }
 
+/** The second sentence is held to the server's notified statuses by appFeedbackChrome.test.ts. */
+export const APP_FEEDBACK_SENT_MESSAGE =
+  "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
+
 export const APP_FEEDBACK_NOT_AVAILABLE_MESSAGE =
   "This app isn't accepting feedback from you right now.";
 export const APP_FEEDBACK_SIGNED_OUT_MESSAGE = 'Sign in to send feedback.';

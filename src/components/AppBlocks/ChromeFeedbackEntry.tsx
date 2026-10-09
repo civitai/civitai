@@ -10,6 +10,7 @@ import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 import type { AppFeedbackRequest } from './appFeedbackChrome';
 import {
+  APP_FEEDBACK_SENT_MESSAGE,
   APP_FEEDBACK_PRIVATE_NOTICE,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
@@ -117,7 +118,7 @@ export function AppFeedbackModal({
     >
       {sent ? (
         <Stack gap="md" data-testid="app-feedback-sent">
-          <Text size="sm">Sent to the developer.</Text>
+          <Text size="sm">{APP_FEEDBACK_SENT_MESSAGE}</Text>
           <Group justify="flex-end">
             <Button onClick={onClose}>Close</Button>
           </Group>

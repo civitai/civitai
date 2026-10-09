@@ -5,6 +5,7 @@ import { ratingReviewNotifications } from '~/server/notifications/rating-review.
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
+import { appFeedbackNotifications } from '~/server/notifications/app-feedback.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
 import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
@@ -58,6 +59,7 @@ export const notificationProcessors = {
   ...appListingNotifications,
   ...appBlockNotifications,
   ...appCollaboratorNotifications,
+  ...appFeedbackNotifications,
   ...appModeratorMessageNotifications,
   ...articleRatingReviewNotifications,
   ...ratingReviewNotifications,
