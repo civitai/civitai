@@ -44,6 +44,7 @@ export function ModelShopCard({
     <TwCosmeticWrapper
       cosmetic={data.cosmetic?.data}
       eventDecoration={data.eventDecoration?.data}
+      eventDecorationOn={{ entityType: 'Model', entityId: data.id }}
       className="h-full"
     >
       <Paper ref={impressionRef} className={classes.card}>

@@ -17,6 +17,10 @@ export type EventDecorationDefinition = {
   event: string;
   /** What the decoration is called in menus, e.g. "Party Hat". */
   label: string;
+  /** The event's name where a worn decoration is clicked, e.g. "Civitai Birthday". */
+  eventTitle: string;
+  /** The button from a worn decoration to its event's page. */
+  eventLinkLabel: string;
   startsAt: Date;
   /** Exclusive. */
   endsAt: Date;
@@ -32,6 +36,8 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
   {
     event: BIRTHDAY_2026_EVENT,
     label: 'Party Hat',
+    eventTitle: 'Civitai Birthday',
+    eventLinkLabel: 'See the birthday event',
     startsAt: BIRTHDAY_2026_STARTS_AT,
     endsAt: BIRTHDAY_2026_ENDS_AT,
     previewFrom: BIRTHDAY_2026_PREVIEW_FROM,

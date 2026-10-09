@@ -18,6 +18,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { AspectRatioCard } from './AspectRatioCard';
 import cardStyles from './AspectRatioCard.module.scss';
 import styles from './AspectRatioImageCard.module.scss';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type ContentTypeProps =
@@ -55,6 +56,8 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   cosmetic?: ContentDecorationCosmetic['data'];
   /** Worn beside the frame; see TwCosmeticWrapper. */
   eventDecoration?: EventDecorationData | null;
+  /** The content wearing the event decoration, so a click on it can open its stats. */
+  eventDecorationOn?: EventDecorationEntity;
   className?: string;
   image?: ImageProps;
   header?: React.ReactNode | ((props: { safe?: boolean }) => React.ReactNode);
@@ -98,6 +101,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   onClick,
   cosmetic,
   eventDecoration,
+  eventDecorationOn,
   className,
   contentType,
   contentId,
@@ -137,6 +141,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
       aspectRatio={aspectRatio}
       cosmetic={cosmetic}
       eventDecoration={eventDecoration}
+      eventDecorationOn={eventDecorationOn}
       className={className}
       impressions={impressions}
       render={({ inView }) => {
@@ -240,7 +245,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           : IMAGE_CARD_WIDTH
                       }
                       hiDpi={features.hiDpiPreviews}
-                        sourceWidth={image.width}
+                      sourceWidth={image.width}
                       skip={
                         image.type === 'video'
                           ? getSkipValue({

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
 export const eventSchema = z.object({
   event: z.string(),
@@ -22,4 +23,10 @@ export const eventCosmeticScoresSchema = eventSchema.extend({
       })
     )
     .max(100),
+});
+
+export type WornEventHatInput = z.infer<typeof wornEventHatSchema>;
+export const wornEventHatSchema = eventSchema.extend({
+  entityType: z.enum(CosmeticEntity),
+  entityId: z.number().int().positive(),
 });
