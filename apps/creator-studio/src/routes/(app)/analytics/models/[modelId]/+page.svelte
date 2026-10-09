@@ -18,6 +18,12 @@
   import { formatRange, eachDayIso, shiftIso, dayDiff } from '$lib/date-range';
   import { currencyMeta, currencySort, hasDisplayValue } from '$lib/earnings';
   import {
+    CHANNEL_HEAD,
+    CHANNEL_SORT_PREFIX,
+    shownChannels,
+    type PerformanceChannel,
+  } from '$lib/analytics/earning-channels';
+  import {
     BANKABLE_CURRENCIES,
     FILTERABLE_CURRENCIES,
     currencySelectionKind,
@@ -45,8 +51,8 @@
   const sortValue = (v: VersionRow, key: string): number =>
     key === 'downloads'
       ? v.downloads
-      : key.startsWith('channel:')
-        ? channelTotal(v, key.slice('channel:'.length) as (typeof CHANNELS)[number])
+      : key.startsWith(CHANNEL_SORT_PREFIX)
+        ? channelTotal(v, key.slice(CHANNEL_SORT_PREFIX.length) as PerformanceChannel)
         : key.startsWith('cash:')
           ? cell(v, key.slice('cash:'.length)).total
           : v.generations;
@@ -170,20 +176,7 @@
   });
   type VersionRow = PageData['model']['versions'][number];
 
-  const CHANNELS = [
-    'licenseFee',
-    'compensation',
-    'earlyAccess',
-    'permanentAccess',
-    'donation',
-  ] as const;
-  const CHANNEL_HEAD: Record<(typeof CHANNELS)[number], string> = {
-    licenseFee: 'License Fees',
-    compensation: 'Compensation',
-    earlyAccess: 'Early Access',
-    permanentAccess: 'Perm. Access',
-    donation: 'Donations',
-  };
+  const visibleChannels = $derived(shownChannels(versions, sortKey));
 
   const currencies = buzzCurrencyState(() => data.buzzCurrencies);
   const selected = $derived(currencies.value);
@@ -197,12 +190,12 @@
         : selected.map((c: string) => currencyMeta(c).label).join(' + ')
   );
 
-  const channelTotal = (v: VersionRow, c: (typeof CHANNELS)[number]) =>
+  const channelTotal = (v: VersionRow, c: PerformanceChannel) =>
     v.channels[c].received.reduce(
       (sum, r) => (selectedSet.has(r.currency) ? sum + r.total : sum),
       0
     );
-  const channelPrev = (v: VersionRow, c: (typeof CHANNELS)[number]) =>
+  const channelPrev = (v: VersionRow, c: PerformanceChannel) =>
     v.channels[c].received.reduce(
       (sum, r) => (selectedSet.has(r.currency) ? sum + r.prev : sum),
       0
@@ -388,8 +381,8 @@
           {@render sortHead('baseModel', 'Base model')}
           {@render sortHead('generations', 'Generations')}
           {@render sortHead('downloads', 'Downloads')}
-          {#each CHANNELS as c (c)}
-            {@render sortHead('channel:' + c, CHANNEL_HEAD[c])}
+          {#each visibleChannels as c (c)}
+            {@render sortHead(CHANNEL_SORT_PREFIX + c, CHANNEL_HEAD[c])}
           {/each}
           {#each cashCurrencies as c (c)}
             {@render sortHead('cash:' + c, currencyMeta(c).label, 'border-l border-dark-4')}
@@ -423,7 +416,7 @@
                 </div>
               {/if}
             </Table.Cell>
-            {#each CHANNELS as c (c)}
+            {#each visibleChannels as c (c)}
               {@const total = channelTotal(v, c)}
               {@const show = hasDisplayValue(total, 'yellow')}
               <Table.Cell class="align-top text-right">
