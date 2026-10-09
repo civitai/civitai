@@ -11,6 +11,7 @@ const { service } = vi.hoisted(() => ({
     getEventStandings: vi.fn(async () => ({ teams: [] })),
     getMyEventCosmeticScores: vi.fn(async () => ({ points: 0, cosmetics: [] })),
     getEventCosmeticScores: vi.fn(async () => ({})),
+    getEventAccess: vi.fn(async () => 'open'),
   },
 }));
 
@@ -45,7 +46,7 @@ describe('scored-event route access', () => {
   it('serves getMyCosmeticScores for the signed-in caller only', async () => {
     await callerFor({ id: 7 }).getMyCosmeticScores({ event: 'birthday2026' });
     expect(service.getMyEventCosmeticScores).toHaveBeenCalledWith({
-      userId: 7,
+      user: { id: 7 },
       event: 'birthday2026',
     });
   });

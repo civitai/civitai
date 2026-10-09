@@ -415,6 +415,9 @@ const featureFlags = createFeatureFlags({
   // The journey page, its entry points and the tier pointer in score refusals, plus tier badge grants
   // and their notifications (see creator-journey-flag.service.ts for the off-session evaluation).
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
+  // Civitai's 4th Birthday (Team Hats). Read through the event engine's access rule
+  // (src/server/events/event-access.ts), which adds the preview and launch windows to it.
+  birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a

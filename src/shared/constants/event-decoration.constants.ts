@@ -2,6 +2,7 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
 
@@ -19,6 +20,8 @@ export type EventDecorationDefinition = {
   startsAt: Date;
   /** Exclusive. */
   endsAt: Date;
+  /** Flagged users may wear it from here; whether a viewer may is the server's call. */
+  previewFrom?: Date;
   /** What it can be worn on. */
   entityTypes: readonly CosmeticEntity[];
   /** How soon one decoration may be placed again after it was last placed. */
@@ -31,6 +34,7 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
     label: 'Party Hat',
     startsAt: BIRTHDAY_2026_STARTS_AT,
     endsAt: BIRTHDAY_2026_ENDS_AT,
+    previewFrom: BIRTHDAY_2026_PREVIEW_FROM,
     entityTypes: [CosmeticEntity.Image, CosmeticEntity.Model, CosmeticEntity.Article],
     moveCooldownMs: 10 * 60 * 1000,
   },
@@ -75,22 +79,17 @@ export function getEventDecorationDefinition(event: string) {
   return EVENT_DECORATION_DEFINITIONS.find((x) => x.event === event);
 }
 
-export function isEventDecorationLive(definition: EventDecorationDefinition, now = new Date()) {
-  return now >= definition.startsAt && now < definition.endsAt;
+/**
+ * Whether someone could wear this event's decorations now: its window, preview included. Who
+ * actually may is the server's call (src/server/events/event-access.ts).
+ */
+export function isEventDecorationInWindow(definition: EventDecorationDefinition, now = new Date()) {
+  return now >= (definition.previewFrom ?? definition.startsAt) && now < definition.endsAt;
 }
 
-/** The live event, if any, whose decorations can be worn on this entity type. */
-export function getLiveEventDecorationDefinition(entityType: CosmeticEntity, now = new Date()) {
+/** The event, if any, whose decorations someone could wear on this entity type now. */
+export function getEventDecorationInWindow(entityType: CosmeticEntity, now = new Date()) {
   return EVENT_DECORATION_DEFINITIONS.find(
-    (x) => isEventDecorationLive(x, now) && x.entityTypes.includes(entityType)
-  );
-}
-
-/** Entity types that any live event lets a decoration be worn on. Empty between events. */
-export function getLiveEventDecorationEntityTypes(now = new Date()) {
-  return new Set(
-    EVENT_DECORATION_DEFINITIONS.filter((x) => isEventDecorationLive(x, now)).flatMap(
-      (x) => x.entityTypes
-    )
+    (x) => isEventDecorationInWindow(x, now) && x.entityTypes.includes(entityType)
   );
 }

@@ -2,6 +2,7 @@ import type { REDIS_KEYS } from '~/server/redis/client';
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
   BIRTHDAY_2026_TEAMS,
 } from '~/shared/constants/birthday2026.constants';
@@ -16,6 +17,9 @@ export const birthday2026 = createEvent(name, {
   // Copies: consumers must never be able to mutate the shared constants.
   startDate: new Date(BIRTHDAY_2026_STARTS_AT.getTime()),
   endDate: new Date(BIRTHDAY_2026_ENDS_AT.getTime()),
+  // Behind the flag; flagged users play from previewFrom. See event-access.ts.
+  featureFlag: 'birthday2026',
+  previewFrom: new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime()),
   teams: BIRTHDAY_2026_TEAMS,
   // Display name only; the join cosmetic is found by data (event, team, design).
   cosmeticName: 'Party Cap',

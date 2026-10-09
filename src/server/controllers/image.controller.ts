@@ -353,6 +353,8 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
         signal,
         actor: buildSearchActor({
           userId: user?.id,
@@ -368,6 +370,8 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
       // than inside getAllImages because the index result type is derived from its

@@ -911,6 +911,7 @@ export const toggleWishlistShopItem = async ({
 
 export const purchaseCosmeticShopItem = async ({
   userId,
+  isModerator,
   shopItemId,
   viaShopUserId,
   payWith = 'default',
@@ -921,6 +922,7 @@ export const purchaseCosmeticShopItem = async ({
   packsEnabled,
 }: PurchaseCosmeticShopItemInput & {
   userId: number;
+  isModerator?: boolean;
   buzzType?: BuzzSpendType;
   stickersEnabled?: boolean;
   packsEnabled?: boolean;
@@ -1005,7 +1007,12 @@ export const purchaseCosmeticShopItem = async ({
     }
 
     if (isEventShopItemData(shopItem.cosmetic.data))
-      await assertEventShopItemPurchasable({ userId, data: shopItem.cosmetic.data, payWith });
+      await assertEventShopItemPurchasable({
+        userId,
+        isModerator,
+        data: shopItem.cosmetic.data,
+        payWith,
+      });
   }
 
   if (

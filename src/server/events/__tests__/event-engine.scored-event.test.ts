@@ -4,9 +4,11 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
   BIRTHDAY_2026_TEAMS,
 } from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 const { mockCreateNotification, mockRefresh, mockScoring } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn(),
@@ -40,6 +42,9 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
 vi.mock('~/server/events/scoring/cosmetic-placement.service', () => mockScoring);
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 
 const { events, eventEngine, getActiveEvents } = await import('~/server/events/index');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
@@ -61,6 +66,8 @@ const cosmeticIds: Record<string, string> = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Launched unless a test says otherwise; who the flag lets in is pinned in event-access.test.ts.
+  testerFlag.reset({ public: true });
   redisMock.redis.hGet.mockImplementation(
     async (_key: string, name: string) => cosmeticIds[name] ?? null
   );
@@ -118,6 +125,35 @@ describe('event registration', () => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     const teams = await Promise.all(GOLDEN_USER_IDS.map((id) => birthday2026.getUserTeam(id)));
     expect(teams).toEqual(GOLDEN_TEAMS);
+  });
+
+  // Justin, 2026-10-09: the test run before launch keeps its hats, on the condition that "the teams
+  // will be the same between test and launch". A team is a function of the event name and user id
+  // only; if you are adding the date, the flag or the preview to it, the hats testers bought
+  // become the wrong colour at launch.
+  it('assigns the same team during the preview, at launch and after, whatever the flag says', async () => {
+    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const moments = [
+        BIRTHDAY_2026_PREVIEW_FROM,
+        new Date(BIRTHDAY_2026_STARTS_AT.getTime() - 1),
+        BIRTHDAY_2026_STARTS_AT,
+        BIRTHDAY_2026_ENDS_AT,
+      ];
+      for (const now of moments) {
+        for (const isPublic of [false, true]) {
+          vi.setSystemTime(now);
+          testerFlag.reset({ public: isPublic, testers: GOLDEN_USER_IDS });
+          const teams = await Promise.all(
+            GOLDEN_USER_IDS.map((id) => birthday2026.getUserTeam(id))
+          );
+          expect(teams).toEqual(GOLDEN_TEAMS);
+        }
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -274,23 +310,34 @@ describe('end-of-event cleanup', () => {
 
 describe('scored event is inert before it starts', () => {
   const justBefore = new Date(BIRTHDAY_2026_STARTS_AT.getTime() - 1);
+  const beforePreview = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1);
 
-  it('runs no scoring, reset or cleanup', async () => {
+  // Armed: the base is on before the start, so the preview is over and nothing runs until launch.
+  it('runs no scoring, reset or cleanup once armed, or before the preview', async () => {
     await eventEngine.updateLeaderboard(justBefore);
     await eventEngine.dailyReset(justBefore);
+    testerFlag.reset({ public: false });
+    await eventEngine.updateLeaderboard(beforePreview);
+    await eventEngine.dailyReset(beforePreview);
     expect(mockScoring.runCosmeticPlacementScoring).not.toHaveBeenCalled();
     expect(anyWrite()).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
-  it('reads as nonexistent', async () => {
-    await expect(eventEngine.getEventData(BIRTHDAY_2026_EVENT, justBefore)).rejects.toThrow(
-      "That event doesn't exist"
-    );
-    expect(() => eventEngine.getStartedScoredEvent(BIRTHDAY_2026_EVENT, justBefore)).toThrow(
-      "That event doesn't exist"
-    );
+  it('reads as nonexistent to the public', async () => {
+    await expect(
+      eventEngine.getEventData(BIRTHDAY_2026_EVENT, undefined, justBefore)
+    ).rejects.toThrow("That event doesn't exist");
+    await expect(
+      eventEngine.getReadableScoredEvent(BIRTHDAY_2026_EVENT, { id: 7 }, justBefore)
+    ).rejects.toThrow("That event doesn't exist");
     expect(
-      eventEngine.getStartedScoredEvent(BIRTHDAY_2026_EVENT, BIRTHDAY_2026_STARTS_AT).name
+      (
+        await eventEngine.getReadableScoredEvent(
+          BIRTHDAY_2026_EVENT,
+          undefined,
+          BIRTHDAY_2026_STARTS_AT
+        )
+      ).name
     ).toBe(BIRTHDAY_2026_EVENT);
   });
 
@@ -305,7 +352,7 @@ describe('scored event is inert before it starts', () => {
 });
 
 describe('join', () => {
-  const join = (now: Date) => eventEngine.join(BIRTHDAY_2026_EVENT, 7, now);
+  const join = (now: Date) => eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, now);
 
   it('is refused outside [STARTS_AT, ENDS_AT), reading as nonexistent before the start', async () => {
     await expect(join(new Date(BIRTHDAY_2026_STARTS_AT.getTime() - 1))).rejects.toThrow(
@@ -343,9 +390,9 @@ describe('join', () => {
 describe('join team lookup', () => {
   it('refuses to join when the manual team assignments cannot be read', async () => {
     redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('ECONNREFUSED'));
-    await expect(eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT)).rejects.toThrow(
-      'ECONNREFUSED'
-    );
+    await expect(
+      eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT)
+    ).rejects.toThrow('ECONNREFUSED');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

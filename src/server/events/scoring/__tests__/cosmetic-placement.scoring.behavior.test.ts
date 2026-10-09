@@ -19,6 +19,10 @@ const ch = vi.hoisted(() => ({ rows: [] as object[], query: vi.fn(), insert: vi.
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { query: ch.query, insert: ch.insert },
 }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
+const { testerFlag } = await import('~/test-utils/testerFlagFake');
 
 const {
   runCosmeticPlacementScoring,
@@ -223,7 +227,7 @@ describe('standings', () => {
   });
 
   it('reads per-cosmetic and per-user scores across days', async () => {
-    const scores = await getCosmeticScores(event.name, [
+    const scores = await getCosmeticScores(event, [
       { userId: 2, cosmeticId: 22, claimKey: 'claimed' },
       { userId: 1, cosmeticId: 21, claimKey: 'txn-1' },
       { userId: 9, cosmeticId: 99, claimKey: 'nope' },
@@ -232,16 +236,14 @@ describe('standings', () => {
       '2:22:claimed': 25,
       '1:21:txn-1': 4,
     });
-    expect((await getUserCosmeticScores(event.name, 1)).map((c) => [c.claimKey, c.points])).toEqual(
-      [
-        ['claimed', 20],
-        ['txn-1', 4],
-      ]
-    );
+    expect((await getUserCosmeticScores(event, 1)).map((c) => [c.claimKey, c.points])).toEqual([
+      ['claimed', 20],
+      ['txn-1', 4],
+    ]);
   });
 
   it('keeps a hidden owner per-cosmetic score readable (standings hide it, cosmetic reads do not)', async () => {
-    const scores = await getCosmeticScores(event.name, [
+    const scores = await getCosmeticScores(event, [
       { userId: BANNED, cosmeticId: 23, claimKey: 'claimed' },
     ]);
     expect(scores[`${BANNED}:23:claimed`]?.points).toBe(100);
@@ -280,6 +282,70 @@ describe('standings', () => {
     expect(await getEventStandings(event)).toBe(cached);
     expect(await getTeamScoreHistory(event)).toBe(cached.history);
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+// Justin, 2026-10-09: before launch the event runs for testers and moderators only, and "jobs
+// should only apply to tagged users". The placement ledger records every equip whoever made it (a
+// trigger cannot ask Flipt), so the flag is applied where a day's scores are written.
+describe('scoring behind the flag', () => {
+  const PREVIEW_FROM = new Date('2026-11-01T00:00:00.000Z');
+  const PREVIEW_DAY = new Date('2026-11-05T20:00:00.000Z');
+  const preview = {
+    ...event,
+    startDate: PREVIEW_FROM,
+    endDate: event.startDate,
+    scoreFrom: PREVIEW_FROM,
+    audienceFlag: 'birthday-2026',
+  };
+
+  beforeEach(() => {
+    testerFlag.reset({ testers: [1] });
+    dbMock.dbWrite.user.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) => where.id.in.map((id) => ({ id, isModerator: false }))) as never);
+  });
+
+  it('writes only the scores of owners the flag is on for', async () => {
+    ch.rows = [row(1, 21, 'claimed', 'Yellow', 7, 0, 0), row(2, 22, 'claimed', 'Blue', 5, 0, 0)];
+    await runCosmeticPlacementScoring(preview, PREVIEW_DAY);
+    expect((await stored()).map((r) => [r.day, r.userId, r.points])).toEqual([
+      ['2026-11-05', 1, 7],
+    ]);
+  });
+
+  it('writes everyone once no flag is applied', async () => {
+    ch.rows = [row(1, 21, 'claimed', 'Yellow', 7, 0, 0), row(2, 22, 'claimed', 'Blue', 5, 0, 0)];
+    await runCosmeticPlacementScoring(event, DAY1);
+    expect((await stored()).map((r) => r.userId)).toEqual([1, 2]);
+  });
+
+  // The reset clears the test run, but if it were ever skipped, test-run days still must not reach
+  // the public standings or anyone's score.
+  it('keeps test-run days out of every read once the event has started', async () => {
+    ch.rows = [row(1, 21, 'claimed', 'Yellow', 7, 0, 0)];
+    await runCosmeticPlacementScoring(preview, PREVIEW_DAY);
+    ch.rows = [row(1, 21, 'claimed', 'Yellow', 3, 0, 0)];
+    await runCosmeticPlacementScoring(event, DAY1);
+
+    const { teams, history } = await getEventStandings(event);
+    expect(teams.find((t) => t.team === 'Yellow')?.score).toBe(3);
+    expect(history.find((h) => h.team === 'Yellow')!.scores.map((x) => x.score)).toEqual([3]);
+    const key = { userId: 1, cosmeticId: 21, claimKey: 'claimed' };
+    expect((await getCosmeticScores(event, [key]))['1:21:claimed']?.points).toBe(3);
+    expect((await getUserCosmeticScores(event, 1))[0]?.points).toBe(3);
+
+    // Positive control: the same rows, read as the preview, include the test-run day.
+    expect((await getUserCosmeticScores(preview, 1))[0]?.points).toBe(10);
+  });
+
+  it('never stores a preview snapshot where the event reads its own', async () => {
+    await getEventStandings(preview);
+    await getEventStandings(event);
+    const keys = redisMock.redis.packed.set.mock.calls.map(([k]) => k);
+    expect(new Set(keys).size).toBe(2);
   });
 });
 

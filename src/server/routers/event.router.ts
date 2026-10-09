@@ -10,6 +10,7 @@ import {
 import {
   activateEventCosmetic,
   donate,
+  getEventAccess,
   getEventCosmetic,
   getEventData,
   getEventRewards,
@@ -22,43 +23,62 @@ import {
   getMyEventCosmeticScores,
   getEventCosmeticScores,
 } from '~/server/services/event.service';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
+// A previewer sees an event the public cannot yet, so their responses must never be cached (edge or
+// Redis) where the public could be served them.
+const noCacheInPreview = middleware(async ({ ctx, input, next }) => {
+  const { event } = input as EventInput;
+  if (!ctx.cache || (await getEventAccess({ event, viewer: ctx.user })) !== 'preview')
+    return next();
+  return next({ ctx: { cache: { ...ctx.cache, skip: true, canCache: false } } });
+});
+
 export const eventRouter = router({
+  // What the viewer may do with an event: closed, preview, open or ended. Per viewer, so uncached.
+  getAccess: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getEventAccess({ ...input, viewer: ctx.user })),
   getData: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(noCacheInPreview)
     // .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ input }) => getEventData(input)),
+    .query(({ ctx, input }) => getEventData({ ...input, viewer: ctx.user })),
   getTeamScores: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(noCacheInPreview)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ input }) => getTeamScores(input)),
+    .query(({ ctx, input }) => getTeamScores({ ...input, viewer: ctx.user })),
   getTeamScoreHistory: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(teamScoreHistorySchema)
+    .use(noCacheInPreview)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ input }) => getTeamScoreHistory(input)),
+    .query(({ ctx, input }) => getTeamScoreHistory({ ...input, viewer: ctx.user })),
   getCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getEventCosmetic({ userId: ctx.user.id, ...input })),
+    .query(({ ctx, input }) => getEventCosmetic({ user: ctx.user, ...input })),
   getPartners: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(noCacheInPreview)
     .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .query(({ input }) => getEventPartners(input)),
+    .query(({ ctx, input }) => getEventPartners({ ...input, viewer: ctx.user })),
   getRewards: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(noCacheInPreview)
     .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ input }) => getEventRewards(input)),
+    .query(({ ctx, input }) => getEventRewards({ ...input, viewer: ctx.user })),
   activateCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(eventSchema)
-    .mutation(({ ctx, input }) => activateEventCosmetic({ userId: ctx.user.id, ...input })),
+    .mutation(({ ctx, input }) => activateEventCosmetic({ user: ctx.user, ...input })),
   donate: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
     .input(eventSchema.extend({ amount: z.number() }))
@@ -66,6 +86,7 @@ export const eventRouter = router({
   getDonors: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(noCacheInPreview)
     .use(
       cacheIt({
         ttl: CacheTTL.day,
@@ -78,23 +99,25 @@ export const eventRouter = router({
         tags: () => ['event-donors'],
       })
     )
-    .query(({ input }) => getEventContributors(input)),
+    .query(({ ctx, input }) => getEventContributors({ ...input, viewer: ctx.user })),
   getStandings: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(noCacheInPreview)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(({ input }) => getEventStandings(input)),
+    .query(({ ctx, input }) => getEventStandings({ ...input, viewer: ctx.user })),
   getMyCosmeticScores: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getMyEventCosmeticScores({ userId: ctx.user.id, ...input })),
+    .query(({ ctx, input }) => getMyEventCosmeticScores({ user: ctx.user, ...input })),
   getCosmeticScores: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventCosmeticScoresSchema)
+    .use(noCacheInPreview)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(({ input }) => getEventCosmeticScores(input)),
+    .query(({ ctx, input }) => getEventCosmeticScores({ ...input, viewer: ctx.user })),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getUserRank({ userId: ctx.user.id, ...input })),
+    .query(({ ctx, input }) => getUserRank({ user: ctx.user, ...input })),
 });

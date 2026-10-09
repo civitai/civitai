@@ -1,18 +1,18 @@
+import type { EventViewer, GatedEvent } from '~/server/events/event-access';
+import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
 import { logToAxiom } from '~/server/logging/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 /**
  * Event-gated shop items: a cosmetic whose `data.event` names a registered event
  * (an entry of `events` in `~/server/events`, matched on `name`) is sold only
- * while that event runs, only for paid Buzz, and, when it carries a
+ * while that event is playable for the buyer (its window, its flag and preview:
+ * see event-access.ts), only for paid Buzz, and, when it carries a
  * `data.team`, only to members of that team. Team hats are the first user; the
  * rules are per event, not per cosmetic kind, so a later event reuses them.
  */
 
-type ShopEvent = {
-  name: string;
-  startDate: Date;
-  endDate: Date;
+type ShopEvent = GatedEvent & {
   teams: readonly string[];
   getUserTeam: (userId: number, opts?: { strict?: boolean }) => Promise<string>;
 };
@@ -44,8 +44,8 @@ function loadEvents(): Promise<ShopEvent[]> {
   return eventsPromise;
 }
 
-// endDate is exclusive.
-const isRunning = (event: ShopEvent, now: Date) => now >= event.startDate && now < event.endDate;
+const isPlayableFor = async (event: ShopEvent, viewer: EventViewer, now: Date) =>
+  canPlayEvent(await getEventAccess(event, viewer, now));
 
 // "Paid Buzz only": Blue is refused, the domain currency (green or yellow) is
 // accepted. Kept as one check so changing which currencies count is one line.
@@ -61,10 +61,12 @@ function eventItemPaymentAllowed(payWith: 'default' | 'blue-first' | undefined) 
  */
 export async function assertEventShopItemPurchasable({
   userId,
+  isModerator,
   data,
   payWith,
 }: {
   userId: number;
+  isModerator?: boolean;
   data: EventItemData;
   payWith?: 'default' | 'blue-first';
 }) {
@@ -75,7 +77,7 @@ export async function assertEventShopItemPurchasable({
     throw throwBadRequestError('This item is not available right now');
   });
   const event = events.find((e) => e.name === data.event);
-  if (!event || !isRunning(event, new Date()))
+  if (!event || !(await isPlayableFor(event, { id: userId, isModerator }, new Date())))
     throw throwBadRequestError('This item is not available');
 
   if (data.team === undefined) return;
@@ -98,9 +100,10 @@ export async function assertEventShopItemPurchasable({
 
 /**
  * Builds a predicate for whether a viewer sees a cosmetic in the shop. Ordinary
- * cosmetics always show. An event item shows only while its event runs: to
- * anonymous viewers in every team (buying needs sign-in, where the purchase
- * check applies) and to signed-in viewers only for their own team. If the
+ * cosmetics always show. An event item shows only while its event is playable
+ * for the viewer: to anonymous viewers in every team (buying needs sign-in,
+ * where the purchase check applies) and to signed-in viewers only for their own
+ * team. If the
  * events can't be loaded, event items are hidden and the rest of the shop still
  * renders.
  */
@@ -112,7 +115,8 @@ export function createEventShopItemVisibility({ userId }: { userId?: number }) {
     if (!isEventShopItemData(data)) return true;
     const events = await loadEvents().catch(() => undefined);
     const event = events?.find((e) => e.name === data.event);
-    if (!event || !isRunning(event, now)) return false;
+    if (!event || !(await isPlayableFor(event, userId ? { id: userId } : undefined, now)))
+      return false;
     if (data.team === undefined || !userId) return true;
 
     let team = teams.get(event.name);
