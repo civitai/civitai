@@ -17,6 +17,7 @@ import {
   liveBucket,
   utcDay,
 } from '~/server/events/points/keys';
+import { markEventPointsDirty } from '~/server/events/points/push';
 import type {
   EventHat,
   EventPointAction,
@@ -46,7 +47,13 @@ export function cappedGrant(weight: number, totalAfter: number, cap: number) {
   return Math.max(0, Math.min(cap, totalAfter) - Math.min(cap, totalAfter - weight));
 }
 
-type ScoredEventDef = { name: string; startDate: Date; endDate: Date; scoring: EventScoring };
+type ScoredEventDef = {
+  name: string;
+  startDate: Date;
+  endDate: Date;
+  teams: readonly string[];
+  scoring: EventScoring;
+};
 
 type LoadedEvent = {
   def: ScoredEventDef;
@@ -77,6 +84,8 @@ export type EventPointsDeps = {
   loadScoredEvents: (now: Date) => Promise<ScoredEventDef[]>;
   now: () => Date;
   logError: (kind: EventPointsFailure, fn: string, error: unknown, extra?: object) => void;
+  // Called once an award has moved the hat's live totals, so they can be pushed to screens.
+  onGrant: (def: ScoredEventDef, hat: EventHat, time: Date) => void;
 };
 
 export type EventPointLedgerRow = {
@@ -267,10 +276,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           [keys.live(bucket, 'team'), hat.team],
           [keys.live(bucket, 'owner'), String(hat.ownerId)],
         ] as const;
-        await Promise.all([
-          ...live.map(([key, f]) => deps.redis.hIncrBy(key, f, grant)),
-          deps.redis.sAdd(eventPointKeys(def.name).changed, field),
-        ]);
+        await Promise.all(live.map(([key, f]) => deps.redis.hIncrBy(key, f, grant)));
+        deps.onGrant(def, hat, time);
         for (const [key] of live) {
           if (bucketTtlSet.has(key)) continue;
           if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
@@ -386,7 +393,13 @@ async function loadScoredEvents(now: Date): Promise<ScoredEventDef[]> {
     if (!e.scoring) continue;
     const window = eventPointsWindow({ ...e, scoring: e.scoring });
     if (now < window.from || now > window.to) continue;
-    scored.push({ name: e.name, startDate: e.startDate, endDate: e.endDate, scoring: e.scoring });
+    scored.push({
+      name: e.name,
+      startDate: e.startDate,
+      endDate: e.endDate,
+      teams: e.teams,
+      scoring: e.scoring,
+    });
   }
   return scored;
 }
@@ -411,6 +424,7 @@ function getEngine() {
         () => undefined
       );
     },
+    onGrant: markEventPointsDirty,
   });
   return engine;
 }

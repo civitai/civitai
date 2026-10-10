@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   applyHatPoints,
   applyTeamPoints,
@@ -9,12 +9,12 @@ import {
 } from '~/components/Events/ScoredEvent/event-points-live';
 import { SignalMessages } from '~/server/common/enums';
 import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from '~/server/events/points/keys';
-import { tickEventPoints } from '~/server/events/points/ticker';
+import { createEventPointsPusher } from '~/server/events/points/push';
 
 describe('topics', () => {
-  // The client builds its topics without the server module (it pulls in Redis); the ticker sends
+  // The client builds its topics without the server module (it pulls in Redis); the pusher sends
   // to the server's. A mismatch subscribes every screen to a topic nothing is sent to.
-  it("match the server's, so the client subscribes where the ticker sends", () => {
+  it("match the server's, so the client subscribes where the pusher sends", () => {
     expect(hatTopic('birthday2026', 'a1b2c3d4e5f60718')).toBe(
       eventHatTopic('birthday2026', 'a1b2c3d4e5f60718')
     );
@@ -23,27 +23,27 @@ describe('topics', () => {
   });
 });
 
-// The two ends of the wire: what the ticker sends must be what the screens read. A renamed field
+// The two ends of the wire: what the pusher sends must be what the screens read. A renamed field
 // on either side would leave every screen silently ignoring every push.
-describe('what the ticker sends, the client reads', () => {
+describe('what the pusher sends, the client reads', () => {
   it('a hat push and a teams push round-trip', async () => {
     const hat = { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' };
     const sent: { target: string; data: Record<string, unknown> }[] = [];
-    await tickEventPoints(
-      {
-        name: 'birthday2026',
-        startDate: new Date('2026-11-01'),
-        endDate: new Date('2999-01-01'),
-        teams: ['Blue'],
-      },
-      {
-        drainChangedHats: vi.fn(async () => [hat]),
-        selectWatchedHats: async (_e, hats) => hats,
-        getHatPoints: async () => ({ [hatField(hat)]: 64 }),
-        getTeamPoints: async () => ({ Blue: 900 }),
-        topicSend: async (args) => void sent.push(args),
-      }
-    );
+    const pusher = createEventPointsPusher({
+      selectWatchedHats: async (_e, hats) => hats,
+      selectWatchedTeams: async () => true,
+      getHatPoints: async () => ({ [hatField(hat)]: 64 }),
+      getTeamPoints: async () => ({ Blue: 900 }),
+      topicSend: async (args) => void sent.push(args),
+    });
+    const event = {
+      name: 'birthday2026',
+      startDate: new Date('2026-01-01'),
+      endDate: new Date('2999-01-01'),
+      teams: ['Blue'],
+    };
+    pusher.markDirty(event, hat, new Date());
+    await pusher.flush();
     const hatData = sent.find((s) => s.target === SignalMessages.EventPointsHat)!.data;
     const teamsData = sent.find((s) => s.target === SignalMessages.EventPointsTeams)!.data;
     expect(readHatPush(hatData, 'birthday2026')).toEqual({ topicId: hatTopicId(hat), points: 64 });
