@@ -19,10 +19,24 @@ import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { askJev, JEV_TIMEOUT_MS, JevError } from '~/server/services/ai/jev';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import {
+  findPoolMergeCandidates,
   findResourceIntentCandidates,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
+import {
+  coocSnapshotHolder,
+  coocStudySnapshots,
+  type CoocServing,
+  type ServedCooc,
+} from '~/server/services/resource-intent-cooc/holder';
+import { rankCooc } from '~/server/services/resource-intent-cooc/score';
+import {
+  RESOURCE_INTENT_COOC_SPEC,
+  RESOURCE_INTENT_COOC_SPEC_HASH,
+} from '~/server/services/resource-intent-cooc/spec';
+import { coocQueryTokens } from '~/server/services/resource-intent-cooc/tokenize';
+import { RESOURCE_INTENT_POOL_MERGE_SPEC_HASH } from '~/server/services/resource-intent-pool-merge';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import {
   buildResourceIntentStage1Request,
@@ -68,7 +82,10 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * prompt needs no resource. Stage 3's `none` is reported (`noneProbability`)
  * and never empties the list: the arm screen measured that rule costing hit@10.
  *
- * Suggestions are `mergeHybrid`'s HYBRID_10 list (`resource-intent-stage3.ts`).
+ * Suggestions are `mergeHybrid`'s HYBRID_10 list (`resource-intent-stage3.ts`), or, on the
+ * POOL_MERGE arm (`ctx.poolMerge` / study mode), the co-occurrence list merged with the same
+ * popularity pool (`findPoolMergeCandidates`), with no stage 3. With no servable production
+ * snapshot that arm serves the popularity pool alone, flagged `coocFallback`, for 60 s.
  *
  * A label-read failure is NOT a degrade: the matcher falls back to the seed (popularity)
  * order and reports it, and the response carries `insightFallback: true`
@@ -128,6 +145,14 @@ const DEGRADED_CACHE_TTL_SECONDS = 60;
  */
 const INSIGHT_FALLBACK_CACHE_TTL_SECONDS = 60;
 
+/** A POOL_MERGE response served without a snapshot is retried as soon as one may have loaded. */
+const COOC_FALLBACK_CACHE_TTL_SECONDS = 60;
+
+export type ResourceIntentArm = 'hybrid_10' | 'pool_merge';
+
+/** The snapshot term of a POOL_MERGE cache key when no snapshot is served. */
+export const COOC_FALLBACK_SNAPSHOT_KEY = 'fallback';
+
 const DEGRADED_MODEL = 'jev-unavailable';
 
 /**
@@ -182,19 +207,26 @@ export function resourceIntentCacheKey(input: {
   baseModel?: string;
   browsingLevel: number;
   cap: number;
+  /** POOL_MERGE only; the HYBRID_10 key is unchanged by this arm's existence. */
+  poolMerge?: { snapshot: string };
 }) {
-  const hash = createHash('sha256')
-    .update(
-      [
-        input.prompt,
-        input.baseModel ?? '',
-        String(input.browsingLevel),
-        String(input.cap),
-        RESOURCE_INTENT_SPEC_HASH,
-        RESOURCE_INTENT_STAGE3_SPEC_HASH,
-      ].join('|')
-    )
-    .digest('hex');
+  const terms = [
+    input.prompt,
+    input.baseModel ?? '',
+    String(input.browsingLevel),
+    String(input.cap),
+    RESOURCE_INTENT_SPEC_HASH,
+    RESOURCE_INTENT_STAGE3_SPEC_HASH,
+  ];
+  if (input.poolMerge) {
+    terms.push(
+      'pool_merge',
+      input.poolMerge.snapshot,
+      RESOURCE_INTENT_COOC_SPEC_HASH,
+      RESOURCE_INTENT_POOL_MERGE_SPEC_HASH
+    );
+  }
+  const hash = createHash('sha256').update(terms.join('|')).digest('hex');
   // `as const` keeps the template-literal type: the redis client is typed over
   // the registered REDIS_KEYS templates and rejects a plain `string`.
   return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
@@ -267,6 +299,16 @@ type ShadowEvent = {
   noneProbability: number;
   stage1NoneProbability: number | null;
   stage3NoneProbability: number | null;
+} & Partial<PoolMergeShadow>;
+
+/** Sent on POOL_MERGE rows only; a HYBRID_10 row reads the columns' defaults. */
+type PoolMergeShadow = {
+  arm: ResourceIntentArm;
+  coocSnapshotHash: string;
+  coocSpecHash: string;
+  poolMergeSpecHash: string;
+  coocFallback: 0 | 1;
+  coocFallbackReason: string;
 };
 
 async function writeShadowEvent(event: ShadowEvent): Promise<void> {
@@ -293,26 +335,88 @@ async function writeShadowEvent(event: ShadowEvent): Promise<void> {
   }
 }
 
+function degradedResponse(
+  insightFallback: boolean,
+  armFields: { coocFallback?: boolean }
+): ResourceIntentResponse {
+  return {
+    degraded: true,
+    insightFallback,
+    ...armFields,
+    intent: null,
+    criteria: null,
+    suggestions: [],
+    noneProbability: null,
+    model: DEGRADED_MODEL,
+    criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
+  };
+}
+
+function logDegraded(degradedReason: string, error: unknown, model: string) {
+  logToAxiom(
+    {
+      type: 'resource-intent-degraded',
+      degradedReason,
+      error: error instanceof Error ? error.message : String(error),
+      model,
+    },
+    'temp-search'
+  ).catch(() => undefined);
+}
+
 export async function getResourceIntent(
   input: ResourceIntentInput,
   ctx: {
     browsingLevel: number;
     /** Overrides the anon coverageAudience lookup (tests; special tRPC callers). */
     coverage?: ResourceIntentCoverage;
-    /** Shadow-event timestamp; injectable for tests. */
+    /** Clock for the shadow-event timestamp and the study pin check; injectable for tests. */
     now?: () => Date;
+    /** Serve the co-occurrence POOL_MERGE list (flag `resourceIntentPoolMerge`). */
+    poolMerge?: boolean;
+    /**
+     * STUDY MODE: serve POOL_MERGE from this pinned study snapshot (its content hash). Fails
+     * closed — `degraded: true` — if the snapshot cannot be served, and never falls back.
+     */
+    coocSnapshotId?: string;
   }
 ): Promise<ResourceIntentResponse> {
   const startedAt = Date.now();
   // Resolved BEFORE the cache read: `cap` is part of the cache key, so it cannot
   // be computed on the miss path only.
   const cap = resolveSuggestionLimit(input.limit);
+  const study = ctx.coocSnapshotId !== undefined;
+  const arm: ResourceIntentArm = ctx.poolMerge || study ? 'pool_merge' : 'hybrid_10';
+
+  // The snapshot is part of the POOL_MERGE cache key, so it is resolved before the cache read.
+  let cooc: ServedCooc | null = null;
+  let coocServing: CoocServing | null = null;
+  let studyFailure: { error: unknown } | null = null;
+  if (study) {
+    try {
+      cooc = await coocStudySnapshots().get(ctx.coocSnapshotId!, (ctx.now ?? (() => new Date()))());
+    } catch (error) {
+      studyFailure = { error };
+    }
+  } else if (arm === 'pool_merge') {
+    coocServing = await coocSnapshotHolder().resolve();
+    cooc = coocServing.snapshot;
+  }
+  const coocFallback = arm === 'pool_merge' && !study && !cooc;
+
   const cacheInput = {
     prompt: input.prompt,
     baseModel: input.baseModel,
     browsingLevel: ctx.browsingLevel,
     cap,
+    ...(arm === 'pool_merge' && {
+      poolMerge: {
+        snapshot: study ? ctx.coocSnapshotId! : cooc?.contentHash ?? COOC_FALLBACK_SNAPSHOT_KEY,
+      },
+    }),
   };
+  // Spread only on this arm, so a HYBRID_10 response is unchanged.
+  const armFields = arm === 'pool_merge' ? { coocFallback } : {};
 
   let stage1Model = DEGRADED_MODEL;
   let shortlistCount = 0;
@@ -326,19 +430,28 @@ export async function getResourceIntent(
   let response: ResourceIntentResponse | undefined;
   let cachedHit = false;
 
+  if (studyFailure) {
+    // Fails closed without the cache: an expired pin must not keep serving a cached list.
+    degradedReason = 'cooc_study_snapshot';
+    response = degradedResponse(false, armFields);
+    logDegraded(degradedReason, studyFailure.error, stage1Model);
+  }
+
   // The flag gate happens BEFORE this function (and before this cache read) in
   // every caller — by the time we are here the feature is enabled.
-  try {
-    const cached = await redis.packed.get<unknown>(resourceIntentCacheKey(cacheInput));
-    if (cached != null) {
-      const parsed = resourceIntentResponseSchema.safeParse(cached);
-      if (parsed.success) {
-        response = parsed.data;
-        cachedHit = true;
+  if (!response) {
+    try {
+      const cached = await redis.packed.get<unknown>(resourceIntentCacheKey(cacheInput));
+      if (cached != null) {
+        const parsed = resourceIntentResponseSchema.safeParse(cached);
+        if (parsed.success) {
+          response = parsed.data;
+          cachedHit = true;
+        }
       }
+    } catch {
+      // A cache read failure is a miss, never an error.
     }
-  } catch {
-    // A cache read failure is a miss, never an error.
   }
 
   if (!response) {
@@ -361,7 +474,24 @@ export async function getResourceIntent(
       let suggestions: ResourceIntentSuggestion[] = [];
       const stage1NoneProbability = intent.role.distribution['none'] ?? null;
 
-      if (criteria.role !== 'none') {
+      if (criteria.role !== 'none' && arm === 'pool_merge') {
+        const coocCandidates = cooc
+          ? rankCooc(
+              cooc.scores,
+              coocQueryTokens(input.prompt),
+              criteria.modelTypes,
+              RESOURCE_INTENT_COOC_SPEC.topK
+            ).map((c) => c.modelId)
+          : [];
+        const merged = await findPoolMergeCandidates(criteria, {
+          browsingLevel: ctx.browsingLevel,
+          coverage,
+          cap,
+          coocCandidates,
+        });
+        shortlistCount = merged.entries.length;
+        suggestions = await hydrateSuggestions(merged.entries, ctx.browsingLevel);
+      } else if (criteria.role !== 'none') {
         const matched = await findResourceIntentCandidates(criteria, {
           browsingLevel: ctx.browsingLevel,
           coverage,
@@ -405,6 +535,7 @@ export async function getResourceIntent(
       response = {
         degraded: false,
         insightFallback,
+        ...armFields,
         intent,
         criteria,
         suggestions,
@@ -415,23 +546,12 @@ export async function getResourceIntent(
     } catch (error) {
       degradedReason =
         degradedReason ?? (error instanceof JevError ? `jev_${error.kind}` : 'jev_error');
-      response = {
-        degraded: true,
-        insightFallback,
-        intent: null,
-        criteria: null,
-        suggestions: [],
-        noneProbability: null,
-        model: DEGRADED_MODEL,
-        criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
-      };
+      response = degradedResponse(insightFallback, armFields);
+      logDegraded(degradedReason, error, stage1Model);
+    }
+    if (coocFallback) {
       logToAxiom(
-        {
-          type: 'resource-intent-degraded',
-          degradedReason,
-          error: error instanceof Error ? error.message : String(error),
-          model: stage1Model,
-        },
+        { type: 'resource-intent-cooc-fallback', reason: coocServing?.fallbackReason ?? '' },
         'temp-search'
       ).catch(() => undefined);
     }
@@ -447,7 +567,7 @@ export async function getResourceIntent(
     response = { ...response, suggestions: response.suggestions.slice(0, cap) };
   }
 
-  if (!cachedHit) {
+  if (!cachedHit && !studyFailure) {
     try {
       await redis.packed.set(resourceIntentCacheKey(cacheInput), response, {
         // Read off the RESPONSE, not the locals, so what is cached and what sets
@@ -470,12 +590,14 @@ export async function getResourceIntent(
           ? DEGRADED_CACHE_TTL_SECONDS
           : response.insightFallback
           ? INSIGHT_FALLBACK_CACHE_TTL_SECONDS
+          : response.coocFallback
+          ? COOC_FALLBACK_CACHE_TTL_SECONDS
           : CACHE_TTL_SECONDS,
       });
     } catch {
       // A cache write failure never fails the request.
     }
-  } else {
+  } else if (cachedHit) {
     // The matcher never ran, so the shortlist size is unknown; the hydrated
     // post-gate count is recorded instead of a misleading zero.
     shortlistCount = response.suggestions.length;
@@ -521,6 +643,14 @@ export async function getResourceIntent(
       // Not cached, so a cache hit records NULL here: this column describes stage 3 as
       // run by THIS request.
       stage3NoneProbability: response?.degraded ? null : stage3NoneProbability,
+      ...(arm === 'pool_merge' && {
+        arm,
+        coocSnapshotHash: study ? ctx.coocSnapshotId! : cooc?.contentHash ?? '',
+        coocSpecHash: RESOURCE_INTENT_COOC_SPEC_HASH,
+        poolMergeSpecHash: RESOURCE_INTENT_POOL_MERGE_SPEC_HASH,
+        coocFallback: coocFallback ? 1 : 0,
+        coocFallbackReason: coocServing?.fallbackReason ?? '',
+      }),
     });
   })();
 

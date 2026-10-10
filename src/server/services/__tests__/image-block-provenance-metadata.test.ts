@@ -25,6 +25,7 @@ const SERVER_APP_ID = 'verified-app-77';
 // untouched — including near-misses of the key and a copy nested inside a value.
 const CLIENT_METADATA = {
   blockPublishedAppId: 'client-app-1',
+  blockUploadedAppId: 'client-app-2',
   size: 12345,
   width: 640,
   blockedAppId: 'not-provenance',
@@ -49,12 +50,17 @@ beforeEach(() => {
 });
 
 describe('block provenance metadata keys', () => {
-  it('lists the published key', () => {
-    expect([...BLOCK_PROVENANCE_METADATA_KEYS]).toEqual(['blockPublishedAppId']);
+  it('lists the published and the uploaded key', () => {
+    expect([...BLOCK_PROVENANCE_METADATA_KEYS]).toEqual([
+      'blockPublishedAppId',
+      'blockUploadedAppId',
+    ]);
   });
 
   it.each([
     ['blockPublishedAppId', true],
+    ['blockUploadedAppId', true],
+    ['blockUploadedAppIds', false],
     ['blockedAppId', false],
     ['publishedAppId', false],
     ['blockPublishedAppIds', false],
@@ -95,6 +101,19 @@ describe('createImage', () => {
     } as never);
 
     expect(createdMetadata()).toEqual({ ...UNRELATED, blockPublishedAppId: SERVER_APP_ID });
+  });
+
+  it('writes the uploaded key from blockProvenance, and only that key', async () => {
+    await createImage({
+      url: KEY,
+      userId: 1,
+      type: 'image',
+      skipIngestion: true,
+      metadata: { ...CLIENT_METADATA },
+      blockProvenance: { key: 'blockUploadedAppId', appId: SERVER_APP_ID },
+    } as never);
+
+    expect(createdMetadata()).toEqual({ ...UNRELATED, blockUploadedAppId: SERVER_APP_ID });
   });
 
   it('writes provenance onto a row that had no metadata', async () => {

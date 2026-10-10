@@ -19,6 +19,8 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onModelReviewsChanged } from '~/server/events/points/hooks';
+import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
@@ -94,7 +96,6 @@ import {
 import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
-import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -698,7 +699,10 @@ export const getUserEngagedModelsByIds = async ({
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
     listModelEngagements(kyselyRead, { userId: id, modelIds }),
-    getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
+    // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+    import('~/server/services/resourceReview.service').then(({ getResourceReviewsByUserId }) =>
+      getResourceReviewsByUserId({ userId: id, recommended: true, modelIds })
+    ),
   ]);
 
   const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
@@ -1151,6 +1155,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+  void syncOwnerEventHats(user.id);
 
   // The account is deleted from here on. A failing step must not skip a later one (a skipped
   // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
@@ -1200,6 +1205,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     WHERE id = ${id}
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
+  void syncOwnerEventHats(id);
 }
 
 /**
@@ -1330,6 +1336,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   if (imagesPendingRestore > 0) await recordPendingImageRestore(id);
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
+  void syncOwnerEventHats(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // deleteUser refreshes userBasicCache (username/deletedAt/image, 1-day TTL) after scrubbing the
   // row; mirror that here so the restored identity is visible immediately instead of serving the
@@ -2113,6 +2120,7 @@ export const toggleBan = async ({
     data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
     updateSource: 'toggleBan',
   });
+  void syncOwnerEventHats(id);
 
   await invalidateSession(id, 'ban');
 
@@ -2531,11 +2539,17 @@ const collectionEntityProps: Partial<Record<CollectionType, string>> = {
 };
 // Image intentionally absent: its metrics are ClickHouse-owned (the legacy PG
 // ImageMetric processor was retired), so image bookmarks skip the PG queueUpdate.
-const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
-  [CollectionType.Article]: articleMetrics,
-  [CollectionType.Model]: modelMetrics,
-  [CollectionType.Post]: postMetrics,
-};
+// A function, not a module-level map: ~/server/metrics reaches this file again through the
+// image.service import cycle, so at load time it can still be half-initialised. A process that
+// imports image.service or post.service first crashed here.
+const collectionEntityMetrics = (type: CollectionType): typeof articleMetrics | undefined =>
+  ((
+    {
+      [CollectionType.Article]: articleMetrics,
+      [CollectionType.Model]: modelMetrics,
+      [CollectionType.Post]: postMetrics,
+    } as Partial<Record<CollectionType, typeof articleMetrics>>
+  )[type]);
 export const toggleBookmarked = async ({
   entityId,
   type,
@@ -2578,7 +2592,7 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
-  const metricsEngine = collectionEntityMetrics[type];
+  const metricsEngine = collectionEntityMetrics(type);
   if (!entityProp) {
     // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
     throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
@@ -2686,6 +2700,7 @@ export async function toggleReview({
   }
 
   await preventReplicationLag('resourceReview', userId);
+  void onModelReviewsChanged([{ modelId, userId }]);
 
   return setTo;
 }

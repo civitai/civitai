@@ -184,6 +184,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['training-dataset'],
     why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
   },
+  persistAppUploadImage: {
+    buckets: ['publish'],
+    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token from the per-install publish bucket that publishGenerationOutputs also draws on, before the row is created.',
+  },
   previewTrainingQuote: {
     buckets: ['catalog'],
     why: 'The read-only half of the training consent pair — a quote + dataset read and a Buzz balance read; materialises nothing.',

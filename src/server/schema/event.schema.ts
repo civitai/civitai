@@ -25,6 +25,13 @@ export const eventCosmeticScoresSchema = eventSchema.extend({
     .max(100),
 });
 
+// Live topics a client has on screen: hat topic ids (16 hex) or 'teams'. Anything else is dropped
+// by the service; the bounds here only keep an oversized request out.
+export type WatchEventPointsInput = z.infer<typeof watchEventPointsSchema>;
+export const watchEventPointsSchema = eventSchema.extend({
+  topics: z.array(z.string().max(32)).min(1).max(50),
+});
+
 export type WornEventHatInput = z.infer<typeof wornEventHatSchema>;
 export const wornEventHatSchema = eventSchema.extend({
   entityType: z.enum(CosmeticEntity),

@@ -608,7 +608,7 @@ export const getArticles = async ({
       items: items as Array<
         Omit<(typeof items)[number], 'cosmetic' | 'eventDecoration'> & {
           cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
-          eventDecoration?: WithClaimKey<EventDecorationCosmetic> | null;
+          eventDecoration?: EventDecorationCosmetic | null;
         }
       >,
     };

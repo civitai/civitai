@@ -50,7 +50,7 @@ const page = {
     { question: 'What happens after?', answer: 'You keep them.' },
   ],
 };
-const rules = { reactionWeight: 10, viewerOwnerDailyCap: 50, newAccountDays: 7 };
+const rules = { reactionWeight: 10, pointsCapPerDay: 50, newAccountDays: 7 };
 const decoration = { entityTypes: ['Image'], moveCooldownMs: 10 * 60_000 };
 
 function render(over: Record<string, unknown> = {}) {
@@ -154,9 +154,9 @@ describe('How it works', () => {
     const fair = (el: HTMLElement) =>
       [...el.querySelectorAll('ul > li')].map((li) => li.textContent);
     const expected = [
-      "One person counts for at most 50 of a creator's posts a day.",
+      'One person can earn a creator at most 50 points a day.',
       "Accounts made in the 7 days before the event don't count.",
-      "Signed-out views count, up to a fair share. Bot-like browsing doesn't.",
+      "Only signed-in people's views and reactions count.",
       'A hat can move again 10 minutes after it was placed.',
       "Buzz spent doesn't score. Only attention does.",
     ];
@@ -170,6 +170,20 @@ describe('How it works', () => {
     host?.remove();
     expect(fair(render({ decoration: { ...decoration, moveCooldownMs: 60_000 } }))).toContain(
       'A hat can move again 1 minute after it was placed.'
+    );
+  });
+
+  // Model thumbs-up reviews score once the rules carry their weight; until then models score views.
+  it('says what models score, from whether the rules weigh a thumbs-up', () => {
+    const note = (el: HTMLElement) =>
+      el.querySelector('[data-testid="event-points"]')?.nextElementSibling?.textContent;
+    expect(note(render())).toBe(
+      "Hats go on your own images. Models score views only: reactions aren't counted for models."
+    );
+    act(() => root?.unmount());
+    host?.remove();
+    expect(note(render({ rules: { ...rules, modelLikeWeight: 5 } }))).toBe(
+      'Hats go on your own images. Models score views and thumbs-up reviews.'
     );
   });
 

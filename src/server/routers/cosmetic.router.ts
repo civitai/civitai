@@ -5,6 +5,7 @@ import {
   getPaginatedCosmeticsSchema,
   purchaseStickerUsesSchema,
   setStickerPlacementRatingSchema,
+  unequipCosmeticSchema,
   updateEventHatFitSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
@@ -104,6 +105,6 @@ export const cosmeticRouter = router({
     ),
   unequipCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
-    .input(equipCosmeticSchema)
+    .input(unequipCosmeticSchema)
     .mutation(({ input, ctx }) => unequipCosmetic({ ...input, userId: ctx.user.id })),
 });

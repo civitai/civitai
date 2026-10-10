@@ -3,7 +3,7 @@ import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { collectionsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
 
 // Removing a model or an image leaves every collection that showed it holding a stale
 // denormalized snapshot, and nothing about the removal reaches the collections index

@@ -15,6 +15,7 @@ import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -355,7 +356,7 @@ export const updateUserProfile = async ({
             connectOrCreate: {
               where: { id: image.id ?? -1 },
               create: {
-                ...image,
+                ...pickClientImageColumns(image),
                 meta:
                   (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
                     | Prisma.JsonObject

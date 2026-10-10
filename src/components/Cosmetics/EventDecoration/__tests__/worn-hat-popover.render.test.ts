@@ -45,6 +45,26 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showErrorNotification: notify,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
+// The live points subscription needs the app's SignalProvider; record what the popover mounts.
+const livePoints = vi.hoisted(() => vi.fn());
+vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
+  WornHatLivePoints: (props: unknown) => {
+    livePoints(props);
+    return null;
+  },
+}));
+// Formats as the real one does (Intl compact, so 1.2K), without its digit columns.
+vi.mock('~/components/Metrics/AnimatedCount', () => ({
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
+}));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => null,
   EdgeMedia2: () => null,
@@ -66,6 +86,7 @@ const WORN = {
   team: 'Blue',
   url: 'u',
   owner: { id: 9, username: 'civbot', image: null },
+  topicId: 'a1b2c3d4e5f60718',
   points: 1234,
   impressions: 56789,
   reactions: 12,
@@ -84,6 +105,7 @@ beforeEach(() => {
   myHats.fetch.mockReset();
   dialogs.trigger.mockReset();
   notify.mockReset();
+  livePoints.mockReset();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -152,13 +174,26 @@ describe('a hatted feed card', () => {
     expect(dropdown.textContent).toContain('Party Cap');
     expect(dropdown.textContent).toContain('Worn by');
     expect(dropdown.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
-    expect(dropdown.textContent).toContain('1.2k');
+    expect(dropdown.textContent).toContain('1.2K');
     expect(dropdown.textContent).toContain('56.8k');
     expect(dropdown.textContent).toContain("Scores for Team Blue while it's worn");
     const link = [...dropdown.querySelectorAll('a')].find((a) =>
       a.textContent?.includes('See the birthday event')
     );
     expect(link?.getAttribute('href')).toBe('/events/birthday2026');
+  });
+
+  // A feed of hatted cards must not listen for every hat: only an open popover follows its total.
+  it('follows the hat total live only while the popover is open', () => {
+    renderCard();
+    expect(livePoints.mock.calls).toEqual([]);
+    clickHat();
+    expect(livePoints.mock.calls.at(-1)![0]).toEqual({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+      topicId: 'a1b2c3d4e5f60718',
+    });
   });
 
   it('keeps the confetti, and the click never reaches the card or anything above it', () => {
@@ -200,7 +235,7 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).not.toContain('Worn by');
     expect(popover()!.textContent).not.toContain('Your hat');
-    expect(popover()!.textContent).toContain('1.2k');
+    expect(popover()!.textContent).toContain('1.2K');
   });
 
   // A click leaves focus on the hat, outside the dropdown that handles Escape itself.
@@ -444,7 +479,7 @@ describe('the popover layout', () => {
     renderCard();
     clickHat();
     expect(stats().querySelector('[data-testid="hat-stat-points"]')?.textContent).toBe(
-      '1.2kpoints'
+      '1.2Kpoints'
     );
     // Comments and remixes score from scoring v2 on: until the server sends them, a dash, not a 0.
     expect(ways()).toEqual([
@@ -453,6 +488,16 @@ describe('the popover layout', () => {
       ['comments', '–', 'comments', 'message-circle var(--mantine-color-green-5)', ''],
       ['remixes', '–', 'remixes', 'hierarchy var(--mantine-color-violet-5)', ''],
     ]);
+  });
+
+  // Two copies of one design on one owner, and the hat map no longer says which: no points to show.
+  it('shows the hat and its wearer but no stats when the server cannot tell which copy it is', () => {
+    wornHat.result = { data: { ...WORN, topicId: null }, isLoading: false, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
+    expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
+    expect(livePoints).not.toHaveBeenCalled();
   });
 
   it('shows comments and remixes once the server counts them', () => {

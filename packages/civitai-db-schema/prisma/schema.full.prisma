@@ -5183,6 +5183,10 @@ model EventCosmeticScoreDaily {
   impressions     Int      @default(0)
   anonImpressions Int      @default(0)
   reactions       Int      @default(0)
+  comments        Int      @default(0)
+  stickers        Int      @default(0)
+  remixes         Int      @default(0)
+  modelLikes      Int      @default(0)
   points          Int      @default(0)
   updatedAt       DateTime @default(now()) @db.Timestamptz(3)
 

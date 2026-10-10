@@ -2803,6 +2803,10 @@ export type EventCosmeticScoreDaily = {
   impressions: Generated<number>;
   anonImpressions: Generated<number>;
   reactions: Generated<number>;
+  comments: Generated<number>;
+  stickers: Generated<number>;
+  remixes: Generated<number>;
+  modelLikes: Generated<number>;
   points: Generated<number>;
   updatedAt: Generated<Timestamp>;
 };

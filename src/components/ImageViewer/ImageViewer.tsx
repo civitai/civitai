@@ -47,7 +47,7 @@ export interface ImageProps {
   userId?: number;
   user?: SimpleUser;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
-  eventDecoration?: WithClaimKey<EventDecorationCosmetic> | null;
+  eventDecoration?: EventDecorationCosmetic | null;
   tags?: Array<{ id: number }> | number[];
   metadata?: MixedObject | null;
   publishedAt?: Date | null;

@@ -268,6 +268,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
+  const podiumEntries = entriesData?.pages[0]?.podium ?? [];
+  // A winner the page can't show (image deleted, hidden, outside the viewer's level) still holds
+  // their prize place on the leaderboard.
+  const leaderboardEntries = [
+    ...loadedEntries.filter(hasScore),
+    ...podiumEntries.filter(({ id }) => !loadedEntries.some((entry) => entry.id === id)),
+  ];
   const userEntries = crucible.viewerEntries;
 
   const openEntry = async ({ imageId }: { imageId: number }, gridOrder: number[]) => {
@@ -436,7 +443,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
         {crucible.status === CrucibleStatus.Completed && (
           <CruciblePodium
-            entries={entriesData?.pages[0]?.podium ?? []}
+            entries={podiumEntries}
             prizeWinners={crucible.prizeWinners}
             buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
           />
@@ -606,7 +613,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               {/* Prize Pool & Standings */}
               {rankingsVisible ? (
                 <CrucibleLeaderboard
-                  entries={loadedEntries.filter(hasScore)}
+                  entries={leaderboardEntries}
                   totalCount={entryCount}
                   prizeWinners={crucible.prizeWinners}
                   hasMore={!!hasMoreEntries}

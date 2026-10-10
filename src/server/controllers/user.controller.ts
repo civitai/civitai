@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
 import {
   OnboardingComplete,
@@ -671,7 +672,7 @@ export const updateUserHandler = async ({
         profilePicture: newPicture
           ? {
               create: {
-                ...newPicture,
+                ...pickClientImageColumns(newPicture),
                 metadata: {
                   ...stripBlockProvenanceMetadata(newPicture.metadata),
                   profilePicture: true,

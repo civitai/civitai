@@ -19,6 +19,7 @@ import type {
   GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
   SetStickerPlacementRatingInput,
+  UnequipCosmeticInput,
   UpdateEventHatFitInput,
 } from '~/server/schema/cosmetic.schema';
 import {
@@ -29,6 +30,7 @@ import {
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
   getEventDecorationDefinition,
   isEventDecorationData,
@@ -48,7 +50,6 @@ import {
 import type {
   EventDecorationCosmetic,
   StickerCosmetic,
-  WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -305,6 +306,14 @@ export async function equipCosmeticToEntity({
     data: { equippedToId, equippedToType, equippedAt: now },
   });
 
+  if (eventDecoration)
+    void syncOwnerEventHats(userId, [
+      { entityType: equippedToType, entityId: equippedToId },
+      ...(userCosmetic.equippedToId && userCosmetic.equippedToType
+        ? [{ entityType: userCosmetic.equippedToType, entityId: userCosmetic.equippedToId }]
+        : []),
+    ]);
+
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
   if (equippedToType === 'Model')
@@ -335,11 +344,15 @@ export async function unequipCosmetic({
   userId,
   claimKey,
   equippedToType,
-}: EquipCosmeticInput & { userId: number }) {
+}: UnequipCosmeticInput & { userId: number }) {
   const updated = await dbWrite.userCosmetic.updateMany({
-    where: { cosmeticId, equippedToId, userId, claimKey },
+    // Without a claimKey this still matches one row: equipping displaces the owner's other
+    // decoration of the same kind on that entity.
+    where: { cosmeticId, equippedToId, equippedToType, userId, ...(claimKey && { claimKey }) },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
+  if (updated.count)
+    void syncOwnerEventHats(userId, [{ entityType: equippedToType, entityId: equippedToId }]);
 
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
@@ -390,16 +403,51 @@ export async function getEventDecorationsForEntity({
    * response is never cached for someone else; omitted, the viewer is treated as signed out.
    */
   viewer?: EventViewer;
-}): Promise<Record<number, WithClaimKey<EventDecorationCosmetic>>> {
+}): Promise<Record<number, EventDecorationCosmetic>> {
   if (ids.length === 0) return {};
   const events = await getVisibleDecorationEvents(entity, viewer);
   if (!events.size) return {};
   const decorations = await eventDecorationEntityCaches[entity].fetch(ids, { writeBack });
-  const visible: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
+  const visible: Record<number, EventDecorationCosmetic> = {};
   for (const [id, decoration] of Object.entries(decorations))
-    if (isEventDecorationData(decoration.data) && events.has(decoration.data.event))
-      visible[Number(id)] = decoration;
+    if (isEventDecorationData(decoration.data) && events.has(decoration.data.event)) {
+      // Picked field by field: entries cached before the claimKey was dropped still carry it.
+      const { name, type, source, data, equippedToId, equippedToType } = decoration;
+      visible[Number(id)] = {
+        id: decoration.id,
+        name,
+        type,
+        source,
+        data,
+        equippedToId,
+        equippedToType,
+      };
+    }
   return visible;
+}
+
+const equippedHatSelect = {
+  userId: true,
+  equippedToId: true,
+  equippedToType: true,
+  cosmetic: { select: { data: true } },
+} as const;
+
+// Event hats among deleted holdings come off the live hat map; other cosmetics never earn.
+function writeThroughRemovedEventHats(
+  rows: {
+    userId: number;
+    equippedToId: number | null;
+    equippedToType: CosmeticEntity | null;
+    cosmetic?: { data: unknown } | null;
+  }[]
+) {
+  const hats = rows.flatMap(({ userId, equippedToId, equippedToType, cosmetic }) =>
+    equippedToId && equippedToType && isEventDecorationData(cosmetic?.data)
+      ? [{ userId, entityType: equippedToType, entityId: equippedToId }]
+      : []
+  );
+  if (hats.length) void syncOwnersEventHats(hats);
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
@@ -513,7 +561,7 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
       equippedToId: { not: null },
     },
-    select: { equippedToId: true, equippedToType: true },
+    select: equippedHatSelect,
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
@@ -523,6 +571,7 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
     },
   });
+  writeThroughRemovedEventHats(equipped);
 
   await userCosmeticCache.refresh(uniqueUserIds);
   await refreshOwnedStickerCache(uniqueUserIds);
@@ -626,9 +675,14 @@ export async function unassignCosmetic({
   userIds: number[];
 }) {
   if (userIds.length === 0) return { count: 0 };
+  const equipped = await dbWrite.userCosmetic.findMany({
+    where: { cosmeticId, userId: { in: userIds }, equippedToId: { not: null } },
+    select: equippedHatSelect,
+  });
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
+  writeThroughRemovedEventHats(equipped);
   await refreshOwnedStickerCache(userIds);
   return { count: result.count };
 }

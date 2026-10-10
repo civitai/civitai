@@ -128,6 +128,7 @@ import {
   isAppBlocksPostCreationEnabled,
 } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
+import { persistBlockUploadImageSchema } from '~/server/schema/blocks/block-image-upload.schema';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
@@ -5320,6 +5321,65 @@ export const blocksRouter = router({
           : new TRPCError({ code: 'BAD_REQUEST', message: 'failed to publish any output' });
       }
       return { imageIds };
+    }),
+
+  /**
+   * `OPEN_IMAGE_UPLOAD { bytes }`: persist an app's own uploaded image exactly as
+   * `blockImageUpload.persist` does, except the row is stamped `blockUploadedAppId` = the verified
+   * token appId, which lets this app post it as a `{ kind: 'published' }` source.
+   *
+   * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
+   * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
+   * post-creation flag) and page tokens only. Then the upload's ONE per-install publish-bucket
+   * charge, BEFORE the persist, so a refusal creates no Image row and starts no scan. The bytes
+   * are already in the store by then; a refused upload leaves that object unreferenced, as a
+   * picked upload refused at `blockImageUpload.persist` does.
+   *
+   * ⚠️ The 60/h `rateLimit` below does NOT bind every caller: the middleware skips moderators
+   * (the current flag audience) and non-prod envs. For them the binding server bound is the
+   * publish bucket (60 per 300 s per install), plus the host's 3-per-60-s window per page.
+   */
+  persistAppUploadImage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many image uploads — slow down.',
+      })
+    )
+    .input(
+      persistBlockUploadImageSchema
+        .pick({ url: true, name: true })
+        .extend({ blockToken: z.string().min(1) })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'upload',
+        ctx.user.id
+      );
+      if (!isPageToken(claims)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'image byte uploads are available to page apps only',
+        });
+      }
+      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { persistBlockUploadImage } = await import(
+        '~/server/services/blocks/block-image-upload.service'
+      );
+      return persistBlockUploadImage({
+        input: { url: input.url, name: input.name },
+        userId,
+        uploadedByAppId: claims.appId,
+      });
     }),
 
   /**

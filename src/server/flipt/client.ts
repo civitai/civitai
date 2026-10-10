@@ -170,6 +170,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 
+  // Kill switch for the event points engine (src/server/events/points). DEFAULT-OFF: an unknown
+  // flag, or a client that never initialised, stops every award, removal, hat sync, signals tick
+  // and referee run. Evaluated with no context and one fixed entity, so set the boolean and add no
+  // rules: a ramp is all or nothing, and a rule can override the boolean.
+  EVENT_POINTS_ENGINE = 'event-points-engine',
+
   // Submits image ingestion as one imageScanning step instead of wdTagging + mediaRating.
   // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.

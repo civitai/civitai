@@ -738,4 +738,29 @@ describe('upsertCollection cover image', () => {
     expect(mockDbWrite.collectionItem.findFirst).not.toHaveBeenCalled();
     expect(mockDbWrite.collection.update).toHaveBeenCalled();
   });
+
+  it('points the cover at an existing image by id', async () => {
+    arrange({ actorId: MANAGER_ID });
+    imageOwnedBy(MANAGER_ID);
+
+    await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image.connectOrCreate.where).toEqual({ id: EXISTING_IMAGE });
+  });
+
+  it('creates a new cover from client columns only', async () => {
+    arrange({ actorId: MANAGER_ID });
+
+    await save({ url: COVER_KEY, type: 'image', width: 10, postId: 9_001, index: 2 });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image.connectOrCreate.create).toMatchObject({
+      url: COVER_KEY,
+      width: 10,
+      userId: MANAGER_ID,
+    });
+    expect(image.connectOrCreate.create).not.toHaveProperty('postId');
+    expect(image.connectOrCreate.create).not.toHaveProperty('index');
+  });
 });
