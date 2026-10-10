@@ -8,16 +8,21 @@ import type { EventHat } from './types';
 
 // Awards inside one window collapse into one push per topic.
 export const PUSH_WINDOW_MS = 1_000;
-// Most sends one flush starts. Until signals can say which topics have subscribers, every dirty hat
-// is a POST, so this bounds what a burst of awards puts on the signals service; the rest stay dirty
-// for the next window.
+// Most sends one flush starts, the same cap the ticker had per tick. Until signals can say which
+// topics have subscribers, every dirty hat is a POST, so this bounds what a burst of awards puts on
+// the signals service; the rest stay dirty for the next window.
 export const MAX_SENDS_PER_FLUSH = 200;
-// The signals client's lane and circuit breaker are shared by every push on the pod (chat, buzz,
-// generation); its breaker opens at 10 timeouts in 60s. This one opens first: at most
-// SEND_CONCURRENCY sends are in flight, and FAILURES_TO_OPEN failures in a row stop pushing on this
-// server for BREAKER_COOL_OFF_MS, so a signals outage costs it a handful of timeouts a minute.
+// Most hats one event keeps dirty. A mark past it is dropped; the screen's next read catches it up.
+export const MAX_DIRTY_HATS = 10_000;
+// A load-shed for this pusher only, on top of the signals client's own breaker, which is shared by
+// every push on the pod (chat, buzz, generation) and opens at 10 timeouts in 60s. This one stops
+// pushing on this server for BREAKER_COOL_OFF_MS after FAILURES_TO_OPEN failures in a row, or
+// FAILURES_PER_COOL_OFF failures of any kind within one cool-off, so a partial outage is bounded too.
+// With SEND_CONCURRENCY sends in flight, it puts at most
+// FAILURES_PER_COOL_OFF + SEND_CONCURRENCY - 1 = 6 failures into any 60s.
 export const SEND_CONCURRENCY = 3;
 export const FAILURES_TO_OPEN = 2;
+export const FAILURES_PER_COOL_OFF = 4;
 export const BREAKER_COOL_OFF_MS = 60_000;
 // How long the referee waits for its corrections to go out before its job carries on.
 export const REFEREE_DRAIN_MS = 5_000;
@@ -50,6 +55,8 @@ export type PushDeps = {
 };
 
 type Send = Parameters<PushDeps['topicSend']>[0];
+// A send, and how to mark its topic dirty again if it is not started.
+type Queued = { send: Send; putBack: () => void };
 type Dirty = { event: PushEvent; hats: Map<string, Hat>; teams: boolean };
 
 // Pushes live totals over signals as they change: an award marks its hat and team dirty, and one
@@ -60,6 +67,8 @@ export function createEventPointsPusher(deps: PushDeps) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let flushing: Promise<void> | undefined;
   let failuresInARow = 0;
+  // When each failure inside the last cool-off happened.
+  let failureTimes: number[] = [];
   let openUntil = 0;
 
   const isOpen = () => Date.now() < openUntil;
@@ -70,24 +79,32 @@ export function createEventPointsPusher(deps: PushDeps) {
     timer.unref?.();
   }
 
-  // Marks a hat, and its team, whose total just moved. Preview totals are never pushed: topics are
-  // named by the public event name, and anyone can subscribe to them.
-  function markDirty(event: PushEvent, hat: Hat, time: Date) {
-    if (time < event.startDate || isOpen() || !deps.isEnabled()) return;
+  function entryFor(event: PushEvent) {
     let entry = dirty.get(event.name);
     if (!entry) {
       entry = { event, hats: new Map(), teams: false };
       dirty.set(event.name, entry);
     }
-    entry.hats.set(hatField(hat), hat);
+    return entry;
+  }
+
+  // Marks a hat, and its team, whose total just moved; false when it was not marked. Preview totals
+  // are never pushed: topics are named by the public event name, and anyone can subscribe to them.
+  function markDirty(event: PushEvent, hat: Hat, time: Date) {
+    if (time < event.startDate || isOpen() || !deps.isEnabled()) return false;
+    const entry = entryFor(event);
+    const field = hatField(hat);
+    if (entry.hats.size >= MAX_DIRTY_HATS && !entry.hats.has(field)) return false;
+    entry.hats.set(field, hat);
     entry.teams = true;
     schedule();
+    return true;
   }
 
   // Takes up to `budget` sends' worth of dirty topics, reads their totals and builds the sends.
   async function collect(budget: number) {
     const now = new Date();
-    const queue: Send[] = [];
+    const queue: Queued[] = [];
     for (const [name, entry] of [...dirty]) {
       if (queue.length >= budget) break;
       const { event } = entry;
@@ -96,8 +113,12 @@ export function createEventPointsPusher(deps: PushDeps) {
       const teams = entry.teams && event.endDate > now;
       entry.teams = false;
       const room = budget - queue.length - (teams ? 1 : 0);
-      const taken = [...entry.hats.values()].slice(0, Math.max(0, room));
-      for (const hat of taken) entry.hats.delete(hatField(hat));
+      const taken: Hat[] = [];
+      for (const [field, hat] of entry.hats) {
+        if (taken.length >= room) break;
+        taken.push(hat);
+        entry.hats.delete(field);
+      }
       if (!entry.hats.size) dirty.delete(name);
       try {
         const [watchedHats, watchedTeams] = await Promise.all([
@@ -112,16 +133,22 @@ export function createEventPointsPusher(deps: PushDeps) {
         ]);
         if (totals)
           queue.push({
-            topic: eventTeamsTopic(name),
-            target: SignalMessages.EventPointsTeams,
-            data: { event: name, teams: totals },
+            send: {
+              topic: eventTeamsTopic(name),
+              target: SignalMessages.EventPointsTeams,
+              data: { event: name, teams: totals },
+            },
+            putBack: () => (entryFor(event).teams = true),
           });
         for (const hat of watchedHats) {
           const topicId = hatTopicId(hat);
           queue.push({
-            topic: eventHatTopic(name, topicId),
-            target: SignalMessages.EventPointsHat,
-            data: { event: name, topicId, points: points[hatField(hat)] ?? 0 },
+            send: {
+              topic: eventHatTopic(name, topicId),
+              target: SignalMessages.EventPointsHat,
+              data: { event: name, topicId, points: points[hatField(hat)] ?? 0 },
+            },
+            putBack: () => void entryFor(event).hats.set(hatField(hat), hat),
           });
         }
       } catch (error) {
@@ -135,9 +162,18 @@ export function createEventPointsPusher(deps: PushDeps) {
   function open() {
     openUntil = Date.now() + BREAKER_COOL_OFF_MS;
     failuresInARow = 0;
+    failureTimes = [];
     // Dropped, not kept: a signals outage must not grow the set.
     dirty.clear();
     clearTimer();
+  }
+
+  function recordFailure() {
+    const now = Date.now();
+    failureTimes = failureTimes.filter((t) => now - t < BREAKER_COOL_OFF_MS);
+    failureTimes.push(now);
+    if (++failuresInARow >= FAILURES_TO_OPEN || failureTimes.length >= FAILURES_PER_COOL_OFF)
+      open();
   }
 
   function clearTimer() {
@@ -145,7 +181,8 @@ export function createEventPointsPusher(deps: PushDeps) {
     timer = undefined;
   }
 
-  async function flushOnce() {
+  // Starts no send after `deadline`; what it did not start is dirty again for the next window.
+  async function flushOnce(deadline: number) {
     clearTimer();
     if (isOpen() || !deps.isEnabled()) return dirty.clear();
     const queue = await collect(MAX_SENDS_PER_FLUSH);
@@ -153,51 +190,59 @@ export function createEventPointsPusher(deps: PushDeps) {
     let sent = 0;
     let failed = 0;
     const worker = async () => {
-      while (next < queue.length && !isOpen()) {
-        const send = queue[next++];
+      while (next < queue.length && !isOpen() && Date.now() < deadline) {
+        const { send } = queue[next++];
         try {
           await deps.topicSend(send);
           sent++;
           failuresInARow = 0;
         } catch {
           failed++;
-          if (++failuresInARow >= FAILURES_TO_OPEN) open();
+          recordFailure();
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(SEND_CONCURRENCY, queue.length) }, worker));
+    if (!isOpen()) for (const { putBack } of queue.slice(next)) putBack();
     if (failed)
       logPush('warning', undefined, {
         message: isOpen() ? 'signals sends failed, pushing paused' : 'signals sends failed',
         sent,
         failed,
-        dropped: queue.length - sent - failed,
+        dropped: isOpen() ? queue.length - sent - failed : 0,
       });
   }
 
   // One window's flush. Anything over the bound, or marked while it ran, waits for the next window.
-  function flush() {
-    flushing ??= flushOnce().finally(() => {
+  function flush(deadline = Infinity) {
+    flushing ??= flushOnce(deadline).finally(() => {
       flushing = undefined;
       schedule();
     });
     return flushing;
   }
 
+  const pending = () =>
+    [...dirty.values()].reduce((n, d) => n + d.hats.size + (d.teams ? 1 : 0), 0);
+
   // Flushes now, and again until nothing is dirty or `maxMs` has passed, for a job that must get its
-  // pushes out before it ends. What is left after `maxMs` goes out on the normal window.
+  // pushes out before it ends. It starts no send after `maxMs`, so it overruns by at most the sends
+  // already in flight. It also stops once a flush leaves no fewer dirty topics than it found, as when
+  // awards mark faster than it sends. What is left goes out on the normal window.
   async function drain(maxMs: number) {
     const deadline = Date.now() + maxMs;
     while (dirty.size && Date.now() < deadline) {
       await flushing;
-      await flush();
+      const before = pending();
+      await flush(deadline);
+      if (pending() >= before) break;
     }
-    const left = [...dirty.values()].reduce((n, d) => n + d.hats.size + (d.teams ? 1 : 0), 0);
+    const left = pending();
     if (left) logPush('warning', undefined, { message: 'drain timed out', left });
     return { left };
   }
 
-  return { markDirty, flush, drain, isOpen, dirtyCount: () => dirty.size };
+  return { markDirty, flush, drain, isOpen, pending, dirtyCount: () => dirty.size };
 }
 
 function logPush(type: 'warning' | 'error', event: string | undefined, extra: object) {

@@ -68,7 +68,7 @@ export type EventPointsRedis = Pick<
   'hGetAll' | 'sAdd' | 'sRem' | 'expire' | 'expireAt' | 'hIncrBy' | 'xRange' | 'xRevRange'
 >;
 
-export type EventPointsFailure = 'redis' | 'ledger';
+export type EventPointsFailure = 'redis' | 'ledger' | 'push';
 
 // Stream ids are `ms-seq`; compare numerically, part by part.
 export function streamIdBefore(a: string, b: string) {
@@ -277,7 +277,12 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           [keys.live(bucket, 'owner'), String(hat.ownerId)],
         ] as const;
         await Promise.all(live.map(([key, f]) => deps.redis.hIncrBy(key, f, grant)));
-        deps.onGrant(def, hat, time);
+        // A push is only display: its failure must not cost the buckets their TTL.
+        try {
+          deps.onGrant(def, hat, time);
+        } catch (error) {
+          deps.logError('push', 'eventPoints.onGrant', error);
+        }
         for (const [key] of live) {
           if (bucketTtlSet.has(key)) continue;
           if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();

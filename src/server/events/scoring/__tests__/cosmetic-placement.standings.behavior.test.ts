@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as SignalClient from '~/utils/signal-client';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -17,10 +18,14 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 const ch = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query: ch.query } }));
 const signals = vi.hoisted(() => ({ topicSend: vi.fn(async (..._a: unknown[]) => undefined) }));
-vi.mock('~/utils/signal-client', () => ({ signalClient: signals }));
+vi.mock('~/utils/signal-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SignalClient>()),
+  signalClient: signals,
+}));
+const engine = vi.hoisted(() => ({ on: true }));
 vi.mock('~/server/events/points/enabled', () => ({
-  isEventPointsEnabled: async () => true,
-  isEventPointsEnabledSync: () => true,
+  isEventPointsEnabled: async () => engine.on,
+  isEventPointsEnabledSync: () => engine.on,
 }));
 
 const {
@@ -422,7 +427,18 @@ describe('referee snapshot', () => {
       expect(preview.changed).toBe(1);
       expect(signals.topicSend).not.toHaveBeenCalled();
 
-      await runEventPointsReferee(scored, 'live', HOURLY);
+      // Switched off, the live correction is counted as unpushed and nothing is sent.
+      engine.on = false;
+      const off = await runEventPointsReferee(scored, 'live', HOURLY);
+      engine.on = true;
+      expect(off).toEqual(expect.objectContaining({ changed: 1, unpushed: 1, unsent: 0 }));
+      expect(signals.topicSend).not.toHaveBeenCalled();
+
+      // The same run with the switch on, from the same starting state.
+      strings.clear();
+      hashes.clear();
+      const live = await runEventPointsReferee(scored, 'live', HOURLY);
+      expect(live).toEqual(expect.objectContaining({ changed: 1, unpushed: 0, unsent: 0 }));
       const topicId = hatTopicId({ ownerId: 1, cosmeticId: 21, claimKey: 'claimed' });
       expect(signals.topicSend.mock.calls).toEqual([
         [

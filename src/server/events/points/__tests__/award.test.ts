@@ -325,6 +325,25 @@ describe('awardEventPoints', () => {
     expect(livePoints('hat', HAT_FIELD)).toBe(5);
   });
 
+  it('a push that throws neither fails the award nor costs the live buckets their TTL', async () => {
+    const errors: string[] = [];
+    build({
+      onGrant: () => {
+        throw new Error('pusher broke');
+      },
+      logError: (kind, fn) => void errors.push(`${kind}:${fn}`),
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(errors).toEqual(['push:eventPoints.onGrant']);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+    expect(ledger).toHaveLength(1);
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    const bucket = liveBucket(now);
+    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    for (const scope of ['hat', 'team', 'owner'] as const)
+      expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
+  });
+
   it('does not report the grant when a live increment fails', async () => {
     const hIncrBy = fake.redis.hIncrBy;
     const liveBucketKey = /:live:[0-9]+:/;

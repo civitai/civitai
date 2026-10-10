@@ -334,18 +334,23 @@ export async function runEventPointsReferee(
     window.cut,
     refereeTotals([...final, ...rows])
   );
-  // This runs in a job: its corrections go out before it returns, not on a later window.
+  // This runs in a job: its corrections go out before it returns, not on a later window. Preview
+  // corrections are never pushed; `unpushed` counts live ones the pusher refused (paused or off).
+  let unpushed = 0;
+  let unsent = 0;
   if (season === 'live' && changed.length) {
     for (const field of changed) {
       const hat = parseHatField(field);
-      if (hat) markEventPointsDirty(event, hat, now);
+      if (!hat || !markEventPointsDirty(event, hat, now)) unpushed++;
     }
-    await drainEventPointsPush();
+    unsent = (await drainEventPointsPush()).left;
   }
   return {
     season,
     rows: rows.length,
     changed: changed.length,
+    unpushed,
+    unsent,
     recomputeFrom: window.recomputeFrom.toISOString(),
   };
 }

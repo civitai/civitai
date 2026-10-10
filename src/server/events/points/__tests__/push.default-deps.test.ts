@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as SignalClient from '~/utils/signal-client';
 
@@ -34,6 +34,8 @@ const event = {
   teams: ['Blue', 'Pink'],
 };
 const HAT = { ownerId: 10, cosmeticId: 7, claimKey: 'claimed' };
+
+beforeEach(() => topicSend.mockClear());
 
 describe('the pusher with its default deps', () => {
   it('reads the kill switch: off, an award marks and sends nothing', async () => {

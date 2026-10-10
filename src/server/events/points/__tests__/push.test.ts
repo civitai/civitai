@@ -4,7 +4,9 @@ import type { PushDeps } from '~/server/events/points/push';
 const {
   BREAKER_COOL_OFF_MS,
   createEventPointsPusher,
+  FAILURES_PER_COOL_OFF,
   FAILURES_TO_OPEN,
+  MAX_DIRTY_HATS,
   MAX_SENDS_PER_FLUSH,
   PUSH_WINDOW_MS,
   SEND_CONCURRENCY,
@@ -155,15 +157,96 @@ describe('event points pusher', () => {
     let call = 0;
     const { pusher } = setup({
       topicSend: vi.fn(async () => {
-        // fail, succeed, fail, succeed...
+        // fail, succeed, fail, succeed...: 3 failures, never 2 in a row
         if (call++ % 2 === 0) throw new Error('flaky');
       }),
       selectWatchedTeams: vi.fn(async () => false),
     });
-    for (let owner = 1; owner <= 10; owner++) pusher.markDirty(event, hat(owner), NOW);
+    for (let owner = 1; owner <= 6; owner++) pusher.markDirty(event, hat(owner), NOW);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
-    expect(call).toBe(10);
+    expect(call).toBe(6);
     expect(pusher.isOpen()).toBe(false);
+  });
+
+  // A brownout: signals mostly works, but sends time out now and then. Without a count over time,
+  // a single flush could put ~20 timeouts into the signals client's shared breaker (10 per 60s).
+  it(`stops pushing after ${FAILURES_PER_COOL_OFF} failures within a cool-off, even with successes between`, async () => {
+    expect(FAILURES_PER_COOL_OFF).toBe(4);
+    let call = 0;
+    let failures = 0;
+    const { pusher } = setup({
+      topicSend: vi.fn(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        if (call++ % 3 === 0) {
+          failures++;
+          throw new Error('timeout');
+        }
+      }),
+    });
+    for (let owner = 1; owner <= 100; owner++) pusher.markDirty(event, hat(owner), NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS + 5_000);
+    expect(pusher.isOpen()).toBe(true);
+    expect(failures).toBeGreaterThanOrEqual(FAILURES_PER_COOL_OFF);
+    expect(failures).toBeLessThanOrEqual(FAILURES_PER_COOL_OFF + SEND_CONCURRENCY - 1);
+    expect(call).toBeLessThan(20);
+  });
+
+  it('forgets failures older than a cool-off', async () => {
+    let failNext = 0;
+    const { pusher } = setup({
+      topicSend: vi.fn(async () => {
+        if (failNext > 0) {
+          failNext--;
+          throw new Error('timeout');
+        }
+      }),
+      selectWatchedTeams: vi.fn(async () => false),
+    });
+    // Three single failures, each followed by a success, inside one cool-off.
+    for (let i = 0; i < 3; i++) {
+      failNext = 1;
+      pusher.markDirty(event, hat(1), new Date());
+      pusher.markDirty(event, hat(2), new Date());
+      await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    }
+    expect(pusher.isOpen()).toBe(false);
+    // A cool-off later, a fourth failure is the only recent one.
+    await vi.advanceTimersByTimeAsync(BREAKER_COOL_OFF_MS);
+    failNext = 1;
+    pusher.markDirty(event, hat(1), new Date());
+    pusher.markDirty(event, hat(2), new Date());
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(pusher.isOpen()).toBe(false);
+  });
+
+  it(`keeps at most ${MAX_DIRTY_HATS} hats dirty per event, and still takes marks for those it has`, () => {
+    const { pusher } = setup();
+    for (let owner = 1; owner <= MAX_DIRTY_HATS; owner++)
+      expect(pusher.markDirty(event, hat(owner), NOW)).toBe(true);
+    expect(pusher.markDirty(event, hat(MAX_DIRTY_HATS + 1), NOW)).toBe(false);
+    expect(pusher.markDirty(event, hat(1), NOW)).toBe(true);
+    // Every hat plus the team.
+    expect(pusher.pending()).toBe(MAX_DIRTY_HATS + 1);
+  });
+
+  it('sends 0 for a hat the read has no total for', async () => {
+    const { pusher, sent } = setup({ getHatPoints: vi.fn(async () => ({})) });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(sent).toEqual([teamsSend(), hatSend(HAT, 0)]);
+  });
+
+  it('reads nothing for a scope nobody is watching', async () => {
+    const { pusher, sent, deps } = setup({
+      selectWatchedHats: vi.fn(async () => []),
+      selectWatchedTeams: vi.fn(async () => false),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(deps.selectWatchedHats).toHaveBeenCalledTimes(1);
+    expect(deps.getHatPoints).not.toHaveBeenCalled();
+    expect(deps.getTeamPoints).not.toHaveBeenCalled();
+    expect(sent).toEqual([]);
   });
 
   it('pushes no team totals once the event has ended, but still pushes the hats', async () => {
@@ -251,7 +334,7 @@ describe('event points pusher', () => {
     expect(sent).toHaveLength(251);
   });
 
-  it('drain gives up after maxMs and leaves the rest for the normal window', async () => {
+  it('drain starts no send after maxMs, and what it did not send goes out on the normal window', async () => {
     const { pusher, sent } = setup({
       topicSend: vi.fn(async (args: Sent) => {
         await new Promise((r) => setTimeout(r, 100));
@@ -259,12 +342,29 @@ describe('event points pusher', () => {
       }),
     });
     for (let owner = 1; owner <= 250; owner++) pusher.markDirty(event, hat(owner), NOW);
-    const drained = pusher.drain(1_000);
-    await vi.advanceTimersByTimeAsync(20_000);
-    // The first flush (200 sends at 3 at a time) outlasts the second; the rest stay dirty.
-    expect(await drained).toEqual({ left: 51 });
+    let done = false;
+    const drained = pusher.drain(1_000).then((r) => ((done = true), r));
+    // 3 sends every 100ms: by 1s, 30 are done and the in-flight ones finish with them.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(done).toBe(true);
+    const { left } = await drained;
+    expect(sent).toHaveLength(30);
+    expect(left).toBe(251 - 30);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS + 20_000);
     expect(sent).toHaveLength(251);
+  });
+
+  it('drain stops when awards mark faster than it sends, even on a frozen clock', async () => {
+    let owner = 1_000;
+    const { pusher } = setup({
+      // Each send marks a hat nobody has marked yet, so the set never shrinks.
+      topicSend: vi.fn(async () => void pusher.markDirty(event, hat(owner++), NOW)),
+    });
+    for (let o = 1; o <= 250; o++) pusher.markDirty(event, hat(o), NOW);
+    // No timers are advanced, so the fake clock never reaches the deadline.
+    const { left } = await pusher.drain(5_000);
+    expect(left).toBeGreaterThan(0);
+    expect(owner).toBe(1_000 + MAX_SENDS_PER_FLUSH);
   });
 });
 
