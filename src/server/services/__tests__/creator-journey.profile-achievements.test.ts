@@ -69,6 +69,8 @@ const MODELS = row({
   track: 'create',
   threshold: 25,
   name: '25 Models',
+  // Only a special keeps its hint once earned; this one must not reach any viewer.
+  hint: 'Keep publishing',
   cosmeticId: 2900,
 });
 
@@ -123,6 +125,7 @@ describe('getProfileAchievements', () => {
       // Justin (2026-10-10): an earned special keeps its hint above the description.
       hint: 'Burn the midnight oil',
     });
+    expect(result.achievements.find((a) => a.key === 'create:models-25')?.hint).toBeNull();
   });
 
   it('lists held tiers lowest first and keeps them out of the achievements', async () => {

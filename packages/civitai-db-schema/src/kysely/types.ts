@@ -2566,7 +2566,7 @@ export type CreatorMilestone = {
   threshold: number | null;
   hidden: Generated<boolean>;
   /**
-   * A hidden milestone left off the Creator Journey list entirely until the viewer earns it.
+   * A special (hidden, not score or activity) milestone left off the journey page's special list until earned. Honoured there only.
    */
   unlisted: Generated<boolean>;
   hint: string | null;

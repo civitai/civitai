@@ -114,6 +114,27 @@ describe('profile achievement cards', () => {
     expect(card.textContent).toContain('25 Models');
     expect(card.textContent).toContain('Publish 25 models');
   });
+
+  // Justin (2026-10-10): the owner's earned special keeps its hint, above the description.
+  it('shows an earned special its hint above the description', () => {
+    const text =
+      mount(
+        React.createElement(AchievementCard, {
+          achievement: {
+            key: 'hidden:remix',
+            track: 'secret',
+            name: 'Remixed',
+            description: 'Someone remixed your model.',
+            hint: 'Someone builds on your work',
+            badgeUrl: null,
+            achievedAt: EARNED,
+          },
+        })
+      ).textContent ?? '';
+    const hintAt = text.indexOf('Someone builds on your work');
+    expect(hintAt).toBeGreaterThan(-1);
+    expect(hintAt).toBeLessThan(text.indexOf('Someone remixed your model.'));
+  });
 });
 
 describe('profile tier card', () => {

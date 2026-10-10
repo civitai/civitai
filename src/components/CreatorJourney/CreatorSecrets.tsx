@@ -62,13 +62,13 @@ function SecretTile({ secret }: { secret: Secret }) {
         <Text size="sm" fw={700} truncate>
           {secret.name}
         </Text>
-        {secret.earned ? (
+        {secret.hint && (
+          <Text size="xs" c="dimmed" fs="italic">
+            {secret.hint}
+          </Text>
+        )}
+        {secret.earned && (
           <>
-            {secret.hint && (
-              <Text size="xs" c="dimmed" fs="italic">
-                {secret.hint}
-              </Text>
-            )}
             {secret.description && (
               <Text size="xs" c="dimmed">
                 {secret.description}
@@ -78,12 +78,6 @@ function SecretTile({ secret }: { secret: Secret }) {
               {earnedLabel(secret.achievedAt)}
             </Text>
           </>
-        ) : (
-          secret.hint && (
-            <Text size="xs" c="dimmed" fs="italic">
-              {secret.hint}
-            </Text>
-          )
         )}
       </div>
     </div>

@@ -381,6 +381,12 @@ describe('hidden milestones', () => {
         ['test:opaque2', 'Wanderer', true],
       ]);
     });
+
+    // A silent grant is held with no observed date: still earned, still shown.
+    it('shows one granted silently, with no date', () => {
+      const [shown] = buildSecretMilestones([unlisted], new Map([['test:opaque2', null]]));
+      expect(shown).toMatchObject({ key: 'test:opaque2', earned: true, achievedAt: null });
+    });
   });
 
   it('reads hidden rows outside the score and activity sections, with the shared select', async () => {
