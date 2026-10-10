@@ -21,7 +21,9 @@ export const eventEngineLeaderboardUpdate = createJob(
   '0 * * * *',
   async () => {
     await eventEngine.updateLeaderboard();
-  }
+  },
+  // Outlasts the referee's 600s ClickHouse query, so a retry cannot start a second run beside it.
+  { lockExpiration: 15 * 60 }
 );
 
 // export const eventEngineApplyDiscordRoles = createJob(

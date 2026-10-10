@@ -98,6 +98,10 @@ add('2026-11-01 10:30:00', 'reaction', 15, 108, H10, 'R:108:15');
 add('2026-11-03 06:00:00', 'reaction', 15, 108, H10, 'R:108:15', 'remove');
 add('2026-11-01 10:31:00', 'reaction', 16, 109, H10, 'R:109:16');
 add('2026-11-03 13:00:00', 'reaction', 16, 109, H10, 'R:109:16', 'remove');
+// Actor 17 reacted, took it back, and reacted again after the end: the late re-add must not revive it.
+add('2026-11-01 10:40:00', 'reaction', 17, 110, H10, 'R:110:17');
+add('2026-11-01 10:41:00', 'reaction', 17, 110, H10, 'R:110:17', 'remove');
+add('2026-11-03 06:30:00', 'reaction', 17, 110, H10, 'R:110:17');
 
 const q = (v) => (typeof v === 'number' ? String(v) : `'${v}'`);
 const rows = (list) => list.map((r) => `(${r.map(q).join(', ')})`).join(', ');

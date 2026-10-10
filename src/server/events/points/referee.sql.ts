@@ -40,7 +40,9 @@ WITH
     FROM seasonRows
     WHERE op = 'add' AND time < {cut:DateTime64(3)}
       AND (sourceId = '' OR (type, actorId, sourceId) IN (
-        SELECT type, actorId, sourceId FROM seasonRows WHERE sourceId != ''
+        SELECT type, actorId, sourceId FROM seasonRows
+        -- A re-add after the cut is after the season, so it cannot revive an add its removal took back.
+        WHERE sourceId != '' AND (op = 'remove' OR time < {cut:DateTime64(3)})
         GROUP BY type, actorId, sourceId HAVING argMax(op, time) = 'add'
       ))
       -- NOT IN builds a hash set; has() scans the array for every row.

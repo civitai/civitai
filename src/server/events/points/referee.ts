@@ -5,6 +5,7 @@ import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   eventPointKeys,
+  eventPointsWindow,
   eventSeasonKeys,
   hatField,
   LIVE_BUCKET_MS,
@@ -62,8 +63,8 @@ export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now
   const cut = new Date(Math.min(settled, end.getTime()));
   // A takedown in the finalize window must still net out the add it pairs with, before the winner
   // is decided on these totals.
-  const finalize = season === 'live' ? event.scoring.finalizeAfterMs : 0;
-  const removeCut = new Date(Math.min(settled, end.getTime() + finalize));
+  const removeEnd = season === 'live' ? eventPointsWindow(event).to : end;
+  const removeCut = new Date(Math.min(settled, removeEnd.getTime()));
   // Once the season has ended a late removal can reach any day, so no day is final.
   const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR || settled >= end.getTime();
   const dayBefore = new Date(startOfUtcDay(cut).getTime() - DAY_MS);
