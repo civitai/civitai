@@ -75,7 +75,7 @@ function render(element: React.ReactElement) {
   return host;
 }
 
-const VIDEO = { id: '2a717391-711f-4005-97df-16921dc25e07', title: 'Hats On' };
+const VIDEO = { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 };
 type HeroProps = React.ComponentProps<typeof ScoredEventHero>;
 const hero = (over: Partial<HeroProps> = {}, page: Record<string, unknown> = {}) =>
   render(
@@ -97,58 +97,34 @@ const watchButton = (page: HTMLElement) =>
   page.querySelector<HTMLButtonElement>('button[aria-label="Watch the Hats On video"]');
 
 describe('hero play button', () => {
-  it('sits on the art, named for the film', () => {
+  it('sits on the art, named for the film, with its stored length from the first paint', () => {
     const page = hero();
     const button = watchButton(page);
     expect(button?.closest('[data-testid=hero-art]')).not.toBeNull();
-    expect(button?.textContent).toBe('Watch');
+    expect(button?.textContent).toBe('Watch · 0:42');
+  });
+
+  it.each([
+    [84.6, 'Watch · 1:25'],
+    [59.5, 'Watch · 1:00'],
+    [undefined, 'Watch'],
+    [0, 'Watch'],
+  ])('reads a length of %s as %s', (duration, label) => {
+    const page = hero({}, { heroVideo: { ...VIDEO, duration } });
+    expect(watchButton(page)?.textContent).toBe(label);
+  });
+
+  // The length used to be read from the film on every page view; it is stored now, so nothing on
+  // the page touches the file until the viewer presses Watch.
+  it('loads nothing of the film before Watch is pressed', () => {
+    const create = vi.spyOn(document, 'createElement');
+    hero();
+    expect(create.mock.calls.filter(([tag]) => tag === 'video')).toEqual([]);
   });
 
   it('is absent without a film', () => {
     const page = hero({}, { heroVideo: undefined });
     expect(watchButton(page)).toBeNull();
-  });
-
-  // The detached element the hero reads the film's length from.
-  const probeVideo = () => {
-    const create = document.createElement.bind(document);
-    const probe: { video?: HTMLVideoElement } = {};
-    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
-      const el = create(tag);
-      if (tag === 'video') probe.video = el as HTMLVideoElement;
-      return el;
-    }) as typeof document.createElement);
-    return probe;
-  };
-  const readMetadata = (video: HTMLVideoElement, duration: number) => {
-    Object.defineProperty(video, 'duration', { value: duration });
-    act(() => {
-      video.dispatchEvent(new Event('loadedmetadata'));
-    });
-  };
-
-  it("adds the film's length once its metadata reads, to the nearest second", () => {
-    const probe = probeVideo();
-    const page = hero();
-    expect(probe.video?.preload).toBe('metadata');
-    expect(probe.video?.getAttribute('src')).toContain(VIDEO.id);
-    readMetadata(probe.video!, 84.6);
-    expect(watchButton(page)?.textContent).toBe('Watch · 1:25');
-  });
-
-  it.each([Infinity, 0])('keeps plain Watch for a length of %s', (duration) => {
-    const probe = probeVideo();
-    const page = hero();
-    readMetadata(probe.video!, duration);
-    expect(watchButton(page)?.textContent).toBe('Watch');
-  });
-
-  it('stops reading the film when the hero goes', () => {
-    const probe = probeVideo();
-    hero();
-    expect(probe.video?.hasAttribute('src')).toBe(true);
-    act(() => root?.unmount());
-    expect(probe.video?.hasAttribute('src')).toBe(false);
   });
 
   it('opens the player with Join for a viewer who has not joined', () => {

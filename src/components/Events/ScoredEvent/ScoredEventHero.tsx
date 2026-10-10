@@ -1,8 +1,6 @@
 import { Badge, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
 import { IconCalendarEvent, IconEye, IconPlayerPlayFilled, IconTrophy } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
-import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -14,9 +12,7 @@ import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useTeamColor } from '~/components/Events/events.utils';
 import type { RouterOutput } from '~/types/router';
-import { HERO_VIDEO_OPTIONS } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { formatDate } from '~/utils/date-helpers';
-import { formatDuration } from '~/utils/number-helpers';
 
 type EventData = RouterOutput['event']['getData'];
 
@@ -272,12 +268,9 @@ function HeroVideoButton({
   video,
   onClick,
 }: {
-  video: { id: string; title: string };
+  video: { id: string; title: string; duration?: number };
   onClick: () => void;
 }) {
-  const { url } = useEdgeUrl(video.id, HERO_VIDEO_OPTIONS);
-  const seconds = useVideoDuration(url);
-
   return (
     <UnstyledButton
       onClick={onClick}
@@ -290,32 +283,17 @@ function HeroVideoButton({
           <IconPlayerPlayFilled size={32} />
         </span>
         <span className="rounded-full bg-dark-9/70 px-3 py-1 text-sm font-semibold text-white backdrop-blur-sm">
-          {seconds ? `Watch · ${formatDuration(Math.round(seconds))}` : 'Watch'}
+          {video.duration ? `Watch · ${filmLength(video.duration)}` : 'Watch'}
         </span>
       </span>
     </UnstyledButton>
   );
 }
 
-// Reads only the film's metadata, from a detached element, so the hero shows its length without
-// loading or playing it.
-function useVideoDuration(url: string) {
-  const [seconds, setSeconds] = useState<number>();
-  useEffect(() => {
-    const video = document.createElement('video');
-    video.preload = 'metadata';
-    const read = () => {
-      if (Number.isFinite(video.duration) && video.duration > 0) setSeconds(video.duration);
-    };
-    video.addEventListener('loadedmetadata', read);
-    video.src = url;
-    return () => {
-      video.removeEventListener('loadedmetadata', read);
-      video.removeAttribute('src');
-      video.load();
-    };
-  }, [url]);
-  return seconds;
+// "0:42", "1:24". The shared formatDuration pads a minute-less length to "00:42".
+function filmLength(seconds: number) {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
 // Label over value, as "You're on" sits over the team name, so both rows share baselines.

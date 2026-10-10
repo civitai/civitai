@@ -57,7 +57,7 @@ export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
 /** The page's card surface (shop tiles, hat cards, standings rows): a step lighter than the page. */
 export const EVENT_CARD_SURFACE = 'bg-white dark:bg-dark-6';
 
-/** The event film as uploaded, so the hero's length and the player read the same file. */
+/** The event film as uploaded: the file whose length `heroVideo.duration` states. */
 export const HERO_VIDEO_OPTIONS = {
   type: MediaType.video,
   original: true,
