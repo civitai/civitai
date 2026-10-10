@@ -5,7 +5,7 @@ import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 // The points engine pushes a hat's new total, and the event's team totals, while a screen showing
-// them is open (src/server/events/points/ticker.ts). These apply each push to the query that
+// them is open (src/server/events/points/push.ts). These apply each push to the query that
 // screen already holds, so the number moves without a refetch.
 
 // Built here rather than imported from the server's keys.ts, which pulls in Redis. Pinned to the

@@ -1,11 +1,9 @@
 import {
-  eventPointKeys,
   eventPointSeason,
   eventSeasonKeys,
   hatField,
   liveBucket,
   LIVE_BUCKET_MS,
-  parseHatField,
   type TotalScope,
 } from '~/server/events/points/keys';
 import type { EventHat } from '~/server/events/points/types';
@@ -68,12 +66,4 @@ export function getTeamPoints(event: PointsEvent & { teams: readonly string[] },
 
 export function getOwnerPoints(event: PointsEvent, ownerIds: number[], now = new Date()) {
   return readTotals(event, 'owner', ownerIds.map(String), now);
-}
-
-// Takes up to `max` hats whose total moved since the last call, for the signals ticker.
-export async function drainChangedHats(event: { name: string }, max: number) {
-  const fields = await sysRedis.sPop(eventPointKeys(event.name).changed, max);
-  return (Array.isArray(fields) ? fields : [fields])
-    .map((field) => (typeof field === 'string' ? parseHatField(field) : undefined))
-    .filter((hat): hat is Omit<EventHat, 'team'> => !!hat);
 }

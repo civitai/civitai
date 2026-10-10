@@ -14,8 +14,6 @@ export function eventPointKeys(event: string) {
     hats: `${root}:hats` as const,
     // Stream of changes to `hats` (fields k = entity key, v = encoded hat, '' when it came off).
     hatsLog: `${root}:hats-log` as const,
-    // hats whose total moved since the signals ticker last drained it
-    changed: `${root}:changed` as const,
   } as const;
 }
 

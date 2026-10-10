@@ -273,11 +273,13 @@ describe('syncEventHats -> engine', () => {
           name: birthday2026.name,
           startDate: birthday2026.startDate,
           endDate: birthday2026.endDate,
+          teams: birthday2026.teams,
           scoring: birthday2026.scoring!,
         },
       ],
       now: () => LIVE,
       logError: () => undefined,
+      onGrant: () => undefined,
     });
     await engine.refresh();
     expect(engine.isHattedEntity('Image', 100)).toBe(true);
@@ -656,10 +658,12 @@ describe('syncEventHats -> engine', () => {
             startDate: birthday2026.startDate,
             endDate: birthday2026.endDate,
             scoring: birthday2026.scoring!,
+            teams: birthday2026.teams,
           },
         ],
         now: () => new Date(clock),
         logError: () => undefined,
+        onGrant: () => undefined,
       });
       await engine.refresh();
       await place(OWNER, 100);
