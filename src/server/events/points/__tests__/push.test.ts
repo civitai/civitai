@@ -139,6 +139,7 @@ describe('event points pusher', () => {
     // Awards during the cool-off are not kept.
     failing = false;
     pusher.markDirty(event, HAT, new Date());
+    expect(pusher.dirtyCount()).toBe(0);
     // Opened at about +1010ms (the window, then one 10ms send); now about +1100ms.
     await vi.advanceTimersByTimeAsync(BREAKER_COOL_OFF_MS - 200);
     expect(attempts).toHaveLength(bound);

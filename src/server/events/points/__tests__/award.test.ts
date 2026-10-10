@@ -327,16 +327,24 @@ describe('awardEventPoints', () => {
 
   it('does not report the grant when a live increment fails', async () => {
     const hIncrBy = fake.redis.hIncrBy;
+    const liveBucketKey = /:live:[0-9]+:/;
+    const failedKeys: string[] = [];
     build({
       redis: {
         ...fake.redis,
         hIncrBy: (async (key: string, field: string, by: number) => {
-          if (key.includes(':live:')) throw new Error('down');
+          if (liveBucketKey.test(key)) {
+            failedKeys.push(key);
+            throw new Error('down');
+          }
           return hIncrBy(key, field, by);
         }) as typeof hIncrBy,
       },
     });
     await engine.awardEventPoints([reaction(1)]);
+    // The award got as far as the live increments (past the cap), and they failed.
+    expect(failedKeys.length).toBe(3);
+    expect(ledger).toHaveLength(1);
     expect(granted).toEqual([]);
   });
 
