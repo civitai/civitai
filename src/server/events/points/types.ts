@@ -50,7 +50,8 @@ export type EventPointAction = {
   sourceId?: string;
   // The actor's account, when the caller already has it (the session user). Lets the live total skip
   // new and banned accounts at once; without it they are only dropped by the hourly referee.
-  actor?: { createdAt?: Date | null; bannedAt?: Date | null };
+  // Dates from a hub session arrive as ISO strings, so either is accepted.
+  actor?: { createdAt?: Date | string | null; bannedAt?: Date | string | null };
 };
 
 // A removal nets out an earlier action by its sourceId. It writes a ledger row only; live totals

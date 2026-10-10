@@ -202,7 +202,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     if (!actor) return true;
     if (actor.bannedAt) return false;
     const cutoff = def.startDate.getTime() - def.scoring.newAccountDays * DAY_S * 1000;
-    return !actor.createdAt || actor.createdAt.getTime() < cutoff;
+    return !actor.createdAt || new Date(actor.createdAt).getTime() < cutoff;
   }
 
   async function awardOne(event: LoadedEvent, action: EventPointAction, time: Date) {

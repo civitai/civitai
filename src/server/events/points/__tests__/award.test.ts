@@ -232,6 +232,16 @@ describe('awardEventPoints', () => {
     expect(ledger.map((r) => r.actorId)).toEqual([3]);
   });
 
+  // A session from the auth hub carries its dates as ISO strings, not Dates.
+  it('reads the actor dates a hub session sends as strings', async () => {
+    await engine.awardEventPoints([
+      { ...reaction(1), actor: { createdAt: '2026-10-30T00:00:00.000Z' } },
+      { ...reaction(2), actor: { bannedAt: '2026-10-01T00:00:00.000Z' } },
+      { ...reaction(3), actor: { createdAt: '2026-01-01T00:00:00.000Z', bannedAt: null } },
+    ]);
+    expect(ledger.map((r) => r.actorId)).toEqual([3]);
+  });
+
   it('ignores actions after the event ends, though hats stay on content', async () => {
     now = new Date(END.getTime() + 60 * 1000);
     await engine.awardEventPoints([reaction(1)]);
