@@ -288,14 +288,15 @@ describe('runEventPointsTicker', () => {
   it("hands every tick the end of the run's window", async () => {
     const deadlines: number[] = [];
     const h = harness(async () => undefined);
-    // This tick replaces the harness's, so it bounds the run itself: a broken window check fails
-    // the count below instead of hanging.
-    await runEventPointsTicker(() => [event], {
+    // This tick replaces the harness's, whose cancel counts ticks, so the run is bounded by loop
+    // turns here: a broken window check fails the count instead of hanging.
+    let turns = 0;
+    const { ticks } = await runEventPointsTicker(() => [event], {
       ...h.deps,
-      isCanceled: () => deadlines.length >= 50,
+      isCanceled: () => ++turns > 50,
       tick: async (_e, deadline) => void deadlines.push(deadline),
     });
-    expect(deadlines).toHaveLength(11);
+    expect(ticks).toBe(11);
     expect(new Set(deadlines)).toEqual(new Set([1_000_000 + TICK_WINDOW_MS]));
   });
 
@@ -324,6 +325,7 @@ describe('runEventPointsTicker', () => {
   it('ends the run when a tick stopped on signals failures', async () => {
     const seen: string[] = [];
     const h = harness(async () => undefined);
+    let turns = 0;
     const { ticks, stopped } = await runEventPointsTicker(
       () => [
         { ...event, name: 'a' },
@@ -331,7 +333,7 @@ describe('runEventPointsTicker', () => {
       ],
       {
         ...h.deps,
-        isCanceled: () => seen.length >= 50,
+        isCanceled: () => ++turns > 50,
         tick: async (e) => {
           seen.push(e.name);
           return { stopped: seen.length === 3 };
