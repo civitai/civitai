@@ -251,11 +251,19 @@ describe('getHatTotals', () => {
   });
 
   // One read of the cut each side for both scopes: the counts and the points always agree on it.
+  // The counts' read cost: one HMGET per source key, the same keys as the points' in their own scope.
   it('reads the cut once on each side for points and counts together', async () => {
     const fake = fakeRedis();
+    fake.strings.set(keys.cut, String(NOW_BUCKET - 2));
     const redis = { ...fake.redis, get: vi.fn(fake.redis.get) };
-    await getHatTotals(EVENT, [HAT], NOW, redis as unknown as PointsReadRedis);
+    await readTotals(EVENT, 'hat', ['x'], NOW, redis as unknown as PointsReadRedis);
+    expect(fake.hmGets).toHaveLength(4);
+    fake.hmGets.length = 0;
+    redis.get.mockClear();
+    await getHatTotals(EVENT, [HAT, HAT], NOW, redis as unknown as PointsReadRedis);
     expect(redis.get).toHaveBeenCalledTimes(2);
+    expect(fake.hmGets).toHaveLength(8);
+    expect(fake.hmGets.filter((key) => key.endsWith(':count'))).toHaveLength(4);
   });
 });
 
