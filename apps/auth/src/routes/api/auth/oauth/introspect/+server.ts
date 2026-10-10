@@ -17,8 +17,8 @@ import { getClientIp } from '$lib/server/auth/request';
 //
 // NOT a public endpoint. The caller must be a CONFIDENTIAL client AND on the
 // OAUTH_INTROSPECTION_CLIENT_IDS allowlist; every other outcome is 401 invalid_client. Any token
-// miss — unknown, expired, wrong type, absent, or owned by a disabled account — is 200
-// {active:false}, never a distinguishing error.
+// miss — unknown, expired, wrong type, absent, owned by a disabled account, or a single-purpose
+// client-credentials token — is 200 {active:false}, never a distinguishing error.
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
