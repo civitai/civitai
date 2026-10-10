@@ -365,9 +365,9 @@ describe('crucible.getEntries — podium', () => {
 
     const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    expect(podium.map((e) => [e.id, e.prizePlace, e.image?.url ?? null])).toEqual([
-      [1, 1, 'image-1'],
-      [3, 2, null],
+    expect(podium.map((e) => [e.id, e.prizePlace, e.imageId, e.image?.url ?? null])).toEqual([
+      [1, 1, 10, 'image-1'],
+      [3, 2, null, null],
     ]);
   });
 

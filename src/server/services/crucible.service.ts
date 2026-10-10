@@ -1295,7 +1295,7 @@ const getPodiumEntries = async ({
                 : entry.image.url,
           }
         : null;
-    return [{ ...entry, image, prizePlace }];
+    return [{ ...entry, imageId: image?.id ?? null, image, prizePlace }];
   });
 };
 
