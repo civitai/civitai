@@ -24,13 +24,17 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (username) {
+      // Prefetch under the route's own spelling, not the slugified `username`: the layout queries
+      // `router.query.username` as-is, and a lowercased key misses for `/user/JustMaier`, so the
+      // server render (and every crawler's og:image) falls back to the empty profile meta.
+      const routeUsername = ctx.params?.username as string;
       const milestone = parseScoreTierSlug(ctx.query.milestone);
       const [, profile] = await Promise.all([
-        ssg?.user.getCreator.prefetch({ username }),
+        ssg?.user.getCreator.prefetch({ username: routeUsername }),
         milestone
-          ? ssg?.userProfile.get.fetch({ username }).catch(() => null)
-          : ssg?.userProfile.get.prefetch({ username }).then(() => null),
-        ssg?.userProfile.overview.prefetch({ username }),
+          ? ssg?.userProfile.get.fetch({ username: routeUsername }).catch(() => null)
+          : ssg?.userProfile.get.prefetch({ username: routeUsername }).then(() => null),
+        ssg?.userProfile.overview.prefetch({ username: routeUsername }),
       ]);
       // Crawlers read og:image from the server render, so whether `?milestone=` swaps it is decided here.
       if (ssg && milestone && profile)
