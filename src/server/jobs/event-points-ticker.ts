@@ -40,7 +40,9 @@ export const eventPointsTicker = createJob(
   async (ctx) => {
     return runEventPointsTicker(async () => getTickerEvents(await loadEvents(), new Date()), {
       now: Date.now,
-      sleep,
+      sleep: async (ms) => {
+        await sleep(ms);
+      },
       isCanceled: () => ctx.status === 'canceled',
       tick: (event, deadline) => tickEventPoints(event, undefined, { deadline }),
     });
