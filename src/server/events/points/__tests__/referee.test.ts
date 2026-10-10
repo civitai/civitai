@@ -3,9 +3,8 @@ import type { EventScoring } from '~/server/events/base.event';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { changedHats, refereeQueryParams, refereeTotals, refereeWindow } = await import(
-  '~/server/events/points/referee'
-);
+const { changedHats, REMOVAL_CUTOFF_MS, refereeQueryParams, refereeTotals, refereeWindow } =
+  await import('~/server/events/points/referee');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -42,14 +41,71 @@ describe('refereeWindow', () => {
     expect(cut.toISOString()).toBe('2026-11-01T00:00:00.000Z');
   });
 
-  it('never settles past the end of the live season either', () => {
-    const { cut, recomputeFrom } = refereeWindow(
-      EVENT,
-      'live',
-      new Date('2026-12-01T12:07:00.000Z')
-    );
+  it('never settles adds past the end of the live season either', () => {
+    const { cut } = refereeWindow(EVENT, 'live', new Date('2026-12-01T12:07:00.000Z'));
     expect(cut.toISOString()).toBe('2026-12-01T00:00:00.000Z');
-    expect(recomputeFrom.toISOString()).toBe('2026-11-30T00:00:00.000Z');
+  });
+
+  // The winner is decided on the totals after the finalize window, so a takedown inside it must
+  // still net out its add, whichever day that add was on.
+  describe('after the live season ends', () => {
+    const FINALIZING = { ...EVENT, scoring: { ...scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 } };
+
+    it('settles removals on through the finalize window, and recomputes the whole season', () => {
+      const { cut, removeCut, recomputeFrom } = refereeWindow(
+        FINALIZING,
+        'live',
+        new Date('2026-12-01T12:07:00.000Z')
+      );
+      expect(cut.toISOString()).toBe('2026-12-01T00:00:00.000Z');
+      expect(removeCut.toISOString()).toBe('2026-12-01T11:55:00.000Z');
+      expect(recomputeFrom.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    });
+
+    it('stops settling removals 75 minutes before the finalize window closes', () => {
+      expect(REMOVAL_CUTOFF_MS).toBe(75 * 60 * 1000);
+      const { removeCut } = refereeWindow(FINALIZING, 'live', new Date('2026-12-02T05:00:00.000Z'));
+      expect(removeCut.toISOString()).toBe('2026-12-01T22:45:00.000Z');
+    });
+
+    // The last run before the window closes must settle every removal that still counts, wherever
+    // in the final hour it falls.
+    it('settles every counted removal by the last run before the window closes', () => {
+      const close = new Date('2026-12-02T00:00:00.000Z').getTime();
+      for (let minute = 0; minute < 60; minute++) {
+        const run = new Date(close - minute * 60 * 1000);
+        const { removeCut } = refereeWindow(FINALIZING, 'live', run);
+        expect(removeCut.getTime(), run.toISOString()).toBe(close - REMOVAL_CUTOFF_MS);
+      }
+    });
+
+    it('recomputes the whole season from the first run whose cut reaches the end', () => {
+      const at = (time: string) => refereeWindow(FINALIZING, 'live', new Date(time)).recomputeFrom;
+      expect(at('2026-12-01T00:10:00.000Z').toISOString()).toBe('2026-11-01T00:00:00.000Z');
+      expect(at('2026-11-30T23:59:00.000Z').toISOString()).toBe('2026-11-29T00:00:00.000Z');
+    });
+  });
+
+  // With a finalize window shorter than the cutoff, removals must never stop before the adds do.
+  it('settles removals at least as far as adds when the finalize window is short', () => {
+    for (const finalizeAfterMs of [0, 30 * 60 * 1000]) {
+      const event = { ...EVENT, scoring: { ...scoring, finalizeAfterMs } };
+      for (const time of ['2026-11-30T23:40:00.000Z', '2026-12-01T12:07:00.000Z']) {
+        const { cut, removeCut } = refereeWindow(event, 'live', new Date(time));
+        expect(removeCut.getTime(), `${finalizeAfterMs} ${time}`).toBe(cut.getTime());
+      }
+    }
+  });
+
+  it('settles removals to the same cut as adds while the season runs, and in the preview', () => {
+    const live = refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:30.000Z'));
+    expect(live.removeCut).toEqual(live.cut);
+    const preview = refereeWindow(
+      { ...EVENT, scoring: { ...scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 } },
+      'preview',
+      new Date('2026-11-01T03:00:00.000Z')
+    );
+    expect(preview.removeCut.toISOString()).toBe('2026-11-01T00:00:00.000Z');
   });
 
   it('recomputes from the day before the cut on an hourly run', () => {
@@ -127,6 +183,20 @@ describe('referee query params', () => {
     expect(withWeights.types).toEqual(['view', 'reaction', 'remix']);
     expect(withWeights.weights).toEqual([1, 7, 25]);
     expect(withWeights.dailyTypes).toEqual(['view']);
+  });
+
+  it('bounds adds by the cut and removals by the removal cut', () => {
+    const finalizing = { ...EVENT, scoring: { ...scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 } };
+    const ended = refereeQueryParams(
+      finalizing,
+      refereeWindow(finalizing, 'live', new Date('2026-12-01T12:07:00.000Z')),
+      undefined,
+      { hidden: [], newAccountMinId: 1 }
+    );
+    expect({ cut: ended.cut, removeCut: ended.removeCut }).toEqual({
+      cut: '2026-12-01 00:00:00.000',
+      removeCut: '2026-12-01 11:55:00.000',
+    });
   });
 
   it('passes an array for every Array placeholder and a scalar otherwise', () => {

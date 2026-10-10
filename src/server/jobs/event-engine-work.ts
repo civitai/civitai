@@ -25,7 +25,10 @@ export const eventEngineLeaderboardUpdate = createJob(
   '0 * * * *',
   async () => {
     await eventEngine.updateLeaderboard();
-  }
+  },
+  // Outlasts both referee queries (REFEREE_QUERY_MAX_SECONDS each), and stays held when the
+  // scheduler hangs up, so its retry cannot start a second run beside a long one.
+  { lockExpiration: 15 * 60, keepLockOnDisconnect: true }
 );
 
 // export const eventEngineApplyDiscordRoles = createJob(

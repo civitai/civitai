@@ -611,3 +611,40 @@ describe('streamIdBefore', () => {
     expect(streamIdBefore('10-0', '10-1')).toBe(true);
   });
 });
+
+// Hooks stamp each action when it happened, so two quick opposite writes order by that time and a
+// late-processed action lands on its own day, season and bucket, not the processing clock's.
+describe('the time an action carries', () => {
+  it('scores an add on its own UTC day and live bucket, not the clock that processed it', async () => {
+    const time = new Date('2026-11-04T23:58:00.000Z');
+    now = new Date('2026-11-05T00:04:00.000Z');
+    await engine.awardEventPoints([{ ...reaction(1), time }]);
+
+    expect(ledger.map((r) => r.time)).toEqual(['2026-11-04 23:58:00.000']);
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    expect(fake.hashes.get(keys.cap('2026-11-04', OWNER))?.get('1')).toBe('5');
+    expect(fake.hashes.has(keys.cap('2026-11-05', OWNER))).toBe(false);
+    expect(fake.hashes.get(keys.live(liveBucket(time), 'hat'))?.get(HAT_FIELD)).toBe('5');
+  });
+
+  it('counts an add made before the end though it is processed after', async () => {
+    now = new Date(END.getTime() + 60 * 1000);
+    await engine.awardEventPoints([{ ...reaction(1), time: new Date(END.getTime() - 1000) }]);
+    expect(ledger.map((r) => [r.op, r.time])).toEqual([['add', '2026-11-30 23:59:59.000']]);
+  });
+
+  it('stamps a removal with its own time and takes it from that season', async () => {
+    const preview = new Date('2026-10-20T12:00:00.000Z');
+    now = preview;
+    await engine.awardEventPoints([reaction(1)]);
+    now = new Date('2026-11-02T12:00:00.000Z');
+    await engine.removeEventPoints([{ ...reaction(1), time: preview }]);
+
+    expect(ledger.map((r) => [r.op, r.time])).toEqual([
+      ['add', '2026-10-20 12:00:00.000'],
+      ['remove', '2026-10-20 12:00:00.000'],
+    ]);
+    const seen = eventSeasonKeys(EVENT.name, 'preview').seen('reaction', 'Image', 100);
+    expect(fake.sets.get(seen)?.has('1')).toBe(false);
+  });
+});
