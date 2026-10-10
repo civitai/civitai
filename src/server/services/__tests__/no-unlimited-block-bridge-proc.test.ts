@@ -184,13 +184,9 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['training-dataset'],
     why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
   },
-  authorizeAppUploadImage: {
-    buckets: ['publish'],
-    why: 'The pre-upload half of OPEN_IMAGE_UPLOAD { bytes }: the upload’s one publish-bucket charge, taken BEFORE the bytes are stored so a bucket refusal never lands after them.',
-  },
   persistAppUploadImage: {
-    buckets: [],
-    why: 'DELIBERATELY NONE. The upload’s publish-bucket charge is taken by authorizeAppUploadImage before the bytes are stored; charging again here refused uploads AFTER storage at the bucket boundary (fixed window: increment then compare). A direct call skipping the preflight is the viewer’s own signed-in session, bounded by the per-user 60/h rateLimit like blockImageUpload.persist.',
+    buckets: ['publish'],
+    why: 'The server half of OPEN_IMAGE_UPLOAD { bytes }: each persist creates a real, scanned Image row, so it takes one token from the per-install publish bucket that publishGenerationOutputs also draws on, before the row is created.',
   },
   previewTrainingQuote: {
     buckets: ['catalog'],
@@ -568,14 +564,7 @@ describe('no unlimited block-bridge procedure without a recorded decision', () =
       .filter(([, d]) => d.buckets.length === 0)
       .map(([name]) => name)
       .sort();
-    // `persistAppUploadImage`: its bucket charge moved to its preflight, `authorizeAppUploadImage`,
-    // so a refusal lands before the bytes are stored rather than after.
-    expect(unlimited).toEqual([
-      'listMyWorkflows',
-      'persistAppUploadImage',
-      'submitWorkflow',
-      'updateUserSettings',
-    ]);
+    expect(unlimited).toEqual(['listMyWorkflows', 'submitWorkflow', 'updateUserSettings']);
   });
 
   it('pollWorkflow charges a bucket of its OWN — not the catalog one', () => {

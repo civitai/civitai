@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * `blocks.persistAppUploadImage` — the server half of `OPEN_IMAGE_UPLOAD { bytes }`. It persists
  * an app's own upload with the `blockUploadedAppId` stamp, so it is gated as a post: the shared
- * post preamble and page tokens only. `blocks.authorizeAppUploadImage`, which the host calls
- * before the store upload, runs the same gates and takes the upload's publish-bucket charge.
+ * post preamble and page tokens only. It also takes the upload's one per-install publish-bucket
+ * charge, before the persist, so a refused upload creates no Image row.
  *
  * Every refusal also asserts the persist never ran, so it cannot be credited to a later gate.
  */
@@ -126,13 +126,35 @@ describe('blocks.persistAppUploadImage', () => {
     });
   });
 
-  it('charges NO block bucket: the preflight took the charge before the bytes were stored', async () => {
-    // Charging here too refused uploads AFTER storage whenever the preflight's own increment
-    // landed on the fixed window's last slot.
-    mockCheckPublishRate.mockResolvedValue({ allowed: false });
-    await expect(call()).resolves.toEqual({ imageId: 777 });
-    expect(mockCheckPublishRate).not.toHaveBeenCalled();
+  it('charges the install’s publish bucket exactly once, by one token, and no other bucket', async () => {
+    await call();
+    expect(mockCheckPublishRate.mock.calls).toEqual([['page_apb_alpha', 1]]);
     expect(mockCheckCatalogRate).not.toHaveBeenCalled();
+  });
+
+  it('a publish-bucket refusal returns TOO_MANY_REQUESTS and creates no Image row', async () => {
+    mockCheckPublishRate.mockResolvedValue({ allowed: false });
+    await expect(call()).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Rate limit exceeded, please retry shortly.',
+    });
+    // `persistBlockUploadImage` is what calls `createImage`; it never ran.
+    expect(mockPersistUpload).not.toHaveBeenCalled();
+  });
+
+  it('charges the bucket BEFORE the persist, never after', async () => {
+    await call();
+    expect(mockCheckPublishRate.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPersistUpload.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('a non-page token is refused BEFORE the publish bucket is charged', async () => {
+    mockAuthorizeBlockBridgeToken.mockResolvedValue(
+      claims({ blockInstanceId: 'bki_alpha', ctx: { slotId: 'model.sidebar_top', modelId: 5 } })
+    );
+    await call().catch(() => undefined);
+    expect(mockCheckPublishRate).not.toHaveBeenCalled();
   });
 
   it('never takes the stamped appId from the request body', async () => {
@@ -165,73 +187,19 @@ describe('blocks.persistAppUploadImage', () => {
         ),
       { code: 'FORBIDDEN', message: 'image byte uploads are available to page apps only' },
     ],
-  ])('refuses %s, and never persists', async (_label, arrange, expected) => {
+  ])('refuses %s, and never charges the bucket or persists', async (_label, arrange, expected) => {
     arrange();
     await expect(call()).rejects.toMatchObject(expected);
+    expect(mockCheckPublishRate).not.toHaveBeenCalled();
     expect(mockPersistUpload).not.toHaveBeenCalled();
   });
 
-  it('refuses a session that is not the token subject, and never persists', async () => {
+  it('refuses a session that is not the token subject, and never charges the bucket or persists', async () => {
     await expect(call({}, ctx({ id: OTHER_USER_ID }))).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: 'this app session belongs to a different account; reload the page to continue',
     });
-    expect(mockPersistUpload).not.toHaveBeenCalled();
-  });
-});
-
-describe('blocks.authorizeAppUploadImage — the gate the host runs BEFORE any bytes reach the store', () => {
-  const authorize = (c = ctx()) =>
-    blocksRouter.createCaller(c as never).authorizeAppUploadImage({ blockToken: 'tok' });
-
-  it('admits a page app holding posts:write:self, taking the upload’s one publish-bucket charge', async () => {
-    await expect(authorize()).resolves.toEqual({ ok: true });
-    expect(mockCheckPublishRate).toHaveBeenCalledWith('page_apb_alpha', 1);
-    expect(mockCheckCatalogRate).not.toHaveBeenCalled();
-    expect(mockPersistUpload).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    [
-      'an app without posts:write:self',
-      () => mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ scopes: [] })),
-      { code: 'FORBIDDEN', message: 'block lacks posts:write:self scope' },
-    ],
-    [
-      'post creation switched off',
-      () => mockIsAppBlocksPostCreationEnabled.mockResolvedValue(false),
-      { code: 'FORBIDDEN', message: 'posting from apps is not enabled' },
-    ],
-    [
-      'a model-slot (non-page) token',
-      () =>
-        mockAuthorizeBlockBridgeToken.mockResolvedValue(
-          claims({ blockInstanceId: 'bki_alpha', ctx: { slotId: 'model.sidebar_top', modelId: 5 } })
-        ),
-      { code: 'FORBIDDEN', message: 'image byte uploads are available to page apps only' },
-    ],
-    [
-      'the publish bucket refusing (before any bytes are stored)',
-      () => mockCheckPublishRate.mockResolvedValue({ allowed: false }),
-      { code: 'TOO_MANY_REQUESTS', message: 'Rate limit exceeded, please retry shortly.' },
-    ],
-  ])('refuses %s', async (_label, arrange, expected) => {
-    arrange();
-    await expect(authorize()).rejects.toMatchObject(expected);
-  });
-
-  it('a non-page token is refused BEFORE the publish bucket is charged', async () => {
-    mockAuthorizeBlockBridgeToken.mockResolvedValue(
-      claims({ blockInstanceId: 'bki_alpha', ctx: { slotId: 'model.sidebar_top', modelId: 5 } })
-    );
-    await authorize().catch(() => undefined);
     expect(mockCheckPublishRate).not.toHaveBeenCalled();
-  });
-
-  it('refuses a session that is not the token subject', async () => {
-    await expect(authorize(ctx({ id: OTHER_USER_ID }))).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: 'this app session belongs to a different account; reload the page to continue',
-    });
+    expect(mockPersistUpload).not.toHaveBeenCalled();
   });
 });

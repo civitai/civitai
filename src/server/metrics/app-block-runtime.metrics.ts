@@ -476,9 +476,8 @@ export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevo
 /**
  * The post-from-app doors whose shared preamble can refuse an unhydratable
  * token subject: `blocks.createPostFromApp` (the write),
- * `blocks.previewPostFromApp` (the read-only dry run), and `upload` — the two
- * halves of an app's `bytes` upload, `blocks.authorizeAppUploadImage` and
- * `blocks.persistAppUploadImage`.
+ * `blocks.previewPostFromApp` (the read-only dry run), and `upload` — the
+ * persist of an app's `bytes` upload, `blocks.persistAppUploadImage`.
  *
  * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Every one of these runs the
  * identical preamble, so a combined number would leave an operator unable to say

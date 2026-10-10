@@ -10,17 +10,16 @@ import { UPLOAD_BYTES_MAX_PER_WINDOW } from '~/components/AppBlocks/imageUploadB
 
 /**
  * `OPEN_IMAGE_UPLOAD { bytes }` on the REAL PageBlockHost: an image the block made in its tab is
- * authorized, uploaded with NO picker through the same store upload a picked image uses,
+ * uploaded with NO picker through the same store upload a picked image uses,
  * persisted by `blocks.persistAppUploadImage`, and gated by the same scan poll — replying exactly
  * once, with the moderated shape a picked `display` upload returns or `{ requestId, error }`.
  *
- * The store upload (`useCFImageUpload`) and the four server calls are the only stubs; the request
+ * The store upload (`useCFImageUpload`) and the two server calls are the only stubs; the request
  * parse, limits, uploader, poller and reply mapping all run for real.
  */
 
 const h = vi.hoisted(() => ({
   uploadToCF: vi.fn(),
-  authorize: vi.fn(),
   persist: vi.fn(),
   gate: vi.fn(),
 }));
@@ -41,7 +40,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),
   trpc: makeTrpcProxy({
-    'blocks.authorizeAppUploadImage': { useMutation: () => ({ mutateAsync: h.authorize }) },
     'blocks.persistAppUploadImage': { useMutation: () => ({ mutateAsync: h.persist }) },
     'blockImageUpload.gate': { useMutation: () => ({ mutateAsync: h.gate }) },
     'apps.shared': makeInertSubRouter(),
@@ -147,7 +145,6 @@ beforeEach(() => {
   h.uploadToCF
     .mockReset()
     .mockResolvedValue({ id: KEY, url: 'u', objectUrl: OBJECT_URL, type: 'image' });
-  h.authorize.mockReset().mockResolvedValue({ ok: true });
   h.persist.mockReset().mockResolvedValue({ imageId: PERSISTED_ID });
   h.gate.mockReset().mockResolvedValue(READY);
 });
@@ -209,11 +206,6 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     }
 
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
-    // Authorized with the HOST's token before anything was uploaded.
-    expect(h.authorize).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
-    expect(h.authorize.mock.invocationCallOrder[0]).toBeLessThan(
-      h.uploadToCF.mock.invocationCallOrder[0]
-    );
     // The bytes reached the store upload unchanged, typed from their content.
     expect(h.uploadToCF).toHaveBeenCalledTimes(1);
     const file = h.uploadToCF.mock.calls[0][0] as File;
@@ -250,19 +242,21 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     replies.stop();
   });
 
-  test('a refused authorization uploads NOTHING to the store', async () => {
-    h.authorize.mockRejectedValueOnce(new Error('block lacks posts:write:self scope'));
+  test('a persist refused by the publish bucket replies its message once and polls no scan', async () => {
+    h.persist.mockRejectedValueOnce(new Error('Rate limit exceeded, please retry shortly.'));
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
-    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_scope', bytes: pngBytes() });
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_bucket', bytes: pngBytes() });
     await vi.waitFor(() =>
-      expect(repliesFor(replies, 'rq_scope')).toEqual([
-        { requestId: 'rq_scope', error: 'block lacks posts:write:self scope' },
+      expect(repliesFor(replies, 'rq_bucket')).toEqual([
+        { requestId: 'rq_bucket', error: 'Rate limit exceeded, please retry shortly.' },
       ])
     );
-    expect(h.uploadToCF).not.toHaveBeenCalled();
-    expect(h.persist).not.toHaveBeenCalled();
+    await settle();
+    expect(repliesFor(replies, 'rq_bucket')).toHaveLength(1);
+    expect(h.uploadToCF).toHaveBeenCalledTimes(1);
+    expect(h.gate).not.toHaveBeenCalled();
     replies.stop();
   });
 
@@ -473,7 +467,7 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
       ])
     );
     expect(h.uploadToCF).not.toHaveBeenCalled();
-    expect(h.authorize).not.toHaveBeenCalled();
+    expect(h.persist).not.toHaveBeenCalled();
     replies.stop();
   });
 });

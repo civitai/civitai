@@ -5324,49 +5324,16 @@ export const blocksRouter = router({
     }),
 
   /**
-   * `OPEN_IMAGE_UPLOAD { bytes }`, step 1 of 2, run BEFORE any bytes reach the image store: the
-   * post preamble, the page-only check and the upload's ONE publish-bucket charge. Charging the
-   * bucket here and only here is what keeps a bucket refusal from landing after the bytes are
-   * stored; step 2 re-runs the authorization but charges no block bucket.
-   */
-  authorizeAppUploadImage: protectedProcedure
-    .meta({ blockApiKeys: true })
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 3600,
-        errorMessage: 'Too many image uploads — slow down.',
-      })
-    )
-    .input(z.object({ blockToken: z.string().min(1) }))
-    .mutation(async ({ ctx, input }) => {
-      const { claims } = await authorizeBlockPostRequest(input.blockToken, 'upload', ctx.user.id);
-      if (!isPageToken(claims)) {
-        throw new TRPCError({
-          code: 'FORBIDDEN',
-          message: 'image byte uploads are available to page apps only',
-        });
-      }
-      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
-      if (!rate.allowed) {
-        throw new TRPCError({
-          code: 'TOO_MANY_REQUESTS',
-          message: 'Rate limit exceeded, please retry shortly.',
-        });
-      }
-      return { ok: true as const };
-    }),
-
-  /**
-   * `OPEN_IMAGE_UPLOAD { bytes }`, step 2 of 2: persist the uploaded image exactly as
+   * `OPEN_IMAGE_UPLOAD { bytes }`: persist an app's own uploaded image exactly as
    * `blockImageUpload.persist` does, except the row is stamped `blockUploadedAppId` = the verified
    * token appId, which lets this app post it as a `{ kind: 'published' }` source.
    *
    * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
    * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
-   * post-creation flag) and page tokens only. The publish bucket was charged by step 1; a caller
-   * that skips step 1 is the signed-in viewer's own session, bounded by the per-user limit below
-   * exactly as `blockImageUpload.persist` is.
+   * post-creation flag) and page tokens only. Then the upload's ONE per-install publish-bucket
+   * charge, BEFORE the persist, so a refusal creates no Image row and starts no scan. The bytes
+   * are already in the store by then; a refused upload leaves that object unreferenced, as a
+   * picked upload refused at `blockImageUpload.persist` does.
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })
@@ -5392,6 +5359,13 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'image byte uploads are available to page apps only',
+        });
+      }
+      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
         });
       }
       const { persistBlockUploadImage } = await import(
