@@ -185,13 +185,19 @@ export async function syncRosterMembersWith(
     deps
   );
 
-  // Listing writes the scores first and opens the gate last.
-  for (const s of listed) {
+  // Listing writes the scores first and opens the gate last. Members go LIST_CONCURRENCY at a
+  // time: each is a few round trips, and a reconcile lists hundreds a batch.
+  for (const group of chunk(listed, LIST_CONCURRENCY))
+    await Promise.all(group.map((s) => listOne(s)));
+  return { listed: listed.length, removed };
+
+  async function listOne(s: RosterMemberState) {
     const team = s.team!;
     const member = String(s.userId);
     const was = previous.get(s.userId);
-    if (was && was !== team)
-      await Promise.all(teamKeys(keys, was).map((k) => deps.redis.zRem(k, member)));
+    const wasTeam = rosterTeam(was);
+    if (wasTeam && wasTeam !== team)
+      await Promise.all(teamKeys(keys, wasTeam).map((k) => deps.redis.zRem(k, member)));
     await Promise.all([
       deps.redis.zAdd(keys.joined(team), {
         score: (s.joinedAt ?? now).getTime(),
@@ -224,8 +230,8 @@ export async function syncRosterMembersWith(
     // Unlisted while this ran: take back what it just wrote.
     if (Number(opened) !== 1) await clearEntries(event, [s.userId], deps);
   }
-  return { listed: listed.length, removed };
 }
+const LIST_CONCURRENCY = 25;
 
 // Everything but the gate: a member's scores, hat list and owner topics.
 async function clearEntries(event: RosterEvent, userIds: number[], deps: RosterSyncDeps) {
@@ -304,8 +310,12 @@ export async function reconcileEventRosters(
     ...defaultRosterSyncDeps(),
     gate: (event) => sysRedis.hGetAll(eventRosterKeys(event).members),
   },
-  events?: RosterEvent[]
+  events?: RosterEvent[],
+  // Stop starting batches after this (ms since epoch), for a caller holding a lock. What is left
+  // is the hourly run's.
+  { deadline = Infinity }: { deadline?: number } = {}
 ) {
+  let complete = true;
   for (const event of events ?? (await rosterEvents(deps.now()))) {
     try {
       const gate = await deps.gate(event.name);
@@ -323,6 +333,10 @@ export async function reconcileEventRosters(
       let listed = 0;
       let removed = 0;
       for (const batch of chunk(ids, RECONCILE_BATCH)) {
+        if (deps.now().getTime() >= deadline) {
+          complete = false;
+          break;
+        }
         const r = await syncRosterMembersWith(event, batch, deps);
         listed += r.listed;
         removed += r.removed;
@@ -330,12 +344,14 @@ export async function reconcileEventRosters(
       if (removed)
         logRoster('warning', 'reconcileEventRosters', { event: event.name, listed, removed });
     } catch (error) {
+      complete = false;
       logRoster('error', 'reconcileEventRosters', {
         event: event.name,
         error: (error as Error).message,
       });
     }
   }
+  return { complete };
 }
 
 // Rebuilds an event's roster from User.settings, for when Redis lost it. A full scan of User, so a

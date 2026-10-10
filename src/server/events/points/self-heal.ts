@@ -4,6 +4,7 @@ import { loadEvents } from '~/server/events/load-events';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { eventPointSeason } from '~/server/events/points/keys';
 import { runEventPointsReferee } from '~/server/events/points/referee';
+import { reconcileEventRosters, rosterEvents } from '~/server/events/points/roster-sync';
 import { syncEventHats } from '~/server/events/points/sync';
 import { acquireJobLock, type JobLock } from '~/server/jobs/job-lock';
 import { logToAxiom } from '~/server/logging/client';
@@ -33,6 +34,9 @@ export const SWITCH_ON_RETRY_MS = 60 * 1000;
 // One past the lock's cap, which lands a few seconds after it (the lock counts down in 8 s ticks).
 export const SWITCH_ON_RETRIES = Math.ceil((SETTLE_LOCK_S * 1000) / SWITCH_ON_RETRY_MS) + 1;
 
+// Longest the roster step may keep the settle lock: it stops starting batches after this.
+export const ROSTER_STEP_MAX_MS = 60 * 1000;
+
 type HealedEvent = Awaited<ReturnType<typeof loadEvents>>[number];
 
 export type SelfHealDeps = {
@@ -43,6 +47,9 @@ export type SelfHealDeps = {
   syncEventHats: (now: Date) => Promise<{ event: string; set: number; removed: number }[]>;
   getScoringPhase: (event: HealedEvent, now: Date) => Promise<unknown>;
   runReferee: typeof runEventPointsReferee;
+  // Re-bases the event's team rosters (roster-sync.ts) on the totals the referee just settled.
+  // Stops starting work at `deadline`; resolves whether it finished.
+  reconcileRoster: (event: string, deadline: number) => Promise<{ complete: boolean }>;
   log: (entry: Record<string, unknown>) => void;
   now: () => Date;
   pod: string | undefined;
@@ -109,6 +116,26 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
           refereeRows: settled?.rows,
           refereeChanged: settled?.changed,
         });
+        // Its own step, after the settle, so the rosters read the totals it just wrote. Only display
+        // state: a failure, or running out of time while holding the hourly job's lock, is logged
+        // and never fails the heal. The :15 reconcile finishes what it leaves.
+        if (settled) {
+          try {
+            const roster = await deps.reconcileRoster(
+              name,
+              deps.now().getTime() + ROSTER_STEP_MAX_MS
+            );
+            if (!roster.complete)
+              deps.log({ ...entry, type: 'warning', step: 'roster', outcome: 'timeout' });
+          } catch (error) {
+            deps.log({
+              ...entry,
+              type: 'error',
+              step: 'roster',
+              message: (error as Error).message,
+            });
+          }
+        }
         return 'ran';
       } finally {
         await lock.release();
@@ -136,6 +163,10 @@ function getSelfHeal() {
     syncEventHats,
     getScoringPhase: (event, now) => getEventScoringPhase(event, now),
     runReferee: runEventPointsReferee,
+    reconcileRoster: async (name, deadline) => {
+      const events = (await rosterEvents()).filter((e) => e.name === name);
+      return reconcileEventRosters(undefined, events, { deadline });
+    },
     log: (entry) => void logToAxiom(entry).catch(() => undefined),
     now: () => new Date(),
     pod: env.PODNAME,

@@ -414,4 +414,23 @@ describe('team roster', () => {
     expect(s.hashes.get(keys.members)?.has('1')).toBe(false);
     expect(s.hashes.get(keys.members)?.get('2')).toBe('Blue');
   });
+
+  it('stops starting batches at the deadline and says it did not finish', async () => {
+    const states = Array.from({ length: 3 }, (_, i) => member(i + 1));
+    const s = setup(states, LIVE_NOW);
+    await syncRosterMembersWith(EVENT, [1, 2, 3], s.deps);
+    const gate = async () => Object.fromEntries(s.hashes.get(keys.members) ?? []);
+    const synced = vi.fn(s.deps.loadStates);
+    const deps = { ...s.deps, loadStates: synced, gate };
+    expect(await reconcileEventRosters(deps, [EVENT], { deadline: LIVE_NOW.getTime() })).toEqual({
+      complete: false,
+    });
+    expect(synced).not.toHaveBeenCalled();
+    expect(
+      await reconcileEventRosters(deps, [EVENT], { deadline: LIVE_NOW.getTime() + 1 })
+    ).toEqual({
+      complete: true,
+    });
+    expect(synced).toHaveBeenCalledTimes(1);
+  });
 });
