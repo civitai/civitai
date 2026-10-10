@@ -2652,6 +2652,7 @@ const REDIS_KEYS_UNPREFIXED = {
   EVENT: {
     BASE: 'event', // special case
     EVENT_CLEANUP: 'eventCleanup',
+    EVENT_WINNER: 'eventWinner',
     CACHE: 'packed:event',
   },
   COSMETICS: {
