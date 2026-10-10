@@ -837,9 +837,13 @@ describe('getWornEventHat', () => {
     expect(scoring.getUserCosmeticScores.mock.calls[0].slice(0, 2)).toEqual([scored, 9]);
   });
 
-  it("ignores a hat map entry for someone else's hat, and falls back to the settled copy", async () => {
+  // A stale map entry: another owner's hat, or this owner's other design, once on this content.
+  it.each([
+    ['someone else', { ownerId: 12 }],
+    ['another design of the same owner', { cosmeticId: 77 }],
+  ])("ignores a hat map entry for %s's hat, and falls back to the settled copy", async (_, hat) => {
     wearing();
-    inHatMap('other', { ownerId: 12 });
+    inHatMap('other', hat);
     scoring.getUserCosmeticScores.mockResolvedValue([settled('txn-1', 40)]);
     expect(await read()).toMatchObject({
       topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'txn-1' }),

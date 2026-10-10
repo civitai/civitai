@@ -124,6 +124,7 @@ beforeEach(() => {
   mockScoring.getEventStandings.mockResolvedValue(standings);
   mockScoring.refreshStandings.mockResolvedValue(standings);
   mockReferee.runEventPointsReferee.mockResolvedValue({ season: 'live', rows: 0, changed: 0 });
+  mockScoring.hasStandingsSnapshot.mockResolvedValue(false);
   mockSync.syncEventHats.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
@@ -667,7 +668,6 @@ describe('scoring behind the flag', () => {
     await eventEngine.updateLeaderboard(past);
     expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
     expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(3);
-    mockScoring.hasStandingsSnapshot.mockResolvedValue(false);
   });
 
   it('snapshots the preview from its own start while switched off, and nothing outside the window', async () => {
