@@ -27,10 +27,6 @@ const SETTLE_LAG_MS = 10 * 60 * 1000;
 // The hour (UTC) whose run recomputes the whole season, picking up late removals and bans on days
 // the hourly runs treat as final.
 const FULL_RECOMPUTE_HOUR = 3;
-// Removals stop counting this long before the finalize window closes. The last referee run is the
-// hourly run before the window's end, and it settles only to a bucket SETTLE_LAG_MS back; the winner
-// is named right after. Lifted once the winner waits for a run that settles the whole window.
-export const REMOVAL_CUTOFF_MS = SETTLE_LAG_MS + 60 * 60 * 1000 + LIVE_BUCKET_MS;
 // Server-side cap on each referee query, under the ClickHouse client's 300s request timeout: a
 // longer cap would leave the query running on the server after the client has given up on it.
 export const REFEREE_QUERY_MAX_SECONDS = 270;
@@ -66,6 +62,7 @@ const startOfUtcDay = (time: Date) =>
 // past, never past the season's end), the cut-off removals settle to (the same boundary, but running
 // on through the live season's finalize window), and the first day it recomputes: the day before the
 // cut's day, or the whole season on the nightly full run and on every run once the season has ended.
+// `final`: this run settles the live season's whole finalize window, so its totals are the final ones.
 export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now: Date) {
   const start = season === 'preview' ? event.previewFrom ?? event.startDate : event.startDate;
   const end = season === 'preview' ? event.startDate : event.endDate;
@@ -73,14 +70,14 @@ export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now
   const cut = new Date(Math.min(settled, end.getTime()));
   // A takedown in the finalize window must still net out the add it pairs with, before the winner
   // is decided on these totals.
-  const removeEnd =
-    season === 'live' ? eventPointsWindow(event).to.getTime() - REMOVAL_CUTOFF_MS : end.getTime();
-  const removeCut = new Date(Math.min(settled, Math.max(removeEnd, end.getTime())));
+  const removeEnd = season === 'live' ? eventPointsWindow(event).to.getTime() : end.getTime();
+  const removeCut = new Date(Math.min(settled, removeEnd));
+  const final = season === 'live' && settled >= removeEnd;
   // Once the season has ended a late removal can reach any day, so no day is final.
   const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR || settled >= end.getTime();
   const dayBefore = new Date(startOfUtcDay(cut).getTime() - DAY_MS);
   const recomputeFrom = full || dayBefore < start ? start : dayBefore;
-  return { start, cut, removeCut, recomputeFrom };
+  return { start, cut, removeCut, recomputeFrom, final };
 }
 
 // Totals per hat, team and owner: the final days from the snapshot plus the recomputed rows.
@@ -340,7 +337,7 @@ export async function runEventPointsReferee(
   now = new Date()
 ) {
   const window = refereeWindow(event, season, now);
-  if (window.cut <= window.start) return { season, rows: 0, changed: 0 };
+  if (window.cut <= window.start) return { season, rows: 0, changed: 0, final: false };
   const rows = await queryReferee(event, window);
   await writeDailySnapshot(event, window, rows);
   const final = await finalDayTotals(event, window);
@@ -368,5 +365,6 @@ export async function runEventPointsReferee(
     changed: changed.length,
     unpushed,
     recomputeFrom: window.recomputeFrom.toISOString(),
+    final: window.final,
   };
 }
