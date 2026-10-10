@@ -63,6 +63,9 @@ const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const HOUR = 60 * 60 * 1000;
 let redisStore: Record<string, string> = {};
+// The options each key was last set with, so expiries are checked, not assumed.
+let redisSetOptions: Record<string, unknown> = {};
+const MARKER_TTL = { EX: 30 * 24 * 60 * 60 };
 const DEPLOY_DAY = new Date('2026-10-09T12:00:00.000Z');
 // Cosmetic ids as the COSMETICS.IDS hash caches them: by name for the holiday events, by
 // event:design:team for join events (which look the cosmetic up by data, never by name).
@@ -86,9 +89,11 @@ beforeEach(() => {
     async (_key: string, name: string) => cosmeticIds[name] ?? null
   );
   redisStore = {};
+  redisSetOptions = {};
   redisMock.redis.get.mockImplementation(async (key: string) => redisStore[key] ?? null);
-  redisMock.redis.set.mockImplementation(async (key: string, value: string) => {
+  redisMock.redis.set.mockImplementation(async (key: string, value: string, options?: unknown) => {
     redisStore[key] = value;
+    redisSetOptions[key] = options;
     return 'OK';
   });
   mockScoring.getEventStandings.mockResolvedValue({
@@ -319,6 +324,8 @@ describe('end-of-event cleanup', () => {
     expect(update?.[1]).toBe(23); // Pink won
     expect((update?.[0] as TemplateStringsArray).join('?')).toContain("'true'::jsonb");
     expect(redisStore[winnerMarker]).toBe('Pink');
+    // Outlives the 7-day grace window, so later runs keep seeing it and stop.
+    expect(redisSetOptions[winnerMarker]).toEqual(MARKER_TTL);
     // On the standings that run refreshed, read after the refresh.
     expect(mockScoring.refreshStandings.mock.invocationCallOrder.at(-1)!).toBeLessThan(
       mockScoring.getEventStandings.mock.invocationCallOrder.at(-1)!
@@ -357,6 +364,25 @@ describe('end-of-event cleanup', () => {
     expect(winnerUpdates().map(([, id]) => id)).toEqual([23]);
   });
 
+  it('ends scoring on a final run with no first-place team, naming no winner', async () => {
+    mockScoring.getEventStandings.mockResolvedValue({
+      teams: [],
+      topCosmetics: [],
+      topUsers: {},
+      updatedAt: new Date(),
+    });
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(redisSetOptions[winnerMarker]).toEqual(MARKER_TTL);
+
+    // ...and the cleanup, as before, has no winner to clean up with.
+    await eventEngine.dailyReset(secondReset);
+    expect(setKeys()).not.toContain(`eventCleanup:${BIRTHDAY_2026_EVENT}`);
+  });
+
   it('does not mark the winner named when flagging it fails', async () => {
     dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
     finalRun();
@@ -364,14 +390,27 @@ describe('end-of-event cleanup', () => {
     expect(redisStore[winnerMarker]).toBeUndefined();
   });
 
-  it('cleans up only once the winner is named, without flagging it again', async () => {
-    await eventEngine.dailyReset(secondReset);
-    expect(setKeys()).toEqual([]);
+  it('cleans up only once the winner is named, with the recorded winner, without flagging it again', async () => {
+    const onCleanup = vi.fn(async () => undefined);
+    const def = birthday2026 as { onCleanup?: unknown };
+    def.onCleanup = onCleanup;
+    try {
+      await eventEngine.dailyReset(secondReset);
+      expect(setKeys()).toEqual([]);
 
-    redisStore[winnerMarker] = 'Pink';
-    await eventEngine.dailyReset(secondReset);
-    expect(winnerUpdates()).toHaveLength(0);
-    expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
+      // Blue is not first in the standings: the record, not the standings, decides.
+      redisStore[winnerMarker] = 'Blue';
+      await eventEngine.dailyReset(secondReset);
+      expect(onCleanup).toHaveBeenCalledWith(
+        expect.objectContaining({ winner: 'Blue', winnerCosmeticId: 22 })
+      );
+      expect(winnerUpdates()).toHaveLength(0);
+      const cleanupMarker = `eventCleanup:${BIRTHDAY_2026_EVENT}`;
+      expect(setKeys()).toEqual([cleanupMarker]);
+      expect(redisSetOptions[cleanupMarker]).toEqual(MARKER_TTL);
+    } finally {
+      delete def.onCleanup;
+    }
   });
 
   it('waits to clean up while the engine is switched off', async () => {

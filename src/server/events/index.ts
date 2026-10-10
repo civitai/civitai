@@ -75,8 +75,10 @@ function scoredEvent(eventDef: EventDef) {
   const { scoring } = eventDef;
   return scoring ? { ...eventDef, scoring } : undefined;
 }
-// Set by the hourly scoring once a scored event's winner is named; its value is the winning team.
+// Set by the hourly scoring once a scored event's final run has named its winner; its value is the
+// winning team, or NO_WINNER when no team ranked first. Either way scoring is done.
 const winnerKey = (event: string) => `${REDIS_KEYS.EVENT.EVENT_WINNER}:${event}` as const;
+const NO_WINNER = 'none';
 async function flagWinnerCosmetic(eventDef: EventDef, winner: string) {
   const winnerCosmeticId = await eventDef.getTeamCosmetic(winner);
   if (winnerCosmeticId) {
@@ -142,7 +144,11 @@ export const eventEngine = {
         if (eventDef.scoring && (!scoredWinner || !(await isEventPointsEnabled()))) continue;
 
         // Get 1st place team
-        const winner = scoredWinner ?? scores.find(({ rank }) => rank === 1)?.team;
+        const winner = scoredWinner
+          ? scoredWinner === NO_WINNER
+            ? undefined
+            : scoredWinner
+          : scores.find(({ rank }) => rank === 1)?.team;
         if (!winner) continue;
 
         // Update first place cosmetic and set to winner (a scored event's is already flagged)
@@ -225,10 +231,10 @@ export const eventEngine = {
           const winner = (await this.getTeamScores(eventDef.name)).find(
             ({ rank }) => rank === 1
           )?.team;
-          if (winner) {
-            await flagWinnerCosmetic(eventDef, winner);
-            await redis.set(winnerKey(eventDef.name), winner, { EX: CLEANUP_MARKER_TTL_S });
-          }
+          if (winner) await flagWinnerCosmetic(eventDef, winner);
+          await redis.set(winnerKey(eventDef.name), winner ?? NO_WINNER, {
+            EX: CLEANUP_MARKER_TTL_S,
+          });
         }
         continue;
       }

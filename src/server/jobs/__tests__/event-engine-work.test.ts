@@ -7,7 +7,7 @@ const { eventEngineLeaderboardUpdate } = await import('~/server/jobs/event-engin
 const { REFEREE_QUERY_MAX_SECONDS } = await import('~/server/events/points/referee');
 
 describe('event-engine-leaderboard-update job', () => {
-  // REMOVAL_CUTOFF_MS assumes a referee run at the top of every hour.
+  // The winner is named by the first run after the finalize window closes, so a run every hour.
   it('runs hourly, on the hour', () => {
     expect(eventEngineLeaderboardUpdate.cron).toBe('0 * * * *');
   });
