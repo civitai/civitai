@@ -190,10 +190,6 @@ import {
   getCosmeticsForEntity,
   getEventDecorationsForEntity,
 } from '~/server/services/cosmetic.service';
-import {
-  getVisibleModel3DIdForPost,
-  getVisibleModel3DIds,
-} from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
 import {
@@ -312,6 +308,9 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const model3dService = () => import('~/server/services/model3d.service');
 
 const {
   cacheHitRequestsTotal,
@@ -2636,7 +2635,9 @@ const getAllImagesUncaptured = async (
     ...new Set(rawImages.map((i) => i.model3dId).filter((id): id is number => id != null)),
   ];
   const visibleModel3DIds = rawModel3dIds.length
-    ? await getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId, isModerator })
+    ? await (
+        await model3dService()
+      ).getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId, isModerator })
     : undefined;
 
   const images = withSpan('image:getAllImages:transform', () => {
@@ -3229,7 +3230,9 @@ export const getAllImagesIndex = async (
     ),
   ];
   const visibleIndexModel3DIds = rawIndexModel3dIds.length
-    ? await getVisibleModel3DIds({
+    ? await (
+        await model3dService()
+      ).getVisibleModel3DIds({
         model3dIds: rawIndexModel3dIds,
         userId: currentUserId,
         isModerator: user?.isModerator,
@@ -5757,7 +5760,9 @@ export const getImage = async ({
   // so a hidden draft/deleted Model3D yields null here too. Null when the post
   // isn't linked, isn't visible, or there's no postId at all.
   const model3dId = firstRawImage.postId
-    ? await getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
+    ? await (
+        await model3dService()
+      ).getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
     : null;
 
   const image = {

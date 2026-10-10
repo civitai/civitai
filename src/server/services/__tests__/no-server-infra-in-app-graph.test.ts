@@ -1,7 +1,17 @@
 import fs from 'fs';
 import path from 'path';
-import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+import type { Edge } from './import-graph.harness';
+import {
+  exportTargetToPath,
+  parseImports,
+  REPO_ROOT,
+  rel,
+  resolveSpecifier,
+  resolveWorkspace,
+  WORKSPACE_PACKAGES,
+} from './import-graph.harness';
 
 /**
  * `_app`'s module graph must not reach server infrastructure.
@@ -19,7 +29,6 @@ import { describe, expect, it } from 'vitest';
  * failed loudly enough to notice.
  */
 
-const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ENTRY = 'src/pages/_app.tsx';
 
 /**
@@ -99,202 +108,6 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
     reason: 'same barrel chain as civitai-buzz/src/client.ts; drops with the same fix.',
   },
 ];
-
-const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.svelte'];
-
-function readAliasMap(): [string, string][] {
-  // tsconfig is JSONC (comments + trailing commas). Use TypeScript's own parser rather than
-  // hand-rolled stripping, so a future edit to tsconfig can't quietly yield an empty alias
-  // map — which would resolve nothing and make this whole guard vacuously pass.
-  const file = path.join(REPO_ROOT, 'tsconfig.json');
-  const { config, error } = ts.parseConfigFileTextToJson(file, fs.readFileSync(file, 'utf8'));
-  if (error) throw new Error(`could not parse tsconfig.json: ${JSON.stringify(error.messageText)}`);
-  const paths = config?.compilerOptions?.paths as Record<string, string[]> | undefined;
-  if (!paths || !Object.keys(paths).length)
-    throw new Error('tsconfig.json has no compilerOptions.paths');
-  return Object.entries(paths).map(([k, v]) => [k, v[0]!]);
-}
-
-const ALIASES = readAliasMap();
-
-/**
- * Workspace packages resolved from each `package.json` `exports` map — the real contract, and
- * the only thing that covers deep subpaths. tsconfig aliases only 8 of the 15 packages, so
- * alias-only resolution silently treated `@civitai/auth`, `buzz`, `shared`, `ui`, `email`,
- * `storage` and `db-queries` as external leaves and stopped walking there. That mattered:
- * `@civitai/auth`'s barrel reaches `redis.ts`, which imports `@civitai/redis` — so the
- * invariant held only because call sites happen to spell it `@civitai/auth/client`, something
- * the guard could not see and a one-word edit would undo.
- */
-/**
- * An `exports` value is a path, or a conditions object (`{ import, require, default }`).
- * Returning null rather than throwing on an unrecognised shape matters: this runs at module
- * scope, so a throw here fails COLLECTION, and a file that collects nothing reads as a pass.
- */
-type ExportTarget = string | Record<string, unknown> | undefined;
-
-function exportTargetToPath(target: ExportTarget): string | null {
-  if (typeof target === 'string') return target;
-  if (!target || typeof target !== 'object') return null;
-  // `import` before `default`: this walks SOURCE. The conventional manifest is
-  // `{ import: './src/x.ts', default: './dist/x.cjs' }`, and preferring `default` would walk a
-  // bundled artifact whose imports are invisible — blindness, dressed as a resolution.
-  for (const condition of ['import', 'node', 'default', 'require']) {
-    const value = target[condition];
-    if (typeof value === 'string') return value;
-  }
-  return null;
-}
-
-function readWorkspacePackages(): {
-  name: string;
-  dir: string;
-  exports: Record<string, ExportTarget>;
-}[] {
-  const packagesDir = path.join(REPO_ROOT, 'packages');
-  const out: { name: string; dir: string; exports: Record<string, ExportTarget> }[] = [];
-  for (const entry of fs.readdirSync(packagesDir)) {
-    const manifest = path.join(packagesDir, entry, 'package.json');
-    if (!fs.existsSync(manifest)) continue;
-    const json = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
-      name?: string;
-      exports?: Record<string, ExportTarget>;
-    };
-    if (!json.name) continue;
-    out.push({ name: json.name, dir: path.join(packagesDir, entry), exports: json.exports ?? {} });
-  }
-  if (!out.length) throw new Error('no workspace packages found under packages/');
-  return out;
-}
-
-const WORKSPACE_PACKAGES = readWorkspacePackages();
-
-function resolveWorkspace(spec: string): string | null {
-  for (const pkg of WORKSPACE_PACKAGES) {
-    if (spec !== pkg.name && !spec.startsWith(pkg.name + '/')) continue;
-    const rest = spec === pkg.name ? '' : spec.slice(pkg.name.length + 1);
-    const subpath = rest ? `./${rest}` : '.';
-
-    const exact = exportTargetToPath(pkg.exports[subpath]);
-    if (exact) return resolveFile(path.join(pkg.dir, exact));
-
-    // Wildcard keys, longest-prefix-wins per the exports spec. `@civitai/ui` maps
-    // `./components/*` at `./src/lib/components/*` — without this the subpath misses the map
-    // and the source-layout fallback guesses `src/components/*`, which does not exist, so the
-    // module becomes a silent external leaf: the exact blindness this guard exists to prevent.
-    let best: string | null = null;
-    let bestPrefix = -1;
-    for (const [key, value] of Object.entries(pkg.exports)) {
-      const star = key.indexOf('*');
-      if (star === -1) continue;
-      const prefix = key.slice(0, star);
-      const suffix = key.slice(star + 1);
-      if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
-      if (prefix.length <= bestPrefix) continue;
-      const target = exportTargetToPath(value);
-      if (!target) continue;
-      best = target.replace('*', subpath.slice(prefix.length, subpath.length - suffix.length));
-      bestPrefix = prefix.length;
-    }
-    // Fall THROUGH when a wildcard matched but its target doesn't exist. Returning here
-    // would make a wildcard key strictly worse than no map at all, since the layout
-    // fallback below would never get its turn.
-    if (best) {
-      const resolved = resolveFile(path.join(pkg.dir, best));
-      if (resolved) return resolved;
-    }
-
-    // Six packages ship no `exports` map at all (buzz, redis, axiom, ...); use their layout.
-    return resolveFile(path.join(pkg.dir, 'src', rest || 'index'));
-  }
-  return null;
-}
-
-function resolveFile(candidate: string): string | null {
-  if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
-  // ESM specifiers name the EMITTED file, so TS/Svelte sources are imported as `./x.js`
-  // (and Svelte 5 rune modules as `./x.svelte.js`). Every real `@civitai/ui` subpath in
-  // apps/ is spelled that way; without this swap they all resolve to nothing and the
-  // package becomes a silent external leaf.
-  if (candidate.endsWith('.js')) {
-    const stem = candidate.slice(0, -'.js'.length);
-    for (const ext of EXTENSIONS) {
-      if (fs.existsSync(stem + ext)) return stem + ext;
-    }
-  }
-  for (const ext of EXTENSIONS) {
-    if (fs.existsSync(candidate + ext)) return candidate + ext;
-  }
-  for (const ext of EXTENSIONS) {
-    const index = path.join(candidate, 'index' + ext);
-    if (fs.existsSync(index)) return index;
-  }
-  return null;
-}
-
-function resolveSpecifier(spec: string, fromFile: string): string | null {
-  if (spec.startsWith('.')) {
-    return resolveFile(path.resolve(path.dirname(fromFile), spec));
-  }
-  for (const [pattern, target] of ALIASES) {
-    if (pattern.endsWith('/*')) {
-      const prefix = pattern.slice(0, -1);
-      if (spec.startsWith(prefix)) {
-        return resolveFile(path.join(REPO_ROOT, target.slice(0, -1) + spec.slice(prefix.length)));
-      }
-    } else if (spec === pattern) {
-      return resolveFile(path.join(REPO_ROOT, target));
-    }
-  }
-  return resolveWorkspace(spec); // null -> node_modules / unresolvable -> external leaf
-}
-
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
-
-/**
- * A named-import clause erases entirely when every specifier is type-only. Both spellings
- * count: `import type { A }` and the inline `import { type A, type B }`. Missing the inline
- * form makes a pure type reference look like a value edge, which mis-attributes megabytes
- * of unrelated graph to whichever file happens to use it.
- */
-function isTypeOnlyClause(clause: string): boolean {
-  if (/^\s*type[\s{*]/.test(clause)) return true;
-  const braces = clause.match(/\{([\s\S]*)\}/);
-  if (!braces) return false;
-  const outside = clause.slice(0, clause.indexOf('{'));
-  if (/[A-Za-z_$*]/.test(outside)) return false; // default or namespace binding present
-  const specifiers = braces[1]!
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return specifiers.length > 0 && specifiers.every((s) => /^type\s/.test(s));
-}
-
-type Edge = { spec: string; dynamic: boolean };
-
-function parseImports(source: string): Edge[] {
-  const code = stripComments(source);
-  const edges: Edge[] = [];
-  let match: RegExpExecArray | null;
-
-  const fromRe = /(?:^|[\n;}])\s*(?:import|export)\s+([\s\S]*?)from\s*['"]([^'"]+)['"]/g;
-  while ((match = fromRe.exec(code))) {
-    if (!isTypeOnlyClause(match[1]!)) edges.push({ spec: match[2]!, dynamic: false });
-  }
-  const bareRe = /(?:^|[\n;}])\s*import\s*['"]([^'"]+)['"]/g;
-  while ((match = bareRe.exec(code))) edges.push({ spec: match[1]!, dynamic: false });
-  const requireRe = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-  while ((match = requireRe.exec(code))) edges.push({ spec: match[1]!, dynamic: false });
-  // Followed deliberately: a lazily-fetched chunk is still a compiled chunk.
-  const dynamicRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-  while ((match = dynamicRe.exec(code))) edges.push({ spec: match[1]!, dynamic: true });
-
-  return edges;
-}
-
-const rel = (abs: string) => path.relative(REPO_ROOT, abs).replace(/\\/g, '/');
 
 /**
  * Breadth-first so a reported chain is the SHORTEST one, and `visited` bounds the walk to

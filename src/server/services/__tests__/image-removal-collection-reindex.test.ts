@@ -67,6 +67,9 @@ vi.mock('~/server/search-index', () => ({
   imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
+vi.mock('~/server/search-index/collections.search-index', () => ({
+  collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
+}));
 
 import * as imageService from '~/server/services/image.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';

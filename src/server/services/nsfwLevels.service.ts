@@ -4,13 +4,11 @@ import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/comm
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import {
-  articlesSearchIndex,
-  bountiesSearchIndex,
-  collectionsSearchIndex,
-  comicsSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
+import { bountiesSearchIndex } from '~/server/search-index/bounties.search-index';
+import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
+import { comicsSearchIndex } from '~/server/search-index/comics.search-index';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import {
   articleModerationFloorSql,
   collectionTextFloorBucketSql,
