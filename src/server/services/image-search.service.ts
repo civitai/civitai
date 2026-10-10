@@ -64,6 +64,8 @@ export type RunImageSearchInput = {
    * the same thing.
    */
   postOrder?: boolean;
+  /** @ai: Detail endpoints must not cache a failed image query as an empty gallery. */
+  throwOnStatementTimeout?: boolean;
   /**
    * Let the feed service answer feed-search requests behind its flag, and accept the `feed:`
    * cursors it hands out. Only the public endpoint opts in.
@@ -141,8 +143,19 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
-  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, postOrder, feedService, data } =
-    input;
+  const {
+    limit,
+    skip,
+    cursor,
+    type,
+    withMeta,
+    flatMeta,
+    withTags,
+    postOrder,
+    feedService,
+    throwOnStatementTimeout,
+    data,
+  } = input;
 
   const features = getFeatureFlags({ user, req });
 
@@ -249,6 +262,7 @@ export async function runImageSearch(
   const include = ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])];
   const dbQuery = {
     ...data,
+    throwOnStatementTimeout,
     types: type ? [type] : undefined,
     limit,
     skip,
