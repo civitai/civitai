@@ -68,11 +68,10 @@ export async function acquireJobLock(
   logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
 
   let released = false;
-  let interval: ReturnType<typeof setInterval> | undefined;
   const release = async () => {
     if (released) return;
     released = true;
-    if (interval) clearInterval(interval);
+    clearInterval(interval);
     logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
     await redis
       .eval(LOCK_RELEASE_SCRIPT, { keys: [key], arguments: [token] })
@@ -82,7 +81,7 @@ export async function acquireJobLock(
   // Refresh while we still own the lock so long jobs keep it and dead pods
   // release it (the short TTL lapses). Hard-cap total hold at lockExpiration.
   let ttl = lockExpiration;
-  interval = setInterval(async () => {
+  const interval = setInterval(async () => {
     ttl -= LOCK_REFRESH_INTERVAL;
     if (ttl <= 0) {
       release().catch(() => undefined);
