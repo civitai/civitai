@@ -34,6 +34,13 @@ export const BLOCK_ANALYTICS_ENUM_VALUE_MAX_LENGTH = 64;
 /** Longest event `description`, in code points (raw, not trimmed). */
 export const BLOCK_ANALYTICS_DESCRIPTION_MAX_LENGTH = 200;
 
+/**
+ * Most errors one parse reports; the rest are summarised in one final line. The
+ * errors are joined into the submit response, so without a cap a crafted
+ * manifest can turn into a multi-megabyte error message.
+ */
+export const BLOCK_ANALYTICS_MAX_ERRORS = 20;
+
 export const BLOCK_ANALYTICS_PROPERTY_TYPES = ['enum', 'number', 'boolean'] as const;
 export type BlockAnalyticsPropertyType = (typeof BLOCK_ANALYTICS_PROPERTY_TYPES)[number];
 
@@ -81,9 +88,14 @@ function exceedsCodePoints(value: string, max: number): boolean {
   return [...value].length > max;
 }
 
-/** A name as it appears in an error: quoted, and bounded so a huge key cannot bloat the message. */
+/** A key as it appears in an error, bounded so a huge key cannot bloat the message. */
+function boundKey(key: string): string {
+  return key.length > 80 ? `${key.slice(0, 80)}…` : key;
+}
+
+/** A name as it appears in an error: quoted and bounded. */
 function quoteName(name: string): string {
-  return JSON.stringify(name.length > 80 ? `${name.slice(0, 80)}…` : name);
+  return JSON.stringify(boundKey(name));
 }
 
 function parseProperty(at: string, raw: unknown, errors: string[]): DeclaredEventProperty | null {
@@ -105,15 +117,13 @@ function parseProperty(at: string, raw: unknown, errors: string[]): DeclaredEven
   }
 
   const allowedKeys = type === 'enum' ? ['type', 'values'] : ['type'];
-  let ok = true;
   for (const key of Object.keys(raw)) {
     if (!allowedKeys.includes(key)) {
-      errors.push(`${at}.${key} is not allowed on a ${type} property`);
-      ok = false;
+      errors.push(`${at}.${boundKey(key)} is not allowed on a ${type} property`);
     }
   }
 
-  if (type === 'number' || type === 'boolean') return ok ? { type } : null;
+  if (type === 'number' || type === 'boolean') return { type };
 
   const { values } = raw;
   if (!Array.isArray(values)) {
@@ -126,8 +136,10 @@ function parseProperty(at: string, raw: unknown, errors: string[]): DeclaredEven
     );
     return null;
   }
+  // At most ONE error per property: the first bad value. Reporting every bad
+  // value multiplies a single mistake by up to 50.
   const seen = new Set<string>();
-  values.forEach((value, index) => {
+  for (const [index, value] of values.entries()) {
     if (
       typeof value !== 'string' ||
       value.length === 0 ||
@@ -136,17 +148,15 @@ function parseProperty(at: string, raw: unknown, errors: string[]): DeclaredEven
       errors.push(
         `${at}.values[${index}] must be a non-empty string of at most ${BLOCK_ANALYTICS_ENUM_VALUE_MAX_LENGTH} characters`
       );
-      ok = false;
-      return;
+      return null;
     }
     if (seen.has(value)) {
       errors.push(`${at}.values[${index}] duplicates an earlier value (${quoteName(value)})`);
-      ok = false;
-      return;
+      return null;
     }
     seen.add(value);
-  });
-  return ok ? { type: 'enum', values: [...seen] } : null;
+  }
+  return { type: 'enum', values: [...seen] };
 }
 
 function parseEvent(at: string, raw: unknown, errors: string[]): DeclaredEvent | null {
@@ -154,11 +164,11 @@ function parseEvent(at: string, raw: unknown, errors: string[]): DeclaredEvent |
     errors.push(`${at} must be an object`);
     return null;
   }
-  let ok = true;
   for (const key of Object.keys(raw)) {
     if (!EVENT_KEYS.has(key)) {
-      errors.push(`${at}.${key} is not allowed (an event takes only description and properties)`);
-      ok = false;
+      errors.push(
+        `${at}.${boundKey(key)} is not allowed (an event takes only description and properties)`
+      );
     }
   }
 
@@ -171,7 +181,6 @@ function parseEvent(at: string, raw: unknown, errors: string[]): DeclaredEvent |
     errors.push(
       `${at}.description must be a string of at most ${BLOCK_ANALYTICS_DESCRIPTION_MAX_LENGTH} characters`
     );
-    ok = false;
   }
 
   const properties = new Map<string, DeclaredEventProperty>();
@@ -195,16 +204,13 @@ function parseEvent(at: string, raw: unknown, errors: string[]): DeclaredEvent |
             name
           )} must be lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _`
         );
-        ok = false;
         continue;
       }
       const prop = parseProperty(`${at}.properties.${name}`, rawProps[name], errors);
       if (prop) properties.set(name, prop);
-      else ok = false;
     }
   }
 
-  if (!ok) return null;
   return typeof description === 'string' ? { description, properties } : { properties };
 }
 
@@ -218,7 +224,7 @@ function parse(manifest: unknown): ParsedManifestAnalytics {
   const errors: string[] = [];
   for (const key of Object.keys(analytics)) {
     if (!ANALYTICS_KEYS.has(key)) {
-      errors.push(`analytics.${key} is not allowed (analytics takes only events)`);
+      errors.push(`analytics.${boundKey(key)} is not allowed (analytics takes only events)`);
     }
   }
 
@@ -257,24 +263,24 @@ function parse(manifest: unknown): ParsedManifestAnalytics {
  *
  * - **Total.** Never throws, whatever it is handed. A manifest with no
  *   `analytics` key is valid and declares nothing.
- * - **Strips, never repairs.** An event whose declaration has ANY error is left
- *   out of `events` entirely (with every error it produced reported), rather than
- *   kept with its bad parts removed: a half-declared event is not what a reviewer
- *   approved. Too many events, or too many properties on one event, drops the
- *   whole catalog or the whole event respectively.
+ * - **All or nothing.** If there is ANY error, `events` is empty: a declaration
+ *   that does not validate declares nothing, so no reader can act on part of one.
+ * - **Bounded errors.** At most {@link BLOCK_ANALYTICS_MAX_ERRORS} messages plus
+ *   one summary line, at most one per enum property, keys truncated.
  * - **Normalised.** `events` holds only the keys this contract defines, enum
  *   values in declaration order, and `Map`s rather than plain objects (see
  *   `DeclaredEvents`).
  * - **No I/O.** One pass over the declaration; a later consumer can call it
  *   from a cache.
- *
- * ⚠️ `events` can be non-empty while `errors` is non-empty (the valid events of a
- * partly invalid declaration). A consumer that must honour only a declaration a
- * reviewer could have approved should treat any error as "declares nothing".
  */
 export function parseManifestAnalytics(manifest: unknown): ParsedManifestAnalytics {
   try {
-    return parse(manifest);
+    const { events, errors } = parse(manifest);
+    if (errors.length === 0) return { events, errors };
+    const capped = errors.slice(0, BLOCK_ANALYTICS_MAX_ERRORS);
+    const rest = errors.length - capped.length;
+    if (rest > 0) capped.push(`…and ${rest} more analytics errors`);
+    return { events: new Map(), errors: capped };
   } catch {
     // Reachable only via a throwing getter or Proxy; JSON input cannot get here.
     return { events: new Map(), errors: ['analytics could not be read'] };

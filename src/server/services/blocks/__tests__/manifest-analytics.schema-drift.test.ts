@@ -47,11 +47,12 @@ const ANNOTATIONS = new Set(['description', '$comment']);
 const IMPLEMENTED = new Set([
   'type',
   'const',
+  'enum',
   'properties',
+  'patternProperties',
   'additionalProperties',
   'required',
   'maxProperties',
-  'propertyNames',
   'pattern',
   'minLength',
   'maxLength',
@@ -60,6 +61,7 @@ const IMPLEMENTED = new Set([
   'uniqueItems',
   'items',
   'oneOf',
+  'allOf',
 ]);
 
 function typeOf(value: unknown): string {
@@ -79,7 +81,8 @@ function schemaAccepts(s: Schema, value: unknown): boolean {
   const t = typeOf(value);
   if (s.type !== undefined && !(s.type === t || (s.type === 'number' && t === 'integer')))
     return false;
-  if ('const' in s && s.const !== value) return false;
+  if (Object.hasOwn(s, 'const') && s.const !== value) return false;
+  if (Array.isArray(s.enum) && !s.enum.includes(value)) return false;
   if (typeof s.pattern === 'string' && typeof value === 'string') {
     if (!new RegExp(s.pattern, 'u').test(value)) return false;
   }
@@ -101,13 +104,21 @@ function schemaAccepts(s: Schema, value: unknown): boolean {
     const obj = value as Record<string, unknown>;
     const keys = Object.keys(obj);
     const props = (s.properties ?? {}) as Record<string, Schema>;
+    const patterns = Object.entries((s.patternProperties ?? {}) as Record<string, Schema>);
     if (typeof s.maxProperties === 'number' && keys.length > s.maxProperties) return false;
-    if (Array.isArray(s.required) && !s.required.every((k: string) => k in obj)) return false;
-    if (s.propertyNames && !keys.every((k) => schemaAccepts(s.propertyNames as Schema, k)))
+    // 🔴 `Object.hasOwn`, never `in`: `in` walks the prototype, so a `constructor`
+    // key would resolve to `Object` and be checked against no schema at all.
+    if (Array.isArray(s.required) && !s.required.every((k: string) => Object.hasOwn(obj, k)))
       return false;
     for (const k of keys) {
-      if (k in props) {
+      // Draft 2020-12: every matching `patternProperties` entry applies, and
+      // `additionalProperties` covers only keys matched by neither map.
+      const matched = patterns.filter(([re]) => new RegExp(re, 'u').test(k));
+      for (const [, sub] of matched) if (!schemaAccepts(sub, obj[k])) return false;
+      if (Object.hasOwn(props, k)) {
         if (!schemaAccepts(props[k], obj[k])) return false;
+      } else if (matched.length > 0) {
+        continue;
       } else if (s.additionalProperties === false) {
         return false;
       } else if (typeof s.additionalProperties === 'object') {
@@ -115,6 +126,8 @@ function schemaAccepts(s: Schema, value: unknown): boolean {
       }
     }
   }
+  if (Array.isArray(s.allOf) && !(s.allOf as Schema[]).every((sub) => schemaAccepts(sub, value)))
+    return false;
   if (Array.isArray(s.oneOf)) {
     const matches = (s.oneOf as Schema[]).filter((sub) => schemaAccepts(sub, value)).length;
     if (matches !== 1) return false;
@@ -148,7 +161,9 @@ const validatorAccepts = (analytics: unknown) =>
 const named = (count: number, value: unknown, prefix = 'n_') =>
   Object.fromEntries(Array.from({ length: count }, (_, i) => [`${prefix}${i}`, value]));
 const values = (count: number) => Array.from({ length: count }, (_, i) => `v${i}`);
-const withProp = (decl: unknown) => ({ events: { tapped: { properties: { p: decl } } } });
+const withProp = (decl: unknown, name = 'p') => ({
+  events: { tapped: { properties: { [name]: decl } } },
+});
 
 const CASES: Array<[string, unknown, boolean]> = [
   // accept
@@ -193,7 +208,21 @@ const CASES: Array<[string, unknown, boolean]> = [
   ['200 astral-char description', { events: { tapped: { description: '😀'.repeat(200) } } }, true],
   ['65 astral-char enum value', withProp({ type: 'enum', values: ['😀'.repeat(65)] }), false],
   ['201 astral-char description', { events: { tapped: { description: '😀'.repeat(201) } } }, false],
+  // `constructor` is the one Object.prototype member the name pattern admits; an
+  // evaluator that resolves keys through the prototype accepts anything under it.
+  ['`constructor` property, valid', withProp({ type: 'number' }, 'constructor'), true],
+  ['`constructor` event, valid', { events: { constructor: { description: 'ok' } } }, true],
   // reject — container shapes
+  // `constructor` as an UNKNOWN key of a fixed-key object: the only place a
+  // `properties` lookup sees it, since map keys go through `patternProperties`.
+  ['`constructor` as an unknown event key', { events: { tapped: { constructor: 'x' } } }, false],
+  ['`constructor` as an unknown analytics key', { events: {}, constructor: 1 }, false],
+  ['`constructor` event, invalid declaration', { events: { constructor: { label: 'x' } } }, false],
+  [
+    '`constructor` property, invalid declaration',
+    withProp({ type: 'string' }, 'constructor'),
+    false,
+  ],
   ['analytics null', null, false],
   ['analytics array', [], false],
   ['analytics string', 'events', false],
@@ -250,26 +279,39 @@ describe('app-block v1 schema ⇄ analytics validator drift guard', () => {
   });
 
   it('pins every bound to the exported constants', () => {
+    // A name-keyed map is `patternProperties` keyed on the name regex, closed with
+    // `additionalProperties: false` — NOT `propertyNames`, which the CLI's
+    // validator reports at the document root with no path to the bad key.
+    const nameKeyed = (map: Schema): Schema => {
+      expect(map.additionalProperties).toBe(false);
+      expect(map.propertyNames).toBeUndefined();
+      const entries = Object.entries(map.patternProperties as Record<string, Schema>);
+      expect(entries.map(([re]) => re)).toEqual([BLOCK_ANALYTICS_NAME_RE.source]);
+      return entries[0][1];
+    };
+
     const events = (analyticsSchema.properties as Record<string, Schema>).events;
     expect(events.maxProperties).toBe(BLOCK_ANALYTICS_MAX_EVENTS);
-    expect((events.propertyNames as Schema).pattern).toBe(BLOCK_ANALYTICS_NAME_RE.source);
-
-    const event = events.additionalProperties as Schema;
+    const event = nameKeyed(events);
     const eventProps = event.properties as Record<string, Schema>;
     expect(event.additionalProperties).toBe(false);
     expect(eventProps.description.maxLength).toBe(BLOCK_ANALYTICS_DESCRIPTION_MAX_LENGTH);
 
     const properties = eventProps.properties;
     expect(properties.maxProperties).toBe(BLOCK_ANALYTICS_MAX_PROPERTIES);
-    expect((properties.propertyNames as Schema).pattern).toBe(BLOCK_ANALYTICS_NAME_RE.source);
+    const property = nameKeyed(properties);
 
-    const arms = (properties.additionalProperties as Schema).oneOf as Schema[];
-    const armTypes = arms.map(
+    // allOf[0] checks `type` against the full list FIRST, so a validator that stops
+    // or sorts by first error reports a wrong type rather than a missing `values`.
+    const [typeCheck, arms] = property.allOf as Schema[];
+    const typeEnum = ((typeCheck.properties as Record<string, Schema>).type as Schema).enum;
+    expect(typeEnum).toEqual([...BLOCK_ANALYTICS_PROPERTY_TYPES]);
+    const armTypes = (arms.oneOf as Schema[]).map(
       (arm) => ((arm.properties as Record<string, Schema>).type as Schema).const
     );
     expect(armTypes).toEqual([...BLOCK_ANALYTICS_PROPERTY_TYPES]);
 
-    const enumValues = (arms[0].properties as Record<string, Schema>).values;
+    const enumValues = ((arms.oneOf as Schema[])[0].properties as Record<string, Schema>).values;
     expect(enumValues.minItems).toBe(1);
     expect(enumValues.maxItems).toBe(BLOCK_ANALYTICS_MAX_ENUM_VALUES);
     expect(enumValues.uniqueItems).toBe(true);

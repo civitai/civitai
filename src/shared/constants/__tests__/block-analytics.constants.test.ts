@@ -4,9 +4,8 @@ import { parseManifestAnalytics } from '../block-analytics.constants';
 
 /**
  * `parseManifestAnalytics` — the custom-events declaration parser. Pins that it
- * is TOTAL (never throws) and STRIPS an invalid event rather than repairing it.
- * The validator suite pins each error message; this one pins `events` (plus the
- * messages of one stripping case).
+ * is TOTAL (never throws), ALL OR NOTHING (any error empties `events`) and that
+ * its error list is BOUNDED. The validator suite pins each message's wording.
  *
  * Fixture counts (3 enum values, 2 events, …) are chosen to differ from every
  * bound the module exports, so a mutant that returns a bound cannot pass.
@@ -124,12 +123,45 @@ describe('parseManifestAnalytics', () => {
     });
   });
 
-  describe('stripping', () => {
-    it('keeps valid events and drops every invalid one, reporting each', () => {
+  describe('all or nothing', () => {
+    // A VALID sibling event sits beside each invalid declaration: any error must
+    // empty `events`, so no reader can act on part of a declaration that failed.
+    const SAVED = { properties: { kind: { type: 'enum', values: ['draft', 'final'] } } };
+    it.each([
+      ['an invalid event name', { BadName: {} }],
+      ['a free-text property type', { searched: { properties: { query: { type: 'string' } } } }],
+      [
+        'a duplicate enum value',
+        { shared: { properties: { t: { type: 'enum', values: ['x', 'x'] } } } },
+      ],
+      ['an unknown event key', { opened: { label: 'Opened' } }],
+      ['an over-long description', { opened: { description: 'd'.repeat(201) } }],
+      ['an invalid property name', { opened: { properties: { 'Bad-Name': { type: 'number' } } } }],
+      [
+        'an extra key on a number property',
+        { opened: { properties: { n: { type: 'number', values: ['1'] } } } },
+      ],
+    ])('declares nothing when a sibling has %s', (_label, invalid) => {
+      const parsed = parseManifestAnalytics({
+        analytics: { events: { saved: SAVED, ...invalid } },
+      });
+      expect(parsed.errors).toHaveLength(1);
+      expect(parsed.events.size).toBe(0);
+    });
+
+    it('declares nothing when analytics carries an unknown key beside valid events', () => {
+      const parsed = parseManifestAnalytics({ analytics: { events: { saved: SAVED }, extra: 1 } });
+      expect(parsed.errors).toEqual([
+        'analytics.extra is not allowed (analytics takes only events)',
+      ]);
+      expect(parsed.events.size).toBe(0);
+    });
+
+    it('reports every independent error, in declaration order', () => {
       const parsed = parseManifestAnalytics({
         analytics: {
           events: {
-            saved: { properties: { kind: { type: 'enum', values: ['draft', 'final'] } } },
+            saved: SAVED,
             BadName: {},
             searched: { properties: { query: { type: 'string' } } },
             shared: { properties: { target: { type: 'enum', values: ['x', 'x'] } } },
@@ -137,7 +169,6 @@ describe('parseManifestAnalytics', () => {
           },
         },
       });
-      expect([...parsed.events.keys()]).toEqual(['saved']);
       expect(parsed.errors).toEqual([
         'analytics.events key "BadName" must be lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _',
         'analytics.events.searched.properties.query.type must be one of enum, number, boolean (free-text strings are not allowed — declare an enum)',
@@ -145,51 +176,62 @@ describe('parseManifestAnalytics', () => {
         'analytics.events.opened.label is not allowed (an event takes only description and properties)',
       ]);
     });
+  });
 
-    // Each branch that marks an event invalid must also keep it out of `events`.
-    // The validator suite cannot see this: it reads only `errors`.
-    it.each([
-      [
-        'an extra key on a number property',
-        { properties: { n: { type: 'number', values: ['1'] } } },
-      ],
-      ['an over-long description', { description: 'd'.repeat(201) }],
-      ['an invalid property name', { properties: { 'Bad-Name': { type: 'number' } } }],
-      [
-        'an over-long enum value',
-        { properties: { t: { type: 'enum', values: ['q'.repeat(65)] } } },
-      ],
-    ])('drops an event with %s', (_label, declaration) => {
-      const parsed = parseManifestAnalytics({ analytics: { events: { tapped: declaration } } });
-      expect(parsed.errors).toHaveLength(1);
-      expect(parsed.events.has('tapped')).toBe(false);
-    });
-
-    it('drops the whole event, not just the bad property, when one property is invalid', () => {
+  describe('error bounds', () => {
+    it('reports at most one error per enum property — the first bad value', () => {
       const parsed = parseManifestAnalytics({
         analytics: {
           events: {
-            tapped: { properties: { ok_prop: { type: 'number' }, bad_prop: { type: 'date' } } },
+            picked: {
+              properties: {
+                tone: { type: 'enum', values: ['warm', '', 'q'.repeat(65), 'warm', 7] },
+              },
+            },
           },
         },
       });
-      expect(parsed.events.has('tapped')).toBe(false);
+      expect(parsed.errors).toEqual([
+        'analytics.events.picked.properties.tone.values[1] must be a non-empty string of at most 64 characters',
+      ]);
     });
 
-    it('drops the whole catalog when too many events are declared', () => {
-      const events = Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`e_${i}`, {}]));
-      expect(parseManifestAnalytics({ analytics: { events } }).events.size).toBe(0);
+    it('caps the error list and summarises the rest', () => {
+      // 30 independent errors: one unknown key on each of 30 events.
+      const events = Object.fromEntries(
+        Array.from({ length: 30 }, (_, i) => [`e_${i}`, { label: `x${i}` }])
+      );
+      const { errors } = parseManifestAnalytics({ analytics: { events } });
+      expect(errors).toHaveLength(21);
+      expect(errors[19]).toBe(
+        'analytics.events.e_19.label is not allowed (an event takes only description and properties)'
+      );
+      expect(errors[20]).toBe('…and 10 more analytics errors');
     });
 
-    it('drops an enum property that repeats a value', () => {
-      const parsed = parseManifestAnalytics({
-        analytics: {
-          events: {
-            shared: { properties: { target: { type: 'enum', values: ['a', 'b', 'a'] } } },
-          },
-        },
-      });
-      expect(parsed.events.size).toBe(0);
+    it('keeps a maximal hostile declaration to a small error payload', () => {
+      // 50 events × 10 properties × 50 bad values: unbounded, this is 25,000 errors.
+      const props = Object.fromEntries(
+        Array.from({ length: 10 }, (_, i) => [
+          `p_${i}`,
+          { type: 'enum', values: Array.from({ length: 50 }, () => '') },
+        ])
+      );
+      const events = Object.fromEntries(
+        Array.from({ length: 50 }, (_, i) => [`e_${i}`, { properties: props }])
+      );
+      const { errors } = parseManifestAnalytics({ analytics: { events } });
+      expect(errors).toHaveLength(21);
+      expect(errors[20]).toBe('…and 480 more analytics errors');
+      expect(errors.join('\n').length).toBeLessThan(4000);
+    });
+
+    it('bounds an attacker-sized unknown key in the error message', () => {
+      const key = 'K'.repeat(5000);
+      const [message] = parseManifestAnalytics({
+        analytics: { events: { tapped: { [key]: 1 } } },
+      }).errors;
+      expect(message.length).toBeLessThan(200);
     });
   });
 
