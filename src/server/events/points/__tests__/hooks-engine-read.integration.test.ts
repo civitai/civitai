@@ -10,6 +10,11 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
  */
 
 const ch = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
+// The engine's kill switch is on here; enabled.test.ts covers it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => true,
+  isEventPointsEnabledSync: () => true,
+}));
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: {
     insert: async ({ values }: { values: Record<string, unknown>[] }) =>

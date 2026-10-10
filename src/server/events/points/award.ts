@@ -1,5 +1,6 @@
 import type { EventScoring } from '~/server/events/base.event';
 import { loadEvents } from '~/server/events/load-events';
+import { isEventPointsEnabled, isEventPointsEnabledSync } from '~/server/events/points/enabled';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
@@ -415,12 +416,18 @@ function getEngine() {
 }
 
 // Records actions that may earn event points. Never throws and never needs awaiting for
-// correctness; await it only to keep a test deterministic.
-export const awardEventPoints = (actions: EventPointAction[]) =>
-  getEngine().awardEventPoints(actions);
-export const removeEventPoints = (removals: EventPointRemoval[]) =>
-  getEngine().removeEventPoints(removals);
+// correctness; await it only to keep a test deterministic. With the kill switch off, all four are
+// no-ops that touch neither Redis nor ClickHouse.
+export const awardEventPoints = async (actions: EventPointAction[]) => {
+  if (!(await isEventPointsEnabled().catch(() => false))) return;
+  return getEngine().awardEventPoints(actions);
+};
+export const removeEventPoints = async (removals: EventPointRemoval[]) => {
+  if (!(await isEventPointsEnabled().catch(() => false))) return;
+  return getEngine().removeEventPoints(removals);
+};
 export const isHattedEntity = (entityType: string, entityId: number) =>
-  getEngine().isHattedEntity(entityType, entityId);
-export const isHattedEntityOnceLoaded = (entityType: string, entityId: number) =>
+  isEventPointsEnabledSync() && getEngine().isHattedEntity(entityType, entityId);
+export const isHattedEntityOnceLoaded = async (entityType: string, entityId: number) =>
+  (await isEventPointsEnabled().catch(() => false)) &&
   getEngine().isHattedEntityOnceLoaded(entityType, entityId);

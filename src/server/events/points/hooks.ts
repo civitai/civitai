@@ -24,6 +24,7 @@ import {
   isHattedEntityOnceLoaded,
   removeEventPoints,
 } from './award';
+import { isEventPointsEnabledSync } from './enabled';
 import type { EventPointAction, EventPointEntityType, EventPointType } from './types';
 
 const POINT_ENTITY_TYPES: ReadonlySet<string> = new Set<EventPointEntityType>([
@@ -51,8 +52,9 @@ export const MAX_HATTED_VIEWS_PER_BATCH = 250;
  * this runs on every impression flush) allocates only the empty result.
  */
 export function hattedImpressionEntities(events: TrackBatchInput): Entity[] {
-  let seen: Set<string> | undefined;
   const hatted: Entity[] = [];
+  if (!isEventPointsEnabledSync()) return hatted;
+  let seen: Set<string> | undefined;
   for (const event of events) {
     if (event.kind !== 'impression') continue;
     for (const { entityType, entityId } of event.data.entities) {

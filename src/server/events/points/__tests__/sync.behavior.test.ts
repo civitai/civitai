@@ -14,6 +14,11 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * engine, the seam the engine and hook suites each fake.
  */
 
+// The engine's kill switch is on here; enabled.test.ts covers it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => true,
+  isEventPointsEnabledSync: () => true,
+}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
