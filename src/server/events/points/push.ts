@@ -1,8 +1,9 @@
 import { SignalMessages } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
+import { sysRedis } from '~/server/redis/client';
 import { signalClient } from '~/utils/signal-client';
 import { isEventPointsEnabledSync } from './enabled';
-import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from './keys';
+import { eventHatTopic, eventPointKeys, eventTeamsTopic, hatField, hatTopicId } from './keys';
 import { getHatPoints, getTeamPoints } from './read';
 import { readWatched, TEAMS_WATCH } from './watch';
 import type { EventHat } from './types';
@@ -56,8 +57,28 @@ export async function selectWatched(event: PushEvent, hats: Hat[], teams: boolea
   }
 }
 
+// Every server that granted points has the team totals dirty, and they are the same totals, read
+// from Redis. A lease for one push window lets one server send them; the others keep them dirty and
+// try the next window, so a later grant is still sent. Fails closed, like selectWatched.
+export async function claimTeamsPush(event: PushEvent) {
+  try {
+    const leased = await sysRedis.set(eventPointKeys(event.name).teamsPushLease, '1', {
+      NX: true,
+      PX: PUSH_WINDOW_MS,
+    });
+    return leased === 'OK';
+  } catch (error) {
+    logPush('error', event.name, {
+      message: 'team push lease failed',
+      error: (error as Error).message,
+    });
+    return false;
+  }
+}
+
 export type PushDeps = {
   selectWatched: typeof selectWatched;
+  claimTeamsPush: typeof claimTeamsPush;
   getHatPoints: typeof getHatPoints;
   getTeamPoints: typeof getTeamPoints;
   topicSend: typeof signalClient.topicSend;
@@ -146,11 +167,13 @@ export function createEventPointsPusher(deps: PushDeps) {
           taken.length || teams
             ? await deps.selectWatched(event, taken, teams)
             : { hats: [] as Hat[], teams: false };
+        const pushTeams = watchedTeams && (await deps.claimTeamsPush(event));
+        if (watchedTeams && !pushTeams) entryFor(event).teams = true;
         const [points, totals] = await Promise.all([
           watchedHats.length
             ? deps.getHatPoints(event, watchedHats, now)
             : ({} as Record<string, number>),
-          watchedTeams ? deps.getTeamPoints(event, now) : null,
+          pushTeams ? deps.getTeamPoints(event, now) : null,
         ]);
         if (totals)
           queue.push({
@@ -283,6 +306,7 @@ let pusher: ReturnType<typeof createEventPointsPusher> | undefined;
 function getPusher() {
   pusher ??= createEventPointsPusher({
     selectWatched,
+    claimTeamsPush,
     getHatPoints,
     getTeamPoints,
     topicSend: (args) => signalClient.topicSend(args),

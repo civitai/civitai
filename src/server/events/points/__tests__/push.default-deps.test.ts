@@ -47,6 +47,9 @@ const markAll = (lapse = Date.now() + 60_000) => {
 beforeEach(() => {
   topicSend.mockClear();
   watch.clear();
+  // The team push lease: free unless a test holds it.
+  redisMock.sysRedis.set.mockReset();
+  redisMock.sysRedis.set.mockResolvedValue('OK');
   zmScore().mockReset();
   zmScore().mockImplementation(async (key: string, members: string[]) =>
     key === eventPointKeys(event.name).watch ? members.map((m) => watch.get(m) ?? null) : []
@@ -104,6 +107,39 @@ describe('the pusher with its default deps', () => {
     expect(
       vi.mocked(logToAxiom).mock.calls.map(([e]) => (e as { message?: string }).message)
     ).toEqual(['interest set read failed']);
+  });
+
+  it('leases the team push for one window on sysRedis, and sends no teams without it', async () => {
+    totals();
+    markAll();
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+      eventPointKeys(event.name).teamsPushLease,
+      '1',
+      { NX: true, PX: 1_000 }
+    );
+
+    topicSend.mockClear();
+    redisMock.sysRedis.set.mockResolvedValue(null);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush(50);
+    expect(topicSend.mock.calls.map(([s]) => (s as { target: string }).target)).toEqual([
+      'event-points:hat',
+    ]);
+
+    // A lease error fails closed too.
+    topicSend.mockClear();
+    redisMock.sysRedis.set.mockRejectedValue(new Error('redis down'));
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush(50);
+    expect(topicSend.mock.calls.map(([s]) => (s as { target: string }).target)).toEqual([
+      'event-points:hat',
+    ]);
+    // The teams it could not send stay dirty; let them out so the next test starts clean.
+    redisMock.sysRedis.set.mockResolvedValue('OK');
+    await drainEventPointsPush();
+    topicSend.mockClear();
   });
 
   it('pushes only the watched topic', async () => {

@@ -30,6 +30,7 @@ function setup(overrides: Partial<PushDeps> = {}) {
   const sent: Sent[] = [];
   const deps: PushDeps = {
     selectWatched: vi.fn(async (_e, hats, teams) => ({ hats, teams })),
+    claimTeamsPush: vi.fn(async () => true),
     // Each hat's total is its owner id, so a payload shows which hat it carries.
     getHatPoints: vi.fn(async (_e, hats) =>
       Object.fromEntries(hats.map((h) => [hatField(h), h.ownerId]))
@@ -64,6 +65,45 @@ afterEach(() => {
 });
 
 describe('event points pusher', () => {
+  // One lease shared by every server, as sysRedis holds it: free once its window has passed.
+  function sharedLease() {
+    let heldUntil = 0;
+    return vi.fn(async () => {
+      if (Date.now() < heldUntil) return false;
+      heldUntil = Date.now() + PUSH_WINDOW_MS;
+      return true;
+    });
+  }
+
+  it('sends the team totals from one server per window, and the others try again', async () => {
+    const claimTeamsPush = sharedLease();
+    const a = setup({ claimTeamsPush });
+    const b = setup({ claimTeamsPush });
+    a.pusher.markDirty(event, HAT, NOW);
+    b.pusher.markDirty(event, hat(11), NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    const teamSends = () =>
+      [...a.sent, ...b.sent].filter((s) => s.target === 'event-points:teams').length;
+    expect(teamSends()).toBe(1);
+    // Hats are each server's own and always go.
+    expect(a.sent).toContainEqual(hatSend(HAT, 10));
+    expect(b.sent).toContainEqual(hatSend(hat(11), 11));
+
+    // The server that lost kept its teams dirty and sends them in the next window.
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(teamSends()).toBe(2);
+    await vi.advanceTimersByTimeAsync(5 * PUSH_WINDOW_MS);
+    expect(teamSends()).toBe(2);
+  });
+
+  it('reads no team totals for a window it did not lease', async () => {
+    const { pusher, sent, deps } = setup({ claimTeamsPush: vi.fn(async () => false) });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(deps.getTeamPoints).not.toHaveBeenCalled();
+    expect(sent).toEqual([hatSend(HAT, 10)]);
+  });
+
   it('pushes the dirty hat and its team once the window closes, with exact payloads', async () => {
     const { pusher, sent } = setup();
     pusher.markDirty(event, HAT, NOW);

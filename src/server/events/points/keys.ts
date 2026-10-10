@@ -16,6 +16,8 @@ export function eventPointKeys(event: string) {
     hatsLog: `${root}:hats-log` as const,
     // The topics someone has on screen (a hat topic id, or `teams`) -> when that lapses (ms).
     watch: `${root}:watch` as const,
+    // Held for one push window by the server sending the team totals, so only one server does.
+    teamsPushLease: `${root}:teams-push-lease` as const,
   } as const;
 }
 
