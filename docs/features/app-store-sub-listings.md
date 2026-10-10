@@ -142,9 +142,9 @@ banned or deleted, and the maturity gate on its own rating. Before the `link_tem
 applied, off-site parents show no children. A parent sorts before its
 children on equal sort keys. Cards render the live columns, the stricter of the two ratings, and
 the item image only when it is cleared for the viewer (otherwise the parent's cover); hydration
-re-checks the item's status and its author, so a change after the page was cached hides the card
-on the next render. A missing
-table falls back to parents only. The public `GET /api/v1/apps` catalog never includes them.
+re-checks the item's status, its author and, for an off-site parent, its link template, so a
+change after the page was cached hides the card on the next render. A missing table falls back to
+parents only. The public `GET /api/v1/apps` catalog never includes them.
 
 Opening an on-site sub-card records the parent's `App_Open` event with `subListingId` added. An
 off-site card opens its platform in a new tab and records nothing.

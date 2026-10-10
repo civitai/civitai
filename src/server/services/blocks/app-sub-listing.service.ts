@@ -886,36 +886,48 @@ export async function withdrawCatalogSubListing(args: {
 }): Promise<{ ok: true; withdrawn: boolean }> {
   assertExternalId(args.externalId);
   const where = { parentListingId: args.parentListingId, itemKey: args.externalId };
+  let charged = false;
   try {
-    const row = await dbWrite.appSubListing.findUnique({
-      where: { parentListingId_itemKey: where },
-      select: { status: true, approvedAt: true },
-    });
-    if (!row || row.status === 'withdrawn' || (row.status === 'hidden' && !row.approvedAt)) {
-      return { ok: true, withdrawn: false };
-    }
-    const rate = await checkSubListingSyncRateLimit(args.parentListingId);
-    if (!rate.allowed) {
-      throw new SubListingError(
-        429,
-        'rate_limited',
-        'Too many store item updates, retry later',
-        rate.retryAfterSeconds
-      );
-    }
-    if (row.status === 'hidden') {
-      // Moving `updated_at` also fails a restore that read the row before this change.
-      await dbWrite.appSubListing.updateMany({
-        where: { ...where, status: 'hidden' },
-        data: { approvedAt: null, updatedAt: new Date() },
+    // Each write is filtered on the status it was chosen from; one that a moderator action beat
+    // changes nothing, so the row is read and dispatched again.
+    for (let attempt = 1; ; attempt++) {
+      const row = await dbWrite.appSubListing.findUnique({
+        where: { parentListingId_itemKey: where },
+        select: { status: true, approvedAt: true },
       });
-      return { ok: true, withdrawn: false };
+      if (!row || row.status === 'withdrawn' || (row.status === 'hidden' && !row.approvedAt)) {
+        return { ok: true, withdrawn: false };
+      }
+      if (!charged) {
+        const rate = await checkSubListingSyncRateLimit(args.parentListingId);
+        if (!rate.allowed) {
+          throw new SubListingError(
+            429,
+            'rate_limited',
+            'Too many store item updates, retry later',
+            rate.retryAfterSeconds
+          );
+        }
+        charged = true;
+      }
+      if (row.status === 'hidden') {
+        // Moving `updated_at` also fails a restore that read the row before this change.
+        const { count } = await dbWrite.appSubListing.updateMany({
+          where: { ...where, status: 'hidden', approvedAt: { not: null } },
+          data: { approvedAt: null, updatedAt: new Date() },
+        });
+        if (count > 0) return { ok: true, withdrawn: false };
+      } else {
+        const count = await transitionActive({
+          where,
+          data: { status: 'withdrawn', ...CLEAR_PENDING },
+        });
+        if (count > 0) return { ok: true, withdrawn: true };
+      }
+      if (attempt >= MAX_WRITE_ATTEMPTS) {
+        throw new SubListingError(409, 'conflict', 'The item changed while saving, retry');
+      }
     }
-    const count = await transitionActive({
-      where,
-      data: { status: 'withdrawn', ...CLEAR_PENDING },
-    });
-    return { ok: true, withdrawn: count > 0 };
   } catch (err) {
     rethrowUnavailable(err);
   }
@@ -946,7 +958,7 @@ export async function listCatalogSubListings(args: {
   try {
     const rows = await dbRead.appSubListing.findMany({
       where: { parentListingId: args.parentListingId },
-      // Ids are ULIDs, so this is creation order, and the primary key serves it.
+      // Ids are ULIDs, so id order is creation order.
       orderBy: { id: 'asc' },
       take: CATALOG_LIST_PAGE_SIZE + 1,
       ...(args.cursor ? { cursor: { id: args.cursor }, skip: 1 } : {}),

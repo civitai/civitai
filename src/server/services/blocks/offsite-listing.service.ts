@@ -396,7 +396,7 @@ export async function submitExternalListing(opts: {
  * Load an OAuth client and assert it is eligible to back an external listing: it must
  * EXIST and NOT be an App-Block client (`isAppBlockOauthClientId` — those are managed
  * by the App Blocks flow, not hand-listed). By default it must also be OWNED by
- * `userId` (IDOR). Returns the client's consentable scopes (`consentableScopes`) as its
+ * `userId` (IDOR). Returns the client's consentable scopes as its
  * `allowedScopes` ceiling. An external listing
  * does NOT require the client to be `isVerified` (decision Q4). All failures are
  * friendly TRPCErrors (parity with `submitExternalListing`'s validation style).
@@ -470,7 +470,7 @@ function assertConnectScopesValid(opts: {
  * For an EDIT patch that touches the OAuth-connect scope disclosure (carries
  * `requestedScopes` and/or `scopeJustifications`), resolve the listing's connect
  * client and return an `effectivePatch` whose `requestedScopes` is DERIVED from the
- * client's CURRENT `allowedScopes` (server-authoritative — a form-supplied mask is
+ * client's CURRENT consentable scopes (server-authoritative — a form-supplied mask is
  * ignored) plus that ceiling. A non-scope patch is passed through unchanged.
  *
  * Re-asserts the caller still OWNS the client (mirrors `loadConnectClientForListing`):
@@ -483,7 +483,7 @@ function assertConnectScopesValid(opts: {
  * `isModerator`: when true, that owner re-assertion is intentionally BYPASSED — a mod
  * may edit a listing that links a client they don't own (mirroring the mod-only
  * client search on submit). The existence check + scope-subset / justification
- * validation (server-authoritative snapshot from the client's CURRENT allowedScopes)
+ * validation (server-authoritative snapshot from the client's CURRENT consentable scopes)
  * are UNCHANGED. A non-mod is still refused a foreign client.
  */
 export async function deriveScopePatch(opts: {
@@ -520,7 +520,7 @@ export async function deriveScopePatch(opts: {
   }
   const connectAllowedScopes = consentableScopes(client.allowedScopes);
   // SERVER-AUTHORITATIVE snapshot: the disclosed set is ALWAYS the client's CURRENT
-  // consentable scopes (`consentableScopes(allowedScopes)`); the form-supplied `patch.requestedScopes` is overwritten. A drift
+  // consentable scopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
   // from the stored snapshot is then a MATERIAL change (patchHasMaterialChange) → the
   // approved edit re-enters mod review via a shadow revision.
   const effectivePatch: UpdateListingPatch = { ...patch, requestedScopes: connectAllowedScopes };
@@ -2703,7 +2703,7 @@ export async function updateRevisionDraft(opts: {
   // Derive the requested-scope snapshot from the shadow's connect client (the shadow
   // carries the parent's connectClientId) when the patch touches scopes — same
   // server-authoritative rule as updateListing, so a scope justification staged on a
-  // shadow re-snapshots against the client's CURRENT allowedScopes.
+  // shadow re-snapshots against the client's CURRENT consentable scopes.
   const { effectivePatch, connectAllowedScopes } = await deriveScopePatch({
     connectClientId: shadow.connectClientId,
     patch,

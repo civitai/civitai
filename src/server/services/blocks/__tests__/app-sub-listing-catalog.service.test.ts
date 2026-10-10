@@ -438,7 +438,12 @@ describe('withdrawCatalogSubListing', () => {
     await expect(del()).resolves.toEqual({ ok: true, withdrawn: false });
     expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
     const { where, data } = write.appSubListing.updateMany.mock.calls[0][0];
-    expect(where).toEqual({ parentListingId: PARENT, itemKey: 'neon-drift', status: 'hidden' });
+    expect(where).toEqual({
+      parentListingId: PARENT,
+      itemKey: 'neon-drift',
+      status: 'hidden',
+      approvedAt: { not: null },
+    });
     expect(data).toMatchObject({ approvedAt: null });
     expect(data.updatedAt).toBeInstanceOf(Date);
     expect(data).not.toHaveProperty('status');
@@ -454,6 +459,39 @@ describe('withdrawCatalogSubListing', () => {
         moderatorId: 9,
       })
     ).resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('re-dispatches when a moderator hid the item between the read and the write', async () => {
+    write.appSubListing.findUnique
+      .mockResolvedValueOnce(itemRow())
+      .mockResolvedValueOnce(itemRow({ status: 'hidden' }));
+    write.appSubListing.updateMany
+      .mockResolvedValueOnce({ count: 0 }) // pending
+      .mockResolvedValueOnce({ count: 0 }) // approved: lost to the hide
+      .mockResolvedValueOnce({ count: 1 }); // the hidden branch
+    await expect(del()).resolves.toEqual({ ok: true, withdrawn: false });
+    expect(write.appSubListing.updateMany.mock.calls[2][0].data).toMatchObject({
+      approvedAt: null,
+    });
+    expect(mockSyncRate).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-dispatches when a moderator restored the item between the read and the write', async () => {
+    write.appSubListing.findUnique
+      .mockResolvedValueOnce(itemRow({ status: 'hidden' }))
+      .mockResolvedValueOnce(itemRow());
+    write.appSubListing.updateMany
+      .mockResolvedValueOnce({ count: 0 }) // the hidden branch: lost to the restore
+      .mockResolvedValueOnce({ count: 0 }) // pending
+      .mockResolvedValueOnce({ count: 1 }); // approved
+    await expect(del()).resolves.toEqual({ ok: true, withdrawn: true });
+  });
+
+  it('gives up with 409 conflict when the item keeps changing', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ status: 'hidden' }));
+    write.appSubListing.updateMany.mockResolvedValue({ count: 0 });
+    await expectError(del(), 409, 'conflict');
+    expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(3);
   });
 
   it('refuses a malformed id and is rate limited per parent', async () => {

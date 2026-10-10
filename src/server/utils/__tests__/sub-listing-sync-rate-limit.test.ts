@@ -52,10 +52,11 @@ describe('checkSubListingSyncRateLimit', () => {
     await expect(checkSubListingSyncRateLimit('apl_B')).resolves.toEqual({ allowed: true });
   });
 
-  it('refuses past 3000 in a day even under the hourly cap', async () => {
+  it('allows the 3000th write in a day and refuses the 3001st, under the hourly cap', async () => {
     await checkSubListingSyncRateLimit('apl_A');
     const daily = keys().find((k) => k.endsWith(':d')) as string;
-    counts.set(daily, 3000);
+    counts.set(daily, 2999);
+    await expect(checkSubListingSyncRateLimit('apl_A')).resolves.toEqual({ allowed: true });
     await expect(checkSubListingSyncRateLimit('apl_A')).resolves.toMatchObject({
       allowed: false,
     });
