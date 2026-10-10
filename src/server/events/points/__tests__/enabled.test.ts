@@ -12,11 +12,16 @@ import type * as FliptClient from '~/server/flipt/client';
 const ENGINE_FLAG = 'event-points-engine';
 const flag = vi.hoisted(() => ({ value: false as boolean | null }));
 const ensureInit = vi.hoisted(() => vi.fn(async () => undefined));
+const syncReads = vi.hoisted(() => ({ engine: 0 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   // Only the kill switch varies; every other flag (the event's own launch flag) reads on.
   isFlipt: async (key: string) => (key === ENGINE_FLAG ? flag.value === true : true),
-  isFliptSync: (key: string) => (key === ENGINE_FLAG ? flag.value : true),
+  isFliptSync: (key: string) => {
+    if (key !== ENGINE_FLAG) return true;
+    syncReads.engine++;
+    return flag.value;
+  },
   ensureFliptInitialized: ensureInit,
 }));
 const ch = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
@@ -37,7 +42,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
 
-const { isEventPointsEnabled, isEventPointsEnabledSync } = await import(
+const { isEventPointsEnabled, isEventPointsEnabledSync, SWITCH_READ_MS } = await import(
   '~/server/events/points/enabled'
 );
 const award = await import('~/server/events/points/award');
@@ -47,6 +52,11 @@ const { encodeHat, eventPointKeys } = await import('~/server/events/points/keys'
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const NOW = new Date('2026-11-05T12:00:00.000Z');
+// A flip waits out the switch's reading cache, as a real one waits for the next read.
+const setFlag = (value: boolean | null) => {
+  flag.value = value;
+  vi.setSystemTime(Date.now() + SWITCH_READ_MS);
+};
 const IMAGE = 100;
 const HAT = { ownerId: 10, cosmeticId: 7, claimKey: 'claimed', team: 'Blue' };
 const sys = redisMock.sysRedis;
@@ -94,14 +104,26 @@ beforeEach(() => {
 
 describe('the kill switch reading', () => {
   it('is on only when the flag reads true', async () => {
-    flag.value = true;
+    setFlag(true);
     expect([await isEventPointsEnabled(), isEventPointsEnabledSync()]).toEqual([true, true]);
-    flag.value = false;
+    setFlag(false);
     expect([await isEventPointsEnabled(), isEventPointsEnabledSync()]).toEqual([false, false]);
   });
 
+  // The client caches only evaluations that succeed: a missing flag would be re-evaluated, and
+  // throw inside the client, on every impression entity.
+  it('reads the flag at most once per window, even when it cannot be evaluated', () => {
+    setFlag(null);
+    const reads = syncReads.engine;
+    for (let i = 0; i < 1000; i++) isEventPointsEnabledSync();
+    expect(syncReads.engine - reads).toBe(1);
+    vi.setSystemTime(Date.now() + SWITCH_READ_MS);
+    isEventPointsEnabledSync();
+    expect(syncReads.engine - reads).toBe(2);
+  });
+
   it('reads off before Flipt has initialised, and starts it initialising', () => {
-    flag.value = null;
+    setFlag(null);
     expect(isEventPointsEnabledSync()).toBe(false);
     expect(ensureInit).toHaveBeenCalled();
   });
@@ -110,7 +132,7 @@ describe('the kill switch reading', () => {
 // Off runs first: the engine is created lazily, so nothing has loaded it before the off case.
 describe('the engine entry points', () => {
   it('off: award, removal and both hat checks touch neither sysRedis nor the ledger', async () => {
-    flag.value = false;
+    setFlag(false);
     await award.awardEventPoints([reaction]);
     await award.removeEventPoints([reaction]);
     expect(award.isHattedEntity('Image', IMAGE)).toBe(false);
@@ -120,7 +142,7 @@ describe('the engine entry points', () => {
   });
 
   it('on: the same calls load the hats and write the ledger', async () => {
-    flag.value = true;
+    setFlag(true);
     await award.awardEventPoints([reaction]);
     await award.removeEventPoints([reaction]);
     expect(await award.isHattedEntityOnceLoaded('Image', IMAGE)).toBe(true);
@@ -130,7 +152,7 @@ describe('the engine entry points', () => {
 
   // With the hats loaded, only the switch can make these answer false.
   it('off again: a loaded engine still answers un-hatted and writes nothing', async () => {
-    flag.value = false;
+    setFlag(false);
     expect(award.isHattedEntity('Image', IMAGE)).toBe(false);
     expect(await award.isHattedEntityOnceLoaded('Image', IMAGE)).toBe(false);
     await award.awardEventPoints([
@@ -154,21 +176,21 @@ describe('the impression filter', () => {
   ] as unknown as Parameters<typeof hattedImpressionEntities>[0];
 
   it('keeps nothing while off, and the hatted entity when on', () => {
-    flag.value = false;
+    setFlag(false);
     expect(hattedImpressionEntities(batch)).toEqual([]);
-    flag.value = true;
+    setFlag(true);
     expect(hattedImpressionEntities(batch)).toEqual([{ entityType: 'Image', entityId: IMAGE }]);
   });
 });
 
 describe('the hat sync', () => {
   it('does nothing while off, and syncs when on', async () => {
-    flag.value = false;
+    setFlag(false);
     expect(await syncEventHats(NOW)).toEqual([]);
     expect(redisCalls()).toBe(0);
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
 
-    flag.value = true;
+    setFlag(true);
     await syncEventHats(NOW);
     expect(sys.hSetNX).toHaveBeenCalled();
   });
