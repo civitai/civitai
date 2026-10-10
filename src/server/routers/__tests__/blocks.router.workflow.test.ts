@@ -956,6 +956,12 @@ describe('blocks.pollWorkflow', () => {
     expect(result.snapshot.workflowId).toBe('wf_1');
     expect(result.snapshot.status).toBe('succeeded');
     expect(result.snapshot.imageUrls).toEqual(['https://cdn/i.png']);
+    // A submitted workflow's snapshot is not itemised: no `cost.authorFee`.
+    expect(
+      Object.keys(result.snapshot.cost!),
+      'a poll snapshot must not carry cost.authorFee'
+    ).toEqual(['total']);
+    expect(result.snapshot.cost).toStrictEqual({ total: 10 });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'orch_token',
       path: { workflowId: 'wf_1' },
@@ -1083,13 +1089,19 @@ describe('blocks.cancelWorkflow', () => {
       tags: [BLOCK_APP_TAG],
       id: 'wf_1',
       status: 'canceled',
-      cost: { total: 0 },
+      cost: { total: 3 },
       steps: [],
     });
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     const result = await caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
     expect(result.snapshot.workflowId).toBe('wf_1');
     expect(result.snapshot.status).toBe('canceled');
+    // A submitted workflow's snapshot is not itemised: no `cost.authorFee`.
+    expect(
+      Object.keys(result.snapshot.cost!),
+      'a cancel snapshot must not carry cost.authorFee'
+    ).toEqual(['total']);
+    expect(result.snapshot.cost).toStrictEqual({ total: 3 });
     // Cancel hits the orchestrator with the VIEWER's token — that's the
     // ownership gate (the orchestrator 403/404s for non-owned workflows).
     expect(mockCancelWorkflow).toHaveBeenCalledWith({ workflowId: 'wf_1', token: 'orch_token' });
@@ -11539,6 +11551,99 @@ describe('blocks workflow — author-fee price disclosure', () => {
       expect(snapshot.cost).toEqual({ total: 117, authorFee: 113 });
       expect(snapshot.cost!.total - snapshot.cost!.authorFee!).toBe(4);
       expect(snapshot.error).toBe('insufficient buzz budget: step price 117 exceeds budget 100');
+    });
+
+    // ── A SUBMITTED workflow's snapshot is NOT itemised. ─────────────────────
+    // Invariant guards (the field never existed on these replies): the success
+    // reply's total is the orchestrator's realized generation cost and the fee
+    // is a separate charge, so an `authorFee` here would describe a number that
+    // is not inside `total`. The fee is LIVE in both submit tests and the
+    // reservation is asserted to carry it, so the absence is a claim about a
+    // priced run, not about a quote that did nothing.
+
+    it('🔴 txt2img SUBMIT success: `cost` is exactly `{ total }`, though a fee was reserved', async () => {
+      // whatIf 25 + fee 37 (5% of 740) = 62 reserved; realized cost 29.
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 500 }));
+      happyVersionLookup();
+      happyUser();
+      feeLive();
+      mockSubmitWorkflow
+        .mockResolvedValueOnce({
+          id: '',
+          status: 'succeeded',
+          cost: { total: 25, base: 740 },
+          steps: [],
+        })
+        .mockResolvedValueOnce({
+          id: 'wf_real',
+          status: 'unassigned',
+          cost: { total: 29 },
+          steps: [],
+        });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(snapshot.workflowId).toBe('wf_real');
+      expect(
+        mockReserveAppSpend.mock.calls.map((c) => c[1]),
+        'positive control: the fee was priced into the reservation'
+      ).toEqual([62]);
+      expect(
+        Object.keys(snapshot.cost!),
+        'a submit success snapshot must not carry cost.authorFee'
+      ).toEqual(['total']);
+      expect(snapshot.cost).toStrictEqual({ total: 29 });
+    });
+
+    it('🔴 registry-step SUBMIT success: `cost` is exactly `{ total }`, though a fee was reserved', async () => {
+      // max(declared floor 1, quoted 4) = 4, + 113 (5% of 2260) = 117 reserved.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 500 }));
+      happyUser();
+      feeLive();
+      stepQuoting({ total: 4, base: 2260 });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      expect(snapshot.workflowId).toBe('wf_step_1');
+      expect(
+        mockReserveAppSpend,
+        'positive control: the fee was priced into the reservation'
+      ).toHaveBeenCalledWith('apb_test', 117);
+      expect(
+        Object.keys(snapshot.cost!),
+        'a step submit success snapshot must not carry cost.authorFee'
+      ).toEqual(['total']);
+      expect(snapshot.cost).toStrictEqual({ total: 4 });
+    });
+
+    it('🔴 registry-step SUBMIT "no price quote" refusal: `cost` is exactly `{ total }` (no fee was quoted)', async () => {
+      // The whatIf returns no `cost`, so the submit refuses BEFORE the fee is
+      // quoted: its total is the declared generation price (1) and carries no
+      // fee. Not itemised — and NOT `authorFee: 0`, which would claim a fee
+      // lookup that never happened.
+      mockVerifyBlockToken.mockResolvedValue(stepClaims({ buzzBudget: 500 }));
+      happyUser();
+      feeLive();
+      mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) =>
+        opts?.query?.whatif === true
+          ? { id: 'wf_quote', status: 'unassigned', steps: [] }
+          : { id: 'wf_step_1', status: 'processing', steps: [], cost: { total: 4 } }
+      );
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const { snapshot } = await caller.submitWorkflow({ blockToken: 'tok', body: stepBody() });
+
+      expect(snapshot).toStrictEqual({
+        workflowId: 'failed',
+        status: 'failed',
+        cost: { total: 1 },
+        error:
+          'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+          'this step, so its cost could not be bounded before execution — please retry shortly',
+      });
+      expect(mockReserveAppSpend).not.toHaveBeenCalled();
     });
 
     it('a kind that prices NO fee leaves the field ABSENT (not `0`)', async () => {

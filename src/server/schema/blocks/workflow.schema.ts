@@ -814,14 +814,16 @@ export type BlockWorkflowSnapshot = {
      * Buzz — the exact amount added into `total` for this reply. Display only.
      *
      * A NUMBER wherever `total` was built from a fee quote: the `textToImage`
-     * and registered-`step` estimate replies, and the refusal replies those
-     * kinds' submit returns when it quotes a price without running. `0` means a
-     * fee was looked up and none applies.
+     * and registered-`step` estimate replies, and those kinds' submit refusals
+     * by a budget, spend cap or rate limit (they quote the refused price). `0`
+     * means a fee was looked up and none applies.
      *
      * ABSENT wherever `total` carries no fee quote — every snapshot of a
      * submitted workflow (its total is the realized generation cost; the fee is
-     * a separate charge) and the kinds that price no fee. Absent means "not
-     * itemised", which an app must not read as zero.
+     * a separate charge), the registered-`step` submit refusal for a missing
+     * orchestrator price quote (it refuses before any fee is looked up), and the
+     * kinds that price no fee. Absent means "not itemised", which an app must
+     * not read as zero.
      */
     authorFee?: number;
   };
