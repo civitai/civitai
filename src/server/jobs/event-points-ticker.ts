@@ -1,3 +1,4 @@
+import { sleep } from '~/server/utils/concurrency-helpers';
 import { loadEvents } from '~/server/events/load-events';
 import type { TickerEvent } from '~/server/events/points/ticker';
 import { runEventPointsTicker, tickEventPoints } from '~/server/events/points/ticker';
@@ -39,7 +40,7 @@ export const eventPointsTicker = createJob(
   async (ctx) => {
     return runEventPointsTicker(async () => getTickerEvents(await loadEvents(), new Date()), {
       now: Date.now,
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      sleep,
       isCanceled: () => ctx.status === 'canceled',
       tick: (event, deadline) => tickEventPoints(event, undefined, { deadline }),
     });

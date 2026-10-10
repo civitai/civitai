@@ -240,6 +240,21 @@ describe('standings', () => {
     expect(new Set(results).size).toBe(1);
   });
 
+  it('lets go of a finished rebuild, so a later miss builds again', async () => {
+    const solo = { ...event, name: 'release-check' };
+    await getEventStandings(solo);
+    dbMock.dbRead.$queryRaw.mockClear();
+    await getEventStandings(solo);
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
+  });
+
+  it('lets go of a failed rebuild, so the next miss retries instead of rethrowing it', async () => {
+    const solo = { ...event, name: 'reject-check' };
+    dbMock.dbRead.$queryRaw.mockRejectedValueOnce(new Error('replica down'));
+    await expect(getEventStandings(solo)).rejects.toThrow('replica down');
+    await expect(getEventStandings(solo)).resolves.toMatchObject({ teams: expect.any(Array) });
+  });
+
   it('serves standings and history from the cached snapshot without querying', async () => {
     const cached = {
       teams: [{ team: 'Green', score: 7, rank: 1 }],

@@ -143,6 +143,41 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
       'add:modelLike:5',
       'add:view:6',
     ]);
+    // The referee scores from these rows alone: each must carry the hat and the pairing key.
+    const hatColumns = { ownerId: OWNER, cosmeticId: 7, claimKey: 'claimed', team: 'Blue' };
+    expect(ch.rows).toEqual([
+      expect.objectContaining({
+        ...hatColumns,
+        entityType: 'Image',
+        entityId: IMAGE,
+        sourceId: 'ImageReaction:100:1',
+      }),
+      expect.objectContaining({
+        ...hatColumns,
+        entityType: 'Image',
+        entityId: IMAGE,
+        sourceId: 'CommentV2:Image:100:2',
+      }),
+      expect.objectContaining({
+        ...hatColumns,
+        entityType: 'Image',
+        entityId: IMAGE,
+        sourceId: 'Placement:sticker:100:3',
+      }),
+      expect.objectContaining({
+        ...hatColumns,
+        entityType: 'Image',
+        entityId: IMAGE,
+        sourceId: 'Placement:remix:100:4',
+      }),
+      expect.objectContaining({
+        ...hatColumns,
+        entityType: 'Model',
+        entityId: MODEL,
+        sourceId: 'ResourceReview:200:5',
+      }),
+      expect.objectContaining({ ...hatColumns, entityType: 'Image', entityId: IMAGE }),
+    ]);
     const expected =
       weights.reaction!.weight +
       weights.comment!.weight +
@@ -166,6 +201,10 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
     await hooks.onReactionRemoved({ entityType: 'image', entityId: IMAGE, userId: 1 });
     await hooks.onReactionCreated({ entityType: 'image', entityId: IMAGE, userId: 1 });
     expect(ledgerTypes().slice(-2)).toEqual(['remove:reaction:1', 'add:reaction:1']);
+    // The removal nets out the add only if both carry the same source id.
+    expect(new Set(ch.rows.filter((r) => r.actorId === 1).map((r) => r.sourceId))).toEqual(
+      new Set(['ImageReaction:100:1'])
+    );
   });
 
   it('ignores the hat owner acting on their own content', async () => {
