@@ -3,6 +3,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
+import type * as HatSync from '~/server/events/points/sync';
 import type * as PaddleService from '~/server/services/paddle.service';
 import type * as StripeService from '~/server/services/stripe.service';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
@@ -39,6 +40,12 @@ vi.mock('~/server/services/user-restriction.service', async (importOriginal) => 
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
   invalidateSession,
+}));
+
+const hatSync = vi.hoisted(() => ({ owner: vi.fn() }));
+vi.mock('~/server/events/points/sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof HatSync>()),
+  syncOwnerEventHats: hatSync.owner,
 }));
 
 import * as UserService from '~/server/services/user.service';
@@ -171,5 +178,15 @@ describe('deleteUser — the post-commit tail is unskippable', () => {
     await deleteUser();
 
     expect(cancelSubscription).toHaveBeenCalledWith({ userId: USER_ID, removeRecord: true });
+  });
+});
+
+describe('deleteUser -> live event hats', () => {
+  it('takes a deleted owner’s hats off after the delete commits', async () => {
+    await deleteUser();
+    expect(hatSync.owner.mock.calls).toEqual([[USER_ID]]);
+    expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]
+    );
   });
 });

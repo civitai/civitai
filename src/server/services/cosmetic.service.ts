@@ -30,6 +30,7 @@ import {
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
+import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
   getEventDecorationDefinition,
   isEventDecorationData,
@@ -305,6 +306,14 @@ export async function equipCosmeticToEntity({
     data: { equippedToId, equippedToType, equippedAt: now },
   });
 
+  if (eventDecoration)
+    void syncOwnerEventHats(userId, [
+      { entityType: equippedToType, entityId: equippedToId },
+      ...(userCosmetic.equippedToId && userCosmetic.equippedToType
+        ? [{ entityType: userCosmetic.equippedToType, entityId: userCosmetic.equippedToId }]
+        : []),
+    ]);
+
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
   if (equippedToType === 'Model')
@@ -342,6 +351,8 @@ export async function unequipCosmetic({
     where: { cosmeticId, equippedToId, equippedToType, userId, ...(claimKey && { claimKey }) },
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
+  if (updated.count)
+    void syncOwnerEventHats(userId, [{ entityType: equippedToType, entityId: equippedToId }]);
 
   await refreshEntityDecorationCaches(equippedToType, [equippedToId]);
 
@@ -526,7 +537,7 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
       equippedToId: { not: null },
     },
-    select: { equippedToId: true, equippedToType: true },
+    select: { userId: true, equippedToId: true, equippedToType: true },
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
@@ -536,6 +547,13 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
     },
   });
+  void syncOwnersEventHats(
+    equipped.flatMap(({ userId, equippedToId, equippedToType }) =>
+      equippedToId && equippedToType
+        ? [{ userId, entityType: equippedToType, entityId: equippedToId }]
+        : []
+    )
+  );
 
   await userCosmeticCache.refresh(uniqueUserIds);
   await refreshOwnedStickerCache(uniqueUserIds);

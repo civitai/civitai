@@ -459,6 +459,25 @@ describe('state refresh', () => {
     expect(engine.isHattedEntity('Image', 400)).toBe(true);
   });
 
+  it('follows the hat log every 2s, between the 30s reloads, with one read when nothing changed', async () => {
+    await engine.refresh();
+    const xRange = vi.spyOn(fake.redis, 'xRange');
+    now = new Date(now.getTime() + 2_000);
+    engine.isHattedEntity('Image', 100);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(xRange).toHaveBeenCalledTimes(1);
+
+    fake.setHat(EVENT.name, 'Image:400', encodeHat(HAT));
+    now = new Date(now.getTime() + 1_999);
+    engine.isHattedEntity('Image', 400);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(engine.isHattedEntity('Image', 400)).toBe(false);
+    now = new Date(now.getTime() + 1);
+    engine.isHattedEntity('Image', 400);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(engine.isHattedEntity('Image', 400)).toBe(true);
+  });
+
   it('reloads the whole map when the change log was trimmed past where it had read', async () => {
     await engine.refresh();
     fake.setHatUnlogged(EVENT.name, 'Image:401', encodeHat(HAT));

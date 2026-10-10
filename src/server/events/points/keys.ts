@@ -9,8 +9,8 @@ export function eventPointKeys(event: string) {
   return {
     // type -> points one action is worth
     weights: `${root}:weights` as const,
-    // `entityType:entityId` -> the hat it wears now (encodeHat). Written by the hat sync job; each app
-    // server loads it once, then follows hatsLog.
+    // `entityType:entityId` -> the hat it wears now (encodeHat). Written by the equip path and the
+    // hourly reconcile; each app server loads it once, then follows hatsLog.
     hats: `${root}:hats` as const,
     // Stream of changes to `hats` (fields k = entity key, v = encoded hat, '' when it came off).
     hatsLog: `${root}:hats-log` as const,

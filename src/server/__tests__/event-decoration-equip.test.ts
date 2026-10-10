@@ -7,6 +7,7 @@ import {
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
+import type * as HatSync from '~/server/events/points/sync';
 
 const db = dbMock.dbWrite;
 const entityCache = () => ({ refresh: vi.fn(), fetch: vi.fn().mockResolvedValue({}) });
@@ -36,6 +37,12 @@ vi.mock('~/server/search-index', () => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+const hatSync = vi.hoisted(() => ({ owner: vi.fn(), owners: vi.fn() }));
+vi.mock('~/server/events/points/sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof HatSync>()),
+  syncOwnerEventHats: hatSync.owner,
+  syncOwnersEventHats: hatSync.owners,
+}));
 vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
@@ -544,5 +551,71 @@ describe('hats are kept after the event ends', () => {
     ).toEqual({});
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
     await expect(equipHat()).rejects.toThrow(/isn't available right now/);
+  });
+});
+
+// The live hat map is written in the same request (sync.behavior.test.ts runs what these calls do).
+describe('a hat placement change writes through to the live hat map', () => {
+  it('on equip, for the content it went on', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(hatRow());
+    await equipHat();
+    expect(hatSync.owner.mock.calls).toEqual([[OWNER, [{ entityType: 'Image', entityId: IMAGE }]]]);
+  });
+
+  it('on a move, for the content it left too', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue({
+      ...hatRow(),
+      equippedToId: 777,
+      equippedToType: 'Image',
+    });
+    await equipHat();
+    expect(hatSync.owner.mock.calls).toEqual([
+      [
+        OWNER,
+        [
+          { entityType: 'Image', entityId: IMAGE },
+          { entityType: 'Image', entityId: 777 },
+        ],
+      ],
+    ]);
+  });
+
+  it('not when a frame is equipped: it cannot move a hat', async () => {
+    db.userCosmetic.findFirst.mockResolvedValue(frameRow());
+    await equipHat();
+    expect(hatSync.owner).not.toHaveBeenCalled();
+  });
+
+  it('on unequip, only when something came off', async () => {
+    const unequip = () =>
+      unequipCosmetic({
+        userId: OWNER,
+        cosmeticId: 1,
+        claimKey: 'tx-1',
+        equippedToId: IMAGE,
+        equippedToType: 'Image',
+      });
+    db.userCosmetic.updateMany.mockResolvedValueOnce({ count: 0 });
+    await unequip();
+    expect(hatSync.owner).not.toHaveBeenCalled();
+    await unequip();
+    expect(hatSync.owner.mock.calls).toEqual([[OWNER, [{ entityType: 'Image', entityId: IMAGE }]]]);
+  });
+
+  it('on revoke, for every holder and the content each wore it on', async () => {
+    db.userCosmetic.findMany.mockResolvedValue([
+      { userId: OWNER, equippedToId: IMAGE, equippedToType: 'Image' },
+      { userId: 8, equippedToId: 9, equippedToType: 'Model' },
+    ]);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 2 });
+    await revokeCosmeticsFromUsers({ userIds: [OWNER, 8], cosmeticIds: [1] });
+    expect(hatSync.owners.mock.calls).toEqual([
+      [
+        [
+          { userId: OWNER, entityType: 'Image', entityId: IMAGE },
+          { userId: 8, entityType: 'Model', entityId: 9 },
+        ],
+      ],
+    ]);
   });
 });
