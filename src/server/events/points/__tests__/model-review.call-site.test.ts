@@ -91,6 +91,7 @@ describe('ResourceReview event points', () => {
     db.resourceReview.count.mockResolvedValue(1);
     await createResourceReview({ ...input, userId: AUTHOR });
     await settle();
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
     expect(awardEventPoints).toHaveBeenCalledWith([modelLike]);
   });
 
@@ -98,6 +99,7 @@ describe('ResourceReview event points', () => {
     db.resourceReview.count.mockResolvedValue(1);
     await upsertResourceReview({ ...input, userId: AUTHOR });
     await settle();
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
     expect(awardEventPoints).toHaveBeenCalledWith([modelLike]);
   });
 
@@ -106,6 +108,7 @@ describe('ResourceReview event points', () => {
     // A moderator editing someone else's review: the points belong to the review's author.
     await updateResourceReview({ id: 7, recommended: false, userId: 1 });
     await settle();
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
     expect(db.resourceReview.update.mock.calls[0][0]).toMatchObject({
       select: expect.objectContaining({ userId: true }),
@@ -116,6 +119,7 @@ describe('ResourceReview event points', () => {
     db.resourceReview.count.mockResolvedValue(0);
     await deleteResourceReview({ id: 7 });
     await settle();
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
   });
 
@@ -126,6 +130,7 @@ describe('ResourceReview event points', () => {
     db.resourceReview.count.mockResolvedValue(0);
     await deleteResourceReviews({ ids: [7] });
     await settle();
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
     expect(db.resourceReview.findMany.mock.calls[0][0]).toMatchObject({
       select: expect.objectContaining({ userId: true }),
@@ -153,7 +158,9 @@ describe('ResourceReview edits through upsert', () => {
     await upsertResourceReview({ ...input, id: 7, userId: AUTHOR });
     await settle();
 
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
     expect(awardEventPoints).toHaveBeenCalledWith([modelLike]);
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ entityId: 11, sourceId: `ResourceReview:11:${AUTHOR}` }),
     ]);

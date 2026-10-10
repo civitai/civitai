@@ -483,6 +483,7 @@ describe('event points on a takedown', () => {
 
     await removePlacementByModerator({ placementId: 3101, actorId: 47 });
 
+    expect(onPlacementsTakenDown).toHaveBeenCalledTimes(1);
     expect(onPlacementsTakenDown).toHaveBeenCalledWith([3101]);
   });
 
@@ -502,6 +503,7 @@ describe('event points on a takedown', () => {
 
     await removePlacementsByUser({ placerId: PLACER, actorId: 99 });
 
+    expect(onPlacementsTakenDown).toHaveBeenCalledTimes(1);
     expect(onPlacementsTakenDown).toHaveBeenCalledWith([7, 8]);
   });
 
@@ -511,6 +513,7 @@ describe('event points on a takedown', () => {
 
     await removePlacementsByCosmetic({ cosmeticIds: [8801], actorId: 47 });
 
+    expect(onPlacementsTakenDown).toHaveBeenCalledTimes(1);
     expect(onPlacementsTakenDown).toHaveBeenCalledWith([4401, 4402]);
   });
 });

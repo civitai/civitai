@@ -50,6 +50,7 @@ describe('toggleReaction event points', () => {
     expect(await toggleReaction(like)).toBe('created');
     await settle();
 
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
     expect(awardEventPoints).toHaveBeenCalledWith([
       {
         type: 'reaction',
@@ -70,6 +71,7 @@ describe('toggleReaction event points', () => {
     expect(await toggleReaction(like)).toBe('removed');
     await settle();
 
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ type: 'reaction', sourceId: `ImageReaction:7:${USER}` }),
     ]);
