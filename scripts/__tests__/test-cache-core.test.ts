@@ -32,7 +32,8 @@ const {
 } = Core as unknown as {
   closureOf: (
     g: { getModuleById: (id: string) => Node | undefined },
-    id: string
+    id: string,
+    expand?: (id: string) => boolean
   ) => Set<string> | null;
   toRel: (id: string, root: string) => string | null;
   isCoveredElsewhere: (rel: string | null) => boolean;
@@ -72,6 +73,16 @@ describe('the dependency set a key is built from', () => {
   // null, not an empty set: an empty dependency set is a key no change can ever invalidate.
   it('reports a file missing from the graph as unknown rather than dependency-free', () => {
     expect(closureOf(graphOf({}), 'missing.test.ts')).toBeNull();
+  });
+
+  // A module the walk may not expand is still a dependency; only what it imports is left out.
+  it('keeps a module it may not expand, and stops there', () => {
+    const graph = graphOf({ 't.test.ts': ['a.ts', 'm.ts'], 'a.ts': ['b.ts'], 'm.ts': ['c.ts'] });
+    expect([...closureOf(graph, 't.test.ts', (id) => id !== 'm.ts')!].sort()).toEqual([
+      'a.ts',
+      'b.ts',
+      'm.ts',
+    ]);
   });
 });
 

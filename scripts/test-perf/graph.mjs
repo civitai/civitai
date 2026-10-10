@@ -8,6 +8,9 @@
  *
  * Output: .test-perf/inventory.json, .test-perf/closures.json
  *
+ * src/server/services/__tests__/import-graph.harness.ts resolves specifiers more completely (tsconfig
+ * paths, package `exports` maps); a resolution fix there may belong here too.
+ *
  * 🔴 `graphModules` is what a worker really loads: lazy `import()` edges are NOT followed and a
  * `vi.mock` factory without `importOriginal` truncates the subtree behind it. A graph that follows
  * both overstates a page-render test by ~75x — four `src/tests/pages/apps/**` files measured 13-26
