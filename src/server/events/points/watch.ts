@@ -29,6 +29,8 @@ const HAT_TOPIC_ID: Record<EventPointSeason, RegExp> = {
   live: /^[0-9a-f]{16}$/,
   preview: /^[0-9a-f]{32}$/,
 };
+// What seasonOwnerTopicId produces, in either season.
+const OWNER_TOPIC_ID = /^o[0-9a-f]{31}$/;
 
 export type WatchRedis = Pick<
   typeof sysRedis,
@@ -50,6 +52,8 @@ export type MarkWatchDeps = {
   // The scored event by name, or undefined when there is none.
   getEvent: (name: string) => Promise<WatchEvent | undefined>;
   isKnownHatTopic: (event: string, topicId: string, season: EventPointSeason) => Promise<boolean>;
+  // Whether an owner topic id names someone listed on the event's roster (roster.ts) now.
+  isListedOwnerTopic?: (event: string, topicId: string) => Promise<boolean>;
   // Whether this caller may see the event's preview (event-access.ts). Asked only during it.
   canWatchPreview: (event: string) => Promise<boolean>;
   // Called when the cap refuses topics, with how many.
@@ -79,6 +83,11 @@ export async function markWatched(
   for (const topic of candidates) {
     if (topic === teams) valid.push(topic);
     else if (HAT_TOPIC_ID[season].test(topic) && (await deps.isKnownHatTopic(name, topic, season)))
+      valid.push(topic);
+    else if (
+      OWNER_TOPIC_ID.test(topic) &&
+      (await deps.isListedOwnerTopic?.(name, topic).catch(() => false))
+    )
       valid.push(topic);
   }
   if (!valid.length) return 0;
@@ -119,7 +128,10 @@ export async function readWatched(
 }
 
 export const defaultMarkWatchDeps = (
-  deps: Pick<MarkWatchDeps, 'getEvent' | 'isKnownHatTopic' | 'canWatchPreview'>
+  deps: Pick<
+    MarkWatchDeps,
+    'getEvent' | 'isKnownHatTopic' | 'isListedOwnerTopic' | 'canWatchPreview'
+  >
 ): MarkWatchDeps => ({
   redis: sysRedis,
   now: Date.now,

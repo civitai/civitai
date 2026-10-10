@@ -274,3 +274,29 @@ describe('readWatched', () => {
     expect([...watched]).toEqual([hatId(1), TEAMS_WATCH]);
   });
 });
+
+describe('markWatched, roster owner topics', () => {
+  const owner = (n: number) => `o${n.toString(16).padStart(31, '0')}`;
+  const LISTED = new Set([owner(1)]);
+  const withRoster = () => deps({ isListedOwnerTopic: async (_e, id) => LISTED.has(id) });
+
+  it('marks an owner topic only while that owner is listed on the roster', async () => {
+    expect(await mark([owner(1), owner(2)], withRoster())).toBe(1);
+    expect([...fake.set(KEY).keys()]).toEqual([owner(1)]);
+  });
+
+  it('refuses owner topics when nothing can say who is listed, or the lookup fails', async () => {
+    expect(await mark([owner(1)])).toBe(0);
+    expect(
+      await mark(
+        [owner(1)],
+        deps({
+          isListedOwnerTopic: async () => {
+            throw new Error('redis down');
+          },
+        })
+      )
+    ).toBe(0);
+    expect(fake.writes).toEqual([]);
+  });
+});

@@ -1,4 +1,5 @@
 import { eventEngine } from '~/server/events';
+import { reconcileEventRosters } from '~/server/events/points/roster-sync';
 import { syncEventHats } from '~/server/events/points/sync';
 import { createJob } from '~/server/jobs/job';
 
@@ -19,6 +20,13 @@ export const eventPointsHatReconcile = createJob(
     await syncEventHats();
   }
 );
+
+// The safety net under the roster write-through (events/points/roster-sync.ts): re-derives every
+// listed member, so points the referee re-based on the hour, a missed hat and a missed ban come
+// right. A quarter past, after the referee's hourly run has settled.
+export const eventRosterReconcile = createJob('event-roster-reconcile', '15 * * * *', async () => {
+  await reconcileEventRosters();
+});
 
 export const eventEngineLeaderboardUpdate = createJob(
   'event-engine-leaderboard-update',

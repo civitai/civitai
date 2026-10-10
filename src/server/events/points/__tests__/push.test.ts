@@ -11,7 +11,8 @@ const {
   PUSH_WINDOW_MS,
   SEND_CONCURRENCY,
 } = await import('~/server/events/points/push');
-const { hatField, hatTopicId, previewTopicId } = await import('~/server/events/points/keys');
+const keysModule = await import('~/server/events/points/keys');
+const { hatField, hatTopicId, previewTopicId } = keysModule;
 
 const NOW = new Date('2026-11-05T12:00:00.000Z');
 const event = {
@@ -458,7 +459,7 @@ describe('event points pusher', () => {
     const { pusher, deps } = setup();
     pusher.markDirty({ ...event, previewFrom: new Date('2026-10-20T00:00:00.000Z') }, HAT, NOW);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
-    expect(deps.selectWatched).toHaveBeenCalledWith(expect.anything(), [HAT], true, 'live');
+    expect(deps.selectWatched).toHaveBeenCalledWith(expect.anything(), [HAT], true, 'live', [10]);
   });
 
   it('puts no claim key in any topic or payload', async () => {
@@ -516,7 +517,7 @@ describe('event points pusher', () => {
           data: { event: 'birthday2026', topicId: keyed, points: 10, counts: countsOf(HAT) },
         },
       ]);
-      expect(deps.selectWatched).toHaveBeenCalledWith(previewEvent, [HAT], true, 'preview');
+      expect(deps.selectWatched).toHaveBeenCalledWith(previewEvent, [HAT], true, 'preview', [10]);
       // The totals are read at the flush's time, which is what makes them the preview season's.
       expect(vi.mocked(deps.getHatTotals).mock.calls[0][2]).toEqual(
         new Date(PREVIEW_NOW.getTime() + PUSH_WINDOW_MS)
@@ -664,3 +665,53 @@ describe('event points pusher', () => {
 function range(from: number, to: number) {
   return Array.from({ length: to - from + 1 }, (_, i) => from + i);
 }
+
+describe('roster card pushes', () => {
+  const { seasonOwnerTopicId } = keysModule;
+  const ownerSend = (ownerId: number, points: number) => {
+    const topicId = seasonOwnerTopicId('birthday2026', ownerId, 'live');
+    return {
+      topic: `event-points:birthday2026:owner:${topicId}`,
+      target: 'event-points:owner',
+      data: { event: 'birthday2026', topicId, points },
+    };
+  };
+  // Owner totals are 1000 + owner id, so a payload shows whose it is.
+  const ownerDeps = (watchedOwners: (owners: number[]) => number[]): Partial<PushDeps> => ({
+    selectWatched: vi.fn(async (_e, hats, teams, _s, owners = []) => ({
+      hats,
+      teams,
+      owners: watchedOwners(owners),
+    })),
+    getOwnerPoints: vi.fn(async (_e, ids: number[]) =>
+      Object.fromEntries(ids.map((id) => [String(id), 1000 + id]))
+    ),
+  });
+
+  it("pushes a watched, listed owner's total when their hat earns", async () => {
+    const { pusher, sent, deps } = setup(ownerDeps((owners) => owners));
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(sent).toContainEqual(ownerSend(10, 1010));
+    expect(deps.getOwnerPoints).toHaveBeenCalledWith(event, [10], expect.any(Date));
+  });
+
+  it('pushes no owner the interest set did not return (unwatched, or no longer listed)', async () => {
+    const { pusher, sent, deps } = setup(ownerDeps(() => []));
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(sent.filter((s) => s.target === 'event-points:owner')).toEqual([]);
+    expect(deps.getOwnerPoints).not.toHaveBeenCalled();
+  });
+
+  it('keeps a flush within MAX_SENDS_PER_FLUSH, hats and teams first', async () => {
+    const topicSend = vi.fn(async () => undefined);
+    const { pusher } = setup({ ...ownerDeps((owners) => owners), topicSend });
+    for (let i = 0; i < MAX_SENDS_PER_FLUSH; i++) pusher.markDirty(event, hat(1000 + i), NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    const targets = topicSend.mock.calls.map(([s]) => (s as unknown as Sent).target);
+    expect(targets).toHaveLength(MAX_SENDS_PER_FLUSH);
+    expect(targets.filter((t) => t === 'event-points:owner')).toEqual([]);
+    expect(targets.filter((t) => t === 'event-points:teams')).toHaveLength(1);
+  });
+});

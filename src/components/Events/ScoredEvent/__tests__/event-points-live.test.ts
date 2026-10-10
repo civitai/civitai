@@ -2,19 +2,24 @@ import { describe, expect, it } from 'vitest';
 import * as live from '~/components/Events/ScoredEvent/event-points-live';
 import {
   applyHatPoints,
+  applyRosterPoints,
   applyTeamPoints,
   hatTopic,
+  ownerTopic,
   readHatPush,
+  readOwnerPush,
   readTeamsPush,
   teamsTopic,
 } from '~/components/Events/ScoredEvent/event-points-live';
 import { SignalMessages } from '~/server/common/enums';
 import {
   eventHatTopic,
+  eventOwnerTopic,
   eventTeamsTopic,
   hatField,
   hatTopicId,
   previewTopicId,
+  seasonOwnerTopicId,
   seasonTeamsTopic,
   seasonTeamsTopicId,
 } from '~/server/events/points/keys';
@@ -221,5 +226,63 @@ describe('applyTeamPoints', () => {
     expect(applyTeamPoints(standings, { Yellow: 900 })).toBe(standings);
     expect(applyTeamPoints(standings, { Green: 5 })).toBe(standings);
     expect(applyTeamPoints(undefined, { Yellow: 1 })).toBeUndefined();
+  });
+});
+
+describe('roster card pushes', () => {
+  it("match the server's owner topic", () => {
+    const id = seasonOwnerTopicId('birthday2026', 9, 'live');
+    expect(ownerTopic('birthday2026', id)).toBe(eventOwnerTopic('birthday2026', id));
+    expect(ownerTopic('birthday2026', 'x')).toBe('event-points:birthday2026:owner:x');
+  });
+
+  it('round-trip from the pusher to the card it names, and only that card', async () => {
+    const hat = { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' };
+    const sent: { target: string; data: Record<string, unknown> }[] = [];
+    const pusher = createEventPointsPusher({
+      selectWatched: async (_e, hats, teams, _s, owners = []) => ({ hats, teams, owners }),
+      claimTeamsPush: async () => true,
+      getHatTotals: async () => ({ points: { [hatField(hat)]: 64 }, counts: null }),
+      getTeamPoints: async () => ({ Blue: 900 }),
+      getOwnerPoints: async () => ({ '9': 321 }),
+      topicSend: async (args) => void sent.push(args),
+      isEnabled: () => true,
+    });
+    const event = {
+      name: 'birthday2026',
+      startDate: new Date('2026-01-01'),
+      endDate: new Date('2999-01-01'),
+      teams: ['Blue'],
+    };
+    pusher.markDirty(event, hat, new Date());
+    await pusher.flush();
+    const data = sent.find((s) => s.target === SignalMessages.EventPointsOwner)!.data;
+    const push = readOwnerPush(data, 'birthday2026');
+    const topicId = seasonOwnerTopicId('birthday2026', 9, 'live');
+    expect(push).toEqual({ topicId, points: 321 });
+
+    const pages = {
+      pages: [
+        {
+          items: [
+            { topicId, points: 1 },
+            { topicId: 'other', points: 7 },
+          ],
+        },
+      ],
+    };
+    expect(applyRosterPoints(pages, push!.topicId, push!.points)).toEqual({
+      pages: [
+        {
+          items: [
+            { topicId, points: 321 },
+            { topicId: 'other', points: 7 },
+          ],
+        },
+      ],
+    });
+    // Nothing to change: the same object, so React Query does not re-render.
+    expect(applyRosterPoints(pages, 'other', 7)).toBe(pages);
+    expect(readOwnerPush({ ...data, event: 'other' }, 'birthday2026')).toBeNull();
   });
 });

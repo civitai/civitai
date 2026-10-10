@@ -2777,6 +2777,7 @@ export const REDIS_SUB_KEYS = {
     MANUAL_ASSIGNMENTS: 'manual-assignments', //sys
     DISCORD_ROLES: 'discord-roles', // sys
     POINTS: 'points', // sys
+    ROSTER: 'roster', // sys
     WINNER: 'winner', // sys
   },
   QUEUES: {
