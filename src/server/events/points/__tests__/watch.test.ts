@@ -100,6 +100,17 @@ describe('markWatched', () => {
     expect(fake.writes).toEqual([hatId(2)]);
   });
 
+  it('refuses a malformed id on its shape, without asking the hat map', async () => {
+    const isKnownHatTopic = vi.fn(async () => true);
+    const malformed = ['', 'teams2', '000000000000000A', `${hatId(1)}0`, 'x'.repeat(16)];
+    expect(await mark(malformed, deps({ isKnownHatTopic }))).toBe(0);
+    expect(isKnownHatTopic).not.toHaveBeenCalled();
+    expect(fake.writes).toEqual([]);
+    // The control: a well-formed id is asked about, and marked.
+    expect(await mark([hatId(7)], deps({ isKnownHatTopic }))).toBe(1);
+    expect(isKnownHatTopic).toHaveBeenCalledWith(EVENT.name, hatId(7));
+  });
+
   it('writes nothing with the engine switched off', async () => {
     enabled = false;
     expect(await mark([hatId(1), TEAMS_WATCH])).toBe(0);
