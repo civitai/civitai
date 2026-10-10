@@ -62,6 +62,23 @@ describe('the order earned badges show in', () => {
     ]);
   });
 
+  // Metal, not the raw number: 500 models is that ladder's diamond, 1,000 downloads only bronze.
+  it('ranks by rung on each ladder, not by the size of the threshold', () => {
+    expect(
+      keys([
+        badge('reach:downloads-1000'),
+        badge('earn:shop-sales-100000'),
+        badge('create:models-500'),
+        badge('reach:followers-1000'),
+      ])
+    ).toEqual([
+      'create:models-500',
+      'reach:followers-1000',
+      'reach:downloads-1000',
+      'earn:shop-sales-100000',
+    ]);
+  });
+
   it('leaves the list it was given alone', () => {
     const given = [badge('create:models-1'), badge('create:models-500')];
     sortEarnedBadges(given);

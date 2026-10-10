@@ -258,7 +258,7 @@ describe('achievements tab', () => {
   it('orders each track dated first, then launch grants by metal', () => {
     const achievement = (key: string, name: string, achievedAt: Date | null) => ({
       key,
-      track: 'create',
+      track: key.split(':')[0],
       name,
       description: null,
       badgeUrl: null,
@@ -270,20 +270,26 @@ describe('achievements tab', () => {
           tiers: [],
           achievements: [
             achievement('create:models-1', 'First Model', null),
-            achievement('create:models-500', '500 Models', null),
             achievement('create:articles-1', 'First Article', EARNED),
+            achievement('reach:followers-100', '100 Followers', null),
+            achievement('create:models-500', '500 Models', null),
+            achievement('reach:followers-10000', '10k Followers', null),
           ],
         },
         userId: OWNER,
       })
     );
-    const names = [...grids(el)[0].children].map(
-      (card) =>
-        ['First Model', '500 Models', 'First Article'].find((name) =>
-          [...card.querySelectorAll('*')].some((node) => node.textContent === name)
-        ) ?? ''
-    );
-    expect(names).toEqual(['First Article', '500 Models', 'First Model']);
+    const names = (grid: HTMLElement) =>
+      [...grid.children].map(
+        (card) =>
+          ['First Model', '500 Models', 'First Article', '100 Followers', '10k Followers'].find(
+            (name) => [...card.querySelectorAll('*')].some((node) => node.textContent === name)
+          ) ?? ''
+      );
+    expect(grids(el).map(names)).toEqual([
+      ['First Article', '500 Models', 'First Model'],
+      ['10k Followers', '100 Followers'],
+    ]);
   });
 
   it('points the owner, and only the owner, at their journey', () => {
