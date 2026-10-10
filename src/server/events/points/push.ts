@@ -177,19 +177,22 @@ export function createEventPointsPusher(deps: PushDeps) {
           taken.length || teams
             ? await deps.selectWatched(event, taken, teams)
             : { hats: [] as Hat[], teams: false };
+        // Before the claim: the second-loss test below compares this to the end of the first loss.
+        const claimFrom = Date.now();
         const pushTeams = watchedTeams && (await deps.claimTeamsPush(event));
         if (watchedTeams && !pushTeams) {
           // Lost to another server. Try once more in a later window: by then this lease has lapsed,
           // so a second loss means its holder claimed after this server's last mark, and it reads
           // and sends the totals this server would. Without that, every server that granted in a
           // burst sends the same totals in turn, one a second.
-          const at = Date.now();
-          const secondLoss = teamsLostAt !== undefined && at - teamsLostAt >= PUSH_WINDOW_MS;
+          // Stamped after the first loss returned, compared to before this claim was sent: a full
+          // window between them however slow either round trip was.
+          const secondLoss = teamsLostAt !== undefined && claimFrom - teamsLostAt >= PUSH_WINDOW_MS;
           // A mark during this flush is newer than both leases, so it keeps its own try.
           const entryNow = secondLoss ? undefined : entryFor(event);
           if (entryNow && !entryNow.teams) {
             entryNow.teams = true;
-            entryNow.teamsLostAt = teamsLostAt ?? at;
+            entryNow.teamsLostAt = teamsLostAt ?? Date.now();
           }
         }
         const [points, totals] = await Promise.all([

@@ -121,6 +121,20 @@ describe('event points pusher', () => {
     expect(sent.filter((s) => s.target === 'event-points:teams')).toEqual([]);
   });
 
+  // A slow claim must not stretch one window into two: the second claim here is sent before the
+  // first lease could have lapsed.
+  it('does not count a loss as the second because the claims were slow', async () => {
+    const claimTeamsPush = vi.fn(async () => {
+      vi.setSystemTime(Date.now() + 1_500);
+      return false;
+    });
+    const { pusher } = setup({ claimTeamsPush });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await pusher.flush();
+    expect(pusher.dirtyCount()).toBe(1);
+  });
+
   it('a new grant after a loss gets its own tries', async () => {
     const claimTeamsPush = vi.fn(async () => false);
     const { pusher } = setup({ claimTeamsPush });
