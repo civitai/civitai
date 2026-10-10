@@ -29,8 +29,8 @@ const future = () => new Date(Date.now() + HOUR);
 const SCOPE = 0b1011;
 
 // An OAuth access/refresh pair minted together (same client, same scope), a personal key, a system
-// key and an expired access token. Ids, keys and owners are pairwise distinct, so a result names
-// its row.
+// key, an expired access token and a row of a type the code does not list. Ids, keys and owners are
+// pairwise distinct, so a result names its row.
 const ROWS: Row[] = [
   {
     id: 11,
@@ -85,6 +85,17 @@ const ROWS: Row[] = [
     buzzLimit: null,
     clientId: null,
     type: 'System',
+    expiresAt: future(),
+  },
+  {
+    id: 16,
+    key: 'unlisted-type',
+    userId: 106,
+    tokenScope: SCOPE,
+    lastUsedAt: null,
+    buzzLimit: null,
+    clientId: null,
+    type: 'Unlisted',
     expiresAt: future(),
   },
 ];
@@ -171,6 +182,10 @@ describe('getSessionFromBearerToken credential type', () => {
     const session = await getSessionFromBearerToken('system-key');
     expect(session?.user?.id).toBe(105);
     expect(session?.apiKeyType).toBe('System');
+  });
+
+  it('does not accept a key type that is not allowlisted', async () => {
+    expect(await getSessionFromBearerToken('unlisted-type')).toBeNull();
   });
 
   it('does not accept an expired access token', async () => {
