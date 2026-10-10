@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'fs';
 import { tmpdir } from 'os';
@@ -29,7 +30,17 @@ const {
   shadowCandidates,
   changedSince,
   tripped,
+  writeRecord,
+  recordsFor,
+  markHit,
+  RECORDS_PER_TEST,
+  identity,
 } = Core as unknown as {
+  writeRecord: (dir: string, project: string, testRel: string, record: { key: string }) => void;
+  recordsFor: (dir: string, project: string, testRel: string) => { key: string }[];
+  markHit: (dir: string, project: string, testRel: string, key: string) => void;
+  RECORDS_PER_TEST: number;
+  identity: (project: string, testRel: string) => string;
   closureOf: (
     g: { getModuleById: (id: string) => Node | undefined },
     id: string,
@@ -563,5 +574,53 @@ describe('what a key must see besides content', () => {
     expect(tripped(dir)).toBeNull();
     writeFileSync(join(dir, 'TRIPPED.json'), '{"at": "2026');
     expect(tripped(dir)).not.toBeNull();
+  });
+});
+
+describe('which records survive when a test has more than fit', () => {
+  // A full slot set of records, written one second apart: rec-0 oldest, rec-(N-1) newest.
+  const fill = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'test-cache-evict-'));
+    const keys = Array.from({ length: RECORDS_PER_TEST }, (_, i) => `rec-${i}`);
+    const t0 = Date.now() / 1000 - 10 * RECORDS_PER_TEST;
+    keys.forEach((key, i) => {
+      writeRecord(dir, 'unit', 'a.test.ts', { key });
+      const file = join(dir, 'rec', identity('unit', 'a.test.ts'), `${key}.json`);
+      utimesSync(file, t0 + i, t0 + i);
+    });
+    const survivors = () => new Set(recordsFor(dir, 'unit', 'a.test.ts').map((r) => r.key));
+    return { dir, survivors };
+  };
+
+  it('evicts the least recently written record when nothing was hit', () => {
+    const { dir, survivors } = fill();
+    writeRecord(dir, 'unit', 'a.test.ts', { key: 'new' });
+    const left = survivors();
+    expect(left.size).toBe(RECORDS_PER_TEST);
+    expect(left.has('new')).toBe(true);
+    expect(left.has('rec-0')).toBe(false);
+    expect(left.has('rec-1')).toBe(true);
+  });
+
+  it('keeps an old record that was just hit, and evicts the oldest one nobody hit', () => {
+    const { dir, survivors } = fill();
+    markHit(dir, 'unit', 'a.test.ts', 'rec-0');
+    writeRecord(dir, 'unit', 'a.test.ts', { key: 'new' });
+    const left = survivors();
+    expect(left.size).toBe(RECORDS_PER_TEST);
+    expect(left.has('rec-0')).toBe(true);
+    expect(left.has('rec-1')).toBe(false);
+    expect(left.has('new')).toBe(true);
+  });
+
+  it('does nothing when the hit record was evicted in the meantime', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'test-cache-evict-'));
+    expect(() => markHit(dir, 'unit', 'a.test.ts', 'gone')).not.toThrow();
+    expect(recordsFor(dir, 'unit', 'a.test.ts')).toEqual([]);
+  });
+
+  // Eight slots turned over in about an hour for busy tests; fewer than this throws hits away.
+  it('keeps at least 32 records per test', () => {
+    expect(RECORDS_PER_TEST).toBeGreaterThanOrEqual(32);
   });
 });

@@ -76,7 +76,7 @@ export default class TestCacheSequencer extends BaseSequencer {
           testRel !== null &&
           core
             .recordsFor(dir, project, testRel)
-            .some(
+            .find(
               (rec) =>
                 core.keyFor({ salt, project, testRel, entries: rec.entries, fingerprint }) ===
                 rec.key
@@ -86,6 +86,7 @@ export default class TestCacheSequencer extends BaseSequencer {
           keep.push(spec);
           continue;
         }
+        core.markHit(dir, project, testRel, hit.key);
         state.hits.add(runKey(spec));
         if (state.mode === 'shadow' || state.tripped || Math.random() < SAMPLE_RATE) {
           if (state.mode === 'on' && !state.tripped) state.sampled.add(runKey(spec));
