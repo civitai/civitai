@@ -7,6 +7,7 @@ vi.mock('~/server/utils/created-image-media-probe', () => ({
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import { imageSchema } from '~/server/schema/image.schema';
+import { profilePictureSchema } from '~/server/schema/user.schema';
 import {
   createEntityImages,
   createImage,
@@ -62,6 +63,7 @@ describe('block provenance metadata keys', () => {
     ['blockPublishedAppId', true],
     ['blockUploadedAppId', true],
     ['blockForkedAppId', true],
+    ['blockAppId', false],
     ['blockedAppId', false],
     ['publishedAppId', false],
     ['blockPublishedAppIds', false],
@@ -185,6 +187,11 @@ describe('input schemas', () => {
       blockProvenance: { key: 'blockPublishedAppId', appId: 'client-app-1' },
     });
     expect(parsed).not.toHaveProperty('blockProvenance');
+  });
+
+  it('profilePictureSchema drops provenance keys and keeps the rest', () => {
+    const parsed = profilePictureSchema.parse({ url: KEY, metadata: { ...CLIENT_METADATA } });
+    expect(parsed.metadata).toEqual(UNRELATED);
   });
 
   it('addPostImageSchema drops provenance keys and keeps the rest', () => {

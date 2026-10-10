@@ -6510,6 +6510,9 @@ export async function createImage({
    */
   blockProvenance?: { key: BlockProvenanceMetadataKey; appId: string } | null;
 }) {
+  if (blockProvenance && !blockProvenance.appId) {
+    throw new Error('createImage: blockProvenance requires an appId');
+  }
   /**
    * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
    *
@@ -6675,9 +6678,6 @@ export async function createImage({
     image.meta as Record<string, unknown> | null | undefined,
     verifiedSourceImageIds
   );
-  if (blockProvenance && !blockProvenance.appId) {
-    throw new Error('createImage: blockProvenance requires an appId');
-  }
   const metadata = stripBlockProvenanceMetadata(image.metadata);
   const result = await dbWrite.image.create({
     data: {
@@ -6780,7 +6780,6 @@ export const createEntityImages = async ({
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...image,
-      metadata: stripBlockProvenanceMetadata(image.metadata),
       // Same strip as `createImage`: nothing that reaches an Image row keeps a
       // provenance claim it didn't prove. These rows have no post, so they can't
       // reach a remix gallery today — but the invariant is "no unproven claim on
@@ -6789,6 +6788,7 @@ export const createEntityImages = async ({
         (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
           | Prisma.JsonObject
           | undefined) ?? Prisma.JsonNull,
+      metadata: stripBlockProvenanceMetadata(image.metadata),
       userId,
       resources: undefined,
     })),
@@ -7174,11 +7174,11 @@ export const updateEntityImages = async ({
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...image,
-        metadata: stripBlockProvenanceMetadata(image.metadata),
         meta:
           (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
             | Prisma.JsonObject
             | undefined) ?? Prisma.JsonNull,
+        metadata: stripBlockProvenanceMetadata(image.metadata),
         userId,
         resources: undefined,
       })),

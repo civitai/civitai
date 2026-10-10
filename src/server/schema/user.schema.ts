@@ -21,6 +21,7 @@ import {
 } from '~/shared/zod/username.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   commaDelimitedEnumArray,
   commaDelimitedNumberArray,
@@ -93,7 +94,10 @@ export const profilePictureSchema = z.object({
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
-  metadata: z.looseObject({}).optional(),
+  metadata: z
+    .looseObject({})
+    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
+    .optional(),
   type: z.enum(MediaType).default(MediaType.image),
 });
 
