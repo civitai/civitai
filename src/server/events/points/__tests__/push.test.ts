@@ -187,6 +187,19 @@ describe('event points pusher', () => {
     expect(claimTeamsPush).not.toHaveBeenCalled();
   });
 
+  it('reads the team totals as of after the claim, not the start of the flush', async () => {
+    const { pusher, deps } = setup({
+      claimTeamsPush: vi.fn(async () => {
+        vi.setSystemTime(Date.now() + 5);
+        return true;
+      }),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    const [, at] = vi.mocked(deps.getTeamPoints).mock.calls[0];
+    expect(at.getTime()).toBe(NOW.getTime() + 5);
+  });
+
   it('reads no team totals for a window it did not lease', async () => {
     const { pusher, sent, deps } = setup({ claimTeamsPush: vi.fn(async () => false) });
     pusher.markDirty(event, HAT, NOW);

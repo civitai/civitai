@@ -199,7 +199,9 @@ export function createEventPointsPusher(deps: PushDeps) {
           watchedHats.length
             ? deps.getHatPoints(event, watchedHats, now)
             : ({} as Record<string, number>),
-          pushTeams ? deps.getTeamPoints(event, now) : null,
+          // Read as of now, after the claim: the losers drop their teams trusting this read is
+          // later than their grants.
+          pushTeams ? deps.getTeamPoints(event, new Date()) : null,
         ]);
         if (totals)
           queue.push({
