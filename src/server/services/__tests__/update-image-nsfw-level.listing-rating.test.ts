@@ -120,7 +120,8 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
     expect(reDerive).toHaveBeenCalledWith({
       imageId: IMAGE_ID,
       previousNsfwLevel: NsfwLevel.R,
-      actorUserId: MOD,
+      // Not the player whose vote completed the consensus.
+      actorUserId: null,
       allowLower: false,
     });
   });

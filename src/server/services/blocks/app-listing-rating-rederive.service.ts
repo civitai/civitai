@@ -34,7 +34,7 @@ const historyEvent = (args: ReDeriveArgs, outcome: ReDeriveOutcome) => ({
   slug: outcome.slug,
   before: outcome.before,
   after: outcome.after,
-  cause: 'image-review' as const,
+  cause: args.allowLower ? ('image-review' as const) : ('image-consensus' as const),
   actorUserId: args.actorUserId,
   imageIds: [args.imageId],
 });
@@ -51,9 +51,11 @@ export async function reDeriveListingRatingInTx(
   tx: Prisma.TransactionClient,
   args: ReDeriveArgs & { appListingId: string }
 ): Promise<ReDeriveOutcome | null> {
-  // The row lock is what stops the assets read below changing before the write: every
-  // writer of a live listing's asset set either updates this row (icon, cover, a revision
-  // apply) or inserts a screenshot whose foreign key takes a share lock on it.
+  // The row lock stops the assets read below gaining an image before the write: every writer
+  // that can ADD one to a live listing's asset set either updates this row (icon, cover, a
+  // revision apply) or inserts a screenshot whose foreign key takes a share lock on it. A
+  // removal takes no lock, but it only shrinks the set, so a stale read errs toward keeping
+  // the rating.
   // It is also the authority on "live": a listing that left `approved`, or a shadow
   // revision, matches nothing and is left to its own approve to rate.
   const locked = await tx.$queryRaw<{ id: string }[]>`

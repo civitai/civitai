@@ -232,7 +232,7 @@ async function moderatorRerates(imageId: number, nsfwLevel: number, allowLower =
   return reDeriveListingRatingsForModeratedImage({
     imageId,
     previousNsfwLevel,
-    actorUserId: MOD,
+    actorUserId: allowLower ? MOD : null,
     allowLower,
   });
 }
@@ -380,13 +380,27 @@ describe('a Knights consensus (allowLower: false)', () => {
     expect(events).toEqual([]);
   });
 
-  it('still raises one', async () => {
+  it('still raises one, and the history does not call it a moderator’s review', async () => {
     await moderatorRerates(ICON, NsfwLevel.X, false);
 
     expect(ratingOf('apl_a')).toBe('x');
-    expect(events.map((e) => e.reason)).toEqual([
-      'Rating raised R → X after a moderator reviewed an image.',
-    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      actorUserId: null,
+      detail: 'image-consensus',
+      reason: 'Rating raised R → X after community reviewers re-rated an image.',
+    });
+  });
+
+  it('raises to the media, not to an app rating the listing has drifted below', async () => {
+    // A moderator's write in this state lands on the declared x; a consensus has no floor.
+    seedMisScanned({ declared: 'x', contentRating: 'pg' });
+    images.find((i) => i.id === SHOT)!.nsfwLevel = NsfwLevel.PG;
+
+    await moderatorRerates(COVER, NsfwLevel.R, false);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events.map((e) => e.before)).toEqual([{ contentRating: 'pg' }]);
   });
 });
 
@@ -587,6 +601,11 @@ describe('failure isolation', () => {
     expect(changed).toEqual([{ appListingId: 'apl_a', before: 'r', after: 'x' }]);
     expect(events).toEqual([]);
     expect(bustCatalog).toHaveBeenCalledTimes(1);
+    // The warning is the only trace that the history row is missing.
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    expect(console.warn).toHaveBeenCalledWith(
+      `[listing-rating] re-derive after image ${ICON} was re-rated failed (listing apl_a): violates check constraint`
+    );
   });
 
   it('a failed cache bust does not throw', async () => {

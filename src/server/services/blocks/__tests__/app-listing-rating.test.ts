@@ -114,6 +114,12 @@ describe('listingRatingChangeReason', () => {
     ['review', 'r', 'pg13', 'Rating changed R → PG-13 at review.'],
     ['image-review', 'r', 'pg13', 'Rating lowered R → PG-13 after a moderator reviewed an image.'],
     ['image-review', 'pg', 'x', 'Rating raised PG → X after a moderator reviewed an image.'],
+    [
+      'image-consensus',
+      'pg13',
+      'r',
+      'Rating raised PG-13 → R after community reviewers re-rated an image.',
+    ],
     ['store-media', null, 'x', 'Rating changed unrated → X: store imagery was rated X.'],
   ] as const)('%s %s → %s', (cause, before, after, sentence) => {
     expect(listingRatingChangeReason({ cause, before, after })).toBe(sentence);

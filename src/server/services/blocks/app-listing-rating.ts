@@ -19,9 +19,14 @@ export const RATING_CHANGE_ACTION =
  * Why a listing's stored rating moved. Stored in the event's `detail`.
  *   - `store-media`  — a go-live or moderator asset edit floored the rating at its media.
  *   - `image-review` — a moderator re-rated one of the listing's images.
+ *   - `image-consensus` — a Knights consensus raised one of the listing's images.
  *   - `review`       — any other go-live move: a review's derive-and-replace or override.
  */
-export type ListingRatingChangeCause = 'store-media' | 'image-review' | 'review';
+export type ListingRatingChangeCause =
+  | 'store-media'
+  | 'image-review'
+  | 'image-consensus'
+  | 'review';
 
 /** One attached asset. A missing Image row is `{ nsfwLevel: null, ingestion: null }`. */
 export type ListingRatingAsset = {
@@ -53,6 +58,8 @@ export function listingRatingChangeReason(args: {
   if (args.cause === 'store-media')
     return `Rating changed ${before} → ${after}: store imagery was rated ${after}.`;
   if (args.cause === 'review') return `Rating changed ${before} → ${after} at review.`;
+  if (args.cause === 'image-consensus')
+    return `Rating raised ${before} → ${after} after community reviewers re-rated an image.`;
   const lowered = nsfwLevelFromContentRating(args.after) < nsfwLevelFromContentRating(args.before);
   return `Rating ${
     lowered ? 'lowered' : 'raised'

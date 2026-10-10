@@ -7451,13 +7451,15 @@ export async function updateImageNsfwLevel({
     const { reDeriveListingRatingsForModeratedImage } = await import(
       '~/server/services/blocks/app-listing-rating-rederive.service'
     );
+    const isKnightsConsensus = activity === 'setNsfwLevelKono';
     await reDeriveListingRatingsForModeratedImage({
       imageId: id,
       previousNsfwLevel: image.nsfwLevel,
-      actorUserId: userId,
       // Knights consensus locks through this branch too, but it is a vote, not a
-      // moderator's decision: it may raise a store listing's rating, never lower it.
-      allowLower: activity !== 'setNsfwLevelKono',
+      // moderator's decision: it may raise a store listing's rating, never lower it, and
+      // the player whose vote completed it is not recorded as the listing event's actor.
+      actorUserId: isKnightsConsensus ? null : userId,
+      allowLower: !isKnightsConsensus,
     });
   } else {
     // Track potential content leaking
