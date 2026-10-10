@@ -511,6 +511,32 @@ export type AppBlockRestApprovalVerdictReason =
   (typeof APP_BLOCK_REST_APPROVAL_VERDICT_REASONS)[number];
 
 /** Known render slots. Anything else is bucketed to 'other' to bound the label. */
+/**
+ * Every value of the `outcome` label on `civitai_app_block_custom_events_total`. A closed list:
+ * the emitter takes this type, so a caller cannot mint a label from request data.
+ *
+ * Two kinds of value, and they do not add up to one total:
+ *   - a DISPOSITION, exactly one per row received for an approved or unknown app: `accepted`,
+ *     `undeclared_event`, `non_prod_skipped`, `insert_failed`, `rate_limited`, `unknown_app`,
+ *     `salt_unavailable`, `no_client_ip`, `private_run`;
+ *   - a FLAG, at most one of each per row and only on a row whose event is declared:
+ *     `undeclared_prop`, `invalid_value`. The row is still written without the stripped properties.
+ */
+export const APP_BLOCK_CUSTOM_EVENT_OUTCOMES = [
+  'accepted',
+  'undeclared_event',
+  'undeclared_prop',
+  'invalid_value',
+  'rate_limited',
+  'unknown_app',
+  'salt_unavailable',
+  'no_client_ip',
+  'private_run',
+  'non_prod_skipped',
+  'insert_failed',
+] as const;
+export type AppBlockCustomEventOutcome = (typeof APP_BLOCK_CUSTOM_EVENT_OUTCOMES)[number];
+
 const KNOWN_SLOT_IDS = new Set([
   'app.page',
   'model.sidebar_top',
@@ -679,6 +705,7 @@ type Bundle = {
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
   bridgeMessagesTotal: Counter<string>;
+  customEventsTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
@@ -1331,11 +1358,21 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     APP_BLOCK_LAUNCH_INIT_POST_BUCKETS
   );
 
+  // No `app_block_id` label on purpose: the per-app breakdown is the table's job, and this route
+  // is public, so the label set must not grow with anything a caller sends.
+  const customEventsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_custom_events_total',
+    'App Blocks custom-event rows received by POST /api/track/block-event, by outcome. Dispositions (one per row): accepted = written as the declared event; undeclared_event = written as one `__undeclared__` row because the approved manifest does not declare the event; non_prod_skipped = validated but not written because this is not the production deployment; insert_failed = the write threw or no ClickHouse client is configured; rate_limited = over the per-process, per-(client address, app) budget; unknown_app = the app is not in the approved set (which is every app while the approved-set lookup is failing); salt_unavailable = a signed-out row dropped because the shared daily salt could not be read; no_client_ip = a signed-out row dropped because no client address resolved; private_run = a private run of a non-approved app. Flags (at most one of each per row, in addition to its disposition): undeclared_prop = at least one property the event does not declare was stripped; invalid_value = at least one declared property was stripped for a wrong type or an undeclared enum value. Flags are counted on declared-event rows whether or not the row is then written, so do not sum all outcomes into a row total. accepted counts rows handed to an asynchronous insert that does not wait for the server, so it is not proof the rows were stored.',
+    ['outcome']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
     bridgeMessagesTotal,
+    customEventsTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
@@ -1798,5 +1835,16 @@ export function observeCustomComfyWallclockSeconds(
     customComfyWallclockSeconds.observe({ engine, recipe }, seconds);
   } catch {
     /* instrument-only — never let a metrics error touch the settle path */
+  }
+}
+
+/** Fail-soft emit of `count` custom-event rows with one outcome. Never throws. */
+export function recordBlockCustomEvents(outcome: AppBlockCustomEventOutcome, count = 1): void {
+  if (count <= 0) return;
+  try {
+    const { customEventsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    customEventsTotal.inc({ outcome }, count);
+  } catch {
+    /* instrument-only */
   }
 }

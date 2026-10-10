@@ -14,7 +14,54 @@
 // block-scope.middleware.ts: at most one DB query per TTL window per pod, never a
 // per-request hit. Fails SAFE — on a cold cache or DB error the set is treated as
 // empty, so every id buckets to 'other' (bounded) rather than passing through.
+import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
+
 const KNOWN_APP_BLOCKS_TTL_MS = 5 * 60_000; // 5min — approved set changes rarely
+
+/** One declared custom-event property, with enum values as a set for the per-event lookup. */
+export type ApprovedEventProperty =
+  | { type: 'enum'; values: ReadonlySet<string> }
+  | { type: 'number' }
+  | { type: 'boolean' };
+
+/** Event name → property name → declaration. Maps, for the reason `DeclaredEvents` gives. */
+export type ApprovedEventDeclarations = ReadonlyMap<
+  string,
+  ReadonlyMap<string, ApprovedEventProperty>
+>;
+
+/**
+ * What the custom-events ingest needs to know about one approved app: who owns it and which
+ * events its APPROVED manifest declares. A projection, so the cache never holds a whole manifest.
+ */
+export type ApprovedAppBlockAnalytics = {
+  /** `null` when the row carried no owner; then nobody is the owner. */
+  ownerUserId: number | null;
+  events: ApprovedEventDeclarations;
+};
+
+const NO_EVENTS: ApprovedEventDeclarations = new Map();
+
+function projectDeclaredEvents(manifest: unknown): ApprovedEventDeclarations {
+  // All-or-nothing: `parseManifestAnalytics` returns no events when anything in the declaration
+  // is invalid, so a half-valid manifest declares nothing here either.
+  const { events } = parseManifestAnalytics(manifest);
+  if (events.size === 0) return NO_EVENTS;
+  const projected = new Map<string, ReadonlyMap<string, ApprovedEventProperty>>();
+  for (const [eventName, event] of events) {
+    const properties = new Map<string, ApprovedEventProperty>();
+    for (const [propertyName, property] of event.properties) {
+      properties.set(
+        propertyName,
+        property.type === 'enum'
+          ? { type: 'enum', values: new Set(property.values) }
+          : { type: property.type }
+      );
+    }
+    projected.set(eventName, properties);
+  }
+  return projected;
+}
 
 /**
  * A resolved view of the approved-id set.
@@ -27,13 +74,18 @@ const KNOWN_APP_BLOCKS_TTL_MS = 5 * 60_000; // 5min — approved set changes rar
  * the app is reading a database outage as a universal claim. Consumers that care
  * must ask for `isConfirmedNonApprovedAppBlockId`, which answers `false` here.
  */
-type ApprovedSet = { ids: Set<string>; trusted: boolean };
+type ApprovedSet = {
+  ids: Set<string>;
+  trusted: boolean;
+  analytics: Map<string, ApprovedAppBlockAnalytics>;
+};
 type CacheEntry = ApprovedSet & { expiresAt: number };
 let _cache: CacheEntry | null = null;
 let _inflight: Promise<ApprovedSet> | null = null;
 
 async function loadKnownAppBlockIds(): Promise<ApprovedSet> {
   const ids = new Set<string>();
+  const analytics = new Map<string, ApprovedAppBlockAnalytics>();
   try {
     // Dynamic import so this module doesn't eager-load the Prisma client into
     // the lightweight beacon route's import graph (mirrors the middleware's
@@ -41,9 +93,16 @@ async function loadKnownAppBlockIds(): Promise<ApprovedSet> {
     const { dbRead } = await import('~/server/db/client');
     const rows = (await dbRead.appBlock.findMany({
       where: { status: 'approved' },
-      select: { id: true },
-    })) as Array<{ id: string }>;
-    for (const row of rows) ids.add(row.id);
+      select: { id: true, manifest: true, app: { select: { userId: true } } },
+    })) as Array<{ id: string; manifest?: unknown; app?: { userId?: unknown } | null }>;
+    for (const row of rows) {
+      ids.add(row.id);
+      const ownerUserId = row.app?.userId;
+      analytics.set(row.id, {
+        ownerUserId: typeof ownerUserId === 'number' ? ownerUserId : null,
+        events: projectDeclaredEvents(row.manifest),
+      });
+    }
   } catch (err) {
     // DB unreachable → return whatever we have (empty). Everything then buckets
     // to 'other' — bounded and safe. Log once per refresh so ops can see it.
@@ -55,9 +114,9 @@ async function loadKnownAppBlockIds(): Promise<ApprovedSet> {
     );
     // NOT trusted: the set is empty because we could not ask, not because there
     // are no approved apps.
-    return { ids, trusted: false };
+    return { ids: new Set(), trusted: false, analytics: new Map() };
   }
-  return { ids, trusted: true };
+  return { ids, trusted: true, analytics };
 }
 
 async function getKnownAppBlockIds(): Promise<ApprovedSet> {
@@ -124,6 +183,19 @@ export async function isKnownAppBlockId(appBlockId: string): Promise<boolean> {
 export async function isConfirmedNonApprovedAppBlockId(appBlockId: string): Promise<boolean> {
   const { ids, trusted } = await getKnownAppBlockIds();
   return trusted && !ids.has(appBlockId);
+}
+
+/**
+ * The owner and declared custom events of an approved app, from the same cached read as the
+ * approved-id set; `null` when the id is not in it. Like `isKnownAppBlockId` this answers "not
+ * approved" for every id while the lookup is failing, which for an ingest means dropping events
+ * rather than storing ones nobody could check.
+ */
+export async function getApprovedAppBlockAnalytics(
+  appBlockId: string
+): Promise<ApprovedAppBlockAnalytics | null> {
+  const { analytics } = await getKnownAppBlockIds();
+  return analytics.get(appBlockId) ?? null;
 }
 
 /**

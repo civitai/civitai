@@ -147,15 +147,22 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     expect(callersOf('blockRenderTrackerPayload')).toEqual(WRITERS);
   });
 
+  // The custom-events ingest writes a different owner-visible table (`appBlockEvents`) and
+  // applies the same gate. It is not a `blockRenders` writer, so it is ledgered apart.
+  const OTHER_GATED_WRITERS = ['src/server/services/blocks/block-event-ingest.service.ts'];
+  const GATE_CALLERS = [...WRITERS, ...OTHER_GATED_WRITERS].sort();
+
   it('🔴 EXACTLY these files consult the private-run gate', () => {
-    expect(callersOf('isPrivateRunImpression')).toEqual(WRITERS);
+    expect(callersOf('isPrivateRunImpression')).toEqual(GATE_CALLERS);
   });
 
   it('🔴 the three populations are THE SAME SET', () => {
     // Redundant while the three above are equalities; load-bearing the moment any is
     // relaxed to `toContain`.
     expect(callersOf('blockRenderTrackerPayload')).toEqual(trackerWriteSites());
-    expect(callersOf('isPrivateRunImpression')).toEqual(trackerWriteSites());
+    expect(
+      callersOf('isPrivateRunImpression').filter((f) => !OTHER_GATED_WRITERS.includes(f))
+    ).toEqual(trackerWriteSites());
   });
 
   /**

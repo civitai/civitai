@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import {
   boundAppBlockIdLabel,
+  getApprovedAppBlockAnalytics,
   isConfirmedNonApprovedAppBlockId,
   isKnownAppBlockId,
   _internalsForTests,
@@ -27,7 +28,7 @@ describe('known-app-blocks.service', () => {
     await isKnownAppBlockId('apb_known_1');
     expect(mockFindMany).toHaveBeenCalledWith({
       where: { status: 'approved' },
-      select: { id: true },
+      select: { id: true, manifest: true, app: { select: { userId: true } } },
     });
   });
 
@@ -82,5 +83,94 @@ describe('isConfirmedNonApprovedAppBlockId [INV]', () => {
     expect(await isConfirmedNonApprovedAppBlockId('apb_nope')).toBe(false);
     expect(await isConfirmedNonApprovedAppBlockId('apb_nope')).toBe(false);
     expect(mockFindMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('getApprovedAppBlockAnalytics — owner and declared events of an approved app', () => {
+  const manifest = {
+    name: 'not projected',
+    analytics: {
+      events: {
+        level_cleared: {
+          description: 'not projected either',
+          properties: {
+            difficulty: { type: 'enum', values: ['calm', 'brutal'] },
+            seconds: { type: 'number' },
+            assisted: { type: 'boolean' },
+          },
+        },
+        menu_opened: {},
+      },
+    },
+  };
+
+  it('projects the declared events and the owner, and nothing else of the manifest', async () => {
+    mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
+    const analytics = await getApprovedAppBlockAnalytics('apb_declares');
+    expect(analytics?.ownerUserId).toBe(6611);
+    expect([...analytics!.events.keys()]).toEqual(['level_cleared', 'menu_opened']);
+    const props = analytics!.events.get('level_cleared')!;
+    expect([...props.keys()]).toEqual(['difficulty', 'seconds', 'assisted']);
+    expect(props.get('difficulty')).toEqual({ type: 'enum', values: new Set(['calm', 'brutal']) });
+    expect(props.get('seconds')).toEqual({ type: 'number' });
+    expect(props.get('assisted')).toEqual({ type: 'boolean' });
+    expect(analytics!.events.get('menu_opened')!.size).toBe(0);
+    expect(JSON.stringify([...analytics!.events])).not.toContain('not projected');
+    expect(Object.keys(analytics!).sort()).toEqual(['events', 'ownerUserId']);
+  });
+
+  it('answers null for an id outside the approved set', async () => {
+    mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
+    expect(await getApprovedAppBlockAnalytics('apb_someone_else')).toBeNull();
+  });
+
+  it('a manifest with ANY analytics error declares nothing, including its valid events', async () => {
+    const half = {
+      analytics: {
+        events: {
+          level_cleared: manifest.analytics.events.level_cleared,
+          // One bad property type poisons the whole declaration.
+          broken: { properties: { note: { type: 'string' } } },
+        },
+      },
+    };
+    mockFindMany.mockResolvedValue([{ id: 'apb_half', manifest: half, app: { userId: 6611 } }]);
+    const analytics = await getApprovedAppBlockAnalytics('apb_half');
+    expect(analytics).not.toBeNull();
+    expect(analytics!.events.size).toBe(0);
+    expect(analytics!.ownerUserId).toBe(6611);
+  });
+
+  it.each([
+    ['no analytics key', { name: 'x' }],
+    ['a null manifest', null],
+    ['a manifest that is not an object', 'oops'],
+    ['an undeclared row shape', undefined],
+  ])('declares nothing for %s', async (_label, value) => {
+    mockFindMany.mockResolvedValue([{ id: 'apb_plain', manifest: value, app: { userId: 6611 } }]);
+    const analytics = await getApprovedAppBlockAnalytics('apb_plain');
+    expect(analytics).toEqual({ ownerUserId: 6611, events: new Map() });
+  });
+
+  it('has no owner when the row carries none', async () => {
+    mockFindMany.mockResolvedValue([{ id: 'apb_orphan', manifest, app: null }, { id: 'apb_bare' }]);
+    expect((await getApprovedAppBlockAnalytics('apb_orphan'))?.ownerUserId).toBeNull();
+    expect(await getApprovedAppBlockAnalytics('apb_bare')).toEqual({
+      ownerUserId: null,
+      events: new Map(),
+    });
+  });
+
+  it('shares the one cached read with the approved-id set', async () => {
+    mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
+    await getApprovedAppBlockAnalytics('apb_declares');
+    expect(await isKnownAppBlockId('apb_declares')).toBe(true);
+    await getApprovedAppBlockAnalytics('apb_declares');
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers null for every id while the lookup is failing', async () => {
+    mockFindMany.mockRejectedValue(new Error('engine down'));
+    expect(await getApprovedAppBlockAnalytics('apb_declares')).toBeNull();
   });
 });
