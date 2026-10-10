@@ -54,6 +54,12 @@ export const equipCosmeticSchema = z.object({
   equippedToType: z.enum(CosmeticEntity),
 });
 
+// Feeds do not carry an event decoration's claimKey, so its owner removes it by where it is worn.
+export type UnequipCosmeticInput = z.infer<typeof unequipCosmeticSchema>;
+export const unequipCosmeticSchema = equipCosmeticSchema.extend({
+  claimKey: z.string().min(1).optional(),
+});
+
 export type CosmeticInputSchema = z.infer<typeof cosmeticInputSchema>;
 export const cosmeticInputSchema = z.object({
   id: z.number(),

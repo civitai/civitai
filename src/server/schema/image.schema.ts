@@ -21,6 +21,7 @@ import {
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -240,7 +241,10 @@ export const imageSchema = z.object({
   postId: z.number().nullish(),
   modelVersionId: z.number().nullish(),
   type: z.enum(MediaType).default(MediaType.image),
-  metadata: z.record(z.string(), z.any()).optional(),
+  metadata: z
+    .record(z.string(), z.any())
+    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
+    .optional(),
   externalDetailsUrl: z.url().optional(),
   toolIds: z.number().array().optional(),
   techniqueIds: z.number().array().optional(),

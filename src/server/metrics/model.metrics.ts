@@ -9,7 +9,7 @@ import type { MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
 import { executeRefresh } from '~/server/metrics/metric-helpers';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { modelsSearchIndex } from '~/server/search-index';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
@@ -150,9 +150,7 @@ export const modelMetrics = createMetricProcessor({
     // window); genuine mutations still reindex immediately via the untouched
     // service-layer queueUpdate path.
     const FLUSH_INTERVAL_MS = env.SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS;
-    const lastFlushStr = await sysRedis.get(
-      REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH
-    );
+    const lastFlushStr = await sysRedis.get(REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH);
     const lastFlush = lastFlushStr ? new Date(lastFlushStr).getTime() : 0;
     const shouldFlush = shouldFlushMetricSearchIndex(Date.now(), lastFlush, FLUSH_INTERVAL_MS);
 

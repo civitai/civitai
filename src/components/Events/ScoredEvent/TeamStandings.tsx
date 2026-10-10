@@ -269,7 +269,13 @@ export function TopHats({ standings }: { standings: Standings }) {
         {top.map((c, i) => {
           const cosmetic = standings.cosmetics[c.cosmeticId];
           return (
-            <Paper key={c.topicId} withBorder radius="md" className={EVENT_CARD_SURFACE}>
+            <Paper
+              // The standings group by team too, so one hat could appear twice; rank keeps keys unique.
+              key={`${c.topicId}:${i}`}
+              withBorder
+              radius="md"
+              className={EVENT_CARD_SURFACE}
+            >
               <Group gap="sm" px="sm" py={10} wrap="nowrap">
                 <Text fw={800} fz={18} w={24} ta="center">
                   {i + 1}

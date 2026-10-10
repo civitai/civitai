@@ -9,7 +9,7 @@ import {
   getMetricJson,
   snippets,
 } from '~/server/metrics/metric-helpers';
-import { bountiesSearchIndex } from '~/server/search-index';
+import { bountiesSearchIndex } from '~/server/search-index/bounties.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
