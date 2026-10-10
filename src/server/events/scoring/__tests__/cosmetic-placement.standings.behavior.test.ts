@@ -400,6 +400,13 @@ describe('referee snapshot', () => {
     expect(hashes.get(keys.base('team'))).toEqual({ Yellow: '18' });
   });
 
+  // The engine names the winner on the first final run, so final must reach the result.
+  it('reports a run final only once it settles the whole finalize window', async () => {
+    expect((await runEventPointsReferee(scored, 'live', HOURLY)).final).toBe(false);
+    const settlesEnd = new Date(scored.endDate.getTime() + 10 * 60 * 1000);
+    expect((await runEventPointsReferee(scored, 'live', settlesEnd)).final).toBe(true);
+  });
+
   it('rerunning the same hour changes nothing', async () => {
     await insertDays([day('2026-11-02', 1, 21, 'claimed', 'Yellow', 10)]);
     await runEventPointsReferee(scored, 'live', HOURLY);

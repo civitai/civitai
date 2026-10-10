@@ -11,7 +11,7 @@ import {
 } from '~/server/events/event-access';
 import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
-import { eventPointSeason } from '~/server/events/points/keys';
+import { eventPointSeason, eventPointsWindow } from '~/server/events/points/keys';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
@@ -75,6 +75,23 @@ function scoredEvent(eventDef: EventDef) {
   const { scoring } = eventDef;
   return scoring ? { ...eventDef, scoring } : undefined;
 }
+// Set by the hourly scoring once a scored event's final run has named its winner; its value is the
+// winning team, or NO_WINNER when no team ranked first. Either way scoring is done.
+// In sysRedis, which does not evict: losing it would name the winner again.
+const winnerKey = (event: string) =>
+  `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.WINNER}` as const;
+const NO_WINNER = 'none';
+async function flagWinnerCosmetic(eventDef: EventDef, winner: string) {
+  const winnerCosmeticId = await eventDef.getTeamCosmetic(winner);
+  if (winnerCosmeticId) {
+    await dbWrite.$executeRaw`
+      UPDATE "Cosmetic"
+      SET data = jsonb_set(data, '{winner}', 'true'::jsonb)
+      WHERE id = ${winnerCosmeticId}
+    `;
+  }
+  return winnerCosmeticId;
+}
 // Scores are read from the start of the window the viewer is in: the preview's for a previewer,
 // the event's for everyone else, so test-run scores never reach the public standings.
 function scoredEventFor(eventDef: EventDef, access: EventAccess) {
@@ -122,29 +139,24 @@ export const eventEngine = {
         if (alreadyCleanedUp) continue;
 
         // A scored event's cosmetics stay on content: owners keep them after the event (see
-        // canWearEventDecorations). Its winner waits until scoring has finished taking late
-        // data, so it is decided on the final standings. While the engine is switched off those
-        // standings are frozen, so it waits until the engine is back on.
-        if (
-          eventDef.scoring &&
-          (now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs ||
-            !(await isEventPointsEnabled()))
-        )
-          continue;
+        // canWearEventDecorations). Its winner is named by the hourly scoring, on the first run that
+        // settles the whole finalize window (updateLeaderboard), so its cleanup waits for that. While
+        // the engine is switched off it waits too.
+        const scoredWinner = eventDef.scoring ? await sysRedis.get(winnerKey(eventDef.name)) : null;
+        if (eventDef.scoring && (!scoredWinner || !(await isEventPointsEnabled()))) continue;
 
         // Get 1st place team
-        const winner = scores.find(({ rank }) => rank === 1)?.team;
+        const winner = scoredWinner
+          ? scoredWinner === NO_WINNER
+            ? undefined
+            : scoredWinner
+          : scores.find(({ rank }) => rank === 1)?.team;
         if (!winner) continue;
 
-        // Update first place cosmetic and set to winner
-        const winnerCosmeticId = await eventDef.getTeamCosmetic(winner);
-        if (winnerCosmeticId) {
-          await dbWrite.$executeRaw`
-            UPDATE "Cosmetic"
-            SET data = jsonb_set(data, '{winner}', 'true'::jsonb)
-            WHERE id = ${winnerCosmeticId}
-          `;
-        }
+        // Update first place cosmetic and set to winner (a scored event's is already flagged)
+        const winnerCosmeticId = scoredWinner
+          ? await eventDef.getTeamCosmetic(winner)
+          : await flagWinnerCosmetic(eventDef, winner);
 
         if (!eventDef.scoring) {
           // Unequip all event cosmetics
@@ -184,9 +196,10 @@ export const eventEngine = {
         // Kill switch off: no settling at all. The standings keep serving their last snapshot, and
         // a scored event never falls through to the old leaderboard below.
         if (!(await isEventPointsEnabled())) continue;
-        // Keeps running past the end so the last hours and late data are settled; the referee clips
-        // every window to the season's end.
-        if (eventDef.endDate.getTime() + scored.scoring.finalizeAfterMs < now.getTime()) continue;
+        // Keeps running past the end until a run has settled the whole finalize window and named
+        // the winner; the referee clips every window to the season's end.
+        if (eventPointsWindow(scored).to < now && (await sysRedis.get(winnerKey(eventDef.name))))
+          continue;
         // Before launch this is the preview, where only flagged users' hats earn (the hat sync
         // applies the flag), settled into its own season.
         const phase = await getEventScoringPhase(eventDef, now);
@@ -195,8 +208,10 @@ export const eventEngine = {
         const season = eventPointSeason(eventDef.startDate, now);
         // A failed settle must not also freeze the standings snapshot (it expires after 2h, and a
         // miss is rebuilt on the request path) or stop the other events.
+        let final = false;
         try {
           const result = await runEventPointsReferee(scored, season, now);
+          final = result.final;
           logToAxiom({
             type: 'info',
             name: 'event-points-referee',
@@ -211,7 +226,17 @@ export const eventEngine = {
             message: (error as Error).message,
           }).catch(() => undefined);
         }
-        await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
+        const standings = await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
+        // The first run that settles the whole finalize window names the winner, on the standings it
+        // just computed: the shared snapshot may be mid-rebuild from a replica by a request. A failed
+        // run names none, and the next hour's run tries again.
+        if (final) {
+          const winner = standings.teams.find(({ rank }) => rank === 1)?.team;
+          if (winner) await flagWinnerCosmetic(eventDef, winner);
+          await sysRedis.set(winnerKey(eventDef.name), winner ?? NO_WINNER, {
+            EX: CLEANUP_MARKER_TTL_S,
+          });
+        }
         continue;
       }
 
@@ -378,7 +403,7 @@ export const eventEngine = {
       endDate: eventDef.endDate,
       // Scores keep taking late data until then; the winner is decided on the standings after it.
       finalAt: eventDef.scoring
-        ? new Date(eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs)
+        ? eventPointsWindow({ ...eventDef, scoring: eventDef.scoring }).to
         : undefined,
       teams: eventDef.teams,
       cosmeticName: eventDef.cosmeticName,
