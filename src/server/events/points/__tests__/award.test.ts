@@ -385,6 +385,39 @@ describe('when the ledger write fails', () => {
     await engine.awardEventPoints([reaction(1)]);
     expect(ledger.map((r) => r.actorId)).toEqual([1]);
   });
+
+  it('puts a removal’s dedupe mark back, so a re-add cannot earn live points the referee never confirms', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    build({
+      insertLedger: async () => {
+        throw new Error('clickhouse down');
+      },
+    });
+    await engine.removeEventPoints([reaction(1)]);
+    build();
+    await engine.awardEventPoints([reaction(1)]);
+    expect(ledger.map((r) => r.op)).toEqual(['add']);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+  });
+});
+
+describe('when Redis fails after the dedupe mark', () => {
+  // The mark is already taken, so a retry is a repeat: the ledger row is the action's only record.
+  it('still writes the ledger row, losing only the live points', async () => {
+    const logError = vi.fn();
+    build({
+      logError,
+      redis: {
+        ...fake.redis,
+        hIncrBy: async () => {
+          throw new Error('redis timeout');
+        },
+      },
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(ledger.map((r) => [r.op, r.actorId])).toEqual([['add', 1]]);
+    expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.liveGrant', expect.any(Error));
+  });
 });
 
 describe('state refresh', () => {

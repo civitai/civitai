@@ -11,16 +11,16 @@
 // - A sourceId names one (kind, entity, person), e.g. one person's reactions on one image. Its adds
 //   count only while its latest row is an add: removing the last reaction nets it out, reacting
 //   again brings it back.
-// - Actors in restrictedActors (banned, deleted, excluded from leaderboards, or registered within the
-//   new-account window) earn nobody anything; owners in restrictedOwners earn nothing. Both lists
-//   are read from Postgres "User" by the caller.
+// - People in restrictedUsers (banned, deleted, excluded from leaderboards) neither give nor earn.
+//   Actors with an id from newAccountMinId (registered inside the new-account window) give nothing.
+//   Both are read from Postgres "User" by the caller.
 // - Each person counts once per (type, entity) for the whole season, or once per UTC day for types
 //   listed in dailyTypes; the earliest surviving add is the one kept, with the hat it was on.
 // - Each kept action is worth its type's weight. Per (UTC day, owner, person), in time order, weights
 //   are credited until the cap; the action that crosses it gets what was left.
 //
 // Params: event, seasonStart, recomputeFrom, cut, cap, types (Array(String)), weights (Array(UInt32),
-// aligned with types), dailyTypes (Array(String)), restrictedActors, restrictedOwners (Array(Int32)).
+// aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), newAccountMinId.
 export const eventPointsRefereeSql = /* sql */ `
 WITH
   seasonRows AS (
@@ -41,8 +41,9 @@ WITH
         SELECT type, actorId, sourceId FROM seasonRows WHERE sourceId != ''
         GROUP BY type, actorId, sourceId HAVING argMax(op, time) = 'add'
       ))
-      AND NOT has({restrictedActors:Array(Int32)}, actorId)
-      AND NOT has({restrictedOwners:Array(Int32)}, ownerId)
+      AND NOT has({restrictedUsers:Array(Int32)}, actorId)
+      AND NOT has({restrictedUsers:Array(Int32)}, ownerId)
+      AND actorId < {newAccountMinId:Int32}
     GROUP BY type, actorId, entityType, entityId, onceKey
   ),
   weighted AS (
@@ -51,6 +52,9 @@ WITH
       toDate(firstTime) AS day,
       toInt64(transform(type, {types:Array(String)}, {weights:Array(UInt32)}, toUInt32(0))) AS weight
     FROM firsts
+    -- Days before recomputeFrom are final. The cap's window is per day, so dropping them here
+    -- changes no recomputed day and spares the window function the whole season.
+    WHERE day >= toDate({recomputeFrom:DateTime64(3)})
   ),
   credited AS (
     SELECT *,
@@ -80,7 +84,6 @@ SELECT
   toUInt64(countIf(type = 'remix' AND granted > 0)) AS remixes,
   toUInt64(countIf(type = 'modelLike' AND granted > 0)) AS modelLikes
 FROM credited
-WHERE day >= toDate({recomputeFrom:DateTime64(3)})
 GROUP BY day, userId, cosmeticId, claimKey
 ORDER BY day, userId, cosmeticId, claimKey
 `;

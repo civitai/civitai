@@ -13,9 +13,9 @@ ALTER TABLE "EventCosmeticScoreDaily"
   ADD COLUMN IF NOT EXISTS "remixes"    INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS "modelLikes" INTEGER NOT NULL DEFAULT 0;
 
--- The hat sync job reads an event's open placements every minute. Without this it walks every
--- placement the event ever had, ended ones included. CONCURRENTLY, so run it on its own, outside a
--- transaction.
+-- The hat sync job reads an event's open placements every minute, ordered by startedAt. This serves
+-- the filter and the order together once open placements number in the thousands. CONCURRENTLY, so
+-- run it on its own, outside a transaction (not as part of this file run as one string).
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "EventCosmeticPlacement_event_open_idx"
   ON "EventCosmeticPlacement" ("event", "startedAt", "id")
   WHERE "endedAt" IS NULL;

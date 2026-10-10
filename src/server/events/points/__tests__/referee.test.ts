@@ -57,6 +57,17 @@ describe('refereeWindow', () => {
     expect(recomputeFrom.toISOString()).toBe('2026-11-04T00:00:00.000Z');
   });
 
+  // Just after midnight the cut is still on the previous day, so that day is the one still open.
+  it('counts back from the cut’s day, not the clock’s, just after midnight', () => {
+    const { cut, recomputeFrom } = refereeWindow(
+      EVENT,
+      'live',
+      new Date('2026-11-05T00:07:00.000Z')
+    );
+    expect(cut.toISOString()).toBe('2026-11-04T23:55:00.000Z');
+    expect(recomputeFrom.toISOString()).toBe('2026-11-03T00:00:00.000Z');
+  });
+
   it('recomputes the whole season on the 03:00 UTC run, and only then', () => {
     const at = (time: string) => refereeWindow(EVENT, 'live', new Date(time)).recomputeFrom;
     expect(at('2026-11-05T03:07:00.000Z').toISOString()).toBe('2026-11-01T00:00:00.000Z');
@@ -82,7 +93,7 @@ describe('referee query params', () => {
     },
     refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:30.000Z')),
     undefined,
-    { actors: [1], owners: [2] }
+    { hidden: [1], newAccountMinId: 2 }
   );
 
   it('supplies every placeholder in both queries, and nothing neither uses', () => {
@@ -94,6 +105,28 @@ describe('referee query params', () => {
     for (const sql of [eventPointsRefereeSql, eventPointsRefereeUsersSql])
       for (const name of placeholders(sql).keys()) expect(Object.keys(params)).toContain(name);
     expect(Object.keys(params).sort()).toEqual([...used.keys()].sort());
+  });
+
+  it('weights each type by its live weight, aligned with the types, falling back to the config', () => {
+    const withWeights = refereeQueryParams(
+      {
+        ...EVENT,
+        scoring: {
+          ...scoring,
+          types: {
+            view: { weight: 1, once: 'day', entities: ['Image'] },
+            reaction: { weight: 5, once: 'event', entities: ['Image'] },
+            remix: { weight: 25, once: 'event', entities: ['Image'] },
+          },
+        },
+      },
+      refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:30.000Z')),
+      { reaction: '7', remix: 'not a number' },
+      { hidden: [], newAccountMinId: 1 }
+    );
+    expect(withWeights.types).toEqual(['view', 'reaction', 'remix']);
+    expect(withWeights.weights).toEqual([1, 7, 25]);
+    expect(withWeights.dailyTypes).toEqual(['view']);
   });
 
   it('passes an array for every Array placeholder and a scalar otherwise', () => {

@@ -112,7 +112,7 @@ export function refereeQueryParams(
   event: RefereeEvent,
   window: Window,
   liveWeights: Record<string, string> | undefined,
-  restricted: { actors: number[]; owners: number[] }
+  restricted: { hidden: number[]; newAccountMinId: number }
 ) {
   const types = Object.entries(event.scoring.types).filter(([, rule]) => !!rule);
   return {
@@ -128,17 +128,23 @@ export function refereeQueryParams(
       return Number.isFinite(live) ? live : rule!.weight;
     }),
     dailyTypes: types.filter(([, rule]) => rule!.once === 'day').map(([type]) => type),
-    restrictedActors: restricted.actors,
-    restrictedOwners: restricted.owners,
+    restrictedUsers: restricted.hidden,
+    newAccountMinId: restricted.newAccountMinId,
   };
 }
 
-// Of the people the recomputed rows involve, those who must not earn or give points, from their
-// accounts in Postgres: banned, deleted or excluded from leaderboards; actors also when registered
-// inside the new-account window.
+const MAX_INT32 = 2147483647;
+
+// Who must not earn or give points. Hidden (banned, deleted, excluded from leaderboards): looked up
+// in Postgres among the people the recomputed rows involve. New accounts: every id from the first
+// account registered inside the new-account window, since ids are assigned in registration order.
+// A threshold, not a list: a month of signups is ~250k ids, past what fits in a query's URL.
 async function restrictedUsers(event: RefereeEvent, window: Window) {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
-  const params = refereeQueryParams(event, window, undefined, { actors: [], owners: [] });
+  const params = refereeQueryParams(event, window, undefined, {
+    hidden: [],
+    newAccountMinId: MAX_INT32,
+  });
   const result = await clickhouse.query({
     query: eventPointsRefereeUsersSql,
     format: 'JSONEachRow',
@@ -146,26 +152,29 @@ async function restrictedUsers(event: RefereeEvent, window: Window) {
   });
   const [users] = await result.json<{ actors: number[]; owners: number[] }>();
   const ids = [...new Set([...(users?.actors ?? []), ...(users?.owners ?? [])].map(Number))];
+
+  const hidden: number[] = [];
+  for (const part of chunk(ids, 10_000)) {
+    const rows = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "User"
+      WHERE id = ANY(${part}::int[])
+        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR "excludeFromLeaderboards")
+    `;
+    hidden.push(...rows.map((r) => r.id));
+  }
+
   const newAccountCutoff = new Date(
     event.startDate.getTime() - event.scoring.newAccountDays * DAY_MS
   );
-  const actors = new Set<number>();
-  const owners = new Set<number>();
-  for (const part of chunk(ids, 10_000)) {
-    const rows = await dbRead.$queryRaw<{ id: number; hidden: boolean }[]>`
-      SELECT id,
-        ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR "excludeFromLeaderboards") AS hidden
-      FROM "User"
-      WHERE id = ANY(${part}::int[])
-        AND ("bannedAt" IS NOT NULL OR "deletedAt" IS NOT NULL OR "excludeFromLeaderboards"
-          OR "createdAt" >= ${newAccountCutoff})
-    `;
-    for (const r of rows) {
-      actors.add(r.id);
-      if (r.hidden) owners.add(r.id);
-    }
-  }
-  return { actors: [...actors], owners: [...owners] };
+  // Ordered by createdAt with the deletedAt filter so it walks the partial createdAt index; min(id)
+  // would scan the primary key from the oldest account. A deleted account is restricted as hidden.
+  const [first] = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "User"
+    WHERE "createdAt" >= ${newAccountCutoff} AND "deletedAt" IS NULL
+    ORDER BY "createdAt"
+    LIMIT 1
+  `;
+  return { hidden, newAccountMinId: first?.id ?? MAX_INT32 };
 }
 
 async function queryReferee(event: RefereeEvent, window: Window) {
@@ -274,7 +283,8 @@ export async function resetLiveBase(
 ) {
   const keys = eventSeasonKeys(event.name, season);
   const oldCutBucket = Number((await redis.get(keys.cut)) ?? 0);
-  const newCutBucket = cut.getTime() / LIVE_BUCKET_MS;
+  // Rounded up: a season end inside a bucket settles all of it, since nothing after the end is live.
+  const newCutBucket = Math.ceil(cut.getTime() / LIVE_BUCKET_MS);
 
   const oldHatBase = (await redis.hGetAll(keys.base('hat'))) ?? {};
   const settledKeys: ReturnType<typeof keys.live>[] = [];

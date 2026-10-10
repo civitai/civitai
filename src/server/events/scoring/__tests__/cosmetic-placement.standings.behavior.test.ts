@@ -68,10 +68,13 @@ beforeAll(async () => {
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false,
       "createdAt" timestamp(3) NOT NULL DEFAULT '2020-01-01'
     );
+    -- Ids in registration order. The new-account window opens 2026-10-25 00:00: user 2 registered a
+    -- second before it, NEWBIE on it, user 7 after.
     INSERT INTO "User" ("id", "bannedAt", "deletedAt", "excludeFromLeaderboards", "createdAt") VALUES
-      (1, NULL, NULL, false, '2020-01-01'), (2, NULL, NULL, false, '2020-01-01'),
-      (${BANNED}, now(), NULL, false, '2020-01-01'), (${DELETED}, NULL, now(), false, '2020-01-01'),
-      (${EXCLUDED}, NULL, NULL, true, '2020-01-01'), (${NEWBIE}, NULL, NULL, false, '2026-10-30');
+      (1, NULL, NULL, false, '2020-01-01'), (2, NULL, NULL, false, '2026-10-24 23:59:59'),
+      (${BANNED}, now(), NULL, false, '2026-10-24'), (${DELETED}, NULL, now(), false, '2026-10-24'),
+      (${EXCLUDED}, NULL, NULL, true, '2026-10-24'), (${NEWBIE}, NULL, NULL, false, '2026-10-25'),
+      (7, NULL, NULL, false, '2026-10-30');
   `);
   // A multi-statement string runs as one implicit transaction, which CREATE INDEX CONCURRENTLY
   // refuses; it is applied on its own, as the migration says.
@@ -299,6 +302,7 @@ describe('referee snapshot', () => {
   const keys = eventSeasonKeys(event.name, 'live');
   const strings = new Map<string, string>();
   const hashes = new Map<string, Record<string, string>>();
+  let involved: { actors: number[]; owners: number[] };
   const refereeRow = (date: string, points: number) => ({
     ...day(date, 1, 21, 'claimed', 'Yellow', points),
     views: points,
@@ -312,6 +316,7 @@ describe('referee snapshot', () => {
   beforeEach(() => {
     strings.clear();
     hashes.clear();
+    involved = { actors: [1, 2, BANNED, DELETED, EXCLUDED, NEWBIE, 7], owners: [1, BANNED] };
     const sys = redisMock.sysRedis;
     sys.get.mockImplementation(async (k: string) => strings.get(k) ?? null);
     sys.hGetAll.mockImplementation(async (k: string) => ({ ...(hashes.get(k) ?? {}) }));
@@ -334,7 +339,7 @@ describe('referee snapshot', () => {
     ch.query.mockImplementation(async ({ query }: { query: string }) => ({
       json: async () =>
         query === eventPointsRefereeUsersSql
-          ? [{ actors: [1, BANNED, NEWBIE], owners: [1] }]
+          ? [involved]
           : [refereeRow('2026-11-04', 5), refereeRow('2026-11-05', 3)],
     }));
   });
@@ -368,13 +373,31 @@ describe('referee snapshot', () => {
     expect(hashes.get(keys.base('hat'))).toEqual({ '1:21:claimed': '18' });
   });
 
-  it('restricts banned actors and new accounts from giving, and only hidden owners from earning', async () => {
+  const refereeParams = () =>
+    ch.query.mock.calls.find(([{ query }]) => query !== eventPointsRefereeUsersSql)![0]
+      .query_params;
+
+  it('restricts banned, deleted and excluded people, and new accounts from the first one registered in the window', async () => {
     await runEventPointsReferee(scored, 'live', HOURLY);
-    const refereeCall = ch.query.mock.calls.find(
-      ([{ query }]) => query !== eventPointsRefereeUsersSql
-    )!;
-    const { restrictedActors, restrictedOwners } = refereeCall[0].query_params;
-    expect([...restrictedActors].sort()).toEqual([BANNED, NEWBIE]);
-    expect(restrictedOwners).toEqual([BANNED]);
+    const { restrictedUsers, newAccountMinId } = refereeParams();
+    expect([...restrictedUsers].sort()).toEqual([BANNED, DELETED, EXCLUDED]);
+    expect(newAccountMinId).toBe(NEWBIE);
+  });
+
+  it('looks the involved people up in chunks, finding a restricted one past the first chunk', async () => {
+    involved = {
+      actors: [...Array.from({ length: 10_000 }, (_, i) => 100_000 + i), BANNED],
+      owners: [1],
+    };
+    await runEventPointsReferee(scored, 'live', HOURLY);
+    expect(refereeParams().restrictedUsers).toEqual([BANNED]);
+    // Two chunks of hidden lookups, then the new-account threshold.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(3);
+  });
+
+  it('replaces the recomputed days in one transaction', async () => {
+    await runEventPointsReferee(scored, 'live', HOURLY);
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
   });
 });

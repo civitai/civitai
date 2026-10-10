@@ -165,6 +165,21 @@ describe('resetLiveBase', () => {
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15' });
   });
 
+  // A bucket id with a fraction names no live key, so reads after the end would find no buckets.
+  it('stores a whole bucket as the cut when the season ends inside a bucket, settling that bucket', async () => {
+    const fake = seeded();
+    await resetLiveBase(
+      fake.redis as unknown as RefereeRedis,
+      EVENT,
+      'live',
+      new Date((NEW_CUT - 1) * LIVE_BUCKET_MS + 60_000),
+      totals({ a: 15, b: 5, c: 1 })
+    );
+    expect(fake.strings.get(keys.cut)).toBe(String(NEW_CUT));
+    // c's bucket (NEW_CUT - 1) is settled into the base, so it is not a change.
+    expect([...(fake.sets.get(changedKey) ?? [])].sort()).toEqual(['gone']);
+  });
+
   it('on the first run (no cut yet) reports every hat with points', async () => {
     const fake = fakeRedis();
     const changed = await resetLiveBase(

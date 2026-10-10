@@ -22,6 +22,7 @@ import type {
   EventPointEntityType,
   EventPointRemoval,
   EventPointType,
+  EventPointTypeRule,
 } from '~/server/events/points/types';
 
 const DAY_S = 24 * 60 * 60;
@@ -223,6 +224,30 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     );
     const actor = String(action.actorId);
     if (!(await deps.redis.sAdd(seenKey, actor))) return undefined;
+    // Every first is a fact, whether or not the cap let it score: if an earlier action from the same
+    // person is later removed, the referee lets this one count instead. Once marked seen it must reach
+    // the ledger, so a Redis error in the live accounting below only costs the live display.
+    const first = { row: ledgerRow(def.name, action, 'add', hat, time), seenKey, actor };
+    try {
+      await liveGrant(event, action, hat, keys, seenKey, actor, rule, time);
+    } catch (error) {
+      deps.logError('redis', 'eventPoints.liveGrant', error);
+    }
+    return first;
+  }
+
+  async function liveGrant(
+    event: LoadedEvent,
+    action: EventPointAction,
+    hat: EventHat,
+    keys: ReturnType<typeof eventSeasonKeys>,
+    seenKey: string,
+    actor: string,
+    rule: EventPointTypeRule,
+    time: Date
+  ) {
+    const { def } = event;
+    const day = utcDay(time);
     // TTLs are set once, when the key is created. Day-scoped keys only matter for their UTC day.
     await deps.redis.expireAt(seenKey, rule.once === 'day' ? dayExpiry(time) : eventExpiry(def));
 
@@ -252,9 +277,6 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         }
       }
     }
-    // Every first is a fact, whether or not the cap let it score: if an earlier action from the same
-    // person is later removed, the referee lets this one count instead.
-    return { row: ledgerRow(def.name, action, 'add', hat, time), seenKey, actor };
   }
 
   async function awardEventPoints(actions: EventPointAction[]) {
@@ -295,6 +317,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       await ensureFresh();
       if (!loaded.length) return;
       const rows: EventPointLedgerRow[] = [];
+      const unmarked: { seenKey: string; actor: string }[] = [];
       await Promise.all(
         loaded.flatMap((event) =>
           removals.map(async (removal) => {
@@ -312,15 +335,23 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
               event.def.name,
               eventPointSeason(event.def.startDate, time)
             );
-            const removed = await deps.redis.sRem(
-              keys.seen(removal.type, removal.entityType, removal.entityId),
-              String(removal.actorId)
-            );
+            const seenKey = keys.seen(removal.type, removal.entityType, removal.entityId);
+            const actor = String(removal.actorId);
+            const removed = await deps.redis.sRem(seenKey, actor);
+            if (removed) unmarked.push({ seenKey, actor });
             if (removed || hat) rows.push(ledgerRow(event.def.name, removal, 'remove', hat, time));
           })
         )
       );
-      if (rows.length) await deps.insertLedger(rows);
+      if (!rows.length) return;
+      try {
+        await deps.insertLedger(rows);
+      } catch (error) {
+        // The add still counts at the referee, so put the marks back: otherwise a re-add would earn
+        // live points the referee never confirms.
+        deps.logError('ledger', 'eventPoints.insertRemovals', error, { rows: rows.length });
+        await Promise.allSettled(unmarked.map((m) => deps.redis.sAdd(m.seenKey, m.actor)));
+      }
     } catch (error) {
       deps.logError('ledger', 'eventPoints.remove', error, { count: removals.length });
     }

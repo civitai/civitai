@@ -58,6 +58,8 @@ for (let i = 0; i < 45; i++)
   add(`2026-11-01 04:${String(i).padStart(2, '0')}:00`, 'view', 2, 110 + i, H10);
 add('2026-11-01 05:00:00', 'remix', 2, 200, H10B, 'P:remix:200:2');
 add('2026-11-01 05:01:00', 'reaction', 2, 161, H10, 'R:161:2');
+// ...and on day two the cap starts over: a view to the same creator earns again.
+add('2026-11-02 04:00:00', 'view', 2, 110, H10);
 // Actor 3: the same view twice on day one counts once, and again on day two.
 add('2026-11-01 06:00:00', 'view', 3, 100, H10);
 add('2026-11-01 07:00:00', 'view', 3, 100, H10);
@@ -72,10 +74,10 @@ add('2026-11-01 10:02:00', 'modelLike', 12, 50, H10, 'RR:50:12', 'add', { entity
 // Actor 13: the post changed hats between two logs of the same reaction; the first hat keeps it.
 add('2026-11-01 11:00:00', 'reaction', 13, 105, H10, 'R:105:13');
 add('2026-11-01 12:00:00', 'reaction', 13, 105, H10B, 'R:105:13');
-// Actor 4 (banned or excluded) and actor 5 (new account) earn nobody anything; actor 6 reacts on the
-// banned owner's hat: nothing.
+// Actor 4 (banned or excluded) and actor 1000 (new account: ids from 1000 registered inside the
+// window) earn nobody anything; actor 6 reacts on the banned owner's hat: nothing.
 add('2026-11-01 08:00:00', 'reaction', 4, 100, H10, 'R:100:4');
-add('2026-11-01 08:00:00', 'reaction', 5, 100, H10, 'R:100:5');
+add('2026-11-01 08:00:00', 'reaction', 1000, 100, H10, 'R:100:1000');
 add('2026-11-01 08:00:00', 'reaction', 6, 500, H11, 'R:500:6');
 // Another event's row, and rows outside the season window: before its start and at the cut.
 add('2026-11-01 08:00:00', 'reaction', 14, 106, H10, 'R:106:14', 'add', { event: 'other' });
@@ -101,11 +103,11 @@ sql = one(sql, 'WITH\n', `WITH\n${fixtures}\n`);
 const full = [
   ['2026-11-01', 10, 7, 'claimed', 'Yellow', 5 + 45 + 1 + 5 + 20 + 5 + 5, 46, 4, 1, 1, 0, 1],
   ['2026-11-01', 10, 9, 'cosmetic-purchase-x', 'Yellow', 5, 0, 0, 0, 0, 1, 0],
-  ['2026-11-02', 10, 7, 'claimed', 'Yellow', 1, 1, 0, 0, 0, 0, 0],
+  ['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0],
 ];
 // The hourly run from day two: day one is final and not returned, and actor 9's day-two log is not a
 // new first, because the event-scoped first was on day one.
-const partial = [['2026-11-02', 10, 7, 'claimed', 'Yellow', 1, 1, 0, 0, 0, 0, 0]];
+const partial = [['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0]];
 
 const client = createClient({
   url: process.env.CLICKHOUSE_HOST,
@@ -126,8 +128,8 @@ async function run(recomputeFrom) {
       types: ['view', 'reaction', 'comment', 'sticker', 'remix', 'modelLike'],
       weights: [1, 5, 5, 10, 25, 5],
       dailyTypes: ['view'],
-      restrictedActors: [4, 5],
-      restrictedOwners: [11],
+      restrictedUsers: [4, 11],
+      newAccountMinId: 1000,
     },
   });
   return (await result.json()).map((r) => [
