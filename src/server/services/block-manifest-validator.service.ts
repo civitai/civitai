@@ -13,6 +13,7 @@ import {
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
+import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,
@@ -136,6 +137,13 @@ interface RawManifest {
    * endpoint also calls — a good that cannot be validated can never be bought.
    */
   goods?: unknown;
+  /**
+   * Optional CUSTOM EVENTS declaration — `analytics.events` names every event the
+   * app may send and the properties each may carry (`enum` / `number` /
+   * `boolean` only, no free text). Validated by `parseManifestAnalytics`; any
+   * later reader of the declaration must call that parser, not re-implement it.
+   */
+  analytics?: unknown;
   /**
    * Slot targets the app installs into (model-page slots). Each entry's
    * `slotId` MUST be a known registered slot id — previously UN-validated
@@ -718,6 +726,8 @@ export class BlockManifestValidator {
         errors.push('goods requires the goods:purchase:self scope');
       }
     }
+
+    for (const analyticsError of parseManifestAnalytics(m).errors) errors.push(analyticsError);
 
     if (!m.iframe || typeof m.iframe !== 'object') {
       // For renderMode=inline+verified, iframe may be omitted in v2. v1: require iframe.

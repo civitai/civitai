@@ -396,7 +396,9 @@ read that file. As of this writing the families are:
 - **Analytics**: `TRACK_EVENT` — fire-and-forget, **not** host-bridged by either
   real host today (no analytics sink wired), so it is silently dropped (never
   hangs the block). Flip the host entries to `required` in the inventory if/when
-  a sink lands.
+  a sink lands. The events an app intends to send are declared in the manifest's
+  optional `analytics.events` and validated at submit by `parseManifestAnalytics`
+  (`src/shared/constants/block-analytics.constants.ts`); nothing records them yet.
 
 `SUSPEND` / `RESUME`, `TOKEN_REFRESH` (see "Token refresh") and `THEME_CHANGE`
 (see "Theme changes") flow the other direction (host→block), which is why they

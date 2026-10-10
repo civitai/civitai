@@ -275,6 +275,104 @@
         }
       }
     },
+    "analytics": {
+      "type": "object",
+      "description": "Optional CUSTOM EVENTS declaration. `events` names every event your app may send with `useBlockAnalytics().track(name, properties)` and the properties each event may carry. Manifest-governed and REVIEW-GATED: the declaration a moderator approves is the only one the platform will accept events against, so a reviewer can see what your app tracks. Properties are typed `enum` (a declared list of string values), `number` or `boolean` ONLY — free-text strings are deliberately not supported, so a string that is not one of an enum's declared values will never be recorded. That is what keeps prompts, emails and usernames out of string properties (a `number` property is not range-limited, so do not use one to carry an identifier). Owners will see aggregates only, never individual events. The platform's manifest validator is authoritative.",
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "type": "object",
+          "description": "Map of event name → declaration. At most 50 events. An event name is lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _.",
+          "maxProperties": 50,
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]{0,63}$": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "description": {
+                  "type": "string",
+                  "description": "Optional human-readable meaning of the event, shown to reviewers and in your analytics.",
+                  "maxLength": 200
+                },
+                "properties": {
+                  "type": "object",
+                  "description": "Map of property name → declaration. At most 10 properties per event. A property name follows the same rule as an event name.",
+                  "maxProperties": 10,
+                  "additionalProperties": false,
+                  "patternProperties": {
+                    "^[a-z][a-z0-9_]{0,63}$": {
+                      "type": "object",
+                      "allOf": [
+                        {
+                          "$comment": "Checked FIRST, before the oneOf below, so a wrong type is reported as such rather than as a missing `values`.",
+                          "required": ["type"],
+                          "properties": {
+                            "type": {
+                              "description": "The property's type. There is no free-text string type: declare an enum.",
+                              "enum": ["enum", "number", "boolean"]
+                            }
+                          }
+                        },
+                        {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "description": "A string drawn from a declared list. A string outside `values` will not be recorded.",
+                              "additionalProperties": false,
+                              "required": ["type", "values"],
+                              "properties": {
+                                "type": {
+                                  "const": "enum"
+                                },
+                                "values": {
+                                  "type": "array",
+                                  "description": "The allowed values: 1 to 50 distinct non-empty strings of at most 64 characters (Unicode code points) each.",
+                                  "minItems": 1,
+                                  "maxItems": 50,
+                                  "uniqueItems": true,
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 64
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "description": "A number.",
+                              "additionalProperties": false,
+                              "required": ["type"],
+                              "properties": {
+                                "type": {
+                                  "const": "number"
+                                }
+                              }
+                            },
+                            {
+                              "type": "object",
+                              "description": "A boolean.",
+                              "additionalProperties": false,
+                              "required": ["type"],
+                              "properties": {
+                                "type": {
+                                  "const": "boolean"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "targets": {
       "type": "array",
       "description": "Model-page slot targets. Each target's slotId must be a known registered model slot (not the page slot). Optional for page-only apps.",
