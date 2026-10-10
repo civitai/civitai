@@ -239,6 +239,24 @@ it('home blocks give edge cards the same room as the feed', () => {
   }
 });
 
+// A hat hangs left of its card, so the first card past a home block's right edge would hang its
+// hat back into view. An empty column, as wide as the room on the left, holds those cards out of
+// reach. Without it a sliver of hat shows at the right edge of every desktop home block.
+it("home blocks hold the cards past the right edge out of a hat's reach", () => {
+  const source = readFileSync('src/components/HomeBlocks/HomeBlock.module.scss', 'utf8');
+  const spacer = new RegExp(
+    String.raw`^\s*&::after \{\s*content: '';\s*grid-row: 1 / -1;\s*grid-column: -1;\s*width: (\d+)px;`,
+    'm'
+  );
+  expect(Number(source.match(spacer)?.[1])).toBe(ITEM_BLEED - 8);
+  // A row-flow grid would place cards into that column, and the scrolling layouts would scroll
+  // past the last card into it.
+  expect(source).toMatch(/^\s*&\.gridRow::after \{\s*display: none;\s*\}/m);
+  expect(source).toMatch(
+    /@container \(max-width: theme\('screens\.md'\)\) \{[^}]*&::after \{\s*display: none;\s*\}/
+  );
+});
+
 // Containers that clip at a card's edge declare their room and keep hats at rest size.
 it.each([
   [
