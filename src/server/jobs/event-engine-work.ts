@@ -10,11 +10,15 @@ export const eventEngineDailyReset = createJob(
   }
 );
 
-// Which content wears which hat, for live event points. A hat placed or moved starts earning within
-// this minute plus each app server's 30s refresh.
-export const eventPointsHatSync = createJob('event-points-hat-sync', '* * * * *', async () => {
-  await syncEventHats();
-});
+// The safety net under the hat write-through: repairs and logs any hat the equip path missed. Named
+// apart from the old every-minute sync because the scheduler keeps an existing name's cron.
+export const eventPointsHatReconcile = createJob(
+  'event-points-hat-reconcile',
+  '0 * * * *',
+  async () => {
+    await syncEventHats();
+  }
+);
 
 export const eventEngineLeaderboardUpdate = createJob(
   'event-engine-leaderboard-update',
