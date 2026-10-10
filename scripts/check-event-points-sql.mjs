@@ -82,6 +82,8 @@ add('2026-11-01 08:00:00', 'reaction', 4, 100, H10, 'R:100:4');
 add('2026-11-01 08:00:00', 'reaction', 1000, 100, H10, 'R:100:1000');
 add('2026-11-01 08:00:00', 'reaction', 6, 500, H11, 'R:500:6');
 add('2026-11-01 08:00:00', 'reaction', 3, 600, H1000, 'R:600:3');
+// The owner reacting on their own hat earns nothing.
+add('2026-11-01 08:00:00', 'reaction', 10, 107, H10, 'R:107:10');
 // Another event's row, and rows outside the season window: before its start and at the cut.
 add('2026-11-01 08:00:00', 'reaction', 14, 106, H10, 'R:106:14', 'add', { event: 'other' });
 add('2026-10-31 23:59:00', 'reaction', 7, 100, H10, 'R:100:7');
