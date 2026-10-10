@@ -151,7 +151,9 @@ describe('cosmetic.getViewerEventDecorations stays per-viewer', () => {
     const route = router.slice(start, end);
     expect(route).toMatch(/^getViewerEventDecorations: protectedProcedure\b/);
     expect(route).toContain('.use(noEdgeCache())');
-    expect(route).toMatch(/\.use\(rateLimit\(\{ limit: \d+, period: CacheTTL\.\w+ \}\)\)/);
+    // The value too: a flagged homepage asks about a dozen times a load, so a tight limit would
+    // starve its blocks of hats with nothing else red.
+    expect(route).toContain('.use(rateLimit({ limit: 120, period: CacheTTL.xs }))');
     expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
     // Add another middleware only after checking it keeps the answer per viewer, then widen this.
     expect(route.match(/\.use\(/g)).toHaveLength(2);

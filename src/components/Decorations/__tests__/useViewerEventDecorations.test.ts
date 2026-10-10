@@ -204,6 +204,22 @@ describe('useViewerEventDecorations', () => {
     unmount();
   });
 
+  it('starts asking when the flag arrives after mount', () => {
+    // A signed-in viewer's per-user flags can land after the first render.
+    state.features = {};
+    const { result, rerender, unmount } = renderHook(() =>
+      useViewerEventDecorations(items, { entity: 'image' })
+    );
+    expect(state.asked).toEqual([]);
+
+    state.features = flagged;
+    state.results = [{ data: { 11: hat(11) }, dataUpdatedAt: 1 }];
+    rerender();
+    expect(state.asked).toHaveLength(1);
+    expect(result.current[0].eventDecoration?.id).toBe(11);
+    unmount();
+  });
+
   it('stops asking when the viewer signs out', () => {
     const { result, rerender, unmount } = renderHook(() =>
       useViewerEventDecorations(items, { entity: 'image' })
