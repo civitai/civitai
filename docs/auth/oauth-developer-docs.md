@@ -296,7 +296,8 @@ Active token:
 
 Anything else returns `200 {"active": false}` — unknown token, expired token, a refresh token, a
 personal API key (a different key type; only OAuth **access** tokens introspect as active), a
-missing `token` parameter, or a live token whose **owner's account is closed or suspended**. The
+client-credentials token (single-purpose), a missing `token` parameter, or a live token whose
+**owner's account is closed or suspended**. The
 endpoint never distinguishes those cases.
 
 So `active` covers the subject as well as the token: `active: true` means the token is live *and*

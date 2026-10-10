@@ -58,10 +58,14 @@ describe('oauthClient.update scopes', () => {
     expect(written()).toEqual({ name: 'Games', redirectUris: ['https://g.example/cb'] });
   });
 
-  it('a scope edit keeps the opt-in bit the client already has', async () => {
-    existing(TokenScope.UserRead | TokenScope.AIServicesWrite | CATALOG);
+  it('a scope edit keeps every opt-in bit the client already has', async () => {
+    existing(
+      TokenScope.UserRead | TokenScope.AIServicesWrite | CATALOG | TokenScope.AppBlocksSubmit
+    );
     await caller().update({ id: 'game-frame', allowedScopes: TokenScope.UserRead });
-    expect(written().allowedScopes).toBe(TokenScope.UserRead | CATALOG);
+    expect(written().allowedScopes).toBe(
+      TokenScope.UserRead | CATALOG | TokenScope.AppBlocksSubmit
+    );
   });
 
   it('a scope edit cannot add an opt-in bit', async () => {

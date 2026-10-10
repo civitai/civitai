@@ -60,15 +60,21 @@ const { resolveCatalogCaller } = await import(
 const OWNER = 1;
 const CATALOG_TOKEN = 'civitai_catalog';
 const ORDINARY_TOKEN = 'civitai_ordinary';
+/** Tokens carrying OTHER opt-in bits above `Full`: they are not client-credentials-only. */
+const OPT_IN_TOKENS: Record<string, number> = {
+  civitai_cli: TokenScope.UserRead | TokenScope.AppBlocksSubmit | TokenScope.LinkConnect,
+  civitai_tunnel: TokenScope.UserRead | TokenScope.AppBlocksDevTunnel,
+};
 
 function keyRow(token: string) {
   return {
     id: token === CATALOG_TOKEN ? 501 : 502,
     userId: OWNER,
     tokenScope:
-      token === CATALOG_TOKEN
+      OPT_IN_TOKENS[token] ??
+      (token === CATALOG_TOKEN
         ? TokenScope.UserRead | TokenScope.AppStoreCatalogWrite
-        : TokenScope.UserRead,
+        : TokenScope.UserRead),
     lastUsedAt: new Date(),
     buzzLimit: null,
     clientId: 'game-frame',
@@ -203,6 +209,23 @@ describe('moderator endpoints', () => {
     expect(ok.statusCode).toBe(200);
     expect(handlerSpy).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('tokens with other opt-in scopes above Full', () => {
+  it.each(Object.entries(OPT_IN_TOKENS))(
+    '%s still resolves on getServerAuthSession and passes AuthedEndpoint',
+    async (token, scope) => {
+      const session = await getServerAuthSession({ req: req(token), res: res() });
+      expect(session?.user?.id).toBe(OWNER);
+      expect((session as { tokenScope?: number } | null)?.tokenScope).toBe(scope);
+
+      const handler = vi.fn(async () => undefined);
+      const r = res();
+      await AuthedEndpoint(handler)(req(token) as never, r);
+      expect(r.statusCode).toBe(200);
+      expect(handler).toHaveBeenCalledTimes(1);
+    }
+  );
 });
 
 describe('the catalog endpoints', () => {
