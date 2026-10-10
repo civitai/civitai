@@ -11,10 +11,13 @@ import {
 } from '~/server/events/event-access';
 import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
+import { eventPointSeason } from '~/server/events/points/keys';
+import { runEventPointsReferee } from '~/server/events/points/referee';
+import { syncEventHats } from '~/server/events/points/sync';
 import {
   getEventStandings,
   getTeamScoreHistory as getScoredTeamScoreHistory,
-  runCosmeticPlacementScoring,
+  refreshStandings,
 } from '~/server/events/scoring/cosmetic-placement.service';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
@@ -175,22 +178,23 @@ export const eventEngine = {
     for (const eventDef of getScorableEvents(now)) {
       const scored = scoredEvent(eventDef);
       if (scored) {
-        // Keeps running past the end so the last hours and late data are scored; the score query
-        // clips every window to endDate.
+        // Keeps running past the end so the last hours and late data are settled; the referee clips
+        // every window to the season's end.
         if (eventDef.endDate.getTime() + scored.scoring.finalizeAfterMs < now.getTime()) continue;
-        // Before launch this is the preview window, and only flagged users' cosmetics score.
+        // Before launch this is the preview, where only flagged users' hats earn (the hat sync
+        // applies the flag), settled into its own season.
         const phase = await getEventScoringPhase(eventDef, now);
         if (!phase) continue;
-        await runCosmeticPlacementScoring(
-          {
-            ...scored,
-            startDate: phase.from,
-            endDate: phase.to,
-            scoreFrom: phase.from,
-            audienceFlag: phase.fliptKey,
-          },
-          now
-        );
+        await syncEventHats(now);
+        const season = eventPointSeason(eventDef.startDate, now);
+        const result = await runEventPointsReferee(scored, season, now);
+        await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
+        logToAxiom({
+          type: 'info',
+          name: 'event-points-referee',
+          event: eventDef.name,
+          ...result,
+        }).catch(() => undefined);
         continue;
       }
 
@@ -364,15 +368,22 @@ export const eventEngine = {
       coverImage,
       coverImageUser,
       scored: !!eventDef.scoring,
-      reactionWeight: eventDef.scoring?.reactionWeight,
+      reactionWeight: eventDef.scoring?.types.reaction?.weight,
       joinable: !!eventDef.join,
       preview: access === 'preview',
       previewFrom: eventDef.previewFrom,
       page: eventDef.page,
       // The fair-play rules the page explains, read from what the scoring job applies.
       rules: eventDef.scoring && {
-        reactionWeight: eventDef.scoring.reactionWeight,
-        viewerOwnerDailyCap: eventDef.scoring.viewerOwnerDailyCap,
+        viewWeight: eventDef.scoring.types.view?.weight,
+        reactionWeight: eventDef.scoring.types.reaction?.weight,
+        commentWeight: eventDef.scoring.types.comment?.weight,
+        stickerWeight: eventDef.scoring.types.sticker?.weight,
+        remixWeight: eventDef.scoring.types.remix?.weight,
+        modelLikeWeight: eventDef.scoring.types.modelLike?.weight,
+        pointsCapPerDay: eventDef.scoring.capPerActorPerOwnerPerDay,
+        // Still read by the rules card until its copy moves to pointsCapPerDay.
+        viewerOwnerDailyCap: eventDef.scoring.capPerActorPerOwnerPerDay,
         newAccountDays: eventDef.scoring.newAccountDays,
       },
       decoration: decoration && {

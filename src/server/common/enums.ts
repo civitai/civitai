@@ -451,6 +451,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  EventPoints = 'event-points', // with :event:hat:topicId, or :event:teams
   ContestScore = 'contest-score', // with :collectionId
 }
 

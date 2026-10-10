@@ -923,24 +923,26 @@ clickhouse client -n <<-EOSQL
             TTL createdDate + INTERVAL 30 DAY
             SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
-    -- Mirror of Postgres "EventCosmeticPlacement", written by the event scoring job.
-    create table if not exists default.event_cosmetic_placements
+    -- Event points ledger, written by awardEventPoints and read by the hourly referee.
+    create table if not exists default.event_point_events
     (
-        id            UInt64,
-        event         LowCardinality(String),
-        userId        Int32,
-        cosmeticId    Int32,
-        claimKey      String,
-        team          LowCardinality(String),
-        entityType    LowCardinality(String),
-        entityId      Int32,
-        entityOwnerId Int32,
-        startedAt     DateTime64(3, 'UTC'),
-        endedAt       Nullable(DateTime64(3, 'UTC')),
-        updatedAt     DateTime64(3, 'UTC')
+        event      LowCardinality(String),
+        time       DateTime64(3, 'UTC'),
+        type       LowCardinality(String),
+        op         Enum8('add' = 1, 'remove' = 2),
+        actorId    Int32,
+        entityType LowCardinality(String),
+        entityId   Int32,
+        ownerId    Int32,
+        cosmeticId Int32,
+        claimKey   String,
+        team       LowCardinality(String),
+        sourceId   String
     )
-        engine = ReplacingMergeTree(updatedAt)
-            ORDER BY (event, id);
+        engine = MergeTree
+            PARTITION BY (event, toYYYYMM(time))
+            ORDER BY (event, toDate(time), ownerId, actorId, type, entityType, entityId)
+            TTL toDateTime(time) + INTERVAL 400 DAY;
 
     create table if not exists default.daily_impressions
     (
