@@ -35,7 +35,7 @@ const {
   syncOwnersEventHats,
 } = await import('~/server/events/points/sync');
 const { createEventPointsEngine } = await import('~/server/events/points/award');
-const { encodeHat, eventPointKeys } = await import('~/server/events/points/keys');
+const { encodeHat, eventPointKeys, hatSyncKeys } = await import('~/server/events/points/keys');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const MIGRATION = path.resolve(
@@ -229,10 +229,22 @@ describe('syncEventHats -> engine', () => {
       sets.delete(key);
       return members;
     });
+    // The two compare-and-act scripts the lock uses: delete, or extend, only while it is ours.
+    sys.eval.mockImplementation(
+      async (
+        script: string,
+        { keys: [key], arguments: [token] }: { keys: string[]; arguments: string[] }
+      ) => {
+        if (strings.get(key) !== token) return 0;
+        if (script.includes("'DEL'")) strings.delete(key);
+        return 1;
+      }
+    );
     testerFlag.reset({ public: true });
   });
   const strings = new Map<string, string>();
   const sets = new Map<string, Set<string>>();
+  const lock = hatSyncKeys(OWNER);
 
   const LIVE = new Date('2026-11-05T12:00:00.000Z');
   const keys = eventPointKeys(birthday2026.name);
@@ -409,6 +421,7 @@ describe('syncEventHats -> engine', () => {
       expect(redisMock.sysRedis.hDel).not.toHaveBeenCalled();
       expect(log).toEqual([]);
       expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
       // Switched back on, the same calls write: the silence above is the switch.
       killSwitch.on = true;
       await syncOwnerEventHats(OWNER, [image(100)], LIVE);
@@ -511,13 +524,53 @@ describe('syncEventHats -> engine', () => {
 
     it('gives up after a bounded number of passes, and says so', async () => {
       await place(OWNER, 100);
-      // Someone always arrives while it runs.
-      redisMock.sysRedis.sPop.mockImplementation(async () => ['*']);
+      // Someone keeps arriving while it runs; the fake stops after 50 so a missing bound fails, not hangs.
+      let arrivals = 0;
+      redisMock.sysRedis.sPop.mockImplementation(async () => (++arrivals <= 50 ? ['*'] : []));
       await syncOwnerEventHats(OWNER, [image(100)], LIVE);
-      expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(HAT_SYNC_MAX_PASSES);
+      const acquired = redisMock.sysRedis.set.mock.calls.filter(([key]) => key === lock.lock);
+      expect(acquired).toHaveLength(HAT_SYNC_MAX_PASSES);
+      expect(arrivals).toBeLessThan(50);
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ fn: 'runOwnerHatSync', ownerId: OWNER })
       );
+    });
+
+    // A pass that outlives the lock must neither write after losing it nor free the next holder's.
+    it('stops writing, and leaves the new holder’s lock alone, when its lock expired mid-pass', async () => {
+      await place(OWNER, 100);
+      const raw = pgliteRaw(db.pg);
+      dbMock.dbWrite.$queryRaw.mockImplementationOnce((async (...args: unknown[]) => {
+        const rows = await (raw.queryRaw as (...a: unknown[]) => Promise<unknown>)(...args);
+        strings.set(lock.lock, 'another-holder');
+        return rows;
+      }) as never);
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(log).toEqual([]);
+      expect(strings.get(lock.lock)).toBe('another-holder');
+      // It left its content for that holder.
+      expect([...(sets.get(lock.pending) ?? [])]).toEqual(['*', 'Image:100']);
+    });
+
+    it('takes the lock itself when the holder let go before it could leave its content', async () => {
+      await place(OWNER, 100);
+      // The holder was there for the SET and gone by the EXISTS.
+      redisMock.sysRedis.set.mockResolvedValueOnce(null);
+      redisMock.sysRedis.exists.mockResolvedValueOnce(0);
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
+    });
+
+    it('takes an owner’s hats off before the preview opens', async () => {
+      await place(OWNER, 100);
+      hashes.set(keys.hats, new Map([['Image:100', ownerHat()]]));
+      await syncOwnerEventHats(
+        OWNER,
+        [image(100)],
+        new Date(birthday2026.previewFrom!.getTime() - 1)
+      );
+      expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({});
+      expect(log).toEqual([{ k: 'Image:100', v: '' }]);
     });
 
     it('still writes the hat when Redis cannot take the lock', async () => {

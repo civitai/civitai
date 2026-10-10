@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -193,11 +194,11 @@ async function syncOneEvent(eventDef: ScoredEvent, now: Date) {
       set: changes.set.slice(0, LOGGED_KEYS_MAX).map(([key]) => key),
       removed: changes.remove.slice(0, LOGGED_KEYS_MAX),
     }).catch(() => undefined);
-    await applyReconcile(keys, changes, current, desired, now);
   }
 
   for (const [type, rule] of Object.entries(scoring.types))
     if (rule) await sysRedis.hSetNX(keys.weights, type, String(rule.weight));
+  await applyReconcile(eventDef.name, keys, changes, current, desired, now);
 
   return { event: eventDef.name, set: changes.set.length, removed: changes.remove.length };
 }
@@ -206,6 +207,7 @@ async function syncOneEvent(eventDef: ScoredEvent, now: Date) {
 // finds is re-derived for that owner on the primary, under the owner's lock, rather than written as
 // read. Only a key with no readable owner, or a batch too big to go owner by owner, is written as is.
 async function applyReconcile(
+  event: string,
   keys: ReturnType<typeof eventPointKeys>,
   changes: ReturnType<typeof diffHats>,
   current: Record<string, string>,
@@ -221,7 +223,10 @@ async function applyReconcile(
   }
   if (byOwner.size > OWNER_BATCH_MAX) return writeHatChanges(keys, changes);
   if (unowned.length) await writeHatChanges(keys, { set: [], remove: unowned });
-  for (const [ownerId, touched] of byOwner) await runOwnerHatSync(ownerId, touched, now);
+  for (const [ownerId, touched] of byOwner)
+    await runOwnerHatSync(ownerId, touched, now, event).catch((error) =>
+      logSyncError('applyReconcile', error, { event, ownerId })
+    );
 }
 
 // Brings one owner's hats in the hat map up to date, right after something changed them: an equip,
@@ -245,38 +250,80 @@ export async function syncOwnerEventHats(
 }
 
 const PENDING_ALL = '*';
+const DELETE_IF_EQUALS_SCRIPT =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
+const RENEW_IF_EQUALS_SCRIPT =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end return 0";
+// Content left for the holder outlives a slow pass by a wide margin.
+const PENDING_TTL_MS = 60_000;
 
 // One owner's passes run one at a time. Two unserialized passes could land in either order, and the
 // older read landing last would leave a hat on that came off. A caller that finds a pass running
 // leaves its content in the pending set and returns; the holder runs again until nothing is pending,
-// so the last pass always reads after the last write. If Redis cannot take the lock, the pass runs
-// anyway: a skipped write-through costs more than an unserialized one.
-async function runOwnerHatSync(ownerId: number, touched: string[], now = new Date()) {
+// so the last pass always reads after the last write. The holder re-checks the lock before each
+// write and stops if it lost it. If Redis cannot take the lock, the pass runs anyway: a skipped
+// write-through costs more than an unserialized one.
+async function runOwnerHatSync(
+  ownerId: number,
+  touched: string[],
+  now = new Date(),
+  onlyEvent?: string
+) {
   const lock = hatSyncKeys(ownerId);
-  let next = touched;
-  for (let pass = 0; pass < HAT_SYNC_MAX_PASSES; pass++) {
+  const token = randomUUID();
+  const stillHeld = async () => {
     try {
-      const held = await sysRedis.set(lock.lock, '1', { NX: true, PX: HAT_SYNC_LOCK_MS });
+      const renewed = await sysRedis.eval(RENEW_IF_EQUALS_SCRIPT, {
+        keys: [lock.lock],
+        arguments: [token, String(HAT_SYNC_LOCK_MS)],
+      });
+      return renewed === 1;
+    } catch (error) {
+      void logSyncError('runOwnerHatSync.renew', error, { ownerId });
+      return true;
+    }
+  };
+  let next = touched;
+  let scope = onlyEvent;
+  let passes = 0;
+  for (let attempt = 0; attempt < 2 * HAT_SYNC_MAX_PASSES; attempt++) {
+    if (passes >= HAT_SYNC_MAX_PASSES) break;
+    try {
+      const held = await sysRedis.set(lock.lock, token, { NX: true, PX: HAT_SYNC_LOCK_MS });
       if (!held) {
         await sysRedis.sAdd(lock.pending, [PENDING_ALL, ...next]);
-        await sysRedis.pExpire(lock.pending, HAT_SYNC_LOCK_MS);
+        await sysRedis.pExpire(lock.pending, PENDING_TTL_MS);
         // The holder may have let go between our SET and SADD, and then nobody would read the set.
         if (await sysRedis.exists(lock.lock)) return;
         continue;
       }
     } catch (error) {
       void logSyncError('runOwnerHatSync.lock', error, { ownerId });
-      return syncOwnerPass(ownerId, next, now);
+      await syncOwnerPass(ownerId, next, now, scope);
+      return;
     }
+    passes++;
     try {
-      next = [...new Set([...next, ...entityKeysOf(await popPending(lock.pending))])];
-      await syncOwnerPass(ownerId, next, now);
+      const drained = await popPending(lock.pending);
+      // Content another caller left may belong to any event.
+      if (drained.length) scope = undefined;
+      next = [...new Set([...next, ...entityKeysOf(drained)])];
+      // Lost the lock mid-pass: the next attempt leaves our content to whoever holds it now.
+      if (!(await syncOwnerPass(ownerId, next, now, scope, stillHeld))) continue;
     } finally {
-      await sysRedis.del(lock.lock).catch(() => undefined);
+      await sysRedis
+        .eval(DELETE_IF_EQUALS_SCRIPT, { keys: [lock.lock], arguments: [token] })
+        .catch(() => undefined);
     }
     const pending = await popPending(lock.pending);
     if (!pending.length) return;
     next = entityKeysOf(pending);
+    scope = undefined;
+  }
+  if (!passes) {
+    // Never got the lock and the holder kept letting go: run unserialized rather than drop it.
+    await syncOwnerPass(ownerId, next, now, scope);
+    return;
   }
   void logToAxiom({
     type: 'warning',
@@ -296,21 +343,31 @@ async function popPending(key: ReturnType<typeof hatSyncKeys>['pending']) {
   );
 }
 
-async function syncOwnerPass(ownerId: number, touched: string[], now: Date) {
+// False when the pass stopped because the lock was lost.
+async function syncOwnerPass(
+  ownerId: number,
+  touched: string[],
+  now: Date,
+  onlyEvent?: string,
+  stillHeld: () => Promise<boolean> = async () => true
+) {
   for (const eventDef of await hatSyncEvents(now)) {
+    if (onlyEvent && eventDef.name !== onlyEvent) continue;
     try {
-      await syncOwnerOneEvent(eventDef, ownerId, touched, now);
+      if (!(await syncOwnerOneEvent(eventDef, ownerId, touched, now, stillHeld))) return false;
     } catch (error) {
       void logSyncError('syncOwnerEventHats', error, { event: eventDef.name, ownerId });
     }
   }
+  return true;
 }
 
 async function syncOwnerOneEvent(
   eventDef: ScoredEvent,
   ownerId: number,
   touched: string[],
-  now: Date
+  now: Date,
+  stillHeld: () => Promise<boolean>
 ) {
   const keys = eventPointKeys(eventDef.name);
   const phase = await getEventScoringPhase(eventDef, now);
@@ -324,7 +381,7 @@ async function syncOwnerOneEvent(
   const candidates = [
     ...new Set([...rows.map((r) => entityKey(r.entityType, r.entityId)), ...touched]),
   ];
-  if (!candidates.length) return;
+  if (!candidates.length) return true;
 
   const values = await sysRedis.hmGet(keys.hats, candidates);
   // Another owner's hat on a touched entity is not this owner's to take off; the reconcile decides it.
@@ -333,7 +390,9 @@ async function syncOwnerOneEvent(
     const value = values[i];
     if (value && (desired.has(key) || decodeHat(value)?.ownerId === ownerId)) current[key] = value;
   });
+  if (!(await stillHeld())) return false;
   await writeHatChanges(keys, diffHats(current, desired));
+  return true;
 }
 
 // The owners of several placements that just changed together, e.g. a revoke across many holders.
