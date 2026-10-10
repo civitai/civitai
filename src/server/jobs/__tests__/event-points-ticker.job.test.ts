@@ -44,4 +44,34 @@ describe('event-points-ticker job', () => {
       { deadline: 123_456 }
     );
   });
+
+  // The loop's own tests inject these; here they are the job's, so a wrong one would stop or stall
+  // the live ticker with every other test green.
+  it('runs the loop on the real clock and timer, and reports a canceled job as canceled', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const canceled: boolean[] = [];
+    let clockSkew = Infinity;
+    let slept = 0;
+    ticker.runEventPointsTicker.mockImplementation(async (_getEvents, deps) => {
+      canceled.push(deps.isCanceled());
+      clockSkew = Math.abs(deps.now() - Date.now());
+      const before = Date.now();
+      await deps.sleep(30);
+      slept = Date.now() - before;
+      await gate;
+      canceled.push(deps.isCanceled());
+      return { ticks: 0 };
+    });
+
+    const run = eventPointsTicker.run();
+    await vi.waitFor(() => expect(slept).toBeGreaterThan(0));
+    await run.cancel();
+    release();
+    await run.result;
+
+    expect(canceled).toEqual([false, true]);
+    expect(clockSkew).toBeLessThan(1000);
+    expect(slept).toBeGreaterThanOrEqual(25);
+  });
 });
