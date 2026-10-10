@@ -1,9 +1,9 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { cn } from '@civitai/ui/utils.js';
   import { enhance } from '$app/forms';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { LINK_CLASS, plural } from '$lib/format';
   import MatchesTab from './MatchesTab.svelte';
   import RulesTab from './RulesTab.svelte';
@@ -12,8 +12,12 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
   const canEdit = $derived(!!data.grants['textScan.modelRules.edit']);
-  const tabHref = (tab: 'rules' | 'matches') => `?tab=${tab}`;
+  const TABS = [
+    { value: 'rules', label: 'Rules', href: '?tab=rules' },
+    { value: 'matches', label: 'Matches', href: '?tab=matches' },
+  ];
   let converting = $state(false);
+  let editorOpen = $state(false);
 </script>
 
 <svelte:head><title>Model rules · Text scan</title></svelte:head>
@@ -26,21 +30,9 @@
   </p>
 </div>
 
-<nav class="mb-4 flex flex-wrap gap-1">
-  {#each [['rules', 'Rules'], ['matches', 'Matches']] as const as [tab, label] (tab)}
-    <a
-      href={tabHref(tab)}
-      class={cn(
-        'rounded-md px-3 py-1 text-sm',
-        tab === data.query.tab ? 'bg-dark-5 text-white' : 'text-dark-2 hover:bg-dark-6'
-      )}
-    >
-      {label}
-    </a>
-  {/each}
-</nav>
+<LinkTabs class="mb-4" items={TABS} active={data.query.tab} />
 
-{#if form?.error}
+{#if form?.error && !editorOpen}
   <ErrorAlert class="mb-4" message={form.error} />
 {:else if form?.message}
   <div class="mb-4 rounded-md border border-teal-500/30 bg-teal-500/10 p-2 text-sm text-teal-300">
@@ -81,7 +73,15 @@
       {/if}
     </section>
   {/if}
-  <RulesTab rules={data.rules} total={data.total} query={data.query} {canEdit} url={page.url} />
+  <RulesTab
+    rules={data.rules}
+    total={data.total}
+    query={data.query}
+    {canEdit}
+    url={page.url}
+    {form}
+    bind:editorOpen
+  />
 {:else if data.matches}
   <MatchesTab
     matches={data.matches}

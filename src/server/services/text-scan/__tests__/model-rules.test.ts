@@ -54,7 +54,11 @@ describe('getModelRulesForPrompt', () => {
       { id: 4, subject: 'Jane Doe', description: 'Likeness claim', aliases: [], updatedAt: 5000 },
     ]);
     expect(dbMock.dbWrite.moderationRule.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { entityType: 'Model', enabled: true } })
+      expect.objectContaining({
+        where: { entityType: 'Model', enabled: true },
+        // The order is the prompt's order, and so part of the fingerprint.
+        orderBy: [{ order: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
+      })
     );
   });
 });

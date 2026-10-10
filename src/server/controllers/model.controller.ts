@@ -165,7 +165,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
-import { modelRulesClearedOnRepublish } from '~/server/services/text-scan/actions/model-rules';
+import { withModelRulesClearance } from '~/server/services/text-scan/actions/model-rules';
 import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
@@ -872,11 +872,9 @@ export const publishModelHandler = async ({
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
-    // A moderator republishing a model the rules took down has approved those matches.
-    const modelRulesCleared = isModerator ? modelRulesClearedOnRepublish(modelMeta) : undefined;
     const updatedModel = await publishModelById({
       ...input,
-      meta: modelRulesCleared ? { ...meta, modelRulesCleared } : meta,
+      meta: withModelRulesClearance(meta, modelMeta, isModerator),
       republishing,
     });
     if (!isModerator)

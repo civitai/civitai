@@ -4,6 +4,7 @@ import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as AdaptersModule from '~/server/services/moderation-adapters';
 import type * as ModelRulesModule from '~/server/services/text-scan/model-rules';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // @civitai/client is mocked globally in src/__tests__/setup.ts (submitWorkflow/getWorkflow are vi.fn()).
@@ -27,7 +28,9 @@ vi.mock('~/server/services/text-scan/model-rules', async (importOriginal) => ({
   getModelRuleSnapshots: vi.fn(),
 }));
 
-const { scanEntity, textScanContentHash } = await import('~/server/services/text-scan/submit');
+const { scanEntity, scanModelAndRules, textScanContentHash } = await import(
+  '~/server/services/text-scan/submit'
+);
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow, getWorkflow } = await import('@civitai/client');
@@ -107,6 +110,28 @@ describe('scanEntity — ModelRules', () => {
   });
 });
 
+describe('scanEntity — ModelRules stale verdict', () => {
+  it('clears a match when the text left to scan is empty', async () => {
+    load.mockResolvedValue(
+      new Map([[7, { fields: [{ heading: 'Name', text: ' ' }], declared: {} }]])
+    );
+    em.findUnique.mockResolvedValue({
+      workflowId: 'wf-0',
+      status: 'Succeeded',
+      nsfwLevel: null,
+      triggeredLabels: ['modelRules'],
+      result: { version: 1 },
+    } as any);
+    await expect(scanEntity({ entityType: 'ModelRules', entityId: 7 })).resolves.toEqual({
+      status: 'skipped',
+      reason: 'too-short',
+    });
+    const { data } = em.updateMany.mock.calls[0][0];
+    expect(data.triggeredLabels).toEqual([]);
+    expect(data.result.labels).toEqual({ modelRules: { matched: [] } });
+  });
+});
+
 describe('textScanContentHash', () => {
   const base = { user: 'u', promptIds: { base: 1 }, model: 'm', thinking: false };
 
@@ -182,6 +207,23 @@ describe('handleTextScanCallback — ModelRules', () => {
         }),
       })
     );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'scan-verdict', tags: 'modelRules,modelRules:3' })
+    );
+  });
+
+  it('acts on nothing for a workflow submitted before rule ids were recorded', async () => {
+    vi.mocked(getModelRuleSnapshots).mockResolvedValue([]);
+    const { ruleIds: _ruleIds, ...legacy } = metadata;
+    vi.mocked(getWorkflow).mockResolvedValue({
+      ...workflow({ modelRules: { matched: [{ ruleId: 3, reason: 'r' }] } }),
+      data: {
+        ...workflow({ modelRules: { matched: [{ ruleId: 3, reason: 'r' }] } }).data,
+        metadata: legacy,
+      },
+    } as any);
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(em.updateMany.mock.calls[0][0].data.triggeredLabels).toEqual([]);
   });
 
   it('drops a match on a rule disabled since the submit', async () => {
@@ -196,11 +238,32 @@ describe('handleTextScanCallback — ModelRules', () => {
   });
 
   it('treats a verdict whose only match was invented as clean', async () => {
-    vi.mocked(getModelRuleSnapshots).mockResolvedValue([]);
+    // Echoes whatever it is asked for, so only the prompt-id filter can drop the invented id.
+    vi.mocked(getModelRuleSnapshots).mockImplementation(async (ids) =>
+      ids.map((id) => ({ id, subject: 'S', description: '', aliases: [] }))
+    );
     vi.mocked(getWorkflow).mockResolvedValue(
       workflow({ modelRules: { matched: [{ ruleId: 42, reason: 'Invented.' }] } }) as any
     );
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
     expect(em.updateMany.mock.calls[0][0].data.triggeredLabels).toEqual([]);
+  });
+});
+
+describe('scanModelAndRules', () => {
+  it('queues both scans, and the rules scan only when asked', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('off');
+    scanModelAndRules(9);
+    await vi.waitFor(() => expect(getTextScanMode).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(getTextScanMode).mock.calls).toEqual([
+      ['Model', 9],
+      ['ModelRules', 9],
+    ]);
+
+    vi.mocked(getTextScanMode).mockClear();
+    scanModelAndRules(9, { rules: false });
+    await vi.waitFor(() => expect(getTextScanMode).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(vi.mocked(getTextScanMode).mock.calls).toEqual([['Model', 9]]);
   });
 });

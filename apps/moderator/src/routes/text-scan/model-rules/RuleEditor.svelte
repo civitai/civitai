@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -14,7 +15,12 @@
     note: string;
   };
 
-  let { rule, onclose }: { rule: Rule | null; onclose: () => void } = $props();
+  let {
+    rule,
+    form,
+    onclose,
+  }: { rule: Rule | null; form: { error?: string } | null | undefined; onclose: () => void } =
+    $props();
 
   let busy = $state(false);
 
@@ -41,6 +47,7 @@
     {rule ? `Edit rule ${rule.id}` : 'New rule'}
   </h2>
   {#if rule}<input type="hidden" name="id" value={rule.id} />{/if}
+  {#if form?.error}<ErrorAlert message={form.error} />{/if}
 
   <div>
     <Label for="rule-subject" class="text-xs text-dark-2">Subject</Label>

@@ -110,6 +110,18 @@ describe('submitViaTextScan (retry cron)', () => {
     });
   });
 
+  it('covers the live and shadow rows of ModelRules too', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'missing-prompt' });
+    await createTextScanAdapter('ModelRules', {}).submit({ entityId: 4, content: '' });
+    expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          entityType: { in: ['ModelRules', 'ModelRules:shadow'] },
+        }),
+      })
+    );
+  });
+
   it('leaves the budget alone for other skips', async () => {
     vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'off' });
     await adapter.submit({ entityId: 9, content: '' });

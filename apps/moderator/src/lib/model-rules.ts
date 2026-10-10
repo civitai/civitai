@@ -1,14 +1,11 @@
+import {
+  isSemanticDefinition,
+  semanticModelRuleSchema,
+  type SemanticModelRule,
+} from '@civitai/moderation/model-rules';
 import { z } from 'zod';
 
-export type SemanticModelRule = {
-  type: 'semantic';
-  subject: string;
-  description: string;
-  aliases: string[];
-  legacyMatch?: unknown;
-  needsAttention?: boolean;
-  updatedById?: number;
-};
+export { isSemanticDefinition, semanticModelRuleSchema, type SemanticModelRule };
 
 export const DEFAULT_RULE_DESCRIPTION = 'Takedown request';
 export const LIKENESS_RULE_DESCRIPTION = 'Real person who has claimed their likeness';
@@ -25,9 +22,6 @@ const descriptionFor = (reason: string | null | undefined) => {
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
-
-export const isSemanticDefinition = (definition: unknown): definition is SemanticModelRule =>
-  isRecord(definition) && definition.type === 'semantic';
 
 // One per line, never split on commas: a name can contain one ("Doe, Jane"), and splitting it would
 // turn one alias into two far broader ones on an unrelated save.
@@ -228,15 +222,21 @@ export function parseRuleMatches(result: unknown): RuleMatch[] {
       if (isRecord(s) && typeof s.id === 'number' && typeof s.subject === 'string')
         subjects.set(s.id, s.subject);
 
-  return matched.flatMap((m) =>
-    isRecord(m) && typeof m.ruleId === 'number'
-      ? [
-          {
-            ruleId: m.ruleId,
-            subject: subjects.get(m.ruleId) ?? null,
-            reason: typeof m.reason === 'string' && m.reason.trim() ? m.reason.trim() : null,
-          },
-        ]
-      : []
-  );
+  // First match per rule wins: the matches tab keys its rows by `ruleId`.
+  const byRule = new Map<number, RuleMatch>();
+  for (const m of matched) {
+    if (!isRecord(m) || typeof m.ruleId !== 'number' || byRule.has(m.ruleId)) continue;
+    byRule.set(m.ruleId, {
+      ruleId: m.ruleId,
+      subject: subjects.get(m.ruleId) ?? null,
+      reason: typeof m.reason === 'string' && m.reason.trim() ? m.reason.trim() : null,
+    });
+  }
+  return [...byRule.values()];
+}
+
+/** The cursor is a row's `updatedAt` as Postgres prints it plus its id: `YYYY-MM-DD HH:MM:SS(.ffffff)|id`. */
+export function parseMatchCursor(cursor: string | undefined) {
+  const match = cursor?.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\|(\d+)$/);
+  return match ? { updatedAt: match[1], id: Number(match[2]) } : undefined;
 }

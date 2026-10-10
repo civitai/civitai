@@ -68,3 +68,13 @@ export function modelRulesClearedOnRepublish(
     meta?.modelRulesCleared?.textHash === taken.textHash ? meta.modelRulesCleared.ruleIds : [];
   return { ruleIds: [...new Set([...previous, ...taken.ruleIds])], textHash: taken.textHash };
 }
+
+/** The meta to publish with: a moderator republishing a model the rules took down approves those matches. */
+export function withModelRulesClearance(
+  meta: ModelMeta,
+  storedMeta: ModelMeta | null | undefined,
+  isModerator: boolean | undefined
+): ModelMeta {
+  const modelRulesCleared = isModerator ? modelRulesClearedOnRepublish(storedMeta) : undefined;
+  return modelRulesCleared ? { ...meta, modelRulesCleared } : meta;
+}

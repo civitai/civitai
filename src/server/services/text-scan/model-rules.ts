@@ -1,19 +1,10 @@
-import * as z from 'zod';
+import { semanticModelRuleSchema } from '@civitai/moderation/model-rules';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { EntityType } from '~/shared/utils/prisma/enums';
-
-/** `ModerationRule.definition` for a Model rule the `ModelRules` text scan evaluates. */
-export const semanticModelRuleSchema = z.object({
-  type: z.literal('semantic'),
-  subject: z.string().trim().min(1),
-  description: z.string().trim().default(''),
-  aliases: z.array(z.string().trim().min(1)).default([]),
-  needsAttention: z.boolean().optional(),
-});
 
 export type ModelRuleForPrompt = {
   id: number;
@@ -45,10 +36,6 @@ export async function getModelRulesForPrompt(): Promise<ModelRuleForPrompt[]> {
     },
     { ttl: CacheTTL.day }
   );
-}
-
-export async function bustModelRulesCache() {
-  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS);
 }
 
 export function renderModelRulesBlock(rules: ModelRuleForPrompt[]) {

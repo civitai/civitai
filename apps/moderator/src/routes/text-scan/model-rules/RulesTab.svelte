@@ -12,6 +12,7 @@
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
   import { cn } from '@civitai/ui/utils.js';
+  import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { dateTime, num } from '$lib/format';
   import { urlWith } from '$lib/url';
   import RuleEditor from './RuleEditor.svelte';
@@ -25,16 +26,47 @@
     query,
     canEdit,
     url,
-  }: { rules: Rules; total: number; query: PageData['query']; canEdit: boolean; url: URL } =
-    $props();
+    form,
+    editorOpen = $bindable(false),
+  }: {
+    rules: Rules;
+    total: number;
+    query: PageData['query'];
+    canEdit: boolean;
+    url: URL;
+    form: { error?: string } | null | undefined;
+    editorOpen?: boolean;
+  } = $props();
 
-  let editing = $state<Rules[number] | 'new' | null>(null);
+  let editingId = $state<number | 'new' | null>(null);
+  let toggling = $state(false);
+
+  // Derived from the list so an editor never shows a row the reloaded list no longer holds.
+  const editingRule = $derived(
+    typeof editingId === 'number' ? rules.find((r) => r.id === editingId) : undefined
+  );
 
   const STATUSES = [
-    ['all', 'All'],
-    ['enabled', 'Enabled'],
-    ['disabled', 'Disabled'],
+    { value: 'all', label: 'All' },
+    { value: 'enabled', label: 'Enabled' },
+    { value: 'disabled', label: 'Disabled' },
   ] as const;
+
+  const statusItems = $derived(
+    STATUSES.map(({ value, label }) => ({
+      value,
+      label,
+      href: urlWith(url, { status: value === 'all' ? null : value }),
+    }))
+  );
+
+  $effect(() => {
+    editorOpen = editingId === 'new' || !!editingRule;
+  });
+
+  $effect(() => {
+    if (typeof editingId === 'number' && !editingRule) editingId = null;
+  });
 </script>
 
 <div class="mb-3 flex flex-wrap items-end gap-3">
@@ -51,30 +83,18 @@
     <Button type="submit" variant="outline" size="sm">Search</Button>
   </form>
 
-  <div class="flex gap-1">
-    {#each STATUSES as [value, label] (value)}
-      <a
-        href={urlWith(url, { status: value === 'all' ? null : value })}
-        class={cn(
-          'rounded-md px-3 py-1 text-sm',
-          value === query.status ? 'bg-dark-5 text-white' : 'text-dark-2 hover:bg-dark-6'
-        )}
-      >
-        {label}
-      </a>
-    {/each}
-  </div>
+  <LinkTabs items={statusItems} active={query.status} />
 
   <span class="text-sm text-dark-2">{num(rules.length)} of {num(total)}</span>
 
   {#if canEdit}
-    <Button class="ml-auto" size="sm" onclick={() => (editing = 'new')}>New rule</Button>
+    <Button class="ml-auto" size="sm" onclick={() => (editingId = 'new')}>New rule</Button>
   {/if}
 </div>
 
-{#if editing}
-  {#key editing === 'new' ? 'new' : editing.id}
-    <RuleEditor rule={editing === 'new' ? null : editing} onclose={() => (editing = null)} />
+{#if editingId === 'new' || editingRule}
+  {#key editingId}
+    <RuleEditor rule={editingRule ?? null} {form} onclose={() => (editingId = null)} />
   {/key}
 {/if}
 
@@ -113,13 +133,13 @@
                 </details>
               {/if}
             </TableCell>
-            <TableCell class="max-w-72 whitespace-normal align-top text-dark-1">
+            <TableCell class="max-w-72 whitespace-normal align-top text-dark-0">
               <p class="break-words">{rule.description || '—'}</p>
               {#if rule.note && rule.note !== rule.description}
                 <p class="mt-1 break-words text-xs text-dark-2">Note: {rule.note}</p>
               {/if}
             </TableCell>
-            <TableCell class="max-w-64 whitespace-normal break-words align-top text-dark-1">
+            <TableCell class="max-w-64 whitespace-normal break-words align-top text-dark-0">
               {rule.aliases.length ? rule.aliases.join(', ') : '—'}
             </TableCell>
             <TableCell class="whitespace-normal align-top text-xs text-dark-2">
@@ -134,14 +154,31 @@
                     variant="outline"
                     disabled={rule.legacy}
                     title={rule.legacy ? 'Convert the regex rules first' : undefined}
-                    onclick={() => (editing = rule)}
+                    onclick={() => (editingId = rule.id)}
                   >
                     Edit
                   </Button>
-                  <form method="POST" action="?/toggle" use:enhance>
+                  <form
+                    method="POST"
+                    action="?/toggle"
+                    use:enhance={({ cancel }) => {
+                      if (toggling) {
+                        cancel();
+                        return;
+                      }
+                      toggling = true;
+                      return async ({ update }) => {
+                        try {
+                          await update();
+                        } finally {
+                          toggling = false;
+                        }
+                      };
+                    }}
+                  >
                     <input type="hidden" name="id" value={rule.id} />
                     <input type="hidden" name="enabled" value={String(!rule.enabled)} />
-                    <Button type="submit" size="sm" variant="outline">
+                    <Button type="submit" size="sm" variant="outline" disabled={toggling}>
                       {rule.enabled ? 'Disable' : 'Enable'}
                     </Button>
                   </form>

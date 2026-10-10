@@ -1,17 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { unpublishModelById } = vi.hoisted(() => ({ unpublishModelById: vi.fn() }));
+const { unpublishModelById, refreshModelData, bustPublicModelResponseCache } = vi.hoisted(() => ({
+  unpublishModelById: vi.fn(),
+  refreshModelData: vi.fn(),
+  bustPublicModelResponseCache: vi.fn(),
+}));
 
 // Hand-listed: the real modules build clients at load.
 vi.mock('~/server/services/model.service', () => ({ unpublishModelById }));
-vi.mock('~/server/services/model-version.service', () => ({
-  bustPublicModelResponseCache: vi.fn(),
-}));
-vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
+vi.mock('~/server/services/model-version.service', () => ({ bustPublicModelResponseCache }));
+vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: refreshModelData } }));
 
-const { applyModelRulesTextScan, modelRulesClearedOnRepublish, MODEL_RULES_UNPUBLISH_MESSAGE } =
-  await import('~/server/services/text-scan/actions/model-rules');
+const {
+  applyModelRulesTextScan,
+  modelRulesClearedOnRepublish,
+  withModelRulesClearance,
+  MODEL_RULES_UNPUBLISH_MESSAGE,
+} = await import('~/server/services/text-scan/actions/model-rules');
 
 const args = (ruleIds: number[], textHash = 'h1') => ({
   entityId: 7,
@@ -24,8 +30,8 @@ const args = (ruleIds: number[], textHash = 'h1') => ({
   subject: { fields: [], declared: {} },
   textHash,
 });
-const claimSql = () =>
-  (dbMock.dbWrite.$executeRaw.mock.calls[0]?.[0] as readonly string[] | undefined)?.join('?');
+const claimCall = () => dbMock.dbWrite.$executeRaw.mock.calls[0] as unknown[];
+const claimSql = () => (claimCall()[0] as readonly string[]).join('?').replace(/\s+/g, ' ').trim();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -37,17 +43,21 @@ describe('applyModelRulesTextScan', () => {
   it('claims a public model, then unpublishes it for review without naming the rule', async () => {
     await applyModelRulesTextScan(args([3, 4]));
 
-    const sql = claimSql();
-    expect(sql).toContain("status IN ('Published', 'Scheduled')");
-    expect(sql).toContain("availability <> 'Private'");
-    expect(sql).toContain('"deletedAt" IS NULL');
-    expect(sql).toContain("meta->'modelRules'->>'workflowId'");
     const modelRules = {
       ruleIds: [3, 4],
       workflowId: 'wf-1',
       textHash: 'h1',
       at: expect.any(String),
     };
+    expect(claimSql()).toBe(
+      `UPDATE "Model" SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('modelRules', ?::jsonb) ` +
+        `WHERE id = ? AND status IN ('Published', 'Scheduled') AND availability <> 'Private' ` +
+        `AND "deletedAt" IS NULL AND COALESCE(meta->'modelRules'->>'workflowId', '') <> ?`
+    );
+    const [, json, id, workflowId] = claimCall();
+    expect(JSON.parse(json as string)).toEqual(modelRules);
+    expect([id, workflowId]).toEqual([7, 'wf-1']);
+    expect(unpublishModelById).toHaveBeenCalledTimes(1);
     expect(unpublishModelById).toHaveBeenCalledWith({
       id: 7,
       userId: -1,
@@ -56,6 +66,8 @@ describe('applyModelRulesTextScan', () => {
       customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
       meta: { foo: 1, needsReview: true, modelRules },
     });
+    expect(refreshModelData).toHaveBeenCalledWith(7);
+    expect(bustPublicModelResponseCache).toHaveBeenCalledWith(7);
     expect(MODEL_RULES_UNPUBLISH_MESSAGE).not.toMatch(/\d/);
   });
 
@@ -65,10 +77,35 @@ describe('applyModelRulesTextScan', () => {
     expect(unpublishModelById).not.toHaveBeenCalled();
   });
 
-  it('stops when the claim matches no row (not public any more, or already acted on)', async () => {
+  it('acts once when the same callback is delivered twice', async () => {
+    const claimed = new Set<string>();
+    dbMock.dbWrite.$executeRaw.mockImplementation(async (_sql: unknown, _json, _id, wf) => {
+      if (claimed.has(wf as string)) return 0;
+      claimed.add(wf as string);
+      return 1;
+    });
+    await applyModelRulesTextScan(args([3]));
+    await applyModelRulesTextScan(args([3]));
+    expect(unpublishModelById).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops when the claim matches no row (not public any more)', async () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
     await applyModelRulesTextScan(args([3]));
     expect(unpublishModelById).not.toHaveBeenCalled();
+    expect(refreshModelData).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for a model that is gone or has no meta', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
+    await applyModelRulesTextScan(args([3]));
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: null });
+    await applyModelRulesTextScan(args([3]));
+    expect(unpublishModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ meta: expect.objectContaining({ needsReview: true }) })
+    );
   });
 
   it('honours a moderator clearance only for the text that was reviewed', async () => {
@@ -118,5 +155,18 @@ describe('modelRulesClearedOnRepublish', () => {
   it('returns undefined for a model the rules did not take down', () => {
     expect(modelRulesClearedOnRepublish({})).toBeUndefined();
     expect(modelRulesClearedOnRepublish(null)).toBeUndefined();
+  });
+});
+
+describe('withModelRulesClearance', () => {
+  const stored = { modelRules: { ruleIds: [3], workflowId: 'w', textHash: 'h1', at: 't' } };
+
+  it('records the approval only for a moderator republishing a rules take-down', () => {
+    expect(withModelRulesClearance({ foo: 1 } as never, stored, true)).toEqual({
+      foo: 1,
+      modelRulesCleared: { ruleIds: [3], textHash: 'h1' },
+    });
+    expect(withModelRulesClearance({ foo: 1 } as never, stored, false)).toEqual({ foo: 1 });
+    expect(withModelRulesClearance({ foo: 1 } as never, {}, true)).toEqual({ foo: 1 });
   });
 });

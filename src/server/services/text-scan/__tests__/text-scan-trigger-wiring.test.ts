@@ -86,19 +86,31 @@ const cases: [file: string, start: string, call: string, times: number][] = [
   [
     'src/server/services/model-moderation.adapter.ts',
     'export async function submitModelTextModeration(',
-    "scanEntityInBackground({ entityType: 'ModelRules', entityId: model.id })",
+    "if (model.isModerator) return;\n\n  scanEntityInBackground({ entityType: 'ModelRules', entityId: model.id })",
     1,
   ],
   [
     'src/server/controllers/model.controller.ts',
     'export const publishModelHandler',
-    "scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedModel.id })",
+    "if (!isModerator)\n      scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedModel.id })",
+    1,
+  ],
+  [
+    'src/server/controllers/model.controller.ts',
+    'export const publishModelHandler',
+    'meta: withModelRulesClearance(meta, modelMeta, isModerator)',
+    1,
+  ],
+  [
+    'src/server/routers/model.router.ts',
+    'migrateToCollection:',
+    'migrateResourceToCollection({ ...input, isModerator: ctx.user.isModerator })',
     1,
   ],
   [
     'src/server/controllers/model-version.controller.ts',
     'export const publishModelVersionHandler',
-    "scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId })",
+    "if (!ctx.user.isModerator)\n      scanEntityInBackground({ entityType: 'ModelRules', entityId: updatedVersion.modelId })",
     1,
   ],
   [

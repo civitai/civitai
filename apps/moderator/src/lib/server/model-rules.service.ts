@@ -3,16 +3,16 @@ import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import {
   convertLegacyModelRule,
   isSemanticDefinition,
+  parseMatchCursor,
   parseRuleMatches,
+  semanticModelRuleSchema,
   type ModelRuleForm,
   type RuleMatch,
-  type SemanticModelRule,
 } from '$lib/model-rules';
-import { logToAxiom } from './axiom';
+import { bustKeyBestEffort } from './cache';
 import { dbRead, dbWrite } from './db';
 import { takePage } from './keyset-page';
 import { recordModActivity } from './mod-activity';
-import { getRedis } from './redis';
 import { usersByIds } from './users.service';
 
 // Image rules share the ModerationRule table: every statement here must name `entityType = 'Model'`.
@@ -20,22 +20,11 @@ import { usersByIds } from './users.service';
 const MODEL_RULES_KEY = REDIS_KEYS.CACHES.MOD_RULES.MODELS as RedisKeyTemplateCache;
 const ACTIVITY_ENTITY = 'moderationRule';
 
-/** Returns false rather than throwing: the row is already committed, so a throw would report failure
- *  for a write that succeeded (see `blocklist.service.ts`). */
-async function bustCache(): Promise<boolean> {
-  try {
-    await getRedis().del(MODEL_RULES_KEY);
-    return true;
-  } catch (error) {
-    void logToAxiom({
-      name: 'model-rules-cache-bust-failed',
-      type: 'error',
-      message: 'Model rule was written but its cache key was not cleared; readers stay stale',
-      details: { error: error instanceof Error ? error.message : String(error) },
-    });
-    return false;
-  }
-}
+const bustCache = () =>
+  bustKeyBestEffort(MODEL_RULES_KEY, {
+    logName: 'model-rules-cache-bust-failed',
+    message: 'Model rule was written but its cache key was not cleared; readers stay stale',
+  });
 
 export type ModelRuleView = {
   id: number;
@@ -112,13 +101,13 @@ export async function createModelRule(
   input: ModelRuleForm,
   userId: number
 ): Promise<WriteResult & { id: number }> {
-  const definition: SemanticModelRule = {
+  const definition = semanticModelRuleSchema.parse({
     type: 'semantic',
     subject: input.subject,
     description: input.description,
     aliases: input.aliases,
     updatedById: userId,
-  };
+  });
   const now = new Date();
   const created = await dbWrite
     .insertInto('ModerationRule')
@@ -162,7 +151,7 @@ export async function updateModelRule(
     if (!existing) throw new ModelRuleNotFoundError();
     if (!isSemanticDefinition(existing.definition)) throw new LegacyRuleError();
 
-    const definition: SemanticModelRule = {
+    const definition = semanticModelRuleSchema.parse({
       type: 'semantic',
       subject: input.subject,
       description: input.description,
@@ -171,7 +160,7 @@ export async function updateModelRule(
         ? {}
         : { legacyMatch: existing.definition.legacyMatch }),
       updatedById: userId,
-    };
+    });
     await trx
       .updateTable('ModerationRule')
       .set({ definition, reason: input.note || null, updatedAt: new Date() })
@@ -250,11 +239,11 @@ export async function convertLegacyModelRules(
       if (isSemanticDefinition(row.definition)) continue;
       const conversion = convertLegacyModelRule(row.definition, row.reason);
       const needsAttention = !!conversion.needsAttention || row.action === 'Approve';
-      const definition: SemanticModelRule = {
+      const definition = semanticModelRuleSchema.parse({
         ...conversion,
         ...(needsAttention ? { needsAttention: true } : {}),
         updatedById: userId,
-      };
+      });
       await trx
         .updateTable('ModerationRule')
         .set({
@@ -285,7 +274,7 @@ export async function convertLegacyModelRules(
 export const MATCH_MODES = ['all', 'shadow', 'active'] as const;
 export type MatchMode = (typeof MATCH_MODES)[number];
 
-const ENTITY_TYPES: Record<MatchMode, string[]> = {
+const ENTITY_TYPES: Record<MatchMode, readonly string[]> = {
   all: ['ModelRules', 'ModelRules:shadow'],
   shadow: ['ModelRules:shadow'],
   active: ['ModelRules'],
@@ -302,8 +291,9 @@ export type ModelRuleMatchRow = {
 
 /**
  * Ordered by verdict time; the cursor is the last row's `updatedAt` as Postgres prints it, so it
- * round-trips without a timezone conversion. Keep `entityType IN (...)`: it keeps this on the
- * (entityType, entityId) index instead of a table walk.
+ * round-trips without a timezone conversion. The entity type, status and label filters are SQL
+ * literals, not bound parameters: the planner can only use the partial index
+ * `EntityModeration_modelRules_matches_idx` when the query repeats its predicate as literals.
  */
 export async function getModelRuleMatches({
   mode,
@@ -328,8 +318,10 @@ export async function getModelRuleMatches({
       'em.result',
       'm.name as modelName',
     ])
-    .where('em.entityType', 'in', ENTITY_TYPES[mode])
-    .where('em.status', '=', 'Succeeded')
+    .where(
+      sql<boolean>`em."entityType" IN (${sql.join(ENTITY_TYPES[mode].map((t) => sql.lit(t)))})`
+    )
+    .where(sql<boolean>`em.status = 'Succeeded'`)
     .where(sql<boolean>`'modelRules' = ANY(em."triggeredLabels")`);
   if (ruleId !== undefined)
     query = query.where(
@@ -360,9 +352,4 @@ export async function getModelRuleMatches({
     })),
     nextCursor: page.nextCursor,
   };
-}
-
-function parseMatchCursor(cursor: string | undefined) {
-  const match = cursor?.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)\|(\d+)$/);
-  return match ? { updatedAt: match[1], id: Number(match[2]) } : undefined;
 }

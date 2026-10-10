@@ -3,6 +3,7 @@ import {
   convertLegacyModelRule,
   modelRuleFormSchema,
   parseAliases,
+  parseMatchCursor,
   parseRuleMatches,
   ruleMatchesText,
 } from '$lib/model-rules';
@@ -177,9 +178,46 @@ describe('parseRuleMatches', () => {
     ]);
   });
 
+  it('keeps the first match per rule so the matches tab can key rows by rule id', () => {
+    const result = {
+      labels: {
+        modelRules: {
+          matched: [
+            { ruleId: 5, reason: 'first' },
+            { ruleId: 9, reason: 'other' },
+            { ruleId: 5, reason: 'second' },
+          ],
+        },
+      },
+    };
+    expect(parseRuleMatches(result)).toEqual([
+      { ruleId: 5, subject: null, reason: 'first' },
+      { ruleId: 9, subject: null, reason: 'other' },
+    ]);
+  });
+
   it('tolerates a missing or malformed result', () => {
     expect(parseRuleMatches(null)).toEqual([]);
     expect(parseRuleMatches({ labels: {} })).toEqual([]);
     expect(parseRuleMatches({ labels: { modelRules: { matched: 'x' } } })).toEqual([]);
+  });
+});
+
+describe('parseMatchCursor', () => {
+  it('parses a timestamp with and without fractional seconds', () => {
+    expect(parseMatchCursor('2026-05-02 10:11:12|42')).toEqual({
+      updatedAt: '2026-05-02 10:11:12',
+      id: 42,
+    });
+    expect(parseMatchCursor('2026-05-02 10:11:12.123456|7')).toEqual({
+      updatedAt: '2026-05-02 10:11:12.123456',
+      id: 7,
+    });
+  });
+
+  it('rejects anything else', () => {
+    expect(parseMatchCursor('garbage')).toBeUndefined();
+    expect(parseMatchCursor('2026-05-02T10:11:12Z|42')).toBeUndefined();
+    expect(parseMatchCursor(undefined)).toBeUndefined();
   });
 });

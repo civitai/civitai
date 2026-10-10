@@ -10,8 +10,8 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
-  import { cn } from '@civitai/ui/utils.js';
   import CursorPager from '$lib/components/CursorPager.svelte';
+  import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { urlWith } from '$lib/url';
   import type { PageData } from './$types';
@@ -29,10 +29,19 @@
   } = $props();
 
   const MODES = [
-    ['all', 'All'],
-    ['shadow', 'Shadow'],
-    ['active', 'Active'],
+    { value: 'all', label: 'All' },
+    { value: 'shadow', label: 'Shadow' },
+    { value: 'active', label: 'Active' },
   ] as const;
+
+  const modeItems = $derived(
+    MODES.map(({ value, label }) => ({
+      value,
+      label,
+      href: urlWith(url, { mode: value === 'all' ? null : value, cursor: null }),
+    }))
+  );
+  const filtered = $derived(query.mode !== 'all' || query.rule !== undefined);
 
   const nextHref = $derived(
     matches.nextCursor === undefined ? null : urlWith(url, { cursor: matches.nextCursor })
@@ -40,19 +49,7 @@
 </script>
 
 <div class="mb-3 flex flex-wrap items-end gap-3">
-  <div class="flex gap-1">
-    {#each MODES as [value, label] (value)}
-      <a
-        href={urlWith(url, { mode: value === 'all' ? null : value, cursor: null })}
-        class={cn(
-          'rounded-md px-3 py-1 text-sm',
-          value === query.mode ? 'bg-dark-5 text-white' : 'text-dark-2 hover:bg-dark-6'
-        )}
-      >
-        {label}
-      </a>
-    {/each}
-  </div>
+  <LinkTabs items={modeItems} active={query.mode} />
 
   <form method="GET" class="flex items-end gap-2">
     <input type="hidden" name="tab" value="matches" />
@@ -76,7 +73,7 @@
 </div>
 
 {#if matches.items.length === 0}
-  <p class="text-sm text-dark-2">No matches yet.</p>
+  <p class="text-sm text-dark-2">{filtered ? 'No matches for these filters.' : 'No matches yet.'}</p>
 {:else}
   <div class="rounded-xl border border-dark-4 bg-dark-6">
     <Table>
@@ -114,7 +111,7 @@
                       rule {match.ruleId}
                     </a>
                     {#if match.reason}
-                      <p class="mt-0.5 break-words text-sm text-dark-1">{match.reason}</p>
+                      <p class="mt-0.5 break-words text-sm text-dark-2">{match.reason}</p>
                     {/if}
                   </li>
                 {/each}
