@@ -60,13 +60,13 @@ describe('the cache, run for real', () => {
     // Both fixtures, one of which is a happy-dom file: that one resolves a node builtin to a vite
     // virtual id, and a key that treats such an id as a path records nothing for it.
     expect({ recorded: cold.last.recorded, notRecorded: cold.last.notRecorded }).toEqual({
-      recorded: 7,
+      recorded: 8,
       notRecorded: {},
     });
 
     const warm = runOnce(cacheDir);
     expect(warm.status).toBe(0);
-    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 7 });
+    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 8 });
   }, 300_000);
 
   // Both files import heavy.ts, so the run's shared graph carries heavy-dep.ts under it. Only the
@@ -85,9 +85,9 @@ describe('the cache, run for real', () => {
     expect(mocked).not.toContain(`${dir}/heavy-dep.ts`);
 
     // Each of these loaded heavy-dep.ts in a way that leaves no plain "evaluated" mark behind:
-    // vi.resetModules() after the test, a spy that runs the real module under a `mock:` id, and a
-    // module that threw partway through loading.
-    for (const file of ['heavy-reset', 'heavy-spy', 'throws']) {
+    // vi.resetModules() after the test, a spy that runs the real module under a `mock:` id, a
+    // factory that calls importOriginal, and a module that threw partway through loading.
+    for (const file of ['heavy-reset', 'heavy-spy', 'heavy-original', 'throws']) {
       expect(entriesOf(cacheDir, `${dir}/${file}.e2e.ts`)).toContain(`${dir}/heavy-dep.ts`);
     }
     // And the reset did not just switch the narrowing off: the module it factory-mocks is still

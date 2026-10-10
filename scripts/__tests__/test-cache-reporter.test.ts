@@ -248,10 +248,10 @@ describe('modules the file never loaded', () => {
     expect(entriesOf('a.test.ts')).toContain('c.ts');
   });
 
-  // `?raw` and `?url` imports, and vitest's own `?_vitest_original` for importOriginal.
+  // `?raw` and `?url` imports.
   it('matches a loaded id that carries a query', () => {
     files();
-    run([testModule('a.test.ts', { ...shape, loaded: ['a.ts', 'b.ts', 'm.ts?_vitest_original'] })]);
+    run([testModule('a.test.ts', { ...shape, loaded: ['a.ts', 'b.ts', 'm.ts?raw'] })]);
     expect(entriesOf('a.test.ts')).toContain('c.ts');
   });
 
