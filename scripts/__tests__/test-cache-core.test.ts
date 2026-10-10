@@ -616,5 +616,11 @@ describe('which records survive when a test has more than fit', () => {
   it('does nothing when the hit record was evicted in the meantime', () => {
     const dir = mkdtempSync(join(tmpdir(), 'test-cache-evict-'));
     expect(() => markHit(dir, 'unit', 'a.test.ts', 'gone')).not.toThrow();
+    expect(recordsFor(dir, 'unit', 'a.test.ts')).toEqual([]);
+  });
+
+  // Eight slots turned over in about an hour for busy tests; fewer than this throws hits away.
+  it('keeps at least 32 records per test', () => {
+    expect(RECORDS_PER_TEST).toBeGreaterThanOrEqual(32);
   });
 });

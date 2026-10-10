@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
-import { mkdtempSync, readdirSync, readFileSync, statSync, utimesSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { recordsFor } from '../test-cache/core.mjs';
@@ -73,11 +73,22 @@ describe('the cache, run for real', () => {
     );
     expect(files).toHaveLength(8);
     for (const f of files) utimesSync(f, old, old);
+    // A second record beside one of them that matches nothing: only the record that answered the
+    // lookup may be refreshed, not whichever sorts first or every record in the directory.
+    const decoy = join(dirname(files[0]!), 'decoy.json');
+    writeFileSync(
+      decoy,
+      JSON.stringify({ ...JSON.parse(readFileSync(files[0]!, 'utf8')), key: 'decoy' })
+    );
+    utimesSync(decoy, old + 60, old + 60);
 
     const warm = runOnce(cacheDir);
     expect(warm.status).toBe(0);
     expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 8 });
+    // CIVITAI_TEST_CACHE_SAMPLE: '0' is load-bearing here: a sampled re-run rewrites its record,
+    // which would refresh the mtime without markHit.
     expect(files.filter((f) => statSync(f).mtimeMs / 1000 > old + 3600)).toHaveLength(8);
+    expect(statSync(decoy).mtimeMs / 1000).toBeLessThan(old + 3600);
   }, 300_000);
 
   // Both files import heavy.ts, so the run's shared graph carries heavy-dep.ts under it. Only the
