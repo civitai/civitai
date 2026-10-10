@@ -18,6 +18,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
     mockScoring: {
       getEventStandings: vi.fn(),
       getTeamScoreHistory: vi.fn(),
+      hasStandingsSnapshot: vi.fn<(event: unknown) => Promise<boolean>>(async () => false),
       refreshStandings: vi.fn(),
     },
     mockReferee: { runEventPointsReferee: vi.fn() },
@@ -123,6 +124,7 @@ beforeEach(() => {
   mockScoring.getEventStandings.mockResolvedValue(standings);
   mockScoring.refreshStandings.mockResolvedValue(standings);
   mockReferee.runEventPointsReferee.mockResolvedValue({ season: 'live', rows: 0, changed: 0 });
+  mockScoring.hasStandingsSnapshot.mockResolvedValue(false);
   mockSync.syncEventHats.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
@@ -333,6 +335,19 @@ describe('end-of-event cleanup', () => {
       final: true,
     });
 
+  it('names no winner while switched off, though it still snapshots, and names it once back on', async () => {
+    killSwitch.on = false;
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(sysStore[winnerMarker]).toBeUndefined();
+
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
+    expect(sysStore[winnerMarker]).toBe('Pink');
+  });
+
   it('names the winner on the first run that settles the whole finalize window', async () => {
     await eventEngine.updateLeaderboard(new Date(close));
     expect(winnerUpdates()).toHaveLength(0);
@@ -348,8 +363,8 @@ describe('end-of-event cleanup', () => {
     expect(sysSetOptions[winnerMarker]).toEqual(MARKER_TTL);
   });
 
-  // A request can be rebuilding the shared snapshot from a replica meanwhile; the winner is read
-  // from the standings this run computed on the primary.
+  // The winner is read from the standings this run computed on the primary, never the stored
+  // snapshot a failed or earlier run left.
   it('names the winner from the standings the final run computed, not the cached snapshot', async () => {
     mockScoring.refreshStandings.mockResolvedValue({
       teams: [
@@ -470,6 +485,22 @@ describe('end-of-event cleanup', () => {
     await eventEngine.dailyReset(secondReset);
     expect(winnerUpdates()).toHaveLength(0);
     expect(setKeys()).toEqual([]);
+  });
+});
+
+describe('scored team reads', () => {
+  it('hands the degraded callback to the settled standings read', async () => {
+    const onDegraded = vi.fn();
+    await eventEngine.getTeamScores(BIRTHDAY_2026_EVENT, 'open', { onDegraded });
+    await eventEngine.getTeamScoreHistory({ event: BIRTHDAY_2026_EVENT }, 'open', { onDegraded });
+    expect(mockScoring.getEventStandings).toHaveBeenCalledWith(
+      expect.objectContaining({ name: BIRTHDAY_2026_EVENT }),
+      { onDegraded }
+    );
+    expect(mockScoring.getTeamScoreHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ name: BIRTHDAY_2026_EVENT }),
+      { onDegraded }
+    );
   });
 });
 
@@ -594,18 +625,64 @@ describe('scoring behind the flag', () => {
     expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
   });
 
-  // Off, a scored event settles nothing and must not fall through to the old donor leaderboard.
-  it('settles nothing and writes nothing while the engine is switched off', async () => {
+  // Off, a scored event settles nothing (no hat sync, no referee, so no ClickHouse read and no push)
+  // and must not fall through to the old donor leaderboard. It only snapshots the durable table, so
+  // the pages show the last settled numbers.
+  it('settles nothing while the engine is switched off, but still snapshots the standings', async () => {
     killSwitch.on = false;
     await eventEngine.updateLeaderboard(DURING);
     expect(mockSync.syncEventHats).not.toHaveBeenCalled();
     expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
-    expect(mockScoring.refreshStandings).not.toHaveBeenCalled();
+    expect(mockScoring.refreshStandings.mock.calls).toEqual([
+      [expect.objectContaining({ name: BIRTHDAY_2026_EVENT }), dbMock.dbWrite],
+    ]);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_STARTS_AT]);
     expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
 
     killSwitch.on = true;
     await eventEngine.updateLeaderboard(DURING);
     expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+  });
+
+  // Nothing more can settle while off once the window has closed: one snapshot there is enough.
+  it('snapshots once past the window while switched off, then stops', async () => {
+    killSwitch.on = false;
+    const past = new Date(
+      BIRTHDAY_2026_ENDS_AT.getTime() + birthday2026.scoring!.finalizeAfterMs + 1
+    );
+    await eventEngine.updateLeaderboard(past);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    mockScoring.hasStandingsSnapshot.mockResolvedValueOnce(true);
+    await eventEngine.updateLeaderboard(past);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(mockScoring.hasStandingsSnapshot.mock.calls.at(-1)?.[0]).toMatchObject({
+      name: BIRTHDAY_2026_EVENT,
+      scoreFrom: BIRTHDAY_2026_STARTS_AT,
+    });
+    // During the season the snapshot is refreshed every run, stored or not.
+    mockScoring.hasStandingsSnapshot.mockResolvedValue(true);
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(2);
+    // Switched on, past the window it keeps settling until a run is final, stored snapshot or not.
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(past);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(3);
+  });
+
+  it('snapshots the preview from its own start while switched off, and nothing outside the window', async () => {
+    killSwitch.on = false;
+    testerFlag.reset({ public: false });
+    await eventEngine.updateLeaderboard(PREVIEW);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_PREVIEW_FROM]);
+    const finalize = birthday2026.scoring!.finalizeAfterMs;
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1));
+    // Past the window once a winner is on record, nothing runs at all.
+    sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize + 1));
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(mockSync.syncEventHats).not.toHaveBeenCalled();
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
   });
 
   it('still refreshes the standings when the referee fails', async () => {

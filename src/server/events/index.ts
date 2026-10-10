@@ -18,6 +18,7 @@ import { syncEventHats } from '~/server/events/points/sync';
 import {
   getEventStandings,
   getTeamScoreHistory as getScoredTeamScoreHistory,
+  hasStandingsSnapshot,
   refreshStandings,
 } from '~/server/events/scoring/cosmetic-placement.service';
 import { discord } from '~/server/integrations/discord';
@@ -193,43 +194,52 @@ export const eventEngine = {
     for (const eventDef of getScorableEvents(now)) {
       const scored = scoredEvent(eventDef);
       if (scored) {
-        // Kill switch off: no settling at all. The standings keep serving their last snapshot, and
-        // a scored event never falls through to the old leaderboard below.
-        if (!(await isEventPointsEnabled())) continue;
-        // Keeps running past the end until a run has settled the whole finalize window and named
-        // the winner; the referee clips every window to the season's end.
+        // A scored event never falls through to the old leaderboard below. It keeps running past
+        // the end until a run has settled the whole finalize window and named the winner; the referee
+        // clips every window to the season's end.
         if (eventPointsWindow(scored).to < now && (await sysRedis.get(winnerKey(eventDef.name))))
           continue;
         // Before launch this is the preview, where only flagged users' hats earn (the hat sync
         // applies the flag), settled into its own season.
         const phase = await getEventScoringPhase(eventDef, now);
         if (!phase) continue;
-        await syncEventHats(now);
-        const season = eventPointSeason(eventDef.startDate, now);
-        // A failed settle must not also freeze the standings snapshot (it expires after 2h, and a
-        // miss is rebuilt on the request path) or stop the other events.
+        const standingsEvent = { ...scored, scoreFrom: phase.from };
+        // Kill switch off: no settling and no winner, only the snapshot below, so the pages show the
+        // last settled numbers from the durable table rather than nothing. Past the window nothing
+        // more can settle while off, so one snapshot there is enough.
+        const enabled = await isEventPointsEnabled();
+        if (
+          !enabled &&
+          eventPointsWindow(scored).to < now &&
+          (await hasStandingsSnapshot(standingsEvent))
+        )
+          continue;
         let final = false;
-        try {
-          const result = await runEventPointsReferee(scored, season, now);
-          final = result.final;
-          logToAxiom({
-            type: 'info',
-            name: 'event-points-referee',
-            event: eventDef.name,
-            ...result,
-          }).catch(() => undefined);
-        } catch (error) {
-          logToAxiom({
-            type: 'error',
-            name: 'event-points-referee',
-            event: eventDef.name,
-            message: (error as Error).message,
-          }).catch(() => undefined);
+        if (enabled) {
+          await syncEventHats(now);
+          const season = eventPointSeason(eventDef.startDate, now);
+          // A failed settle must not also freeze the standings snapshot or stop the other events.
+          try {
+            const result = await runEventPointsReferee(scored, season, now);
+            final = result.final;
+            logToAxiom({
+              type: 'info',
+              name: 'event-points-referee',
+              event: eventDef.name,
+              ...result,
+            }).catch(() => undefined);
+          } catch (error) {
+            logToAxiom({
+              type: 'error',
+              name: 'event-points-referee',
+              event: eventDef.name,
+              message: (error as Error).message,
+            }).catch(() => undefined);
+          }
         }
-        const standings = await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
+        const standings = await refreshStandings(standingsEvent, dbWrite);
         // The first run that settles the whole finalize window names the winner, on the standings it
-        // just computed: the shared snapshot may be mid-rebuild from a replica by a request. A failed
-        // run names none, and the next hour's run tries again.
+        // just computed from the primary. A failed run names none, and the next hour's run tries again.
         if (final) {
           const winner = standings.teams.find(({ rank }) => rank === 1)?.team;
           if (winner) await flagWinnerCosmetic(eventDef, winner);
@@ -447,10 +457,14 @@ export const eventEngine = {
     return teamAccounts;
   },
   // Ungated: the jobs read this after the start, and routes check access before calling it.
-  async getTeamScores(event: string, access: EventAccess = 'open') {
+  async getTeamScores(
+    event: string,
+    access: EventAccess = 'open',
+    read?: Parameters<typeof getEventStandings>[1]
+  ) {
     const eventDef = getEventDef(event);
     const scored = scoredEventFor(eventDef, access);
-    if (scored) return (await getEventStandings(scored)).teams;
+    if (scored) return (await getEventStandings(scored, read)).teams;
 
     // Get team scores from buzz accounts
     const teamScores: TeamScore[] = [];
@@ -472,11 +486,12 @@ export const eventEngine = {
   // Ungated like getTeamScores.
   async getTeamScoreHistory(
     { event, window, start }: TeamScoreHistoryInput,
-    access: EventAccess = 'open'
+    access: EventAccess = 'open',
+    read?: Parameters<typeof getEventStandings>[1]
   ) {
     const eventDef = getEventDef(event);
     const scored = scoredEventFor(eventDef, access);
-    if (scored) return getScoredTeamScoreHistory(scored);
+    if (scored) return getScoredTeamScoreHistory(scored, read);
 
     // Get team scores from buzz accounts
     const accounts = this.getTeamAccounts(event);

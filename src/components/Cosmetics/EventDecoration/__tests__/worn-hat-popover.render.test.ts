@@ -490,6 +490,16 @@ describe('the popover layout', () => {
     ]);
   });
 
+  // Two copies of one design on one owner, and the hat map no longer says which: no points to show.
+  it('shows the hat and its wearer but no stats when the server cannot tell which copy it is', () => {
+    wornHat.result = { data: { ...WORN, topicId: null }, isLoading: false, isError: false };
+    renderCard();
+    clickHat();
+    expect(popover()!.querySelector('[data-testid="hat-stats"]')).toBeNull();
+    expect(popover()!.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
+    expect(livePoints).not.toHaveBeenCalled();
+  });
+
   it('shows comments and remixes once the server counts them', () => {
     wornHat.result = {
       data: { ...WORN, comments: 3, remixes: 0 },

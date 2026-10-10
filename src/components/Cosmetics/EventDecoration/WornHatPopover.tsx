@@ -182,7 +182,7 @@ function WornHatDetails({
           />
         </Group>
       ) : null}
-      <HatStats stats={hat} color={hat.team ? teamColor(hat.team) : undefined} />
+      {hat.topicId && <HatStats stats={hat} color={hat.team ? teamColor(hat.team) : undefined} />}
     </>
   );
 }
