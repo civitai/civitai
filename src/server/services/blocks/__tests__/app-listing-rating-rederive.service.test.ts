@@ -392,6 +392,26 @@ describe('a Knights consensus (allowLower: false)', () => {
     });
   });
 
+  it.each([
+    [false, MOD, 'image-consensus'],
+    [true, null, 'image-review'],
+  ] as const)(
+    'the cause follows the licence to lower (%s), not who the actor is',
+    async (allowLower, actorUserId, detail) => {
+      images.find((i) => i.id === ICON)!.nsfwLevel = NsfwLevel.X;
+
+      await reDeriveListingRatingsForModeratedImage({
+        imageId: ICON,
+        previousNsfwLevel: NsfwLevel.PG,
+        actorUserId,
+        allowLower,
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ detail, actorUserId });
+    }
+  );
+
   it('raises to the media, not to an app rating the listing has drifted below', async () => {
     // A moderator's write in this state lands on the declared x; a consensus has no floor.
     seedMisScanned({ declared: 'x', contentRating: 'pg' });

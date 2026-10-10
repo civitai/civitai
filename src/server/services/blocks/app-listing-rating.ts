@@ -19,7 +19,7 @@ export const RATING_CHANGE_ACTION =
  * Why a listing's stored rating moved. Stored in the event's `detail`.
  *   - `store-media`  — a go-live or moderator asset edit floored the rating at its media.
  *   - `image-review` — a moderator re-rated one of the listing's images.
- *   - `image-consensus` — a Knights consensus raised one of the listing's images.
+ *   - `image-consensus` — a Knights consensus re-rated one of the listing's images (raise-only).
  *   - `review`       — any other go-live move: a review's derive-and-replace or override.
  */
 export type ListingRatingChangeCause =
