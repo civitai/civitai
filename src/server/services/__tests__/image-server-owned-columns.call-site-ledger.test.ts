@@ -115,7 +115,8 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
   // re-checks here so no other path can write into someone else's post.
   'src/server/services/image.service.ts#createImage': {
     sites: 1,
-    spreads: ['pickClientImageColumns(image)'],
+    // `metadata`: the stripped client metadata, plus the caller-verified App Blocks stamp.
+    spreads: ['pickClientImageColumns(image)', 'metadata'],
     serverColumns: ['postId: image.postId', 'index: image.index'],
     guards: [
       'if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });',
@@ -151,7 +152,10 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
   },
   'src/server/controllers/user.controller.ts#updateUserHandler': {
     sites: 1,
-    spreads: ['pickClientImageColumns(newPicture)', 'newPicture.metadata'],
+    spreads: [
+      'pickClientImageColumns(newPicture)',
+      'stripBlockProvenanceMetadata(newPicture.metadata)',
+    ],
     serverColumns: [],
   },
   // Server-built rows: nothing from a client image object is spread.
