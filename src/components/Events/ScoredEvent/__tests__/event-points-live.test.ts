@@ -1,11 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   applyHatPoints,
   applyTeamPoints,
   hatTopic,
+  readHatPush,
+  readTeamsPush,
   teamsTopic,
 } from '~/components/Events/ScoredEvent/event-points-live';
-import { eventHatTopic, eventTeamsTopic } from '~/server/events/points/keys';
+import { SignalMessages } from '~/server/common/enums';
+import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from '~/server/events/points/keys';
+import { tickEventPoints } from '~/server/events/points/ticker';
 
 describe('topics', () => {
   // The client builds its topics without the server module (it pulls in Redis); the ticker sends
@@ -16,6 +20,55 @@ describe('topics', () => {
     );
     expect(teamsTopic('birthday2026')).toBe(eventTeamsTopic('birthday2026'));
     expect(hatTopic('birthday2026', 'x')).toBe('event-points:birthday2026:hat:x');
+  });
+});
+
+// The two ends of the wire: what the ticker sends must be what the screens read. A renamed field
+// on either side would leave every screen silently ignoring every push.
+describe('what the ticker sends, the client reads', () => {
+  it('a hat push and a teams push round-trip', async () => {
+    const hat = { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' };
+    const sent: { target: string; data: Record<string, unknown> }[] = [];
+    await tickEventPoints(
+      { name: 'birthday2026', startDate: new Date('2026-11-01'), teams: ['Blue'] },
+      {
+        drainChangedHats: vi.fn(async () => [hat]),
+        selectWatchedHats: async (_e, hats) => hats,
+        getHatPoints: async () => ({ [hatField(hat)]: 64 }),
+        getTeamPoints: async () => ({ Blue: 900 }),
+        topicSend: async (args) => void sent.push(args),
+      }
+    );
+    const hatData = sent.find((s) => s.target === SignalMessages.EventPointsHat)!.data;
+    const teamsData = sent.find((s) => s.target === SignalMessages.EventPointsTeams)!.data;
+    expect(readHatPush(hatData, 'birthday2026')).toEqual({ topicId: hatTopicId(hat), points: 64 });
+    expect(readTeamsPush(teamsData, 'birthday2026')).toEqual({ Blue: 900 });
+  });
+});
+
+describe('readHatPush / readTeamsPush', () => {
+  const hatPush = { event: 'birthday2026', topicId: 'a', points: 5 };
+
+  it("ignores another event's push", () => {
+    expect(readHatPush(hatPush, 'other')).toBeNull();
+    expect(readTeamsPush({ event: 'birthday2026', teams: { Blue: 1 } }, 'other')).toBeNull();
+  });
+
+  it('ignores a push whose total is not a finite number', () => {
+    for (const points of ['5', NaN, Infinity, null, undefined])
+      expect(readHatPush({ ...hatPush, points }, 'birthday2026')).toBeNull();
+    expect(readHatPush({ ...hatPush, topicId: 5 }, 'birthday2026')).toBeNull();
+    expect(readHatPush(undefined, 'birthday2026')).toBeNull();
+  });
+
+  it('keeps only numeric team totals', () => {
+    expect(
+      readTeamsPush(
+        { event: 'birthday2026', teams: { Blue: 3, Pink: 'x', Green: NaN } },
+        'birthday2026'
+      )
+    ).toEqual({ Blue: 3 });
+    expect(readTeamsPush({ event: 'birthday2026' }, 'birthday2026')).toBeNull();
   });
 });
 

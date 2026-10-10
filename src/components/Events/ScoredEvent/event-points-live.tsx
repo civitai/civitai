@@ -14,8 +14,24 @@ export const hatTopic = (event: string, topicId: string) =>
   `${SignalTopic.EventPoints}:${event}:hat:${topicId}` as const;
 export const teamsTopic = (event: string) => `${SignalTopic.EventPoints}:${event}:teams` as const;
 
-type HatPush = { event?: string; topicId?: string; points?: number };
-type TeamsPush = { event?: string; teams?: Record<string, number> };
+const isPoints = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+
+/** A hat push for this event, or null for anything else. */
+export function readHatPush(push: unknown, event: string) {
+  const { event: e, topicId, points } = (push ?? {}) as Record<string, unknown>;
+  if (e !== event || typeof topicId !== 'string' || !isPoints(points)) return null;
+  return { topicId, points };
+}
+
+/** A team totals push for this event, keeping only numeric totals, or null for anything else. */
+export function readTeamsPush(push: unknown, event: string) {
+  const { event: e, teams } = (push ?? {}) as Record<string, unknown>;
+  if (e !== event || !teams || typeof teams !== 'object') return null;
+  return Object.fromEntries(Object.entries(teams).filter(([, v]) => isPoints(v))) as Record<
+    string,
+    number
+  >;
+}
 
 /** The rows with the pushed total on the matching hat; the same array when nothing changed. */
 export function applyHatPoints<T extends { topicId: string; points: number }>(
@@ -40,10 +56,11 @@ export function applyTeamPoints<
   return { ...standings, teams };
 }
 
-const isPoints = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
-
-/** While the worn-hat popover is open: its hat's total, live. */
-export function useWornHatLivePoints({
+/**
+ * Mounted only while a worn-hat popover is open, so a feed of hatted cards registers nothing:
+ * follows that hat's total live. Renders nothing.
+ */
+export function WornHatLivePoints({
   event,
   entityType,
   entityId,
@@ -52,30 +69,36 @@ export function useWornHatLivePoints({
   event: string;
   entityType: CosmeticEntity;
   entityId: number;
-  /** From the getWornHat row; undefined while it loads or the popover is closed. */
-  topicId: string | undefined;
+  /** From the getWornHat row. */
+  topicId: string;
 }) {
   const utils = trpc.useUtils();
-  useSignalTopic(topicId ? hatTopic(event, topicId) : undefined);
+  useSignalTopic(hatTopic(event, topicId));
   const onPush = useCallback(
-    ({ event: e, topicId: id, points }: HatPush) => {
-      if (!topicId || e !== event || id !== topicId || !isPoints(points)) return;
+    (raw: unknown) => {
+      const push = readHatPush(raw, event);
+      if (!push || push.topicId !== topicId) return;
+      // The popover's own query input: { event, ...wornOn }.
       utils.event.getWornHat.setData({ event, entityType, entityId }, (hat) =>
-        hat && hat.topicId === id && hat.points !== points ? { ...hat, points } : hat
+        hat ? applyHatPoints([hat], push.topicId, push.points)?.[0] : hat
       );
     },
     [utils, event, entityType, entityId, topicId]
   );
   useSignalConnection(SignalMessages.EventPointsHat, onPush);
+  return null;
 }
 
 /** While "Your hats" is on screen: each hat's total, live. Renders nothing. */
 export function MyHatsLivePoints({ event, topicIds }: { event: string; topicIds: string[] }) {
   const utils = trpc.useUtils();
   const onPush = useCallback(
-    ({ event: e, topicId, points }: HatPush) => {
-      if (e !== event || !topicId || !isPoints(points)) return;
-      utils.event.getMyHats.setData({ event }, (rows) => applyHatPoints(rows, topicId, points));
+    (raw: unknown) => {
+      const push = readHatPush(raw, event);
+      if (!push) return;
+      utils.event.getMyHats.setData({ event }, (rows) =>
+        applyHatPoints(rows, push.topicId, push.points)
+      );
     },
     [utils, event]
   );
@@ -94,17 +117,17 @@ function HatTopic({ topic }: { topic: ReturnType<typeof hatTopic> }) {
   return null;
 }
 
-/** While the event page is open: the team totals, live. */
-export function useEventTeamsLivePoints(event: string) {
+/** While the event page is open and the event running: the team totals, live. */
+export function useEventTeamsLivePoints(event: string, enabled: boolean) {
   const utils = trpc.useUtils();
-  useSignalTopic(teamsTopic(event));
+  useSignalTopic(enabled ? teamsTopic(event) : undefined);
   const onPush = useCallback(
-    ({ event: e, teams }: TeamsPush) => {
-      if (e !== event || !teams) return;
-      const totals = Object.fromEntries(Object.entries(teams).filter(([, v]) => isPoints(v)));
+    (raw: unknown) => {
+      const totals = enabled ? readTeamsPush(raw, event) : null;
+      if (!totals) return;
       utils.event.getStandings.setData({ event }, (s) => applyTeamPoints(s, totals));
     },
-    [utils, event]
+    [utils, event, enabled]
   );
   useSignalConnection(SignalMessages.EventPointsTeams, onPush);
 }

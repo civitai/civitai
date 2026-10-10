@@ -315,10 +315,11 @@ export async function getUserRank({
 export async function getEventStandings({ event, viewer }: EventInput & Viewer) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const standings = withLiveTeamPoints(
-      await getScoredEventStandings(scored),
-      await liveTeamPoints(scored)
-    );
+    const [settled, live] = await Promise.all([
+      getScoredEventStandings(scored),
+      liveTeamPoints(scored),
+    ]);
+    const standings = withLiveTeamPoints(settled, live);
     const userIds = [
       ...new Set([
         ...standings.topCosmetics.map((x) => x.userId),
@@ -358,7 +359,10 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
   }
 }
 
-async function liveTeamPoints(event: SeasonEvent) {
+// Null once the event has ended: from then on the page names a winner, and it must be the one the
+// prize payout reads from the settled snapshot (eventEngine.getTeamScores), never a live total.
+async function liveTeamPoints(event: SeasonEvent & { endDate: Date }, now = new Date()) {
+  if (event.endDate <= now) return null;
   try {
     return await getTeamPoints({
       name: event.name,
@@ -372,7 +376,7 @@ async function liveTeamPoints(event: SeasonEvent) {
 }
 
 // Team totals from the live engine, re-ranked. History and the top lists stay on the settled
-// snapshot; the winner is decided from that snapshot too (eventEngine.getTeamScores), never here.
+// snapshot.
 function withLiveTeamPoints<T extends { teams: { team: string; score: number; rank: number }[] }>(
   standings: T,
   live: Record<string, number> | null

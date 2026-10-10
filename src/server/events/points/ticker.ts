@@ -37,34 +37,69 @@ const defaultDeps: TickDeps = {
   topicSend: (args) => signalClient.topicSend(args),
 };
 
-// One tick for one event: push the new total of every hat that moved, then the team totals. A
-// failed send is dropped, never re-queued, so a signals outage cannot grow the changed set; the
-// next move of that hat, or the client's own refetch, catches the screen up.
+// Sends one tick runs at once. The signals client's shared lane allows 30 in flight with a bounded
+// queue and a circuit breaker every push on the pod shares, so a tick must never fill it.
+export const SEND_CONCURRENCY = 10;
+// Failed sends after which a tick stops sending: signals is struggling, and more timeouts would only
+// push the shared breaker open for the pod's other pushes (chat, buzz, generation).
+export const FAILURES_TO_STOP = 3;
+
+type Send = Parameters<TickDeps['topicSend']>[0];
+
+// One tick for one event: push the team totals, then the new total of every hat that moved. A
+// failed or skipped send is dropped, never re-queued, so a signals outage cannot grow the changed
+// set; the next move of that hat, or the screen's next read, catches it up.
 export async function tickEventPoints(event: TickerEvent, deps: TickDeps = defaultDeps) {
   const drained = await deps.drainChangedHats(event, MAX_HAT_SENDS_PER_TICK);
-  if (!drained.length) return { drained: 0, sent: 0, failed: 0 };
+  if (!drained.length) return { drained: 0, sent: 0, failed: 0, dropped: 0 };
   const hats = await deps.selectWatchedHats(event, drained);
-  const points = hats.length ? await deps.getHatPoints(event, hats) : {};
-  const sends = hats.map((hat) => {
-    const topicId = hatTopicId(hat);
-    return deps.topicSend({
-      topic: eventHatTopic(event.name, topicId),
-      target: SignalMessages.EventPointsHat,
-      data: { event: event.name, topicId, points: points[hatField(hat)] ?? 0 },
-    });
-  });
-  // Any drained hat moved its team's total, watched or not.
-  const teams = await deps.getTeamPoints(event);
-  sends.push(
-    deps.topicSend({
+  const [points, teams] = await Promise.all([
+    hats.length ? deps.getHatPoints(event, hats) : ({} as Record<string, number>),
+    // Any drained hat moved its team's total, watched or not.
+    deps.getTeamPoints(event),
+  ]);
+  const queue: Send[] = [
+    {
       topic: eventTeamsTopic(event.name),
       target: SignalMessages.EventPointsTeams,
       data: { event: event.name, teams },
-    })
-  );
-  const results = await Promise.allSettled(sends);
-  const failed = results.filter((r) => r.status === 'rejected').length;
-  return { drained: drained.length, sent: results.length - failed, failed };
+    },
+    ...hats.map((hat) => {
+      const topicId = hatTopicId(hat);
+      return {
+        topic: eventHatTopic(event.name, topicId),
+        target: SignalMessages.EventPointsHat,
+        data: { event: event.name, topicId, points: points[hatField(hat)] ?? 0 },
+      };
+    }),
+  ];
+  let next = 0;
+  let sent = 0;
+  let failed = 0;
+  const worker = async () => {
+    while (failed < FAILURES_TO_STOP && next < queue.length) {
+      const send = queue[next++];
+      try {
+        await deps.topicSend(send);
+        sent++;
+      } catch {
+        failed++;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SEND_CONCURRENCY, queue.length) }, worker));
+  const dropped = queue.length - sent - failed;
+  if (failed)
+    logToAxiom({
+      type: 'warning',
+      name: 'event-points-ticker',
+      event: event.name,
+      message: 'signals sends failed',
+      sent,
+      failed,
+      dropped,
+    }).catch(() => undefined);
+  return { drained: drained.length, sent, failed, dropped };
 }
 
 type TickerRunDeps = {

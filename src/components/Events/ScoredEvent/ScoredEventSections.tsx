@@ -49,7 +49,8 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     : undefined;
 
   const { data: standings } = trpc.event.getStandings.useQuery({ event });
-  useEventTeamsLivePoints(event);
+  // Frozen once ended: the winner the page names must be the settled one the payout uses.
+  useEventTeamsLivePoints(event, !ended);
   // Scores take late data until finalAt, and the standings snapshot is hourly: the result is final
   // only once a snapshot taken after finalAt is on the page.
   const finalizing =

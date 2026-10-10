@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useTeamColor } from '~/components/Events/events.utils';
-import { useWornHatLivePoints } from '~/components/Events/ScoredEvent/event-points-live';
+import { WornHatLivePoints } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatStats } from '~/components/Events/ScoredEvent/HatStats';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -47,8 +47,6 @@ export function WornHatPopover({
     { event, ...wornOn },
     { enabled: opened }
   );
-  // While open, the hat's total follows the live points.
-  useWornHatLivePoints({ event, ...wornOn, topicId: opened ? data?.topicId : undefined });
   const definition = getEventDecorationDefinition(event);
 
   return (
@@ -67,6 +65,10 @@ export function WornHatPopover({
       <Popover.Target>{children}</Popover.Target>
       {/* Portalled, but React still bubbles its clicks to the card underneath. */}
       <Popover.Dropdown onClick={(e) => e.stopPropagation()} data-testid="worn-hat-popover">
+        {/* While open, the hat's total follows the live points. */}
+        {opened && data?.topicId && (
+          <WornHatLivePoints event={event} {...wornOn} topicId={data.topicId} />
+        )}
         <Stack gap="xs">
           {isLoading ? (
             <Stack gap={8}>

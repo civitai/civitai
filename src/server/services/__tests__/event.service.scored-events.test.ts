@@ -83,6 +83,7 @@ const scored = {
   name: 'birthday2026',
   teams: ['Yellow', 'Blue'],
   startDate: new Date('2026-11-01T00:00:00Z'),
+  endDate: new Date('2999-01-01T00:00:00Z'),
   // A previewer's reads start here; the live totals are keyed by the real startDate regardless.
   scoreFrom: new Date('2026-10-20T00:00:00Z'),
 };
@@ -306,6 +307,14 @@ describe('getMyEventHats', () => {
     expect(hats[1]).toMatchObject({ points: 0, comments: 0, placedOn: null, movableAt: null });
   });
 
+  // A live read that answers is the total, even where it has nothing: the snapshot is only for when
+  // the live store is unreachable.
+  it('reads a hat missing from an answering live read as 0, not its snapshot', async () => {
+    live.getHatPoints.mockResolvedValue({});
+    const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(placed.points).toBe(0);
+  });
+
   // Points are the live total; the per-type counts are the hourly snapshot's.
   it("reads points live for every hat, keyed by the event's real start", async () => {
     await service.getMyEventHats({ event: 'birthday2026', user });
@@ -458,6 +467,23 @@ describe('getEventStandings decoration', () => {
     ]);
     expect(res.history).toBe(history);
     expect(live.getTeamPoints).toHaveBeenCalledWith({ ...season, teams: scored.teams });
+  });
+
+  // After the end the page names a winner: it must be the settled one the prize payout reads.
+  it('shows the settled team totals once the event has ended, never live ones', async () => {
+    const teams = [
+      { team: 'Yellow', score: 900, rank: 1 },
+      { team: 'Blue', score: 800, rank: 2 },
+    ];
+    engine.getReadableScoredEvent.mockResolvedValue({
+      ...scored,
+      endDate: new Date(Date.now() - 1000),
+    });
+    scoring.getEventStandings.mockResolvedValue({ teams, topCosmetics: [], topUsers: {} });
+    live.getTeamPoints.mockResolvedValue({ Yellow: 950, Blue: 1000 });
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(res.teams).toEqual(teams);
+    expect(live.getTeamPoints).not.toHaveBeenCalled();
   });
 
   it('keeps the snapshot team totals when the live totals are unreachable', async () => {

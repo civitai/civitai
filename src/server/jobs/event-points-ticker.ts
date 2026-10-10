@@ -6,12 +6,15 @@ import { createJob } from '~/server/jobs/job';
 // The referee keeps correcting totals for a while after the end; their pushes still go out.
 const TICK_AFTER_END_MS = 2 * 24 * 60 * 60 * 1000;
 
+// From the start, never the preview: topics are named by the public event name and anyone can
+// subscribe, while the preview's reads are gated to previewers. Previewers still read live totals
+// on each open.
+
 export function getTickerEvents(
   events: {
     name: string;
     startDate: Date;
     endDate: Date;
-    previewFrom?: Date;
     teams: readonly string[];
     scoring?: unknown;
   }[],
@@ -21,7 +24,7 @@ export function getTickerEvents(
     .filter(
       (e) =>
         !!e.scoring &&
-        (e.previewFrom ?? e.startDate) <= now &&
+        e.startDate <= now &&
         e.endDate.getTime() + TICK_AFTER_END_MS >= now.getTime()
     )
     .map(({ name, startDate, teams }) => ({ name, startDate, teams }));

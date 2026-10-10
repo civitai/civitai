@@ -44,11 +44,12 @@ vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({
 }));
 // The live points subscriptions need the app's SignalProvider; record what the page asks for.
 const live = vi.hoisted(() => ({
-  teams: [] as string[],
+  teams: [] as [string, boolean][],
   myHats: undefined as Record<string, unknown> | undefined,
 }));
 vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
-  useEventTeamsLivePoints: (event: string) => void live.teams.push(event),
+  useEventTeamsLivePoints: (event: string, enabled: boolean) =>
+    void live.teams.push([event, enabled]),
   MyHatsLivePoints: (props: Record<string, unknown>) => {
     live.myHats = props;
     return null;
@@ -93,7 +94,29 @@ describe('ScoredEventSections: Your hats', () => {
     expect(myHatsProps?.hats).toBe(hats);
     expect(myHatsProps?.fetchedAt).toBe(1_234_567);
     // While the page is open it follows the team totals and each of the viewer's hats live.
-    expect(live.teams).toContain('birthday2026');
+    expect(live.teams.at(-1)).toEqual(['birthday2026', true]);
     expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'] });
+  });
+
+  // After the end the page names a winner; it must be the settled one the payout uses.
+  it('stops following the team totals once the event has ended', () => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const data = {
+      title: 'Birthday',
+      startDate: new Date(Date.now() - 120_000),
+      endDate: new Date(Date.now() - 60_000),
+    } as unknown as React.ComponentProps<typeof ScoredEventSections>['data'];
+    act(() =>
+      root!.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(ScoredEventSections, { event: 'birthday2026', data })
+        )
+      )
+    );
+    expect(live.teams.at(-1)).toEqual(['birthday2026', false]);
   });
 });

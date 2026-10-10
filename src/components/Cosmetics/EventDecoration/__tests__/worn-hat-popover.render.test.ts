@@ -45,10 +45,13 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showErrorNotification: notify,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
-// The live points subscription needs the app's SignalProvider; record what the popover asks for.
+// The live points subscription needs the app's SignalProvider; record what the popover mounts.
 const livePoints = vi.hoisted(() => vi.fn());
 vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
-  useWornHatLivePoints: livePoints,
+  WornHatLivePoints: (props: unknown) => {
+    livePoints(props);
+    return null;
+  },
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => null,
@@ -168,12 +171,10 @@ describe('a hatted feed card', () => {
     expect(link?.getAttribute('href')).toBe('/events/birthday2026');
   });
 
-  // A feed of hatted cards must not subscribe to every hat: only an open popover follows its total.
+  // A feed of hatted cards must not listen for every hat: only an open popover follows its total.
   it('follows the hat total live only while the popover is open', () => {
     renderCard();
-    const topics = () => livePoints.mock.calls.map(([args]) => args.topicId);
-    expect(topics().length).toBeGreaterThan(0);
-    expect(topics().filter((t) => t !== undefined)).toEqual([]);
+    expect(livePoints.mock.calls).toEqual([]);
     clickHat();
     expect(livePoints.mock.calls.at(-1)![0]).toEqual({
       event: 'birthday2026',
