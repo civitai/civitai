@@ -1,8 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import type { ImageSchema } from '~/server/schema/image.schema';
+import type { ImageReferenceInput, ImageSchema } from '~/server/schema/image.schema';
 import { createImage } from '~/server/services/image.service';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { checkFileExists, getImageUploadBackend } from '~/utils/s3-utils';
 
 /**
@@ -235,7 +236,7 @@ export async function resolveCoverImageId(
     currentCoverId,
     assertOwnership,
   }: {
-    coverImage: ImageSchema;
+    coverImage: ImageReferenceInput;
     userId: number;
     /** The entity's existing `coverId`, when the caller already has it loaded. */
     currentCoverId?: number | null;
@@ -275,6 +276,6 @@ export async function resolveCoverImageId(
     deps.logExistenceUnknown({ userId });
   }
 
-  const created = await deps.createImage({ ...image, userId });
+  const created = await deps.createImage({ ...pickClientImageColumns(image), userId });
   return created.id;
 }

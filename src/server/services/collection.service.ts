@@ -71,6 +71,7 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -1264,6 +1265,31 @@ function withStoredModeratorMetadata(
   return next;
 }
 
+/**
+ * An existing image may become a collection's cover when the caller owns it or it is already an
+ * item of that collection. Co-managers can set covers, so ownership alone would be too narrow.
+ */
+async function assertUsableCollectionCover({
+  collectionId,
+  imageId,
+  userId,
+  isModerator,
+}: {
+  collectionId: number;
+  imageId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  if (isModerator) return;
+  const usable = await dbWrite.image.count({
+    where: {
+      id: imageId,
+      OR: [{ userId }, { collectionItems: { some: { collectionId } } }],
+    },
+  });
+  if (!usable) throw throwAuthorizationError('Invalid cover image');
+}
+
 export const upsertCollection = async ({
   input,
 }: {
@@ -1357,15 +1383,15 @@ export const upsertCollection = async ({
       );
     }
 
-    // nb - if we ever allow a cover image on create, copy this logic below
-    // TODO commenting this out - other users can manage collections
-    // const coverImgId = imageId ?? image?.id;
-    // if (isDefined(coverImgId)) {
-    //   const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverImgId });
-    //   if (!isImgOwner) {
-    //     throw throwAuthorizationError('Invalid cover image');
-    //   }
-    // }
+    const coverImageId = imageId ?? image?.id;
+    if (coverImageId != null && coverImageId !== currentCollection.image?.id) {
+      await assertUsableCollectionCover({
+        collectionId: id,
+        imageId: coverImageId,
+        userId,
+        isModerator,
+      });
+    }
 
     const updated = await dbWrite.$transaction(async (tx) => {
       if (tags) {
@@ -1413,7 +1439,7 @@ export const upsertCollection = async ({
                   connectOrCreate: {
                     where: { id: image.id ?? -1 },
                     create: {
-                      ...image,
+                      ...pickClientImageColumns(image),
                       meta:
                         (sanitizeProvenance(
                           image?.meta as Record<string, unknown> | null | undefined

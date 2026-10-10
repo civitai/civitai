@@ -618,3 +618,78 @@ describe('upsertCollection create-path scan', () => {
     expect(enqueueJobs).not.toHaveBeenCalled();
   });
 });
+
+describe('upsertCollection cover image', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const COVER_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+  const EXISTING_IMAGE = 4_321;
+
+  const save = (image: Record<string, unknown>, actorId = MANAGER_ID) =>
+    upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Covered', image, userId: actorId, isMember: true },
+    } as never);
+
+  it('refuses an existing image the caller neither owns nor has in the collection', async () => {
+    arrange({ actorId: MANAGER_ID });
+    mockDbWrite.image.count.mockResolvedValue(0);
+
+    await expect(save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' })).rejects.toThrow(
+      /invalid cover image/i
+    );
+
+    expect(mockDbWrite.image.count).toHaveBeenCalledWith({
+      where: {
+        id: EXISTING_IMAGE,
+        OR: [
+          { userId: MANAGER_ID },
+          { collectionItems: { some: { collectionId: COLLECTION_ID } } },
+        ],
+      },
+    });
+    expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
+  });
+
+  it('accepts an existing image the check finds usable', async () => {
+    arrange({ actorId: MANAGER_ID });
+    mockDbWrite.image.count.mockResolvedValue(1);
+
+    await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image.connectOrCreate.where).toEqual({ id: EXISTING_IMAGE });
+  });
+
+  it('re-saves the current cover without a check', async () => {
+    arrange({ actorId: MANAGER_ID });
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Public',
+      write: 'Private',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: { id: EXISTING_IMAGE },
+    });
+
+    await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
+
+    expect(mockDbWrite.image.count).not.toHaveBeenCalled();
+    expect(mockDbWrite.collection.update).toHaveBeenCalled();
+  });
+
+  it('creates a new cover from client columns only', async () => {
+    arrange({ actorId: MANAGER_ID });
+
+    await save({ url: COVER_KEY, type: 'image', width: 10, postId: 9_001, index: 2 });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image.connectOrCreate.create).toMatchObject({
+      url: COVER_KEY,
+      width: 10,
+      userId: MANAGER_ID,
+    });
+    expect(image.connectOrCreate.create).not.toHaveProperty('postId');
+    expect(image.connectOrCreate.create).not.toHaveProperty('index');
+    expect(mockDbWrite.image.count).not.toHaveBeenCalled();
+  });
+});
