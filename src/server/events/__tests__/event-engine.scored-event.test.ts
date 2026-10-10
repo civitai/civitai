@@ -24,7 +24,13 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
     mockSync: { syncEventHats: vi.fn() },
   })
 );
+const killSwitch = vi.hoisted(() => ({ on: true }));
 
+// The engine's kill switch is on unless a test turns it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => killSwitch.on,
+  isEventPointsEnabledSync: () => killSwitch.on,
+}));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
@@ -72,6 +78,7 @@ const cosmeticIds: Record<string, string> = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  killSwitch.on = true;
   // Launched unless a test says otherwise; who the flag lets in is pinned in event-access.test.ts.
   testerFlag.reset({ public: true });
   redisMock.redis.hGet.mockImplementation(
@@ -252,6 +259,22 @@ describe('end-of-event cleanup', () => {
       (sql as TemplateStringsArray).join('?').includes('{winner}')
     );
     expect(winnerFlags.map(([, id]) => id)).toEqual([23]);
+  });
+
+  it('names no birthday winner while the engine is switched off, and leaves the cleanup to retry', async () => {
+    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
+    killSwitch.on = false;
+    await eventEngine.dailyReset(birthdayCleanup);
+    const winnerFlags = () =>
+      dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
+        (sql as TemplateStringsArray).join('?').includes('{winner}')
+      );
+    expect(winnerFlags()).toEqual([]);
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+
+    killSwitch.on = true;
+    await eventEngine.dailyReset(birthdayCleanup);
+    expect(winnerFlags().map(([, id]) => id)).toEqual([23]);
   });
 
   it('positive control: holiday2024 cleanup does run inside its own grace window, with real cosmetic ids', async () => {
@@ -438,6 +461,20 @@ describe('scoring behind the flag', () => {
     expect(synced).toBeLessThan(refereed);
     expect(refereed).toBeLessThan(refreshed);
     expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
+  });
+
+  // Off, a scored event settles nothing and must not fall through to the old donor leaderboard.
+  it('settles nothing and writes nothing while the engine is switched off', async () => {
+    killSwitch.on = false;
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockSync.syncEventHats).not.toHaveBeenCalled();
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
+    expect(mockScoring.refreshStandings).not.toHaveBeenCalled();
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
+
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
   });
 
   it('still refreshes the standings when the referee fails', async () => {
