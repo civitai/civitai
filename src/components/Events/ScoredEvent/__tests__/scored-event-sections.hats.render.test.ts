@@ -57,8 +57,9 @@ vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
   TopHatsLivePoints: () => null,
 }));
 // Every section counts as in view; the in-view gating is tested in event-points-watch.test.ts.
+const view = vi.hoisted(() => ({ inView: true }));
 vi.mock('~/hooks/useInView', () => ({
-  useInView: () => ({ ref: { current: null }, inView: true }),
+  useInView: () => ({ ref: { current: null }, inView: view.inView }),
 }));
 
 vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({ ScoredEventHero: () => null }));
@@ -102,6 +103,33 @@ describe('ScoredEventSections: Your hats', () => {
     // While the page is open it follows the team totals and each of the viewer's hats live.
     expect(live.teams.at(-1)).toEqual(['birthday2026', true]);
     expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'], inView: true });
+  });
+
+  it('follows nothing live while no section that shows it is in view', () => {
+    view.inView = false;
+    try {
+      host = document.createElement('div');
+      document.body.appendChild(host);
+      root = createRoot(host);
+      const data = {
+        title: 'Birthday',
+        startDate: new Date(Date.now() - 60_000),
+        endDate: new Date(Date.now() + 60_000),
+      } as unknown as React.ComponentProps<typeof ScoredEventSections>['data'];
+      act(() =>
+        root!.render(
+          React.createElement(
+            MantineProvider,
+            null,
+            React.createElement(ScoredEventSections, { event: 'birthday2026', data })
+          )
+        )
+      );
+      expect(live.teams.at(-1)).toEqual(['birthday2026', false]);
+      expect(live.myHats).toEqual(expect.objectContaining({ inView: false }));
+    } finally {
+      view.inView = true;
+    }
   });
 
   // After the end the page names a winner; it must be the settled one the payout uses.
