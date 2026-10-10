@@ -28,6 +28,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
   ...(await importOriginal<typeof Award>()),
   awardEventPoints,
   isHattedEntity: (entityType: string, entityId: number) => hatted.has(`${entityType}:${entityId}`),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    hatted.has(`${entityType}:${entityId}`),
 }));
 
 import handler from '~/pages/api/track/batch';

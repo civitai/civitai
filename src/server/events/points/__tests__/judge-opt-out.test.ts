@@ -19,6 +19,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
   ...(await importOriginal<typeof Award>()),
   awardEventPoints,
   isHattedEntity: (entityType: string, entityId: number) => hatted.has(`${entityType}:${entityId}`),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    hatted.has(`${entityType}:${entityId}`),
 }));
 vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMock.dbWrite }));
 vi.mock('~/server/services/block-check.service', () => ({

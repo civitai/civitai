@@ -49,6 +49,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
   awardEventPoints,
   isHattedEntity: (entityType: string, entityId: number) =>
     entityType === 'Image' && hattedImages.has(entityId),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    entityType === 'Image' && hattedImages.has(entityId),
 }));
 
 // A real mutex, not a pass-through: the lock is what stops two callers both

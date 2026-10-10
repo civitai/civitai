@@ -17,6 +17,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
   awardEventPoints,
   removeEventPoints,
   isHattedEntity: (entityType: string, entityId: number) => hatted.has(`${entityType}:${entityId}`),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    hatted.has(`${entityType}:${entityId}`),
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedCommentContent: vi.fn(async () => undefined),
