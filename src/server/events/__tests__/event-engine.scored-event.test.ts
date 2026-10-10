@@ -440,6 +440,12 @@ describe('scoring behind the flag', () => {
     expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
   });
 
+  it('still refreshes the standings when the referee fails', async () => {
+    mockReferee.runEventPointsReferee.mockRejectedValueOnce(new Error('clickhouse down'));
+    await expect(eventEngine.updateLeaderboard(DURING)).resolves.not.toThrow();
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+  });
+
   it('scores everyone from the start, base on or off', async () => {
     for (const isPublic of [true, false]) {
       testerFlag.reset({ public: isPublic });

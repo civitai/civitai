@@ -536,6 +536,35 @@ describe('getEventStandings decoration', () => {
     }
   });
 
+  // Public and edge-cached, and a bought hat's claim key is its purchase's transaction id.
+  it('sends each top hat under its opaque topic id, never its claim key', async () => {
+    const { hatTopicId } = await import('~/server/events/points/keys');
+    scoring.getEventStandings.mockResolvedValueOnce({
+      teams: [],
+      topCosmetics: [
+        {
+          userId: 7,
+          cosmeticId: 21,
+          claimKey: 'cosmetic-purchase-txn-9',
+          team: 'Yellow',
+          points: 5,
+        },
+      ],
+      topUsers: {},
+    });
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(JSON.stringify(res)).not.toContain('cosmetic-purchase-txn-9');
+    expect(res.topCosmetics).toEqual([
+      {
+        userId: 7,
+        cosmeticId: 21,
+        team: 'Yellow',
+        points: 5,
+        topicId: hatTopicId({ ownerId: 7, cosmeticId: 21, claimKey: 'cosmetic-purchase-txn-9' }),
+      },
+    ]);
+  });
+
   // The art is decoration: a failed lookup must cost the hats, never the standings.
   it('still answers when the join hat lookup fails', async () => {
     engine.getJoinHats.mockRejectedValueOnce(new Error('redis down'));

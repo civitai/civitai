@@ -229,6 +229,17 @@ describe('standings', () => {
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
+  it('rebuilds a cold snapshot once however many requests miss at the same time', async () => {
+    dbMock.dbRead.$queryRaw.mockClear();
+    await getEventStandings({ ...event, name: 'warmup-other' });
+    const perBuild = dbMock.dbRead.$queryRaw.mock.calls.length;
+    dbMock.dbRead.$queryRaw.mockClear();
+    const results = await Promise.all(Array.from({ length: 5 }, () => getEventStandings(event)));
+    expect(perBuild).toBeGreaterThan(0);
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(perBuild);
+    expect(new Set(results).size).toBe(1);
+  });
+
   it('serves standings and history from the cached snapshot without querying', async () => {
     const cached = {
       teams: [{ team: 'Green', score: 7, rank: 1 }],

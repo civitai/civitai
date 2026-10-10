@@ -3,8 +3,8 @@ import type { TickerEvent } from '~/server/events/points/ticker';
 import { runEventPointsTicker, tickEventPoints } from '~/server/events/points/ticker';
 import { createJob } from '~/server/jobs/job';
 
-// The referee keeps correcting totals for a while after the end; their pushes still go out.
-const TICK_AFTER_END_MS = 2 * 24 * 60 * 60 * 1000;
+// The referee keeps correcting totals until scoring finalizes; its last corrections still go out.
+const TICK_AFTER_FINAL_MS = 60 * 60 * 1000;
 
 // From the start, never the preview: topics are named by the public event name and anyone can
 // subscribe, while the preview's reads are gated to previewers. Previewers still read live totals
@@ -16,7 +16,7 @@ export function getTickerEvents(
     startDate: Date;
     endDate: Date;
     teams: readonly string[];
-    scoring?: unknown;
+    scoring?: { finalizeAfterMs: number };
   }[],
   now: Date
 ): TickerEvent[] {
@@ -25,7 +25,7 @@ export function getTickerEvents(
       (e) =>
         !!e.scoring &&
         e.startDate <= now &&
-        e.endDate.getTime() + TICK_AFTER_END_MS >= now.getTime()
+        e.endDate.getTime() + e.scoring.finalizeAfterMs + TICK_AFTER_FINAL_MS >= now.getTime()
     )
     .map(({ name, startDate, endDate, teams }) => ({ name, startDate, endDate, teams }));
 }

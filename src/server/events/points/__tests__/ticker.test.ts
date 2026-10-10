@@ -375,18 +375,22 @@ describe('getTickerEvents', () => {
     startDate: new Date('2026-11-01T00:00:00Z'),
     endDate: new Date('2026-12-01T00:00:00Z'),
     previewFrom: new Date('2026-10-20T00:00:00Z'),
-    scoring: {},
+    scoring: { finalizeAfterMs: 24 * 60 * 60 * 1000 },
   };
   const at = (iso: string, e: Partial<typeof base> = {}) =>
     getTickerEvents([{ ...base, ...e }], new Date(iso)).map((x) => x.name);
 
   // Signals topics are open to any subscriber; the preview's totals are for previewers only.
-  it('ticks scored events from the start, not the preview, through two days after the end', () => {
+  it('ticks scored events from the start, not the preview, until an hour after scoring finalizes', () => {
     expect(at('2026-10-25T00:00:00Z')).toEqual([]);
     expect(at('2026-10-31T23:59:59Z')).toEqual([]);
     expect(at('2026-11-01T00:00:00Z')).toEqual(['e']);
-    expect(at('2026-12-03T00:00:00Z')).toEqual(['e']);
-    expect(at('2026-12-03T00:00:01Z')).toEqual([]);
+    expect(at('2026-12-02T01:00:00Z')).toEqual(['e']);
+    expect(at('2026-12-02T01:00:01Z')).toEqual([]);
+    // Follows the event's own finalize window, not a fixed tail.
+    expect(
+      at('2026-12-03T01:00:00Z', { scoring: { finalizeAfterMs: 48 * 60 * 60 * 1000 } })
+    ).toEqual(['e']);
   });
 
   // The season comes from startDate, and the ticker's end-of-event freeze from endDate.

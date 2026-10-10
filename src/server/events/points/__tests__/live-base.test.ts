@@ -244,7 +244,14 @@ describe('readTotals', () => {
   it('retries only once, so a cut that keeps moving cannot stall a read', async () => {
     const fake = fakeRedis();
     let cut = NOW_BUCKET - 5;
-    const redis = { ...fake.redis, get: vi.fn(async () => String(cut++)) };
+    // Throws past 20 reads, so a retry loop that never stops fails here instead of hanging the run.
+    const redis = {
+      ...fake.redis,
+      get: vi.fn(async () => {
+        if (cut > NOW_BUCKET + 15) throw new Error('readTotals kept re-reading the cut');
+        return String(cut++);
+      }),
+    };
     await readTotals(EVENT, 'hat', ['a'], NOW, redis as unknown as PointsReadRedis);
     expect(redis.get).toHaveBeenCalledTimes(4);
   });
