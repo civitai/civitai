@@ -18,8 +18,14 @@ import { stripComments } from '../../../../../test/strip-comments';
  *
  * Population, under `src/` with test files excluded: every
  * `.image.(create|createMany|createManyAndReturn|upsert)(` call, every raw
- * `INSERT INTO "Image"`, and every nested `create`/`connectOrCreate`/`upsert` under a
- * relation field typed `Image` in the Prisma schema.
+ * `INSERT INTO "Image"`, and every nested `create`/`createMany`/`connectOrCreate`/`upsert`
+ * that follows the key of a relation field typed `Image` in the Prisma schema within 300
+ * characters of the same statement. A nested create built in a helper is found only when
+ * that key (or a parameter named like one) sits within that window.
+ *
+ * The ledgers count sites per enclosing function, which is the nearest `function` or
+ * `const x = async` declaration before the site; a site in a plain arrow is counted under
+ * the declaration above it.
  */
 
 const ROOT = process.cwd();
@@ -86,19 +92,19 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
  * Every function that names `blockProvenance`: `createImage`, which declares it, and the
  * callers that pass it — the only legitimate stampers.
  */
-const STAMPER_LEDGER = [
-  'src/server/services/image.service.ts#createImage',
-  'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
-];
+const STAMPER_LEDGER: Record<string, number> = {
+  'src/server/services/image.service.ts#createImage': 8,
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': 1,
+};
 
 /**
  * Every site that writes a provenance key as an object key. `createImage` is the one
  * `Image` writer; the other entry stamps `Post.metadata`, a different column.
  */
-const PROVENANCE_KEY_WRITE_LEDGER = [
-  'src/server/services/image.service.ts#createImage',
-  'src/server/services/blocks/block-post.service.ts#writeBlockPost',
-];
+const PROVENANCE_KEY_WRITE_LEDGER: Record<string, number> = {
+  'src/server/services/image.service.ts#createImage': 1,
+  'src/server/services/blocks/block-post.service.ts#writeBlockPost': 1,
+};
 
 const WRITE_CALL = /\.image\s*\.\s*(?:create|createMany|createManyAndReturn|upsert)\s*\(/g;
 const RAW_INSERT = /INSERT\s+INTO\s+(?:"?public"?\.)?"Image"/gi;
@@ -184,6 +190,8 @@ function rawStatement(text: string, offset: number): string {
 /** The `{ … }` object literal that starts at the first `{` at or after `from`. */
 function objectAfter(text: string, from: number): string {
   const open = text.indexOf('{', from);
+  // `create: data` is not a literal this file can read; an empty region fails every check.
+  if (open === -1 || text.slice(from, open).trim() !== '') return '';
   let depth = 0;
   for (let i = open; i < text.length; i++) {
     if (text[i] === '{') depth++;
@@ -356,11 +364,11 @@ describe('Image metadata provenance — write-site ledger', () => {
 
 describe('Image metadata provenance — stamper ledger', () => {
   it('only the recorded functions name blockProvenance', () => {
-    expect(keysOf(collect(STAMPER))).toEqual([...STAMPER_LEDGER].sort());
+    expect(countsOf(collect(STAMPER))).toEqual(STAMPER_LEDGER);
   });
 
   it('only the recorded sites write a provenance key as an object key', () => {
-    expect(keysOf(collect(PROVENANCE_KEY_WRITE))).toEqual([...PROVENANCE_KEY_WRITE_LEDGER].sort());
+    expect(countsOf(collect(PROVENANCE_KEY_WRITE))).toEqual(PROVENANCE_KEY_WRITE_LEDGER);
   });
 });
 
@@ -469,6 +477,27 @@ describe('detector controls', () => {
         body: '',
       })
     ).toBeNull();
+  });
+
+  it('reads no region from a nested create whose value is not a literal', () => {
+    const text = fixture(
+      'async function save(a) {\n  await db.user.update({ data: { avatar: { create: a } } });\n  const other = { metadata: { x: 1 } };\n}'
+    );
+    const [site] = sitesIn('x.ts', text, NESTED_CREATE);
+    expect(site.region).toBe('');
+    expect(checkDecision('nested-server-literal', site)).not.toBeNull();
+  });
+
+  it('counts a provenance key write added under an already-listed function', () => {
+    const text = fixture(
+      'async function createImage(m, blockProvenance) { return { ...m, [blockProvenance.key]: 1 }; }\n' +
+        'export const tagAppImage = (m, id) => ({ ...m, [BLOCK_PUBLISHED_APP_ID_META_KEY]: id });\n' +
+        'export const stampIt = (blockProvenance) => doThing({ blockProvenance });'
+    );
+    expect(countsOf(sitesIn('x.ts', text, PROVENANCE_KEY_WRITE))).toEqual({
+      'x.ts#createImage': 2,
+    });
+    expect(countsOf(sitesIn('x.ts', text, STAMPER))).toEqual({ 'x.ts#createImage': 4 });
   });
 
   it('accepts a conditional spread of object literals in a server-literal site', () => {
