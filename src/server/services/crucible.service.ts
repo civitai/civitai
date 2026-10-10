@@ -97,7 +97,10 @@ import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isNonSfwForGreen } from '~/server/games/daily-challenge/challenge-currency';
-import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
+import {
+  getEffectiveBrowsingLevel,
+  isImageHiddenFromGreenViewer,
+} from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
 import { createPost, afterPostPublish, afterPostsPublish } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
@@ -1231,7 +1234,9 @@ export const getCrucibleEntries = async ({
           crucibleId,
           prizePositions: parsePrizePositions(crucible.prizePositions),
           viewerId: userId,
-          visibleImage: page.visibleImage,
+          isGreen,
+          // The viewer's own level is left to the card's blur, as challenge winners are.
+          visibleImage: visibleEntryImageSql(crucible.nsfwLevel, 0),
         })
       : [];
 
@@ -1240,13 +1245,19 @@ export const getCrucibleEntries = async ({
 
 const PODIUM_PLACES = 3;
 
+/**
+ * Every podium winner, as challenge winners are shown: a paid place never drops off. A winner whose
+ * image was deleted or failed moderation comes without one, and on green a mature one without its url.
+ */
 const getPodiumEntries = async ({
   crucibleId,
   prizePositions,
   viewerId,
+  isGreen,
   visibleImage,
 }: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'> & {
   prizePositions: PrizePosition[];
+  isGreen: boolean;
 }) => {
   const winners = (
     (await getCruciblesPrizeWinners([{ id: crucibleId, prizePositions, totalPrizePool: 0 }])).get(
@@ -1255,20 +1266,37 @@ const getPodiumEntries = async ({
   ).filter(({ prizePlace }) => prizePlace <= PODIUM_PLACES);
   if (!winners.length) return [];
 
-  const ids = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT ce.id
-    FROM "CrucibleEntry" ce
-    JOIN "Image" i ON i.id = ce."imageId"
-    WHERE ce.id = ANY(${winners.map(({ entryId }) => entryId)}::int[])
-      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
-  `;
-  const prizePlaceById = new Map(winners.map(({ entryId, prizePlace }) => [entryId, prizePlace]));
-  return (await loadEntriesInOrder(ids))
-    .flatMap((entry) => {
-      const prizePlace = prizePlaceById.get(entry.id);
-      return prizePlace ? [{ ...entry, prizePlace }] : [];
-    })
-    .sort((a, b) => a.prizePlace - b.prizePlace);
+  const ids = winners.map(({ entryId }) => entryId);
+  const [visibility, entries] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; imageVisible: boolean }[]>`
+      SELECT ce.id, COALESCE(${entryVisibleToViewerSql(
+        viewerId,
+        visibleImage
+      )}, false) AS "imageVisible"
+      FROM "CrucibleEntry" ce
+      LEFT JOIN "Image" i ON i.id = ce."imageId"
+      WHERE ce.id = ANY(${ids}::int[])
+    `,
+    dbRead.crucibleEntry.findMany({ where: { id: { in: ids } }, select: crucibleEntrySelect }),
+  ]);
+  const visibleIds = new Set(visibility.filter((row) => row.imageVisible).map(({ id }) => id));
+  const entryById = new Map(entries.map((entry) => [entry.id, entry]));
+
+  return winners.flatMap(({ entryId, prizePlace }) => {
+    const entry = entryById.get(entryId);
+    if (!entry) return [];
+    const image =
+      entry.image && visibleIds.has(entry.id)
+        ? {
+            ...entry.image,
+            url:
+              isGreen && isImageHiddenFromGreenViewer(entry.image.nsfwLevel, viewerId)
+                ? null
+                : entry.image.url,
+          }
+        : null;
+    return [{ ...entry, image, prizePlace }];
+  });
 };
 
 type EntryPageArgs = {
