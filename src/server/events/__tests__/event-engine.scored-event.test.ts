@@ -261,6 +261,22 @@ describe('end-of-event cleanup', () => {
     expect(winnerFlags.map(([, id]) => id)).toEqual([23]);
   });
 
+  it('names no birthday winner while the engine is switched off, and leaves the cleanup to retry', async () => {
+    const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
+    killSwitch.on = false;
+    await eventEngine.dailyReset(birthdayCleanup);
+    const winnerFlags = () =>
+      dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
+        (sql as TemplateStringsArray).join('?').includes('{winner}')
+      );
+    expect(winnerFlags()).toEqual([]);
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
+
+    killSwitch.on = true;
+    await eventEngine.dailyReset(birthdayCleanup);
+    expect(winnerFlags().map(([, id]) => id)).toEqual([23]);
+  });
+
   it('positive control: holiday2024 cleanup does run inside its own grace window, with real cosmetic ids', async () => {
     // Proves the assertions above can see a cleanup: the same observable fires when it should.
     // Also pins the for..in fix: the old loop passed indices "0".."3" to getCosmetic and

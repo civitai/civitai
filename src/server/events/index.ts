@@ -123,10 +123,12 @@ export const eventEngine = {
 
         // A scored event's cosmetics stay on content: owners keep them after the event (see
         // canWearEventDecorations). Its winner waits until scoring has finished taking late
-        // data, so it is decided on the final standings.
+        // data, so it is decided on the final standings. While the engine is switched off those
+        // standings are frozen, so it waits until the engine is back on.
         if (
           eventDef.scoring &&
-          now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs
+          (now.getTime() < eventDef.endDate.getTime() + eventDef.scoring.finalizeAfterMs ||
+            !(await isEventPointsEnabled()))
         )
           continue;
 

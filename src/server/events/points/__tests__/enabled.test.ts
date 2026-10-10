@@ -42,6 +42,7 @@ const { isEventPointsEnabled, isEventPointsEnabledSync } = await import(
 );
 const award = await import('~/server/events/points/award');
 const { syncEventHats } = await import('~/server/events/points/sync');
+const { hattedImpressionEntities } = await import('~/server/events/points/hooks');
 const { encodeHat, eventPointKeys } = await import('~/server/events/points/keys');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
@@ -56,11 +57,9 @@ const reaction = {
   entityId: IMAGE,
   sourceId: `ImageReaction:${IMAGE}:1`,
 };
+// Every sysRedis command, so a new write path on any command is seen.
 const redisCalls = () =>
-  [sys.hGetAll, sys.xRange, sys.xRevRange, sys.sAdd, sys.sRem, sys.hIncrBy, sys.hSetNX].reduce(
-    (n, fn) => n + fn.mock.calls.length,
-    0
-  );
+  Object.values(sys).reduce((n, fn) => n + (vi.isMockFunction(fn) ? fn.mock.calls.length : 0), 0);
 
 beforeAll(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -125,7 +124,40 @@ describe('the engine entry points', () => {
     await award.awardEventPoints([reaction]);
     await award.removeEventPoints([reaction]);
     expect(await award.isHattedEntityOnceLoaded('Image', IMAGE)).toBe(true);
+    expect(award.isHattedEntity('Image', IMAGE)).toBe(true);
     expect(ch.rows.map((r) => r.op)).toEqual(['add', 'remove']);
+  });
+
+  // With the hats loaded, only the switch can make these answer false.
+  it('off again: a loaded engine still answers un-hatted and writes nothing', async () => {
+    flag.value = false;
+    expect(award.isHattedEntity('Image', IMAGE)).toBe(false);
+    expect(await award.isHattedEntityOnceLoaded('Image', IMAGE)).toBe(false);
+    await award.awardEventPoints([
+      { ...reaction, actorId: 2, sourceId: `ImageReaction:${IMAGE}:2` },
+    ]);
+    expect(redisCalls()).toBe(0);
+    expect(ch.rows).toEqual([]);
+  });
+});
+
+describe('the impression filter', () => {
+  const batch = [
+    {
+      kind: 'impression',
+      data: {
+        sessionKey: 'k',
+        surface: 'images',
+        entities: [{ entityType: 'Image', entityId: IMAGE }],
+      },
+    },
+  ] as unknown as Parameters<typeof hattedImpressionEntities>[0];
+
+  it('keeps nothing while off, and the hatted entity when on', () => {
+    flag.value = false;
+    expect(hattedImpressionEntities(batch)).toEqual([]);
+    flag.value = true;
+    expect(hattedImpressionEntities(batch)).toEqual([{ entityType: 'Image', entityId: IMAGE }]);
   });
 });
 
