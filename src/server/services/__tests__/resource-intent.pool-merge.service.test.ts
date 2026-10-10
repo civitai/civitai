@@ -251,6 +251,16 @@ describe('cache key', () => {
   });
 });
 
+describe('the merge spec hash', () => {
+  // A change detector: the hash covers the merge constants and the merge's output on a fixture,
+  // and the cache key relies on it moving when either does. Update the literal deliberately.
+  it('is pinned', () => {
+    expect(RESOURCE_INTENT_POOL_MERGE_SPEC_HASH).toBe(
+      '2c1171c711b5c50f424ee0332c77a0c00102d9b37eee47bf593cc1be171c4d2b'
+    );
+  });
+});
+
 describe('flag off: HYBRID_10 exactly as before', () => {
   it('🔴 never touches the snapshot holder or the pool merge; response, key and shadow row unchanged', async () => {
     for (const ctx of [CTX, { ...CTX, poolMerge: false }]) {
@@ -353,6 +363,58 @@ describe('🔴 POOL_MERGE with no servable snapshot: BASE, flagged, 60 s, reason
       expect.objectContaining({ type: 'resource-intent-cooc-fallback' }),
       'temp-search'
     );
+  });
+});
+
+describe('POOL_MERGE cache hit', () => {
+  it('serves the cached list with no vendor call, no merge, no fallback log; the row keeps its arm', async () => {
+    mockHolderResolve.mockResolvedValue(fallback('no_snapshot'));
+    const cached = {
+      degraded: false,
+      insightFallback: false,
+      coocFallback: true,
+      intent: null,
+      criteria: null,
+      suggestions: [{ versionId: 21 }],
+      noneProbability: null,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2,
+    };
+    redisMock.redis.packed.get.mockResolvedValue(cached);
+    const result = await getResourceIntent(INPUT, { ...CTX, poolMerge: true });
+    expect(result).toEqual(cached);
+    expect(mockAskJev).not.toHaveBeenCalled();
+    expect(mockPoolMerge).not.toHaveBeenCalled();
+    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'resource-intent-cooc-fallback' }),
+      'temp-search'
+    );
+    await flush();
+    expect(shadowRow()).toMatchObject({
+      arm: 'pool_merge',
+      coocFallback: 1,
+      coocFallbackReason: 'no_snapshot',
+      shortlistCount: 1,
+    });
+  });
+});
+
+describe('POOL_MERGE degrade', () => {
+  it('a Jev failure on the fallback arm degrades and still reports coocFallback (60 s)', async () => {
+    mockHolderResolve.mockResolvedValue(fallback('no_snapshot'));
+    mockAskJev.mockRejectedValue(new Error('timeout'));
+    const result = await getResourceIntent(INPUT, { ...CTX, poolMerge: true });
+    expect(result).toMatchObject({ degraded: true, coocFallback: true, suggestions: [] });
+    expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({ coocFallback: true });
+    expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
+  });
+
+  it('a merge (search) failure degrades with a snapshot served too', async () => {
+    mockStage1();
+    mockPoolMerge.mockRejectedValue(new Error('search down'));
+    const result = await getResourceIntent(INPUT, { ...CTX, poolMerge: true });
+    expect(result).toMatchObject({ degraded: true, coocFallback: false, suggestions: [] });
   });
 });
 

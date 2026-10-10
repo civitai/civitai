@@ -128,10 +128,15 @@ function snapshotScores(zephyrModels: number[], yarrowModels: number[]) {
 
 let row: Row;
 
-/** The index: filtered by `excluded` and `id IN`, popularity order when sorted, reversed when not. */
+/**
+ * The index: `excluded` drops out only under the gate's maturity clause, `id IN` restricts;
+ * popularity order when sorted, reversed when not.
+ */
 function meili(params: { filter?: string; sort?: string[]; limit: number }) {
   meiliCalls.push(params);
-  let docs = row.docs.filter((d) => !row.excluded.has(d.id));
+  let docs = params.filter?.includes('nsfwLevel IN')
+    ? row.docs.filter((d) => !row.excluded.has(d.id))
+    : row.docs;
   const ids = params.filter?.match(/\bid IN \[([^\]]*)\]/)?.[1];
   if (ids !== undefined) {
     const set = new Set(ids.split(',').map((x) => Number(x.trim())));
@@ -156,8 +161,6 @@ const searchClient = {
 };
 const DEEP_LIMIT = 500;
 const SORT = ['metrics.thumbsUpCount:desc'];
-const CAP = 50;
-const POOL_CAP = 100;
 const COOC_SLOTS = 25;
 
 async function retry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
@@ -217,7 +220,11 @@ function rankedModelIds(entries: readonly Pick<ResourceIntentShortlistEntry, 'mo
 }
 
 /** The screen's per-row POOL_MERGE computation, minus scoring (its processRow, trimmed). */
-async function screenPoolMerge(noSnapshot = false): Promise<number[]> {
+async function screenPoolMerge({
+  noSnapshot = false,
+  CAP = 50,
+  POOL_CAP = 100,
+}: { noSnapshot?: boolean; CAP?: number; POOL_CAP?: number } = {}): Promise<number[]> {
   const baseModels = [BASE_MODEL];
   const coverage = COVERAGE;
   const filter = buildResourceIntentFilter({
@@ -413,18 +420,54 @@ const rowC = (): Row => ({
   })(),
 });
 
+/**
+ * Runs the shipped request, then the oracle, and holds the two to the same search calls: the
+ * same filter and limit for the sorted BASE page and for the unsorted co-occurrence page.
+ */
+async function bothSides(
+  opts: {
+    limit?: number;
+    coocFallback?: boolean;
+    oracle?: Parameters<typeof screenPoolMerge>[0];
+  } = {}
+) {
+  meiliCalls.length = 0;
+  const result = await shipped(opts.limit, opts.coocFallback ?? false);
+  const shippedCalls = meiliCalls.splice(0);
+  const oracle = await screenPoolMerge(opts.oracle);
+  const oracleCalls = meiliCalls.splice(0);
+  const byKind = (calls: typeof meiliCalls) =>
+    ['sorted', 'unsorted'].map((k) =>
+      calls
+        .filter((c) => (k === 'sorted') === !!c.sort)
+        .map((c) => ({ filter: c.filter, limit: c.limit }))
+    );
+  expect(byKind(shippedCalls)).toEqual(byKind(oracleCalls));
+  return { result, oracle, shippedCalls };
+}
+
+/** Row D — the co-occurrence models ARE BASE's 25 most popular: BASE must reach past them. */
+const rowD = (): Row => ({
+  docs: corpus(
+    300,
+    () => 1,
+    () => true
+  ),
+  excluded: new Set(),
+  scores: snapshotScores(ids(Array.from({ length: 25 }, (_, i) => i)), []),
+});
+
 describe('🔴 seam: shipped POOL_MERGE = the screen, row by row', () => {
   it('row A: 25 reserved co-occurrence models interleaved with BASE, gates and re-sort applied', async () => {
     install(rowA());
-    const result = await shipped();
-    const shippedCalls = [...meiliCalls];
-    const oracle = await screenPoolMerge();
+    const { result, oracle, shippedCalls } = await bothSides();
 
     expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
     expect(oracle).toHaveLength(50);
-    // The co-occurrence query is the screen's: no sort, one page as wide as the candidates.
+    // The co-occurrence query is the screen's: the gate's filter AND id IN, unsorted, one page.
     const cooc = shippedCalls.find((c) => !c.sort)!;
     expect(cooc.limit).toBe(59); // 60 synthetic models, one on both token lists
+    expect(cooc.filter).toMatch(/nsfwLevel IN .* AND id IN \[/);
     expect(shippedCalls.map((c) => c.limit).sort((a, b) => a - b)).toEqual([59, 500]);
     // Pinned as literals too, so the oracle and the service cannot drift TOGETHER.
     expect(oracle.slice(0, 10).map((id) => id - 5000)).toEqual(ROW_A_HEAD);
@@ -435,8 +478,7 @@ describe('🔴 seam: shipped POOL_MERGE = the screen, row by row', () => {
 
   it('row B: a short co-occurrence list leaves its unused slots to BASE', async () => {
     install(rowB());
-    const result = await shipped();
-    const oracle = await screenPoolMerge();
+    const { result, oracle } = await bothSides();
 
     expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
     expect(oracle.slice(0, 7).map((id) => id - 5000)).toEqual([0, 1, 120, 2, 250, 3, 4]);
@@ -445,11 +487,9 @@ describe('🔴 seam: shipped POOL_MERGE = the screen, row by row', () => {
 
   it('row C: no candidates — BASE top 50, and no co-occurrence query', async () => {
     install(rowC());
-    const result = await shipped();
-    const shippedLimits = meiliCalls.map((c) => c.limit);
-    const oracle = await screenPoolMerge();
+    const { result, oracle, shippedCalls } = await bothSides();
 
-    expect(shippedLimits).toEqual([500]);
+    expect(shippedCalls.map((c) => c.limit)).toEqual([500]);
     expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
     expect(oracle.slice(0, 4).map((id) => id - 5000)).toEqual([1, 2, 4, 5]);
   });
@@ -457,25 +497,52 @@ describe('🔴 seam: shipped POOL_MERGE = the screen, row by row', () => {
   it('row A with no servable snapshot: BASE top 50 through the same gates, flagged', async () => {
     install(rowA());
     holderResolve.mockResolvedValue({ snapshot: null, fallbackReason: 'no_snapshot' });
-    const result = await shipped(undefined, true);
-    const shippedLimits = meiliCalls.map((c) => c.limit);
-    const oracle = await screenPoolMerge(true);
+    const { result, oracle, shippedCalls } = await bothSides({
+      coocFallback: true,
+      oracle: { noSnapshot: true },
+    });
 
-    expect(shippedLimits).toEqual([500]);
+    expect(shippedCalls.map((c) => c.limit)).toEqual([500]);
     expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
     expect(oracle).toHaveLength(50);
     // Excluded (10, 21) and gate-failing (8, 17) models are skipped.
     expect(oracle.slice(0, 10).map((id) => id - 5000)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 9, 11]);
   });
 
-  it('row A at limit 10: the 50-wide list cut to 10', async () => {
+  it.each([10, 30])('row A at limit %i: the 50-wide list cut to the limit', async (limit) => {
     install(rowA());
-    const result = await shipped(10);
-    const oracle = await screenPoolMerge();
+    const { result, oracle } = await bothSides({ limit });
+
+    expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle.slice(0, limit));
+    // 25 reserved slots interleave with BASE across the whole cut, past position 25 too.
+    expect(oracle.slice(0, limit).filter((id) => ROW_A_COOC.has(id)).length).toBe(limit / 2);
+  });
+
+  it('row D at limit 10: reserved popular models do not starve BASE of its 5 slots', async () => {
+    install(rowD());
+    const { result, oracle } = await bothSides({ limit: 10 });
 
     expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle.slice(0, 10));
+    expect(
+      oracle
+        .slice(1, 10)
+        .filter((_, i) => i % 2 === 0)
+        .map((id) => id - 5000)
+    ).toEqual([25, 26, 27, 28, 29]);
+  });
+
+  it('row A at limit 120 (beyond the screen): 25 reserved slots, BASE 240 wide fills the rest', async () => {
+    install(rowA());
+    const { result, oracle } = await bothSides({ limit: 120, oracle: { CAP: 120, POOL_CAP: 240 } });
+
+    expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
+    expect(oracle).toHaveLength(120);
+    expect(oracle.filter((id) => ROW_A_COOC.has(id)).length).toBeGreaterThanOrEqual(25);
+    // Its first 50 are the screened list.
+    expect(oracle.slice(0, 50)).toEqual(await screenPoolMerge());
   });
 });
 
 // Model 365 is on both token lists, so it scores highest; model 3 is reserved, so BASE skips it.
 const ROW_A_HEAD = [365, 0, 47, 1, 64, 2, 276, 4, 259, 5];
+const ROW_A_COOC = new Set([...ROW_A_ZEPHYR, ...ROW_A_YARROW]);

@@ -22,9 +22,13 @@ import {
  */
 
 export const COOC_SNAPSHOT_POLL_MS = 5 * 60_000;
+/** Spreads pods' polls so a new build is not fetched by every pod in the same instant. */
+export const COOC_SNAPSHOT_POLL_JITTER_MS = 60_000;
 /** A failed check is retried sooner than the poll. */
 export const COOC_SNAPSHOT_RETRY_MS = 60_000;
-/** How long a request waits for the first load before serving the fallback. */
+/** A check still running after this is abandoned as failed; a late result is discarded. */
+export const COOC_SNAPSHOT_LOAD_TIMEOUT_MS = 120_000;
+/** How long ONE request waits for a first load before the fallback; later ones do not wait. */
 export const COOC_FIRST_LOAD_WAIT_MS = 10_000;
 const STUDY_SNAPSHOTS_HELD = 2;
 
@@ -62,17 +66,30 @@ async function loadServable(
 type HolderDeps = {
   sql: () => CoocSql;
   now?: () => number;
+  /** In [0, 1); scales the poll jitter. */
+  random?: () => number;
   onLoadFailure?: (reason: CoocFallbackReason, error: unknown) => void;
 };
 
 const TIMED_OUT = Symbol('timed-out');
+
+function delay(ms: number): { done: Promise<typeof TIMED_OUT>; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = new Promise<typeof TIMED_OUT>((res) => {
+    timer = setTimeout(() => res(TIMED_OUT), ms);
+  });
+  return { done, cancel: () => clearTimeout(timer) };
+}
+
+type Flight = { done: Promise<void>; waitSpent: boolean };
 
 export class CoocSnapshotHolder {
   private served: ServedCooc | null = null;
   private reason: CoocFallbackReason = 'loading';
   private rejected: string | null = null;
   private nextCheckAt = -Infinity;
-  private inflight: Promise<void> | null = null;
+  private flight: Flight | null = null;
+  private generation = 0;
 
   constructor(private readonly deps: HolderDeps) {}
 
@@ -81,21 +98,15 @@ export class CoocSnapshotHolder {
   }
 
   async resolve(): Promise<CoocServing> {
-    if (!this.inflight && this.now() >= this.nextCheckAt) {
-      this.inflight = this.refresh().finally(() => {
-        this.inflight = null;
-      });
-    }
-    if (!this.served && this.inflight) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const waited = await Promise.race([
-        this.inflight,
-        new Promise<typeof TIMED_OUT>((res) => {
-          timer = setTimeout(() => res(TIMED_OUT), COOC_FIRST_LOAD_WAIT_MS);
-        }),
-      ]);
-      clearTimeout(timer);
-      if (waited === TIMED_OUT && !this.served)
+    if (!this.flight && this.now() >= this.nextCheckAt) this.flight = this.startCheck();
+    const flight = this.flight;
+    if (!this.served && flight) {
+      if (!flight.waitSpent) {
+        const wait = delay(COOC_FIRST_LOAD_WAIT_MS);
+        if ((await Promise.race([flight.done, wait.done])) === TIMED_OUT) flight.waitSpent = true;
+        wait.cancel();
+      }
+      if (!this.served && this.flight === flight)
         return { snapshot: null, fallbackReason: 'loading' };
     }
     return this.served
@@ -103,13 +114,47 @@ export class CoocSnapshotHolder {
       : { snapshot: null, fallbackReason: this.reason };
   }
 
-  /** On a failed load a held snapshot stays served; it was valid for this code when loaded. */
-  private async refresh(): Promise<void> {
+  private startCheck(): Flight {
+    const gen = ++this.generation;
     const startedAt = this.now();
-    let retryAt = startedAt + COOC_SNAPSHOT_POLL_MS;
+    const timeout = delay(COOC_SNAPSHOT_LOAD_TIMEOUT_MS);
+    const done = Promise.race([this.refresh(gen, startedAt), timeout.done])
+      .then((result) => {
+        if (result !== TIMED_OUT || gen !== this.generation) return;
+        this.generation++;
+        this.fail(new Error('cooc snapshot check timed out'), startedAt);
+      })
+      .finally(() => {
+        timeout.cancel();
+        if (this.flight?.done === done) this.flight = null;
+      });
+    return { done, waitSpent: false };
+  }
+
+  private fail(error: unknown, startedAt: number) {
+    const mismatch = error instanceof CoocSpecMismatchError;
+    const reason: CoocFallbackReason = mismatch ? 'spec_mismatch' : 'load_failed';
+    // Re-reading cannot fix a spec mismatch, only a new build can: remember it, keep the poll.
+    if (mismatch) this.rejected = error.contentHash;
+    this.nextCheckAt = mismatch ? this.pollAfter(startedAt) : startedAt + COOC_SNAPSHOT_RETRY_MS;
+    if (!this.served) this.reason = reason;
+    this.deps.onLoadFailure?.(reason, error);
+  }
+
+  private pollAfter(startedAt: number) {
+    return (
+      startedAt +
+      COOC_SNAPSHOT_POLL_MS +
+      (this.deps.random ?? Math.random)() * COOC_SNAPSHOT_POLL_JITTER_MS
+    );
+  }
+
+  /** On a failed load a held snapshot stays served; it was valid for this code when loaded. */
+  private async refresh(gen: number, startedAt: number): Promise<void> {
     try {
       const sql = this.deps.sql();
       const latest = await latestReadySnapshotId(sql);
+      if (gen !== this.generation) return;
       if (!latest) {
         this.served = null;
         this.reason = 'no_snapshot';
@@ -120,19 +165,13 @@ export class CoocSnapshotHolder {
           'production',
           new Date(startedAt)
         );
+        if (gen !== this.generation) return;
         this.served = { contentHash, scores };
         this.rejected = null;
       }
+      this.nextCheckAt = this.pollAfter(startedAt);
     } catch (error) {
-      const mismatch = error instanceof CoocSpecMismatchError;
-      const reason: CoocFallbackReason = mismatch ? 'spec_mismatch' : 'load_failed';
-      // Re-reading cannot fix a spec mismatch, only a new build can: remember it, keep the poll.
-      if (mismatch) this.rejected = error.contentHash;
-      else retryAt = startedAt + COOC_SNAPSHOT_RETRY_MS;
-      if (!this.served) this.reason = reason;
-      this.deps.onLoadFailure?.(reason, error);
-    } finally {
-      this.nextCheckAt = retryAt;
+      if (gen === this.generation) this.fail(error, startedAt);
     }
   }
 }

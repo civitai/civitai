@@ -367,13 +367,11 @@ type ResourceIntentSeed = {
   pool: ResourceIntentShortlistEntry[];
 };
 
-/** The candidate pool before any label is read, and the response cap it is later cut to. */
-async function seedResourceIntentPool(
+/** The seed's gates as a search filter, shared by both arms. */
+function seedFilter(
   criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
-  opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
-): Promise<ResourceIntentSeed> {
-  const cap = clampResourceIntentCap(opts.cap);
-  const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
+  opts: { browsingLevel: number; coverage: ResourceIntentCoverage }
+): Pick<ResourceIntentSeed, 'filter' | 'baseModels'> {
   const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
   const filter = buildResourceIntentFilter({
     modelTypes: criteria.modelTypes,
@@ -381,6 +379,17 @@ async function seedResourceIntentPool(
     browsingLevel: opts.browsingLevel,
     coverage: opts.coverage,
   });
+  return { filter, baseModels };
+}
+
+/** The candidate pool before any label is read, and the response cap it is later cut to. */
+async function seedResourceIntentPool(
+  criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
+  opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
+): Promise<ResourceIntentSeed> {
+  const cap = clampResourceIntentCap(opts.cap);
+  const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
+  const { filter, baseModels } = seedFilter(criteria, opts);
   const hits = await searchShortlistModels(filter, poolCap);
   const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
   return { cap, poolCap, filter, baseModels, pool };
@@ -389,19 +398,16 @@ async function seedResourceIntentPool(
 /**
  * The hybrid's fill, built exactly as the screen built its BASE pool: one
  * `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT`-document page under the seed's filter and sort,
- * one version per model, the first `poolCap` models in popularity order. Always its own
+ * one version per model, the first `width` models in popularity order. Always its own
  * query, so it does not rely on the seed page being a prefix of it.
  */
 async function seedBasePool(
-  seed: ResourceIntentSeed,
-  coverage: ResourceIntentCoverage
+  seed: Pick<ResourceIntentSeed, 'filter' | 'baseModels'>,
+  coverage: ResourceIntentCoverage,
+  width: number
 ): Promise<ResourceIntentShortlistEntry[]> {
   const deep = await searchShortlistModels(seed.filter, RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT);
-  return expandOneVersionPerModel(deep, {
-    baseModels: seed.baseModels,
-    coverage,
-    cap: seed.poolCap,
-  });
+  return expandOneVersionPerModel(deep, { baseModels: seed.baseModels, coverage, cap: width });
 }
 
 /**
@@ -461,7 +467,7 @@ export async function findResourceIntentCandidates(
   const seed = await seedResourceIntentPool(criteria, opts);
   const { cap, pool } = seed;
   const [basePool, insightRead] = await Promise.all([
-    seedBasePool(seed, opts.coverage),
+    seedBasePool(seed, opts.coverage, seed.poolCap),
     loadResourceInsights(pool.map((entry) => entry.versionId)).then(
       (insights) => ({ insights }),
       // Settled here, not in a try: the base pool must not wait on (or fail with) the label read.
@@ -536,15 +542,10 @@ export async function findPoolMergeCandidates(
   if (criteria.role === 'none') return { entries: [], coocGated: 0 };
   const cap = clampResourceIntentCap(opts.cap);
   const cands = opts.coocCandidates;
-  const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
-  const filter = buildResourceIntentFilter({
-    modelTypes: criteria.modelTypes,
-    baseModels,
-    browsingLevel: opts.browsingLevel,
-    coverage: opts.coverage,
-  });
-  const [deep, hits] = await Promise.all([
-    searchShortlistModels(filter, RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT),
+  const seed = seedFilter(criteria, opts);
+  const { filter, baseModels } = seed;
+  const [basePool, hits] = await Promise.all([
+    seedBasePool(seed, opts.coverage, poolMergeBaseWidth(cap)),
     cands.length
       ? searchModelIndex({
           filter: and(filter, inArray('id', cands)) ?? undefined,
@@ -552,11 +553,6 @@ export async function findPoolMergeCandidates(
         })
       : Promise.resolve([]),
   ]);
-  const basePool = expandOneVersionPerModel(deep, {
-    baseModels,
-    coverage: opts.coverage,
-    cap: poolMergeBaseWidth(cap),
-  });
   const candRank = new Map(cands.map((id, i) => [id, i]));
   const docs = [...hits].sort((x, y) => (candRank.get(x.id) ?? 1e9) - (candRank.get(y.id) ?? 1e9));
   const gated = cands.length

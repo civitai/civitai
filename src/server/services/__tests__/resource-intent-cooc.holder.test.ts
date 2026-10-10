@@ -6,6 +6,8 @@ import {
 } from '~/server/services/resource-intent-cooc/build';
 import {
   COOC_FIRST_LOAD_WAIT_MS,
+  COOC_SNAPSHOT_LOAD_TIMEOUT_MS,
+  COOC_SNAPSHOT_POLL_JITTER_MS,
   COOC_SNAPSHOT_POLL_MS,
   COOC_SNAPSHOT_RETRY_MS,
   CoocSnapshotHolder,
@@ -103,7 +105,11 @@ describe('CoocSnapshotHolder (production)', () => {
     const { sql } = await freshDb();
     const probe = instrumented(sql);
     let clock = 1_000_000;
-    const holder = new CoocSnapshotHolder({ sql: () => probe.sql, now: () => clock });
+    const holder = new CoocSnapshotHolder({
+      sql: () => probe.sql,
+      now: () => clock,
+      random: () => 0,
+    });
 
     expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'no_snapshot' });
     await holder.resolve();
@@ -141,7 +147,7 @@ describe('CoocSnapshotHolder (production)', () => {
     const { sql } = await freshDb();
     const old = await build(sql, 'production', { token: 'zephyr', model: 77, trainEndDaysAgo: 9 });
     let clock = 1_000_000;
-    const holder = new CoocSnapshotHolder({ sql: () => sql, now: () => clock });
+    const holder = new CoocSnapshotHolder({ sql: () => sql, now: () => clock, random: () => 0 });
     expect((await holder.resolve()).snapshot?.contentHash).toBe(old);
 
     const fresh = await build(sql, 'production', {
@@ -166,6 +172,7 @@ describe('CoocSnapshotHolder (production)', () => {
     const holder = new CoocSnapshotHolder({
       sql: () => probe.sql,
       now: () => clock,
+      random: () => 0,
       onLoadFailure: (reason) => failures.push(reason),
     });
     probe.state.fail = true;
@@ -188,6 +195,7 @@ describe('CoocSnapshotHolder (production)', () => {
     const holder = new CoocSnapshotHolder({
       sql: () => probe.sql,
       now: () => clock,
+      random: () => 0,
       onLoadFailure: (reason) => failures.push(reason),
     });
     expect((await holder.resolve()).snapshot?.contentHash).toBe(hash);
@@ -203,7 +211,11 @@ describe('CoocSnapshotHolder (production)', () => {
     await build(sql, 'production', { token: 'zephyr', model: 77, specHash: 'older-spec' });
     const probe = instrumented(sql);
     let clock = 1_000_000;
-    const holder = new CoocSnapshotHolder({ sql: () => probe.sql, now: () => clock });
+    const holder = new CoocSnapshotHolder({
+      sql: () => probe.sql,
+      now: () => clock,
+      random: () => 0,
+    });
     expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'spec_mismatch' });
     clock += COOC_SNAPSHOT_POLL_MS;
     expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'spec_mismatch' });
@@ -211,23 +223,136 @@ describe('CoocSnapshotHolder (production)', () => {
     expect(probe.state.latestReads).toBe(2);
   });
 
-  it('a first load slower than the wait serves the fallback (loading) instead of blocking', async () => {
-    vi.useFakeTimers();
+  it('a slow first load: ONE request waits, later ones fall back at once, then the load is served', async () => {
+    const { sql: real } = await freshDb();
+    const hash = await build(real, 'production', { token: 'zephyr', model: 77 });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let release!: () => void;
     const gate = new Promise<void>((res) => (release = res));
     const sql: CoocSql = {
-      query: async () => {
+      query: async (q) => {
         await gate;
-        return [];
+        return real.query(q);
+      },
+      execute: real.execute,
+    };
+    const holder = new CoocSnapshotHolder({ sql: () => sql, random: () => 0 });
+    const first = holder.resolve();
+    await vi.advanceTimersByTimeAsync(COOC_FIRST_LOAD_WAIT_MS);
+    expect(await first).toEqual({ snapshot: null, fallbackReason: 'loading' });
+    // The wait is spent for this load: the next request does not wait another 10 s.
+    let settled = false;
+    const second = holder.resolve().then((r) => ((settled = true), r));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+    expect(await second).toEqual({ snapshot: null, fallbackReason: 'loading' });
+
+    release();
+    vi.useRealTimers();
+    await vi.waitFor(async () => expect((await holder.resolve()).snapshot?.contentHash).toBe(hash));
+  });
+
+  it('a check that never settles is abandoned as load_failed and retried', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const failures: string[] = [];
+    let calls = 0;
+    let clock = 1_000_000;
+    const sql: CoocSql = {
+      query: () => {
+        calls++;
+        return new Promise(() => undefined);
       },
       execute: async () => 0,
     };
-    const holder = new CoocSnapshotHolder({ sql: () => sql });
-    const pending = holder.resolve();
-    await vi.advanceTimersByTimeAsync(COOC_FIRST_LOAD_WAIT_MS);
-    expect(await pending).toEqual({ snapshot: null, fallbackReason: 'loading' });
-    release();
-    await vi.runAllTimersAsync();
+    const holder = new CoocSnapshotHolder({
+      sql: () => sql,
+      now: () => clock,
+      random: () => 0,
+      onLoadFailure: (reason) => failures.push(reason),
+    });
+    void holder.resolve();
+    await vi.advanceTimersByTimeAsync(COOC_SNAPSHOT_LOAD_TIMEOUT_MS);
+    expect(failures).toEqual(['load_failed']);
+    expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+    expect(calls).toBe(1);
+    clock += COOC_SNAPSHOT_RETRY_MS;
+    void holder.resolve();
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(COOC_SNAPSHOT_LOAD_TIMEOUT_MS);
+  });
+
+  it('the poll is jittered', async () => {
+    const { sql } = await freshDb();
+    const probe = instrumented(sql);
+    let clock = 1_000_000;
+    const holder = new CoocSnapshotHolder({
+      sql: () => probe.sql,
+      now: () => clock,
+      random: () => 0.5,
+    });
+    await holder.resolve();
+    clock += COOC_SNAPSHOT_POLL_MS + COOC_SNAPSHOT_POLL_JITTER_MS / 2 - 1;
+    await holder.resolve();
+    expect(probe.state.latestReads).toBe(1);
+    clock += 1;
+    await holder.resolve();
+    expect(probe.state.latestReads).toBe(2);
+  });
+
+  it('a served snapshot that disappears is dropped (no_snapshot)', async () => {
+    const { db, sql } = await freshDb();
+    await build(sql, 'production', { token: 'zephyr', model: 77 });
+    let clock = 1_000_000;
+    const holder = new CoocSnapshotHolder({ sql: () => sql, now: () => clock, random: () => 0 });
+    expect((await holder.resolve()).snapshot).not.toBeNull();
+    await db.exec('DELETE FROM "ResourceIntentCoocSnapshot"');
+    clock += COOC_SNAPSHOT_POLL_MS;
+    await vi.waitFor(async () =>
+      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'no_snapshot' })
+    );
+  });
+
+  it('a newer build under another spec keeps the held one, once; a later good build replaces it', async () => {
+    const { sql } = await freshDb();
+    const old = await build(sql, 'production', { token: 'zephyr', model: 77, trainEndDaysAgo: 9 });
+    const probe = instrumented(sql);
+    const failures: string[] = [];
+    let clock = 1_000_000;
+    const holder = new CoocSnapshotHolder({
+      sql: () => probe.sql,
+      now: () => clock,
+      random: () => 0,
+      onLoadFailure: (reason) => failures.push(reason),
+    });
+    expect((await holder.resolve()).snapshot?.contentHash).toBe(old);
+
+    await build(sql, 'production', {
+      token: 'yarrow',
+      model: 88,
+      trainEndDaysAgo: 5,
+      specHash: 'other',
+    });
+    clock += COOC_SNAPSHOT_POLL_MS;
+    await holder.resolve();
+    await vi.waitFor(() => expect(failures).toEqual(['spec_mismatch']));
+    expect((await holder.resolve()).snapshot?.contentHash).toBe(old);
+    // The next poll sees the same rejected hash and does not download it again.
+    clock += COOC_SNAPSHOT_POLL_MS;
+    await holder.resolve();
+    await vi.waitFor(() => expect(probe.state.latestReads).toBe(3));
+    expect((await holder.resolve()).snapshot?.contentHash).toBe(old);
+    expect(probe.state.loads).toBe(2); // the held one, and the mismatched one once
+
+    const fresh = await build(sql, 'production', {
+      token: 'yarrow',
+      model: 99,
+      trainEndDaysAgo: 2,
+    });
+    clock += COOC_SNAPSHOT_POLL_MS;
+    await holder.resolve();
+    await vi.waitFor(async () =>
+      expect((await holder.resolve()).snapshot?.contentHash).toBe(fresh)
+    );
   });
 });
 
