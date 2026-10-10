@@ -164,7 +164,10 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
   it('reads approved rows only, once per cache lifetime, with its own query', async () => {
     mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
     // Cold and concurrent first: the callers must share one read.
-    await Promise.all([1, 2, 3].map(() => getApprovedAppBlockAnalytics('apb_declares')));
+    const concurrent = await Promise.all(
+      [1, 2, 3].map(() => getApprovedAppBlockAnalytics('apb_declares'))
+    );
+    expect(concurrent.map((a) => a?.ownerUserId)).toEqual([6611, 6611, 6611]);
     await getApprovedAppBlockAnalytics('apb_declares');
     await getApprovedAppBlockAnalytics('apb_someone_else');
     expect(mockFindMany).toHaveBeenCalledTimes(1);
