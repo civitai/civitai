@@ -32,7 +32,7 @@ describe('scopeLabels', () => {
       'View generation & training history',
       'Generate, train & scan',
       'View buzz balance & history',
-      'Submit Apps for review',
+      'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback',
       'Open on-site dev tunnels',
     ]);
   });
@@ -43,7 +43,7 @@ describe('scopeLabels', () => {
     const before = 100663297; // UserRead|AppBlocksSubmit|AppBlocksDevTunnel
     expect(scopeLabels(before)).toEqual([
       'Read profile, settings & email',
-      'Submit Apps for review',
+      'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback',
       'Open on-site dev tunnels',
     ]);
   });

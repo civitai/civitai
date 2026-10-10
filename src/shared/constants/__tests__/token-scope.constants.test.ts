@@ -64,6 +64,8 @@ describe('TokenScope constants', () => {
   });
 
   it('AppBlocksSubmit has a human-readable consent label', () => {
-    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe('Submit Apps for review');
+    expect(tokenScopeLabels[TokenScope.AppBlocksSubmit]).toBe(
+      'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback'
+    );
   });
 });

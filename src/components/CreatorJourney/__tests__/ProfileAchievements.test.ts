@@ -93,8 +93,8 @@ describe('profile achievement cards', () => {
         },
       })
     );
-    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Secret achievement');
-    expect(card.textContent).toContain('Secret achievement');
+    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Special achievement');
+    expect(card.textContent).toContain('Special achievement');
     expect(card.textContent).not.toContain('Creator Score');
   });
 
@@ -113,6 +113,27 @@ describe('profile achievement cards', () => {
     );
     expect(card.textContent).toContain('25 Models');
     expect(card.textContent).toContain('Publish 25 models');
+  });
+
+  // Justin (2026-10-10): the owner's earned special keeps its hint, above the description.
+  it('shows an earned special its hint above the description', () => {
+    const text =
+      mount(
+        React.createElement(AchievementCard, {
+          achievement: {
+            key: 'hidden:remix',
+            track: 'secret',
+            name: 'Remixed',
+            description: 'Someone remixed your model.',
+            hint: 'Someone builds on your work',
+            badgeUrl: null,
+            achievedAt: EARNED,
+          },
+        })
+      ).textContent ?? '';
+    const hintAt = text.indexOf('Someone builds on your work');
+    expect(hintAt).toBeGreaterThan(-1);
+    expect(hintAt).toBeLessThan(text.indexOf('Someone remixed your model.'));
   });
 });
 
@@ -311,6 +332,34 @@ describe('achievements tab', () => {
     mocks.viewer = { id: OWNER, meta: { scores: { total: 824228 } } };
     const el = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
     expect(el.textContent).toContain('Only you see this: score 824,228');
+  });
+
+  // A shared tier link lands here with `?milestone=`; that tier's card is the one to look at.
+  it('scrolls to and rings the tier a shared link named, and only that one', () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['tier-blaze']);
+      expect(spotlit[0].textContent).toContain('Blaze');
+      expect(spotlit[0].className).toContain('ring-2');
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it('picks out nothing for a tier the creator does not hold', () => {
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'legend' })
+    );
+    expect(el.querySelectorAll('[data-spotlight]')).toHaveLength(0);
   });
 
   // The width itself is a stylesheet fact the test environment cannot measure; what is pinned here

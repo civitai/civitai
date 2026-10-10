@@ -216,6 +216,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'article.getCivitaiNews',
   'bug.getLatest',
   'changelog.getLatest',
+  'cosmetic.getEventDecorationsForSearch',
   'event.getCosmeticScores',
   'event.getDonors',
   'event.getHatCatalog',

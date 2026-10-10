@@ -131,6 +131,20 @@ describe('getCreatorJourney', () => {
       expect.objectContaining({ key: 'score:secret', achievedAt: new Date('2026-10-01') }),
     ]);
   });
+
+  // Justin (2026-10-10): an earned special keeps its hint above the description; others carry none.
+  it('keeps the hint on an earned hidden badge only', async () => {
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: new Date('2026-10-01'), milestone: definition() },
+      { achievedAt: new Date('2026-10-01'), milestone: definition({ key: 'b', hidden: false }) },
+    ] as never);
+
+    const { earned } = await getCreatorJourney(1);
+    expect(earned.map((badge) => [badge.key, badge.hint])).toEqual([
+      ['hidden:remix', 'Someone builds on your work'],
+      ['b', null],
+    ]);
+  });
 });
 
 describe('earned dates', () => {
@@ -314,6 +328,7 @@ describe('hidden milestones', () => {
     ...definition({ key: 'test:opaque1', threshold: 42, hint: 'Look up' }),
     name: 'Stargazer',
     cosmetic: { data: { url: 'stargazer-art' } },
+    unlisted: false,
     // Whatever a read hands back, the masked shape is built field by field.
     detector: { type: 'query', sql: 'SELECT 1' },
   };
@@ -348,6 +363,32 @@ describe('hidden milestones', () => {
     ]);
   });
 
+  // Product decision: an unlisted secret is not even a "???" tile, and not in "N of M found" (the
+  // count is the list's length), until it is earned. Do not fold it back into the masked tiles.
+  describe('an unlisted one', () => {
+    const unlisted = { ...secret, key: 'test:opaque2', name: 'Wanderer', unlisted: true };
+
+    it('is left out entirely until earned, so it is not counted', () => {
+      const shown = buildSecretMilestones([secret, unlisted, secret], new Map());
+      expect(shown.map((s) => s.key)).toEqual(['hidden:secret-0', 'hidden:secret-1']);
+    });
+
+    it('shows normally once earned, in its place', () => {
+      const at = new Date('2026-10-01');
+      const shown = buildSecretMilestones([secret, unlisted], new Map([['test:opaque2', at]]));
+      expect(shown.map((s) => [s.key, s.name, s.earned])).toEqual([
+        ['hidden:secret-0', '???', false],
+        ['test:opaque2', 'Wanderer', true],
+      ]);
+    });
+
+    // A silent grant is held with no observed date: still earned, still shown.
+    it('shows one granted silently, with no date', () => {
+      const [shown] = buildSecretMilestones([unlisted], new Map([['test:opaque2', null]]));
+      expect(shown).toMatchObject({ key: 'test:opaque2', earned: true, achievedAt: null });
+    });
+  });
+
   it('reads hidden rows outside the score and activity sections, with the shared select', async () => {
     dbMock.dbRead.creatorMilestone.findMany.mockClear();
     await getCreatorJourney(1);
@@ -359,7 +400,17 @@ describe('hidden milestones', () => {
       key: { notIn: expect.arrayContaining(['create:models-1', 'reach:followers-100']) },
     });
     expect(Object.keys(secretCall?.select ?? {}).sort()).toEqual(
-      ['cosmetic', 'description', 'hidden', 'hint', 'key', 'name', 'threshold', 'track'].sort()
+      [
+        'cosmetic',
+        'description',
+        'hidden',
+        'hint',
+        'key',
+        'name',
+        'threshold',
+        'track',
+        'unlisted',
+      ].sort()
     );
   });
 });

@@ -315,6 +315,12 @@ import {
   isDefiniteOrchestratorSubmitRefusal,
 } from '~/server/services/orchestrator/submit-failure';
 import {
+  classifyQuoteFailure,
+  quoteFailureLogLevel,
+  unquotedTrainingRefusal,
+  type PassThroughQuoteFailure,
+} from '~/server/services/blocks/pass-through-quote-failure';
+import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -5492,9 +5498,10 @@ export const blocksRouter = router({
    *      shared-storage path: it is the platform's existing answer to "may this
    *      human write something other users see", and a public post is strictly
    *      more consequential than a 64 KB shared-storage row.
-   *   7. ✚ TWO dedicated post rate buckets — per INSTALL (3/hour/instance) and
-   *      per APP (300/hour/appId, the aggregate an install-keyed bucket cannot
-   *      express) — plus the image count charged to the existing publish bucket so
+   *   7. ✚ TWO dedicated post rate buckets — per VIEWER OF AN INSTALL
+   *      (3/hour/(instance, viewer)) and per APP (300/hour/appId, the aggregate
+   *      a viewer-and-install-keyed bucket cannot express) — plus the image count
+   *      charged to the existing publish bucket so
    *      this path cannot be used to bypass the per-image origin-cost ceiling.
    *      All three FAIL OPEN on a Redis error; they are cost ceilings, not
    *      authorization.
@@ -5544,9 +5551,13 @@ export const blocksRouter = router({
       // selection is known, so a block cannot route around the publish ceiling by
       // posting.
       //
-      // 🔴 BOTH, AND NEITHER SUBSUMES THE OTHER. The per-INSTANCE bucket bounds
-      // one install. An app has many installs, so on its own it bounds the app at
-      // N × the per-install ceiling and no ceiling anywhere sees the total — the
+      // 🔴 BOTH, AND NEITHER SUBSUMES THE OTHER. The first bucket bounds ONE
+      // VIEWER of one install: it is keyed on (instance, viewer), because a page
+      // app's instance id is shared by every viewer of that app and an
+      // instance-only key would make them share one allowance. `userId` here is
+      // the verified token subject from the preamble, never client input. An app
+      // has many viewers and installs, so on its own that bucket bounds the app at
+      // N × its ceiling and no ceiling anywhere sees the total — the
       // APP bucket is that total. A popular legitimate app never reaches it (see
       // `BLOCK_POST_APP_RATE_LIMIT_MAX` for how the number was picked, and for the
       // plain statement that it is not derived from data).
@@ -5555,7 +5566,7 @@ export const blocksRouter = router({
       // limiter follows. Do not read either as a hard cap or a security control:
       // what actually bounds abuse on this path is the self-dealing guard, the
       // per-source ownership proofs and the per-post consent confirm.
-      const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
+      const postRate = await checkBlockPostRateLimit(claims.blockInstanceId, userId);
       if (!postRate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
@@ -8939,9 +8950,8 @@ export const blocksRouter = router({
     // stricter but would recreate the "one command needs two different scopes" problem
     // the analytics note above argues against.
     //
-    // 🟡 Consequence worth knowing: the consent string for this bit is "Submit Apps for
-    // review", which does not mention minting a git credential. That copy lives in
-    // @civitai/auth and is a product decision, not a drive-by edit.
+    // 🟡 The consent string for this bit (`tokenScopeLabels`, in @civitai/auth) covers this as
+    // "pull source". It is product copy: change it deliberately, with whatever the bit gates.
     //
     // If an `AppBlocksRead` bit is ever introduced, THIS proc must not move to it — it is
     // not a read. getMyAppAnalytics could, but only TOGETHER WITH the REST route
@@ -10103,15 +10113,13 @@ function stampUnquotedTimeout(
  * The snapshot carries no `cost`: there is no price to show, and the declared
  * `maxBuzz` is not one.
  */
-const UNQUOTED_TRAINING_ERROR =
-  'Training needs a price quote and none could be obtained; try again.';
 function refuseUnquotedTraining(
   stepType: string,
-  quotedBuzz: number | null
+  quote: PassThroughQuote
 ): { snapshot: BlockWorkflowSnapshot } | null {
-  if (quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
+  if (quote.quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
   return {
-    snapshot: { workflowId: 'failed', status: 'failed', error: UNQUOTED_TRAINING_ERROR },
+    snapshot: { workflowId: 'failed', status: 'failed', ...unquotedTrainingRefusal(quote.failure) },
   };
 }
 
@@ -11431,9 +11439,9 @@ async function estimatePassThroughStepWorkflow(opts: {
   // an estimate must degrade to the declared ceiling when the mint fails, while a
   // submit that cannot mint must throw before it reserves anything.
   const token = await getOrchestratorToken(userId, ctx).catch(() => null);
-  let quotedBuzz: number | null = null;
+  let quote: PassThroughQuote = { quotedBuzz: null, failure: { kind: 'unavailable' } };
   if (token) {
-    quotedBuzz = await quotePassThroughBuzz({
+    quote = await quotePassThroughBuzz({
       claims,
       body,
       orchestratorStep,
@@ -11443,8 +11451,9 @@ async function estimatePassThroughStepWorkflow(opts: {
   } else {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
   }
+  const { quotedBuzz } = quote;
 
-  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  const refusal = refuseUnquotedTraining(body.$type, quote);
   if (refusal) return refusal;
 
   return {
@@ -11458,9 +11467,13 @@ async function estimatePassThroughStepWorkflow(opts: {
   };
 }
 
+type PassThroughQuote =
+  | { quotedBuzz: number }
+  | { quotedBuzz: null; failure: PassThroughQuoteFailure };
+
 /**
- * The orchestrator's live price for an already-built pass-through step, or
- * `null` if it could not be had.
+ * The orchestrator's live price for an already-built pass-through step, or a
+ * `null` price and why it could not be had.
  *
  * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
  * deliberately outside this, at both call sites, so a deterministic denial can
@@ -11496,7 +11509,7 @@ async function quotePassThroughBuzz(opts: {
    * denominator and falls when submit volume falls, which reads as healthy.
    */
   phase: 'estimate' | 'submit';
-}): Promise<number | null> {
+}): Promise<PassThroughQuote> {
   const { claims, body, orchestratorStep, token, phase } = opts;
   const [quoted, absent] =
     phase === 'estimate'
@@ -11518,13 +11531,30 @@ async function quotePassThroughBuzz(opts: {
     const total = quote.cost?.total;
     if (typeof total !== 'number' || !Number.isFinite(total)) {
       recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
-      return null;
+      return { quotedBuzz: null, failure: { kind: 'unpriced' } };
     }
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, quoted);
-    return Math.ceil(total);
-  } catch {
+    return { quotedBuzz: Math.ceil(total) };
+  } catch (e) {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
-    return null;
+    const failure = classifyQuoteFailure(e, JSON.stringify(body.input));
+    const response = getOrchestratorSubmitFailure(e);
+    void Promise.resolve(
+      logToAxiom({
+        name: 'block-pass-through-quote-failed',
+        type: quoteFailureLogLevel(failure, e),
+        outcome: failure.kind,
+        phase,
+        stepType: body.$type,
+        appBlockId: claims.appBlockId,
+        code: e instanceof TRPCError ? e.code : null,
+        attempt: response?.attempt ?? null,
+        status: response?.status ?? null,
+        error: e instanceof Error ? e.message : String(e),
+        cause: e instanceof Error && e.cause instanceof Error ? e.cause.message : null,
+      })
+    ).catch(() => undefined);
+    return { quotedBuzz: null, failure };
   }
 }
 
@@ -11585,13 +11615,14 @@ async function submitPassThroughStepWorkflow(opts: {
   const tags = buildPassThroughWorkflowTags(claims, body.$type);
 
   const token = await getOrchestratorToken(userId, ctx);
-  const quotedBuzz = await quotePassThroughBuzz({
+  const quote = await quotePassThroughBuzz({
     claims,
     body,
     orchestratorStep,
     token,
     phase: 'submit',
   });
+  const { quotedBuzz } = quote;
 
   // 🔴 THE RESERVATION IS THE LARGER OF THE TWO, AND THE TIMEOUT IS STILL
   // `maxBuzz`. The declared ceiling is the floor because the job may accrue up
@@ -11670,7 +11701,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // went through must get its replay (or CONFLICT while it is in flight), never
   // a "try again" that invites a second paid run. Still before any reservation,
   // and the claim is released so the key can be retried once a quote exists.
-  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  const refusal = refuseUnquotedTraining(body.$type, quote);
   if (refusal) {
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     return refusal;

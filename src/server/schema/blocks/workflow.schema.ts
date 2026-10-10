@@ -4,6 +4,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
+import type { TrainingQuoteErrorCode } from '~/server/services/blocks/pass-through-quote-failure';
 import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
@@ -809,6 +810,12 @@ export type BlockWorkflowSnapshot = {
   cost?: { total: number };
   imageUrls?: string[];
   error?: string;
+  /**
+   * A stable, machine-readable companion to `error`, for a block to branch on.
+   * OPTIONAL + additive: set only on the refusals that define a code, absent
+   * everywhere else. Treat an unknown value as opaque — codes may be added.
+   */
+  errorCode?: TrainingQuoteErrorCode;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
