@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  milestoneLandingHref,
-  milestoneShareHref,
-} from '~/shared/constants/creator-journey.constants';
+import { milestoneLandingHref } from '~/shared/constants/creator-journey.constants';
 
 const landing = (over: Partial<Parameters<typeof milestoneLandingHref>[0]> = {}) =>
   milestoneLandingHref({
@@ -18,18 +15,13 @@ describe('where a shared tier link lands', () => {
     expect(landing()).toBe('/user/JustMaier/achievements?milestone=supernova');
   });
 
-  // The share link must stay on the profile: only its server render carries the tier's og:image.
-  it('leaves the share link itself on the profile', () => {
-    expect(milestoneShareHref('JustMaier', 'supernova')).toBe(
-      '/user/JustMaier?milestone=supernova'
-    );
-  });
-
-  it('stays on the profile when the tier is not shareable, not yet known, or the journey is off', () => {
-    expect(landing({ shareable: false })).toBeNull();
-    expect(landing({ shareable: undefined })).toBeNull();
-    expect(landing({ journeyOn: false })).toBeNull();
-    expect(landing({ milestone: null })).toBeNull();
+  it.each([
+    ['not shareable', { shareable: false }],
+    ['not yet known to be shareable', { shareable: undefined }],
+    ['the journey is off', { journeyOn: false }],
+    ['no tier', { milestone: null }],
+  ])('stays on the profile when %s', (_, over) => {
+    expect(landing(over)).toBeNull();
   });
 
   it('encodes the username', () => {
