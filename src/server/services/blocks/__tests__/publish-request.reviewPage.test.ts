@@ -79,6 +79,9 @@ beforeEach(() => {
   // `listingBelongsToRequest` requires the listing to be keyed on that same block.
   mockDbRead.appListing.findMany.mockResolvedValue([
     {
+      id: 'apl_mine',
+      status: 'draft',
+      contentRating: 'pg13',
       slug: 'my-app',
       kind: 'onsite',
       appBlockId: 'appblk_1',
@@ -207,6 +210,135 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
     mockDbRead.appListing.findMany.mockResolvedValue([]);
     const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
     expect(res!.request).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
+    expect(res!.request).toMatchObject({ appListingId: null, approveRating: null });
+  });
+
+  /**
+   * `approveRating` mirrors `approveRequest`'s two rating-floor sites. The listing's own
+   * rating (`r`) and the manifest's (`pg13`) differ so the wrong source is visible.
+   */
+  describe('approveRating — will this approve re-rate the listing, and from what', () => {
+    const SUBMITTER = 7;
+    const joined = (over: Record<string, unknown>) => ({
+      id: 'apl_mine',
+      status: 'draft',
+      contentRating: 'r',
+      slug: 'my-app',
+      kind: 'onsite',
+      appBlockId: null,
+      userId: SUBMITTER,
+      icon: null,
+      cover: null,
+      metric: null,
+      _count: { publishRequests: 0 },
+      ...over,
+    });
+    const approveRatingFor = async (
+      listing: Record<string, unknown>,
+      request: Record<string, unknown> = {}
+    ) => {
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        dbRow({ manifest: { name: 'my-app', contentRating: 'pg13' }, ...request })
+      );
+      mockDbRead.appListing.findMany.mockResolvedValue([listing]);
+      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+      return (res!.request as unknown as { appListingId: unknown; approveRating: unknown })
+        .approveRating;
+    };
+
+    it('a first-version DRAFT is floored from the submitted manifest rating', async () => {
+      expect(await approveRatingFor(joined({}), { appBlockId: null })).toEqual({
+        declared: 'pg13',
+      });
+    });
+
+    it('a manifest with no rating floors from g', async () => {
+      expect(
+        await approveRatingFor(joined({}), { appBlockId: null, manifest: { name: 'my-app' } })
+      ).toEqual({ declared: 'g' });
+    });
+
+    it('a listing RESET to pending is floored from the rating it already carries', async () => {
+      expect(await approveRatingFor(joined({ status: 'pending', appBlockId: 'appblk_1' }))).toEqual(
+        { declared: 'r' }
+      );
+    });
+
+    it('a pending listing whose OWN review request is open is not re-rated by a version approve', async () => {
+      expect(
+        await approveRatingFor(
+          joined({ status: 'pending', appBlockId: 'appblk_1', _count: { publishRequests: 1 } })
+        )
+      ).toBeNull();
+    });
+
+    // Each of the next four differs from a re-rated case above in exactly one field.
+    it('a draft already linked to an app is not the first-approve transition', async () => {
+      expect(await approveRatingFor(joined({ appBlockId: 'appblk_1' }))).toBeNull();
+    });
+
+    it('an unlinked listing that is not a draft is not re-rated', async () => {
+      expect(
+        await approveRatingFor(joined({ status: 'approved' }), { appBlockId: null })
+      ).toBeNull();
+    });
+
+    it('an unlinked pending listing is not the reset restore', async () => {
+      expect(
+        await approveRatingFor(joined({ status: 'pending' }), { appBlockId: null })
+      ).toBeNull();
+    });
+
+    it('a reset listing is not re-rated by a request that is not keyed to its app', async () => {
+      expect(
+        await approveRatingFor(joined({ status: 'pending', appBlockId: 'appblk_1' }), {
+          appBlockId: null,
+        })
+      ).toBeNull();
+    });
+
+    it('an already-approved listing keeps its rating across a version approve', async () => {
+      expect(
+        await approveRatingFor(joined({ status: 'approved', appBlockId: 'appblk_1' }))
+      ).toBeNull();
+    });
+
+    it('the join carries the listing id and counts only PENDING listing requests', async () => {
+      await approveRatingFor(joined({}), { appBlockId: null });
+      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+      expect(res!.request).toMatchObject({ appListingId: 'apl_mine' });
+      const joinArgs = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+        select: Record<string, unknown>;
+      };
+      expect(joinArgs.select).toMatchObject({
+        id: true,
+        status: true,
+        contentRating: true,
+        _count: { select: { publishRequests: { where: { status: 'pending' } } } },
+      });
+    });
+  });
+
+  it('another app’s slug-matched listing lends this submission no listing id either', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      dbRow({ status: 'rejected', appBlockId: null })
+    );
+    mockDbRead.appListing.findMany.mockResolvedValue([
+      {
+        id: 'apl_theirs',
+        status: 'approved',
+        contentRating: 'r',
+        slug: 'my-app',
+        kind: 'onsite',
+        appBlockId: null,
+        userId: 999,
+        icon: null,
+        cover: null,
+        metric: null,
+      },
+    ]);
+    const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+    expect(res!.request).toMatchObject({ appListingId: null, approveRating: null });
   });
 
   it('a rejected detail carries the rejectionReason the history view renders', async () => {

@@ -1,0 +1,198 @@
+import { describe, expect, it } from 'vitest';
+
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  assetRating,
+  declaredListingRating,
+  describeRatingAssets,
+  listingRatingAssetsFromView,
+  summarizeListingRating,
+  type ListingRatingAsset,
+} from '~/shared/utils/app-listing-rating';
+
+/** Pairwise-distinct levels, so an asset picked by the wrong field changes the answer. */
+const icon: ListingRatingAsset = { kind: 'icon', nsfwLevel: NsfwLevel.PG };
+const cover: ListingRatingAsset = { kind: 'cover', nsfwLevel: NsfwLevel.PG13 };
+const shotR: ListingRatingAsset = { kind: 'screenshot', position: 2, nsfwLevel: NsfwLevel.R };
+const shotX: ListingRatingAsset = { kind: 'screenshot', position: 3, nsfwLevel: NsfwLevel.X };
+
+describe('summarizeListingRating', () => {
+  it('declared g + one R screenshot: raised to r, hidden, and names only that screenshot', () => {
+    const s = summarizeListingRating({
+      declaredRating: 'g',
+      listingRating: 'r',
+      assets: [icon, cover, shotR],
+    });
+    expect(s.derived).toBe('r');
+    expect(s.current).toEqual({ rating: 'r', raised: true, hiddenOnSfw: true });
+    expect(s.projected).toEqual({ rating: 'r', raised: true, hiddenOnSfw: true });
+    expect(s.drivingAssets).toEqual([shotR]);
+    expect(s.projectedExceedsCurrent).toBe(false);
+    expect(s.currentExceedsProjected).toBe(false);
+    expect(s.allAssetsRated).toBe(true);
+  });
+
+  it('a listing rated above what its images require is not explained by them alone', () => {
+    const s = summarizeListingRating({
+      declaredRating: 'g',
+      listingRating: 'x',
+      assets: [icon, shotR],
+    });
+    expect(s.projected.rating).toBe('r');
+    expect(s.drivingAssets).toEqual([shotR]);
+    expect(s.currentExceedsProjected).toBe(true);
+    expect(s.projectedExceedsCurrent).toBe(false);
+  });
+
+  it('declared r, every asset PG: mature and hidden, but NOT raised and nothing drives it', () => {
+    const s = summarizeListingRating({
+      declaredRating: 'r',
+      listingRating: 'r',
+      assets: [icon, { kind: 'cover', nsfwLevel: NsfwLevel.PG }],
+    });
+    expect(s.derived).toBe('g');
+    expect(s.current).toEqual({ rating: 'r', raised: false, hiddenOnSfw: true });
+    expect(s.projected).toEqual({ rating: 'r', raised: false, hiddenOnSfw: true });
+    expect(s.drivingAssets).toEqual([]);
+  });
+
+  it('declared g, PG-13 max: raised to pg13 but NOT hidden', () => {
+    const s = summarizeListingRating({ declaredRating: 'g', assets: [icon, cover] });
+    expect(s.derived).toBe('pg13');
+    expect(s.projected).toEqual({ rating: 'pg13', raised: true, hiddenOnSfw: false });
+    expect(s.drivingAssets).toEqual([cover]);
+  });
+
+  it('unscanned (null / 0) levels raise nothing and are reported as not all rated', () => {
+    const s = summarizeListingRating({
+      declaredRating: 'g',
+      listingRating: 'g',
+      assets: [
+        { kind: 'icon', nsfwLevel: null },
+        { kind: 'cover', nsfwLevel: 0 },
+        { kind: 'screenshot', position: 1, nsfwLevel: undefined },
+      ],
+    });
+    expect(s.derived).toBe('g');
+    expect(s.projected).toEqual({ rating: 'g', raised: false, hiddenOnSfw: false });
+    expect(s.drivingAssets).toEqual([]);
+    expect(s.allAssetsRated).toBe(false);
+  });
+
+  it('with no assets supplied, derives nothing and projects the declared rating', () => {
+    const s = summarizeListingRating({ declaredRating: 'pg13', listingRating: 'x' });
+    expect(s.derived).toBeNull();
+    expect(s.current).toEqual({ rating: 'x', raised: true, hiddenOnSfw: true });
+    expect(s.projected).toEqual({ rating: 'pg13', raised: false, hiddenOnSfw: false });
+    expect(s.drivingAssets).toEqual([]);
+    expect(s.allAssetsRated).toBe(false);
+  });
+
+  it('an empty asset list derives g but is not "every image rated"', () => {
+    const s = summarizeListingRating({ declaredRating: 'g', listingRating: 'r', assets: [] });
+    expect(s.derived).toBe('g');
+    expect(s.allAssetsRated).toBe(false);
+    expect(s.drivingAssets).toEqual([]);
+  });
+
+  it('only the assets at the TOP level drive the rating, not every asset above declared', () => {
+    const s = summarizeListingRating({ declaredRating: 'pg', assets: [cover, shotR, shotX] });
+    expect(s.derived).toBe('x');
+    expect(s.drivingAssets).toEqual([shotX]);
+  });
+
+  it('a listing still rated below what its assets need has a raise pending', () => {
+    const s = summarizeListingRating({
+      declaredRating: 'g',
+      listingRating: 'g',
+      assets: [icon, shotR],
+    });
+    expect(s.current).toEqual({ rating: 'g', raised: false, hiddenOnSfw: false });
+    expect(s.projected).toEqual({ rating: 'r', raised: true, hiddenOnSfw: true });
+    expect(s.projectedExceedsCurrent).toBe(true);
+    expect(s.currentExceedsProjected).toBe(false);
+  });
+
+  it('g and pg permit the same level, so neither counts as a raise over the other', () => {
+    expect(
+      summarizeListingRating({ declaredRating: 'g', listingRating: 'pg' }).current.raised
+    ).toBe(false);
+    expect(summarizeListingRating({ declaredRating: 'pg', assets: [icon] }).projected).toEqual({
+      rating: 'pg',
+      raised: false,
+      hiddenOnSfw: false,
+    });
+  });
+
+  it('an unknown declared rating is treated as SFW, so mature assets still raise it', () => {
+    const s = summarizeListingRating({ declaredRating: null, assets: [shotR] });
+    expect(s.declared).toBeNull();
+    expect(s.projected).toEqual({ rating: 'r', raised: true, hiddenOnSfw: true });
+    expect(s.drivingAssets).toEqual([shotR]);
+  });
+});
+
+describe('assetRating', () => {
+  it('maps a detected level to the listing rating it requires, and no level to null', () => {
+    expect(assetRating(NsfwLevel.PG)).toBe('g');
+    expect(assetRating(NsfwLevel.PG13)).toBe('pg13');
+    expect(assetRating(NsfwLevel.R)).toBe('r');
+    expect(assetRating(NsfwLevel.XXX)).toBe('x');
+    expect(assetRating(0)).toBeNull();
+    expect(assetRating(null)).toBeNull();
+  });
+});
+
+describe('describeRatingAssets', () => {
+  it('names each asset with its rating, joined as prose', () => {
+    expect(describeRatingAssets([shotR])).toBe('Screenshot 2 (R)');
+    expect(describeRatingAssets([cover, shotR])).toBe('Cover (PG-13) and Screenshot 2 (R)');
+    expect(describeRatingAssets([icon, cover, shotX])).toBe(
+      'Icon (G), Cover (PG-13) and Screenshot 3 (X)'
+    );
+    expect(describeRatingAssets([])).toBe('');
+  });
+});
+
+describe('listingRatingAssetsFromView', () => {
+  it('skips an absent icon/cover and numbers only screenshots that still have an image', () => {
+    expect(
+      listingRatingAssetsFromView({
+        iconId: null,
+        iconNsfwLevel: null,
+        coverId: 53,
+        coverNsfwLevel: NsfwLevel.PG13,
+        screenshots: [
+          { imageId: 61, nsfwLevel: NsfwLevel.PG },
+          { imageId: null, nsfwLevel: null },
+          { imageId: 67, nsfwLevel: NsfwLevel.R },
+        ],
+      })
+    ).toEqual([
+      { kind: 'cover', nsfwLevel: NsfwLevel.PG13 },
+      { kind: 'screenshot', position: 1, nsfwLevel: NsfwLevel.PG },
+      { kind: 'screenshot', position: 2, nsfwLevel: NsfwLevel.R },
+    ]);
+  });
+});
+
+describe('declaredListingRating', () => {
+  it('an on-site listing declares through its app row, not through the listing rating', () => {
+    expect(declaredListingRating({ kind: 'onsite', appRating: 'g', listingRating: 'r' })).toBe('g');
+  });
+
+  it('before the first approval there is no app row: the listing still carries the submitted rating', () => {
+    expect(declaredListingRating({ kind: 'onsite', appRating: null, listingRating: 'pg13' })).toBe(
+      'pg13'
+    );
+    expect(
+      declaredListingRating({ kind: 'onsite', appRating: undefined, listingRating: null })
+    ).toBe(null);
+  });
+
+  it('an off-site listing has no separate declaration, whatever columns it carries', () => {
+    expect(declaredListingRating({ kind: 'offsite', appRating: 'g', listingRating: 'r' })).toBe(
+      null
+    );
+  });
+});

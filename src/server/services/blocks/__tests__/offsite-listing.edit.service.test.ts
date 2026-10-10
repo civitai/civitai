@@ -2140,3 +2140,73 @@ describe('🔴 NEW-2 — updateRevisionDraft evaluates the note/flag rule agains
     expect(betaRead?.where).toEqual({ id: 'apl_parent' });
   });
 });
+
+describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
+  /** Complete in every other dimension, so the rating problem is the only one that can fire. */
+  const requestRow = (
+    id: string,
+    status: string,
+    contentRating: string | null,
+    kind = 'offsite'
+  ) => ({
+    id,
+    appListingId: `apl_${id}`,
+    slug: `app-${id}`,
+    kind,
+    status: 'approved',
+    appListing: {
+      name: `App ${id}`,
+      revisionOfId: null,
+      status,
+      kind,
+      // Every row carries an app row declaring G; only an on-site listing may read it.
+      appBlock: { contentRating: 'g' },
+      contentRating,
+      iconId: 41,
+      coverId: 53,
+      description: 'A description.',
+      tagline: 'A tagline',
+      category: 'utility',
+      screenshots: [],
+      _count: { screenshots: 7 },
+    },
+  });
+
+  it('an approved R listing is reported hidden; a PG-13 one and a draft R one on the same page are not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_hidden', 'approved', 'r'),
+        requestRow('r_sfw', 'approved', 'pg13'),
+        requestRow('r_draft', 'draft', 'r'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems)).toEqual([
+      [
+        {
+          code: 'hidden-mature-rating',
+          severity: 'advisory',
+          label: 'Rated R — hidden on civitai.com (visible on civitai.red)',
+        },
+      ],
+      [],
+      [],
+    ]);
+  });
+
+  it('an ON-SITE row is compared against its app’s declared rating; the off-site row beside it is not', async () => {
+    mockRead.appListingPublishRequest.findMany
+      .mockResolvedValueOnce([
+        requestRow('r_on', 'approved', 'r', 'onsite'),
+        requestRow('r_off', 'approved', 'r'),
+      ])
+      .mockResolvedValueOnce([]);
+    const res = await listMySubmissions({ userId: OWNER });
+    expect(res.items.map((i) => i.problems.map((p) => p.label))).toEqual([
+      [
+        'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
+      ],
+      ['Rated R — hidden on civitai.com (visible on civitai.red)'],
+    ]);
+  });
+});

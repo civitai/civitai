@@ -2001,10 +2001,21 @@ type ListingJoinSubject = {
   slug: string;
   appBlockId: string | null;
   submittedBy: { id: number } | null;
+  manifest?: unknown;
 };
 
-/** A slug-resolved listing, reduced to what the ownership test and the projection read. */
+/** {@link ListingQueueFacts} plus the joined listing's id and {@link approveRatingFor}. */
+type RequestListingFacts = ListingQueueFacts & {
+  appListingId: string | null;
+  approveRating: { declared: string | null } | null;
+};
+
+/** A slug-resolved listing, reduced to what {@link listingFactsForRequests} reads. */
 type JoinedListing = {
+  id: string;
+  status: string;
+  contentRating: string | null;
+  _count?: { publishRequests: number };
   slug: string;
   kind: string;
   appBlockId: string | null;
@@ -2073,9 +2084,48 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
   return listing.userId === req.submittedBy?.id;
 }
 
+/** The rating a manifest declares; an app that declares none is approved as `g`. */
+function manifestRatingOrDefault(manifest: unknown): string {
+  const rating = (manifest as { contentRating?: unknown } | null)?.contentRating;
+  return typeof rating === 'string' ? rating : 'g';
+}
+
 /**
- * The store-listing facts a moderator queue shows beside a CODE request — lifetime plays
- * and the listing's media — for a whole page of requests.
+ * Whether approving `req` re-rates `listing` from its imagery, and from which rating:
+ * `null` when it does not.
+ *
+ * 🔴 MIRRORS `approveRequest`'s two floor sites and must change with them: the
+ * (3b-transition) draft lookup, which floors the request's manifest rating, and the
+ * (3b-reset) `resetListingWhere`, which floors the rating a reset listing already
+ * carries — but only while no listing request of its own is pending. A version approve
+ * of an already-approved listing leaves its rating alone.
+ */
+function approveRatingFor(
+  listing: JoinedListing,
+  req: ListingJoinSubject
+): { declared: string | null } | null {
+  if (
+    listing.status === 'draft' &&
+    listing.appBlockId == null &&
+    listing.userId === req.submittedBy?.id
+  ) {
+    return { declared: manifestRatingOrDefault(req.manifest) };
+  }
+  if (
+    listing.status === 'pending' &&
+    listing.appBlockId != null &&
+    listing.appBlockId === req.appBlockId &&
+    (listing._count?.publishRequests ?? 0) === 0
+  ) {
+    return { declared: listing.contentRating };
+  }
+  return null;
+}
+
+/**
+ * The store-listing facts a moderator queue shows beside a CODE request — lifetime plays,
+ * the listing's media, its id and whether approving re-rates it — for a whole page of
+ * requests.
  *
  * 🔴 RESOLVED BY `AppListing.slug`, NOT `appBlockId`, because that FK is NULL while an
  * app's first request is pending and an id-keyed join would blank exactly the rows a
@@ -2093,14 +2143,22 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
  */
 async function listingFactsForRequests(
   requests: ListingJoinSubject[]
-): Promise<(requestId: string) => ListingQueueFacts> {
+): Promise<(requestId: string) => RequestListingFacts> {
   const { NO_LISTING_QUEUE_FACTS, listingQueueFacts } = await import('./app-listing.service');
+  const noListing: RequestListingFacts = {
+    ...NO_LISTING_QUEUE_FACTS,
+    appListingId: null,
+    approveRating: null,
+  };
   const slugs = [...new Set(requests.map((r) => r.slug))];
-  if (slugs.length === 0) return () => NO_LISTING_QUEUE_FACTS;
+  if (slugs.length === 0) return () => noListing;
   const { dbRead } = await import('~/server/db/client');
   const rows = (await dbRead.appListing.findMany({
     where: { slug: { in: slugs }, kind: 'onsite', revisionOfId: null },
     select: {
+      id: true,
+      status: true,
+      contentRating: true,
       slug: true,
       kind: true,
       appBlockId: true,
@@ -2108,18 +2166,23 @@ async function listingFactsForRequests(
       icon: { select: { url: true } },
       cover: { select: { url: true } },
       metric: { select: { openCount: true } },
+      _count: { select: { publishRequests: { where: { status: 'pending' } } } },
     },
   })) as JoinedListing[];
 
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
-  const out = new Map<string, ListingQueueFacts>();
+  const out = new Map<string, RequestListingFacts>();
   for (const req of requests) {
     const listing = bySlug.get(req.slug);
     if (listing && listingBelongsToRequest(listing, req)) {
-      out.set(req.id, listingQueueFacts(listing));
+      out.set(req.id, {
+        ...listingQueueFacts(listing),
+        appListingId: listing.id,
+        approveRating: approveRatingFor(listing, req),
+      });
     }
   }
-  return (requestId: string) => out.get(requestId) ?? NO_LISTING_QUEUE_FACTS;
+  return (requestId: string) => out.get(requestId) ?? noListing;
 }
 
 /**
@@ -2441,8 +2504,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // `approvedScopes = []` ⟹ its dev token is read-only + cannot spend. Writing
   // `approvedScopes` anywhere OUTSIDE this approval flow would break that safety.
   const manifestScopes = Array.isArray(manifest.scopes) ? (manifest.scopes as string[]) : [];
-  const manifestContentRating =
-    typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
+  const manifestContentRating = manifestRatingOrDefault(manifest);
   const manifestRenderMode =
     typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
   // W13 category-on-approve: the OPTIONAL marketplace `category` the manifest
@@ -2837,6 +2899,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // `AppListing.userId`). A foreign same-slug draft does NOT match here and falls
     // through to the legacy create path below.
     let handledByDraftTransition = false;
+    // Mirrored for the moderator's pre-approve warning by `approveRatingFor` — change both.
     const draftListing = await dbWrite.appListing.findFirst({
       where: {
         slug: request.slug,
@@ -3121,6 +3184,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // Scoped through the relation (= `appListingId`), NOT by slug: a pending SHADOW media
     // revision denormalizes the parent slug but targets a different row and is a
     // legitimate concurrent review that must not block a reset restore.
+    // Mirrored for the moderator's pre-approve warning by `approveRatingFor` — change both.
     const resetListingWhere = {
       appBlockId,
       kind: 'onsite',

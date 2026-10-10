@@ -1169,7 +1169,7 @@ export const appListingsRouter = router({
    * seat-only caller who owns nothing. Same gate the collaborator router composes.
    *
    * CLI-reachable (`listingMediaCliScope`): THE read behind `civitai app doctor`. It is
-   * the only surface carrying `problems[]` (the 8-code completeness advisory) plus
+   * the only surface carrying `problems[]` (the listing-problems advisory) plus
    * `lastModerationAction`, so without the meta the CLI's OAuth token 403s on the one
    * proc that can tell an author what is wrong with their listing. The set it returns is
    * resolved from ownership ∪ accepted seats in the service; the meta admits a credential,

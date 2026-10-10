@@ -65,6 +65,7 @@ import {
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
+import { declaredListingRating } from '~/shared/utils/app-listing-rating';
 import {
   computeListingProblems,
   type ListingProblemKind,
@@ -2339,6 +2340,8 @@ export type GetMyListingForAppResult = {
    * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
    */
   shadowId: string | null;
+  /** The rating the author declared, which approval may have raised `contentRating` above. */
+  declaredContentRating: string | null;
   /**
    * The id the client hands to the asset procs: `shadowId` when a shadow already
    * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
@@ -2431,9 +2434,11 @@ export async function getMyListingForApp(opts: {
   // an access check is an invitation to compare against it again.
   const entrySelect = {
     id: true,
+    kind: true,
     status: true,
     contentRating: true,
     revisionOfId: true,
+    appBlock: { select: { contentRating: true } },
   } as const;
   let listing = appBlockId
     ? await dbRead.appListing.findUnique({
@@ -2572,6 +2577,11 @@ export async function getMyListingForApp(opts: {
     // Nullable column; fall back to the safest rating so the asset step's scan
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
+    declaredContentRating: declaredListingRating({
+      kind: listing.kind,
+      appRating: listing.appBlock?.contentRating,
+      listingRating: listing.contentRating,
+    }),
     hasPendingRevision: !!pendingRevisionReq,
     shadowId,
     editTargetId: effectiveId,
@@ -4054,6 +4064,7 @@ const mySubmissionSelect = {
        * read); the mod queues that spread the base `submissionSelect` are untouched.
        */
       kind: true,
+      appBlock: { select: { contentRating: true } },
       iconId: true,
       coverId: true,
       description: true,
@@ -4341,6 +4352,13 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
           tagline: r.appListing.tagline,
           category: r.appListing.category,
           assetScans: assetScansFor(r.appListing),
+          status: r.appListing.status,
+          contentRating: r.appListing.contentRating,
+          declaredContentRating: declaredListingRating({
+            kind: r.appListing.kind ?? 'offsite',
+            appRating: r.appListing.appBlock?.contentRating,
+            listingRating: r.appListing.contentRating,
+          }),
         }).problems
       : [],
   }));

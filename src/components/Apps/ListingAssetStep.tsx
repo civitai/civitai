@@ -37,6 +37,11 @@ import {
   patchScreenshotSlot,
   type ScreenshotSlot,
 } from '~/components/Apps/screenshotSlots';
+import {
+  AssetRatingBadge,
+  ListingMediaRatingCallout,
+  type ListingRatingStage,
+} from '~/components/Apps/ListingRatingNotices';
 import type { EditAsset, EditScreenshot } from '~/components/Apps/offsiteEditConfig';
 import {
   listingAssetTooLargeReason,
@@ -44,6 +49,7 @@ import {
   type ListingAssetKind,
 } from '~/server/schema/blocks/app-listing.schema';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
+import type { ListingAssetLevels, ListingRatingAsset } from '~/shared/utils/app-listing-rating';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -101,6 +107,14 @@ export type AssetState = {
 };
 
 export const emptyAsset: AssetState = { status: 'idle', imageId: null, message: null };
+
+function assetLevelsByImageId(view: ListingAssetLevels): Map<number, number | null> {
+  const byId = new Map<number, number | null>();
+  if (view.iconId != null) byId.set(view.iconId, view.iconNsfwLevel);
+  if (view.coverId != null) byId.set(view.coverId, view.coverNsfwLevel);
+  for (const s of view.screenshots) if (s.imageId != null) byId.set(s.imageId, s.nsfwLevel);
+  return byId;
+}
 
 /** Seed an icon/cover AssetState from an edit-prefill asset (attached iff it has an imageId). */
 function assetFromInitial(a: EditAsset | undefined): AssetState {
@@ -188,9 +202,11 @@ export function ListingAssetStep({
   footer,
   allowRemove = false,
   onAssetMutated,
+  onScanSettled,
   onCompletenessChange,
   onRepull,
   repullLoading = false,
+  rating,
 }: {
   listingId: string;
   contentRating: OffsiteContentRating;
@@ -217,6 +233,19 @@ export function ListingAssetStep({
   onRepull?: () => void;
   /** True while a `onRepull()` fetch is in flight (drives the button spinner). */
   repullLoading?: boolean;
+  /** Called once when a freshly-attached asset's scan reaches a terminal state (scanned or blocked). */
+  onScanSettled?: () => void;
+  /**
+   * Enables the per-asset rating badges and the "imagery raised your rating" callout.
+   * `assets` is the `appListings.getAssets` read of THIS `listingId`; levels are matched
+   * to the slots by image id, so a slot the read has not caught up with shows no badge.
+   */
+  rating?: {
+    declaredRating: string | null;
+    listingRating: string | null;
+    stage: ListingRatingStage;
+    assets: ListingAssetLevels;
+  } | null;
 }) {
   const { uploadToCF } = useCFImageUpload();
   const [icon, setIcon] = useState<AssetState>(() => assetFromInitial(initial?.icon));
@@ -353,6 +382,7 @@ export function ListingAssetStep({
         scanTimersRef.current.delete(key);
       }
       applyScan(badge);
+      onScanSettled?.();
       return;
     }
     applyScan('scanning');
@@ -704,6 +734,24 @@ export function ListingAssetStep({
     onCompletenessChange?.({ meetsFloor, complete });
   }, [meetsFloor, complete, onCompletenessChange]);
 
+  const levelByImageId = rating ? assetLevelsByImageId(rating.assets) : null;
+  const levelOf = (imageId: number | null) =>
+    imageId != null ? levelByImageId?.get(imageId) ?? null : null;
+  // Screenshots are numbered by SLOT, like the "Screenshot N" row labels above the callout.
+  const ratingAssets: ListingRatingAsset[] = [
+    ...(icon.status === 'attached'
+      ? [{ kind: 'icon' as const, nsfwLevel: levelOf(icon.imageId) }]
+      : []),
+    ...(cover.status === 'attached'
+      ? [{ kind: 'cover' as const, nsfwLevel: levelOf(cover.imageId) }]
+      : []),
+    ...screenshots.flatMap((s, i) =>
+      s.status === 'attached'
+        ? [{ kind: 'screenshot' as const, position: i + 1, nsfwLevel: levelOf(s.imageId) }]
+        : []
+    ),
+  ];
+
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-success">
       {header}
@@ -732,6 +780,7 @@ export function ListingAssetStep({
         label="Icon"
         description="Square-ish, ≥128px, png/jpeg/webp."
         state={icon}
+        nsfwLevel={levelOf(icon.imageId)}
         onFile={(f) => void startAttach('icon', 'icon', f, applyIcon)}
         onRetry={() => {
           if (icon.imageId != null) void retryAttach('icon', 'icon', icon.imageId, applyIcon);
@@ -752,6 +801,7 @@ export function ListingAssetStep({
         label="Cover"
         description="Landscape, ≥640px wide, png/jpeg/webp."
         state={cover}
+        nsfwLevel={levelOf(cover.imageId)}
         onFile={(f) => void startAttach('cover', 'cover', f, applyCover)}
         onRetry={() => {
           if (cover.imageId != null) void retryAttach('cover', 'cover', cover.imageId, applyCover);
@@ -818,6 +868,12 @@ export function ListingAssetStep({
                       <Text size="xs">Screenshot {i + 1}</Text>
                     </Group>
                     <Group gap={6}>
+                      {s.status === 'attached' && (
+                        <AssetRatingBadge
+                          nsfwLevel={levelOf(s.imageId)}
+                          testId={`apps-asset-rating-screenshot-${i}`}
+                        />
+                      )}
                       <AssetStatusBadge state={s} />
                       {(s.status === 'error' || s.status === 'timeout') && s.imageId != null && (
                         <Button
@@ -867,6 +923,15 @@ export function ListingAssetStep({
         </Stack>
       </Card>
 
+      {rating && (
+        <ListingMediaRatingCallout
+          declaredRating={rating.declaredRating}
+          listingRating={rating.listingRating}
+          stage={rating.stage}
+          assets={ratingAssets}
+        />
+      )}
+
       {/* Tri-state completeness advisory:
           (a) below floor (missing icon or cover) → warning, submit blocked;
           (b) floor met but no screenshots → neutral, submit ENABLED (optional);
@@ -904,6 +969,7 @@ function AssetRow({
   label,
   description,
   state,
+  nsfwLevel,
   onFile,
   onRetry,
   onCancel,
@@ -914,6 +980,7 @@ function AssetRow({
   label: string;
   description: string;
   state: AssetState;
+  nsfwLevel: number | null;
   onFile: (file: File | null) => void;
   onRetry: () => void;
   onCancel?: () => void;
@@ -943,6 +1010,9 @@ function AssetRow({
             </Text>
           </Group>
           <Group gap={6}>
+            {state.status === 'attached' && (
+              <AssetRatingBadge nsfwLevel={nsfwLevel} testId={`apps-asset-rating-${kind}`} />
+            )}
             <AssetStatusBadge state={state} />
             {(state.status === 'error' || state.status === 'timeout') && state.imageId != null && (
               <Button

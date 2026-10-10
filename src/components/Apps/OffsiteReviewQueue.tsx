@@ -77,12 +77,16 @@ import {
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { OFFSITE_CONTENT_RATING_OPTIONS } from '~/components/Apps/offsiteSubmitFormConfig';
+import { RatingMismatchAlert } from '~/components/Apps/ListingRatingNotices';
 import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import {
-  deriveContentRatingFromAssets,
   nsfwLevelFromContentRating,
   offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
+import {
+  listingRatingAssetsFromView,
+  summarizeListingRating,
+} from '~/shared/utils/app-listing-rating';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -480,14 +484,11 @@ export function OffsiteReviewModalBody({
   // screenshots), surface it ALONGSIDE the author-declared rating, and FLAG when the
   // assets are more mature than declared. The Select defaults to the derived value;
   // the mod may rate UP (an under-rating is floored server-side).
-  const assetLevels: (number | null | undefined)[] = [
-    (assetsQuery.data as { iconNsfwLevel?: number | null } | undefined)?.iconNsfwLevel,
-    (assetsQuery.data as { coverNsfwLevel?: number | null } | undefined)?.coverNsfwLevel,
-    ...screenshots.map((s) => s.nsfwLevel),
-  ];
-  const derivedRating = deriveContentRatingFromAssets(
-    assetLevels.map((nsfwLevel) => ({ nsfwLevel: nsfwLevel ?? null }))
-  );
+  const ratingSummary = summarizeListingRating({
+    declaredRating: request.appListing?.contentRating,
+    assets: listingRatingAssetsFromView(assetsQuery.data ?? {}),
+  });
+  const derivedRating = ratingSummary.derived ?? 'g';
   // On-site listing-MEDIA revision: reviewed by this same shadow-asset + content
   // modal, but the rating discipline INVERTS. For an offsite listing the declared
   // rating is a FLOOR the assets must meet (rate UP; the server floors an under-
@@ -519,9 +520,7 @@ export function OffsiteReviewModalBody({
     (OFFSITE_CONTENT_RATINGS as readonly string[]).includes(declaredRating)
       ? (declaredRating as OffsiteContentRating)
       : null;
-  const ratingExceeds =
-    !assetsQuery.isLoading &&
-    nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
+  const ratingExceeds = !assetsQuery.isLoading && ratingSummary.projected.raised;
   // Keep the offsite name for the unchanged offsite paths below.
   const ratingMismatch = ratingExceeds;
   // Onsite media REVISION defaults to the app's rating (the cap — media inherits it); the
@@ -817,11 +816,9 @@ export function OffsiteReviewModalBody({
       )}
 
       {ratingMismatch && (
-        <Alert
-          color="red"
-          variant="light"
-          icon={<IconAlertTriangle size={16} />}
-          data-testid="apps-offsite-rating-mismatch"
+        <RatingMismatchAlert
+          testId="apps-offsite-rating-mismatch"
+          drivingAssets={ratingSummary.drivingAssets}
         >
           {isOnsiteRepublishReview ? (
             <Text size="sm">
@@ -845,7 +842,7 @@ export function OffsiteReviewModalBody({
               defaults to the detected value; rate it at least that high.
             </Text>
           )}
-        </Alert>
+        </RatingMismatchAlert>
       )}
 
       {!readOnly &&
