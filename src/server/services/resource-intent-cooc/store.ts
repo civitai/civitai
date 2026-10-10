@@ -9,10 +9,11 @@ import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocCounts, type CoocCounts } from '
  *
  * Raw SQL so the tests run the migration's real CHECKs and partial unique index.
  *
- * Nothing on the request path reads this yet. When serving lands, its contract when no snapshot
- * can be served is the operator's: "Return BASE's top 50, still fully gated, with
- * `coocFallback: true`, a 60 s cache and a logged reason. Users get a usable list. In study mode
- * the request fails closed regardless."
+ * The request path reads this on the POOL_MERGE arm: `holder.ts` calls `latestReadySnapshotId` and
+ * `loadCoocSnapshot` (production, polled) and `loadCoocSnapshot` (study, by hash). When no snapshot
+ * can be served, the contract is the operator's, implemented by the service: "Return BASE's top
+ * 50, still fully gated, with `coocFallback: true`, a 60 s cache and a logged reason. Users get a
+ * usable list. In study mode the request fails closed regardless."
  */
 
 export type CoocSql = {
@@ -67,9 +68,16 @@ export type CoocSnapshotMeta = {
   keptPairs: number | null;
 };
 
-export class CoocSnapshotHashMismatchError extends Error {}
+/**
+ * The stored snapshot itself cannot be served: reading the same row again returns the same bytes
+ * and fails the same way, so only a different snapshot can fix it.
+ */
+export class CoocSnapshotUnservableError extends Error {}
+export class CoocSnapshotHashMismatchError extends CoocSnapshotUnservableError {}
 export class CoocSnapshotExpiredError extends Error {}
-export class CoocSnapshotKindMismatchError extends Error {}
+export class CoocSnapshotKindMismatchError extends CoocSnapshotUnservableError {}
+/** The payload's hash matched but it did not decode: too large, unknown format, or invalid counts. */
+export class CoocSnapshotCorruptError extends CoocSnapshotUnservableError {}
 export class CoocStudyDuplicateError extends Error {}
 
 /**
@@ -205,8 +213,8 @@ const META_COLUMNS = Prisma.raw(
 
 /**
  * Load a ready snapshot by content hash, refusing bytes whose hash does not match, a row of another
- * kind than the caller asked for, and a study snapshot whose pin has passed (even if retention has
- * not yet run).
+ * kind than the caller asked for, a payload that does not decode (`CoocSnapshotCorruptError`), and
+ * a study snapshot whose pin has passed (even if retention has not yet run).
  */
 export async function loadCoocSnapshot(
   sql: CoocSql,
@@ -230,7 +238,15 @@ export async function loadCoocSnapshot(
     );
   if (meta.kind === 'study' && (!meta.pinnedUntil || meta.pinnedUntil.getTime() <= now.getTime()))
     throw new CoocSnapshotExpiredError(`cooc study snapshot ${contentHash}: pin has passed`);
-  return { meta, counts: await deserializeCoocCounts(payload) };
+  let counts: CoocCounts;
+  try {
+    counts = await deserializeCoocCounts(payload);
+  } catch (e) {
+    throw new CoocSnapshotCorruptError(
+      `cooc snapshot ${contentHash}: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+  return { meta, counts };
 }
 
 /**

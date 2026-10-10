@@ -20,18 +20,23 @@ import {
 } from '~/server/services/resource-intent-cooc/spec';
 import {
   beginCoocBuild,
+  coocContentHash,
   completeCoocBuild,
+  CoocSnapshotCorruptError,
   CoocSnapshotExpiredError,
+  CoocSnapshotHashMismatchError,
   CoocSnapshotKindMismatchError,
   type CoocSql,
 } from '~/server/services/resource-intent-cooc/store';
-import { freshDb } from './resource-intent-cooc.harness';
+import { asFixtureWriter, freshDb } from './resource-intent-cooc.harness';
 
 /** The serving holder over the real migration (PGlite) and the real store. Synthetic data only. */
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const DAY = 86_400_000;
+
+type PGliteLike = Awaited<ReturnType<typeof freshDb>>['db'];
 
 /** `model` co-occurs with `token` in 5 of 200 rows. */
 function countsFor(token: string, model: number) {
@@ -227,6 +232,81 @@ describe('CoocSnapshotHolder (production)', () => {
     expect(probe.state.loads).toBe(1);
     expect(probe.state.latestReads).toBe(2);
   });
+
+  // Each corrupts the newest snapshot's stored row the way a bad write or a bad build could.
+  it.each([
+    [
+      'bytes no longer matching its content hash',
+      CoocSnapshotHashMismatchError,
+      /content hash mismatch/,
+      async (db: PGliteLike, hash: string) => {
+        await asFixtureWriter(db, () =>
+          db.query(
+            `UPDATE "ResourceIntentCoocSnapshot" SET "payload" = $1 WHERE "contentHash" = $2`,
+            [new Uint8Array([1, 2, 3]), hash]
+          )
+        );
+      },
+    ],
+    [
+      'a payload that matches its hash but fails count validation',
+      CoocSnapshotCorruptError,
+      /cooc counts invalid: N/,
+      async (db: PGliteLike, hash: string) => {
+        const bad = await serializeCoocCounts({ ...countsFor('zephyr', 77), N: -1 });
+        const badHash = coocContentHash('production', bad);
+        await asFixtureWriter(db, () =>
+          db.query(
+            `UPDATE "ResourceIntentCoocSnapshot" SET "payload" = $1, "contentHash" = $2 WHERE "contentHash" = $3`,
+            [bad, badHash, hash]
+          )
+        );
+      },
+    ],
+  ])(
+    '🔴 a snapshot with %s is load_failed once, not re-downloaded every 60 s; a new build still loads',
+    async (_what, errorClass, message, corrupt) => {
+      const { db, sql } = await freshDb();
+      await corrupt(
+        db,
+        await build(sql, 'production', { token: 'zephyr', model: 77, trainEndDaysAgo: 9 })
+      );
+      const probe = instrumented(sql);
+      const failures: string[] = [];
+      const errors: unknown[] = [];
+      let clock = 1_000_000;
+      const holder = new CoocSnapshotHolder({
+        sql: () => probe.sql,
+        now: () => clock,
+        random: () => 0,
+        onLoadFailure: (reason, error) => (failures.push(reason), errors.push(error)),
+      });
+      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+      expect(failures).toEqual(['load_failed']);
+      // The refusal this case means to reach, not some other error.
+      expect(errors[0]).toBeInstanceOf(errorClass);
+      expect((errors[0] as Error).message).toMatch(message);
+      expect(probe.state).toMatchObject({ latestReads: 1, loads: 1 });
+
+      // Not the transient 60 s retry: nothing is read at all until the poll.
+      clock += COOC_SNAPSHOT_RETRY_MS;
+      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+      expect(probe.state).toMatchObject({ latestReads: 1, loads: 1 });
+      // At the poll the same snapshot is still the newest: checked, not downloaded again.
+      clock += COOC_SNAPSHOT_POLL_MS;
+      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+      expect(probe.state).toMatchObject({ latestReads: 2, loads: 1 });
+      expect(failures).toEqual(['load_failed']);
+
+      const fresh = await build(sql, 'production', { token: 'yarrow', model: 99 });
+      clock += COOC_SNAPSHOT_POLL_MS;
+      await holder.resolve();
+      await vi.waitFor(async () =>
+        expect((await holder.resolve()).snapshot?.contentHash).toBe(fresh)
+      );
+      expect(probe.state.loads).toBe(2);
+    }
+  );
 
   it('a slow first load: ONE request waits, later ones fall back at once, then the load is served', async () => {
     const { sql: real } = await freshDb();

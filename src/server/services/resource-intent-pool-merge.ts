@@ -1,28 +1,23 @@
 import { createHash } from 'crypto';
 
-import { clampResourceIntentCap } from '~/server/schema/resource-intent.schema';
-
 /**
  * The POOL_MERGE list as the offline co-occurrence screen measured it: up to 25 gated
  * co-occurrence models and BASE's popularity models, interleaved co-occurrence first, 50 in all.
- * No stage 3. Imports only the schema, so a study script can load it.
+ * No stage 3. Imports nothing from the app, so a study script can load it.
  */
 
 /** Co-occurrence models reserved in the merged list. */
 export const POOL_MERGE_COOC_SLOTS = 25;
-/** Width the screen merged at; a narrower request is that list's prefix. */
+/**
+ * Width the screen merged at, and the most this arm ever returns: limits above 50 were never
+ * screened, so they get these 50 (unlike HYBRID_10, which honours the limit). A narrower request
+ * is this list's prefix.
+ */
 export const POOL_MERGE_LIST_MODELS = 50;
 /** Gated co-occurrence models handed to the merge (the screen's `coocList`). */
 export const POOL_MERGE_COOC_LIST_MODELS = 50;
-
-/**
- * BASE pool width for a request: `2 × max(cap, 50)` models, capped at the shortlist maximum. At
- * the default cap this is the screen's 100; a narrower cap keeps the full 100 so its list stays
- * the 50-wide list's prefix.
- */
-export function poolMergeBaseWidth(cap: number): number {
-  return clampResourceIntentCap(Math.max(cap, POOL_MERGE_LIST_MODELS) * 2);
-}
+/** BASE pool width, the screen's 100, whatever the request's cap. */
+export const POOL_MERGE_BASE_MODELS = 2 * POOL_MERGE_LIST_MODELS;
 
 // Copied verbatim from the screen; `resource-intent-pool-merge.seam.test.ts` holds it there.
 function distinct(ids: readonly number[]): number[] {
@@ -53,20 +48,19 @@ export function mergeReservedK(
 }
 
 /**
- * The merged model ids for a request cap. Merged at `max(cap, 50)` and cut, because
- * `mergeReservedK` with `cap < slots` slices BASE with a negative bound.
+ * The merged model ids for a request cap: always merged at 50, then cut to `min(cap, 50)`, so a
+ * narrower cap gets the 50-wide list's prefix. Merging at the cap itself would not: BASE would get
+ * only `cap - 25` slots, and below 25 `mergeReservedK` slices BASE with a negative bound.
  */
 export function poolMergeModelIds(
   cooc: readonly number[],
   base: readonly number[],
   cap: number
 ): number[] {
-  return mergeReservedK(
-    cooc,
-    base,
-    POOL_MERGE_COOC_SLOTS,
-    Math.max(cap, POOL_MERGE_LIST_MODELS)
-  ).slice(0, cap);
+  return mergeReservedK(cooc, base, POOL_MERGE_COOC_SLOTS, POOL_MERGE_LIST_MODELS).slice(
+    0,
+    Math.min(cap, POOL_MERGE_LIST_MODELS)
+  );
 }
 
 /**
@@ -80,7 +74,7 @@ function poolMergeFingerprint() {
     slots: POOL_MERGE_COOC_SLOTS,
     listModels: POOL_MERGE_LIST_MODELS,
     coocListModels: POOL_MERGE_COOC_LIST_MODELS,
-    baseWidth: [1, 50, 200].map(poolMergeBaseWidth),
+    baseModels: POOL_MERGE_BASE_MODELS,
     merged: [1, 4, 50].map((cap) => poolMergeModelIds(cooc, base, cap)),
     small: mergeReservedK(cooc, base, 2, 5),
   };

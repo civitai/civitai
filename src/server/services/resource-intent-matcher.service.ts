@@ -17,7 +17,7 @@ import {
   type ResourceIntentStyleFamily,
 } from '~/server/schema/resource-intent.schema';
 import {
-  poolMergeBaseWidth,
+  POOL_MERGE_BASE_MODELS,
   poolMergeModelIds,
   POOL_MERGE_COOC_LIST_MODELS,
 } from '~/server/services/resource-intent-pool-merge';
@@ -528,7 +528,7 @@ export async function findResourceIntentCandidates(
  *
  * Co-occurrence: the candidates (best first) under the seed's filter AND `id IN candidates`, one
  * page as wide as the candidate list and unsorted, re-sorted by candidate rank, one version per
- * model. BASE: `seedBasePool`'s page, one version per model, `poolMergeBaseWidth(cap)` wide.
+ * model. BASE: `seedBasePool`'s page, one version per model, `POOL_MERGE_BASE_MODELS` wide.
  */
 export async function findPoolMergeCandidates(
   criteria: ResourceIntentCriteria,
@@ -545,7 +545,7 @@ export async function findPoolMergeCandidates(
   const seed = seedFilter(criteria, opts);
   const { filter, baseModels } = seed;
   const [basePool, hits] = await Promise.all([
-    seedBasePool(seed, opts.coverage, poolMergeBaseWidth(cap)),
+    seedBasePool(seed, opts.coverage, POOL_MERGE_BASE_MODELS),
     cands.length
       ? searchModelIndex({
           filter: and(filter, inArray('id', cands)) ?? undefined,

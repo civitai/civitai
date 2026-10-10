@@ -5,6 +5,7 @@ import { loadScores, type CoocScores } from './score';
 import { RESOURCE_INTENT_COOC_SPEC, RESOURCE_INTENT_COOC_SPEC_HASH } from './spec';
 import {
   CoocSnapshotExpiredError,
+  CoocSnapshotUnservableError,
   coocSqlOf,
   latestReadySnapshotId,
   loadCoocSnapshot,
@@ -137,13 +138,20 @@ export class CoocSnapshotHolder {
     return { done, waitSpent: false };
   }
 
-  /** `at`: when the failure was observed, which the retry is measured from. */
-  private fail(error: unknown, at: number) {
+  /**
+   * `at`: when the failure was observed, which the retry is measured from. `snapshot`: the content
+   * hash being loaded when it failed, if a load had started.
+   */
+  private fail(error: unknown, at: number, snapshot: string | null = null) {
     const mismatch = error instanceof CoocSpecMismatchError;
     const reason: CoocFallbackReason = mismatch ? 'spec_mismatch' : 'load_failed';
-    // Re-reading cannot fix a spec mismatch, only a new build can: remember it, keep the poll.
-    if (mismatch) this.rejected = error.contentHash;
-    this.nextCheckAt = mismatch ? this.pollAfter(at) : at + COOC_SNAPSHOT_RETRY_MS;
+    // A spec mismatch or a snapshot whose stored bytes fail verification fails the same way on
+    // every re-read; only a new build can fix it. Remember it and keep the poll. Anything else
+    // (database, network, timeout) may pass on a retry, 60 s later.
+    const unservable =
+      snapshot !== null && (mismatch || error instanceof CoocSnapshotUnservableError);
+    if (unservable) this.rejected = snapshot;
+    this.nextCheckAt = unservable ? this.pollAfter(at) : at + COOC_SNAPSHOT_RETRY_MS;
     if (!this.served) this.reason = reason;
     this.deps.onLoadFailure?.(reason, error);
   }
@@ -158,6 +166,7 @@ export class CoocSnapshotHolder {
 
   /** On a failed load a held snapshot stays served; it was valid for this code when loaded. */
   private async refresh(gen: number, startedAt: number): Promise<void> {
+    let loading: string | null = null;
     try {
       const sql = this.deps.sql();
       const latest = await latestReadySnapshotId(sql);
@@ -166,6 +175,7 @@ export class CoocSnapshotHolder {
         this.served = null;
         this.reason = 'no_snapshot';
       } else if (latest !== this.served?.contentHash && latest !== this.rejected) {
+        loading = latest;
         const { contentHash, scores } = await loadServable(
           sql,
           latest,
@@ -178,7 +188,7 @@ export class CoocSnapshotHolder {
       }
       this.nextCheckAt = this.pollAfter(startedAt);
     } catch (error) {
-      if (gen === this.generation) this.fail(error, this.now());
+      if (gen === this.generation) this.fail(error, this.now(), loading);
     }
   }
 }

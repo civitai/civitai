@@ -531,16 +531,18 @@ describe('🔴 seam: shipped POOL_MERGE = the screen, row by row', () => {
     ).toEqual([25, 26, 27, 28, 29]);
   });
 
-  it('row A at limit 120 (beyond the screen): 25 reserved slots, BASE 240 wide fills the rest', async () => {
-    install(rowA());
-    const { result, oracle } = await bothSides({ limit: 120, oracle: { CAP: 120, POOL_CAP: 240 } });
+  it.each([51, 120])(
+    'row A at limit %i (beyond the screen): exactly the screened 50, never wider',
+    async (limit) => {
+      install(rowA());
+      // The oracle is the screen at its own width: the arm never merges wider than it was screened.
+      const { result, oracle } = await bothSides({ limit });
 
-    expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
-    expect(oracle).toHaveLength(120);
-    expect(oracle.filter((id) => ROW_A_COOC.has(id)).length).toBeGreaterThanOrEqual(25);
-    // Its first 50 are the screened list.
-    expect(oracle.slice(0, 50)).toEqual(await screenPoolMerge());
-  });
+      expect(oracle).toHaveLength(50);
+      expect(result.suggestions).toHaveLength(50);
+      expect(result.suggestions.map((s) => s.modelId)).toEqual(oracle);
+    }
+  );
 });
 
 // Model 365 is on both token lists, so it scores highest; model 3 is reserved, so BASE skips it.
