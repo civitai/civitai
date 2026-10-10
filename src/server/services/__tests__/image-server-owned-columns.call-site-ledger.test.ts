@@ -1,11 +1,15 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import type * as z from 'zod';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { scanSource } from '../../../../test/source-scan';
 import { stripComments } from '../../../../test/strip-comments';
-import { crucibleImageSchema } from '~/server/schema/crucible.schema';
+import {
+  createCrucibleInputBaseSchema,
+  updateCrucibleSchema,
+} from '~/server/schema/crucible.schema';
 
 /**
  * Seam guard for the server-owned `Image` columns `id`, `postId` and `index`.
@@ -286,7 +290,7 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
     calls: 1,
     decision: 'moderator-route',
   },
-  // `crucibleImageSchema` has no `id`.
+  // The crucible inputs' cover and hero schemas have no `id`.
   'src/server/services/crucible.service.ts#createCrucible': {
     calls: 2,
     decision: 'input-has-no-id',
@@ -297,7 +301,10 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   },
 };
 
-/** Every write pointing an `Image` relation at an existing row by id, with the guard that decides it. */
+/**
+ * Every relation `connect` / `connectOrCreate` pointing an `Image` relation at an existing row by
+ * id, with the guard that decides it. Direct writes of an `…ImageId` column are not in this set.
+ */
 const CONNECT_EXISTING_LEDGER: Record<
   string,
   { sites: number; guard: string; guardFollows?: boolean }
@@ -318,6 +325,7 @@ const CONNECT_EXISTING_LEDGER: Record<
     guard: 'const heroImageId = changes.heroImage ? await resolveCoverImageId({',
   },
   // The `where` is reached only when the client sent no `id`, so it is always `-1`.
+  // Found through the `(image: …)` parameter of `buildCoverImageUpdate`, not a relation key.
   'src/server/services/user-profile.service.ts#updateUserProfile': {
     sites: 1,
     guard: 'image !== undefined && !image?.id',
@@ -356,7 +364,7 @@ const NESTED_CREATE = new RegExp(
 const CONNECT_EXISTING = new RegExp(
   String.raw`\b(?:${IMAGE_RELATION_FIELDS.join(
     '|'
-  )})\s*:[^;]{0,300}?\b(?:connect\s*:\s*\{\s*id\s*:|connectOrCreate\s*:\s*\{\s*where\s*:\s*\{\s*id\s*:)`,
+  )})\s*:[^;]{0,300}?\b(?:connect\s*:\s*\{\s*id\s*[:,}]|connectOrCreate\s*:\s*\{\s*where\s*:\s*\{\s*id\s*[:,}])`,
   'g'
 );
 
@@ -643,15 +651,30 @@ describe('existing-image references', () => {
       'src/server/services/crucible.service.ts',
       'src/server/services/crucible.service.ts',
     ]);
-    expect(crucibleImageSchema.shape).not.toHaveProperty('id');
-    expect(
-      crucibleImageSchema.parse({ url: URL_UUID, width: 1, height: 2, id: 7 } as never)
-    ).not.toHaveProperty('id');
+    for (const [name, schema] of [
+      ['create coverImage', createCrucibleInputBaseSchema.shape.coverImage],
+      ['create heroImage', createCrucibleInputBaseSchema.shape.heroImage],
+      ['update coverImage', updateCrucibleSchema.shape.coverImage],
+      ['update heroImage', updateCrucibleSchema.shape.heroImage],
+    ] as const) {
+      const parsed = (schema as z.ZodType).parse({ url: URL_UUID, width: 1, height: 2, id: 7 });
+      expect(parsed, name).not.toHaveProperty('id');
+    }
   });
 });
 
 describe('detector controls', () => {
   const at = (src: string, re: RegExp) => sitesIn('x.ts', stripComments(src), re);
+
+  it('finds an Image relation pointed at an existing row in every spelling', () => {
+    const src = [
+      'async function a(i) { await db.x.update({ data: { image: { connect: { id: i } } } }); }',
+      'async function b(id) { await db.x.update({ data: { coverImage: { connect: { id } } } }); }',
+      'async function c(i) { await db.x.update({ data: { image: { connectOrCreate: { where: { id: i }, create: {} } } } }); }',
+      'async function d(i) { await db.x.update({ data: { modelVersions: { connect: { id: i } } } }); }',
+    ].join('\n');
+    expect(keysOf(at(src, CONNECT_EXISTING))).toEqual(['x.ts#a', 'x.ts#b', 'x.ts#c']);
+  });
 
   it('reads the spreads and server columns of a write call', () => {
     const [site] = at(
