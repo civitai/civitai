@@ -249,10 +249,16 @@ describe('persistBlockUploadImage (measures the uploaded bytes)', () => {
 });
 
 describe('persistBlockUploadImage provenance stamp (OPEN_IMAGE_UPLOAD bytes)', () => {
-  const stampedMetadata = () =>
-    (mockCreateImage.mock.calls[0][0] as { metadata: Record<string, unknown> }).metadata;
+  // `createImage` is mocked here, so these pin only the ARGUMENTS. That the stamp survives the
+  // real `createImage` (which drops any provenance key found in `metadata`) is proven in
+  // `block-image-upload.provenance-stamp.test.ts`.
+  const createArg = () =>
+    mockCreateImage.mock.calls[0][0] as {
+      metadata: Record<string, unknown>;
+      blockProvenance?: { key: string; appId: string } | null;
+    };
 
-  it('an app bytes upload is stamped with the UPLOADED key, never the published one', async () => {
+  it('an app bytes upload passes the UPLOADED key as blockProvenance, never the published one', async () => {
     storeObject(await flatPng(800, 450));
     const { persistBlockUploadImage } = await import('../block-image-upload.service');
 
@@ -262,11 +268,12 @@ describe('persistBlockUploadImage provenance stamp (OPEN_IMAGE_UPLOAD bytes)', (
       uploadedByAppId: 'appblk-alpha',
     });
 
-    const metadata = stampedMetadata();
-    expect(metadata.blockUploadedAppId).toBe('appblk-alpha');
+    const arg = createArg();
     // The published key would open the CROSS-USER gated read to this upload.
-    expect('blockPublishedAppId' in metadata).toBe(false);
-    expect(metadata.size).toEqual(expect.any(Number));
+    expect(arg.blockProvenance).toEqual({ key: 'blockUploadedAppId', appId: 'appblk-alpha' });
+    expect('blockUploadedAppId' in arg.metadata).toBe(false);
+    expect('blockPublishedAppId' in arg.metadata).toBe(false);
+    expect(arg.metadata.size).toEqual(expect.any(Number));
   });
 
   it('a viewer-picked upload carries no provenance stamp at all', async () => {
@@ -274,9 +281,10 @@ describe('persistBlockUploadImage provenance stamp (OPEN_IMAGE_UPLOAD bytes)', (
 
     await persist({ url: KEY });
 
-    const metadata = stampedMetadata();
-    expect('blockUploadedAppId' in metadata).toBe(false);
-    expect('blockPublishedAppId' in metadata).toBe(false);
+    const arg = createArg();
+    expect(arg.blockProvenance ?? null).toBeNull();
+    expect('blockUploadedAppId' in arg.metadata).toBe(false);
+    expect('blockPublishedAppId' in arg.metadata).toBe(false);
   });
 });
 

@@ -114,6 +114,7 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
  * count, so refactoring inside a listed function does not churn this list.
  */
 const STAMPER_FUNCTIONS: string[] = [
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
   'src/server/services/image.service.ts#createImage',
 ];

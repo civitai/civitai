@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { BLOCK_PROVENANCE_METADATA_KEYS } from '~/shared/utils/block-provenance-metadata';
 
 /**
  * EVERY site in `src/` that names an App Blocks provenance key — by constant (aliases included),
@@ -56,6 +57,9 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-post.logic.ts#BLOCK_POST_APP_ID_META_KEY': 'declaration',
   'src/server/services/blocks/block-post.service.ts#writeBlockPost': 'post-attribution',
   'src/server/services/blocks/post-app-chip.logic.ts#readBlockPublishedAppId': 'post-attribution',
+  // The server-owned key list `createImage` and the image input schemas strip client copies
+  // against. It decides what is DROPPED, never what an app may read.
+  'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS': 'declaration',
 });
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -195,13 +199,21 @@ describe('App Blocks image provenance-key sites', () => {
     ]);
   });
 
-  it('the uploaded key is spelled once, in its declaration', () => {
+  it('the uploaded key is spelled only in its declaration and the server-owned key list', () => {
     const spelled = [...sites.entries()]
       .filter(([, tokens]) => tokens.has("'blockUploadedAppId'"))
-      .map(([site]) => site);
+      .map(([site]) => site)
+      .sort();
     expect(spelled).toEqual([
       'src/server/services/blocks/block-image-upload.service.ts#BLOCK_UPLOADED_APP_ID_META_KEY',
+      'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS',
     ]);
+  });
+
+  it('the keys this ledger tracks are exactly the server-owned provenance keys', () => {
+    // A key added to the shared list without this ledger learning it would have readers this
+    // file cannot see; a key tracked here but missing from the list would not be server-owned.
+    expect([...KEY_LITERALS].sort()).toEqual([...BLOCK_PROVENANCE_METADATA_KEYS].sort());
   });
 
   it('sees every spelling of a read, on synthetic sources (so each branch of the derivation is exercised)', () => {

@@ -70,11 +70,12 @@ export async function persistBlockUploadImage(opts: {
     // entity tag records which stored object they were measured from — a row from
     // here is attachable as listing media, so it must carry the same evidence the
     // listing attach gate re-checks.
-    metadata: {
-      size: measured.sizeBytes,
-      ...storedObjectEtagMetadata(measured.etag),
-      ...(uploadedByAppId ? { [BLOCK_UPLOADED_APP_ID_META_KEY]: uploadedByAppId } : {}),
-    },
+    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
+    // A server-owned provenance key: `createImage` drops any copy in `metadata`, so this
+    // argument is the only way the stamp reaches the row.
+    blockProvenance: uploadedByAppId
+      ? { key: BLOCK_UPLOADED_APP_ID_META_KEY, appId: uploadedByAppId }
+      : undefined,
     userId,
   });
   return { imageId: image.id };
@@ -101,7 +102,8 @@ export const BLOCK_PUBLISHED_APP_ID_META_KEY =
  * uploads. This one is accepted only where the reader is already bound to the image's owner: the
  * post-from-app `published` source ({@link BLOCK_POSTABLE_APP_ID_META_KEYS}).
  */
-export const BLOCK_UPLOADED_APP_ID_META_KEY = 'blockUploadedAppId' as const;
+export const BLOCK_UPLOADED_APP_ID_META_KEY =
+  'blockUploadedAppId' as const satisfies BlockProvenanceMetadataKey;
 
 /** The provenance keys a post-from-app `published` source accepts. Never the gated read's set. */
 export const BLOCK_POSTABLE_APP_ID_META_KEYS = [

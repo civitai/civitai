@@ -3,8 +3,14 @@
  * server-owned: only a server path that has verified the app passes one to `createImage`
  * (its `blockProvenance` argument), and every client-supplied copy is dropped. A new
  * provenance key must be added here together with its writer.
+ *
+ *  - `blockPublishedAppId`: a workflow output the app published (`persistBlockWorkflowOutputImage`).
+ *  - `blockUploadedAppId`: an image the app uploaded from bytes (`persistBlockUploadImage`).
  */
-export const BLOCK_PROVENANCE_METADATA_KEYS = ['blockPublishedAppId'] as const;
+export const BLOCK_PROVENANCE_METADATA_KEYS = [
+  'blockPublishedAppId',
+  'blockUploadedAppId',
+] as const;
 
 export type BlockProvenanceMetadataKey = (typeof BLOCK_PROVENANCE_METADATA_KEYS)[number];
 
