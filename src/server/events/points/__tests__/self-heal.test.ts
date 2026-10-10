@@ -342,6 +342,20 @@ describe('the engine asks for a heal', () => {
     expect(selfHeal).not.toHaveBeenCalled();
   });
 
+  // The reload is what every request's hat check waits on at first load: a hung Redis read in the
+  // check must not hold it.
+  it('never makes the reload wait on the check', async () => {
+    const fake = fakeRedis();
+    fake.setHash(eventPointKeys(EVENT.name).hats, 'Image:100', encodeHat(HAT));
+    fake.redis.hGet = () => new Promise<string | null>(() => undefined);
+    const { engine } = engineOver(fake);
+    const outcome = await Promise.race([
+      engine.refresh().then(() => 'reloaded'),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting on the check'), 200)),
+    ]);
+    expect(outcome).toBe('reloaded');
+  });
+
   it('a failing check neither throws nor fails the reload', async () => {
     const fake = fakeRedis();
     fake.setHash(eventPointKeys(EVENT.name).hats, 'Image:100', encodeHat(HAT));
