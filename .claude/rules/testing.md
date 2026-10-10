@@ -41,6 +41,7 @@ When the dev-server queue has the cache on (`cli.mjs test config --cache on`), a
 [test-cache] 1880 test files: 41 ran, 1839 skipped as unchanged since they last passed. 92 unchanged file(s) re-run to verify; false skips: 0.
 ```
 
+- The key follows imports only through first-party modules the file actually loaded: a module it replaces with a `vi.mock` factory is keyed, but not what that module imports.
 - A random ~5% of unchanged files run anyway. If one fails, the cache mispredicted (a false skip) and trips itself off (`TRIPPED.json` in the cache dir) until a human looks.
 - Environment variables are not part of the cache key, and neither are `package.json` `scripts` or `version`: a change to how a script invokes vitest (its flags) does not invalidate anything. A test that reads a `package.json` is still keyed on the whole file.
 - The key definition (`scripts/test-cache/core.mjs`) is the dev-server daemon's copy, not the tree's, so a fix to it reaches every tree once the daemon's checkout pulls it; a change to `test-queue.mjs` itself needs a daemon restart. A tree older than `load-core.mjs` keys with its own copy until it rebases, and a tree's own edit to `core.mjs` is not what its queued runs key with unless the daemon's copy lacks one of its exports (its unit tests still import it directly).
