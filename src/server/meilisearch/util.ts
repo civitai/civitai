@@ -92,6 +92,70 @@ const swapIndex = async ({
   return index;
 };
 
+/**
+ * Discards a swap index that will not be promoted.
+ *
+ * `swapIndex` deletes the swap index as its last step, so a reset that completes in a swap does not
+ * need this. It exists for the reset that ABANDONS its rebuild: without it the half-built
+ * `<indexName>_NEW` stays resident, holding a near-complete copy of the corpus until some later run
+ * happens to swap.
+ *
+ * 🔴 BEST-EFFORT, AND NOT A CORRECTNESS MECHANISM. The deletion is a Meilisearch TASK and this
+ * resolves when that task is ENQUEUED, not when it completes (`Index.delete` returns an
+ * `EnqueuedTask`). So it does not establish "the swap index is gone" for anything that runs after
+ * it — a caller that needs to know an index is empty has to READ, which is what
+ * `countIndexDocuments` is for. Do not reintroduce a call to this before a rebuild and treat it as
+ * a guarantee: the deletion lands AFTER the rebuild's `setup` has already read the old settings,
+ * so the rebuild gets a bare auto-created index and the swap promotes one with no settings at all.
+ *
+ * `deleteIndexIfExists`, not `deleteIndex`: the latter rejects with `index_not_found`, and an absent
+ * swap index is a reachable case on the path this runs on. Resolves to `false` when there was
+ * nothing to delete, and to `undefined` when there is no client at all.
+ */
+const deleteSwapIndex = async ({
+  swapIndexName,
+  client = searchClient,
+}: {
+  swapIndexName: string;
+  client?: MeiliSearch | null;
+}) => {
+  if (!client) {
+    return;
+  }
+
+  return await client.deleteIndexIfExists(swapIndexName);
+};
+
+/**
+ * How many documents an index holds, or `null` when there is no search client to ask.
+ *
+ * A READ, deliberately, and that is the whole point: Meilisearch mutations are tasks that complete
+ * asynchronously, so no sequence of deletes can prove an index is empty at the moment a rebuild
+ * starts writing into it. A stats read can, because it answers about now.
+ *
+ * An absent index counts as 0 rather than an error — "not there" and "there and empty" are the same
+ * answer to the question the callers ask.
+ */
+const countIndexDocuments = async ({
+  indexName,
+  client = searchClient,
+}: {
+  indexName: string;
+  client?: MeiliSearch | null;
+}): Promise<number | null> => {
+  if (!client) {
+    return null;
+  }
+
+  try {
+    const stats = await client.index(indexName).getStats();
+    return stats.numberOfDocuments;
+  } catch (e) {
+    if ((e as MeiliSearchErrorInfo)?.code === 'index_not_found') return 0;
+    throw e;
+  }
+};
+
 const onSearchIndexDocumentsCleanup = async ({
   indexName,
   ids,
@@ -290,4 +354,11 @@ export const processUserContentRemovalQueue = async () => {
   return { processed: entries.length };
 };
 
-export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup, waitForTasksWithRetries };
+export {
+  swapIndex,
+  deleteSwapIndex,
+  countIndexDocuments,
+  getOrCreateIndex,
+  onSearchIndexDocumentsCleanup,
+  waitForTasksWithRetries,
+};

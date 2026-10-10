@@ -3,6 +3,12 @@ import type { createLogger } from '~/utils/logging';
 
 export type Task = PullTask | TransformTask | PushTask | OnCompleteTask;
 
+/**
+ * An inclusive span of source ids. Declared once so the failed-task record, the queue's getter and
+ * the reset result cannot drift into describing different shapes.
+ */
+export type SearchIndexIdRange = { startId: number; endId: number };
+
 type BaseTask = {
   maxRetries?: number;
   retries?: number;
@@ -37,6 +43,21 @@ type BaseTask = {
    * than being subtracted into the silence `idsWithoutDocument` exists to break.
    */
   handledWithoutDocumentIds?: (number | string)[];
+  /**
+   * The source id RANGE this task covers, for attributing a failure back to a repairable slice of
+   * the corpus. Set by a caller that enqueues `mode: 'range'` pull tasks (`reset`) and carried
+   * through the pull -> transform -> push chain, because the derived tasks no longer hold the
+   * range the pull was built from.
+   *
+   * Deliberately separate from `PullTask`'s own `startId`/`endId`, which are query PARAMETERS
+   * consumed at the pull step: this is the reporting key, and it has to outlive them.
+   *
+   * 🔴 A range is a span of id SPACE, not a count of documents. The id space is sparse — most ids
+   * in a range carry no indexable row — so `endId - startId + 1` massively overstates how many
+   * documents a dropped batch cost. That is exactly why this is reported as a range to re-pull
+   * and never summed into `failedIdCount`, which means documents.
+   */
+  sourceRange?: SearchIndexIdRange;
 };
 
 /**
@@ -98,6 +119,17 @@ export type FailedTaskRecord = {
    * A task with `maxRetries: 0` is attempted once and records 0.
    */
   retries: number;
+  /**
+   * The id range the dropped batch covered, when the task carried one. Present only for tasks
+   * descended from a `mode: 'range'` pull — a targeted batch reports its loss through `idCount`
+   * instead.
+   *
+   * Copied rather than referenced, which buys MUTATION safety, not reachability: a property does
+   * not point back at the object that owns it, so holding `task.sourceRange` would not have kept
+   * the task or its `data` payload alive either. The copy means a later edit to the task cannot
+   * retroactively change what this record says was lost.
+   */
+  sourceRange?: SearchIndexIdRange;
 };
 
 const MAX_QUEUE_SIZE_DEFAULT = 50;
@@ -170,6 +202,15 @@ export class TaskQueue {
   /** Number of source ids belonging to tasks that permanently failed. */
   get failedIdCount(): number {
     return this.failedTasks.reduce((acc, record) => acc + record.idCount, 0);
+  }
+
+  /**
+   * The id ranges of the batches that permanently failed, in the order they gave up — the slice
+   * of the corpus a caller has to re-pull. Empty when no failed task carried a range, which is
+   * every targeted run: those attribute through `failedIdCount` instead.
+   */
+  get failedRanges(): SearchIndexIdRange[] {
+    return this.failedTasks.flatMap((record) => (record.sourceRange ? [record.sourceRange] : []));
   }
 
   async waitForQueueCapacity(queue: Task[]): Promise<void> {
@@ -274,6 +315,11 @@ export class TaskQueue {
       type: task.type,
       idCount: task.idCount ?? 0,
       retries: task.retries,
+      // Copied, not referenced — see `FailedTaskRecord.sourceRange`. Omitted entirely when the
+      // task carries no range, so a targeted batch's record keeps the shape it had before.
+      ...(task.sourceRange
+        ? { sourceRange: { startId: task.sourceRange.startId, endId: task.sourceRange.endId } }
+        : {}),
     });
     this.updateTaskStatus(task, 'failed');
   }

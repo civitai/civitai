@@ -65,6 +65,19 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
       {
         // 3hr lock. This can be a long-running job.
         lockExpiration: 180 * 60,
+        /**
+         * A reset is the textbook case `keepLockOnDisconnect` was added for: it legitimately runs
+         * far longer than the scheduler's client timeout, and it is harmful to run twice
+         * concurrently. Without this, losing the socket releases the lock and the scheduler's retry
+         * starts a SECOND reset of the same index while the first is still writing — both into the
+         * same `<indexName>_NEW`, so whichever swaps first promotes an interleaving of two runs,
+         * and the later one's `swapIndex` then deletes an index the other may still be using.
+         *
+         * It narrows the window rather than closing it: a pod that DIES still drops its lock within
+         * seconds. That is why `reset` refuses a swap index it finds populated instead of assuming
+         * it owns one, and why that refusal does not delete it.
+         */
+        keepLockOnDisconnect: true,
       }
     ),
   ])

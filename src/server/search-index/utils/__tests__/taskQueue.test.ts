@@ -191,3 +191,71 @@ describe('TaskQueue :: what a permanently-failed task retains', () => {
     expect(queue.failedIdCount).toBe(5);
   }, 15_000);
 });
+
+describe('failedRanges', () => {
+  // `toStrictEqual`, NOT `toEqual`: `toEqual` treats an `undefined` property as equal to a missing
+  // one, so it cannot tell `{type, idCount, retries}` from
+  // `{type, idCount, retries, sourceRange: undefined}`. The record's own doc comment promises the
+  // key is OMITTED for a task that carries no range, and this is the only assertion that holds it
+  // to that — an unconditional spread of `sourceRange` passes every `toEqual` in this file.
+  it('omits sourceRange entirely for a task that carried no range', async () => {
+    const queue = new TaskQueue('pull');
+    const task: PushTask = { type: 'push', data: { marker: 'x' }, idCount: 9, maxRetries: 0 };
+
+    startProcessing(queue, task);
+    await queue.failTask(task);
+
+    expect(queue.failedTasks).toStrictEqual([{ type: 'push', idCount: 9, retries: 0 }]);
+    // The consequence that matters: a targeted run reports NO ranges rather than a list of holes.
+    // Deleting the `sourceRange ? […] : []` filter yields `[undefined]` here, which would render
+    // as "undefined-undefined" in an operator's repair instruction.
+    expect(queue.failedRanges).toStrictEqual([]);
+  }, 15_000);
+
+  it('reports the range of each failed task that carried one, and only those', async () => {
+    const queue = new TaskQueue('pull');
+    // A MIXED queue: two range tasks and one targeted task failing in between, so the getter has
+    // to both collect and exclude. Pairwise-distinct bounds, none of them equal to an idCount.
+    const withRange: PullTask[] = [
+      {
+        type: 'pull',
+        mode: 'range',
+        startId: 40,
+        endId: 49,
+        sourceRange: { startId: 40, endId: 49 },
+        maxRetries: 0,
+      },
+      {
+        type: 'pull',
+        mode: 'range',
+        startId: 70,
+        endId: 79,
+        sourceRange: { startId: 70, endId: 79 },
+        maxRetries: 0,
+      },
+    ];
+    const targeted: PullTask = {
+      type: 'pull',
+      mode: 'targeted',
+      ids: [1, 2, 3],
+      idCount: 3,
+      maxRetries: 0,
+    };
+
+    for (const task of [withRange[0], targeted, withRange[1]]) {
+      startProcessing(queue, task);
+      await queue.failTask(task);
+    }
+
+    expect(queue.failedTasks).toHaveLength(3);
+    expect(queue.failedRanges).toStrictEqual([
+      { startId: 40, endId: 49 },
+      { startId: 70, endId: 79 },
+    ]);
+    // The targeted task's loss is carried by the id count instead, and the two are not mixed.
+    expect(queue.failedIdCount).toBe(3);
+    // Copied, not referenced: editing the task afterwards cannot rewrite what was reported lost.
+    withRange[0].sourceRange!.startId = -1;
+    expect(queue.failedRanges[0]).toStrictEqual({ startId: 40, endId: 49 });
+  }, 15_000);
+});
