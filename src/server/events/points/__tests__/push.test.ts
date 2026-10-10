@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PushDeps } from '~/server/events/points/push';
 
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
-
 const {
   BREAKER_COOL_OFF_MS,
   createEventPointsPusher,
