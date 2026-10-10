@@ -30,7 +30,10 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof EventsUtils>()),
   useTeamColor: () => () => 'pink',
 }));
-vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
+// Marks what it would load, so a test can see whether the hero asks for the film.
+vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
+  EdgeMedia: ({ src }: { src: string }) => React.createElement('span', { 'data-edge-media': src }),
+}));
 // The real player needs a scroller and media APIs; this one records what it was told.
 vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
   EdgeVideo: (props: Record<string, unknown>) =>
@@ -75,7 +78,7 @@ function render(element: React.ReactElement) {
   return host;
 }
 
-const VIDEO = { id: '2a717391-711f-4005-97df-16921dc25e07', title: 'Hats On' };
+const VIDEO = { id: 'ecd5aeef-b4d5-497d-bdd7-51750c302122', title: 'Hats On', duration: 42.411 };
 type HeroProps = React.ComponentProps<typeof ScoredEventHero>;
 const hero = (over: Partial<HeroProps> = {}, page: Record<string, unknown> = {}) =>
   render(
@@ -97,58 +100,47 @@ const watchButton = (page: HTMLElement) =>
   page.querySelector<HTMLButtonElement>('button[aria-label="Watch the Hats On video"]');
 
 describe('hero play button', () => {
-  it('sits on the art, named for the film', () => {
+  it('sits on the art, named for the film, with its stored length from the first paint', () => {
     const page = hero();
     const button = watchButton(page);
     expect(button?.closest('[data-testid=hero-art]')).not.toBeNull();
-    expect(button?.textContent).toBe('Watch');
+    expect(button?.textContent).toBe('Watch · 0:42');
+  });
+
+  it.each([
+    [84.6, 'Watch · 1:25'],
+    [84.5, 'Watch · 1:25'],
+    [59.5, 'Watch · 1:00'],
+    [undefined, 'Watch'],
+    [0, 'Watch'],
+    [0.4, 'Watch'],
+    [-5, 'Watch'],
+    [Infinity, 'Watch'],
+  ])('reads a length of %s as %s', (duration, label) => {
+    const page = hero({}, { heroVideo: { ...VIDEO, duration } });
+    expect(watchButton(page)?.textContent).toBe(label);
+  });
+
+  // The length used to be read from the film on every page view; it is stored now, so nothing on
+  // the page touches the file until the viewer presses Watch.
+  it('loads nothing of the film before Watch is pressed', () => {
+    const create = vi.spyOn(document, 'createElement');
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const page = hero();
+    // The spy sees the hero being built, so an empty list below is a real absence.
+    expect(create.mock.calls.some(([tag]) => tag === 'div')).toBe(true);
+    expect(
+      create.mock.calls.filter(([tag]) => ['video', 'audio', 'source', 'link'].includes(tag))
+    ).toEqual([]);
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes(VIDEO.id))).toEqual([]);
+    // Nothing rendered names the film: no media element, no preload, no source.
+    expect(page.innerHTML).not.toContain(VIDEO.id);
+    expect(page.querySelector('[data-edge-media=art]')).not.toBeNull();
   });
 
   it('is absent without a film', () => {
     const page = hero({}, { heroVideo: undefined });
     expect(watchButton(page)).toBeNull();
-  });
-
-  // The detached element the hero reads the film's length from.
-  const probeVideo = () => {
-    const create = document.createElement.bind(document);
-    const probe: { video?: HTMLVideoElement } = {};
-    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
-      const el = create(tag);
-      if (tag === 'video') probe.video = el as HTMLVideoElement;
-      return el;
-    }) as typeof document.createElement);
-    return probe;
-  };
-  const readMetadata = (video: HTMLVideoElement, duration: number) => {
-    Object.defineProperty(video, 'duration', { value: duration });
-    act(() => {
-      video.dispatchEvent(new Event('loadedmetadata'));
-    });
-  };
-
-  it("adds the film's length once its metadata reads, to the nearest second", () => {
-    const probe = probeVideo();
-    const page = hero();
-    expect(probe.video?.preload).toBe('metadata');
-    expect(probe.video?.getAttribute('src')).toContain(VIDEO.id);
-    readMetadata(probe.video!, 84.6);
-    expect(watchButton(page)?.textContent).toBe('Watch · 1:25');
-  });
-
-  it.each([Infinity, 0])('keeps plain Watch for a length of %s', (duration) => {
-    const probe = probeVideo();
-    const page = hero();
-    readMetadata(probe.video!, duration);
-    expect(watchButton(page)?.textContent).toBe('Watch');
-  });
-
-  it('stops reading the film when the hero goes', () => {
-    const probe = probeVideo();
-    hero();
-    expect(probe.video?.hasAttribute('src')).toBe(true);
-    act(() => root?.unmount());
-    expect(probe.video?.hasAttribute('src')).toBe(false);
   });
 
   it('opens the player with Join for a viewer who has not joined', () => {
@@ -180,7 +172,7 @@ describe('EventVideoModal', () => {
       (b) => b.textContent === 'Join and get your free hat'
     );
 
-  it('plays the film the hero measured, with sound and the browser controls', () => {
+  it('plays the uploaded film, with sound and the browser controls', () => {
     const video = modal().querySelector('video');
     expect({ ...video?.dataset }).toEqual({
       src: VIDEO.id,
