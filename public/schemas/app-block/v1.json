@@ -55,7 +55,15 @@
     "category": {
       "type": "string",
       "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories — this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
-      "enum": ["generation", "games", "utility", "discovery", "moderation", "analytics", "other"]
+      "enum": [
+        "generation",
+        "games",
+        "utility",
+        "discovery",
+        "moderation",
+        "analytics",
+        "other"
+      ]
     },
     "renderMode": {
       "type": "string",
@@ -126,10 +134,7 @@
       "maxLength": 256,
       "allOf": [
         { "$comment": "no leading '/' (absolute path)", "not": { "pattern": "^/" } },
-        {
-          "$comment": "no backslash separators (Windows / '\\..' traversal)",
-          "not": { "pattern": "\\\\" }
-        },
+        { "$comment": "no backslash separators (Windows / '\\..' traversal)", "not": { "pattern": "\\\\" } },
         { "$comment": "no '..' path-traversal segment", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
         { "$comment": "no Windows drive prefix (e.g. C:)", "not": { "pattern": "^[A-Za-z]:" } }
       ]
@@ -272,7 +277,7 @@
     },
     "analytics": {
       "type": "object",
-      "description": "Optional CUSTOM EVENTS declaration. `events` names every event your app may send with `useBlockAnalytics().track(name, properties)` and the properties each event may carry. Manifest-governed and REVIEW-GATED: the declaration a moderator approves is the only one the platform will accept events against, so a reviewer can see what your app tracks. Properties are typed `enum` (a declared list of string values), `number` or `boolean` ONLY — free-text strings are deliberately not supported, so a value that is not one of an enum's declared strings is never recorded. That is what keeps prompts, emails and usernames out of this channel. Owners will see aggregates only, never individual events. NOTE: the platform does not record custom events yet; the declaration is validated at submit today so that apps can declare events ahead of collection going live. All bounds are kept in lockstep with src/shared/constants/block-analytics.constants.ts (a drift-guard test enforces equality); `parseManifestAnalytics` in that module is authoritative.",
+      "description": "Optional CUSTOM EVENTS declaration. `events` names every event your app may send with `useBlockAnalytics().track(name, properties)` and the properties each event may carry. Manifest-governed and REVIEW-GATED: the declaration a moderator approves is the only one the platform will accept events against, so a reviewer can see what your app tracks. Properties are typed `enum` (a declared list of string values), `number` or `boolean` ONLY — free-text strings are deliberately not supported, so a string that is not one of an enum's declared values will never be recorded. That is what keeps prompts, emails and usernames out of string properties (a `number` property is not range-limited, so do not use one to carry an identifier). Owners will see aggregates only, never individual events. NOTE: the platform does not record custom events yet; the declaration is validated at submit today so that apps can declare events ahead of collection going live. All bounds are kept in lockstep with src/shared/constants/block-analytics.constants.ts (a drift-guard test enforces equality); `parseManifestAnalytics` in that module is authoritative.",
       "additionalProperties": false,
       "properties": {
         "events": {
@@ -298,14 +303,14 @@
                   "oneOf": [
                     {
                       "type": "object",
-                      "description": "A string drawn from a declared list. Any other string sent for this property is dropped.",
+                      "description": "A string drawn from a declared list. A string outside `values` will not be recorded.",
                       "additionalProperties": false,
                       "required": ["type", "values"],
                       "properties": {
                         "type": { "const": "enum" },
                         "values": {
                           "type": "array",
-                          "description": "The allowed values: 1 to 50 distinct non-empty strings of at most 64 characters each.",
+                          "description": "The allowed values: 1 to 50 distinct non-empty strings of at most 64 characters (Unicode code points) each.",
                           "minItems": 1,
                           "maxItems": 50,
                           "uniqueItems": true,

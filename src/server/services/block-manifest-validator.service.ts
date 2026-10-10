@@ -140,9 +140,8 @@ interface RawManifest {
   /**
    * Optional CUSTOM EVENTS declaration — `analytics.events` names every event the
    * app may send and the properties each may carry (`enum` / `number` /
-   * `boolean` only, no free text). Validated by `parseManifestAnalytics`, the
-   * same parser a consumer of the declaration calls, so the rules a manifest is
-   * approved under and the rules it is read under are one function.
+   * `boolean` only, no free text). Validated by `parseManifestAnalytics`; any
+   * later reader of the declaration must call that parser, not re-implement it.
    */
   analytics?: unknown;
   /**
@@ -728,8 +727,6 @@ export class BlockManifestValidator {
       }
     }
 
-    // CUSTOM EVENTS declaration. `parseManifestAnalytics` is the single rule, as
-    // `parseManifestGoods` is for goods above.
     for (const analyticsError of parseManifestAnalytics(m).errors) errors.push(analyticsError);
 
     if (!m.iframe || typeof m.iframe !== 'object') {

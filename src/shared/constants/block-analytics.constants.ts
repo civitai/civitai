@@ -1,26 +1,25 @@
 /**
  * App Blocks CUSTOM EVENTS — the manifest-declared `analytics.events` contract.
- * Pure constants + one pure parser, client-safe: the manifest validator imports
- * it, and so does anything that later needs an app's declared events.
+ * Pure and client-safe: no server imports (the manifest validator that imports
+ * it is client-bundle-safe).
  *
  * An app declares, in its reviewed manifest, every event it may send and every
  * property each event may carry. A property is an `enum` of declared string
  * values, a `number` or a `boolean`. There is deliberately NO free-text string
- * type: whatever a block sends is checked against this declaration, so a value
- * that is not one of the declared strings cannot be recorded at all. That is
- * what stops an app from logging a prompt, an email or a username through this
- * channel, and it also bounds how many distinct values can ever be stored.
+ * type: an enum admits only its declared strings, so a prompt, an email or a
+ * username has no string property to travel in. (A `number` property is
+ * unbounded, so this guard is about strings only.)
  *
  * Every bound below is mirrored in `public/schemas/app-block/v1.json` (the
- * published manifest schema); a drift-guard test pins the two together.
+ * published manifest schema); a drift-guard test pins the two together. Lengths
+ * are counted in Unicode CODE POINTS, as JSON Schema `maxLength` counts them —
+ * not in UTF-16 units (`String#length`), which would reject an emoji string the
+ * published schema accepts.
  */
 
 /**
- * Event names and property names share one rule: lowercase snake_case starting
- * with a letter, at most 64 characters. The length IS in the regex here because
- * the published schema expresses it the same way (`propertyNames.pattern`), and
- * the drift guard asserts the schema pattern equals this regex's `source` — one
- * spelling, so the two cannot disagree about a 65-character name.
+ * Shared by event and property names. The length lives in the regex because the
+ * schema's `propertyNames.pattern` must equal its `.source` (drift-guarded).
  */
 export const BLOCK_ANALYTICS_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
@@ -30,9 +29,9 @@ export const BLOCK_ANALYTICS_MAX_EVENTS = 50;
 export const BLOCK_ANALYTICS_MAX_PROPERTIES = 10;
 /** Most values one `enum` property may declare. */
 export const BLOCK_ANALYTICS_MAX_ENUM_VALUES = 50;
-/** Longest single `enum` value, in characters. */
+/** Longest single `enum` value, in code points. */
 export const BLOCK_ANALYTICS_ENUM_VALUE_MAX_LENGTH = 64;
-/** Longest event `description`, in characters (raw, not trimmed). */
+/** Longest event `description`, in code points (raw, not trimmed). */
 export const BLOCK_ANALYTICS_DESCRIPTION_MAX_LENGTH = 200;
 
 export const BLOCK_ANALYTICS_PROPERTY_TYPES = ['enum', 'number', 'boolean'] as const;
@@ -52,10 +51,10 @@ export type DeclaredEvent = {
  * Event name → declaration.
  *
  * 🔴 A `Map`, NOT A PLAIN OBJECT. Names are author-chosen and only have to match
- * `BLOCK_ANALYTICS_NAME_RE`, which admits `constructor`, `valueof` and friends.
- * On a plain object, a lookup of an UNDECLARED name such as `constructor` returns
- * `Object.prototype.constructor` — truthy — so a declared-event check written as
- * `events[name]` would accept it. A `Map` only answers for keys that were set.
+ * `BLOCK_ANALYTICS_NAME_RE`, which admits `constructor`. On a plain object, a
+ * lookup of an UNDECLARED `constructor` returns `Object.prototype.constructor` —
+ * truthy — so a declared-event check written as `events[name]` would accept it.
+ * A `Map` only answers for keys that were set.
  */
 export type DeclaredEvents = ReadonlyMap<string, DeclaredEvent>;
 
@@ -69,6 +68,17 @@ const ANALYTICS_KEYS = new Set(['events']);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * True when `value` has more than `max` code points. `String#length` counts UTF-16
+ * units, which is at least the code-point count and at most twice it, so only the
+ * band in between needs the (allocating) exact count.
+ */
+function exceedsCodePoints(value: string, max: number): boolean {
+  if (value.length <= max) return false;
+  if (value.length > max * 2) return true;
+  return [...value].length > max;
 }
 
 /** A name as it appears in an error: quoted, and bounded so a huge key cannot bloat the message. */
@@ -121,7 +131,7 @@ function parseProperty(at: string, raw: unknown, errors: string[]): DeclaredEven
     if (
       typeof value !== 'string' ||
       value.length === 0 ||
-      value.length > BLOCK_ANALYTICS_ENUM_VALUE_MAX_LENGTH
+      exceedsCodePoints(value, BLOCK_ANALYTICS_ENUM_VALUE_MAX_LENGTH)
     ) {
       errors.push(
         `${at}.values[${index}] must be a non-empty string of at most ${BLOCK_ANALYTICS_ENUM_VALUE_MAX_LENGTH} characters`
@@ -155,7 +165,8 @@ function parseEvent(at: string, raw: unknown, errors: string[]): DeclaredEvent |
   const { description } = raw;
   if (
     description !== undefined &&
-    (typeof description !== 'string' || description.length > BLOCK_ANALYTICS_DESCRIPTION_MAX_LENGTH)
+    (typeof description !== 'string' ||
+      exceedsCodePoints(description, BLOCK_ANALYTICS_DESCRIPTION_MAX_LENGTH))
   ) {
     errors.push(
       `${at}.description must be a string of at most ${BLOCK_ANALYTICS_DESCRIPTION_MAX_LENGTH} characters`
@@ -245,8 +256,7 @@ function parse(manifest: unknown): ParsedManifestAnalytics {
  * `errors`; a consumer that needs the declaration reads `events`.
  *
  * - **Total.** Never throws, whatever it is handed. A manifest with no
- *   `analytics` key is valid and declares nothing — every app that exists today
- *   is in that state.
+ *   `analytics` key is valid and declares nothing.
  * - **Strips, never repairs.** An event whose declaration has ANY error is left
  *   out of `events` entirely (with every error it produced reported), rather than
  *   kept with its bad parts removed: a half-declared event is not what a reviewer
@@ -255,14 +265,18 @@ function parse(manifest: unknown): ParsedManifestAnalytics {
  * - **Normalised.** `events` holds only the keys this contract defines, enum
  *   values in declaration order, and `Map`s rather than plain objects (see
  *   `DeclaredEvents`).
- * - **Cheap.** One pass over at most 50 × 10 × 50 entries, no I/O.
+ * - **No I/O.** One pass over the declaration; a later consumer can call it
+ *   from a cache.
+ *
+ * ⚠️ `events` can be non-empty while `errors` is non-empty (the valid events of a
+ * partly invalid declaration). A consumer that must honour only a declaration a
+ * reviewer could have approved should treat any error as "declares nothing".
  */
 export function parseManifestAnalytics(manifest: unknown): ParsedManifestAnalytics {
   try {
     return parse(manifest);
   } catch {
-    // Only reachable through exotic input (a throwing getter or a Proxy); a
-    // manifest parsed from JSON cannot get here. Totality is the contract.
+    // Reachable only via a throwing getter or Proxy; JSON input cannot get here.
     return { events: new Map(), errors: ['analytics could not be read'] };
   }
 }

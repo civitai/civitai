@@ -187,6 +187,12 @@ const CASES: Array<[string, unknown, boolean]> = [
   ['64-char enum value', withProp({ type: 'enum', values: ['c'.repeat(64)] }), true],
   ['200-char description', { events: { tapped: { description: 'd'.repeat(200) } } }, true],
   ['empty description', { events: { tapped: { description: '' } } }, true],
+  // Astral characters are 1 code point but 2 UTF-16 units. JSON Schema `maxLength`
+  // counts code points, so these are where a `.length`-based check would disagree.
+  ['64 astral-char enum value', withProp({ type: 'enum', values: ['😀'.repeat(64)] }), true],
+  ['200 astral-char description', { events: { tapped: { description: '😀'.repeat(200) } } }, true],
+  ['65 astral-char enum value', withProp({ type: 'enum', values: ['😀'.repeat(65)] }), false],
+  ['201 astral-char description', { events: { tapped: { description: '😀'.repeat(201) } } }, false],
   // reject — container shapes
   ['analytics null', null, false],
   ['analytics array', [], false],

@@ -3,10 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { parseManifestAnalytics } from '../block-analytics.constants';
 
 /**
- * `parseManifestAnalytics` — the custom-events declaration parser. A later
- * consumer reads `events` on a hot path, so beyond the rules themselves this pins
- * that the parser is TOTAL (never throws, whatever it is handed) and that it
- * STRIPS an invalid declaration rather than keeping a repaired one.
+ * `parseManifestAnalytics` — the custom-events declaration parser. Pins that it
+ * is TOTAL (never throws) and STRIPS an invalid event rather than repairing it.
+ * The validator suite pins the error messages; this one pins `events`.
  *
  * Fixture counts (3 enum values, 2 events, …) are chosen to differ from every
  * bound the module exports, so a mutant that returns a bound cannot pass.
@@ -138,7 +137,31 @@ describe('parseManifestAnalytics', () => {
         },
       });
       expect([...parsed.events.keys()]).toEqual(['saved']);
-      expect(parsed.errors).toHaveLength(4);
+      expect(parsed.errors).toEqual([
+        'analytics.events key "BadName" must be lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _',
+        'analytics.events.searched.properties.query.type must be one of enum, number, boolean (free-text strings are not allowed — declare an enum)',
+        'analytics.events.shared.properties.target.values[1] duplicates an earlier value ("x")',
+        'analytics.events.opened.label is not allowed (an event takes only description and properties)',
+      ]);
+    });
+
+    // Each branch that marks an event invalid must also keep it out of `events`.
+    // The validator suite cannot see this: it reads only `errors`.
+    it.each([
+      [
+        'an extra key on a number property',
+        { properties: { n: { type: 'number', values: ['1'] } } },
+      ],
+      ['an over-long description', { description: 'd'.repeat(201) }],
+      ['an invalid property name', { properties: { 'Bad-Name': { type: 'number' } } }],
+      [
+        'an over-long enum value',
+        { properties: { t: { type: 'enum', values: ['q'.repeat(65)] } } },
+      ],
+    ])('drops an event with %s', (_label, declaration) => {
+      const parsed = parseManifestAnalytics({ analytics: { events: { tapped: declaration } } });
+      expect(parsed.errors).toHaveLength(1);
+      expect(parsed.events.has('tapped')).toBe(false);
     });
 
     it('drops the whole event, not just the bad property, when one property is invalid', () => {
@@ -169,13 +192,39 @@ describe('parseManifestAnalytics', () => {
     });
   });
 
-  it('answers only for declared names, including ones that shadow Object.prototype', () => {
-    const { events } = parseManifestAnalytics({
-      analytics: { events: { constructor: { properties: { valueof: { type: 'number' } } } } },
+  it('answers for `constructor` only when it is declared', () => {
+    // `constructor` is the one Object.prototype member the name pattern admits.
+    const declared = parseManifestAnalytics({
+      analytics: { events: { constructor: { properties: { constructor: { type: 'number' } } } } },
+    }).events;
+    expect(declared.get('constructor')?.properties.get('constructor')).toEqual({ type: 'number' });
+
+    const undeclared = parseManifestAnalytics({
+      analytics: { events: { tapped: { properties: { count: { type: 'number' } } } } },
+    }).events;
+    expect(undeclared.has('constructor')).toBe(false);
+    expect(undeclared.get('tapped')?.properties.has('constructor')).toBe(false);
+  });
+
+  it('counts lengths in code points, as the published schema does', () => {
+    // '😀' is one code point and two UTF-16 units.
+    const ok = parseManifestAnalytics({
+      analytics: {
+        events: {
+          tapped: {
+            description: '😀'.repeat(200),
+            properties: { mood: { type: 'enum', values: ['😀'.repeat(64)] } },
+          },
+        },
+      },
     });
-    expect(events.get('constructor')?.properties.get('valueof')).toEqual({ type: 'number' });
-    expect(events.has('hasownproperty')).toBe(false);
-    expect(events.get('constructor')?.properties.has('tostring')).toBe(false);
+    expect(ok.errors).toEqual([]);
+    expect(ok.events.has('tapped')).toBe(true);
+
+    const over = parseManifestAnalytics({
+      analytics: { events: { tapped: { description: '😀'.repeat(201) } } },
+    });
+    expect(over.events.has('tapped')).toBe(false);
   });
 
   it('bounds an attacker-sized key in the error message', () => {
