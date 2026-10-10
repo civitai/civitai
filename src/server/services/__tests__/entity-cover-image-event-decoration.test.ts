@@ -23,7 +23,7 @@ vi.mock('~/server/services/cosmetic.service', () => ({
   getEventDecorationsForEntity: decorations,
 }));
 
-import { getEntityCoverImage } from '../image.service';
+import { getEntityCoverImage } from '../image-entity.service';
 
 const row = (id: number, entityType: string, entityId: number) => ({
   id,

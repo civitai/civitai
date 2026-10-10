@@ -69,11 +69,11 @@ type Decision =
 /** Every insert site, keyed by enclosing function, with its decision and its site count. */
 const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> = {
   'src/server/services/image.service.ts#createImage': { decision: 'createImage-strip', sites: 1 },
-  'src/server/services/image.service.ts#createEntityImages': {
+  'src/server/services/image-entity.service.ts#createEntityImages': {
     decision: 'in-function-strip',
     sites: 1,
   },
-  'src/server/services/image.service.ts#updateEntityImages': {
+  'src/server/services/image-entity.service.ts#updateEntityImages': {
     decision: 'in-function-strip',
     sites: 1,
   },
@@ -566,7 +566,7 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
     decision: 'stored-merge-server-keys',
     sites: 1,
   },
-  'src/server/services/image.service.ts#setVideoThumbnail': {
+  'src/server/services/image-detail.service.ts#setVideoThumbnail': {
     decision: 'stored-merge-server-keys',
     sites: 1,
   },

@@ -8,7 +8,7 @@ import {
   throwNotFoundError,
 } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
-import { getImagesByEntity } from '~/server/services/image.service';
+import { getImagesByEntity } from '~/server/services/image-entity.service';
 import {
   awardBountyEntry,
   deleteBountyEntry,

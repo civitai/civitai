@@ -39,7 +39,7 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
-import { getImage } from '../image.service';
+import { getImage } from '../image-detail.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const VIEWER = 71806;

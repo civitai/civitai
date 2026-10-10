@@ -8,7 +8,7 @@ import type {
   CreateReportInput,
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
-import { getImageById } from '~/server/services/image.service';
+import { getImageById } from '~/server/services/image-detail.service';
 import {
   createEntityAppeal,
   createReport,

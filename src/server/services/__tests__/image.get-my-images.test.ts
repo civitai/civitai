@@ -3,7 +3,7 @@ import { dbMock } from '~/__tests__/mocks';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const findMany = dbMock.dbRead.image.findMany;
-const { getMyImages } = await import('~/server/services/image.service');
+const { getMyImages } = await import('~/server/services/image-detail.service');
 
 const whereOf = () => findMany.mock.calls[0][0].where;
 

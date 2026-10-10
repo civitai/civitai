@@ -6,11 +6,10 @@ import type {
 } from '~/server/schema/bounty-entry.schema';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import {
-  createEntityImages,
   invalidateManyImageExistence,
-  updateEntityImages,
   enqueueImageIngestion,
 } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages } from '~/server/services/image-entity.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';

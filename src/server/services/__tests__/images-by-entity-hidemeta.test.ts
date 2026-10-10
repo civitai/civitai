@@ -43,7 +43,7 @@ vi.mock('~/server/services/cosmetic.service', () => ({
   getCosmeticsForEntity: vi.fn().mockResolvedValue({}),
 }));
 
-import { getImagesByEntity } from '../image.service';
+import { getImagesByEntity } from '../image-entity.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const ENTITY_ID = 1;

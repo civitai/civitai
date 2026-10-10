@@ -41,7 +41,9 @@ vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async
 vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: vi.fn(async () => []),
 }));
-vi.mock('~/server/services/image.service', () => ({ getImageById: vi.fn(async () => null) }));
+vi.mock('~/server/services/image-detail.service', () => ({
+  getImageById: vi.fn(async () => null),
+}));
 
 // Hoisted so the 🔴-2 tests can assert these NON-idempotent side effects do not fire
 // for a transaction the ledger deduped.

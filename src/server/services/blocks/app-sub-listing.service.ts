@@ -270,7 +270,7 @@ export async function readSharedItemForSubListing(
  * per-viewer maturity (`hydrateSubListingCards` / `projectSubListingCard`).
  */
 async function publicImageOwner(imageId: number): Promise<number | null> {
-  const { getImage } = await import('~/server/services/image.service');
+  const { getImage } = await import('~/server/services/image-detail.service');
   try {
     const image = await getImage({ id: imageId, isModerator: false });
     return image.user.id;

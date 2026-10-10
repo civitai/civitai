@@ -35,9 +35,11 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
+  enqueueImageIngestion: vi.fn(),
+}));
+vi.mock('~/server/services/image-entity.service', () => ({
   createEntityImages: vi.fn(async () => []),
   updateEntityImages: vi.fn(async () => []),
-  enqueueImageIngestion: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -299,7 +301,10 @@ describe('upsertBounty — create path', () => {
         startsAt: new Date(Date.now() + 10 * day).toISOString(),
         expiresAt: new Date(Date.now() + 2 * day).toISOString(),
       })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Expiration date must come after the start date' });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Expiration date must come after the start date',
+    });
     expect(mockBuzzTransaction).not.toHaveBeenCalled();
   });
 

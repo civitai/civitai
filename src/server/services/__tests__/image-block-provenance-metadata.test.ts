@@ -7,11 +7,8 @@ vi.mock('~/server/utils/created-image-media-probe', () => ({
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { imageSchema } from '~/server/schema/image.schema';
 import { profilePictureSchema } from '~/server/schema/user.schema';
-import {
-  createEntityImages,
-  createImage,
-  updateEntityImages,
-} from '~/server/services/image.service';
+import { createImage } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages } from '~/server/services/image-entity.service';
 import {
   BLOCK_PROVENANCE_METADATA_KEYS,
   isBlockProvenanceMetadataKey,

@@ -26,15 +26,14 @@ import {
   bulkRemoveBlockedImages,
   deleteImageById,
   getAllImagesIndex,
-  getPostDetailByImageId,
   invalidateManyImageExistence,
   queueImageSearchIndexUpdate,
-  setVideoThumbnail,
   updateImageAcceptableMinor,
   raiseOwnImageNsfwLevel,
   updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import { getPostDetailByImageId, setVideoThumbnail } from '~/server/services/image-detail.service';
 import {
   clearReviewFlagsOnBlock,
   keepPendingAppealFlags,
@@ -77,15 +76,17 @@ import type {
 import { requiresImageDbPath } from './../schema/image.schema';
 import {
   getAllImages,
-  getEntityCoverImage,
-  getImage,
-  getImageContestCollectionDetails,
   getImageResources,
   getReportViolationDetailsForImages,
   getResourceIdsForImages,
+} from './../services/image.service';
+import { getEntityCoverImage } from './../services/image-entity.service';
+import {
+  getImage,
+  getImageContestCollectionDetails,
   filterPinnedImagesToVersion,
   getTagNamesForImages,
-} from './../services/image.service';
+} from './../services/image-detail.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { buildPostImagesWire } from '~/server/utils/images-as-posts-wire';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';

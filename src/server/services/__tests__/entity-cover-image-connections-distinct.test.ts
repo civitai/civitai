@@ -52,7 +52,7 @@ vi.mock('~/server/services/cosmetic.service', () => ({
   getEventDecorationsForEntity: vi.fn().mockResolvedValue({}),
 }));
 
-import { getEntityCoverImage } from '../image.service';
+import { getEntityCoverImage } from '../image-entity.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const ENTITY = { entityId: 1, entityType: 'Bounty' as const };

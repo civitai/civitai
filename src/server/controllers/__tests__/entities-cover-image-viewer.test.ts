@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type * as ImageService from '~/server/services/image.service';
+import type * as ImageService from '~/server/services/image-entity.service';
 
 /**
  * The profile Showcase reads image.getEntitiesCoverImage. Before launch only a flagged viewer sees
@@ -10,7 +10,7 @@ import type * as ImageService from '~/server/services/image.service';
  */
 
 const { covers } = vi.hoisted(() => ({ covers: vi.fn(async () => []) }));
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
+vi.mock('~/server/services/image-entity.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getEntityCoverImage: covers,
 }));

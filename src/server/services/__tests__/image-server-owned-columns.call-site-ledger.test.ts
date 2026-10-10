@@ -125,12 +125,12 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
       'if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });',
     ],
   },
-  'src/server/services/image.service.ts#createEntityImages': {
+  'src/server/services/image-entity.service.ts#createEntityImages': {
     sites: 1,
     spreads: ['pickClientImageColumns(image)'],
     serverColumns: [],
   },
-  'src/server/services/image.service.ts#updateEntityImages': {
+  'src/server/services/image-entity.service.ts#updateEntityImages': {
     sites: 1,
     spreads: ['pickClientImageColumns(image)'],
     serverColumns: [],
@@ -215,7 +215,7 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: ['pickClientImageColumns(image)'],
     serverColumns: [],
   },
-  'src/server/services/image.service.ts#setVideoThumbnail': {
+  'src/server/services/image-detail.service.ts#setVideoThumbnail': {
     calls: 1,
     spreads: ['pickClientImageColumns(customThumbnail)'],
     serverColumns: [],
@@ -596,12 +596,12 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     ],
     decision: 'not-a-write',
   },
-  'src/server/services/image.service.ts#createEntityImages': {
+  'src/server/services/image-entity.service.ts#createEntityImages': {
     writes: ['imageId: image.id'],
     decision: 'server-derived',
   },
   // The linked ids pass the `owned` count in INSERT_SITE_LEDGER's guard.
-  'src/server/services/image.service.ts#updateEntityImages': {
+  'src/server/services/image-entity.service.ts#updateEntityImages': {
     writes: ['imageId: id'],
     decision: 'owner-checked',
     guards: {

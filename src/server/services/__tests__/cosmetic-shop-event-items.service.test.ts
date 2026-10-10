@@ -57,9 +57,11 @@ vi.mock('~/server/services/buzz.service', () => ({
   getMultiAccountTransactionsByPrefix: mocks.listMultiTx,
 }));
 vi.mock('~/server/services/image.service', () => ({
-  createEntityImages: vi.fn(),
   getAllImages: vi.fn(),
   enqueueImageIngestion: vi.fn(),
+}));
+vi.mock('~/server/services/image-entity.service', () => ({
+  createEntityImages: vi.fn(),
 }));
 vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: mocks.getBlockedPairIds,

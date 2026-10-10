@@ -40,7 +40,7 @@ vi.mock('~/env/server', () => ({
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 
-import { getImageContestCollectionDetails } from '../image.service';
+import { getImageContestCollectionDetails } from '../image-detail.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { CollectionItemRejectionReason } from '~/shared/utils/prisma/enums';
 

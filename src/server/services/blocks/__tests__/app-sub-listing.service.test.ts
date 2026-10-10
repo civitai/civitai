@@ -30,7 +30,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
   checkSubListingWriteRateLimit: mockRateLimit,
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQuery }) }));
-vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
+vi.mock('~/server/services/image-detail.service', () => ({ getImage: mockGetImage }));
 
 const {
   cleanSubListingText,

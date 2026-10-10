@@ -151,11 +151,8 @@ import {
   defaultToggleableFeatures,
   getFliptGatedEligibility,
 } from '../services/feature-flags.service';
-import {
-  getEntityCoverImage,
-  ingestImageById,
-  queueReplacedImageDeletion,
-} from '../services/image.service';
+import { ingestImageById, queueReplacedImageDeletion } from '../services/image.service';
+import { getEntityCoverImage } from '../services/image-entity.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';

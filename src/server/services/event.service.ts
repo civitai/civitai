@@ -2,7 +2,7 @@ import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { pack } from 'msgpackr';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getEntityCoverImage } from '~/server/services/image.service';
+import { getEntityCoverImage } from '~/server/services/image-entity.service';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import {
   getEventDecorationDefinition,

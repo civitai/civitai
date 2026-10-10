@@ -10,7 +10,7 @@ import {
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
+import { chunk, isEqual, uniq, uniqBy } from 'lodash-es';
 import {
   filterViewableModelVersions,
   modelVersionVisibilitySelect,
@@ -22,7 +22,7 @@ import {
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
-import { isDev, isProd } from '~/env/other';
+import { isDev } from '~/env/other';
 import { env } from '~/env/server';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -45,7 +45,6 @@ import { parseFeedCursor } from '~/server/common/feed-cursor';
 import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
-  constants,
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
@@ -59,11 +58,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import {
-  getDbWithoutLag,
-  getDbWithoutLagBatch,
-  preventReplicationLag,
-} from '~/server/db/db-lag-helpers';
+import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import {
@@ -84,12 +79,10 @@ import {
   failfastReasonForStatus,
   failfastReasonForTransientError,
   fetchDocumentsAbortable,
-  getMetricsSearchClient,
   isFailfastStatus,
   isTransientMeiliError,
   meiliFetchFailfastTotal,
   metricsSearchClient,
-  withMeili,
   wrapMeilisearchClientWithLimiter,
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
@@ -101,7 +94,7 @@ import {
   registerCounterWithLabels,
 } from '~/server/prom/client';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
-import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
+import { imageOnSiteSql } from '~/server/utils/image-onsite';
 import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import { deriveUnmatchedResources } from '~/server/utils/unmatched-resources';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
@@ -113,7 +106,6 @@ import {
   imageMetadataCache,
   imageResourcesCache,
   imageTagsCache,
-  tagCache,
   tagIdsForImagesCache,
   refreshThumbnailCache,
   thumbnailCache,
@@ -129,34 +121,21 @@ import {
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
-import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type {
-  AddOrRemoveImageTechniquesOutput,
-  AddOrRemoveImageToolsOutput,
-  GetEntitiesCoverImage,
-  GetImageInput,
   GetInfiniteImagesOutput,
-  GetMyImagesInput,
-  ImageEntityType,
   ImageMetaProps,
   ImageModerationBlockSchema,
-  ImageModerationSchema,
   ImageModerationUnblockSchema,
-  ImageReferenceInput,
   ImageSchema,
   IngestImageInput,
   RemoveImageResourceSchema,
   ReportCsamImagesInput,
-  SetVideoThumbnailInput,
   ToggleImageFlagInput,
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
-  UpdateImageTechniqueOutput,
-  UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
-import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
+import { ingestImageSchema } from '~/server/schema/image.schema';
 import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
@@ -171,17 +150,12 @@ import type {
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import {
-  imageSelect,
-  publishedImageWhere,
-  publishedOrEntryDraftImageWhere,
-} from '~/server/selectors/image.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
-import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { imageTagCompositeSelect } from '~/server/selectors/tag.selector';
 import {
   getCollectionRandomSeed,
   getUserCollectionPermissionsById,
-  getUserCollectionPermissionsByIds,
 } from '~/server/services/collection.service';
 import {
   enqueueCollectionRebuild,
@@ -232,7 +206,6 @@ import {
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -242,7 +215,6 @@ import {
 import type {
   CollectionItemRejectionReason,
   DomainColor,
-  ModelType,
   ReportReason,
   ReviewReactions,
   TagType,
@@ -250,9 +222,7 @@ import type {
 import {
   Availability,
   BlockImageReason,
-  CosmeticEntity,
   CollectionItemStatus,
-  CollectionMode,
   AppealStatus,
   EntityType,
   ImageIngestionStatus,
@@ -281,7 +251,7 @@ import { isDefined, isNumber } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
-import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
+import { queryWithTimeout } from '~/server/db/db-helpers';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
@@ -304,15 +274,11 @@ import {
   isAllowedImageScanUrl,
 } from '~/server/utils/image-scan-url';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
-import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
-import {
-  sanitizeProvenance,
-  storedSourceImageIds,
-} from '~/server/services/orchestrator/remix-provenance';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
-const model3dService = () => import('~/server/services/model3d.service');
+export const model3dService = () => import('~/server/services/model3d.service');
 
 const {
   cacheHitRequestsTotal,
@@ -671,7 +637,7 @@ export const invalidateManyImageExistence = async (ids: number[]) => {
   );
 };
 
-async function getImageTagsForImages(
+export async function getImageTagsForImages(
   imageIds: number[]
 ): Promise<(VotableTagModel & { imageId: number })[]> {
   const tagsByImage = await imageTagsCache.fetch(imageIds);
@@ -687,33 +653,6 @@ async function getImageTagsForImages(
         name: tagName,
       })) ?? []
   );
-}
-
-/**
- * Associates already-fetched tags to their images in O(N + M).
- *
- * `getImageTagsForImages` returns the tags for EVERY image in the batch, so a
- * per-image `tags.filter(x => x.imageId === i.id)` rescans the whole array once
- * per image — O(N x M), and M grows with N. CPU profiles of the production API
- * showed that construct dominating multi-second event-loop stalls.
- *
- * 🔴 The empty case must stay `[]`, NOT `undefined`. `.filter()` returned `[]`
- * for an image with no tags and `Map.get()` returns `undefined`; those are
- * different values in the API response, and images with no tags are common.
- * That is what the `?? []` is for — do not "simplify" it away.
- */
-export function attachTagsToImages<TImage extends { id: number }, TTag extends { imageId: number }>(
-  images: TImage[],
-  tags: TTag[] | undefined
-): (TImage & { tags: TTag[] })[] {
-  const tagsByImageId = tags?.reduce((acc, tag) => {
-    const arr = acc.get(tag.imageId);
-    if (arr) arr.push(tag);
-    else acc.set(tag.imageId, [tag]);
-    return acc;
-  }, new Map<number, TTag[]>());
-
-  return images.map((i) => ({ ...i, tags: tagsByImageId?.get(i.id) ?? [] }));
 }
 
 export const deleteImageById = async ({
@@ -1235,36 +1174,6 @@ export const updateImageReportStatusByReason = ({
       AND r.reason = ${reason}::"ReportReason"
     RETURNING id, "userId"
   `;
-};
-
-export const getImageDetail = async ({ id }: GetByIdInput) => {
-  const [resourcesData, tagsData] = await Promise.all([
-    imageResourcesCache.fetch([id]),
-    imageTagsCache.fetch([id]),
-  ]);
-
-  const resources = (resourcesData[id]?.resources ?? []).map((r) => ({
-    id: r.modelVersionId, // Use modelVersionId as identifier (ImageResourceNew has no id column)
-    modelVersion: { id: r.modelVersionId, name: r.versionName },
-    detected: r.detected,
-  }));
-
-  const tags = (tagsData[id]?.tags ?? []).map((t) => ({
-    automated: t.automated,
-    tag: {
-      id: t.tagId,
-      name: t.tagName,
-      isCategory: false, // ImageTag doesn't have isCategory, default to false
-    },
-  }));
-
-  return { resources, tags };
-};
-
-export const getImageById = async ({ id }: GetByIdInput) => {
-  return await dbRead.image.findUnique({
-    where: { id },
-  });
 };
 
 export const ingestImageById = async ({ id }: GetByIdInput) => {
@@ -1986,7 +1895,7 @@ const getAllImagesUncaptured = async (
     // here; recorded so the next person checking parity does not read a
     // three-backend claim and stop looking.
     //
-    // A fourth site is out of step too: `getImage` (~:6452) still carries the old
+    // A fourth site is out of step too: `getImage` (image-detail.service.ts) still carries the old
     // permissive `OR p."userId" = <viewer>` with no publish predicate.
     //
     // The carve-out used to be a bare `p."userId" = <viewer>` with no publish
@@ -5573,15 +5482,6 @@ export const getImageMetricsObject = async (
   }
 };
 
-export async function getTagNamesForImages(imageIds: number[]) {
-  const tagIds = await tagIdsForImagesCache.fetch(imageIds);
-  const tags = await tagCache.fetch(Object.values(tagIds).flatMap((x) => x.tags));
-  const imageTags = Object.fromEntries(
-    Object.entries(tagIds).map(([k, v]) => [k, v.tags.map((t) => tags[t]?.name).filter(isDefined)])
-  ) as Record<number, string[]>;
-  return imageTags;
-}
-
 export async function getResourceIdsForImages(imageIds: number[]) {
   // Route to writer while DataPacket replica is missing ImageResourceNew backfill.
   const useWrite = await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE);
@@ -5599,191 +5499,13 @@ export async function getResourceIdsForImages(imageIds: number[]) {
   return imageResources;
 }
 
-/**
- * Narrow a pinned post's media down to what the pinned model version made.
- *
- * Media with no resource rows at all is kept: it can't be attributed either way, and
- * dropping it is what made pinned posts with videos vanish before 7518ca4f54.
- */
-export async function filterPinnedImagesToVersion<T extends { id: number }>(
-  images: T[],
-  modelVersionId: number
-) {
-  if (!images.length) return images;
-
-  const resources = await getResourceIdsForImages(images.map((x) => x.id));
-  return images.filter((image) => {
-    const imageResources = resources[image.id];
-    return !imageResources?.length || imageResources.includes(modelVersionId);
-  });
-}
-
-type GetImageRaw = GetAllImagesRaw & {
+export type GetImageRaw = GetAllImagesRaw & {
   reactions?: ReviewReactions[];
   postId?: number | null;
   // User fields from JOIN (not in GetAllImagesRaw since main query uses cache)
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
-};
-export const getImage = async ({
-  id,
-  userId,
-  isModerator,
-  withoutPost,
-}: GetImageInput & { userId?: number; isModerator?: boolean }) => {
-  const AND = [Prisma.sql`i.id = ${id}`];
-  if (!isModerator) {
-    AND.push(
-      Prisma.sql`(${Prisma.join(
-        [
-          Prisma.sql`i."needsReview" IS NULL AND ${imageReviewedSql()}`,
-          withoutPost
-            ? null
-            : Prisma.sql`
-              p."collectionId" IS NOT NULL AND EXISTS (
-                SELECT 1 FROM "CollectionContributor" cc
-                WHERE cc."collectionId" = p."collectionId"
-                  AND cc."userId" = ${userId}
-                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-              )`,
-          Prisma.sql`i."userId" = ${userId}`,
-        ].filter(isDefined),
-        ' OR '
-      )})`
-    );
-
-    if (!withoutPost) {
-      // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
-      // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
-      // `Image` separates that from a never-posted upload, so only the owner may fetch a postless one.
-      AND.push(
-        Prisma.sql`(
-          p."publishedAt" < now()
-          OR p."userId" = ${userId}
-          OR (i."postId" IS NULL AND i."userId" = ${userId})
-        )`
-      );
-      AND.push(
-        Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`
-      );
-    }
-
-    // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
-    // mod review) — never serve it by direct id to anyone but the owner. Feeds already
-    // drop it via the browsingLevel mask; single-image fetch had no equivalent gate.
-    AND.push(Prisma.sql`(i."nsfwLevel" != ${NsfwLevel.Blocked} OR i."userId" = ${userId})`);
-  }
-
-  const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
-    SELECT
-      i.id,
-      i.name,
-      i.url,
-      i.height,
-      i.width,
-      i.index,
-      i.hash,
-      -- i.meta,
-      i."hideMeta",
-      i."createdAt",
-      i."mimeType",
-      i."scannedAt",
-      i."needsReview",
-      i."postId",
-      i.ingestion,
-      i."blockedFor",
-      i.type,
-      i.metadata,
-      i."nsfwLevel",
-      i.minor,
-      i.poi,
-      i."acceptableMinor",
-      (
-        CASE
-          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
-          ELSE TRUE
-        END
-      ) AS "hasMeta",
-      (
-        CASE
-          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-            AND i.meta->>'prompt' IS NOT NULL
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) AS "hasPositivePrompt",
-      ${imageOnSiteSql()} as "onSite",
-      i."meta"->'extra'->'remixOfId' as "remixOfId",
-      u.id as "userId",
-      u.username,
-      u.image as "userImage",
-      u."deletedAt",
-      u."profilePictureId",
-      ${
-        !withoutPost
-          ? Prisma.sql`
-            COALESCE(p."availability", 'Public') "availability",
-            GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
-          `
-          : Prisma.sql`'Public' "availability",`
-      }
-      (
-        SELECT jsonb_agg(reaction)
-        FROM "ImageReaction"
-        WHERE "imageId" = i.id
-        AND "userId" = ${userId}
-      ) reactions
-    FROM "Image" i
-    JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(withoutPost ? '' : `LEFT JOIN "Post" p ON p.id = i."postId"`)}
-    WHERE ${Prisma.join(AND, ' AND ')}
-  `;
-  if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
-
-  const [{ userId: creatorId, username, userImage, deletedAt, reactions, ...firstRawImage }] =
-    rawImages;
-
-  const userCosmetics = await getCosmeticsForUsers([creatorId]);
-  const profilePictures = await getProfilePicturesForUsers([creatorId]);
-
-  const imageMetrics = await getImageMetricsObject([firstRawImage]);
-  const match = imageMetrics[firstRawImage.id];
-  const imageCosmetics = await getCosmeticsForEntity({
-    ids: [firstRawImage.id],
-    entity: 'Image',
-  });
-
-  // Durable replacement for the ambient `model3d.getByPostId` chip call: carry
-  // the visibility-checked linked Model3D id on this payload (the image
-  // viewers already fetch it) so the "Posted to 3D Model" chip renders from a
-  // prop instead of firing a per-image tRPC query for every image (~36/s,
-  // mostly null). Resolves the SAME visibility predicate the chip lookup used,
-  // so a hidden draft/deleted Model3D yields null here too. Null when the post
-  // isn't linked, isn't visible, or there's no postId at all.
-  const model3dId = firstRawImage.postId
-    ? await (
-        await model3dService()
-      ).getVisibleModel3DIdForPost({ postId: firstRawImage.postId, userId, isModerator })
-    : null;
-
-  const image = {
-    ...firstRawImage,
-    model3dId,
-    cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
-    user: {
-      id: creatorId,
-      username,
-      image: userImage,
-      deletedAt,
-      cosmetics: userCosmetics?.[creatorId] ?? [],
-      profilePicture: profilePictures?.[creatorId] ?? null,
-    },
-    stats: toImageV2Stats(match),
-    reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
-  };
-
-  return image;
 };
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
@@ -6365,7 +6087,7 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
   return dictionary;
 };
 
-type GetImageConnectionRaw = {
+export type GetImageConnectionRaw = {
   id: number;
   name: string;
   url: string;
@@ -6388,111 +6110,6 @@ type GetImageConnectionRaw = {
   hasPositivePrompt: boolean;
   poi?: boolean;
   minor?: boolean;
-};
-
-export const getImagesByEntity = async ({
-  id,
-  ids,
-  type,
-  imagesPerId = 4,
-  include,
-  userId,
-  isModerator,
-}: {
-  id?: number;
-  ids?: number[];
-  type: ImageEntityType;
-  imagesPerId?: number;
-  include?: ['tags'];
-  userId?: number;
-  isModerator?: boolean;
-}) => {
-  if (!id && (!ids || ids.length === 0)) {
-    return [];
-  }
-
-  const AND: Prisma.Sql[] = !isModerator
-    ? [
-        Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
-          userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
-        })`,
-      ]
-    : [];
-
-  if (!isModerator) {
-    const needsReviewOr = [
-      Prisma.sql`i."needsReview" IS NULL`,
-      userId ? Prisma.sql`i."userId" = ${userId}` : null,
-    ].filter(isDefined);
-
-    if (needsReviewOr.length > 0) {
-      AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-    }
-  }
-
-  const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
-    WITH targets AS (
-      SELECT
-        id,
-        "entityId"
-      FROM (
-        SELECT
-          i.id,
-          ic."entityId",
-          row_number() OVER (PARTITION BY ic."entityId" ORDER BY i.index) row_num
-        FROM "Image" i
-        JOIN "ImageConnection" ic ON ic."imageId" = i.id
-            AND ic."entityType" = ${type}
-            AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
-        ${AND.length ? Prisma.sql`WHERE ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
-      ) ranked
-      WHERE ranked.row_num <= ${imagesPerId}
-    )
-    SELECT
-      i.id,
-      i.name,
-      i.url,
-      i."nsfwLevel",
-      i.width,
-      i.height,
-      i.hash,
-      i."hideMeta",
-      i."createdAt",
-      i."mimeType",
-      i.type,
-      i.metadata,
-      i.ingestion,
-      i."scannedAt",
-      i."needsReview",
-      i."userId",
-      i."index",
-      i.poi,
-      i.minor,
-      (
-        CASE
-          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
-          ELSE TRUE
-        END
-      ) AS "hasMeta",
-      (
-        CASE
-          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-            AND i.meta->>'prompt' IS NOT NULL
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) AS "hasPositivePrompt",
-      t."entityId"
-    FROM targets t
-    JOIN "Image" i ON i.id = t.id`;
-
-  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
-  if (include && include.includes('tags')) {
-    const imageIds = images.map((i) => i.id);
-    tagsVar = await getImageTagsForImages(imageIds);
-  }
-
-  return attachTagsToImages(images, tagsVar);
 };
 
 /** Refuses unless `postId` belongs to `userId`. */
@@ -6567,8 +6184,8 @@ export async function createImage({
    * paths reach the `Image` table without passing through here, so their rows appear in
    * neither the numerator nor the denominator of anything this emits:
    *   1. `article.service.ts` `linkArticleContentImages` (`tx.image.createManyAndReturn`)
-   *   2. `createEntityImages`, below in this file (`dbClient.image.createMany`)
-   *   3. `updateEntityImages`, below in this file (`dbClient.image.createMany`)
+   *   2. `image-entity.service.ts` `createEntityImages` (`dbClient.image.createMany`)
+   *   3. `image-entity.service.ts` `updateEntityImages` (`dbClient.image.createMany`)
    *   4. `blocks/app-listing-assets.service.ts` (`dbWrite.image.create`)
    *   5. `pages/api/admin/temp/migrate-article-images.ts` (a one-off admin backfill)
    *   6. `jobs/daily-challenge-processing.ts` `duplicateImage` — a raw
@@ -6802,74 +6419,7 @@ export async function fillVideoDimensions({ id, url }: { id: number; url: string
   return dimensions;
 }
 
-export const createEntityImages = async ({
-  tx,
-  entityId,
-  entityType,
-  images,
-  userId,
-}: {
-  tx?: Prisma.TransactionClient;
-  entityId?: number;
-  entityType?: string;
-  images: ImageReferenceInput[];
-  userId: number;
-}) => {
-  const dbClient = tx ?? dbWrite;
-
-  if (images.length === 0) {
-    return [];
-  }
-
-  await dbClient.image.createMany({
-    data: images.map((image) => ({
-      ...pickClientImageColumns(image),
-      // Same strip as `createImage`: nothing that reaches an Image row keeps a
-      // provenance claim it didn't prove. These rows have no post, so they can't
-      // reach a remix gallery today — but the invariant is "no unproven claim on
-      // any row", not "on the rows that currently matter".
-      meta:
-        (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
-          | Prisma.JsonObject
-          | undefined) ?? Prisma.JsonNull,
-      metadata: stripBlockProvenanceMetadata(image.metadata),
-      userId,
-      resources: undefined,
-    })),
-  });
-
-  const imageRecords = await dbClient.image.findMany({
-    select: { id: true, url: true, type: true, width: true, height: true },
-    where: {
-      url: { in: images.map((i) => i.url) },
-      ingestion: ImageIngestionStatus.Pending,
-      userId,
-    },
-  });
-
-  const shouldAddImageResources = !!entityType && ['Bounty', 'BountyEntry'].includes(entityType);
-  const batches = chunk(imageRecords, 50);
-  for (const batch of batches) {
-    if (shouldAddImageResources) {
-      const tasks = batch.map((image) => () => createImageResources({ imageId: image.id, tx }));
-      await limitConcurrency(tasks, 10);
-    }
-  }
-
-  if (entityType && entityId) {
-    await dbClient.imageConnection.createMany({
-      data: imageRecords.map((image) => ({
-        imageId: image.id,
-        entityId,
-        entityType,
-      })),
-    });
-  }
-
-  return imageRecords;
-};
-
-type GetEntityImageRaw = {
+export type GetEntityImageRaw = {
   id: number;
   name: string;
   url: string;
@@ -6894,408 +6444,6 @@ type GetEntityImageRaw = {
   poi?: boolean;
   minor?: boolean;
 };
-
-const isCosmeticEntity = (value: string): value is CosmeticEntity =>
-  (Object.values(CosmeticEntity) as string[]).includes(value);
-
-export const getEntityCoverImage = async ({
-  entities,
-  include,
-  eventDecorationViewer,
-}: GetEntitiesCoverImage & {
-  include?: ['tags'];
-  // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
-  // where the result is never cached for someone else.
-  eventDecorationViewer?: EventViewer;
-}) => {
-  if (entities.length === 0) {
-    return [];
-  }
-
-  // Returns 1 cover image for:
-  // Models, Images, Bounties, BountyEntries, Article and Post.
-  const imagesRaw = await dbRead.$queryRaw<GetEntityImageRaw[]>`
-    WITH entities AS (
-      SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
-        "entityId" INTEGER,
-        "entityType" VARCHAR
-      )
-    )
-    SELECT
-      i.id,
-      i.name,
-      i.url,
-      i."nsfwLevel",
-      i.width,
-      i.height,
-      i.hash,
-      i."hideMeta",
-      (
-        CASE
-          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
-          ELSE TRUE
-        END
-      ) AS "hasMeta",
-      (
-        CASE
-          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
-            AND i.meta->>'prompt' IS NOT NULL
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) AS "hasPositivePrompt",
-      i."createdAt",
-      i."mimeType",
-      i.type,
-      i.metadata,
-      i."scannedAt",
-      i."needsReview",
-      i."userId",
-      i."index",
-      i."postId",
-      t."entityId",
-      t."entityType",
-      i."poi",
-      i."minor"
-    FROM (
-      -- NOTE: Adding "order1/2/3" looks a bit hacky, but it avoids using partitions and makes it far more performant.
-      -- It might may look weird, but it has 0 practical effect other than better performance.
-       SELECT
-         *
-        FROM
-        (
-          -- MODEL
-          SELECT DISTINCT ON (e."entityId")
-            e."entityId",
-            e."entityType",
-            i.id as "imageId",
-            mv.index "order1",
-            p.id "order2",
-            i.index "order3"
-          FROM entities e
-          JOIN "Model" m ON e."entityId" = m.id
-          JOIN "ModelVersion" mv ON m.id = mv."modelId"
-          JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
-          JOIN "Image" i ON p.id = i."postId"
-          WHERE e."entityType" = 'Model'
-          AND m.status = 'Published'
-          AND i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
-          ORDER BY e."entityId", mv.index,  p.id, i.index
-        ) t
-
-        UNION
-
-        -- MODEL VERSION
-        SELECT * FROM (
-          SELECT DISTINCT ON (e."entityId")
-            e."entityId",
-            e."entityType",
-            i.id as "imageId",
-            mv.index "order1",
-            p.id "order2",
-            i.index "order3"
-          FROM entities e
-          JOIN "ModelVersion" mv ON e."entityId" = mv."id"
-          JOIN "Post" p ON mv.id = p."modelVersionId"
-          JOIN "Image" i ON p.id = i."postId"
-          WHERE e."entityType" = 'ModelVersion'
-          AND mv.status = 'Published'
-          AND i."ingestion" = 'Scanned'
-          AND i."needsReview" IS NULL
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
-          ORDER BY e."entityId", mv.index,  p.id, i.index
-        ) t
-
-        UNION
-        -- IMAGES
-        SELECT
-            e."entityId",
-            e."entityType",
-            e."entityId" AS "imageId",
-            0 "order1",
-            0 "order2",
-            0 "order3"
-        FROM entities e
-        WHERE e."entityType" = 'Image'
-
-        UNION
-        -- ARTICLES
-        SELECT * FROM (
-          SELECT DISTINCT ON (e."entityId")
-              e."entityId",
-              e."entityType",
-              i.id AS "imageId",
-              0 "order1",
-	          0 "order2",
-	          0 "order3"
-          FROM entities e
-          JOIN "Article" a ON a.id = e."entityId"
-          JOIN "Image" i ON a."coverId" = i.id
-          WHERE e."entityType" = 'Article'
-          AND a."publishedAt" IS NOT NULL
-              AND i."ingestion" = 'Scanned'
-              AND i."needsReview" IS NULL
-        ) t
-
-        UNION
-        -- POSTS
-        SELECT * FROM  (
-          SELECT DISTINCT ON(e."entityId")
-              e."entityId",
-              e."entityType",
-              i.id AS "imageId",
-              i."postId" "order1",
-	          i.index "order2",
-	          0 "order3"
-          FROM entities e
-          JOIN "Post" p ON p.id = e."entityId"
-          LEFT JOIN "ModelVersion" mv ON p."modelVersionId" = mv.id
-          JOIN "Image" i ON i."postId" = p.id
-          WHERE e."entityType" = 'Post'
-            AND p."publishedAt" IS NOT NULL
-            AND i."ingestion" = 'Scanned'
-            AND i."needsReview" IS NULL
-            AND (
-              (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-              OR NOT i."modelRestricted"
-            )
-          ORDER BY e."entityId", i."postId", i.index
-        ) t
-
-        UNION
-        -- CONNECTIONS
-        SELECT * FROM (
-          -- There is one "ImageConnection" row per linked image, so this branch --
-          -- alone among the six -- can emit many rows per entity (fan-out p50 1,
-          -- p99 11, max 525). DISTINCT ON collapses it to the single row the JS
-          -- join below would have consumed anyway, which is what keeps the size of
-          -- this result set proportional to the number of entities requested.
-          --
-          -- The eligibility predicate belongs HERE rather than in the outer WHERE.
-          -- DISTINCT ON picks its row before any later filter runs, so collapsing
-          -- first and filtering afterwards could settle on an unscanned image and
-          -- leave the entity with no cover at all, even though a sibling connection
-          -- was eligible the whole time.
-          --
-          -- Both key columns are required. Every other branch pins a single
-          -- "entityType", so "entityId" alone identifies a row there; this branch
-          -- joins on the pair, so one id can legitimately recur across types.
-          --
-          -- "ImageConnection" carries no ordering column of its own -- no index, no
-          -- timestamp -- so nothing on the link records which image the author meant
-          -- to come first. The tiebreak is the image id, chosen for the properties
-          -- that can actually be guaranteed: it is a primary key, so the order is
-          -- total, never null, and leaves no residual tie for the planner to settle
-          -- arbitrarily. It is deliberately NOT claimed to be a first-attached rule.
-          -- "updateEntityImages" links already-existing images -- with arbitrary older
-          -- ids -- ahead of the ones it creates in the same call, so attaching an older
-          -- image on a later edit lowers the minimum and promotes that image to cover.
-          -- What the tiebreak buys is a stable, deterministic choice, not a
-          -- semantically-first one.
-          SELECT DISTINCT ON (e."entityId", e."entityType")
-              e."entityId",
-              e."entityType",
-              i.id AS "imageId",
-              0 "order1",
-              0 "order2",
-              0 "order3"
-          FROM entities e
-          JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
-          JOIN "Image" i ON i.id = ic."imageId"
-          WHERE i."ingestion" = 'Scanned'
-            AND i."needsReview" IS NULL
-          ORDER BY e."entityId", e."entityType", i.id
-        ) t
-    ) t
-    JOIN "Image" i ON i.id = t."imageId"
-    WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
-
-  // Index once instead of scanning `imagesRaw` per entity. `set` is guarded so the
-  // first row for a key wins, matching what `.find()` returned: an entity can still
-  // draw rows from two branches at once (an Article has both a cover image and
-  // content-image connections), and this must not silently switch which one is kept.
-  const imagesByEntity = new Map<string, GetEntityImageRaw>();
-  for (const image of imagesRaw) {
-    const key = `${image.entityId}:${image.entityType}`;
-    if (!imagesByEntity.has(key)) imagesByEntity.set(key, image);
-  }
-
-  const images = entities
-    .map((e) => imagesByEntity.get(`${e.entityId}:${e.entityType}`) ?? null)
-    .filter(isDefined);
-
-  let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
-  if (include && include.includes('tags')) {
-    const imageIds = images.map((i) => i.id);
-    tagsVar = await getImageTagsForImages(imageIds);
-  }
-
-  const imageIds = images.map((i) => i.id);
-  // The hat is the covered entity's own, as on that entity's feed card: a Model wears the
-  // Model's hat, not whatever its cover image wears. An Image entity is its own cover.
-  const decoratedIds = new Map<CosmeticEntity, number[]>();
-  for (const { entityType, entityId } of images) {
-    if (!isCosmeticEntity(entityType)) continue;
-    decoratedIds.set(entityType, [...(decoratedIds.get(entityType) ?? []), entityId]);
-  }
-  const [cosmetics, eventDecorations] = await Promise.all([
-    getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }),
-    Promise.all(
-      [...decoratedIds].map(async ([entity, ids]) => ({
-        entity,
-        decorations: await getEventDecorationsForEntity({
-          ids,
-          entity,
-          viewer: eventDecorationViewer,
-        }),
-      }))
-    ),
-  ]);
-  const eventDecorationOf = (entityType: string, entityId: number) =>
-    eventDecorations.find((x) => x.entity === entityType)?.decorations[entityId] ?? null;
-
-  return attachTagsToImages(images, tagsVar).map((i) => ({
-    ...i,
-    cosmetic: cosmetics[i.id],
-    eventDecoration: eventDecorationOf(i.entityType, i.entityId),
-  }));
-};
-
-export const updateEntityImages = async ({
-  tx,
-  entityId,
-  entityType,
-  images,
-  userId,
-}: {
-  tx?: Prisma.TransactionClient;
-  entityId: number;
-  entityType: string;
-  images: ImageReferenceInput[];
-  userId: number;
-}) => {
-  const dbClient = tx ?? dbWrite;
-  const connections = await dbClient.imageConnection.findMany({
-    select: { imageId: true },
-    where: {
-      entityId,
-      entityType,
-    },
-  });
-
-  // Delete any images that are no longer in the list.
-  await dbClient.imageConnection.deleteMany({
-    where: {
-      entityId,
-      entityType,
-      imageId: { notIn: images.map((i) => i.id).filter(isDefined) },
-    },
-  });
-
-  const newImages = images.filter((x) => !x.id);
-  const newLinkedImages = images.filter(
-    (x) => !!x.id && !connections.find((c) => c.imageId === x.id)
-  );
-
-  const linkIds = newLinkedImages.map((i) => i.id).filter(isDefined);
-  if (linkIds.length > 0) {
-    const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } });
-    if (owned !== new Set(linkIds).size) throw throwAuthorizationError();
-  }
-
-  const links = [...linkIds];
-  let imageRecords: {
-    id: number;
-    url: string;
-    type: MediaType;
-    width: number | null;
-    height: number | null;
-  }[] = [];
-
-  if (newImages.length > 0) {
-    await dbClient.image.createMany({
-      data: newImages.map((image) => ({
-        ...pickClientImageColumns(image),
-        meta:
-          (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
-            | Prisma.JsonObject
-            | undefined) ?? Prisma.JsonNull,
-        metadata: stripBlockProvenanceMetadata(image.metadata),
-        userId,
-        resources: undefined,
-      })),
-    });
-
-    imageRecords = await dbClient.image.findMany({
-      select: { id: true, url: true, type: true, width: true, height: true },
-      where: {
-        url: { in: newImages.map((i) => i.url) },
-        ingestion: ImageIngestionStatus.Pending,
-        userId,
-      },
-    });
-
-    links.push(...imageRecords.map((i) => i.id));
-
-    // Process the new images just in case:
-    const shouldAddImageResources = !!entityType && ['Bounty', 'BountyEntry'].includes(entityType);
-    const batches = chunk(imageRecords, 50);
-    for (const batch of batches) {
-      if (shouldAddImageResources) {
-        await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
-      }
-    }
-  }
-
-  if (links.length > 0) {
-    // Create any new files.
-    await dbClient.imageConnection.createMany({
-      data: links.filter(isDefined).map((id) => ({
-        imageId: id,
-        entityId,
-        entityType,
-      })),
-    });
-  }
-
-  return imageRecords;
-};
-
-export async function get404Images() {
-  const imagesRaw = await dbRead.$queryRaw<
-    { url: string; username: string; meta: ImageMetaProps | null }[]
-  >`
-    SELECT
-      u.username,
-      i.url,
-      i.meta
-    FROM "CollectionItem" ci
-    JOIN "Image" i ON i.id = ci."imageId"
-    JOIN "User" u ON u.id = i."userId" AND username IS NOT NULL
-    JOIN "Collection" c ON c.id = ci."collectionId"
-    WHERE c."userId" = -1
-      AND c.name = '404 Contest'
-      AND i."ingestion" = 'Scanned'
-      AND i."needsReview" IS NULL
-      AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
-      AND ci.status = 'ACCEPTED';
-  `;
-
-  const images = Object.values(imagesRaw).map(({ meta, username, url }) => {
-    const alt = truncate(meta?.prompt, { length: constants.altTruncateLength });
-    return [username, url, alt];
-  });
-
-  return images;
-}
 
 type NameReference = {
   imageId: number;
@@ -7704,195 +6852,6 @@ export async function resolveIngestionError({
   });
 }
 
-// #region [image tools]
-async function authorizeImagesAction({
-  imageIds,
-  user,
-}: {
-  imageIds: number[];
-  user: SessionUser;
-}) {
-  if (!user.isModerator) {
-    const images = await dbRead.image.findMany({
-      where: { id: { in: imageIds }, userId: user.id },
-      select: { id: true },
-    });
-    const validatedIds = images.map((x) => x.id);
-    if (!imageIds.every((id) => validatedIds.includes(id))) throw throwAuthorizationError();
-  }
-}
-
-export async function addImageTools({
-  data,
-  user,
-}: {
-  data: AddOrRemoveImageToolsOutput['data'];
-  user: SessionUser;
-}) {
-  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
-  await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
-  // Update these images if blocked:
-  const updated = await dbWrite.image.updateManyAndReturn({
-    where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
-    data: {
-      blockedFor: null,
-      // Ensures we do another run:
-      ingestion: 'Pending',
-    },
-    select: {
-      id: true,
-      url: true,
-      type: true,
-    },
-  });
-
-  enqueueImageIngestion({
-    images: updated,
-    name: 'add-image-tools',
-    userId: user.id,
-    lowPriority: true,
-  });
-
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-
-  await queueImageSearchIndexUpdate({
-    ids: data.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Update,
-  });
-}
-
-export async function removeImageTools({
-  data,
-  user,
-}: {
-  data: AddOrRemoveImageToolsOutput['data'];
-  user: SessionUser;
-}) {
-  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
-  const toolsByImage = data.reduce<Record<number, number[]>>((acc, { imageId, toolId }) => {
-    if (!acc[imageId]) acc[imageId] = [];
-    acc[imageId].push(toolId);
-    return acc;
-  }, {});
-
-  await dbWrite.$transaction(
-    Object.entries(toolsByImage).map(([imageId, toolIds]) =>
-      dbWrite.imageTool.deleteMany({ where: { imageId: Number(imageId), toolId: { in: toolIds } } })
-    )
-  );
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-
-  await queueImageSearchIndexUpdate({
-    ids: data.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Update,
-  });
-}
-
-export async function updateImageTools({
-  data,
-  user,
-}: {
-  data: UpdateImageToolsOutput['data'];
-  user: SessionUser;
-}) {
-  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
-  await dbWrite.$transaction(
-    data.map(({ imageId, toolId, notes }) =>
-      dbWrite.imageTool.update({
-        where: { imageId_toolId: { imageId, toolId } },
-        data: { notes },
-        select: { imageId: true },
-      })
-    )
-  );
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-}
-
-// #endregion
-
-// #region [image techniques]
-export async function addImageTechniques({
-  data,
-  user,
-}: {
-  data: AddOrRemoveImageTechniquesOutput['data'];
-  user: SessionUser;
-}) {
-  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
-  await dbWrite.imageTechnique.createMany({ data, skipDuplicates: true });
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-
-  await queueImageSearchIndexUpdate({
-    ids: data.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Update,
-  });
-}
-
-export async function removeImageTechniques({
-  data,
-  user,
-}: {
-  data: AddOrRemoveImageTechniquesOutput['data'];
-  user: SessionUser;
-}) {
-  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
-  const techniquesByImage = data.reduce<Record<number, number[]>>(
-    (acc, { imageId, techniqueId }) => {
-      if (!acc[imageId]) acc[imageId] = [];
-      acc[imageId].push(techniqueId);
-      return acc;
-    },
-    {}
-  );
-
-  await dbWrite.$transaction(
-    Object.entries(techniquesByImage).map(([imageId, techniqueIds]) =>
-      dbWrite.imageTechnique.deleteMany({
-        where: { imageId: Number(imageId), techniqueId: { in: techniqueIds } },
-      })
-    )
-  );
-
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-
-  await queueImageSearchIndexUpdate({
-    ids: data.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Update,
-  });
-}
-
-export async function updateImageTechniques({
-  data,
-  user,
-}: {
-  data: UpdateImageTechniqueOutput['data'];
-  user: SessionUser;
-}) {
-  await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
-  await dbWrite.$transaction(
-    data.map(({ imageId, techniqueId, notes }) =>
-      dbWrite.imageTechnique.update({
-        where: { imageId_techniqueId: { imageId, techniqueId } },
-        data: { notes },
-        select: { imageId: true },
-      })
-    )
-  );
-  for (const { imageId } of data) {
-    purgeImageGenerationDataCache(imageId);
-  }
-}
-
 // #endregion
 
 export function purgeImageGenerationDataCache(id: number) {
@@ -7906,172 +6865,9 @@ export function purgeImageGenerationDataCache(id: number) {
   );
 }
 
-const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
-
-export async function getImageGenerationData({ id }: { id: number }) {
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      hideMeta: true,
-      generationProcess: true,
-      meta: true,
-      type: true,
-      tools: {
-        orderBy: { tool: { priority: 'asc' } },
-        select: {
-          notes: true,
-          tool: {
-            select: {
-              id: true,
-              name: true,
-              icon: true,
-              domain: true,
-              priority: true,
-            },
-          },
-        },
-      },
-      techniques: {
-        select: {
-          notes: true,
-          technique: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
-      },
-    },
-  });
-  if (!image) throw throwNotFoundError();
-
-  const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
-  const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
-
-  const cachedResources = await imageResourcesCache.fetch([id]);
-  const resources = (cachedResources[id]?.resources ?? []).map((r) => ({
-    imageId: r.imageId,
-    modelVersionId: r.modelVersionId,
-    strength: r.strength,
-    modelId: r.modelId,
-    modelName: r.modelName,
-    modelType: r.modelType as ModelType,
-    versionId: r.modelVersionId, // versionId is the same as modelVersionId
-    versionName: r.versionName,
-    baseModel: r.baseModel,
-  }));
-
-  const parsedMeta = imageMetaOutput.safeParse(image.meta);
-  const data = parsedMeta.success ? parsedMeta.data : {};
-  const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
-  const meta =
-    parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
-
-  let onSite = false;
-  let process: string | undefined | null = undefined;
-  let hasControlNet = false;
-  if (meta) {
-    onSite = isImageMetaOnSite(meta);
-    if ('engine' in meta) {
-      process = meta.process ?? meta.type;
-    }
-
-    if (meta.comfy) {
-      hasControlNet = !!meta.controlNets?.length;
-    } else {
-      hasControlNet = Object.keys(meta).some((x) => x.toLowerCase().startsWith('controlnet'));
-    }
-
-    if (!process) {
-      if (meta.comfy) process = 'comfy';
-      else if (image.generationProcess === 'txt2imgHiRes') process = 'txt2img + Hi-Res';
-      else process = image.generationProcess;
-
-      if (process && hasControlNet) process += ' + ControlNet';
-    }
-  }
-
-  // On-site generations: let the generation graph decide which meta keys are
-  // real generator inputs (drops computed/derived nodes + unrelated legacy
-  // junk). Off-site/foreign metadata has no graph mapping, so leave undefined
-  // and the client shows all keys.
-  let displayKeys: string[] | undefined;
-  if (onSite && meta) {
-    const graphResources = resources.map((r) => ({
-      id: r.modelVersionId,
-      baseModel: r.baseModel,
-      model: { type: r.modelType },
-      strength: r.strength,
-    }));
-    displayKeys =
-      getGenerationDisplayKeys(meta as Record<string, unknown>, graphResources) ?? undefined;
-  }
-
-  return {
-    type: image.type,
-    onSite,
-    process,
-    meta,
-    displayKeys,
-    resources: resources.map((resource) => ({
-      ...resource,
-      strength:
-        strengthTypes.includes(resource.modelType) && resource.strength
-          ? resource.strength / 100
-          : undefined,
-    })),
-    tools,
-    techniques,
-    external,
-    canRemix: !image.hideMeta && !!meta?.prompt,
-    remixOfId: meta?.extra?.remixOfId,
-    remixOfIds: getRemixSourceIds(id, meta),
-  };
-}
-
-/**
- * Every image this one was VERIFIED to have been derived from.
- *
- * `meta.extra.sourceImageIds` only. It is server-written by `sanitizeProvenance`
- * after the orchestrator workflow was checked, and nothing else can put it on a
- * row — a client-supplied value is stripped on the way in (see
- * remix-provenance.ts, and `remix-provenance.test.ts:224`, which demonstrates in
- * one assertion that an unverified `sourceImageIds` is stripped while
- * `remixOfId` survives untouched).
- *
- * ⚠️ The older `meta.extra.remixOfId` is deliberately NOT read here, and adding
- * it back is a product decision, not a bug fix. It is a client-declared claim
- * with no verification behind it, and Justin ruled on 2026-08-27 that public
- * attribution must not rest on it. This costs real coverage rather than only
- * legacy rows: measured on prod that day, 28 images carried the old field
- * against 39 with the new one over 8 hours, interleaved hour by hour with no
- * downward trend, and zero images carried both. So roughly half of all remixes
- * intentionally show no card. That is the accepted trade, not a gap to close.
- *
- * Validation goes through `storedSourceImageIds` rather than reading the field
- * directly. That is load-bearing: `sanitizeProvenance` writes `verified`
- * VERBATIM — the MAX_SOURCE_IMAGES cap lives in the three resolvers that produce
- * it, not in the sink — so nothing about a stored row bounds this list. An
- * earlier version of this comment claimed the writer capped it; it does not, and
- * the read path is where every other reader in this feature re-applies both the
- * cap and element validation.
- *
- * Exported for `__tests__/remix-of-provenance.test.ts`, which pins the exclusion
- * above by name so it cannot be quietly unioned back.
- */
-export function getRemixSourceIds(
-  imageId: number,
-  meta: { extra?: { sourceImageIds?: number[] } } | null | undefined
-) {
-  // Self-reference is not a derivation, and it would render the image as its own
-  // source. Dedupe as well, so a repeated id shows once.
-  return [...new Set(storedSourceImageIds(meta) ?? [])].filter((sourceId) => sourceId !== imageId);
-}
-
 // LRU cache for contest collection items lookup - caches by imageId
 // This avoids repeated database queries for the same image's contest participation
-type ContestCollectionItem = {
+export type ContestCollectionItem = {
   id: number;
   imageId: number;
   addedById: number | null;
@@ -8081,76 +6877,6 @@ type ContestCollectionItem = {
   scores: { userId: number; score: number }[];
   rejectionReason: CollectionItemRejectionReason | null;
   rejectionDetail: string | null;
-};
-const contestCollectionItemsCache = createLruCache({
-  name: 'contest-collection-items',
-  max: 100_000,
-  ttl: 30 * 60 * 1000, // 30 minutes
-  keyFn: (imageId: number) => `image:${imageId}`,
-  fetchFn: async (imageId: number) => {
-    return dbRead.$queryRaw<ContestCollectionItem[]>`
-      SELECT
-        ci.id,
-        ci."imageId",
-        ci."addedById",
-        ci.status,
-        ci."rejectionReason"::text as "rejectionReason",
-        ci."rejectionDetail",
-        CASE WHEN t.id IS NOT NULL
-          THEN jsonb_build_object('id', t.id, 'name', t.name)
-          ELSE NULL
-        END as tag,
-        jsonb_build_object('id', c.id, 'name', c.name, 'metadata', c.metadata, 'mode', c.mode) as collection,
-        COALESCE(
-          (SELECT jsonb_agg(jsonb_build_object('userId', cis."userId", 'score', cis.score))
-           FROM "CollectionItemScore" cis
-           WHERE cis."collectionItemId" = ci.id),
-          '[]'::jsonb
-        ) as scores
-      FROM "CollectionItem" ci
-      JOIN "Collection" c ON c.id = ci."collectionId"
-      LEFT JOIN "Tag" t ON t.id = ci."tagId"
-      WHERE ci."imageId" = ${imageId}
-        AND c.mode = 'Contest'
-    `;
-  },
-});
-
-export const getImageContestCollectionDetails = async ({
-  id,
-  userId,
-  isModerator,
-}: { userId?: number; isModerator?: boolean } & GetByIdInput) => {
-  const items = await contestCollectionItemsCache.fetch(id);
-
-  // Fetch all permissions in one query instead of N queries
-  const collectionIds = items.map((i) => i.collection.id);
-  const allPermissions = await getUserCollectionPermissionsByIds({
-    ids: collectionIds,
-    userId,
-  });
-
-  // `addedById` is destructured off rather than spread: it is only here to resolve the gate below,
-  // and it names who submitted an entry, which this public endpoint has never returned.
-  return items.map(({ addedById, ...i }) => {
-    const permissions = allPermissions.find((p) => p.collectionId === i.collection.id);
-    // This endpoint is public. The reason — and above all the reviewer's free text about
-    // someone else's entry — is only for the submitter, whoever manages the collection,
-    // and site moderators investigating reports about reviewer behaviour.
-    const canReadRejection =
-      (!!userId && userId === addedById) || !!permissions?.manage || !!isModerator;
-
-    return {
-      ...i,
-      rejectionReason: canReadRejection ? i.rejectionReason : null,
-      rejectionDetail: canReadRejection ? i.rejectionDetail : null,
-      permissions,
-      collection: {
-        ...i.collection,
-        metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
-      },
-    };
-  });
 };
 
 // this method should hopefully not be a lasting addition
@@ -8257,69 +6983,6 @@ export async function queueImageSearchIndexUpdate({
       ...poolCounters.Templar.b.map((queue) => queue.reset({ id: ids })),
     ]);
   }
-}
-
-export async function getPostDetailByImageId({ imageId }: { imageId: number }) {
-  const image = await dbRead.image.findUnique({
-    where: { id: imageId },
-    select: { postId: true },
-  });
-  if (!image || !image.postId) return null;
-
-  const post = await dbRead.post.findUnique({
-    where: { id: image.postId },
-    select: { title: true, detail: true },
-  });
-  if (!post) return null;
-
-  return post;
-}
-
-export async function setVideoThumbnail({
-  imageId,
-  frame,
-  customThumbnail,
-  userId,
-  isModerator,
-  postId,
-}: SetVideoThumbnailInput & { userId: number; isModerator?: boolean }) {
-  const db = await getDbWithoutLag('postImages', postId);
-  const image = await db.image.findUnique({
-    where: { id: imageId, userId: !isModerator ? userId : undefined },
-    select: { id: true, type: true, metadata: true, userId: true },
-  });
-  if (!image)
-    throw throwAuthorizationError("You don't have permission to set the thumbnail for this video.");
-  if (image.type !== MediaType.video) throw throwBadRequestError('This is not a video.');
-
-  let thumbnailId: number | undefined;
-  if (customThumbnail) {
-    const thumbnail = await createImage({
-      ...pickClientImageColumns(customThumbnail),
-      userId: image.userId,
-      metadata: { parentId: image.id },
-    });
-    thumbnailId = thumbnail.id;
-  }
-
-  const videoMetadata = image.metadata as VideoMetadata;
-  const updated = await dbWrite.image.update({
-    where: { id: imageId },
-    data: { metadata: { ...videoMetadata, thumbnailFrame: frame, thumbnailId } },
-  });
-
-  // Clear up the thumbnail cache
-  await Promise.all([
-    preventReplicationLag('postImages', postId),
-    thumbnailCache.refresh(imageId),
-    imageMetadataCache.refresh(imageId),
-    queueImageSearchIndexUpdate({
-      ids: [imageId],
-      action: SearchIndexUpdateQueueAction.Update,
-    }),
-  ]);
-
-  return updated;
 }
 
 export async function updateImageAcceptableMinor({
@@ -8487,67 +7150,6 @@ export async function createImageResources({
   return resources;
 }
 
-export const getMyImages = async ({
-  mediaTypes,
-  publishedOnly,
-  includeEntryDrafts,
-  userId,
-  limit,
-  cursor = 0,
-}: GetMyImagesInput & { userId: number }) => {
-  const allowedMediaTypes = mediaTypes.filter((x) => x !== MediaType.audio);
-
-  try {
-    const media = await dbRead.image.findMany({
-      // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
-      // over a crucible's maxClipSeconds before the user spends a click on them.
-      select: {
-        id: true,
-        url: true,
-        meta: true,
-        metadata: true,
-        createdAt: true,
-        type: true,
-        nsfwLevel: true,
-        ingestion: true,
-      },
-      where: {
-        userId,
-        type: {
-          in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
-        },
-        postId: { not: null },
-        // Published-only callers render still-scanning images as pending rather than hiding them.
-        ingestion: publishedOnly
-          ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
-          : ImageIngestionStatus.Scanned,
-        ...(publishedOnly && includeEntryDrafts
-          ? publishedOrEntryDraftImageWhere()
-          : publishedOnly
-          ? publishedImageWhere()
-          : {}),
-      },
-      take: limit + 1,
-      cursor: cursor ? { id: cursor } : undefined,
-      orderBy: { id: 'desc' },
-    });
-
-    let nextCursor: number | undefined;
-    if (media.length > limit) {
-      const nextItem = media.pop();
-      nextCursor = nextItem?.id;
-    }
-
-    return {
-      items: media,
-      nextCursor,
-    };
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
 export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => {
   const blob = await fetchBlob(imageUrl);
 
@@ -8663,40 +7265,6 @@ export async function refreshImageResources(imageId: number) {
   await createImageResources({ imageId });
   await imageResourcesCache.refresh(imageId);
   return await dbWrite.imageResourceHelper.findMany({ where: { imageId } });
-}
-
-export async function addSeenImageIds(imageIds: number[], maxSize = 10000) {
-  if (imageIds.length === 0) return;
-
-  const key = REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES;
-  const score = Date.now();
-
-  await sysRedis
-    .multi()
-    .zAdd(
-      key,
-      imageIds.map((id) => ({ score, value: id.toString() }))
-    )
-    .zRemRangeByRank(key, 0, -(maxSize + 1))
-    .exec()
-    .catch((e) => {
-      const err = e as Error;
-      logToAxiom(
-        {
-          type: 'search-redis-error',
-          error: err.message,
-          cause: err.cause,
-          stack: err.stack,
-        },
-        'temp-search'
-      ).catch();
-    });
-}
-
-export async function getSeenImageIds(): Promise<number[]> {
-  const key = REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES;
-  const ids = await sysRedis.zRange(key, 0, -1, { REV: true });
-  return ids.map((id) => parseInt(id, 10));
 }
 
 export async function getReportViolationDetailsForImages(

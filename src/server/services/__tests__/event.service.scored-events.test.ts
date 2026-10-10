@@ -60,7 +60,7 @@ vi.mock('~/shared/constants/event-decoration.constants', async (importOriginal) 
   decorations.getEventDecorationDefinition.mockImplementation(actual.getEventDecorationDefinition);
   return { ...actual, getEventDecorationDefinition: decorations.getEventDecorationDefinition };
 });
-vi.mock('~/server/services/image.service', () => ({ getEntityCoverImage: covers }));
+vi.mock('~/server/services/image-entity.service', () => ({ getEntityCoverImage: covers }));
 vi.mock('~/server/services/user.service', () => ({
   cosmeticStatus: vi.fn(),
   getCosmeticsForUsers: vi.fn(),

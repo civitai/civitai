@@ -38,7 +38,7 @@ function sourceAspectRatio(image: { width?: number | null; height?: number | nul
  * (`meta.extra.sourceImageIds`). The older client-declared `meta.extra.remixOfId`
  * is deliberately excluded — Justin's ruling, 2026-08-27 — which knowingly costs
  * about half of all remixes their card. See `getRemixSourceIds` in
- * image.service.ts before "fixing" that.
+ * image-detail.service.ts before "fixing" that.
  *
  * So absent on almost every image, by design twice over: 101 of 51,661 on-site
  * generations in a 24h prod sample carried any provenance at all. A blank

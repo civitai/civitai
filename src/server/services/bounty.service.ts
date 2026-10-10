@@ -35,11 +35,8 @@ import {
   readTextScanFlags,
   withTextScanDecision,
 } from '~/server/services/text-scan/flag-snapshot';
-import {
-  createEntityImages,
-  updateEntityImages,
-  enqueueImageIngestion,
-} from '~/server/services/image.service';
+import { enqueueImageIngestion } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages } from '~/server/services/image-entity.service';
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
 import { BountySort, BountyStatus } from '../common/enums';

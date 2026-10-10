@@ -56,7 +56,7 @@ vi.mock('../../flipt/client', async (importOriginal) => ({
   getFliptVariant: vi.fn().mockResolvedValue(null),
 }));
 
-import { filterPinnedImagesToVersion } from '../image.service';
+import { filterPinnedImagesToVersion } from '../image-detail.service';
 
 const PINNED_VERSION = 280515;
 const OTHER_VERSION = 274522;

@@ -24,7 +24,7 @@ import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId, getBountyEntryEarnedBuzz } from '../services/bountyEntry.service';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
-import { getImagesByEntity } from '../services/image.service';
+import { getImagesByEntity } from '../services/image-entity.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';

@@ -29,13 +29,12 @@ import { purchasableRewardUpsertSchema } from '~/server/schema/purchasable-rewar
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { resolveCoverImageId, type CoverImageDeps } from '~/server/services/cover-image.service';
 import {
-  createEntityImages,
   createImage,
   createPostOwnerCheck,
-  setVideoThumbnail,
-  updateEntityImages,
   type AssertPostOwnedBy,
 } from '~/server/services/image.service';
+import { createEntityImages, updateEntityImages } from '~/server/services/image-entity.service';
+import { setVideoThumbnail } from '~/server/services/image-detail.service';
 import { CLIENT_IMAGE_COLUMNS, pickClientImageColumns } from '~/server/utils/image-columns';
 
 const URL_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';

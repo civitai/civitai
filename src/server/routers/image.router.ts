@@ -11,24 +11,28 @@ import {
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
-  addImageTechniques,
-  addImageTools,
-  get404Images,
-  getImageDetail,
-  getImageGenerationData,
   getImagesByUserIdForModeration,
   getImagesForModelVersionCache,
-  getMyImages,
   ingestImageById,
   removeImageResource,
-  removeImageTechniques,
-  removeImageTools,
   reportCsamImages,
   toggleImageFlag,
-  updateImageTechniques,
-  updateImageTools,
   refreshImageResources,
 } from '~/server/services/image.service';
+import {
+  addImageTechniques,
+  addImageTools,
+  removeImageTechniques,
+  removeImageTools,
+  updateImageTechniques,
+  updateImageTools,
+} from '~/server/services/image-tools.service';
+import { get404Images } from '~/server/services/image-entity.service';
+import {
+  getImageDetail,
+  getImageGenerationData,
+  getMyImages,
+} from '~/server/services/image-detail.service';
 import {
   middleware,
   heavyProcedure,

@@ -138,6 +138,7 @@ describe('Image.meta writes cannot carry an unverified provenance claim', () => 
     expect(sites.map((site) => site.at)).toEqual(
       expect.arrayContaining([
         expect.stringContaining('services/image.service.ts'),
+        expect.stringContaining('services/image-entity.service.ts'),
         expect.stringContaining('services/post.service.ts'),
         // Nested creates under another model — the shape the first version of
         // this scan was blind to, which is how the collection cover-image sink

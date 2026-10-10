@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
-import type * as ImageService from '~/server/services/image.service';
+import type * as ImageService from '~/server/services/image-detail.service';
 import type * as ReportService from '~/server/services/report.service';
 
 const { mockGetImageById, mockGetLatestAppeal, mockCreateEntityAppeal, mockReopenAppeal } =
@@ -14,7 +14,7 @@ const { mockGetImageById, mockGetLatestAppeal, mockCreateEntityAppeal, mockReope
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
 }));
-vi.mock('~/server/services/image.service', async (importOriginal) => ({
+vi.mock('~/server/services/image-detail.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getImageById: mockGetImageById,
 }));

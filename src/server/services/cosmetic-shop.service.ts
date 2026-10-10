@@ -50,11 +50,8 @@ import {
 } from '~/server/services/buzz.service';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getBlockedPairIds } from '~/server/services/user-preferences.service';
-import {
-  createEntityImages,
-  getAllImages,
-  enqueueImageIngestion,
-} from '~/server/services/image.service';
+import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
+import { createEntityImages } from '~/server/services/image-entity.service';
 import { validateStickerCosmetic } from '~/server/services/cosmetic.service';
 import { getPackMembers, purchaseCosmeticPack } from '~/server/services/cosmetic-pack.service';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';

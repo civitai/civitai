@@ -31,10 +31,12 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
-  createEntityImages: vi.fn(async () => []),
-  updateEntityImages: vi.fn(async () => []),
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
+}));
+vi.mock('~/server/services/image-entity.service', () => ({
+  createEntityImages: vi.fn(async () => []),
+  updateEntityImages: vi.fn(async () => []),
 }));
 vi.mock('~/server/redis/caches', () => ({
   userBountyCountCache: { refresh: vi.fn() },

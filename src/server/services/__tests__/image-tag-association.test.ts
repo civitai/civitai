@@ -56,11 +56,8 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   imageTagsCache: { fetch: imageTagsFetch, bust: vi.fn() },
 }));
 
-import {
-  attachTagsToImages,
-  getImagesByEntity,
-  getEntityCoverImage,
-} from '~/server/services/image.service';
+import { attachTagsToImages } from '~/server/services/image-detail.service';
+import { getImagesByEntity, getEntityCoverImage } from '~/server/services/image-entity.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // ---------------------------------------------------------------------------

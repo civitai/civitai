@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getRemixSourceIds } from '~/server/services/image.service';
+import { getRemixSourceIds } from '~/server/services/image-detail.service';
 
 /**
  * What the "Remixed from" card is allowed to treat as provenance.

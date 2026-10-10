@@ -30,7 +30,7 @@ import {
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
 import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
-import { getImageById } from '~/server/services/image.service';
+import { getImageById } from '~/server/services/image-detail.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';

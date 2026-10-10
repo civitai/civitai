@@ -3,7 +3,7 @@ import { chunk } from 'lodash-es';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { getSeenImageIds } from '~/server/services/image.service';
+import { getSeenImageIds } from '~/server/services/image-detail.service';
 import { createJob, getJobDate } from './job';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
 
