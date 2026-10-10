@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { bustImageModRulesCache } from '~/server/services/image.service';
-import { bustModelModRulesCache } from '~/server/services/model.service';
 import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { EntityType, ModerationRuleAction } from '~/shared/utils/prisma/enums';
@@ -12,7 +11,8 @@ const payloadSchema = z.object({
   definition: z.record(z.string(), z.any()),
   userId: z.number(),
   action: z.enum(ModerationRuleAction),
-  entityType: z.enum(['Model', 'Image']),
+  // Model rules are text-scan rules, managed in the moderator app (`/text-scan/model-rules`).
+  entityType: z.literal('Image'),
   enabled: z.boolean().optional().default(true),
   order: z.number().optional(),
   reason: z.string().optional(),
@@ -47,7 +47,11 @@ async function upsertModRule(req: NextApiRequest, res: NextApiResponse) {
 
     try {
       const { id, userId, ...data } = schemaResult.data;
-      await dbWrite.moderationRule.update({ where: { id }, data });
+      const updated = await dbWrite.moderationRule.updateMany({
+        where: { id, entityType: EntityType.Image },
+        data,
+      });
+      if (!updated.count) return res.status(404).json({ error: 'No image rule with that id' });
     } catch (error) {
       return res.status(500).json({ error: 'Could not update rule', details: error });
     }
@@ -64,10 +68,7 @@ async function upsertModRule(req: NextApiRequest, res: NextApiResponse) {
     }
   }
 
-  if (req.body.entityType === EntityType.Model)
-    await bustModelModRulesCache().catch(handleLogError);
-  else if (req.body.entityType === EntityType.Image)
-    await bustImageModRulesCache().catch(handleLogError);
+  await bustImageModRulesCache().catch(handleLogError);
 
   return res.status(200).json({ ok: true });
 }
@@ -79,12 +80,11 @@ async function deleteModRule(req: NextApiRequest, res: NextApiResponse) {
 
   try {
     const { id } = schemaResult.data;
-    const result = await dbWrite.moderationRule.delete({ where: { id } });
-
-    if (result.entityType === EntityType.Model)
-      await bustModelModRulesCache().catch(handleLogError);
-    else if (result.entityType === EntityType.Image)
-      await bustImageModRulesCache().catch(handleLogError);
+    const deleted = await dbWrite.moderationRule.deleteMany({
+      where: { id, entityType: EntityType.Image },
+    });
+    if (!deleted.count) return res.status(404).json({ error: 'No image rule with that id' });
+    await bustImageModRulesCache().catch(handleLogError);
 
     return res.status(200).json({ ok: true });
   } catch (error) {

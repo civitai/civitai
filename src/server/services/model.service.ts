@@ -139,7 +139,7 @@ import { submitModelTextModeration } from '~/server/services/model-moderation.ad
 import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
 import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { scanEntityInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -185,7 +185,6 @@ import {
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
 } from '~/server/utils/minor-flag-meta';
-import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
   GET_ALL_IMAGES_PER_MODEL,
@@ -4803,7 +4802,8 @@ export async function setModelShowcaseCollection({
 export async function migrateResourceToCollection({
   id: modelId,
   collectionName,
-}: MigrateResourceToCollectionInput) {
+  isModerator,
+}: MigrateResourceToCollectionInput & { isModerator?: boolean }) {
   const model = await dbRead.model.findUnique({
     where: { id: modelId },
     include: { modelVersions: true, tagsOnModels: true, licenses: true, resourceReviews: true },
@@ -4930,7 +4930,7 @@ export async function migrateResourceToCollection({
   await modelsSearchIndex.queueUpdate(
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
-  modelIds.forEach((entityId) => scanEntityInBackground({ entityType: 'Model', entityId }));
+  modelIds.forEach((id) => scanModelAndRules(id, { rules: !isModerator }));
 
   return { ok: true };
 }
@@ -5085,31 +5085,6 @@ export async function getModelModerationDetail({ id }: { id: number }) {
   };
 }
 
-export async function getModelModRules() {
-  const modRules = await fetchThroughCache(
-    REDIS_KEYS.CACHES.MOD_RULES.MODELS,
-    async () => {
-      const rules = await dbRead.moderationRule.findMany({
-        where: { entityType: EntityType.Model, enabled: true },
-        select: { id: true, definition: true, action: true, reason: true },
-        orderBy: [{ order: 'asc' }],
-      });
-
-      return rules.map(({ definition, ...rule }) => ({
-        ...rule,
-        definition: definition as RuleDefinition,
-      }));
-    },
-    { ttl: CacheTTL.day }
-  );
-
-  return modRules;
-}
-
-export async function bustModelModRulesCache() {
-  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS);
-}
-
 export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
   return await dbRead.model.count({
     where: {
@@ -5252,7 +5227,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
-    if (!user.isModerator) scanEntityInBackground({ entityType: 'Model', entityId: result.id });
+    if (!user.isModerator) scanModelAndRules(result.id);
     return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({
@@ -5406,6 +5381,7 @@ export const publishPrivateModel = async ({
       `;
     }
   });
+  if (publishVersions) scanEntityInBackground({ entityType: 'ModelRules', entityId: modelId });
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

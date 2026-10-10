@@ -4,6 +4,7 @@ import {
   REDIS_KEYS,
   type RedisKeyTemplateCache,
 } from '@civitai/redis';
+import { logToAxiom } from './axiom';
 import { getRedis } from './redis';
 
 // Read-through caches for this app's own expensive reads. The mechanics — single-flight, TTL jitter,
@@ -61,5 +62,32 @@ export async function bustCacheTag(tag: string | string[]): Promise<void> {
     const keys = await redis.sMembers<RedisKeyTemplateCache>(setKey);
     for (const key of keys) await redis.del(key);
     await redis.del(setKey);
+  }
+}
+
+/**
+ * Deletes one key after a committed write. Returns false rather than throwing: the row is already
+ * committed, so a throw would report failure for a write that succeeded, and the operator's retry then
+ * acts on state that no longer matches what they meant (same rule as `a04fa6a608` on the session cache).
+ */
+export async function bustKeyBestEffort(
+  key: RedisKeyTemplateCache,
+  {
+    logName,
+    message,
+    details,
+  }: { logName: string; message: string; details?: Record<string, unknown> }
+): Promise<boolean> {
+  try {
+    await getRedis().del(key);
+    return true;
+  } catch (error) {
+    void logToAxiom({
+      name: logName,
+      type: 'error',
+      message,
+      details: { ...details, error: error instanceof Error ? error.message : String(error) },
+    });
+    return false;
   }
 }

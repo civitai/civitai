@@ -8,7 +8,15 @@ import { findChatCompletionStep, parseTextScanStep } from '~/server/services/tex
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
-import { recordTextScanFailure, recordTextScanSuccess } from '~/server/services/text-scan/record';
+import {
+  filterModelRuleMatches,
+  getModelRuleSnapshots,
+} from '~/server/services/text-scan/model-rules';
+import {
+  recordTextScanFailure,
+  recordTextScanSuccess,
+  type TextScanResult,
+} from '~/server/services/text-scan/record';
 import type { PromptIds, TextScanLabel } from '~/server/services/text-scan/types';
 import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
@@ -42,6 +50,8 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     model?: string;
     textHash?: string;
     subjectMeta?: Record<string, unknown>;
+    ruleIds?: number[];
+    rulesFingerprint?: string;
   };
   const { entityType, entityId, mode } = metadata;
   if (
@@ -122,6 +132,20 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   const subject = (await profile.load([entityId])).get(entityId);
   if (!subject) return log('info', 'entity gone before callback', ctx);
 
+  let modelRules: TextScanResult['modelRules'];
+  if (parsed.output.modelRules) {
+    const { kept, dropped } = filterModelRuleMatches(
+      parsed.output.modelRules.matched,
+      metadata.ruleIds
+    );
+    if (dropped.length)
+      await log('warning', 'matched rule ids the prompt did not list', { ...ctx, dropped });
+    const snapshot = await getModelRuleSnapshots(kept.map((m) => m.ruleId));
+    const live = new Set(snapshot.map((rule) => rule.id));
+    parsed.output.modelRules = { matched: kept.filter((m) => live.has(m.ruleId)) };
+    modelRules = { fingerprint: metadata.rulesFingerprint, snapshot };
+  }
+
   const outcome = evaluateTextScan(parsed.output, subject.declared, labels);
   const recorded = await recordTextScanSuccess({
     entityType: emEntityType,
@@ -134,6 +158,7 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     model: metadata.model ?? '',
     textHash: metadata.textHash,
     meta: metadata.subjectMeta ?? subject.meta,
+    modelRules,
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
 
@@ -151,7 +176,10 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     poi: outcome.poi?.detected,
     minor: outcome.minor?.detected,
     scam: outcome.scam?.detected,
-    tags: outcome.triggeredLabels,
+    tags: [
+      ...outcome.triggeredLabels,
+      ...(outcome.modelRules?.matched.map((m) => `modelRules:${m.ruleId}`) ?? []),
+    ],
     textHash: metadata.textHash,
   });
 

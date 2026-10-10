@@ -1,5 +1,6 @@
 export const LAB_ENTITY_TYPES = [
   'Model',
+  'ModelRules',
   'Article',
   'Post',
   'Bounty',
@@ -16,11 +17,12 @@ export const LAB_ENTITY_TYPES = [
 ] as const;
 export type LabEntityType = (typeof LAB_ENTITY_TYPES)[number];
 
-export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam';
+export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'modelRules';
 
 // Mirrors each main-app profile's `labels` (src/server/services/text-scan/profiles/*.profile.ts).
 export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
   Model: ['nsfw', 'poi', 'minor'],
+  ModelRules: ['modelRules'],
   Bounty: ['nsfw', 'poi'],
   Article: ['nsfw'],
   Post: ['nsfw'],
@@ -39,6 +41,7 @@ export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {
 // Each profile's first heading, so free text reads to the model like that entity type.
 export const DEFAULT_HEADING: Record<LabEntityType, string> = {
   Model: 'Name',
+  ModelRules: 'Name',
   Article: 'Title',
   Post: 'Title',
   Bounty: 'Name',
@@ -79,6 +82,7 @@ export const PROMPT_KEYS = [
   'label:poi',
   'label:minor',
   'label:scam',
+  'label:modelRules',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 

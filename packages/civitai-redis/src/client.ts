@@ -2554,7 +2554,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IMAGE_RESOURCES: 'packed:caches:image-resources',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
-      MODELS: 'packed:caches:mod-rules:models',
+      MODELS: 'packed:caches:mod-rules:models:v2',
       IMAGES: 'packed:caches:mod-rules:images',
     },
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',

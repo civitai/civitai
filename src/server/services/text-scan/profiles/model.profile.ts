@@ -1,52 +1,75 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
+import type { TextScanSubject } from '~/server/services/text-scan/types';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
+
+const PUBLIC_STATUSES = [ModelStatus.Published, ModelStatus.Scheduled];
 import { removeTags } from '~/utils/string-helpers';
+
+/**
+ * Shared with the `ModelRules` profile, so both scans read the same model text. `publicOnly` loads
+ * only what the public can see: a Published or Scheduled, non-Private model and its public versions.
+ */
+export async function loadModelScanSubjects(
+  ids: number[],
+  { publicOnly = false }: { publicOnly?: boolean } = {}
+): Promise<Map<number, TextScanSubject>> {
+  const rows = await dbWrite.model.findMany({
+    where: {
+      id: { in: ids },
+      deletedAt: null,
+      ...(publicOnly
+        ? {
+            status: { in: PUBLIC_STATUSES },
+            availability: { not: Availability.Private },
+          }
+        : {}),
+    },
+    select: {
+      id: true,
+      userId: true,
+      name: true,
+      description: true,
+      nsfw: true,
+      poi: true,
+      minor: true,
+      modelVersions: {
+        ...(publicOnly ? { where: { status: { in: PUBLIC_STATUSES } } } : {}),
+        select: { name: true, description: true, trainedWords: true },
+        orderBy: { index: 'asc' },
+      },
+    },
+  });
+  return new Map(
+    rows.map((m) => [
+      m.id,
+      {
+        userId: m.userId,
+        declared: {
+          nsfwLevel: m.nsfw ? NsfwLevel.XXX : NsfwLevel.PG13,
+          poi: m.poi,
+          minor: m.minor,
+        },
+        fields: [
+          { heading: 'Name', text: m.name },
+          { heading: 'Description', text: m.description ? removeTags(m.description) : null },
+          ...m.modelVersions.flatMap((v) => [
+            { heading: 'Version name', text: v.name },
+            {
+              heading: 'Version description',
+              text: v.description ? removeTags(v.description) : null,
+            },
+            { heading: 'Trained words', text: v.trainedWords.join(', ') },
+          ]),
+        ],
+      },
+    ])
+  );
+}
 
 registerTextScanProfile({
   entityType: 'Model',
   labels: ['nsfw', 'poi', 'minor'],
-  load: async (ids) => {
-    const rows = await dbWrite.model.findMany({
-      where: { id: { in: ids }, deletedAt: null },
-      select: {
-        id: true,
-        userId: true,
-        name: true,
-        description: true,
-        nsfw: true,
-        poi: true,
-        minor: true,
-        modelVersions: {
-          select: { name: true, description: true, trainedWords: true },
-          orderBy: { index: 'asc' },
-        },
-      },
-    });
-    return new Map(
-      rows.map((m) => [
-        m.id,
-        {
-          userId: m.userId,
-          declared: {
-            nsfwLevel: m.nsfw ? NsfwLevel.XXX : NsfwLevel.PG13,
-            poi: m.poi,
-            minor: m.minor,
-          },
-          fields: [
-            { heading: 'Name', text: m.name },
-            { heading: 'Description', text: m.description ? removeTags(m.description) : null },
-            ...m.modelVersions.flatMap((v) => [
-              { heading: 'Version name', text: v.name },
-              {
-                heading: 'Version description',
-                text: v.description ? removeTags(v.description) : null,
-              },
-              { heading: 'Trained words', text: v.trainedWords.join(', ') },
-            ]),
-          ],
-        },
-      ])
-    );
-  },
+  load: (ids) => loadModelScanSubjects(ids),
 });

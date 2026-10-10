@@ -7,6 +7,7 @@ import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
 import { readTextScanRollouts, textScanEmEntityType } from '~/server/services/text-scan/mode';
+import { getModelRulesForPrompt } from '~/server/services/text-scan/model-rules';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -258,7 +259,11 @@ type ComposeInput = {
 };
 
 async function composeStep({ subject, profile, promptOverrides, model, thinking }: ComposeInput) {
-  const [config, active] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
+  const [config, active, modelRules] = await Promise.all([
+    getTextScanConfig(),
+    getActiveTextScanPrompts(),
+    profile.labels.includes('modelRules') ? getModelRulesForPrompt() : undefined,
+  ]);
   const prompts = { ...active };
   for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
@@ -270,6 +275,7 @@ async function composeStep({ subject, profile, promptOverrides, model, thinking 
       labels: profile.labels,
       subject,
       maxInputChars: config.maxInputChars,
+      modelRules,
     });
   } catch (e) {
     if (e instanceof MissingTextScanPromptError)
@@ -494,6 +500,10 @@ type ShadowRow = {
 function verdictSummary(verdict: TextScanOutput[TextScanLabel] | undefined) {
   if (!verdict) return null;
   if ('level' in verdict) return verdict.level;
+  if ('matched' in verdict)
+    return verdict.matched.length
+      ? `matched: ${verdict.matched.map((m) => m.ruleId).join(', ')}`
+      : 'clear';
   if ('names' in verdict)
     return verdict.detected ? `detected: ${verdict.names.join(', ')}` : 'clear';
   return verdict.detected ? 'detected' : 'clear';
@@ -544,7 +554,10 @@ async function sampleShadow(input: ShadowSampleInput) {
       scannedAt: new Date(row.updatedAt).toISOString(),
       triggered: row.triggeredLabels.includes(input.label),
       verdict: verdictSummary(verdict),
-      reason: verdict?.reason ?? null,
+      reason:
+        verdict && 'matched' in verdict
+          ? verdict.matched.map((m) => `[${m.ruleId}] ${m.reason}`).join(' | ') || null
+          : verdict?.reason ?? null,
       declared: (subject?.declared ?? null) as TextScanDeclared | null,
       promptIds: row.result.promptIds,
       model: row.result.model,
@@ -558,6 +571,7 @@ async function sampleShadow(input: ShadowSampleInput) {
               promptIds: row.result.promptIds,
               model: row.result.model,
               thinking: config.thinking,
+              rulesFingerprint: row.result.modelRules?.fingerprint,
             }) !== row.contentHash,
     };
   });

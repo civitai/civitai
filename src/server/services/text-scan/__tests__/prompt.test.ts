@@ -303,3 +303,57 @@ describe('insertTextScanPrompt', () => {
     expect(bustFetchThroughCache).toHaveBeenCalled();
   });
 });
+
+describe('composeTextScanMessages — modelRules', () => {
+  const rulePrompts = {
+    ...prompts,
+    'label:modelRules': { id: 14, key: 'label:modelRules', content: 'RULES DEF' },
+  };
+  const modelRules = [
+    { id: 3, subject: 'Example', description: 'Desc', aliases: ['Alias'], updatedAt: 1 },
+    { id: 8, subject: 'Other', description: '', aliases: [], updatedAt: 2 },
+  ];
+
+  it('appends the rule list under the label definition and reports the rules it carried', () => {
+    const composed = composeTextScanMessages({
+      prompts: rulePrompts,
+      labels: ['modelRules'],
+      subject,
+      maxInputChars: 1000,
+      modelRules,
+    });
+    expect(composed.system).toBe(
+      [
+        'BASE PROMPT',
+        '## Label: modelRules\nRULES DEF\n\n### Rules\n[3] Example — Desc. Also known as: Alias.\n[8] Other',
+      ].join('\n\n')
+    );
+    expect(composed.promptIds).toEqual({ base: 10, modelRules: 14 });
+    expect(composed.ruleIds).toEqual([3, 8]);
+    expect(composed.rulesFingerprint).toEqual(expect.any(String));
+  });
+
+  it('treats an empty rule set as a missing prompt', () => {
+    expect(() =>
+      composeTextScanMessages({
+        prompts: rulePrompts,
+        labels: ['modelRules'],
+        subject,
+        maxInputChars: 1000,
+        modelRules: [],
+      })
+    ).toThrow(MissingTextScanPromptError);
+  });
+
+  it('carries no rule fields for a scan without the label', () => {
+    const composed = composeTextScanMessages({
+      prompts,
+      labels: ['nsfw'],
+      subject,
+      maxInputChars: 1000,
+      modelRules,
+    });
+    expect(composed).not.toHaveProperty('ruleIds');
+    expect(composed.system).not.toContain('### Rules');
+  });
+});

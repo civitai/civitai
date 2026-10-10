@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SubmitModule from '~/server/services/text-scan/submit';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.mock('~/server/services/text-scan/profiles/index', () => ({}));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
@@ -77,10 +78,10 @@ describe('createTextScanAdapter', () => {
     expect(await createTextScanShadowAdapter('Post').isEnabled!({ entityId: 1 })).toBe(enabled);
   });
 
-  it('registers a hookless shadow adapter for each of the 14 entities', () => {
+  it('registers a hookless shadow adapter for each of the 15 entities', () => {
     const adapters = textScanShadowAdapters();
-    expect(Object.keys(adapters)).toHaveLength(14);
-    for (const key of ['Crucible:shadow', 'Collection:shadow']) {
+    expect(Object.keys(adapters)).toHaveLength(15);
+    for (const key of ['Crucible:shadow', 'Collection:shadow', 'ModelRules:shadow']) {
       expect(adapters[key]).toBeDefined();
       expect(adapters[key].applyTextScan).toBeUndefined();
       expect(adapters[key].applyFailure).toBeUndefined();
@@ -92,5 +93,38 @@ describe('createTextScanAdapter', () => {
   it('passes the hooks through', () => {
     expect(adapter.applyTextScan).toBe(applyTextScan);
     expect(adapter.applyResult).toBeUndefined();
+  });
+});
+
+describe('submitViaTextScan (retry cron)', () => {
+  it('spends a retry when the scan cannot be built, so the row is not reselected forever', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'missing-prompt' });
+    await expect(adapter.submit({ entityId: 9, content: '' })).resolves.toBeNull();
+    expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith({
+      where: {
+        entityType: { in: ['Post', 'Post:shadow'] },
+        entityId: 9,
+        status: { not: 'Succeeded' },
+      },
+      data: { retryCount: { increment: 1 } },
+    });
+  });
+
+  it('covers the live and shadow rows of ModelRules too', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'missing-prompt' });
+    await createTextScanAdapter('ModelRules', {}).submit({ entityId: 4, content: '' });
+    expect(dbMock.dbWrite.entityModeration.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          entityType: { in: ['ModelRules', 'ModelRules:shadow'] },
+        }),
+      })
+    );
+  });
+
+  it('leaves the budget alone for other skips', async () => {
+    vi.mocked(scanEntity).mockResolvedValue({ status: 'skipped', reason: 'off' });
+    await adapter.submit({ entityId: 9, content: '' });
+    expect(dbMock.dbWrite.entityModeration.updateMany).not.toHaveBeenCalled();
   });
 });

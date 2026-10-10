@@ -19,6 +19,7 @@ describe('friendly names', () => {
       'Real person definition',
       'Minor definition',
       'Scam / phishing definition',
+      'Model rules definition',
     ]);
   });
 
@@ -97,6 +98,46 @@ describe('verdictsDiffer', () => {
     expect(verdictsDiffer('scam', failed('no'), ok({ scam: { detected: false } }))).toBe(true);
     expect(verdictsDiffer('nsfw', failed('a'), failed('b'))).toBe(false);
     expect(verdictsDiffer('scam', { ok: true, output: null, parseError: 'x' }, ok({}))).toBe(false);
+  });
+});
+
+describe('model rules verdict', () => {
+  const rules = (matched: unknown) => ok({ modelRules: { matched } });
+
+  it('names the matched rules and joins their reasons', () => {
+    expect(
+      describeVerdict(
+        'modelRules',
+        rules([
+          { ruleId: 378, reason: ' a ' },
+          { ruleId: 12, reason: 'b' },
+        ])
+      )
+    ).toEqual({ headline: 'Matched rule 378, 12', tone: 'flagged', reason: 'a\nb' });
+  });
+
+  it('reads an empty match list as clear', () => {
+    expect(describeVerdict('modelRules', rules([]))).toEqual({
+      headline: 'No rule matched',
+      tone: 'clear',
+    });
+  });
+
+  it('could not judge without a matched list', () => {
+    expect(describeVerdict('modelRules', ok({ modelRules: {} })).tone).toBe('unknown');
+    expect(describeVerdict('modelRules', ok({})).tone).toBe('unknown');
+  });
+
+  it('differs when the matched rules differ, not the reasons', () => {
+    expect(
+      verdictsDiffer(
+        'modelRules',
+        rules([{ ruleId: 1, reason: 'x' }]),
+        rules([{ ruleId: 1, reason: 'y' }])
+      )
+    ).toBe(false);
+    expect(verdictsDiffer('modelRules', rules([{ ruleId: 1 }]), rules([{ ruleId: 2 }]))).toBe(true);
+    expect(verdictsDiffer('modelRules', rules([{ ruleId: 1 }]), rules([]))).toBe(true);
   });
 });
 

@@ -22,7 +22,7 @@ Status column reflects what is in `apps/moderator` today, cross-checked against 
 | 1.9 | Front Page Audit | not started — **blocked on an open question** |
 | 1.12 | Buzz add/subtract | not started — **blocked on an open question** |
 | 2.1 | Bulk Ban | not started |
-| 2.2 | Moderation Rules | not started |
+| 2.2 | Moderation Rules | **partly done** — Model rules on `/text-scan/model-rules`; image rules stay in Retool |
 | 2.3 | Model notes | **done** — Model Lookup's "Moderator notes" panel over `ModelNotes`, add + edit-own (`868mb8h0y`) |
 | 2 | Retool Workflows | not started |
 
@@ -112,7 +112,8 @@ messages), and Newest. Message bodies outside an opened transcript sit behind a 
 **2.1 Bulk Ban** — restricted tool; ban a list of users. Needs its own role restriction (the grant system
 supports this) and 0.1 for list resolution.
 
-**2.2 Moderation Rules** — ticket marks this low priority, "not used much."
+**2.2 Moderation Rules** — ticket marks this low priority, "not used much." Model rules are managed on
+`/text-scan/model-rules` (list, create, edit, enable/disable, no delete). Image rules stay in Retool.
 
 **2.3 Model notes** — free-text mod notes on models. **Shipped 2026-09-29** on `/retool/model-lookup`
 rather than a page of its own: `model-notes.service.ts` + `/api/model-notes/[modelId]`, with the list

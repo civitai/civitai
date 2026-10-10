@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { cn } from '@civitai/ui/utils.js';
+  import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
   import ActivePromptPanel from './ActivePromptPanel.svelte';
@@ -21,19 +21,11 @@
   {/if}
 </div>
 
-<nav class="mb-4 flex flex-wrap gap-1">
-  {#each PROMPT_KEYS as key (key)}
-    <a
-      href="?key={key}"
-      class={cn(
-        'rounded-md px-3 py-1 text-sm',
-        key === data.key ? 'bg-dark-5 text-white' : 'text-dark-2 hover:bg-dark-6'
-      )}
-    >
-      {promptKeyName(key)}
-    </a>
-  {/each}
-</nav>
+<LinkTabs
+  class="mb-4"
+  active={data.key}
+  items={PROMPT_KEYS.map((key) => ({ value: key, label: promptKeyName(key), href: `?key=${key}` }))}
+/>
 
 {#if data.prompts.ok}
   <ActivePromptPanel promptKey={data.key} prompts={data.prompts.value} authors={data.authors} />

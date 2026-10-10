@@ -92,3 +92,19 @@ describe('evaluateTextScan — flag labels', () => {
     expect(outcome.triggeredLabels).toEqual([]);
   });
 });
+
+describe('evaluateTextScan — modelRules', () => {
+  it('triggers only when something matched', () => {
+    const matched = [{ ruleId: 3, reason: 'r' }];
+    expect(evaluateTextScan({ modelRules: { matched } }, {}, ['modelRules'])).toEqual({
+      triggeredLabels: ['modelRules'],
+      nsfwLevel: null,
+      modelRules: { matched },
+    });
+    expect(evaluateTextScan({ modelRules: { matched: [] } }, {}, ['modelRules'])).toEqual({
+      triggeredLabels: [],
+      nsfwLevel: null,
+      modelRules: { matched: [] },
+    });
+  });
+});

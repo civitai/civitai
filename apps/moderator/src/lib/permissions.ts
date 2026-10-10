@@ -75,6 +75,7 @@ export const PERMISSIONS = [
   { id: 'feedback.status.set', label: 'Set feedback status' },
   { id: 'feedback.bug.promote', label: 'Promote feedback to a Known Issue' },
   { id: 'textScan.prompt.publish', label: 'Publish text-scan prompt versions (production)' },
+  { id: 'textScan.modelRules.edit', label: 'Edit Model rules (production)' },
   // `/decisions`: reading the inbox is the page grant; recording a ruling is this. A ruling is
   // labelled data other systems will train and calibrate on, so who may produce it is its own call.
   { id: 'decisions.rule', label: 'Record a ruling on a decision item' },
