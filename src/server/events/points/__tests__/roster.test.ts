@@ -830,7 +830,6 @@ describe('team roster', () => {
     const s = setup([member(1)]);
     await syncRosterMembersWith(EVENT, [1], s.deps);
     const first = s.hashes.get(keys.members)?.get('1');
-    await s.redis.hSet(keys.members, '1', 'x:1');
     await syncRosterMembersWith(EVENT, [1], s.deps);
     const second = s.hashes.get(keys.members)?.get('1');
     expect(rosterTeam(first)).toBe('Blue');
@@ -839,9 +838,9 @@ describe('team roster', () => {
     expect(first).toMatch(/^Blue#[0-9a-f]{8}$/);
   });
 
-  // A listing that lands between this sync's tombstone and its clear has its entries wiped by the
-  // clear; the sync sees the gate listed afterwards and derives that member again.
-  it('restores a listing whose entries its own clear wiped', async () => {
+  // A listing that lands right after this sync's tombstone writes its entries after this sync's
+  // clear, so they survive. (With the clear after the tombstone, it would wipe them.)
+  it('keeps the entries of a listing that lands right after its tombstone', async () => {
     const s = setup([member(1, { optedIn: false })]);
     const evalOf = s.redis.eval.bind(s.redis);
     let raced = false;
@@ -918,5 +917,24 @@ describe('team roster', () => {
       removed: 1,
     });
     expect(loaded).toHaveBeenCalledTimes(1);
+  });
+
+  it('still hides a member when clearing their entries fails', async () => {
+    const s = setup([member(1)]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    s.db.set(1, member(1, { eligible: false }));
+    const zRemOf = s.redis.zRem.bind(s.redis);
+    let failed = false;
+    (s.redis as { zRem: typeof zRemOf }).zRem = async (key, members) => {
+      if (!failed) {
+        failed = true;
+        throw new Error('redis blip');
+      }
+      return zRemOf(key, members);
+    };
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    expect(failed).toBe(true);
+    expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
+    expect((await s.read('hats')).rows).toEqual([]);
   });
 });

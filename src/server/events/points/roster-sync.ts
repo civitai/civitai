@@ -199,7 +199,8 @@ export async function syncRosterMembersWith(
     return Number(opened) === 1;
   };
 
-  // Unlisting closes the gate first, so no read can pair a remaining score with a listed member.
+  // Unlisting hides before listing writes anything, so no read can pair a remaining score with a
+  // listed member.
   // Everyone unlisted gets a fresh tombstone, listed before or not: a ban or an opt-out can land
   // while someone's first opt-in is still in flight, and only a changed gate stops that listing.
   // The reconcile prunes them after TOMBSTONE_TTL_MS.
@@ -211,7 +212,15 @@ export async function syncRosterMembersWith(
   for (const group of chunk(unlisted, LIST_CONCURRENCY))
     await Promise.all(
       group.map(async (s) => {
-        await clearEntries(event, [s.userId], deps);
+        // A failed clear must not stop the hide: the tombstone still goes in, and the gate keeps
+        // any leftover entries out of every read.
+        await clearEntries(event, [s.userId], deps).catch((error) =>
+          logRoster('error', 'syncRosterMembersWith.clear', {
+            event: event.name,
+            userId: s.userId,
+            error: (error as Error).message,
+          })
+        );
         if (await gateWrite(s.userId, tombstone(now))) closed.push(s.userId);
         else changed.push(s.userId);
       })
