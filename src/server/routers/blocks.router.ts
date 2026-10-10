@@ -8939,9 +8939,8 @@ export const blocksRouter = router({
     // stricter but would recreate the "one command needs two different scopes" problem
     // the analytics note above argues against.
     //
-    // 🟡 Consequence worth knowing: the consent string for this bit is "Submit Apps for
-    // review", which does not mention minting a git credential. That copy lives in
-    // @civitai/auth and is a product decision, not a drive-by edit.
+    // 🟡 The consent string for this bit (`tokenScopeLabels`, in @civitai/auth) covers this as
+    // "pull source". It is product copy: change it deliberately, with whatever the bit gates.
     //
     // If an `AppBlocksRead` bit is ever introduced, THIS proc must not move to it — it is
     // not a read. getMyAppAnalytics could, but only TOGETHER WITH the REST route
