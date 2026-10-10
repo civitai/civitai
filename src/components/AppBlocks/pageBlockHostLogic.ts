@@ -3,6 +3,7 @@
 // (no RTL — civitai-web's unit project runs `environment: 'node'` and only
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
+import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 import { maxInitPostsWithin } from './iframeInitController';
 import type { HostStatus } from './openBuzzPurchaseGate';
@@ -584,6 +585,54 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
     ? obj.imageIds.filter((n): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0)
     : [];
   return { requestId: obj.requestId, imageIds };
+}
+
+// ── ESTIMATE_WORKFLOW_BATCH ──────────────────────────────────────────────────
+// A grid app asks for the price of several generations in one message: a list of
+// workflow bodies, each the body ESTIMATE_WORKFLOW carries. The host forwards the
+// list to `blocks.estimateWorkflowBatch`; nothing is submitted.
+//
+// 🔴 THE HOST CHECKS THE LIST, NEVER A CELL. Each body is validated server-side,
+// per cell, so that one malformed body becomes that cell's error and the others
+// still price. Parsing bodies here would either duplicate the server schema or
+// fail the whole message on one bad cell — the opposite of what the batch is for.
+// What IS refused here is what the server would refuse for the whole call anyway
+// (not an array, empty, longer than the cap), so the block gets a legible error
+// without a round trip.
+
+/** The refusals the HOST itself emits for a batch estimate, before any round trip. */
+export const ESTIMATE_BATCH_HOST_ERRORS = [
+  /** `bodies` is missing, not an array, or empty. */
+  'invalid estimate batch',
+  /** `bodies` is longer than `BLOCK_ESTIMATE_BATCH_MAX_CELLS`. */
+  'estimate batch too large',
+] as const satisfies readonly string[];
+
+export type EstimateBatchHostError = (typeof ESTIMATE_BATCH_HOST_ERRORS)[number];
+
+export type EstimateBatchDecision =
+  | { kind: 'drop' }
+  | { kind: 'refuse'; requestId: string; error: EstimateBatchHostError }
+  | { kind: 'proceed'; request: { requestId: string; bodies: unknown[] } };
+
+/**
+ * Validate a raw ESTIMATE_WORKFLOW_BATCH payload from an untrusted iframe and
+ * decide drop / refuse / proceed. A payload with no string `requestId` is DROPPED
+ * (there is nothing to correlate a reply to — mirrors ESTIMATE_WORKFLOW); every
+ * later refusal carries a reply. `bodies` is passed through untouched.
+ */
+export function resolveEstimateBatchRequest(raw: unknown): EstimateBatchDecision {
+  if (!raw || typeof raw !== 'object') return { kind: 'drop' };
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.requestId !== 'string') return { kind: 'drop' };
+  const requestId = obj.requestId;
+  if (!Array.isArray(obj.bodies) || obj.bodies.length === 0) {
+    return { kind: 'refuse', requestId, error: 'invalid estimate batch' };
+  }
+  if (obj.bodies.length > BLOCK_ESTIMATE_BATCH_MAX_CELLS) {
+    return { kind: 'refuse', requestId, error: 'estimate batch too large' };
+  }
+  return { kind: 'proceed', request: { requestId, bodies: obj.bodies as unknown[] } };
 }
 
 // ── NAVIGATE (#5209) ─────────────────────────────────────────────────────────

@@ -199,6 +199,7 @@ const GUARD_CALL_SITE_LEDGER = [
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
+  'estimateWorkflowBatch',
   'getImagesByIds',
   'getMyBuzzBalance',
   'getMyViewer',
@@ -225,6 +226,9 @@ const BRIDGE_INPUT_LEDGER = [
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
+  // The batch twin of `estimateWorkflow`. Its `blockToken` arrives through
+  // `blockEstimateBatchInputSchema`, imported from the workflow schema.
+  'estimateWorkflowBatch',
   'getImagesByIds',
   'getMyBuzzAccounts',
   'getMyBuzzBalance',

@@ -621,6 +621,65 @@ export async function checkBlockTrainingDatasetRateLimit(
   );
 }
 
+// ESTIMATE-CELLS bucket (blocks.estimateWorkflowBatch). A batch estimate charges
+// the catalog bucket ONCE, like a single estimate — that is the point of it: a
+// 16-cell grid no longer spends 16 of an allowance that a page app shares between
+// every viewer and every other read. But each cell is still an orchestrator
+// `whatif` plus the version, checkpoint and entitlement reads, so charging only
+// the call would let one caller multiply those by the cell cap for the price of
+// one request. This bucket is what keeps "one request" from being a way around
+// the estimate allowance: it is charged the CELL COUNT, before any cell runs.
+//
+// KEYED ON THE INSTALL AND THE VIEWER, like the poll and training-dataset buckets
+// and for the reason they give: a page app's `blockInstanceId` is one string
+// shared by every viewer of the app, so an install-only key would let one
+// viewer's grid starve everyone else's — the same shape the batch exists to
+// relieve on the catalog bucket.
+//
+// HOW THE NUMBER WAS CHOSEN, STATED PLAINLY BECAUSE IT IS NOT DATA-DERIVED. 64
+// cells per 10 s is four full `BLOCK_ESTIMATE_BATCH_MAX_CELLS` grids per window
+// for one viewer — a full re-price every 2.5 s sustained. The guidance for grid
+// apps is to price when the viewer is about to confirm rather than on every edit,
+// so that is generous for an honest app, and it is LOWER than what the same
+// viewer could already do with single estimates (the catalog ceiling, per cell).
+// The window matches the catalog bucket's so the two describe the same interval.
+//
+// WHAT IT BOUNDS. Cost quotes started through batches by ONE viewer of ONE
+// install: at most 64 per window, whatever the number of calls. Across a page
+// app the total scales with the number of distinct signed-in viewers, as the poll
+// bucket's does, and is additionally capped by the catalog bucket at one token
+// per batch call. The arithmetic is at `estimateWorkflowBatch`.
+//
+// Same stated limits as every bucket in this file: a FIXED window (a 2x burst
+// across a boundary is reachable by construction) and it FAILS OPEN on a Redis
+// error. It is a cost ceiling, not a security control. A refused call still
+// counts toward the window, exactly as on the weighted publish bucket.
+export const BLOCK_ESTIMATE_CELLS_RATE_LIMIT_MAX = 64;
+export const BLOCK_ESTIMATE_CELLS_RATE_LIMIT_WINDOW_SECONDS = 10;
+
+/**
+ * Records a batch estimate of `cellCount` cells against this (install, viewer)'s
+ * window. Own `:estimate-cells:` sub-namespace, so it never contends with the
+ * catalog bucket the same call charges once. Weighted by cells because the cost is
+ * per cell; fail-open like every sibling limiter.
+ *
+ * @param blockInstanceId the stable per-install identity from the verified token.
+ * @param userId the self-bound token subject, never client input.
+ * @param cellCount how many bodies the batch carries (weight >= 1).
+ */
+export async function checkBlockEstimateCellsRateLimit(
+  blockInstanceId: string,
+  userId: number,
+  cellCount: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:estimate-cells:${blockInstanceId}:${userId}`,
+    BLOCK_ESTIMATE_CELLS_RATE_LIMIT_MAX,
+    BLOCK_ESTIMATE_CELLS_RATE_LIMIT_WINDOW_SECONDS,
+    Math.max(1, Math.floor(cellCount))
+  );
+}
+
 export const BLOCK_LLM_RATE_LIMIT_MAX = 30;
 export const BLOCK_LLM_RATE_LIMIT_WINDOW_SECONDS = 60;
 

@@ -251,6 +251,19 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The batch twin of ESTIMATE_WORKFLOW: a list of bodies in, one snapshot per
+  // body plus a run total out. Estimate only — nothing is submitted. Both live
+  // hosts forward it to `blocks.estimateWorkflowBatch` (decision + reply live in
+  // `estimateBatchGate.ts`). Its reply is in the `{ requestId, error }` family, so
+  // a host with no handler NACKs it through the shared dispatcher. REQUEST-style;
+  // ahead of the published SDK dist union (the SDK pair lands in the SDK repo).
+  ESTIMATE_WORKFLOW_BATCH: {
+    request: true,
+    reply: 'ESTIMATE_BATCH_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   POLL_WORKFLOW: {
     request: true,
     reply: 'WORKFLOW_STATUS',

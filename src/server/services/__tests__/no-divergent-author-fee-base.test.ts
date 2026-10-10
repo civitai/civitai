@@ -227,7 +227,7 @@ const QUOTE_SITE_LEDGER: Record<
     typeDerivation:
       'const blockGenerationType = resolveBlockGenerationType(textToImageBody, ' +
       '{ imageWorkflowType: generateInput.workflow, });',
-    disclosedBy: 'estimateWorkflow',
+    disclosedBy: 'estimateBlockWorkflowCell',
     reason:
       'txt2img submit. The quote is added to `cost` BEFORE the per-call budget gate, the ' +
       'per-user cap, the consent budget, the per-app cap and the dev-tunnel backstop, and is ' +
@@ -244,7 +244,13 @@ const QUOTE_SITE_LEDGER: Record<
       'registry-step submit. Same placement: `reserveBuzz = reserveGenerationBuzz + ' +
       'reservedAuthorFeeBuzz`, gated and reserved before the orchestrator submit.',
   },
-  estimateWorkflow: {
+  // Keyed by the FUNCTION the quote now sits in. This is the txt2img arm of the
+  // `estimateWorkflow` procedure: its tail was moved, unchanged, into
+  // `estimateBlockWorkflowCell` so `estimateWorkflowBatch` prices each cell with
+  // the same code. Both procedures disclose through this one site, so the batch
+  // adds no quote site of its own — a second one appearing is a change to this
+  // ledger, not something the move permits.
+  estimateBlockWorkflowCell: {
     role: 'disclosing',
     baseExpr: 'baseGenerationBuzz: whatIfResult.cost?.base',
     capExpr: 'priceIsCap: whatIfResult.cost?.variable',
