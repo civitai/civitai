@@ -38,7 +38,10 @@ import type {
   ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
-import { hydrateSubListingCards } from '~/server/services/blocks/app-sub-listing-store.service';
+import {
+  hydrateSubListingCards,
+  PARENT_LINK_TEMPLATE_SQL,
+} from '~/server/services/blocks/app-sub-listing-store.service';
 import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { logToAxiom } from '~/server/logging/client';
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
@@ -1415,9 +1418,12 @@ export async function listAvailableListings(
       WHERE ${eligibility(levelFilter)}
         AND sp.enabled
         AND s.status = 'approved'
-        -- The parent's run route serves only an approved block, so a suspended or
-        -- re-submitted block would make every child link a 404.
-        AND ab.status = 'approved'
+        -- An on-site child opens under the parent's run route, which serves only an approved
+        -- block (a suspended or re-submitted block would make every child link a 404). An
+        -- off-site child opens the parent's link template instead.
+        AND CASE WHEN al.kind = 'offsite'
+              THEN ${PARENT_LINK_TEMPLATE_SQL} IS NOT NULL
+              ELSE ab.status = 'approved' END
         AND ${subListingMatureFilter(redCapable)}
         AND ${armKeyset(childKeyExpr, Prisma.sql`s.id`, 1)}
       ORDER BY sort_key ${dir}, s.id ${dir}

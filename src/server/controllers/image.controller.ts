@@ -410,6 +410,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
+    // Every fetch below names `user` as the event decoration viewer. Safe because only a signed-out
+    // response is edge-cached here (createContext), and that one names no viewer.
 
     const useIndex = features.imageIndexFeed;
 
@@ -450,6 +452,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         postIds: versionPinnedPosts,
         user,
+        eventDecorationViewer: user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
@@ -497,6 +500,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         postIds: [sponsoredPost.postId],
         user,
+        eventDecorationViewer: user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
@@ -524,6 +528,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         ids: fetchHidden ? versionHiddenImages : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
         user,
+        eventDecorationViewer: user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',

@@ -3,6 +3,7 @@ import {
   equipCosmeticSchema,
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
+  getViewerEventDecorationsSchema,
   purchaseStickerUsesSchema,
   setStickerPlacementRatingSchema,
   unequipCosmeticSchema,
@@ -15,6 +16,7 @@ import {
   getStickerAttribution,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
+  getViewerEventDecorations,
   unequipCosmetic,
   updateEventHatFit,
 } from '~/server/services/cosmetic.service';
@@ -25,6 +27,8 @@ import {
   purchaseStickerUses,
 } from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { noEdgeCache, rateLimit } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 import {
   moderatorProcedure,
   protectedProcedure,
@@ -97,6 +101,17 @@ export const cosmeticRouter = router({
   updateEventHatFit: moderatorProcedure
     .input(updateEventHatFitSchema)
     .mutation(({ input }) => updateEventHatFit(input)),
+  // The viewer's own preview hats, for cards served from a cache every viewer shares (the home
+  // blocks), which can only carry the hats everyone sees. Per viewer, so never cached anywhere.
+  getViewerEventDecorations: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getViewerEventDecorationsSchema)
+    .use(noEdgeCache())
+    // A flagged viewer's homepage asks once per block section, about a dozen times a load.
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) =>
+      getViewerEventDecorations({ ids: input.ids, entity: input.entityType, viewer: ctx.user })
+    ),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)

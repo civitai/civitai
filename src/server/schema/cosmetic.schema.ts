@@ -92,3 +92,12 @@ export const updateEventHatFitSchema = z.object({
       message: 'Change at least one setting',
     }),
 });
+
+/** Mirrors the reaction lookup's cap, which the home blocks already chunk to. */
+export const VIEWER_EVENT_DECORATION_LIMIT = 100;
+
+export type GetViewerEventDecorationsInput = z.infer<typeof getViewerEventDecorationsSchema>;
+export const getViewerEventDecorationsSchema = z.object({
+  entityType: z.enum([CosmeticEntity.Image, CosmeticEntity.Model, CosmeticEntity.Article]),
+  ids: z.array(z.number().int().positive()).min(1).max(VIEWER_EVENT_DECORATION_LIMIT),
+});

@@ -43,6 +43,9 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
+// The heal itself is tested in self-heal.test.ts; here, only who asks for it and when.
+const selfHeal = vi.hoisted(() => ({ healEventPoints: vi.fn() }));
+vi.mock('~/server/events/points/self-heal', () => selfHeal);
 
 const { isEventPointsEnabled, isEventPointsEnabledSync, SWITCH_READ_MS } = await import(
   '~/server/events/points/enabled'
@@ -239,6 +242,53 @@ describe('the impression filter', () => {
     expect(hattedImpressionEntities(batch)).toEqual([]);
     setFlag(true);
     expect(hattedImpressionEntities(batch)).toEqual([{ entityType: 'Image', entityId: IMAGE }]);
+  });
+});
+
+// Hats placed while the engine was off never reached the hat map; a flip to on asks for the
+// reconcile at once instead of leaving them out until the hourly job.
+describe('a flip to on', () => {
+  // A flip's heal is a detached listener that loads the scored events, then imports the heal.
+  const settleHeals = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.dynamicImportSettled();
+  };
+
+  it('asks each scored event for a heal, once per flip, and never while staying on or off', async () => {
+    // Earlier cases flip the switch too; let their heals land before counting this one's.
+    await settleHeals();
+    selfHeal.healEventPoints.mockClear();
+    setFlag(false);
+    isEventPointsEnabledSync();
+    setFlag(false);
+    isEventPointsEnabledSync();
+    setFlag(true);
+    isEventPointsEnabledSync();
+    await vi.waitFor(() =>
+      expect(selfHeal.healEventPoints).toHaveBeenCalledWith(birthday2026.name, 'switch-on')
+    );
+    setFlag(true);
+    isEventPointsEnabledSync();
+    await settleHeals();
+    expect(selfHeal.healEventPoints).toHaveBeenCalledTimes(1);
+  });
+
+  // A process's first reading is not a flip: every pod would heal on every deploy.
+  it("does not count a fresh process's first reading as a flip", async () => {
+    vi.resetModules();
+    const fresh = await import('~/server/events/points/enabled');
+    const listener = vi.fn();
+    fresh.onEventPointsSwitchOn(listener);
+    setFlag(true);
+    fresh.isEventPointsEnabledSync();
+    setFlag(false);
+    fresh.isEventPointsEnabledSync();
+    await settleHeals();
+    expect(listener).not.toHaveBeenCalled();
+    // The control: the same module does call it on a flip.
+    setFlag(true);
+    fresh.isEventPointsEnabledSync();
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1));
   });
 });
 

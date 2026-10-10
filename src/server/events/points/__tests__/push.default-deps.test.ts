@@ -20,7 +20,10 @@ const engine = vi.hoisted(() => ({ on: true }));
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => engine.on,
   isEventPointsEnabledSync: () => engine.on,
+  onEventPointsSwitchOn: () => () => undefined,
 }));
+// The engine's self-heal runs the reconcile and settle: tested in self-heal.test.ts, not here.
+vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() }));
 
 const { logToAxiom } = await import('~/server/logging/client');
 const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');

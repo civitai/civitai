@@ -2353,6 +2353,7 @@ export interface AppSubListingParent {
   parentListing?: AppListing;
   enabled: boolean;
   maxPerAuthor: number;
+  linkTemplate: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

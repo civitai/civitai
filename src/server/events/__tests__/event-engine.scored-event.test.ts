@@ -31,7 +31,10 @@ const killSwitch = vi.hoisted(() => ({ on: true }));
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => killSwitch.on,
   isEventPointsEnabledSync: () => killSwitch.on,
+  onEventPointsSwitchOn: () => () => undefined,
 }));
+// The engine's self-heal runs the reconcile and settle: tested in self-heal.test.ts, not here.
+vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));

@@ -1,3 +1,4 @@
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import {
   BIRTHDAY_2026_EVENT,
@@ -23,6 +24,8 @@ export type EventDecorationDefinition = {
   startsAt: Date;
   /** Flagged users may wear it from here; whether a viewer may is the server's call. */
   previewFrom?: Date;
+  /** The event's own `featureFlag`, the one that lets a viewer into its preview. */
+  featureFlag?: FeatureFlagKey;
   /** What it can be worn on. */
   entityTypes: readonly CosmeticEntity[];
   /** How soon one decoration may be placed again after it was last placed. */
@@ -37,6 +40,7 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
     eventLinkLabel: 'See the birthday event',
     startsAt: BIRTHDAY_2026_STARTS_AT,
     previewFrom: BIRTHDAY_2026_PREVIEW_FROM,
+    featureFlag: 'birthday2026',
     entityTypes: [CosmeticEntity.Image, CosmeticEntity.Model, CosmeticEntity.Article],
     moveCooldownMs: 10 * 60 * 1000,
   },
@@ -115,5 +119,19 @@ export function isEventDecorationReleased(definition: EventDecorationDefinition,
 export function getReleasedEventDecoration(entityType: CosmeticEntity, now = new Date()) {
   return EVENT_DECORATION_DEFINITIONS.find(
     (x) => isEventDecorationReleased(x, now) && x.entityTypes.includes(entityType)
+  );
+}
+
+/**
+ * The decoration on this entity type that is in its preview now: released to flagged viewers, not
+ * yet to everyone. From `startsAt` a shared, viewer-less read carries it, so nothing needs this.
+ */
+export function getPreviewEventDecoration(entityType: CosmeticEntity, now = new Date()) {
+  return EVENT_DECORATION_DEFINITIONS.find(
+    (x) =>
+      !!x.previewFrom &&
+      now >= x.previewFrom &&
+      now < x.startsAt &&
+      x.entityTypes.includes(entityType)
   );
 }

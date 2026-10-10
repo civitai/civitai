@@ -13,7 +13,10 @@ const { awardEventPoints, removeEventPoints, hatted } = vi.hoisted(() => ({
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => true,
   isEventPointsEnabledSync: () => true,
+  onEventPointsSwitchOn: () => () => undefined,
 }));
+// The engine's self-heal runs the reconcile and settle: tested in self-heal.test.ts, not here.
+vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() }));
 vi.mock('~/server/events/points/award', async (importOriginal) => ({
   ...(await importOriginal<typeof Award>()),
   awardEventPoints,
