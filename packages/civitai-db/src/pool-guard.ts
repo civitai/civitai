@@ -11,34 +11,32 @@ const logToConsole: PoolErrorLogFn = (message, err) =>
   console.error(message, err.stack ?? err.message);
 
 /**
- * Attach the listeners that keep a dropped database connection from crashing the process.
+ * Keep a dropped database connection from crashing the process. `'error'` with no listener throws, and
+ * pg emits from a socket callback, so the throw is uncaught. A failover drops every connection at
+ * once, along two paths that each need a listener:
+ *   - IDLE client: the error is re-emitted on the POOL -> `pool.on('error')`.
+ *   - CHECKED-OUT client (dropped mid-query): emitted on the CLIENT only, because pg-pool (3.10) removes
+ *     its own client listener during checkout -> a listener on every client, via `pool.on('connect')`.
+ * Both only log. pg-pool discards the broken client (at once if idle, on release if checked out) and pg
+ * rejects the in-flight query at its call site.
  *
- * `'error'` is special in Node: an `emit('error')` with no listener throws, and because node-postgres
- * emits from a socket callback, that throw is an uncaught exception. A failover drops every open
- * connection at once, along two separate paths, and each needs its own listener:
- *
- *   - An IDLE client's error is re-emitted on the POOL -> `pool.on('error')`.
- *   - A CHECKED-OUT client's error (the connection died mid-query or mid-transaction) is emitted on
- *     the CLIENT only. pg-pool (3.10) removes its own client listener while a client is checked out,
- *     so the pool-level listener does not cover this path -> a per-client listener, attached once to
- *     every client the pool creates.
- *
- * Both only log. pg-pool already discards the broken client (at once if idle, on release if checked
- * out) and pg rejects any in-flight query, so callers still see the failure at the call site. Listeners only: no pool option, parser or query path changes.
- *
- * Attach it straight after constructing the pool: the per-client listener reaches clients created
- * from then on.
+ * Attach straight after constructing the pool: the per-client listener only reaches clients created
+ * after it.
  */
 export function guardPool<P extends Pool>(
   pool: P,
   label = 'pg',
   logError: PoolErrorLogFn = logToConsole
 ): P {
-  pool.on('error', (err) =>
-    logError(`[db:${label}] idle client error (pool will recycle it)`, err)
-  );
-  pool.on('connect', (client) => {
-    client.on('error', (err) => logError(`[db:${label}] client connection error`, err));
-  });
+  // One drop can reach both listeners (an idle client's error is re-emitted on the pool), so log
+  // each error once.
+  const logged = new WeakSet<Error>();
+  const logOnce = (err: Error) => {
+    if (logged.has(err)) return;
+    logged.add(err);
+    logError(`[db:${label}] connection error (the pool discards the client)`, err);
+  };
+  pool.on('error', logOnce);
+  pool.on('connect', (client) => client.on('error', logOnce));
   return pool;
 }

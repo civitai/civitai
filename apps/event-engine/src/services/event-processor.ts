@@ -64,8 +64,7 @@ export class EventProcessor {
         max: config.cache.pgPoolMaxConnections
       },
       'event-processor',
-      // Not `{ err }`: pg-pool attaches the whole pg Client to an idle client's error (`err.client`),
-      // and pino's error serializer would write all of it out on every dropped connection.
+      // Not `{ err }`: pg-pool sets `err.client`, and pino would serialize the whole Client.
       (message, err) => logger.error({ error: { name: err.name, message: err.message, stack: err.stack } }, message)
     )
 

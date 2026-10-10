@@ -5,8 +5,7 @@
 // TCP connection ends without a protocol-level goodbye, and pg raises
 // `Connection terminated unexpectedly`.
 //
-// Not a general-purpose server: it never answers a query. Plain TCP only (no SSL negotiation), so
-// callers must connect with SSL off.
+// Not a general-purpose server: it never answers a query, and it declines SSL.
 import net from 'node:net';
 
 export type FakePgServer = {

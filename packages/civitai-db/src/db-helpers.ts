@@ -152,8 +152,8 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     application_name: applicationName,
   }) as AugmentedPool;
 
-  // Before anything else touches the pool, so every client it creates gets the per-client listener.
-  // Logs via console.error, not `log`: `log` is a debug logger that defaults to a no-op.
+  // Before anything else, so every client the pool creates gets the per-client listener. Logs to the
+  // console, not `log`: `log` defaults to a no-op.
   guardPool(pool, label);
 
   // Per-connection statement_timeout for PgBouncer-fronted pools (which ignore the startup param).

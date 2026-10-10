@@ -1,26 +1,17 @@
 import type { EventEmitter } from 'node:events';
-import type { Pool } from 'pg';
+import { Client, type Pool } from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { createPool } from './db-helpers';
 import { createKyselyClients, sql } from './kysely';
 import { startFakePgServer, type FakePgServer } from './test-support/fake-pg-server';
 
 /**
- * A pg pool must never let a dropped connection surface as an `'error'` event with no listener.
+ * A dropped connection must never surface as an `'error'` emit with no listener: Node throws, from a
+ * socket callback, so the process dies. The two paths are described on `guardPool`.
  *
- * `'error'` is special in Node: `emit('error')` with no listener THROWS, and because pg emits from a
- * socket callback the throw is an uncaught exception, which ends the process. A database failover
- * produces exactly that, on every open connection at once, along two paths:
- *
- *   (a) IDLE client dies   -> pg-pool re-emits the error on the POOL.
- *   (b) CHECKED-OUT client dies mid-query -> the error is emitted on the CLIENT. pg-pool removes its
- *       own client `'error'` listener while a client is checked out (pg-pool 3.10, `_acquireClient`),
- *       so a pool-level listener does not cover this path; only a per-client listener does.
- *
- * These tests drive a REAL `pg.Pool` against a fake server that drops the socket, so pg raises its
- * own `Connection terminated unexpectedly`. Rather than let a listenerless emit throw inside the test
- * worker, `trapErrorEmits` records each `'error'` emit with the listener count it found: a count of 0
- * is precisely the case in which Node would have thrown.
+ * Drives a REAL `pg.Pool` against a fake server that drops the socket, so pg raises its own
+ * `Connection terminated unexpectedly`. `trapErrorEmits` records each `'error'` emit with the listener
+ * count it found; 0 is exactly where Node would have thrown.
  */
 
 type ErrorEmit = { target: 'pool' | 'client'; listeners: number; message: string };
@@ -71,50 +62,60 @@ async function waitForErrorOn(target: ErrorEmit['target']) {
   });
 }
 
-function expectLogged() {
-  const lines = consoleError.mock.calls.map((args) => args.map(String).join(' '));
-  expect(lines.some((line) => line.startsWith('[db') && line.includes(TERMINATED))).toBe(true);
+/** The guard's log lines for this drop, by message. One line per drop, never a duplicate. */
+function loggedLines() {
+  return consoleError.mock.calls
+    .filter((args) => String(args[1]).includes(TERMINATED))
+    .map((args) => String(args[0]));
 }
 
-const factories: Array<[string, (url: string) => Pool]> = [
-  ['createPool', (url) => createPool({ connectionString: url, ssl: false })],
+const factories: Array<[string, string, (url: string) => Pool]> = [
+  ['createPool', 'node-pg', (url) => createPool({ connectionString: url, ssl: false })],
   [
     'createKyselyClients',
+    'kysely',
     (url) => createKyselyClients({ connectionString: url, singleClient: true }).pool,
   ],
 ];
 
-describe.each(factories)('%s guards its pool against dropped connections', (_name, build) => {
-  // For createKyselyClients, (a) is an INVARIANT guard: its pool-level listener predates guardPool.
-  // Every other case here was red before guardPool.
-  it('(a) an IDLE client dropped by the server does not raise an unhandled error on the pool', async () => {
-    server = await startFakePgServer();
-    pool = build(server.url);
-    trapPool(pool, emits);
+describe.each(factories)(
+  '%s guards its pool against dropped connections',
+  (_name, label, build) => {
+    // For createKyselyClients, (a)'s no-unhandled-emit assertion is an INVARIANT guard: its pool-level
+    // listener predates guardPool. Only the log-line assertion is new there.
+    it('(a) an IDLE client dropped by the server does not raise an unhandled error on the pool', async () => {
+      server = await startFakePgServer();
+      pool = build(server.url);
+      trapPool(pool, emits);
 
-    const client = await pool.connect();
-    client.release(); // back to idle
-    server.dropAll();
+      const client = await pool.connect();
+      client.release();
+      server.dropAll();
 
-    await waitForErrorOn('pool');
-    expect(unhandled()).toEqual([]);
-    expectLogged();
-  });
+      await waitForErrorOn('pool');
+      expect(unhandled()).toEqual([]);
+      expect(loggedLines()).toEqual([
+        `[db:${label}] connection error (the pool discards the client)`,
+      ]);
+    });
 
-  it('(b) a CHECKED-OUT client dropped mid-query does not raise an unhandled error on the client', async () => {
-    server = await startFakePgServer({ dropOnQuery: true });
-    pool = build(server.url);
-    trapPool(pool, emits);
+    it('(b) a CHECKED-OUT client dropped mid-query does not raise an unhandled error on the client', async () => {
+      server = await startFakePgServer({ dropOnQuery: true });
+      pool = build(server.url);
+      trapPool(pool, emits);
 
-    const client = await pool.connect();
-    await expect(client.query('SELECT 1')).rejects.toThrow(TERMINATED);
-    client.release();
+      const client = await pool.connect();
+      await expect(client.query('SELECT 1')).rejects.toThrow(TERMINATED);
+      client.release();
 
-    await waitForErrorOn('client');
-    expect(unhandled()).toEqual([]);
-    expectLogged();
-  });
-});
+      await waitForErrorOn('client');
+      expect(unhandled()).toEqual([]);
+      expect(loggedLines()).toEqual([
+        `[db:${label}] connection error (the pool discards the client)`,
+      ]);
+    });
+  }
+);
 
 describe('createKyselyClients through Kysely itself', () => {
   it('(b) a query that loses its connection rejects at the call site without an unhandled client error', async () => {
@@ -130,5 +131,32 @@ describe('createKyselyClients through Kysely itself', () => {
 
     await waitForErrorOn('client');
     expect(unhandled()).toEqual([]);
+  });
+
+  it('(b) the REPLICA pool is guarded too: a dbRead query that loses its connection raises no unhandled error', async () => {
+    // createKyselyClients does not return the replica pool, so trap every pg Client instead.
+    const primary = await startFakePgServer();
+    server = await startFakePgServer({ dropOnQuery: true });
+    const originalEmit = Client.prototype.emit;
+    trapErrorEmits(Client.prototype, 'client', emits);
+    try {
+      const { dbRead, pool: primaryPool } = createKyselyClients({
+        connectionString: primary.url,
+        replicaConnectionString: server.url,
+      });
+      pool = primaryPool;
+
+      await expect(sql`SELECT 1`.execute(dbRead)).rejects.toThrow(TERMINATED);
+
+      await waitForErrorOn('client');
+      expect(unhandled()).toEqual([]);
+      expect(loggedLines()).toEqual([
+        '[db:kysely] connection error (the pool discards the client)',
+      ]);
+      await dbRead.destroy();
+    } finally {
+      Client.prototype.emit = originalEmit;
+      await primary.close();
+    }
   });
 });

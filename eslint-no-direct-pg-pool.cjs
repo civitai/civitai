@@ -5,14 +5,11 @@
 // failover — surfaces as an `'error'` event nobody listens to, which crashes the process. The
 // @civitai/db builders attach them; build pools there.
 //
-// One definition, required by every ESLint config that lints TypeScript in this repo (each app with
-// its own `root: true` config inherits nothing from the root one): the root .eslintrc.js,
-// packages/.eslintrc.cjs, apps/event-engine/.eslintrc.js, apps/moderator/.eslintrc.cjs and
-// apps/creator-studio/.eslintrc.cjs. Each config owns its own allowlist, because override globs
-// resolve relative to the config file.
+// Required by each ESLint config that should enforce it (a `root: true` config inherits nothing from
+// the others); each owns its allowlist, because override globs resolve relative to the config file.
 //
 // Limits: matches by name, so an aliased import (`import { Pool as P } from 'pg'; new P()`) is not
-// caught, and a non-pg class named `Pool` would be (none exists in the repo today).
+// caught, and a non-pg class named `Pool` would be.
 const message =
   'Build pg pools with @civitai/db (createPool / createClients / createKyselyClients), which attach ' +
   'guardPool: without its listeners a dropped DB connection crashes the process. A pool that must ' +

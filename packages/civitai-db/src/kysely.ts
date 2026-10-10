@@ -153,9 +153,7 @@ export function createKyselyClients<DB>(
 
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  // A dropped connection must not surface as a listenerless 'error' event, which crashes the process:
-  // guardPool covers both the idle-client (pool) and the checked-out-client (per-client) paths.
-  // Pre-built pools are the caller's to guard (createPool does).
+  // Pre-built pools are the caller's to guard (createPool pools already are).
   const guard = (p: Pool) => guardPool(p, 'kysely');
 
   const primaryPool = pool ?? guard(new Pool(config));

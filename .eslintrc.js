@@ -433,8 +433,7 @@ module.exports = {
     },
     {
       // Where a direct pg Pool is allowed (see eslint-no-direct-pg-pool.cjs). Tests and scripts are
-      // short-lived. The auth hub's pool is deliberately standalone, so it must attach the same
-      // listeners itself.
+      // short-lived; apps/auth deliberately builds its own standalone pool.
       files: [
         '**/*.test.ts',
         '**/*.test.tsx',
