@@ -187,14 +187,25 @@ export const eventEngine = {
         if (!phase) continue;
         await syncEventHats(now);
         const season = eventPointSeason(eventDef.startDate, now);
-        const result = await runEventPointsReferee(scored, season, now);
+        // A failed settle must not also freeze the standings snapshot (it expires after 2h, and a
+        // miss is rebuilt on the request path) or stop the other events.
+        try {
+          const result = await runEventPointsReferee(scored, season, now);
+          logToAxiom({
+            type: 'info',
+            name: 'event-points-referee',
+            event: eventDef.name,
+            ...result,
+          }).catch(() => undefined);
+        } catch (error) {
+          logToAxiom({
+            type: 'error',
+            name: 'event-points-referee',
+            event: eventDef.name,
+            message: (error as Error).message,
+          }).catch(() => undefined);
+        }
         await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
-        logToAxiom({
-          type: 'info',
-          name: 'event-points-referee',
-          event: eventDef.name,
-          ...result,
-        }).catch(() => undefined);
         continue;
       }
 

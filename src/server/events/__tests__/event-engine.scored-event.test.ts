@@ -440,6 +440,21 @@ describe('scoring behind the flag', () => {
     expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
   });
 
+  it('still refreshes the standings when the referee fails', async () => {
+    const { logToAxiom } = await import('~/server/logging/client');
+    mockReferee.runEventPointsReferee.mockRejectedValueOnce(new Error('clickhouse down'));
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    // ...and the failure is reported, not swallowed.
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'event-points-referee',
+        message: 'clickhouse down',
+      })
+    );
+  });
+
   it('scores everyone from the start, base on or off', async () => {
     for (const isPublic of [true, false]) {
       testerFlag.reset({ public: isPublic });

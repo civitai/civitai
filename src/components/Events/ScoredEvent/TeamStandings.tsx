@@ -269,12 +269,7 @@ export function TopHats({ standings }: { standings: Standings }) {
         {top.map((c, i) => {
           const cosmetic = standings.cosmetics[c.cosmeticId];
           return (
-            <Paper
-              key={`${c.userId}:${c.cosmeticId}:${c.claimKey}`}
-              withBorder
-              radius="md"
-              className={EVENT_CARD_SURFACE}
-            >
+            <Paper key={c.topicId} withBorder radius="md" className={EVENT_CARD_SURFACE}>
               <Group gap="sm" px="sm" py={10} wrap="nowrap">
                 <Text fw={800} fz={18} w={24} ta="center">
                   {i + 1}

@@ -365,7 +365,13 @@ export async function getEventStandings({
         return [id, { name: c.name, url: typeof url === 'string' ? url : null }];
       })
     );
-    return { ...standings, users, cosmetics, teamHats };
+    // Public and edge-cached: a bought hat's claim key is its purchase's transaction id, so each
+    // hat goes out under its opaque topic id instead.
+    const topCosmetics = standings.topCosmetics.map(({ claimKey, ...rest }) => ({
+      ...rest,
+      topicId: hatTopicId({ ownerId: rest.userId, cosmeticId: rest.cosmeticId, claimKey }),
+    }));
+    return { ...standings, topCosmetics, users, cosmetics, teamHats };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

@@ -41,8 +41,9 @@ WITH
         SELECT type, actorId, sourceId FROM seasonRows WHERE sourceId != ''
         GROUP BY type, actorId, sourceId HAVING argMax(op, time) = 'add'
       ))
-      AND NOT has({restrictedUsers:Array(Int32)}, actorId)
-      AND NOT has({restrictedUsers:Array(Int32)}, ownerId)
+      -- NOT IN builds a hash set; has() scans the array for every row.
+      AND actorId NOT IN {restrictedUsers:Array(Int32)}
+      AND ownerId NOT IN {restrictedUsers:Array(Int32)}
       AND actorId < {newAccountMinId:Int32}
     GROUP BY type, actorId, entityType, entityId, onceKey
   ),

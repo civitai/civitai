@@ -13,7 +13,7 @@ const { ticker, events } = vi.hoisted(() => ({
       startDate: new Date('2000-01-01'),
       endDate: new Date('2999-01-01'),
       teams: ['Blue'],
-      scoring: {},
+      scoring: { finalizeAfterMs: 0 },
     },
   ],
 }));

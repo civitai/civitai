@@ -1,3 +1,4 @@
+import { hatField } from '~/server/events/points/keys';
 import { dbRead, type dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -23,8 +24,9 @@ const TOP_COSMETICS = 50;
 const TOP_USERS_PER_TEAM = 20;
 
 export type CosmeticScoreKey = { userId: number; cosmeticId: number; claimKey: string };
+// The same string as the live totals' hat field: live and settled points are merged by it.
 export const cosmeticScoreKey = ({ userId, cosmeticId, claimKey }: CosmeticScoreKey) =>
-  `${userId}:${cosmeticId}:${claimKey}`;
+  hatField({ ownerId: userId, cosmeticId, claimKey });
 
 export type CosmeticScore = CosmeticScoreKey & {
   team: string;
@@ -71,11 +73,12 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
       AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR u."excludeFromLeaderboards")
   `;
   const hiddenIds = hidden.map((u) => u.id);
+  // NOT IN over a subquery is hashed; <> ALL(array) compares every row with the whole array.
 
   const teamDays = await db.$queryRaw<{ team: string; day: Date; points: number }[]>`
     SELECT team, day, sum(points)::int AS points
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" <> ALL(${hiddenIds}::int[])
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
     GROUP BY team, day
     ORDER BY day
   `;
@@ -104,7 +107,7 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
       sum(comments)::int AS comments, sum(stickers)::int AS stickers, sum(remixes)::int AS remixes,
       sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" <> ALL(${hiddenIds}::int[])
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
     GROUP BY "userId", "cosmeticId", "claimKey", team
     ORDER BY points DESC
     LIMIT ${TOP_COSMETICS}
@@ -116,7 +119,7 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
         row_number() OVER (PARTITION BY team ORDER BY sum(points) DESC) AS rn
       FROM "EventCosmeticScoreDaily"
       WHERE event = ${event.name} AND day >= ${fromDay}::date
-        AND "userId" <> ALL(${hiddenIds}::int[])
+        AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
       GROUP BY team, "userId"
     ) ranked
     WHERE rn <= ${TOP_USERS_PER_TEAM}
@@ -134,12 +137,22 @@ export async function refreshStandings(event: StandingsEvent, db: typeof dbWrite
   return standings;
 }
 
+// A miss rebuilds once per pod, however many requests arrive while it runs: the four aggregates
+// cover the whole event, and a miss comes when the page is busiest.
+const rebuilding = new Map<string, Promise<EventStandings>>();
+
 // Served from the snapshot the hourly job writes; a miss (no run for 2h) recomputes once here.
 export async function getEventStandings(event: StandingsEvent) {
-  const cached = await redis.packed.get<EventStandings>(standingsKey(event));
+  const key = standingsKey(event);
+  const cached = await redis.packed.get<EventStandings>(key);
   if (cached) return cached;
-  // Request path: a cold snapshot is rebuilt from the replica, never the primary.
-  return refreshStandings(event, dbRead);
+  let pending = rebuilding.get(key);
+  if (!pending) {
+    // Request path: a cold snapshot is rebuilt from the replica, never the primary.
+    pending = refreshStandings(event, dbRead).finally(() => rebuilding.delete(key));
+    rebuilding.set(key, pending);
+  }
+  return pending;
 }
 
 export async function getTeamScoreHistory(event: StandingsEvent) {
