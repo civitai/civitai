@@ -80,14 +80,18 @@ let presignMode: 'ok' | 'hang' | 'unavailable-once' | 'throttle-once' | 'rejecte
 let rejectedStatus: number;
 let presignCount: number;
 // The first N presigns fail before `presignMode` applies: an upstream outage.
-let presignOutage: { failures: number; as: 'http-502' | 'network-error' };
+let presignOutage: { failures: number; as: 'http-502' | 'network-error'; afterMs?: number };
 const fetchMock = vi.fn((url: string, init?: RequestInit) => {
   if (url === PRESIGN_PATH) {
     presignCount++;
-    if (presignCount <= presignOutage.failures)
-      return presignOutage.as === 'http-502'
-        ? Promise.resolve({ ok: false, status: 502, headers: new Headers() })
-        : Promise.reject(new TypeError('Failed to fetch'));
+    if (presignCount <= presignOutage.failures) {
+      const fail = () =>
+        presignOutage.as === 'http-502'
+          ? Promise.resolve({ ok: false, status: 502, headers: new Headers() })
+          : Promise.reject(new TypeError('Failed to fetch'));
+      const after = presignOutage.afterMs;
+      return after ? new Promise((r) => setTimeout(r, after)).then(fail) : fail();
+    }
     if (presignMode === 'hang')
       return new Promise((_, reject) =>
         init?.signal?.addEventListener('abort', () =>
@@ -318,6 +322,21 @@ describe('uploadConsumerBlob', () => {
     }
   );
 
+  it('starts no presign try past the 50 s budget when each 5xx arrives slowly', async () => {
+    // Each 502 takes 14 s, just under the timeout: tries start at 0, 16 and 36 s; a fourth
+    // would start at 62 s, past the budget, so the third failure at 50 s is the last.
+    presignOutage = { failures: Infinity, as: 'http-502', afterMs: 14_000 };
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(49_999);
+    expect(result.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(result.error?.message).toBe('Failed to get upload URL');
+    expect(presignCount).toBe(3);
+    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-502']);
+  });
+
   it('reports presign-http-502 once, in the existing format, when the outage outlasts the retries', async () => {
     presignOutage = { failures: Infinity, as: 'http-502' };
     const result = track(uploadConsumerBlob(jpeg()));
@@ -370,19 +389,34 @@ describe('uploadConsumerBlob', () => {
     expect(kinds()).toEqual(['consumer blob upload failed: presign-http-401']);
   });
 
-  it('times out hung presign requests and gives up within the presign budget', async () => {
+  it('times out a hung presign request and throws after one retry', async () => {
     presignMode = 'hang';
     const result = track(uploadConsumerBlob(jpeg()));
-    // Tries at ~0, ~17 and ~38 s each time out after 15 s; a fourth would start past 50 s.
-    await vi.advanceTimersByTimeAsync(15_000 + PRESIGN_WAITS_MS[0] + 15_000 + PRESIGN_WAITS_MS[1]);
-    expect(presignCount).toBe(3);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(15_000 + BACKOFF_MS + 15_000);
 
     expect(result.settled).toBe(true);
     expect(result.error?.message).toMatch(/Timed out preparing the upload/);
-    expect(presignCount).toBe(3);
+    expect(presignCount).toBe(2);
+    expect(FakeXHR.instances).toHaveLength(0);
+    expect(kinds()).toEqual([
+      'consumer blob upload failed: presign-timeout',
+      'consumer blob upload failed: presign-timeout',
+    ]);
+    // Unchanged from before the presign retries: a timeout keeps the single outer retry.
+    expect(attempts().map((a) => a.message)).toEqual(['attempt 1/2', 'attempt 2/2']);
+  });
+
+  it('ends on a presign timeout that follows a presign retry, reporting it once', async () => {
+    presignOutage = { failures: 1, as: 'http-502' };
+    presignMode = 'hang';
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(PRESIGN_WAITS_MS[0] + 15_000 + 60_000);
+
+    expect(result.error?.message).toMatch(/Timed out preparing the upload/);
+    expect(presignCount).toBe(2);
     expect(FakeXHR.instances).toHaveLength(0);
     expect(kinds()).toEqual(['consumer blob upload failed: presign-timeout']);
+    expect(attempts().map((a) => a.message)).toEqual(['attempt 1/2']);
   });
 
   it('adds up to 1 s of jitter to each presign wait', async () => {

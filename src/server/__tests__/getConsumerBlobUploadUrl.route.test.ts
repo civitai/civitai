@@ -118,24 +118,31 @@ describe('presign failure logging', () => {
         causeStatus: 503,
         causeMessage: '',
         causeDetail: 'upstream down',
+        rootCauseCode: undefined,
       },
     ]);
     expect(logToAxiom.mock.calls[0]).toHaveLength(2);
     expect((logToAxiom.mock.calls[0] as unknown[])[1]).toBe('civitai-prod');
   });
 
-  it('logs an unreachable upstream with its cause', async () => {
-    const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
-    getConsumerBlobUploadUrl.mockRejectedValueOnce(new TypeError('fetch failed', { cause }));
+  it('logs an unreachable upstream with its root connection code', async () => {
+    // The production shape: the client RESOLVES on a fetch failure, with the fetch's TypeError as
+    // `error` and no response; the connection code sits on that TypeError's own cause.
+    const root = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    getConsumerBlobUploadUrl.mockResolvedValueOnce({
+      data: undefined,
+      error: new TypeError('fetch failed', { cause: root }),
+      response: undefined,
+    });
     expect((await call()).status).toBe(502);
     expect(logged()).toEqual([
       expect.objectContaining({
         type: 'warning',
-        errorName: 'TypeError',
-        errorMessage: 'fetch failed',
-        causeName: 'Error',
-        causeCode: 'ECONNREFUSED',
-        causeMessage: 'connect ECONNREFUSED',
+        code: 'SERVICE_UNAVAILABLE',
+        errorName: 'TRPCError',
+        causeName: 'TypeError',
+        causeMessage: 'fetch failed',
+        rootCauseCode: 'ECONNREFUSED',
       }),
     ]);
   });
@@ -153,9 +160,8 @@ describe('presign failure logging', () => {
     await call();
     const entry = logged()[0];
     const fields = ['errorName', 'errorMessage', 'causeName', 'causeCode', 'causeMessage'];
-    expect(fields.concat('causeDetail').map((f) => (entry[f] as string).length)).toEqual(
-      Array(6).fill(300)
-    );
+    const all = fields.concat('causeDetail', 'rootCauseCode');
+    expect(all.map((f) => (entry[f] as string).length)).toEqual(Array(7).fill(300));
   });
 
   it('truncates a raw string cause', async () => {

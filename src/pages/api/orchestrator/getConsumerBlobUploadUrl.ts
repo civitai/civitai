@@ -18,6 +18,22 @@ const truncate = (value: unknown) =>
   typeof value === 'string' ? value.slice(0, MAX_LOGGED_MESSAGE_LENGTH) : undefined;
 
 /**
+ * The deepest string `code` in the cause chain below the thrown error, at most 5 levels down.
+ * On a fetch failure the client resolves with the fetch's TypeError, which becomes our `cause`,
+ * and the connection code (ECONNREFUSED, ECONNRESET, ...) sits on that TypeError's own cause.
+ */
+function rootCauseCode(cause: unknown) {
+  let code: unknown;
+  let current = cause;
+  for (let depth = 0; depth < 5 && current !== null && typeof current === 'object'; depth++) {
+    const own = (current as { code?: unknown }).code;
+    if (typeof own === 'string') code = own;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return truncate(code);
+}
+
+/**
  * Records a presign that failed upstream. Without it these 502s left no trace on our side.
  *
  * Severity `warning`, not `error`: an upstream outage fails every presign at once, the same
@@ -52,6 +68,7 @@ function logPresignFailure(e: unknown, userId: number) {
       causeStatus: typeof cause.status === 'number' ? cause.status : undefined,
       causeMessage: truncate(typeof rawCause === 'string' ? rawCause : cause.message),
       causeDetail: truncate(cause.detail),
+      rootCauseCode: rootCauseCode(rawCause),
     },
     'civitai-prod'
   ).catch(() => undefined);
