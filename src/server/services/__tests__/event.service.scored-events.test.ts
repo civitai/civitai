@@ -501,6 +501,13 @@ describe('getEventStandings decoration', () => {
     expect(onDegraded).not.toHaveBeenCalled();
   });
 
+  it('hands the hat scores read the degraded callback', async () => {
+    const onDegraded = vi.fn();
+    const cosmetics = [{ userId: 9, cosmeticId: 31, claimKey: 'claimed' }];
+    await service.getEventCosmeticScores({ event: 'birthday2026', cosmetics, viewer, onDegraded });
+    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, cosmetics, onDegraded);
+  });
+
   // The settled snapshot is on sysRedis too: an unreachable one must not be edge-cached as zeros.
   it('hands the settled read the same degraded callback', async () => {
     const onDegraded = vi.fn();
@@ -705,10 +712,17 @@ describe('getWornEventHat', () => {
 
   // Every case runs with Postgres throwing: the only proof the popover never reads it.
   beforeEach(() => {
-    for (const client of [dbMock.dbRead, dbMock.dbWrite])
-      client.$queryRaw.mockImplementation((async () => {
-        throw new Error('Postgres read on the request path');
-      }) as never);
+    const forbidden = (async () => {
+      throw new Error('Postgres on the request path');
+    }) as never;
+    for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
+      for (const method of ['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe'])
+        client[method].mockImplementation(forbidden);
+      client.$transaction.mockImplementation(forbidden);
+      for (const model of ['userCosmetic', 'cosmetic', 'image', 'model', 'article', 'post'])
+        for (const method of ['findMany', 'findFirst', 'findUnique'])
+          client[model][method].mockImplementation(forbidden);
+    }
     caches.worn.fetch.mockResolvedValue({});
     caches.visible.fetch.mockResolvedValue({ 5: { id: 5 } });
     redisMock.sysRedis.hGet.mockResolvedValue(null);
@@ -724,6 +738,8 @@ describe('getWornEventHat', () => {
   it('is null when no hat of the event is on that content', async () => {
     expect(await read()).toBeNull();
     expect(caches.worn.fetch).toHaveBeenCalledWith([5]);
+    // Content with no hat never costs a visibility lookup.
+    expect(caches.visible.fetch).not.toHaveBeenCalled();
     expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
   });
 

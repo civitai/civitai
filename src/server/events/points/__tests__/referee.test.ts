@@ -3,8 +3,9 @@ import type { EventScoring } from '~/server/events/base.event';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { changedHats, REMOVAL_CUTOFF_MS, refereeQueryParams, refereeTotals, refereeWindow } =
-  await import('~/server/events/points/referee');
+const { changedHats, refereeQueryParams, refereeTotals, refereeWindow } = await import(
+  '~/server/events/points/referee'
+);
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -62,21 +63,29 @@ describe('refereeWindow', () => {
       expect(recomputeFrom.toISOString()).toBe('2026-11-01T00:00:00.000Z');
     });
 
-    it('stops settling removals 75 minutes before the finalize window closes', () => {
-      expect(REMOVAL_CUTOFF_MS).toBe(75 * 60 * 1000);
+    it('settles removals up to the close of the finalize window, and no further', () => {
       const { removeCut } = refereeWindow(FINALIZING, 'live', new Date('2026-12-02T05:00:00.000Z'));
-      expect(removeCut.toISOString()).toBe('2026-12-01T22:45:00.000Z');
+      expect(removeCut.toISOString()).toBe('2026-12-02T00:00:00.000Z');
     });
 
-    // The last run before the window closes must settle every removal that still counts, wherever
-    // in the final hour it falls.
-    it('settles every counted removal by the last run before the window closes', () => {
+    // The winner is named on the first final run, so final must mean every removal is in.
+    it('is final only from the first run that settles the whole finalize window', () => {
       const close = new Date('2026-12-02T00:00:00.000Z').getTime();
-      for (let minute = 0; minute < 60; minute++) {
-        const run = new Date(close - minute * 60 * 1000);
-        const { removeCut } = refereeWindow(FINALIZING, 'live', run);
-        expect(removeCut.getTime(), run.toISOString()).toBe(close - REMOVAL_CUTOFF_MS);
+      for (let minute = -60; minute <= 60; minute++) {
+        const run = new Date(close + minute * 60 * 1000);
+        const { removeCut, final } = refereeWindow(FINALIZING, 'live', run);
+        expect(final, run.toISOString()).toBe(minute >= 10);
+        if (final) expect(removeCut.getTime(), run.toISOString()).toBe(close);
       }
+    });
+
+    it('is never final mid-season or in the preview', () => {
+      expect(refereeWindow(FINALIZING, 'live', new Date('2026-11-05T12:07:00.000Z')).final).toBe(
+        false
+      );
+      expect(refereeWindow(FINALIZING, 'preview', new Date('2026-12-05T00:00:00.000Z')).final).toBe(
+        false
+      );
     });
 
     it('recomputes the whole season from the first run whose cut reaches the end', () => {
@@ -86,15 +95,21 @@ describe('refereeWindow', () => {
     });
   });
 
-  // With a finalize window shorter than the cutoff, removals must never stop before the adds do.
-  it('settles removals at least as far as adds when the finalize window is short', () => {
+  // A short finalize window: removals run on to its close and stop there, and never stop before
+  // the adds do.
+  it('settles removals to the close of a short finalize window', () => {
+    const at = (finalizeAfterMs: number, time: string) =>
+      refereeWindow({ ...EVENT, scoring: { ...scoring, finalizeAfterMs } }, 'live', new Date(time));
     for (const finalizeAfterMs of [0, 30 * 60 * 1000]) {
-      const event = { ...EVENT, scoring: { ...scoring, finalizeAfterMs } };
-      for (const time of ['2026-11-30T23:40:00.000Z', '2026-12-01T12:07:00.000Z']) {
-        const { cut, removeCut } = refereeWindow(event, 'live', new Date(time));
-        expect(removeCut.getTime(), `${finalizeAfterMs} ${time}`).toBe(cut.getTime());
-      }
+      const before = at(finalizeAfterMs, '2026-11-30T23:40:00.000Z');
+      expect(before.removeCut, `${finalizeAfterMs}`).toEqual(before.cut);
     }
+    expect(at(0, '2026-12-01T12:07:00.000Z').removeCut.toISOString()).toBe(
+      '2026-12-01T00:00:00.000Z'
+    );
+    expect(at(30 * 60 * 1000, '2026-12-01T12:07:00.000Z').removeCut.toISOString()).toBe(
+      '2026-12-01T00:30:00.000Z'
+    );
   });
 
   it('settles removals to the same cut as adds while the season runs, and in the preview', () => {

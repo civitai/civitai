@@ -149,15 +149,19 @@ function fakeSysRedis() {
   });
 }
 
-// Every read below runs with this on: the only proof that a read never touches Postgres.
+// Every read below runs with this on: the only proof that a read never touches Postgres. Raw, unsafe,
+// transactional and the delegates a score read could plausibly reach for all throw.
 function forbidPostgres() {
+  const forbidden = (async () => {
+    throw new Error('Postgres on the request path');
+  }) as never;
   for (const client of [dbMock.dbWrite, dbMock.dbRead]) {
-    client.$queryRaw.mockImplementation((async () => {
-      throw new Error('Postgres read on the request path');
-    }) as never);
-    client.$executeRaw.mockImplementation((async () => {
-      throw new Error('Postgres write on the request path');
-    }) as never);
+    for (const method of ['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe'])
+      client[method].mockImplementation(forbidden);
+    client.$transaction.mockImplementation(forbidden);
+    for (const model of ['eventCosmeticScoreDaily', 'userCosmetic', 'user', 'cosmetic'])
+      for (const method of ['findMany', 'findFirst', 'findUnique', 'groupBy', 'aggregate', 'count'])
+        client[model][method].mockImplementation(forbidden);
   }
 }
 
@@ -362,7 +366,10 @@ describe('standings', () => {
 
   it('serves an event the job has not settled yet as every team at zero, never reading Postgres', async () => {
     forbidPostgres();
-    expect(await getEventStandings(event)).toEqual(zeroStandings);
+    const onDegraded = vi.fn();
+    expect(await getEventStandings(event, { onDegraded })).toEqual(zeroStandings);
+    // Not the real standings: an edge-cached route must not keep it.
+    expect(onDegraded).toHaveBeenCalledTimes(1);
     expect(await getTeamScoreHistory(event)).toEqual(zeroStandings.history);
     expect(
       await getCosmeticScores(event, [{ userId: 2, cosmeticId: 22, claimKey: 'claimed' }])
@@ -370,11 +377,40 @@ describe('standings', () => {
     expect(await getUserCosmeticScores(event, 2)).toEqual([]);
   });
 
-  it('rebuilds a missing snapshot for a job from the database it is given, and stores it', async () => {
-    const { teams } = await getEventStandings(event, { rebuildFrom: dbMock.dbWrite as never });
-    expect(teams[0]).toEqual({ team: 'Blue', score: 25, rank: 1 });
+  it('does not call a settled read degraded', async () => {
+    await settle();
+    const onDegraded = vi.fn();
+    expect((await getEventStandings(event, { onDegraded })).teams[0].team).toBe('Blue');
+    expect(onDegraded).not.toHaveBeenCalled();
+  });
+
+  it('never folds hats a crashed earlier run left half-written into the new totals', async () => {
+    await settle();
+    const hatsKey = [...store.hashes.keys()].find((k) => k.endsWith(':hats'))!;
+    store.hashes.set(`${hatsKey}:next`, {
+      '9:99:stale': JSON.stringify({ userId: 9, cosmeticId: 99, claimKey: 'stale', points: 5 }),
+    });
+    const raw = pgliteRaw(db.pg);
+    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    await settle();
+    expect(
+      await getCosmeticScores(event, [{ userId: 9, cosmeticId: 99, claimKey: 'stale' }])
+    ).toEqual({});
+    // Positive control: the run itself landed.
+    expect(Object.keys(store.hashes.get(hatsKey)!)).toContain('2:22:claimed');
+  });
+
+  it('keeps serving the previous totals whole when a run fails partway through writing', async () => {
+    await settle();
+    await insertDays([day('2026-11-04', 2, 22, 'claimed', 'Blue', 100)]);
+    const raw = pgliteRaw(db.pg);
+    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    redisMock.sysRedis.hSet.mockRejectedValueOnce(new Error('sysRedis down'));
+    await expect(refreshStandings(event, dbMock.dbWrite as never)).rejects.toThrow('sysRedis down');
     forbidPostgres();
-    expect((await getEventStandings(event)).teams[0]).toEqual({ team: 'Blue', score: 25, rank: 1 });
+    const key = { userId: 2, cosmeticId: 22, claimKey: 'claimed' };
+    expect((await getCosmeticScores(event, [key]))['2:22:claimed']?.points).toBe(25);
+    expect((await getUserCosmeticScores(event, 1)).map((c) => c.points)).toEqual([20, 4]);
   });
 
   it('serves zeros when sysRedis is unreachable on a request, and says it degraded', async () => {
@@ -398,13 +434,6 @@ describe('standings', () => {
       ['read-degraded', 'getCosmeticScores'],
       ['read-degraded', 'getUserCosmeticScores'],
     ]);
-  });
-
-  it('fails a job read when sysRedis is unreachable, so the payout never runs on zeros', async () => {
-    redisMock.sysRedis.packed.get.mockRejectedValue(new Error('sysRedis down'));
-    await expect(
-      getEventStandings(event, { rebuildFrom: dbMock.dbWrite as never })
-    ).rejects.toThrow('sysRedis down');
   });
 
   it('serves standings and history from the stored snapshot without querying', async () => {
@@ -533,6 +562,13 @@ describe('referee snapshot', () => {
     ]);
     expect(hashes.get(keys.base('hat'))).toEqual({ '1:21:claimed': '18' });
     expect(hashes.get(keys.base('team'))).toEqual({ Yellow: '18' });
+  });
+
+  // The engine names the winner on the first final run, so final must reach the result.
+  it('reports a run final only once it settles the whole finalize window', async () => {
+    expect((await runEventPointsReferee(scored, 'live', HOURLY)).final).toBe(false);
+    const settlesEnd = new Date(scored.endDate.getTime() + 10 * 60 * 1000);
+    expect((await runEventPointsReferee(scored, 'live', settlesEnd)).final).toBe(true);
   });
 
   it('rerunning the same hour changes nothing', async () => {

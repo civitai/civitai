@@ -195,30 +195,19 @@ const emptyStandings = (event: StandingsEvent): EventStandings => ({
   updatedAt: new Date(0),
 });
 
-type StandingsRead = {
-  // Jobs only: a miss is rebuilt from this database rather than served empty, since the prize
-  // payout must never crown whichever team happens to be listed first.
-  rebuildFrom?: typeof dbWrite;
-  onDegraded?: () => void;
-};
+type StandingsRead = { onDegraded?: () => void };
 
-// On a request, before the job's first run the event shows every team at zero, and an unreachable
-// sysRedis shows the same rather than failing the page.
-export async function getEventStandings(
-  event: StandingsEvent,
-  { rebuildFrom, onDegraded }: StandingsRead = {}
-) {
-  let cached: EventStandings | null | undefined;
+// Before the job's first run, or while sysRedis is unreachable, every team shows zero. Neither is
+// the real standings, so an edge-cached route is told not to keep it.
+export async function getEventStandings(event: StandingsEvent, { onDegraded }: StandingsRead = {}) {
   try {
-    cached = await sysRedis.packed.get<EventStandings>(snapshotKeys(event).standings);
+    const cached = await sysRedis.packed.get<EventStandings>(snapshotKeys(event).standings);
+    if (cached) return cached;
   } catch (error) {
-    if (rebuildFrom) throw error;
     logSysRedisFailOpen('read-degraded', 'getEventStandings', error, { event: event.name });
-    onDegraded?.();
-    return emptyStandings(event);
   }
-  if (cached) return cached;
-  return rebuildFrom ? refreshStandings(event, rebuildFrom) : emptyStandings(event);
+  onDegraded?.();
+  return emptyStandings(event);
 }
 
 export async function getTeamScoreHistory(event: StandingsEvent, read?: StandingsRead) {

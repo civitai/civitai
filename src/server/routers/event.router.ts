@@ -149,7 +149,9 @@ export const eventRouter = router({
     .input(eventCosmeticScoresSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(({ ctx, input }) => getEventCosmeticScores({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) =>
+      getEventCosmeticScores({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+    ),
   // The hat on one card, read when its popover opens. The same for every viewer who sees the event.
   // Short-lived at the edge: its points are a live total, and an open popover only moves on pushes.
   getWornHat: publicProcedure

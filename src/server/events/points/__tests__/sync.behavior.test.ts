@@ -556,8 +556,7 @@ describe('syncEventHats -> engine', () => {
       expect([...(sets.get(lock.pending) ?? [])]).toEqual(['*']);
       // ...and expires like any other content left there, in case nobody runs next.
       const sys = redisMock.sysRedis;
-      expect(sys.pExpire.mock.calls).toEqual([[lock.pending, expect.any(Number)]]);
-      expect(sys.pExpire.mock.calls[0][1]).toBeGreaterThan(0);
+      expect(sys.pExpire.mock.calls).toEqual([[lock.pending, 60_000]]);
       expect(sys.pExpire.mock.invocationCallOrder[0]).toBeGreaterThan(
         sys.sAdd.mock.invocationCallOrder.at(-1)!
       );

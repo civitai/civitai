@@ -668,10 +668,11 @@ export async function getEventCosmeticScores({
   event,
   cosmetics,
   viewer,
-}: EventInput & Viewer & { cosmetics: CosmeticScoreKey[] }) {
+  onDegraded,
+}: EventInput & Viewer & OnDegraded & { cosmetics: CosmeticScoreKey[] }) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    return await getCosmeticScores(scored, cosmetics);
+    return await getCosmeticScores(scored, cosmetics, onDegraded);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -726,12 +727,11 @@ export async function getWornEventHat({
 }: WornEventHatInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const [worn, visible] = await Promise.all([
-      eventDecorationEntityCaches[entityType].fetch([entityId]),
-      publicContentCaches[entityType]?.fetch([entityId]),
-    ]);
-    const decoration = worn[entityId];
-    if (!decoration || !visible?.[entityId] || decoration.data.event !== event) return null;
+    const decoration = (await eventDecorationEntityCaches[entityType].fetch([entityId]))[entityId];
+    if (!decoration || decoration.data.event !== event) return null;
+    // A type with no cache is never public.
+    const visible = await publicContentCaches[entityType]?.fetch([entityId]);
+    if (!visible?.[entityId]) return null;
     const ownerId = decoration.userId;
     const hat = await wornHatInstance(
       scored,

@@ -392,6 +392,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
 
 // Content anyone may see, for the hat popover, which is the same for every viewer: only public ids
 // are returned, so a miss reads as not public. No stale serving, so a take-down shows within the TTL.
+// The same rules as reviewedImageWhere and the published-model checks elsewhere; change them together.
 const publicContentCache = (
   entity: 'Image' | 'Model' | 'Article',
   lookup: (ids: number[]) => Promise<{ id: number }[]>

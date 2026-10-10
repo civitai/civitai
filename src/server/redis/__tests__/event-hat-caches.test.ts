@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * The two caches the hat popover reads instead of Postgres: the decoration each piece of content
@@ -13,9 +14,16 @@ const { eventDecorationEntityCaches, publicContentCaches, cosmeticCache } = awai
 
 const sql = (call: unknown[]) => (call[0] as string[]).join('?').replace(/\s+/g, ' ').trim();
 
+// The ids the lookup was asked for: Prisma.join's values.
+const ids = (call: unknown[]) => (call[1] as { values: unknown[] }).values;
+// What each id was cached as, and for how long.
+const writes = () =>
+  redisMock.redis.packed.set.mock.calls.map(([key, value, options]) => [key, value, options]);
+
 beforeEach(() => {
   dbMock.dbRead.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockReset();
+  redisMock.redis.packed.set.mockClear();
 });
 
 describe('publicContentCaches', () => {
@@ -28,7 +36,17 @@ describe('publicContentCaches', () => {
         `AND p."publishedAt" <= now() AND p.availability <> 'Private' AND NOT p."tosViolation" ` +
         `AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation"`
     );
+    expect(ids(call)).toEqual([5, 6]);
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    // Five minutes for both answers, with no stale tail, so a take-down shows within that.
+    expect(writes()).toEqual([
+      [
+        'packed:caches:cosmetics2:event-public:Image:5',
+        expect.objectContaining({ id: 5 }),
+        { EX: 300 },
+      ],
+      ['packed:caches:cosmetics2:event-public:Image:6', expect.anything(), { EX: 300, NX: true }],
+    ]);
   });
 
   it('reads a model as public once published, and an article once published and scanned', async () => {
@@ -67,11 +85,17 @@ describe('eventDecorationEntityCaches', () => {
     try {
       const worn = await eventDecorationEntityCaches.Image.fetch([5]);
       expect(worn[5]).toMatchObject({ id: 31, userId: 9, equippedToId: 5 });
+      // v2: entries cached before the wearer was added are never read as having one.
+      expect(writes().map(([key]) => key)).toEqual(['packed:caches:cosmetics2:event:v2:Image:5']);
     } finally {
       cosmeticCache.fetch = fetch;
     }
-    expect(sql(dbMock.dbWrite.$queryRaw.mock.calls[0])).toMatch(
-      /^SELECT uc."cosmeticId", uc."equippedToId", uc."userId" FROM "UserCosmetic" uc/
+    const [call] = dbMock.dbWrite.$queryRaw.mock.calls;
+    expect(sql(call)).toBe(
+      `SELECT uc."cosmeticId", uc."equippedToId", uc."userId" FROM "UserCosmetic" uc ` +
+        `JOIN "Cosmetic" c ON c.id = uc."cosmeticId" WHERE uc."equippedToId" IN (?) ` +
+        `AND uc."equippedToType" = '?'::"CosmeticEntity" AND jsonb_typeof(c.data->'event') = 'string';`
     );
+    expect(ids(call)).toEqual([5]);
   });
 });
