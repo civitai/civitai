@@ -42,8 +42,8 @@ export const MAX_HATTED_VIEWS_PER_BATCH = 250;
 
 /**
  * The distinct hatted entities in a tracking batch's impressions, at most
- * MAX_HATTED_VIEWS_PER_BATCH. Synchronous and allocation-free for a batch with no hatted entity,
- * which is nearly every batch: this runs on every impression flush.
+ * MAX_HATTED_VIEWS_PER_BATCH. Synchronous, and a batch with no hatted entity (nearly every batch:
+ * this runs on every impression flush) allocates only the empty result.
  */
 export function hattedImpressionEntities(events: TrackBatchInput): Entity[] {
   let seen: Set<string> | undefined;
@@ -81,12 +81,13 @@ export async function awardViewPoints(
     if (!session || 'tokenScope' in session) return;
     const user = session.user;
     if (!user?.id) return;
+    // Lets the live total skip new and banned accounts at once, not only at the hourly referee.
+    const actor = { createdAt: toDate(user.createdAt), bannedAt: toDate(user.bannedAt) };
     await awardEventPoints(
       entities.map(({ entityType, entityId }) => ({
         type: 'view',
         actorId: user.id,
-        // Lets the live total skip new and banned accounts at once, not only at the hourly referee.
-        actor: { createdAt: toDate(user.createdAt), bannedAt: toDate(user.bannedAt) },
+        actor,
         entityType,
         entityId,
       }))

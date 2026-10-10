@@ -417,3 +417,50 @@ describe('round 3', () => {
     });
   });
 });
+
+describe('round 4', () => {
+  const events = (...batches: { entityType: string; entityId: number }[][]) =>
+    batches.map((entities) => ({
+      kind: 'impression',
+      data: { sessionKey: 'k', surface: 'images', entities },
+    })) as unknown as TrackBatchInput;
+
+  it('dedupes across events by type and id, keeping same-id entities of other types', () => {
+    hatted.add('Image:1').add('Model:1');
+    expect(
+      hattedImpressionEntities(
+        events(
+          [{ entityType: 'Image', entityId: 1 }],
+          [
+            { entityType: 'Image', entityId: 1 },
+            { entityType: 'Model', entityId: 1 },
+          ]
+        )
+      )
+    ).toEqual([
+      { entityType: 'Image', entityId: 1 },
+      { entityType: 'Model', entityId: 1 },
+    ]);
+  });
+
+  it('counts distinct entities toward the cap, across events', () => {
+    const repeats = Array.from({ length: 300 }, () => ({ entityType: 'Image', entityId: 0 }));
+    const distinct = Array.from({ length: 250 }, (_, i) => ({ entityType: 'Image', entityId: i }));
+    for (const { entityId } of distinct) hatted.add(`Image:${entityId}`);
+
+    const result = hattedImpressionEntities(events(repeats, distinct));
+
+    expect(result).toHaveLength(250);
+    expect(new Set(result.map(({ entityId }) => entityId)).size).toBe(250);
+  });
+
+  it('passes an unbanned viewer as unbanned: a null ban date stays null', async () => {
+    const createdAt = '2026-01-02T00:00:00.000Z';
+    await awardViewPoints(
+      async () => ({ user: { id: ACTOR, createdAt, bannedAt: null } } as never),
+      [{ entityType: 'Image', entityId: 1 }]
+    );
+    const [[[action]]] = awardEventPoints.mock.calls as unknown as [[[{ actor: unknown }]]];
+    expect(action.actor).toStrictEqual({ createdAt: new Date(createdAt), bannedAt: null });
+  });
+});
