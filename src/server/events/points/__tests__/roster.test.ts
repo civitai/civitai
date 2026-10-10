@@ -804,9 +804,13 @@ describe('team roster', () => {
   it('lets no stale unlisting hide a member who opted out and back in while it ran', async () => {
     const s = setup([member(1)]);
     await syncRosterMembersWith(EVENT, [1], s.deps);
+    let churned = false;
     const stale: RosterSyncDeps = {
       ...s.deps,
       loadStates: async (event, ids) => {
+        // Once: its retries read fresh, as a real retry would.
+        if (churned) return s.deps.loadStates(event, ids);
+        churned = true;
         // This sync reads them as opted out...
         s.db.set(1, member(1, { optedIn: false }));
         const states = await s.deps.loadStates(event, ids);
@@ -832,6 +836,7 @@ describe('team roster', () => {
     expect(rosterTeam(first)).toBe('Blue');
     expect(rosterTeam(second)).toBe('Blue');
     expect(second).not.toBe(first);
+    expect(first).toMatch(/^Blue#[0-9a-f]{8}$/);
   });
 
   // A listing that lands between this sync's tombstone and its clear has its entries wiped by the
@@ -855,5 +860,63 @@ describe('team roster', () => {
     expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
     expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1]);
+  });
+
+  // The gap a clear-after-tombstone leaves: a listing reads this sync's tombstone, writes its
+  // entries, the clear wipes them, then the listing's gate write succeeds. Listed, with no rows.
+  it('never leaves a member listed without entries when a listing straddles an unlisting', async () => {
+    const s = setup([member(1)]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    s.db.set(1, member(1, { optedIn: false }));
+    let entered!: () => void;
+    const atGate = new Promise<void>((r) => (entered = r));
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    let listing: Promise<unknown> | undefined;
+    const evalOf = s.redis.eval.bind(s.redis);
+    // The listing's gate write waits until the unlisting has finished.
+    const gated = {
+      ...s.redis,
+      eval: async (script: string, args: EvalArgs) => {
+        if (rosterTeam(args.arguments[2])) {
+          entered();
+          await released;
+        }
+        return evalOf(script, args);
+      },
+    };
+    (s.redis as { eval: typeof evalOf }).eval = async (script, args) => {
+      const result = await evalOf(script, args);
+      if (!listing && isTombstone(args.arguments[2])) {
+        // Right after the tombstone: the member opts back in, and that sync gets as far as its
+        // gate write (entries written) before this one goes on.
+        s.db.set(1, member(1));
+        listing = syncRosterMembersWith(EVENT, [1], {
+          ...s.deps,
+          redis: gated as unknown as RosterSyncDeps['redis'],
+        });
+        await atGate;
+      }
+      return result;
+    };
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    release();
+    await listing;
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+    expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1]);
+  });
+
+  // An ordinary opt-out writes once and is done: no re-derive, no give-up.
+  it('unlists in one pass when nothing races it', async () => {
+    const s = setup([member(1)]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    s.db.set(1, member(1, { optedIn: false }));
+    const loaded = vi.fn(s.deps.loadStates);
+    expect(await syncRosterMembersWith(EVENT, [1], { ...s.deps, loadStates: loaded })).toEqual({
+      listed: 0,
+      removed: 1,
+    });
+    expect(loaded).toHaveBeenCalledTimes(1);
   });
 });

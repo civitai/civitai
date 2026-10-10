@@ -203,23 +203,19 @@ export async function syncRosterMembersWith(
   // Everyone unlisted gets a fresh tombstone, listed before or not: a ban or an opt-out can land
   // while someone's first opt-in is still in flight, and only a changed gate stops that listing.
   // The reconcile prunes them after TOMBSTONE_TTL_MS.
+  // Each member's entries are cleared before its tombstone goes in. Reads filter by the gate, so
+  // clearing first can only hide; and a listing that wrote entries after the clear must have read
+  // the gate before the tombstone, so its own compare-and-set fails and it derives again, rewriting
+  // them. Clearing after the tombstone would wipe such a listing's entries once it had won.
   const closed: number[] = [];
   for (const group of chunk(unlisted, LIST_CONCURRENCY))
     await Promise.all(
       group.map(async (s) => {
+        await clearEntries(event, [s.userId], deps);
         if (await gateWrite(s.userId, tombstone(now))) closed.push(s.userId);
         else changed.push(s.userId);
       })
     );
-  await clearEntries(event, closed, deps);
-  // Another sync may have listed one of these between its tombstone and the clear above, and the
-  // clear took that listing's entries: derive those again.
-  if (closed.length) {
-    const after = await deps.redis.hmGet(keys.members, closed.map(String));
-    closed.forEach((id, i) => {
-      if (rosterTeam(after[i])) changed.push(id);
-    });
-  }
   const removed = closed.filter((id) => rosterTeam(previous.get(id))).length;
 
   // Listing writes the scores first and opens the gate last. Members go LIST_CONCURRENCY at a
