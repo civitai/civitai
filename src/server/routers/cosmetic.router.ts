@@ -3,6 +3,7 @@ import {
   equipCosmeticSchema,
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
+  getViewerEventDecorationsSchema,
   purchaseStickerUsesSchema,
   setStickerPlacementRatingSchema,
   unequipCosmeticSchema,
@@ -15,6 +16,7 @@ import {
   getStickerAttribution,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
+  getEventDecorationsForEntity,
   unequipCosmetic,
   updateEventHatFit,
 } from '~/server/services/cosmetic.service';
@@ -25,6 +27,7 @@ import {
   purchaseStickerUses,
 } from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { noEdgeCache } from '~/server/middleware.trpc';
 import {
   moderatorProcedure,
   protectedProcedure,
@@ -97,6 +100,15 @@ export const cosmeticRouter = router({
   updateEventHatFit: moderatorProcedure
     .input(updateEventHatFitSchema)
     .mutation(({ input }) => updateEventHatFit(input)),
+  // The viewer's own preview hats, for cards served from a cache every viewer shares (the home
+  // blocks), which can only carry the hats everyone sees. Per viewer, so never cached anywhere.
+  getViewerEventDecorations: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getViewerEventDecorationsSchema)
+    .use(noEdgeCache())
+    .query(({ input, ctx }) =>
+      getEventDecorationsForEntity({ ids: input.ids, entity: input.entityType, viewer: ctx.user })
+    ),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)
