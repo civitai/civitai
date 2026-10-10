@@ -2004,10 +2004,13 @@ type ListingJoinSubject = {
   manifest?: unknown;
 };
 
-/** {@link ListingQueueFacts} plus the joined listing's id and {@link approveRatingFor}. */
+/**
+ * {@link ListingQueueFacts} plus the joined listing's id and, when approving the request
+ * re-rates a listing from its imagery, which listing and from what declared rating.
+ */
 type RequestListingFacts = ListingQueueFacts & {
   appListingId: string | null;
-  approveRating: { declared: string | null } | null;
+  approveRating: { listingId: string; declared: string | null } | null;
 };
 
 /** A slug-resolved listing, reduced to what {@link listingFactsForRequests} reads. */
@@ -2015,7 +2018,6 @@ type JoinedListing = {
   id: string;
   status: string;
   contentRating: string | null;
-  _count?: { publishRequests: number };
   slug: string;
   kind: string;
   appBlockId: string | null;
@@ -2091,35 +2093,32 @@ function manifestRatingOrDefault(manifest: unknown): string {
 }
 
 /**
- * Whether approving `req` re-rates `listing` from its imagery, and from which rating:
- * `null` when it does not.
- *
- * 🔴 MIRRORS `approveRequest`'s two floor sites and must change with them: the
- * (3b-transition) draft lookup, which floors the request's manifest rating, and the
- * (3b-reset) `resetListingWhere`, which floors the rating a reset listing already
- * carries — but only while no listing request of its own is pending. A version approve
- * of an already-approved listing leaves its rating alone.
+ * The pre-approval draft listing a FIRST approve of `slug` transitions in place and rates
+ * from the request's manifest (`approveRequest`, 3b-transition). Owner-scoped: a draft
+ * another user holds on the same slug is never adopted.
  */
-function approveRatingFor(
-  listing: JoinedListing,
-  req: ListingJoinSubject
-): { declared: string | null } | null {
-  if (
-    listing.status === 'draft' &&
-    listing.appBlockId == null &&
-    listing.userId === req.submittedBy?.id
-  ) {
-    return { declared: manifestRatingOrDefault(req.manifest) };
-  }
-  if (
-    listing.status === 'pending' &&
-    listing.appBlockId != null &&
-    listing.appBlockId === req.appBlockId &&
-    (listing._count?.publishRequests ?? 0) === 0
-  ) {
-    return { declared: listing.contentRating };
-  }
-  return null;
+export function draftTransitionWhere(args: { slug: string; submittedByUserId: number }) {
+  return {
+    slug: args.slug,
+    kind: 'onsite',
+    appBlockId: null,
+    status: 'draft',
+    userId: args.submittedByUserId,
+  } satisfies Prisma.AppListingWhereInput;
+}
+
+/**
+ * The reset-to-pending listing an approve of `appBlockId` restores to `approved` and rates
+ * from the rating it already carries (`approveRequest`, 3b-reset) — only while no listing
+ * request of its own is pending, since that queue then owns the listing's review.
+ */
+export function resetRestoreWhere(appBlockId: string) {
+  return {
+    appBlockId,
+    kind: 'onsite',
+    status: 'pending',
+    publishRequests: { none: { status: 'pending' } },
+  } satisfies Prisma.AppListingWhereInput;
 }
 
 /**
@@ -2166,21 +2165,54 @@ async function listingFactsForRequests(
       icon: { select: { url: true } },
       cover: { select: { url: true } },
       metric: { select: { openCount: true } },
-      _count: { select: { publishRequests: { where: { status: 'pending' } } } },
     },
   })) as JoinedListing[];
+
+  // Whether an approve re-rates a listing is answered with approveRequest's OWN `where`
+  // builders, so this warning and that write cannot disagree about which listing it is.
+  const draftWheres = requests.flatMap((r) =>
+    r.submittedBy
+      ? [draftTransitionWhere({ slug: r.slug, submittedByUserId: r.submittedBy.id })]
+      : []
+  );
+  const resetWheres = requests.flatMap((r) =>
+    r.appBlockId ? [resetRestoreWhere(r.appBlockId)] : []
+  );
+  const [drafts, resets] = await Promise.all([
+    draftWheres.length
+      ? dbRead.appListing.findMany({
+          where: { OR: draftWheres },
+          select: { id: true, slug: true, userId: true },
+        })
+      : [],
+    resetWheres.length
+      ? dbRead.appListing.findMany({
+          where: { OR: resetWheres },
+          select: { id: true, appBlockId: true, contentRating: true },
+        })
+      : [],
+  ]);
+  const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
+    const draft = (drafts as { id: string; slug: string; userId: number }[]).find(
+      (d) => d.slug === req.slug && d.userId === req.submittedBy?.id
+    );
+    if (draft) return { listingId: draft.id, declared: manifestRatingOrDefault(req.manifest) };
+    const reset = (
+      resets as { id: string; appBlockId: string | null; contentRating: string | null }[]
+    ).find((l) => req.appBlockId != null && l.appBlockId === req.appBlockId);
+    return reset ? { listingId: reset.id, declared: reset.contentRating } : null;
+  };
 
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
   const out = new Map<string, RequestListingFacts>();
   for (const req of requests) {
     const listing = bySlug.get(req.slug);
-    if (listing && listingBelongsToRequest(listing, req)) {
-      out.set(req.id, {
-        ...listingQueueFacts(listing),
-        appListingId: listing.id,
-        approveRating: approveRatingFor(listing, req),
-      });
-    }
+    const belongs = listing && listingBelongsToRequest(listing, req);
+    out.set(req.id, {
+      ...(belongs ? listingQueueFacts(listing) : NO_LISTING_QUEUE_FACTS),
+      appListingId: belongs ? listing.id : null,
+      approveRating: approveRatingFor(req),
+    });
   }
   return (requestId: string) => out.get(requestId) ?? noListing;
 }
@@ -2899,15 +2931,12 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // `AppListing.userId`). A foreign same-slug draft does NOT match here and falls
     // through to the legacy create path below.
     let handledByDraftTransition = false;
-    // Mirrored for the moderator's pre-approve warning by `approveRatingFor` — change both.
+    // Shared with the moderator's pre-approve warning (`listingFactsForRequests`).
     const draftListing = await dbWrite.appListing.findFirst({
-      where: {
+      where: draftTransitionWhere({
         slug: request.slug,
-        kind: 'onsite',
-        appBlockId: null,
-        status: 'draft',
-        userId: request.submittedByUserId,
-      },
+        submittedByUserId: request.submittedByUserId,
+      }),
       select: { id: true },
     });
     if (draftListing) {
@@ -3184,13 +3213,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     // Scoped through the relation (= `appListingId`), NOT by slug: a pending SHADOW media
     // revision denormalizes the parent slug but targets a different row and is a
     // legitimate concurrent review that must not block a reset restore.
-    // Mirrored for the moderator's pre-approve warning by `approveRatingFor` — change both.
-    const resetListingWhere = {
-      appBlockId,
-      kind: 'onsite',
-      status: 'pending',
-      publishRequests: { none: { status: 'pending' } },
-    } satisfies Prisma.AppListingWhereInput;
+    // Shared with the moderator's pre-approve warning (`listingFactsForRequests`).
+    const resetListingWhere = resetRestoreWhere(appBlockId);
     const resetListing = await dbWrite.appListing.findFirst({
       where: resetListingWhere,
       select: { id: true, contentRating: true },

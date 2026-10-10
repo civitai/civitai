@@ -7,7 +7,7 @@ import {
   MATURE_STORE_HOST,
   SFW_STORE_HOST,
   summarizeListingRating,
-} from '~/shared/utils/app-listing-rating';
+} from '~/shared/utils/listing-rating-display';
 
 /**
  * Advisory "listing completeness" surface for /apps/my-submissions.
@@ -16,7 +16,7 @@ import {
  * and ratings, it enumerates the row's PROBLEMS — missing assets (icon / cover /
  * screenshots, delegated to the shared {@link checkListingAssetsComplete} gate), empty
  * key fields (description / tagline / category), blocked or still-scanning media, and a
- * mature rating that hides an approved listing from the SFW store. `name` is always
+ * rating raised above the declared one that hides an approved listing from the SFW store. `name` is always
  * filled from the manifest so it is intentionally NOT checked.
  *
  * This is a heads-up for the developer, NOT a hard gate — nothing here blocks
@@ -317,8 +317,9 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
 }
 
 /**
- * The label for an approved listing whose mature rating hides it from the SFW store;
- * adds the declared rating when the stored one sits above it.
+ * The label for an approved listing that a rating ABOVE what its author declared hides
+ * from the SFW store. A listing declared mature is hidden by the author's own choice and
+ * has nothing to fix, so it is not a problem (the CLI's `app doctor` has no remedy for it).
  */
 function hiddenMatureRatingLabel(listing: ListingProblemInput): string | null {
   if (listing.status !== 'approved') return null;
@@ -326,12 +327,11 @@ function hiddenMatureRatingLabel(listing: ListingProblemInput): string | null {
     declaredRating: listing.declaredContentRating,
     listingRating: listing.contentRating,
   });
-  if (!current.hiddenOnSfw || current.rating == null) return null;
-  const hidden = `Rated ${offsiteContentRatingLabel(
+  if (!current.hiddenOnSfw || !current.raised || current.rating == null || declared == null)
+    return null;
+  return `Rated ${offsiteContentRatingLabel(
     current.rating
-  )} — hidden on ${SFW_STORE_HOST} (visible on ${MATURE_STORE_HOST})`;
-  if (declared == null || !current.raised) return hidden;
-  return `${hidden}. You declared ${offsiteContentRatingLabel(
+  )} — hidden on ${SFW_STORE_HOST} (visible on ${MATURE_STORE_HOST}). You declared ${offsiteContentRatingLabel(
     declared
   )}; a listing is rated at least as high as its most mature store image — check its images`;
 }

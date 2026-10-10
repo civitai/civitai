@@ -124,8 +124,8 @@ export type ReviewedRequestCommon = {
   coverUrl?: string | null;
   /** Id of the slug-joined store listing; `null` when the request has none of its own. */
   appListingId?: string | null;
-  /** Set when approving re-rates that listing from its imagery, starting from `declared`. */
-  approveRating?: { declared: string | null } | null;
+  /** Set when approving re-rates a listing from its imagery, starting from `declared`. */
+  approveRating?: { listingId: string; declared: string | null } | null;
 };
 
 export type PendingRequest = ReviewedRequestCommon;

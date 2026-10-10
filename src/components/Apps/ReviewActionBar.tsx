@@ -160,9 +160,9 @@ export function ReviewActionBar({
       </Stack>
     ) : (
       <Stack gap="xs">
-        {request.appListingId && request.approveRating && (
+        {request.approveRating && (
           <OnsiteApproveRatingWarning
-            listingId={request.appListingId}
+            listingId={request.approveRating.listingId}
             declaredRating={request.approveRating.declared}
           />
         )}

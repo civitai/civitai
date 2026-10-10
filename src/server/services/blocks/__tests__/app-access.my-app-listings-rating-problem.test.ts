@@ -119,15 +119,9 @@ describe('listMyAppListings — the hidden-mature-rating advisory', () => {
     ]);
   });
 
-  it('each row reads its OWN declared rating: a declared-mature row on the same page is not "raised"', async () => {
+  it('each row reads its OWN declared rating: a declared-mature row on the same page has no problem', async () => {
     mockDb.appListing.findMany.mockImplementation(findManyFake([raised, declaredMature, sfw]));
-    expect(await problemsFor('l-declared')).toEqual([
-      {
-        code: 'hidden-mature-rating',
-        severity: 'advisory',
-        label: 'Rated X — hidden on civitai.com (visible on civitai.red)',
-      },
-    ]);
+    expect(await problemsFor('l-declared')).toEqual([]);
   });
 
   it('a PG-13 row on the same page gets no rating problem', async () => {

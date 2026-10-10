@@ -34,24 +34,34 @@ describe('computeListingProblems — hidden-mature-rating', () => {
     ]);
   });
 
-  it('a listing DECLARED mature is hidden too, but is not told its imagery raised it', () => {
-    expect(problems({ contentRating: 'x', declaredContentRating: 'x' })).toEqual([
+  it('a raise from PG-13 to X names both ratings', () => {
+    expect(problems({ contentRating: 'x', declaredContentRating: 'pg13' })).toEqual([
       {
         code: 'hidden-mature-rating',
         severity: 'advisory',
-        label: 'Rated X — hidden on civitai.com (visible on civitai.red)',
+        label:
+          'Rated X — hidden on civitai.com (visible on civitai.red). You declared PG-13; a listing is rated at least as high as its most mature store image — check its images',
       },
     ]);
   });
 
-  it('with no declared rating to compare (off-site), reports the hiding alone', () => {
-    expect(problems({ kind: 'offsite', contentRating: 'r', declaredContentRating: null })).toEqual([
+  it('a listing DECLARED mature is hidden by the author’s own choice: not a problem', () => {
+    expect(problems({ contentRating: 'x', declaredContentRating: 'x' })).toEqual([]);
+    expect(problems({ contentRating: 'x', declaredContentRating: 'r' })).toEqual([
       {
         code: 'hidden-mature-rating',
         severity: 'advisory',
-        label: 'Rated R — hidden on civitai.com (visible on civitai.red)',
+        label:
+          'Rated X — hidden on civitai.com (visible on civitai.red). You declared R; a listing is rated at least as high as its most mature store image — check its images',
       },
     ]);
+    expect(problems({ contentRating: 'r', declaredContentRating: 'r' })).toEqual([]);
+  });
+
+  it('with no declared rating to compare (off-site) there is no raise to report', () => {
+    expect(problems({ kind: 'offsite', contentRating: 'r', declaredContentRating: null })).toEqual(
+      []
+    );
   });
 
   it('PG-13 is not mature: raised above a declared G, but not hidden, so no problem', () => {

@@ -44,8 +44,10 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
 }));
 
 import {
-  resolveReviewRequestTarget,
+  draftTransitionWhere,
   getReviewRequestById,
+  resetRestoreWhere,
+  resolveReviewRequestTarget,
 } from '~/server/services/blocks/publish-request.service';
 
 // A full hydrated DB row shaped as getReviewRequestById's `select` returns it.
@@ -176,7 +178,12 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       expect(res!.request.playCount).toBe(1234);
       expect(res!.request.iconUrl).toContain('icon-uuid');
       expect(res!.request.coverUrl).toContain('cover-uuid');
-      expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
+      // One slug join for the page; the other two reads are the re-rate lookups.
+      const slugJoins = mockDbRead.appListing.findMany.mock.calls.filter(
+        (c) => ((c[0] ?? {}) as { where?: { slug?: unknown } }).where?.slug !== undefined
+      );
+      expect(slugJoins).toHaveLength(1);
+      expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(3);
       const joinArgs = mockDbRead.appListing.findMany.mock.calls[0][0] as {
         where: { slug: { in: string[] } };
       };
@@ -214,108 +221,84 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
   });
 
   /**
-   * `approveRating` mirrors `approveRequest`'s two rating-floor sites. The listing's own
-   * rating (`r`) and the manifest's (`pg13`) differ so the wrong source is visible.
+   * `approveRating` asks the database with approveRequest's own `where` builders; these
+   * pin that it sends exactly those and maps what comes back. The listing's own rating
+   * (`r`) and the manifest's (`pg13`) differ so the wrong source is visible.
    */
-  describe('approveRating — will this approve re-rate the listing, and from what', () => {
+  describe('approveRating — will this approve re-rate a listing, and from what', () => {
     const SUBMITTER = 7;
-    const joined = (over: Record<string, unknown>) => ({
-      id: 'apl_mine',
-      status: 'draft',
-      contentRating: 'r',
-      slug: 'my-app',
-      kind: 'onsite',
-      appBlockId: null,
-      userId: SUBMITTER,
-      icon: null,
-      cover: null,
-      metric: null,
-      _count: { publishRequests: 0 },
-      ...over,
-    });
+    type Where = { OR?: Record<string, unknown>[] };
+    const isDraftQuery = (w: Where) => w.OR?.[0]?.status === 'draft';
+    const isResetQuery = (w: Where) => w.OR?.[0]?.status === 'pending';
     const approveRatingFor = async (
-      listing: Record<string, unknown>,
+      found: { drafts?: unknown[]; resets?: unknown[] },
       request: Record<string, unknown> = {}
     ) => {
       mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
         dbRow({ manifest: { name: 'my-app', contentRating: 'pg13' }, ...request })
       );
-      mockDbRead.appListing.findMany.mockResolvedValue([listing]);
-      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
-      return (res!.request as unknown as { appListingId: unknown; approveRating: unknown })
-        .approveRating;
-    };
-
-    it('a first-version DRAFT is floored from the submitted manifest rating', async () => {
-      expect(await approveRatingFor(joined({}), { appBlockId: null })).toEqual({
-        declared: 'pg13',
+      mockDbRead.appListing.findMany.mockImplementation(async (...a: unknown[]) => {
+        const w = ((a[0] ?? {}) as { where?: Where }).where ?? {};
+        if (isDraftQuery(w)) return found.drafts ?? [];
+        if (isResetQuery(w)) return found.resets ?? [];
+        return [];
       });
+      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+      return (res!.request as unknown as { approveRating: unknown }).approveRating;
+    };
+    const queries = () =>
+      mockDbRead.appListing.findMany.mock.calls.map(
+        (c) => ((c[0] ?? {}) as { where?: Where }).where ?? {}
+      );
+
+    it('asks with exactly draftTransitionWhere and resetRestoreWhere for this request', async () => {
+      await approveRatingFor({});
+      const wheres = queries();
+      expect(wheres.find(isDraftQuery)).toEqual({
+        OR: [draftTransitionWhere({ slug: 'my-app', submittedByUserId: SUBMITTER })],
+      });
+      expect(wheres.find(isResetQuery)).toEqual({ OR: [resetRestoreWhere('appblk_1')] });
+    });
+
+    it('a request not yet keyed to an app asks for no reset restore', async () => {
+      await approveRatingFor({}, { appBlockId: null });
+      expect(queries().some(isResetQuery)).toBe(false);
+    });
+
+    it('a matching first-version DRAFT is floored from the submitted manifest rating', async () => {
+      expect(
+        await approveRatingFor({ drafts: [{ id: 'apl_draft', slug: 'my-app', userId: SUBMITTER }] })
+      ).toEqual({ listingId: 'apl_draft', declared: 'pg13' });
     });
 
     it('a manifest with no rating floors from g', async () => {
       expect(
-        await approveRatingFor(joined({}), { appBlockId: null, manifest: { name: 'my-app' } })
-      ).toEqual({ declared: 'g' });
+        await approveRatingFor(
+          { drafts: [{ id: 'apl_draft', slug: 'my-app', userId: SUBMITTER }] },
+          { manifest: { name: 'my-app' } }
+        )
+      ).toEqual({ listingId: 'apl_draft', declared: 'g' });
     });
 
     it('a listing RESET to pending is floored from the rating it already carries', async () => {
-      expect(await approveRatingFor(joined({ status: 'pending', appBlockId: 'appblk_1' }))).toEqual(
-        { declared: 'r' }
-      );
-    });
-
-    it('a pending listing whose OWN review request is open is not re-rated by a version approve', async () => {
       expect(
-        await approveRatingFor(
-          joined({ status: 'pending', appBlockId: 'appblk_1', _count: { publishRequests: 1 } })
-        )
-      ).toBeNull();
+        await approveRatingFor({
+          resets: [{ id: 'apl_reset', appBlockId: 'appblk_1', contentRating: 'r' }],
+        })
+      ).toEqual({ listingId: 'apl_reset', declared: 'r' });
     });
 
-    // Each of the next four differs from a re-rated case above in exactly one field.
-    it('a draft already linked to an app is not the first-approve transition', async () => {
-      expect(await approveRatingFor(joined({ appBlockId: 'appblk_1' }))).toBeNull();
-    });
-
-    it('an unlinked listing that is not a draft is not re-rated', async () => {
+    it('rows for another request on the same page are not this one’s', async () => {
       expect(
-        await approveRatingFor(joined({ status: 'approved' }), { appBlockId: null })
-      ).toBeNull();
-    });
-
-    it('an unlinked pending listing is not the reset restore', async () => {
-      expect(
-        await approveRatingFor(joined({ status: 'pending' }), { appBlockId: null })
-      ).toBeNull();
-    });
-
-    it('a reset listing is not re-rated by a request that is not keyed to its app', async () => {
-      expect(
-        await approveRatingFor(joined({ status: 'pending', appBlockId: 'appblk_1' }), {
-          appBlockId: null,
+        await approveRatingFor({
+          drafts: [{ id: 'apl_other', slug: 'other-app', userId: SUBMITTER }],
+          resets: [{ id: 'apl_other2', appBlockId: 'appblk_9', contentRating: 'r' }],
         })
       ).toBeNull();
     });
 
-    it('an already-approved listing keeps its rating across a version approve', async () => {
-      expect(
-        await approveRatingFor(joined({ status: 'approved', appBlockId: 'appblk_1' }))
-      ).toBeNull();
-    });
-
-    it('the join carries the listing id and counts only PENDING listing requests', async () => {
-      await approveRatingFor(joined({}), { appBlockId: null });
-      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
-      expect(res!.request).toMatchObject({ appListingId: 'apl_mine' });
-      const joinArgs = mockDbRead.appListing.findMany.mock.calls[0][0] as {
-        select: Record<string, unknown>;
-      };
-      expect(joinArgs.select).toMatchObject({
-        id: true,
-        status: true,
-        contentRating: true,
-        _count: { select: { publishRequests: { where: { status: 'pending' } } } },
-      });
+    it('nothing the writer would re-rate: null', async () => {
+      expect(await approveRatingFor({})).toBeNull();
     });
   });
 

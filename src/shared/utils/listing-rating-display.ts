@@ -12,10 +12,10 @@ import {
 export const SFW_STORE_HOST = 'civitai.com';
 export const MATURE_STORE_HOST = 'civitai.red';
 
-export type ListingRatingAssetKind = 'icon' | 'cover' | 'screenshot';
+export type ListingRatingDisplayAssetKind = 'icon' | 'cover' | 'screenshot';
 
-export type ListingRatingAsset = {
-  kind: ListingRatingAssetKind;
+export type ListingRatingDisplayAsset = {
+  kind: ListingRatingDisplayAssetKind;
   /** 1-based position among the listing's screenshots; unset for the icon and cover. */
   position?: number;
   /** The image's detected level. `null`/`0` = not rated yet, which raises nothing. */
@@ -39,7 +39,7 @@ export type ListingRatingSummary = {
   /** What approving these assets under the declared rating stamps: the higher of the two. */
   projected: ListingRatingState;
   /** The assets at the derived level, when that level is above the declared rating. */
-  drivingAssets: ListingRatingAsset[];
+  drivingAssets: ListingRatingDisplayAsset[];
   /** The listing row does not carry the projected rating yet: a review still has to apply it. */
   projectedExceedsCurrent: boolean;
   /** The listing row is rated above the projection, so its images alone do not explain it. */
@@ -68,7 +68,7 @@ function ratingState(rating: string | null, declared: string | null): ListingRat
 export function summarizeListingRating(input: {
   declaredRating: string | null | undefined;
   listingRating?: string | null;
-  assets?: ListingRatingAsset[];
+  assets?: ListingRatingDisplayAsset[];
 }): ListingRatingSummary {
   const declared = input.declaredRating ?? null;
   const assets = input.assets ?? null;
@@ -100,7 +100,7 @@ export function assetRating(nsfwLevel: number | null | undefined): OffsiteRating
   return nsfwLevel ? contentRatingFromNsfwLevel(nsfwLevel) : null;
 }
 
-export function listingRatingAssetLabel(asset: ListingRatingAsset): string {
+export function listingRatingAssetLabel(asset: ListingRatingDisplayAsset): string {
   if (asset.kind === 'icon') return 'Icon';
   if (asset.kind === 'cover') return 'Cover';
   return asset.position != null ? `Screenshot ${asset.position}` : 'Screenshot';
@@ -131,7 +131,7 @@ export type ListingAssetLevels = Pick<
 /** Those levels as rating assets in display order; a read that has not arrived is empty. */
 export function listingRatingAssetsFromView(
   view: Partial<ListingAssetLevels>
-): ListingRatingAsset[] {
+): ListingRatingDisplayAsset[] {
   return [
     ...(view.iconId != null ? [{ kind: 'icon' as const, nsfwLevel: view.iconNsfwLevel }] : []),
     ...(view.coverId != null ? [{ kind: 'cover' as const, nsfwLevel: view.coverNsfwLevel }] : []),
@@ -142,7 +142,7 @@ export function listingRatingAssetsFromView(
 }
 
 /** "Cover (R) and Screenshot 2 (R)" — the driving assets, each with the rating it requires. */
-export function describeRatingAssets(assets: ListingRatingAsset[]): string {
+export function describeRatingAssets(assets: ListingRatingDisplayAsset[]): string {
   const parts = assets.map((a) => {
     const rating = assetRating(a.nsfwLevel);
     const label = listingRatingAssetLabel(a);

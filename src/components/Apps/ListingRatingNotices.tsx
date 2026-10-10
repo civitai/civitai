@@ -10,8 +10,8 @@ import {
   MATURE_STORE_HOST,
   SFW_STORE_HOST,
   summarizeListingRating,
-  type ListingRatingAsset,
-} from '~/shared/utils/app-listing-rating';
+  type ListingRatingDisplayAsset,
+} from '~/shared/utils/listing-rating-display';
 import { trpc } from '~/utils/trpc';
 
 const ratingLabel = (rating: string | null) => (rating ? offsiteContentRatingLabel(rating) : '—');
@@ -45,7 +45,7 @@ export function RatingMismatchAlert({
   children,
 }: {
   testId: string;
-  drivingAssets: ListingRatingAsset[];
+  drivingAssets: ListingRatingDisplayAsset[];
   children: ReactNode;
 }) {
   return (
@@ -130,7 +130,7 @@ export function ListingMediaRatingCallout({
   declaredRating: string | null;
   listingRating: string | null;
   stage: ListingRatingStage;
-  assets: ListingRatingAsset[];
+  assets: ListingRatingDisplayAsset[];
 }) {
   const {
     current,
@@ -174,11 +174,10 @@ export function ListingMediaRatingCallout({
           above the {ratingLabel(declaredRating)} you declared for this app. A listing is never
           rated lower than its most mature image. {consequence}{' '}
           {currentExceedsProjected
-            ? 'Ask a moderator to review the listing’s rating.'
-            : projectedExceedsCurrent
-            ? 'Replace the image, or ask a moderator to review its rating.'
-            : // A rating is never lowered by itself, so a new image alone does not undo it.
-              'Replace the image, then ask a moderator to review the listing’s rating.'}
+            ? 'Ask a moderator to review its images’ ratings.'
+            : drivingAssets.length === 1
+            ? 'Replace that image, or ask a moderator to review its rating.'
+            : 'Replace those images, or ask a moderator to review their ratings.'}
         </Text>
       </Alert>
     );
@@ -197,7 +196,7 @@ export function ListingMediaRatingCallout({
           This listing is rated {ratingLabel(current.rating)}, above the{' '}
           {ratingLabel(declaredRating)} you declared
           {current.hiddenOnSfw ? `, and ${hidden}` : ''} — but none of its current images is rated
-          that high. Ask a moderator to review the listing’s rating.
+          that high. Ask a moderator to review its images’ ratings.
         </Text>
       </Alert>
     );

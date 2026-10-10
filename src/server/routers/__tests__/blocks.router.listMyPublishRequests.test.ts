@@ -628,7 +628,7 @@ describe('listMyPublishRequests — the hidden-mature-rating advisory', () => {
     expect(requestArgs.select.appBlock.select.contentRating).toBe(true);
   });
 
-  it('an app that DECLARED R is hidden but not told its imagery raised it', async () => {
+  it('an app that DECLARED R has nothing to fix, so no problem', async () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       requestRow('req-d', 'blk-d', 'r'),
     ]);
@@ -637,13 +637,7 @@ describe('listMyPublishRequests — the hidden-mature-rating advisory', () => {
     const caller = blocksRouter.createCaller(fakeCtx(owner) as never);
     const rows = await caller.listMyPublishRequests();
 
-    expect(rows[0].problems).toEqual([
-      {
-        code: 'hidden-mature-rating',
-        severity: 'advisory',
-        label: 'Rated R — hidden on civitai.com (visible on civitai.red)',
-      },
-    ]);
+    expect(rows[0].problems).toEqual([]);
   });
 
   it('a removed listing is not flagged — it is not in the store at all', async () => {

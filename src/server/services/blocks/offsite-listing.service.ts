@@ -65,7 +65,7 @@ import {
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
-import { declaredListingRating } from '~/shared/utils/app-listing-rating';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
   type ListingProblemKind,

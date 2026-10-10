@@ -49,7 +49,10 @@ import {
   type ListingAssetKind,
 } from '~/server/schema/blocks/app-listing.schema';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
-import type { ListingAssetLevels, ListingRatingAsset } from '~/shared/utils/app-listing-rating';
+import type {
+  ListingAssetLevels,
+  ListingRatingDisplayAsset,
+} from '~/shared/utils/listing-rating-display';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -738,7 +741,7 @@ export function ListingAssetStep({
   const levelOf = (imageId: number | null) =>
     imageId != null ? levelByImageId?.get(imageId) ?? null : null;
   // Screenshots are numbered by SLOT, like the "Screenshot N" row labels above the callout.
-  const ratingAssets: ListingRatingAsset[] = [
+  const ratingAssets: ListingRatingDisplayAsset[] = [
     ...(icon.status === 'attached'
       ? [{ kind: 'icon' as const, nsfwLevel: levelOf(icon.imageId) }]
       : []),

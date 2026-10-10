@@ -2172,12 +2172,12 @@ describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
     },
   });
 
-  it('an approved R listing is reported hidden; a PG-13 one and a draft R one on the same page are not', async () => {
+  it('an approved on-site listing raised to R is reported; a PG-13 one and a draft R one on the same page are not', async () => {
     mockRead.appListingPublishRequest.findMany
       .mockResolvedValueOnce([
-        requestRow('r_hidden', 'approved', 'r'),
-        requestRow('r_sfw', 'approved', 'pg13'),
-        requestRow('r_draft', 'draft', 'r'),
+        requestRow('r_hidden', 'approved', 'r', 'onsite'),
+        requestRow('r_sfw', 'approved', 'pg13', 'onsite'),
+        requestRow('r_draft', 'draft', 'r', 'onsite'),
       ])
       .mockResolvedValueOnce([]);
     const res = await listMySubmissions({ userId: OWNER });
@@ -2186,7 +2186,8 @@ describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
         {
           code: 'hidden-mature-rating',
           severity: 'advisory',
-          label: 'Rated R — hidden on civitai.com (visible on civitai.red)',
+          label:
+            'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
         },
       ],
       [],
@@ -2206,7 +2207,7 @@ describe('listMySubmissions (the hidden-mature-rating advisory)', () => {
       [
         'Rated R — hidden on civitai.com (visible on civitai.red). You declared G; a listing is rated at least as high as its most mature store image — check its images',
       ],
-      ['Rated R — hidden on civitai.com (visible on civitai.red)'],
+      [],
     ]);
   });
 });

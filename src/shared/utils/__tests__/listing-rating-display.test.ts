@@ -7,14 +7,22 @@ import {
   describeRatingAssets,
   listingRatingAssetsFromView,
   summarizeListingRating,
-  type ListingRatingAsset,
-} from '~/shared/utils/app-listing-rating';
+  type ListingRatingDisplayAsset,
+} from '~/shared/utils/listing-rating-display';
 
 /** Pairwise-distinct levels, so an asset picked by the wrong field changes the answer. */
-const icon: ListingRatingAsset = { kind: 'icon', nsfwLevel: NsfwLevel.PG };
-const cover: ListingRatingAsset = { kind: 'cover', nsfwLevel: NsfwLevel.PG13 };
-const shotR: ListingRatingAsset = { kind: 'screenshot', position: 2, nsfwLevel: NsfwLevel.R };
-const shotX: ListingRatingAsset = { kind: 'screenshot', position: 3, nsfwLevel: NsfwLevel.X };
+const icon: ListingRatingDisplayAsset = { kind: 'icon', nsfwLevel: NsfwLevel.PG };
+const cover: ListingRatingDisplayAsset = { kind: 'cover', nsfwLevel: NsfwLevel.PG13 };
+const shotR: ListingRatingDisplayAsset = {
+  kind: 'screenshot',
+  position: 2,
+  nsfwLevel: NsfwLevel.R,
+};
+const shotX: ListingRatingDisplayAsset = {
+  kind: 'screenshot',
+  position: 3,
+  nsfwLevel: NsfwLevel.X,
+};
 
 describe('summarizeListingRating', () => {
   it('declared g + one R screenshot: raised to r, hidden, and names only that screenshot', () => {

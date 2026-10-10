@@ -1452,14 +1452,14 @@ describe('ListingAssetStep — rating badges + the "imagery raised your rating" 
   test('declared G + one R screenshot on a listing already rated R: names it, says hidden, says what to do', async () => {
     rated({});
     expect(await calloutText()).toBe(
-      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replace the image, then ask a moderator to review the listing’s rating.'
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replace that image, or ask a moderator to review its rating.'
     );
   });
 
   test('a live listing edited in place is hidden in the present tense too', async () => {
     rated({ stage: 'live-direct' });
     expect(await calloutText()).toBe(
-      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replace the image, then ask a moderator to review the listing’s rating.'
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replace that image, or ask a moderator to review its rating.'
     );
   });
 
@@ -1467,35 +1467,35 @@ describe('ListingAssetStep — rating badges + the "imagery raised your rating" 
     // Cover PG-13 is the top image; the listing carries R.
     rated({ assets: levels(1) });
     expect(await calloutText()).toBe(
-      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is rated R and is hidden on civitai.com (visible on civitai.red), higher still than its images require. Ask a moderator to review the listing’s rating.'
+      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is rated R and is hidden on civitai.com (visible on civitai.red), higher still than its images require. Ask a moderator to review its images’ ratings.'
     );
   });
 
   test('the same listing while it is NOT live is not said to be visible anywhere yet', async () => {
     rated({ stage: 'not-live' });
     expect(await calloutText()).toBe(
-      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and will be hidden on civitai.com (visible on civitai.red) once it is live. Replace the image, then ask a moderator to review the listing’s rating.'
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and will be hidden on civitai.com (visible on civitai.red) once it is live. Replace that image, or ask a moderator to review its rating.'
     );
   });
 
   test('a listing raised only to PG-13 is explained without claiming it is hidden', async () => {
     rated({ listingRating: 'pg13', assets: levels(1) });
     expect(await calloutText()).toBe(
-      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated PG-13. Replace the image, then ask a moderator to review the listing’s rating.'
+      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated PG-13. Replace that image, or ask a moderator to review its rating.'
     );
   });
 
   test('two images at the top rating are both named, in the plural', async () => {
     rated({ assets: levels(4, 4) });
     expect(await calloutText()).toBe(
-      'Cover (R) and Screenshot 2 (R) are rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replace the image, then ask a moderator to review the listing’s rating.'
+      'Cover (R) and Screenshot 2 (R) are rated above the G you declared for this app. A listing is never rated lower than its most mature image. That is why this listing is rated R and is hidden on civitai.com (visible on civitai.red). Replace those images, or ask a moderator to review their ratings.'
     );
   });
 
   test('not live, still rated G: going live will rate it R and hide it', async () => {
     rated({ listingRating: 'g', stage: 'not-live' });
     expect(await calloutText()).toBe(
-      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. When this listing goes live it will be rated R and hidden on civitai.com (visible on civitai.red). Replace the image, or ask a moderator to review its rating.'
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. When this listing goes live it will be rated R and hidden on civitai.com (visible on civitai.red). Replace that image, or ask a moderator to review its rating.'
     );
   });
 
@@ -1528,28 +1528,28 @@ describe('ListingAssetStep — rating badges + the "imagery raised your rating" 
   test('not live, a PG-13 image: going live will rate it PG-13, with no hidden claim', async () => {
     rated({ listingRating: 'g', stage: 'not-live', assets: levels(1) });
     expect(await calloutText()).toBe(
-      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. When this listing goes live it will be rated PG-13. Replace the image, or ask a moderator to review its rating.'
+      'Cover (PG-13) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. When this listing goes live it will be rated PG-13. Replace that image, or ask a moderator to review its rating.'
     );
   });
 
   test('a revision of a LIVE listing cannot raise its rating: the change will be sent back', async () => {
     rated({ listingRating: 'pg', stage: 'live-revision' });
     expect(await calloutText()).toBe(
-      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is live and rated PG; image changes to a live listing cannot raise its rating, so a moderator will send back a change that includes this image. Replace the image, or ask a moderator to review its rating.'
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is live and rated PG; image changes to a live listing cannot raise its rating, so a moderator will send back a change that includes this image. Replace that image, or ask a moderator to review its rating.'
     );
   });
 
   test('a live listing edited in place has no review to wait for: it is simply rated below the image', async () => {
     rated({ listingRating: 'pg', stage: 'live-direct' });
     expect(await calloutText()).toBe(
-      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is live and still rated PG, below this image. Replace the image, or ask a moderator to review its rating.'
+      'Screenshot 2 (R) is rated above the G you declared for this app. A listing is never rated lower than its most mature image. This listing is live and still rated PG, below this image. Replace that image, or ask a moderator to review its rating.'
     );
   });
 
   test('a listing rated R whose current images are all tame: says so and sends the author to a moderator', async () => {
     rated({ declaredRating: 'pg13', assets: levels(1) });
     expect(await staleText()).toBe(
-      'This listing is rated R, above the PG-13 you declared, and is hidden on civitai.com (visible on civitai.red) — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+      'This listing is rated R, above the PG-13 you declared, and is hidden on civitai.com (visible on civitai.red) — but none of its current images is rated that high. Ask a moderator to review its images’ ratings.'
     );
     expect(page.getByTestId('apps-listing-rating-callout').elements()).toHaveLength(0);
   });
@@ -1557,21 +1557,21 @@ describe('ListingAssetStep — rating badges + the "imagery raised your rating" 
   test('the same state on a live listing edited in place is present tense', async () => {
     rated({ declaredRating: 'pg13', stage: 'live-direct', assets: levels(1) });
     expect(await staleText()).toBe(
-      'This listing is rated R, above the PG-13 you declared, and is hidden on civitai.com (visible on civitai.red) — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+      'This listing is rated R, above the PG-13 you declared, and is hidden on civitai.com (visible on civitai.red) — but none of its current images is rated that high. Ask a moderator to review its images’ ratings.'
     );
   });
 
   test('the same state on a listing that is not live says it WILL be hidden', async () => {
     rated({ declaredRating: 'pg13', stage: 'not-live', assets: levels(1) });
     expect(await staleText()).toBe(
-      'This listing is rated R, above the PG-13 you declared, and will be hidden on civitai.com (visible on civitai.red) once it is live — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+      'This listing is rated R, above the PG-13 you declared, and will be hidden on civitai.com (visible on civitai.red) once it is live — but none of its current images is rated that high. Ask a moderator to review its images’ ratings.'
     );
   });
 
   test('the same state at PG-13 over a declared G makes no hidden claim', async () => {
     rated({ listingRating: 'pg13', assets: levels(1, 1) });
     expect(await staleText()).toBe(
-      'This listing is rated PG-13, above the G you declared — but none of its current images is rated that high. Ask a moderator to review the listing’s rating.'
+      'This listing is rated PG-13, above the G you declared — but none of its current images is rated that high. Ask a moderator to review its images’ ratings.'
     );
   });
 

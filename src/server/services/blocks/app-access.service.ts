@@ -16,7 +16,7 @@ import { readListingVisibility } from '~/server/services/blocks/app-listing-visi
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
-import { declaredListingRating } from '~/shared/utils/app-listing-rating';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import type {
   AppRole,
   ListingCapability,

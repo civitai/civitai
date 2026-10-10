@@ -86,7 +86,7 @@ import {
 import {
   listingRatingAssetsFromView,
   summarizeListingRating,
-} from '~/shared/utils/app-listing-rating';
+} from '~/shared/utils/listing-rating-display';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

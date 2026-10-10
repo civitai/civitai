@@ -301,8 +301,8 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
   });
   const reRated = (over: Record<string, unknown> = {}) => ({
     ...PENDING,
-    appListingId: 'apl_draft',
-    approveRating: { declared: 'g' as string | null },
+    appListingId: 'apl_joined',
+    approveRating: { listingId: 'apl_draft', declared: 'g' as string | null },
     ...over,
   });
   const bar = (request: ReturnType<typeof reRated>) =>
@@ -355,14 +355,14 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
 
   test('the comparison uses the rating the SERVER says the approve starts from', async () => {
     mocks.assets.data = assetsWithShot2At(4);
-    bar(reRated({ approveRating: { declared: 'r' } }));
+    bar(reRated({ approveRating: { listingId: 'apl_draft', declared: 'r' } }));
     await approveVisibleWithoutAlert();
     expect(mocks.assetsQuery).toHaveBeenCalled();
   });
 
   test('a null starting rating is treated as SFW and shown as a dash', async () => {
     mocks.assets.data = assetsWithShot2At(4);
-    bar(reRated({ approveRating: { declared: null } }));
+    bar(reRated({ approveRating: { listingId: 'apl_draft', declared: null } }));
     await expect
       .element(page.getByTestId('apps-onsite-rating-mismatch'))
       .toHaveTextContent(
@@ -377,11 +377,14 @@ describe('ReviewActionBar — approving will raise the listing’s rating', () =
     expect(mocks.assetsQuery).not.toHaveBeenCalled();
   });
 
-  test('a request with no joined listing never asks for its assets', async () => {
+  test('the levels are read for the listing the SERVER says is re-rated, joined or not', async () => {
     mocks.assets.data = assetsWithShot2At(4);
     bar(reRated({ appListingId: null }));
-    await approveVisibleWithoutAlert();
-    expect(mocks.assetsQuery).not.toHaveBeenCalled();
+    await expect.element(page.getByTestId('apps-onsite-rating-mismatch')).toBeInTheDocument();
+    expect(mocks.assetsQuery).toHaveBeenCalledWith(
+      { listingId: 'apl_draft' },
+      { staleTime: 0, refetchOnMount: 'always', retry: false }
+    );
   });
 
   test('while the levels are loading it says it is checking, and approve stays available', async () => {
