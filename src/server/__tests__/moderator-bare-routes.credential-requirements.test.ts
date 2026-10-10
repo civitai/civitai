@@ -144,6 +144,11 @@ describe.each(routes)('$name credential requirements', (route) => {
     });
   });
 
+  it('refuses a non-moderator OAuth access token as a non-moderator', async () => {
+    bearerSession.mockResolvedValue({ ...oauthToken(TokenScope.Full), user: MEMBER });
+    expect((await call(route, { authorization: 'Bearer oauth-access' })).status).toBe(401);
+  });
+
   it('refuses a non-moderator session as a non-moderator', async () => {
     hubSession.current = { user: MEMBER };
     expect((await call(route)).status).toBe(401);

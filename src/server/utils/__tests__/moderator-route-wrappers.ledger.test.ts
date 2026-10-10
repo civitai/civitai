@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -171,8 +172,10 @@ describe('routes under src/pages/api/mod', () => {
 });
 
 /**
- * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above. Each is
- * listed here, so a new one fails until it is classified.
+ * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above, in the
+ * route file or in the module its default export comes from. A read is the identifier or a string
+ * element access (`x['isModerator']`); a check under another name, or one further down the import
+ * graph, is not seen. Each route found must be listed here.
  *
  * - `full credential`: a moderator-only route; it must call `requireFullScopeSession`.
  * - every other entry names why moderator status there is not a moderator-only gate.
@@ -217,6 +220,78 @@ function parse(fileName: string, source: string) {
   return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
 }
 
+/** Whether the code reads the `isModerator` flag: the identifier or a string element access. */
+function readsModeratorFlag(fileName: string, source: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (
+      (ts.isIdentifier(node) && node.text === 'isModerator') ||
+      (ts.isElementAccessExpression(node) &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        node.argumentExpression.text === 'isModerator')
+    )
+      found = true;
+    else ts.forEachChild(node, visit);
+  };
+  visit(parse(fileName, source));
+  return found;
+}
+
+/** A `~/` or relative module specifier as a file under `root`, or undefined for a package. */
+function resolveModule(root: string, fromFile: string, specifier: string): string | undefined {
+  let base: string;
+  if (specifier.startsWith('~/')) base = path.join(root, 'src', specifier.slice(2));
+  else if (specifier.startsWith('.')) base = path.resolve(path.dirname(fromFile), specifier);
+  else return undefined;
+  return ['.ts', '.tsx', '/index.ts', '/index.tsx']
+    .map((ext) => base + ext)
+    .find((candidate) => fs.existsSync(candidate));
+}
+
+/** The module a file's default export is imported or re-exported from, if it is one. */
+function defaultExportOrigin(root: string, file: string, source: string): string | undefined {
+  const tree = parse(file, source);
+  const importedFrom = new Map<string, string>();
+  let origin: string | undefined;
+  for (const statement of tree.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const clause = statement.importClause;
+      const specifier = statement.moduleSpecifier.text;
+      if (clause?.name) importedFrom.set(clause.name.text, specifier);
+      const bindings = clause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings))
+        for (const element of bindings.elements) importedFrom.set(element.name.text, specifier);
+    }
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.exportClause &&
+      ts.isNamedExports(statement.exportClause) &&
+      statement.exportClause.elements.some((e) => e.name.text === 'default')
+    )
+      origin = statement.moduleSpecifier.text;
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      let expression = statement.expression;
+      while (ts.isCallExpression(expression) || ts.isParenthesizedExpression(expression))
+        expression = ts.isCallExpression(expression)
+          ? expression.arguments[0] ?? expression.expression
+          : expression.expression;
+      if (ts.isIdentifier(expression)) origin = importedFrom.get(expression.text);
+    }
+  }
+  return origin && resolveModule(root, file, origin);
+}
+
+/** Whether a route, or the module its default export comes from, reads the moderator flag. */
+function routeReadsModeratorFlag(root: string, file: string): boolean {
+  const source = fs.readFileSync(file, 'utf8');
+  if (readsModeratorFlag(file, source)) return true;
+  const origin = defaultExportOrigin(root, file, source);
+  return !!origin && readsModeratorFlag(origin, fs.readFileSync(origin, 'utf8'));
+}
+
 /** Whether the code names `name` anywhere; comments are not part of the tree. */
 function namesIdentifier(fileName: string, source: string, name: string): boolean {
   let found = false;
@@ -256,6 +331,51 @@ function callsImported(fileName: string, source: string, name: string, module: s
   return found;
 }
 
+describe('routeReadsModeratorFlag', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'moderator-route-ledger-'));
+  const write = (relative: string, source: string) => {
+    const file = path.join(root, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, source);
+    return file;
+  };
+  const gate = 'export function handler(s: any) { if (!s?.user?.isModerator) throw 0; }\n';
+  write('src/server/gated.ts', `${gate}export default handler;\n`);
+  write('src/server/open.ts', 'export default function handler() {}\n');
+
+  it.each([
+    ['an identifier read in the route', 'export default (s: any) => s.user.isModerator;'],
+    [
+      'a bracket-string read in the route',
+      `export default (s: any) => (s?.user as any)?.['isModerator'];`,
+    ],
+    [
+      'a double-quoted bracket read in the route',
+      'export default (s: any) => s.user["isModerator"];',
+    ],
+    ['a default re-export of a gated module', "export { default } from '~/server/gated';"],
+    ['a named re-export as default', "export { handler as default } from '~/server/gated';"],
+    [
+      'a default export of an imported gated handler',
+      "import { handler } from '~/server/gated';\nexport default handler;",
+    ],
+    [
+      'a wrapped imported gated handler',
+      "import { handler } from '../../server/gated';\nexport default withAxiom(handler);",
+    ],
+  ])('sees %s', (_label, source) => {
+    expect(routeReadsModeratorFlag(root, write('src/pages/api/route.ts', source))).toBe(true);
+  });
+
+  it.each([
+    ['a comment', '// user.isModerator\nexport default () => null;'],
+    ['a re-export of a module without the read', "export { default } from '~/server/open';"],
+    ['a package import', "import handler from 'next';\nexport default handler;"],
+  ])('does not see %s', (_label, source) => {
+    expect(routeReadsModeratorFlag(root, write('src/pages/api/route.ts', source))).toBe(false);
+  });
+});
+
 describe('namesIdentifier and callsImported', () => {
   it('see code and not comments', () => {
     expect(namesIdentifier('a.ts', 'const ok = user.isModerator;', 'isModerator')).toBe(true);
@@ -285,14 +405,21 @@ describe('namesIdentifier and callsImported', () => {
 describe('routes under src/pages/api outside the moderator wrappers', () => {
   const files = routeFiles(API_ROUTES).filter((f) => /\.tsx?$/.test(f));
   const sources = new Map(files.map((f) => [routeName(f), fs.readFileSync(f, 'utf8')]));
-  const outsideWrappers = [...sources]
-    .filter(([route, source]) => !(defaultExportWrapper(route, source) in WRAPPERS))
-    .filter(([route, source]) => namesIdentifier(route, source, 'isModerator'))
-    .map(([route]) => route)
+  const outsideWrappers = files
+    .filter((file) => !(defaultExportWrapper(file, sources.get(routeName(file)) ?? '') in WRAPPERS))
+    .filter((file) => routeReadsModeratorFlag(REPO_ROOT, file))
+    .map(routeName)
     .sort();
 
   it('walks the api tree', () => {
     expect(files.length).toBeGreaterThan(300);
+  });
+
+  it('follows a default export to the module it comes from', () => {
+    const route = path.join(API_ROUTES, 'internal/game-frame/reports/index.ts');
+    expect(defaultExportOrigin(REPO_ROOT, route, fs.readFileSync(route, 'utf8'))).toBe(
+      path.join(REPO_ROOT, 'src/server/game-frame/report-endpoints.ts')
+    );
   });
 
   it('that read isModerator are each classified', () => {
