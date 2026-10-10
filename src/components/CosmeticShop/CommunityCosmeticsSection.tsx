@@ -40,6 +40,8 @@ export function CommunityCosmeticsSection({
   // Type chips are multi-select, so a viewer picking three fires three queries
   // without this. The other filters are one click each.
   const [debouncedTypes] = useDebouncedValue(filters.cosmeticTypes, 500);
+  // Searched server-side, so one request per pause in typing, not per keystroke.
+  const [debouncedSearch] = useDebouncedValue(filters.search?.trim() ?? '', 300);
 
   const { items, totalPages, isLoading, isFetching } = useQueryCommunityCosmetics({
     cosmeticTypes: debouncedTypes?.length ? debouncedTypes : undefined,
@@ -50,6 +52,7 @@ export function CommunityCosmeticsSection({
     owned: filters.modifier,
     limited: filters.limited || undefined,
     acceptsBlueBuzz: filters.acceptsBlueBuzz || undefined,
+    query: debouncedSearch || undefined,
   });
   const ownedCosmeticIds = useOwnedCosmeticIds();
   const { wishlistedIds } = useQueryWishlistedShopItems();
@@ -63,7 +66,9 @@ export function CommunityCosmeticsSection({
     !!filters.wishlisted ||
     !!filters.modifier ||
     !!filters.limited ||
-    !!filters.acceptsBlueBuzz;
+    !!filters.acceptsBlueBuzz ||
+    !!filters.search?.trim() ||
+    !!debouncedSearch;
 
   // Nothing published yet — keep /shop clean rather than showing an empty hub.
   // Once the viewer has narrowed it themselves the section stays, so an empty

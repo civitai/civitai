@@ -29,6 +29,9 @@ export type ShopFilters = GetShopInput & {
   wishlisted?: boolean;
   limited?: boolean;
   acceptsBlueBuzz?: boolean;
+  // The search box. Not one of the dropdown's chips, so clearing the chips
+  // keeps it.
+  search?: string;
 };
 
 type Filters = ShopFilters;
@@ -64,7 +67,10 @@ export function ShopFiltersDropdown({ filters, setFilters, availableTypes }: Pro
     (filters.limited ? 1 : 0) +
     (filters.acceptsBlueBuzz ? 1 : 0);
 
-  const clearFilters = useCallback(() => setFilters({}), [setFilters]);
+  const clearFilters = useCallback(
+    () => setFilters((prev) => ({ search: prev.search })),
+    [setFilters]
+  );
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',

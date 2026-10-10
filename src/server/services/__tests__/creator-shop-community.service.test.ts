@@ -140,8 +140,8 @@ describe('getCommunityCosmetics', () => {
     });
   });
 
-  it('searches title and cosmetic name without displacing the creator/pack branch', async () => {
-    await getCommunityCosmetics({ ...baseInput, query: 'sparkle', packsEnabled: true });
+  it('searches title, description, cosmetic name and sticker slug without displacing the creator/pack branch', async () => {
+    await getCommunityCosmetics({ ...baseInput, query: ':Sparkle:', packsEnabled: true });
     const { where } = mocks.shopItemFindMany.mock.calls[0][0];
     // The creator/pack gating lives in the top-level OR. A search written there
     // instead of into AND would replace it and leak official items into the feed.
@@ -149,8 +149,29 @@ describe('getCommunityCosmetics', () => {
     expect(packBranch(where)).toBeDefined();
     expect(andClauses(where)).toContainEqual({
       OR: [
-        { title: { contains: 'sparkle', mode: 'insensitive' } },
-        { cosmetic: { name: { contains: 'sparkle', mode: 'insensitive' } } },
+        { title: { contains: ':Sparkle:', mode: 'insensitive' } },
+        { description: { contains: ':Sparkle:', mode: 'insensitive' } },
+        { cosmetic: { name: { contains: ':Sparkle:', mode: 'insensitive' } } },
+        {
+          cosmetic: {
+            type: 'Sticker',
+            data: { path: ['slug'], string_contains: 'sparkle' },
+          },
+        },
+      ],
+    });
+  });
+
+  it('leaves the slug arm out for a search no slug could contain', async () => {
+    await getCommunityCosmetics({ ...baseInput, query: 'happy cat' });
+    const { where } = mocks.shopItemFindMany.mock.calls[0][0];
+    // Exact match, not a stringified search: JSON.stringify drops an undefined
+    // `string_contains`, which would hide an unguarded slug arm.
+    expect(andClauses(where)).toContainEqual({
+      OR: [
+        { title: { contains: 'happy cat', mode: 'insensitive' } },
+        { description: { contains: 'happy cat', mode: 'insensitive' } },
+        { cosmetic: { name: { contains: 'happy cat', mode: 'insensitive' } } },
       ],
     });
   });

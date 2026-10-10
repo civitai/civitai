@@ -712,7 +712,8 @@ export const getCommunityCosmeticsSchema = z.object({
   // Capped quantity and/or a hard end date.
   limited: z.boolean().optional(),
   acceptsBlueBuzz: z.boolean().optional(),
-  // Matched against the listing title and the cosmetic's own name. Empty after
+  // Matched against the listing title and description, the cosmetic's own name,
+  // and a sticker's slug. Empty after
   // trimming is dropped so a cleared search box doesn't filter on ''.
   query: z
     .string()
