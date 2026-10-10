@@ -424,6 +424,87 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     }
   });
 
+  test('CROSS-FRAME: an in-flight bytes requestId re-sent as a PICKER request opens no modal and gets no reply, and the original still settles with its real result', async () => {
+    // Past the bridge's 5 s replay dedup, so the re-send really reaches the host handler.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    // Hold the original in flight: persist does not settle until the re-send has been handled.
+    let releasePersist: (v: { imageId: number }) => void = () => undefined;
+    h.persist.mockImplementation(
+      () => new Promise<{ imageId: number }>((resolve) => (releasePersist = resolve))
+    );
+    renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
+    await vi.waitFor(() => {
+      if (!iframe().contentWindow) throw new Error('not mounted yet');
+    });
+    const el = iframe();
+    const cw = el.contentWindow;
+    const echoes: Array<{ origin: string; data: { type?: string; payload?: unknown } }> = [];
+    const onEcho = (e: MessageEvent) => {
+      const d = e.data as { __xfEcho?: { type?: string; payload?: unknown } } | null;
+      if (e.source === cw && d && d.__xfEcho) echoes.push({ origin: e.origin, data: d.__xfEcho });
+    };
+    window.addEventListener('message', onEcho);
+    try {
+      el.srcdoc =
+        `<script>
+        var sent = false;
+        var png = new Uint8Array([${PNG.join(',')}]);
+        function go() {
+          if (sent) return;
+          sent = true;
+          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse', bytes: png.buffer.slice(0) } }, '*');
+        }
+        window.addEventListener('message', function (e) {
+          if (e.source !== parent) return;
+          if (e.data && e.data.__resend) {
+            // A PICKER request (no bytes) reusing the in-flight bytes id.
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse' } }, '*');
+            // Sentinel: the same picker request on a FRESH id, sent after the re-send. Its modal
+            // proves the re-send was delivered and handled before we assert it opened none.
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_fresh' } }, '*');
+            return;
+          }
+          parent.postMessage({ __xfEcho: e.data }, '*');
+          if (e.data && e.data.type === 'BLOCK_INIT') go();
+        });
+        parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
+        setTimeout(go, 300);
+      </` + `script>`;
+
+      const repliesTo = (id: string) =>
+        echoes
+          .filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT')
+          .map((m) => m.data.payload)
+          .filter((p) => (p as { requestId?: string }).requestId === id);
+      const dialogIds = () => useDialogStore.getState().dialogs.map((d) => d.id);
+
+      await vi.waitFor(() => expect(h.persist).toHaveBeenCalledTimes(1));
+      expect(dialogIds()).toEqual([]);
+      offset = 6_000;
+      el.contentWindow?.postMessage({ __resend: true }, '*');
+      await vi.waitFor(() => expect(dialogIds()).toContain('block-image-upload-rq_xf_pick_fresh'));
+      await settle();
+      // Only the fresh id's picker opened; the reused id opened none and got no reply — any reply
+      // would settle the ORIGINAL request in the SDK.
+      expect(dialogIds()).toEqual(['block-image-upload-rq_xf_pick_fresh']);
+      expect(repliesTo('rq_xf_pick_reuse')).toEqual([]);
+
+      releasePersist({ imageId: PERSISTED_ID });
+      await vi.waitFor(() => expect(repliesTo('rq_xf_pick_reuse')).toHaveLength(1));
+      await settle();
+      expect(repliesTo('rq_xf_pick_reuse')).toEqual([
+        { requestId: 'rq_xf_pick_reuse', selected: SELECTED },
+      ]);
+      expect(h.uploadToCF).toHaveBeenCalledTimes(1);
+      expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
+    } finally {
+      window.removeEventListener('message', onEcho);
+      nowSpy.mockRestore();
+    }
+  });
+
   test('once answered, a requestId is free again (the in-flight set is cleared on error and on a verdict)', async () => {
     let offset = 0;
     const realNow = Date.now.bind(Date);
