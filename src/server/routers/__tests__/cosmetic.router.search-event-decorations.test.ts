@@ -3,6 +3,14 @@ import type * as Caches from '~/server/redis/caches';
 
 // `edgeCacheIt` returns early unless `isProd`; `isTest` keeps `rateLimit` (and its Redis) out.
 vi.mock('~/env/other', () => ({ isDev: false, isProd: true, isTest: true, isPreview: false }));
+// `isProd` makes the client env schema require these; CI has no .env to supply them.
+vi.mock('~/env/client', () => ({
+  env: {
+    NEXT_PUBLIC_BASE_URL: 'http://localhost:3000',
+    NEXT_PUBLIC_CIVITAI_LINK: 'http://localhost:3000',
+  },
+  formatErrors: () => [],
+}));
 
 /**
  * `cosmetic.getEventDecorationsForSearch` gives the search grids their hats. From launch one answer
