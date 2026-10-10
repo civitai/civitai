@@ -9,7 +9,9 @@ import { CREATOR_STUDIO_URL } from '~/shared/constants/creator-studio.constants'
 export type PhraseLink = { phrase?: string; href: string };
 
 const studioModels = { href: `${CREATOR_STUDIO_URL}/models` };
-const placements = { href: '/user/placements' };
+// Where the price and free-slot sliders live, per surface; `/user/placements` is only the queue.
+// The bare account path, not `/creator`: the legacy page has no sub-paths and drops the fragment.
+const creatorControls = { href: '/user/account#creator-controls' };
 
 /**
  * Where each ladder unlock leads, keyed by the unlock key's family (the part before the first `:`),
@@ -28,12 +30,33 @@ export const unlockLinks: Record<string, PhraseLink[]> = {
   'early-access-days': [studioModels],
   'early-access-quantity': [studioModels],
   announcements: [{ href: CREATOR_ANNOUNCEMENTS_URL }],
-  'placement-price-cap': [placements],
-  'placement-free-slots': [placements],
+  'placement-price-cap': [creatorControls],
+  'placement-free-slots': [creatorControls],
   'creator-program': [{ phrase: 'Creator Program', href: '/creator-program' }],
 };
 
 export const unlockLinksFor = (key: string) => unlockLinks[key.split(':')[0]] ?? [];
+
+/**
+ * Each unlock row's links down the whole ladder, rung boundaries included. A row that would link
+ * the same place as the unlock row directly above is left plain: testers saw one Creator Studio
+ * link six rows running. `null` is a row that is not an unlock (a tier reward); it gets no links
+ * here and ends a run.
+ */
+export function unlockLinksDownLadder(rows: (string | null)[]): PhraseLink[][] {
+  let previous = '';
+  return rows.map((key) => {
+    if (key === null) {
+      previous = '';
+      return [];
+    }
+    const links = unlockLinksFor(key);
+    const signature = links.map((link) => `${link.phrase ?? ''}>${link.href}`).join('|');
+    const repeat = signature !== '' && signature === previous;
+    previous = signature;
+    return repeat ? [] : links;
+  });
+}
 
 export function rewardLinks(username?: string): PhraseLink[] {
   return [

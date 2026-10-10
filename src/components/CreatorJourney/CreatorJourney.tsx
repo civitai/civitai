@@ -8,7 +8,12 @@ import { CreatorScoreExplainer } from '~/components/Account/CreatorScoreExplaine
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
-import { LinkedText, rewardLinks, unlockLinksFor } from '~/components/CreatorJourney/journey-links';
+import {
+  LinkedText,
+  rewardLinks,
+  unlockLinksDownLadder,
+  type PhraseLink,
+} from '~/components/CreatorJourney/journey-links';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
 import { TierShareButton } from '~/components/CreatorJourney/TierShareButton';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -71,6 +76,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
   };
   const total = kinds.total;
   const rungs = buildCreatorScoreLadder(journey.unlocks, journey.tiers);
+  const ladderLinks = ladderUnlockLinks(rungs);
   const next = nextCreatorScoreRung(rungs, total);
   const currentTier = currentCreatorScoreTier(rungs, total);
   // Unlocks between tiers fold into the higher tier's rung, so the next rung is unnamed only past the top tier.
@@ -164,6 +170,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
             <LadderRung
               key={rung.tier?.key ?? rung.minScore}
               rung={rung}
+              unlockLinks={ladderLinks[index]}
               kinds={kinds}
               isNext={rung === next}
               badgeEarned={!!rung.tier && earnedKeys.has(rung.tier.key)}
@@ -383,6 +390,26 @@ function ScoreExplainerToggle() {
   );
 }
 
+const rungRewards = (rung: CreatorScoreRung) => (rung.tier && tierRewards[rung.tier.key]) ?? [];
+
+/** Each rung's unlock-row links, with repeats collapsed across rung boundaries. */
+function ladderUnlockLinks(rungs: CreatorScoreRung[]): PhraseLink[][][] {
+  const groups = rungs.map((rung) => groupCreatorScoreUnlocks(rung.unlocks));
+  const flat = unlockLinksDownLadder(
+    rungs.flatMap((rung, index) => [
+      ...rungRewards(rung).map(() => null),
+      ...groups[index].map((group) => group.key),
+    ])
+  );
+  let at = 0;
+  return rungs.map((rung, index) => {
+    at += rungRewards(rung).length;
+    const links = flat.slice(at, at + groups[index].length);
+    at += groups[index].length;
+    return links;
+  });
+}
+
 function LadderRung({
   rung,
   kinds,
@@ -390,6 +417,7 @@ function LadderRung({
   isLast,
   badgeEarned,
   username,
+  unlockLinks,
 }: {
   rung: CreatorScoreRung;
   kinds: CreatorScoreKinds;
@@ -397,11 +425,14 @@ function LadderRung({
   isLast: boolean;
   badgeEarned: boolean;
   username?: string;
+  /** Per unlock group, from `ladderUnlockLinks`. */
+  unlockLinks: PhraseLink[][];
 }) {
   const reached = kinds.total >= rung.minScore;
   const accent = accentOf(rung.tier);
   const state: BadgeState = badgeEarned ? 'earned' : isNext ? 'next' : 'locked';
-  const rewards = (rung.tier && tierRewards[rung.tier.key]) ?? [];
+  const rewards = rungRewards(rung);
+  const unlockGroups = groupCreatorScoreUnlocks(rung.unlocks);
 
   return (
     <div className="flex gap-3 sm:gap-4" style={accentVar(accent)}>
@@ -479,11 +510,11 @@ function LadderRung({
                 <LinkedText text={reward} links={rewardLinks(username)} />
               </UnlockItem>
             ))}
-            {groupCreatorScoreUnlocks(rung.unlocks).map((group) => {
+            {unlockGroups.map((group, index) => {
               const unlocked = group.unlocks.every((u) => isCreatorScoreUnlockReached(u, kinds));
               return (
                 <UnlockItem key={group.key} unlocked={unlocked}>
-                  <LinkedText text={group.label} links={unlockLinksFor(group.key)} />
+                  <LinkedText text={group.label} links={unlockLinks[index] ?? []} />
                   {group.minScore !== rung.minScore &&
                     ` (from ${numberWithCommas(group.minScore)})`}
                 </UnlockItem>

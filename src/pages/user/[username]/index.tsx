@@ -2,7 +2,7 @@ import { Anchor, Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
@@ -15,7 +15,11 @@ import {
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { parseScoreTierSlug } from '~/shared/constants/creator-journey.constants';
+import {
+  milestoneLandingHref,
+  parseScoreTierSlug,
+} from '~/shared/constants/creator-journey.constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -58,6 +62,24 @@ function ProfileOverview() {
     username,
   });
   const { data: userOverview } = trpc.userProfile.overview.useQuery({ username });
+
+  // Same key as the layout's query, so this reads the server-rendered answer.
+  const milestone = parseScoreTierSlug(router.query.milestone);
+  const { data: milestoneShareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
+    { userId: user?.id ?? 0, slug: milestone ?? 'spark' },
+    { enabled: !!user && !!milestone }
+  );
+  const features = useFeatureFlags();
+  const landingHref = milestoneLandingHref({
+    username,
+    milestone,
+    shareable: milestoneShareable,
+    journeyOn: !!features.creatorJourney,
+  });
+  useEffect(() => {
+    if (landingHref) router.replace(landingHref);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [landingHref]);
 
   const sections = useMemo(
     () =>
