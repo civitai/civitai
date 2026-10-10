@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure).
 import type * as TrpcMod from '~/utils/trpc';
+import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * AN UNHANDLED REQUEST-STYLE MESSAGE GETS AN ERROR REPLY, ON THE REAL MODEL-SLOT HOST.
@@ -50,56 +51,21 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
 }));
 
+// A proxy, not a literal: no procedure is measured here, so every un-listed one
+// answers with an inert hook (`test/trpcProxyStub.ts`). The two overrides keep the
+// LOADED, non-empty shapes the model-slot host renders from.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    collection: {
-      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+  trpc: makeTrpcProxy({
+    'blocks.getEffectiveCheckpoint': {
+      useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
     },
-    blocks: {
-      getEffectiveCheckpoint: {
-        useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
-      },
-      getShowcaseImages: { useQuery: () => ({ data: [], isLoading: false }) },
-      submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      updateUserSettings: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-    },
-    apps: {
-      shared: {
-        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      },
-      storage: {
-        set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      },
-    },
-    useUtils: () => ({
-      collection: { getById: { fetch: vi.fn() } },
-      apps: {
-        shared: {
-          list: { fetch: vi.fn() },
-          getCount: { fetch: vi.fn() },
-          getCounts: { fetch: vi.fn() },
-          get: { fetch: vi.fn() },
-        },
-        storage: {
-          get: { fetch: vi.fn() },
-          list: { fetch: vi.fn() },
-          getQuota: { fetch: vi.fn() },
-        },
-      },
-    }),
-  },
+    'blocks.getShowcaseImages': { useQuery: () => ({ data: [], isLoading: false }) },
+    // Two levels deep (`trpc.apps.shared.append`), which the proxy resolves only
+    // through an explicit sub-router.
+    'apps.shared': makeInertSubRouter(),
+    'apps.storage': makeInertSubRouter(),
+  }),
 }));
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
