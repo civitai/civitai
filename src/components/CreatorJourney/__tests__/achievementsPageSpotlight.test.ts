@@ -44,6 +44,9 @@ let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
 function open(query: Record<string, string>) {
+  act(() => root?.unmount());
+  container?.remove();
+  mocks.listProps = [];
   mocks.query = query;
   container = document.createElement('div');
   document.body.appendChild(container);
