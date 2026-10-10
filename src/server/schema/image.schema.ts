@@ -251,11 +251,33 @@ export const imageSchema = z.object({
   index: z.number().optional(),
 });
 
-export const comfylessImageSchema = imageSchema.extend({
+/**
+ * The image fields a client may send. `id`, `postId` and `index` are server-owned `Image`
+ * columns: server code decides an image's row id, the post it belongs to and its position
+ * there, and assigns them explicitly at the write. Route inputs use this (or
+ * `imageReferenceInputSchema`); `imageSchema` is for server-internal callers.
+ */
+export const imageInputSchema = imageSchema.omit({ id: true, postId: true, index: true });
+export type ImageInput = z.infer<typeof imageInputSchema>;
+
+/**
+ * `imageInputSchema` plus an optional `id` naming an EXISTING row, for routes that let a
+ * client keep or link an image it already has (a cover it is re-saving, a bounty image it is
+ * keeping). The route decides whether the caller may use that row; the id is never written
+ * as a new row's primary key.
+ */
+export const imageReferenceInputSchema = imageInputSchema.extend({
+  id: z.number().int().positive().optional(),
+});
+export type ImageReferenceInput = z.infer<typeof imageReferenceInputSchema>;
+
+/** A client-proposed position within a post. */
+export const imagePositionSchema = z.number().int().min(0);
+
+export const comfylessImageSchema = imageReferenceInputSchema.extend({
   meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
 });
 
-export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
 
 export const imageUpdateSchema = z.object({
@@ -636,7 +658,7 @@ export type SetVideoThumbnailInput = z.infer<typeof setVideoThumbnailSchema>;
 export const setVideoThumbnailSchema = z.object({
   imageId: z.number(),
   frame: z.number().nullable(),
-  customThumbnail: imageSchema.nullish(),
+  customThumbnail: imageInputSchema.nullish(),
   postId: z.number().optional(),
 });
 

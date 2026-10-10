@@ -321,6 +321,22 @@ function sendComicPanelSignal(
   signalClient.send({ userId, target: SignalMessages.ComicPanelUpdate, data }).catch(() => null); // Fire-and-forget
 }
 
+/**
+ * Loads an existing image that `userId` may attach to their comic, or refuses with an
+ * authorization error when it is missing or belongs to someone else. The one image-ownership
+ * check for every comics route that points a row at an existing image by id.
+ */
+async function getOwnedImageOrThrow(imageId: number, userId: number) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { id: true, userId: true, url: true },
+  });
+  if (!image || image.userId !== userId) {
+    throw throwAuthorizationError();
+  }
+  return image;
+}
+
 // Middleware to check project ownership
 const isProjectOwner = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -2337,7 +2353,7 @@ export const comicsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const project = await dbRead.comicProject.findUnique({
         where: { id: input.id },
-        select: { userId: true },
+        select: { userId: true, coverImageId: true, heroImageId: true },
       });
       if (!project || project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
@@ -2353,6 +2369,11 @@ export const comicsRouter = router({
 
       // Cover image: accept either an existing Image ID or a CF URL (creates Image record)
       if (input.coverImageId !== undefined) {
+        // A route may only point at an image the caller may use. Clearing, or re-sending the
+        // project's current image, needs no lookup.
+        if (input.coverImageId !== null && input.coverImageId !== project.coverImageId) {
+          await getOwnedImageOrThrow(input.coverImageId, ctx.user.id);
+        }
         data.coverImageId = input.coverImageId;
       } else if (input.coverUrl !== undefined) {
         if (input.coverUrl) {
@@ -2369,6 +2390,9 @@ export const comicsRouter = router({
 
       // Hero image: accept either an existing Image ID or a CF URL (creates Image record)
       if (input.heroImageId !== undefined) {
+        if (input.heroImageId !== null && input.heroImageId !== project.heroImageId) {
+          await getOwnedImageOrThrow(input.heroImageId, ctx.user.id);
+        }
         data.heroImageId = input.heroImageId;
       } else if (input.heroUrl !== undefined) {
         if (input.heroUrl) {
@@ -5758,13 +5782,7 @@ export const comicsRouter = router({
 
         // Mode 1: Import from existing image ID
         if (panelDef.imageId != null) {
-          const image = await dbRead.image.findUnique({
-            where: { id: panelDef.imageId },
-            select: { id: true, userId: true, url: true },
-          });
-          if (!image || image.userId !== ctx.user!.id) {
-            throw throwAuthorizationError();
-          }
+          const image = await getOwnedImageOrThrow(panelDef.imageId, ctx.user!.id);
 
           const panel = await dbWrite.comicPanel.create({
             data: {
@@ -6054,13 +6072,7 @@ export const comicsRouter = router({
     .use(isChapterOwner)
     .mutation(async ({ ctx, input }) => {
       // Verify the image belongs to the user
-      const image = await dbRead.image.findUnique({
-        where: { id: input.imageId },
-        select: { id: true, userId: true, url: true },
-      });
-      if (!image || image.userId !== ctx.user!.id) {
-        throw throwAuthorizationError();
-      }
+      const image = await getOwnedImageOrThrow(input.imageId, ctx.user!.id);
 
       // Get next position
       let nextPosition: number;

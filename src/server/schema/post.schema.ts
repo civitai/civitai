@@ -6,7 +6,11 @@ import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { toStringList } from '~/utils/array-helpers';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
+import {
+  imageInputSchema,
+  imageMetaSchema,
+  imagePositionSchema,
+} from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -176,10 +180,8 @@ export const postUpdateSchema = z.object({
 });
 
 // Composite create-with-images input for headless/agent (MCP) use. Each image
-// reuses the shared imageSchema shape (without postId — the server fills it in
-// after creating the post) and requires an explicit ordering index. The post is
-// created, images are attached in order, and the post is optionally published in
-// a single server-side round-trip.
+// requires an explicit ordering index. The post is created, images are attached in
+// order, and the post is optionally published in a single server-side round-trip.
 export type CreatePostWithImagesInput = z.infer<typeof createPostWithImagesSchema>;
 export const createPostWithImagesSchema = z.object({
   title: z.string().trim().nullish(),
@@ -190,13 +192,21 @@ export const createPostWithImagesSchema = z.object({
   collectionId: z.number().optional(),
   publish: z.boolean().optional(),
   images: z
-    .array(
-      // Omit `id` as well: this is a create path, so a caller-supplied Image PK
-      // would be forwarded into createImage and fail (or clobber). The server
-      // fills postId, and index is required for explicit ordering.
-      imageSchema.omit({ postId: true, index: true, id: true }).extend({ index: z.number().min(0) })
-    )
+    .array(imageInputSchema.extend({ index: imagePositionSchema }))
     .min(1, 'At least one image must be provided'),
+});
+
+/** `post.addImage`: the target post is the caller's to name, and the server checks it. */
+export const postAddImageInput = imageInputSchema.extend({
+  postId: z.number(),
+  index: imagePositionSchema.optional(),
+  /**
+   * The generation this upload claims to be an output of. Only ever used to
+   * look up provenance the server itself signed, against a workflow the
+   * session user owns — see remix-provenance.ts. Never stored, and kept off
+   * the shared image schemas so it can't ride into a Prisma create.
+   */
+  generationWorkflowId: z.string().optional(),
 });
 
 export type RemovePostTagInput = z.infer<typeof removePostTagSchema>;

@@ -2534,11 +2534,17 @@ const collectionEntityProps: Partial<Record<CollectionType, string>> = {
 };
 // Image intentionally absent: its metrics are ClickHouse-owned (the legacy PG
 // ImageMetric processor was retired), so image bookmarks skip the PG queueUpdate.
-const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
-  [CollectionType.Article]: articleMetrics,
-  [CollectionType.Model]: modelMetrics,
-  [CollectionType.Post]: postMetrics,
-};
+// A function, not a module-level map: ~/server/metrics reaches this file again through the
+// image.service import cycle, so at load time it can still be half-initialised. A process that
+// imports image.service or post.service first crashed here.
+const collectionEntityMetrics = (type: CollectionType): typeof articleMetrics | undefined =>
+  ((
+    {
+      [CollectionType.Article]: articleMetrics,
+      [CollectionType.Model]: modelMetrics,
+      [CollectionType.Post]: postMetrics,
+    } as Partial<Record<CollectionType, typeof articleMetrics>>
+  )[type]);
 export const toggleBookmarked = async ({
   entityId,
   type,
@@ -2581,7 +2587,7 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
-  const metricsEngine = collectionEntityMetrics[type];
+  const metricsEngine = collectionEntityMetrics(type);
   if (!entityProp) {
     // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
     throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
