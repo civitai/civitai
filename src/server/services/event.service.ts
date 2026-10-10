@@ -398,7 +398,9 @@ export async function getEventStandings({
     }));
     // What the page subscribes to and marks for the live team totals.
     const teamsTopicId = seasonTeamsTopicId(scored.name, season);
-    return { ...standings, topCosmetics, teamsTopicId, users, cosmetics, teamHats };
+    // Whether the team totals came from the live engine, so the page does not call them hourly.
+    const liveTotals = live !== null;
+    return { ...standings, topCosmetics, teamsTopicId, liveTotals, users, cosmetics, teamHats };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

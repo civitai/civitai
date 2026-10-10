@@ -90,7 +90,12 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
   const sections: Record<ScoredSection, ReactNode> = {
     standings: standings && (
       <div ref={standingsView.ref}>
-        <TeamStandings standings={standings} myTeam={team} startDate={data.startDate} />
+        <TeamStandings
+          standings={standings}
+          myTeam={team}
+          startDate={data.startDate}
+          preview={data.preview}
+        />
       </div>
     ),
     hats: joined && hats.length > 0 && (

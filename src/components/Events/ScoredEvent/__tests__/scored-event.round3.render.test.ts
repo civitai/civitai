@@ -154,6 +154,15 @@ describe('Your hats cards', () => {
     ]);
   });
 
+  // The points total is live but the counts come from the hourly settle, so the card says so rather
+  // than showing 0 reactions beside points a reaction just earned.
+  it('labels the counts as hourly, under the four ways', () => {
+    const card = cards([hat({ placedOn: placed })]).querySelector('[data-testid="my-hat"]')!;
+    const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+    expect(stats.lastElementChild?.getAttribute('data-testid')).toBe('hat-stats-counts-note');
+    expect(stats.lastElementChild?.textContent).toBe('Counts update hourly');
+  });
+
   // Justin, 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above
   // the 2x2, side by side only from 13rem, and its cells show whole thousands.
   it('stacks the points above the four ways on a narrow card, with whole thousands', () => {
