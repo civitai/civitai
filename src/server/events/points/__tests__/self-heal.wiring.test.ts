@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as JobLock from '~/server/jobs/job-lock';
 
 /**
  * The self-heal as production builds it (`healEventPoints`), with only its leaves faked: the switch,
@@ -31,6 +32,18 @@ vi.mock('~/server/events/load-events', () => ({
 }));
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: leaves.sync }));
 vi.mock('~/server/events/points/referee', () => ({ runEventPointsReferee: leaves.referee }));
+// The real lock, watched: what the production heal asks it for.
+const lockCalls = vi.hoisted(() => [] as unknown[][]);
+vi.mock('~/server/jobs/job-lock', async (importOriginal) => {
+  const actual = await importOriginal<typeof JobLock>();
+  return {
+    ...actual,
+    acquireJobLock: (...args: Parameters<typeof actual.acquireJobLock>) => {
+      lockCalls.push(args);
+      return actual.acquireJobLock(...args);
+    },
+  };
+});
 vi.mock('~/server/events/event-access', () => ({
   getEventScoringPhase: async () => ({ from: new Date('2026-01-01T00:00:00.000Z') }),
 }));
@@ -44,6 +57,7 @@ const setKeys = () => sys.set.mock.calls.map(([key]) => String(key));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lockCalls.length = 0;
   sys.set.mockResolvedValue('OK');
   sys.eval.mockResolvedValue(1);
 });
@@ -69,6 +83,29 @@ describe('healEventPoints', () => {
       expect.stringMatching(/:self-heal-cooldown:repair$/),
       jobLockKey('event-engine-leaderboard-update'),
     ]);
+    expect(lockCalls).toEqual([
+      ['event-engine-leaderboard-update', 15 * 60, sys, { failOpen: false }],
+    ]);
+  });
+
+  it('while on, retries a flip that met a held lock a minute later, on a real timer', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    let held = true;
+    sys.set.mockImplementation(async (key: string) =>
+      key === jobLockKey('event-engine-leaderboard-update') && held ? null : 'OK'
+    );
+    try {
+      healEventPoints('birthday2026', 'switch-on');
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(lockCalls).toHaveLength(1);
+      expect(leaves.sync).not.toHaveBeenCalled();
+      held = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(lockCalls).toHaveLength(2);
+      expect(leaves.sync).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('while on, with the lock unreachable: settles nothing', async () => {

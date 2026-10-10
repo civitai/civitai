@@ -283,7 +283,35 @@ describe('the self-heal', () => {
       await vi.waitFor(() => expect(calls.logs).toHaveLength(i + 2));
     }
     expect(calls.retries).toEqual([]);
-    expect(SWITCH_ON_RETRIES * SWITCH_ON_RETRY_MS).toBe(SETTLE_LOCK_S * 1000);
+    // Past the lock's cap: the last retry finds a lapsed lock, not the same hold.
+    expect((SWITCH_ON_RETRIES - 1) * SWITCH_ON_RETRY_MS).toBeGreaterThanOrEqual(
+      SETTLE_LOCK_S * 1000
+    );
+  });
+
+  it('retries a flip that met another heal of the event running on this pod', async () => {
+    const fake = fakeRedis();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { heal, calls } = pod(fake, {
+      syncEventHats: async () => {
+        calls.sync++;
+        await held;
+        return [];
+      },
+    });
+    const repair = heal(EVENT.name, 'empty-map');
+    expect(await heal(EVENT.name, 'switch-on')).toBe('busy');
+    expect(calls.retries.map((r) => r.ms)).toEqual([SWITCH_ON_RETRY_MS]);
+    expect(await heal(EVENT.name, 'missing-count-base')).toBe('busy');
+    expect(calls.retries).toHaveLength(1);
+    release();
+    await repair;
+    calls.retries.shift()!.fn();
+    await vi.waitFor(() => expect(calls.sync).toBe(2));
+    expect(calls.logs.at(-1)).toEqual(
+      expect.objectContaining({ reason: 'switch-on', outcome: 'ran' })
+    );
   });
 
   it('does not retry a repair that met a held lock: the next reload asks again', async () => {

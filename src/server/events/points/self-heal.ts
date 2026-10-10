@@ -30,7 +30,8 @@ export const selfHealCooldownKey = (event: string, reason: SelfHealReason) =>
 // A flip that finds the settle lock held tries again this often, for as long as the lock can be held:
 // nothing else asks again, and the holder may be an hourly run that read the switch as off.
 export const SWITCH_ON_RETRY_MS = 60 * 1000;
-export const SWITCH_ON_RETRIES = SETTLE_LOCK_S / 60;
+// One past the lock's cap, which lands a few seconds after it (the lock counts down in 8 s ticks).
+export const SWITCH_ON_RETRIES = Math.ceil((SETTLE_LOCK_S * 1000) / SWITCH_ON_RETRY_MS) + 1;
 
 type HealedEvent = Awaited<ReturnType<typeof loadEvents>>[number];
 
@@ -56,7 +57,12 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
   // Axiom which pod healed, why, and how long after the flag read on.
   // `retry`: a flip's retry after a held lock, which its own cooldown must not stop.
   async function heal(name: string, reason: SelfHealReason, retry = 0): Promise<SelfHealOutcome> {
-    if (inFlight.has(name)) return 'busy';
+    if (inFlight.has(name)) {
+      // A flip must not be lost behind another heal of this event on this pod.
+      if (reason === 'switch-on' && retry < SWITCH_ON_RETRIES)
+        deps.retryLater(() => void heal(name, reason, retry), SWITCH_ON_RETRY_MS);
+      return 'busy';
+    }
     inFlight.add(name);
     const entry = { name: 'event-points', fn: 'selfHeal', event: name, reason, pod: deps.pod };
     try {
