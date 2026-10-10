@@ -47,7 +47,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { escalateToServerFault } from '~/server/logging/server-fault-override';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
-import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
+import {
+  assertSharedWriteTrust,
+  hasLinkedOAuthAccount,
+} from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import type { SyncSubListingForSharedRowArgs } from '~/server/services/blocks/app-sub-listing.service';
@@ -382,15 +385,8 @@ export async function resolveSharedContext(
         message: 'shared storage writes require an authenticated viewer',
       });
     }
-    // "Verified email" is satisfied by emailVerified OR a linked OAuth account.
-    // Only query when emailVerified is absent (the common OAuth case) — a
-    // verified-email user short-circuits with NO extra query per write op. The
-    // query keys on the SUBJECT `userId` (parsed from the verified block token),
-    // never client-forgeable input.
-    let hasLinkedOAuth = false;
-    if (subjectUser && !subjectUser.emailVerified) {
-      hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
-    }
+    // Keyed on the SUBJECT (from the verified block token), never client-forgeable input.
+    const hasLinkedOAuth = subjectUser ? await hasLinkedOAuthAccount(subjectUser) : false;
     assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
   }
 

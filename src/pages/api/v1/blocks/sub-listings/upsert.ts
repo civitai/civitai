@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 
 import { sessionClient } from '~/server/auth/session-client';
-import { dbRead } from '~/server/db/client';
 import {
   parseSubjectUserId,
   withBlockScope,
@@ -12,6 +11,7 @@ import {
   subListingErrorResponse,
   upsertSubListing,
 } from '~/server/services/blocks/app-sub-listing.service';
+import { hasLinkedOAuthAccount } from '~/server/services/blocks/block-write-trust.service';
 import type { SessionUser } from '~/types/session';
 
 export const config = { api: { bodyParser: { sizeLimit: '8kb' } } };
@@ -50,13 +50,11 @@ export const baseHandler = withAxiom(async function handler(
     let hasLinkedOAuth = false;
     if (userId != null) {
       subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
-      if (subjectUser && !subjectUser.emailVerified) {
-        hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
-      }
       if (!subjectUser) {
         res.status(403).json({ error: 'Token subject could not be resolved' });
         return;
       }
+      hasLinkedOAuth = await hasLinkedOAuthAccount(subjectUser);
     }
     const result = await upsertSubListing({
       appBlockId: claims.appBlockId,

@@ -85,6 +85,12 @@ export const TokenScope = {
   // to mint an instance key without this bit.
   LinkConnect: 1 << 27, // 134217728
 
+  // App Store catalog sync — publish and withdraw store items under the off-site listing linked
+  // to the calling OAuth client. Opt-in and EXCLUDED from `Full`, and only ever minted through
+  // the `client_credentials` grant (see `CLIENT_CREDENTIALS_ONLY_SCOPES`); the hub refuses it on
+  // every user-facing flow, the consent screen included.
+  AppStoreCatalogWrite: 1 << 28, // 268435456
+
   // All scopes
   //
   // NOTE: `Full` is INTENTIONALLY frozen at (1 << 25) - 1 = 33554431 — it is the
@@ -101,7 +107,8 @@ export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 
 /**
  * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
- * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel` and `LinkConnect`). Use this as the
+ * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect` and
+ * `AppStoreCatalogWrite`). Use this as the
  * upper bound when validating a requested/stored scope value in the OAuth flow —
  * bounding against `Full` would reject any value carrying an opt-in bit. Computed
  * from the enum so it can never drift behind a newly-added bit.
@@ -140,7 +147,23 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.AppBlocksSubmit]: 'Submit Apps for review',
   [TokenScope.AppBlocksDevTunnel]: 'Open on-site dev tunnels',
   [TokenScope.LinkConnect]: 'Connect the Civitai Link app to your account',
+  [TokenScope.AppStoreCatalogWrite]: "Publish items to the app's App Store listing",
 };
+
+/**
+ * Scopes a token can carry only when minted through the `client_credentials` grant: the client
+ * acting as itself, never on a user's behalf. Every other grant refuses them.
+ */
+export const CLIENT_CREDENTIALS_ONLY_SCOPES: number = TokenScope.AppStoreCatalogWrite;
+
+/** The most a `client_credentials` token may carry (`UserRead` is forced onto every token). */
+export const CLIENT_CREDENTIALS_MAX_SCOPE: number =
+  TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+
+/** The part of a client's `allowedScopes` a user can be asked to consent to. */
+export function consentableScopes(allowedScopes: number): number {
+  return allowedScopes & ~CLIENT_CREDENTIALS_ONLY_SCOPES;
+}
 
 /** Convenience presets for the API key creation UI */
 export const TokenScopePresets = {
@@ -367,7 +390,8 @@ export function validateConnectScopeJustifications(
  * scope bit never silently folds it in. Deliberately EXCLUDES the read-only scopes
  * that expose only PUBLIC data (`ModelsRead`/`MediaRead`/`ArticlesRead`/
  * `BountiesRead`/`AIServicesRead`/`CollectionsRead`) and the opt-in scopes
- * (`AppBlocksSubmit`/`AppBlocksDevTunnel`/`LinkConnect`, never part of a connect ceiling).
+ * (`AppBlocksSubmit`/`AppBlocksDevTunnel`/`LinkConnect`/`AppStoreCatalogWrite`, never part of a
+ * connect ceiling).
  * `NotificationsWrite`/`VaultWrite` are included as account-mutating writes even
  * though they are self-scoped.
  */

@@ -23,7 +23,10 @@ import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge
 // because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
 // not import this router. See that module's docblock for why a second copy is banned.
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
-import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
+import {
+  assertSharedWriteTrust,
+  hasLinkedOAuthAccount,
+} from '~/server/services/blocks/block-write-trust.service';
 import {
   BLOCK_POST_DETAIL_MAX,
   BLOCK_POST_MAX_SOURCES,
@@ -5471,17 +5474,9 @@ export const blocksRouter = router({
         ctx.user.id
       );
 
-      // WRITE TRUST. Reused from the shared-storage path. "Verified email" is
-      // satisfied by emailVerified OR a linked OAuth account; only query for the
-      // link when emailVerified is absent, so a verified-email user pays nothing.
-      // No `subjectUser &&` guard here any more: the preamble refuses an
-      // unhydratable subject outright, so this is a real `SessionUser` by
-      // construction. Re-adding the null check would be dead code that quietly
-      // claims the opposite.
-      let hasLinkedOAuth = false;
-      if (!subjectUser.emailVerified) {
-        hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
-      }
+      // WRITE TRUST. Reused from the shared-storage path. No `subjectUser &&` guard: the
+      // preamble refuses an unhydratable subject outright, so this is a real `SessionUser`.
+      const hasLinkedOAuth = await hasLinkedOAuthAccount(subjectUser);
       assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
 
       // ── THE TWO POST BUCKETS. One token per POST in each, regardless of image

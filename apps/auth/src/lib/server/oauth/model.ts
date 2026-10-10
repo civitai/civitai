@@ -15,11 +15,11 @@ import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getRedis } from '$lib/server/redis';
 import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
-import { createOAuthTokenPair } from './token-helpers';
+import { createAppAccessToken, createOAuthTokenPair } from './token-helpers';
 import { OriginNotAllowedError } from './errors';
 import { redirectUriMatches } from './redirect-uri';
 import { firstPartyClientForOrigin, originOf } from './first-party';
-import { hasScope, scopeToString, stringToScope } from './scope';
+import { hasScope, isScopeGrantable, scopeToString, stringToScope } from './scope';
 import { hSetWithTTL, type EvalCapableClient } from './redis-atomic';
 
 // Ported from the main app's src/server/oauth/model.ts. Every `prisma.*` call is rewritten to Kysely
@@ -256,6 +256,17 @@ export const oauthModel = {
   async saveToken(token: Token, client: Client, user: User): Promise<Token> {
     const scope = stringToScope(token.scope as unknown as string);
 
+    if (isClientCredentialsUser(user)) {
+      const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL);
+      return {
+        accessToken: access.accessToken,
+        accessTokenExpiresAt: access.expiresAt,
+        scope: scopeToString(scope | TokenScope.UserRead),
+        client,
+        user,
+      } as Token;
+    }
+
     const pair = await createOAuthTokenPair(user.id, client.id, scope);
 
     return {
@@ -341,34 +352,38 @@ export const oauthModel = {
     // For client_credentials grant, the "user" is the client owner
     const oauthClient = await db
       .selectFrom('OauthClient')
-      .select(['userId', 'grants'])
+      .select(['userId', 'grants', 'isConfidential', 'secret'])
       .where('id', '=', client.id)
       .executeTakeFirst();
 
     if (!oauthClient || !oauthClient.grants.includes('client_credentials')) {
       return false;
     }
+    // The grant authenticates the client by its secret, so only a confidential client holding one
+    // may use it.
+    if (!oauthClient.isConfidential || !oauthClient.secret) return false;
 
-    return { id: oauthClient.userId };
+    const user: ClientCredentialsUser = { id: oauthClient.userId, viaClientCredentials: true };
+    return user;
   },
 
   // ─── Scope Validation ──────────────────────────────────────
 
-  async validateScope(_user: User, client: Client, scope: string[]): Promise<string[] | false> {
-    // UserRead is always granted as a baseline (see createOAuthTokenPair).
-    // Force it into both the requested and allowed sets so it propagates to
-    // the issued token and never trips the allowed-scope check even for
-    // clients that didn't register UserRead in allowedScopes.
+  async validateScope(user: User, client: Client, scope: string[]): Promise<string[] | false> {
+    // UserRead is always granted as a baseline: force it into the requested set so it propagates to
+    // the issued token.
     const requestedScope = stringToScope(scope) | TokenScope.UserRead;
     // Default a MISSING ceiling to UserRead (read-only), NOT Full — the safer fallback for third-party
     // clients. First-party clients are unaffected: they carry an explicit `Full` ceiling (the synthesized
     // first-party client). The OauthClient.allowedScopes column is NOT NULL, so this fallback is unreachable
     // for real rows — it's purely fail-safe.
     const allowedScopes =
-      ((client as Client & { allowedScopes?: number }).allowedScopes ?? TokenScope.UserRead) |
-      TokenScope.UserRead;
+      (client as Client & { allowedScopes?: number }).allowedScopes ?? TokenScope.UserRead;
+    // The library does not pass the grant type here; the client_credentials grant is recognised by
+    // the user `getUserFromClient` returned.
+    const grant = isClientCredentialsUser(user) ? 'client_credentials' : 'user';
 
-    if (!hasScope(allowedScopes, requestedScope)) {
+    if (!isScopeGrantable(allowedScopes, requestedScope, grant)) {
       return false;
     }
 
@@ -382,6 +397,13 @@ export const oauthModel = {
   },
 };
 
+/** The client owner, as `getUserFromClient` returns it for the client_credentials grant. */
+type ClientCredentialsUser = { id: number; viaClientCredentials: true };
+
+function isClientCredentialsUser(user: User): user is User & ClientCredentialsUser {
+  return (user as Partial<ClientCredentialsUser>).viaClientCredentials === true;
+}
+
 /**
  * Resolve a client to the lite shape ({ id, grants, redirectUris }) needed for code issuance + redirect_uri
  * validation, from the DB OR the first-party source seam. Single definition so the DB→first-party fallback
@@ -392,7 +414,13 @@ export async function resolveClientLite(
   clientId: string,
   redirectUri?: string
 ): Promise<
-  | { id: string; grants: string[]; redirectUris: string[]; isFirstParty: boolean; accessMode: string }
+  | {
+      id: string;
+      grants: string[];
+      redirectUris: string[];
+      isFirstParty: boolean;
+      accessMode: string;
+    }
   | undefined
 > {
   const dbClient = await db

@@ -290,7 +290,8 @@ export type ListingCard = {
  * One store card for a SUB-LISTING: an item a parent app placed in the store. Public-field
  * allowlist like `ListingCard`. `kind` and `category` are the parent's, so the grid's filters
  * and client-side search treat it like any other card; `contentRating` is the stricter of
- * parent and item. `runHref` is built server-side under the parent's run route; there is no
+ * parent and item. `runHref` is built server-side: under the parent's run route, or, for an
+ * off-site parent (`external`), from the parent's moderator-set link template. There is no
  * author-supplied URL.
  *
  * Only the tRPC store grid returns these (behind the `app-store-sub-listings` flag). The
@@ -310,6 +311,8 @@ export type SubListingCard = {
   creator: ListingCreatorChip;
   parent: { id: string; slug: string; name: string; iconUrl: string | null };
   runHref: string;
+  /** `runHref` leaves Civitai: open it in a new tab, whether or not the viewer can open pages. */
+  external?: true;
 };
 
 export type StoreGridItem = ListingCard | SubListingCard;

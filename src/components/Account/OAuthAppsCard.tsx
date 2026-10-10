@@ -634,7 +634,8 @@ function EditAppModal({
       description: description.trim(),
       redirectUris: uris,
       allowedOrigins: originsParsed.value,
-      allowedScopes: tokenScope,
+      // Opt-in bits above `Full` aren't editable here.
+      allowedScopes: tokenScope & TokenScope.Full,
     });
   };
 

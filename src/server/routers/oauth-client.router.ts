@@ -115,8 +115,7 @@ export const oauthClientRouter = router({
         // Only treat the query as an author id when it's a valid positive
         // Postgres int4 — an all-digits query beyond int32 (e.g. a pasted long
         // number) passes Number.isInteger but would 500 on int4 overflow.
-        const numericIsUserId =
-          Number.isInteger(numeric) && numeric >= 1 && numeric <= 2147483647;
+        const numericIsUserId = Number.isInteger(numeric) && numeric >= 1 && numeric <= 2147483647;
         const or: Prisma.OauthClientWhereInput[] = [
           { name: { contains: query, mode: 'insensitive' } },
           { user: { username: { contains: query, mode: 'insensitive' } } },
@@ -204,7 +203,17 @@ export const oauthClientRouter = router({
       });
       if (!client) throw new TRPCError({ code: 'NOT_FOUND' });
 
-      const { id, ...data } = input;
+      const { id, allowedScopes, ...rest } = input;
+      // The owner edits only the bits within `Full`; opt-in bits above it are set by hand and
+      // survive an edit unchanged.
+      const data =
+        allowedScopes === undefined
+          ? rest
+          : {
+              ...rest,
+              allowedScopes:
+                (allowedScopes & TokenScope.Full) | (client.allowedScopes & ~TokenScope.Full),
+            };
       const result = await dbWrite.oauthClient.update({ where: { id }, data });
       logOAuthEvent({ type: 'client.updated', userId: ctx.user.id, clientId: id });
       return result;
@@ -264,9 +273,7 @@ export const oauthClientRouter = router({
       // for auth and would keep honoring the deleted tokens until TTL. Expire
       // each affected user's cache so revocation takes effect immediately.
       // Best-effort: invalidateCivitaiUser swallows its own errors.
-      await Promise.all(
-        tokenHolders.map(({ userId }) => invalidateCivitaiUser({ userId }))
-      );
+      await Promise.all(tokenHolders.map(({ userId }) => invalidateCivitaiUser({ userId })));
 
       return { success: true };
     }),

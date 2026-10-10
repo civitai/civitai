@@ -170,3 +170,18 @@ export async function checkSubListingWriteRateLimit(
   if (!hourly.allowed) return hourly;
   return checkFixedWindow(`${base}:d`, SUB_LISTING_WRITE_DAILY_MAX, 24 * 60 * 60);
 }
+
+// CATALOG SYNC (an off-site parent's platform publishing through `/api/v1/catalog/items`): one
+// bucket per parent, since the platform writes for many creators. Identical re-syncs are not
+// counted.
+export const SUB_LISTING_SYNC_HOURLY_MAX = 600;
+export const SUB_LISTING_SYNC_DAILY_MAX = 3000;
+
+export async function checkSubListingSyncRateLimit(
+  parentListingId: string
+): Promise<SharedStorageRateLimitResult> {
+  const base = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:sub-listing-sync:${parentListingId}`;
+  const hourly = await checkFixedWindow(`${base}:h`, SUB_LISTING_SYNC_HOURLY_MAX, 60 * 60);
+  if (!hourly.allowed) return hourly;
+  return checkFixedWindow(`${base}:d`, SUB_LISTING_SYNC_DAILY_MAX, 24 * 60 * 60);
+}
