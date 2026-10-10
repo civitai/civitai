@@ -226,10 +226,14 @@ export default class TestCacheReporter {
       // Exactly the tracker, not its directory: the end-to-end fixture's own setup file lives under
       // scripts/test-cache/ too, and a directory-wide exclusion silently skipped scanning it.
       if (core.toRel(setup, root) === 'scripts/test-cache/fs-tracker.mjs') continue;
-      const s = core.closureOf(graph, setup);
+      // Narrowed like the test file, and stricter: a module this file never loaded is dropped, not
+      // kept as a leaf. setup.ts's `vi.mock` factories `await import` the redis and db packages, and
+      // once any file runs one, the shared graph hangs them under setup.ts for every file. Measured:
+      // a component test importing neither was keyed on both.
+      const s = core.closureOf(graph, setup, expand);
       if (s === null) return void (row.why = 'setup file not in module graph');
       ids.add(setup);
-      for (const id of s) ids.add(id);
+      for (const id of s) if (expand(id)) ids.add(id);
     }
     const entries = new Set([testRel]);
     for (const id of ids) entries.add(core.toRel(id, root));
