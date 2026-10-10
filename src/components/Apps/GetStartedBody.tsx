@@ -86,17 +86,11 @@ export function GetStartedBody({
       </Stack>
 
       {/*
-        The agent route leads this state, ABOVE the banner. That reverses an earlier choice to
-        keep the card below the banner because the banner was the LCP element of the one
-        indexable state of `/apps/build`. With the card first the banner starts lower, so on
-        shorter viewports the LCP candidate is likely hero or prompt text instead of the
-        image. Neither ordering's LCP has been measured.
-
-        The card is not CLS-free: its caret exists only in the animated tree, so one commit
-        after hydration it can wrap the prompt's last line and push everything below it, now
-        including the banner, down by one line (~21px). That bounds the shift at roughly
-        0.03 on a 667px-tall viewport, under the 0.1 "good" threshold. See
-        `AgentOnboardingCard`'s header for the alternative that was declined.
+        Above the banner on purpose: the agent route is this state's primary action. The
+        banner is therefore not guaranteed to be the LCP element of this indexable state, and
+        LCP has not been measured for this order, so do not tune the image's loading on that
+        assumption. The card can also shift what follows it by one line just after hydration;
+        see `AgentOnboardingCard`'s header.
       */}
       <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
 

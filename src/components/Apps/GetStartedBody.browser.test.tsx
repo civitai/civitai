@@ -116,11 +116,16 @@ describe('GetStartedBody (public App builders landing)', () => {
     await expect
       .element(page.getByText('go install github.com/civitai/cli/cmd/civitai@latest'))
       .toBeVisible();
-    expect(
-      page
-        .getByRole('button', { name: 'Copy command: brew install civitai/tap/civitai' })
-        .elements()
-    ).toHaveLength(0);
+    for (const alternative of [
+      'brew install civitai/tap/civitai',
+      'go install github.com/civitai/cli/cmd/civitai@latest',
+    ]) {
+      expect(
+        page.getByRole('button', { name: `Copy command: ${alternative}` }).elements()
+      ).toHaveLength(0);
+    }
+    // Exactly the three steps are copyable.
+    expect(page.getByRole('button', { name: /^Copy command: / }).elements()).toHaveLength(3);
 
     await toggle.click();
     await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -140,9 +145,15 @@ describe('GetStartedBody (public App builders landing)', () => {
 
     await page.getByTestId(MANUAL_TOGGLE).click();
     await expect.element(page.getByTestId(MANUAL_REGION)).toBeVisible();
-    await page.getByRole('button', { name: `Copy command: ${NPM_INSTALL}` }).click();
-    await page.getByRole('button', { name: 'Copy command: civitai app create my-app' }).click();
-    expect(onCopyCommand.mock.calls).toEqual([[NPM_INSTALL], ['civitai app create my-app']]);
+    const steps = [
+      NPM_INSTALL,
+      'civitai app create my-app',
+      'cd my-app && npm install && npm run dev:harness',
+    ];
+    for (const command of steps) {
+      await page.getByRole('button', { name: `Copy command: ${command}` }).click();
+    }
+    expect(onCopyCommand.mock.calls).toEqual(steps.map((command) => [command]));
     expect(onCopyAgentPrompt).toHaveBeenCalledTimes(1);
   });
 

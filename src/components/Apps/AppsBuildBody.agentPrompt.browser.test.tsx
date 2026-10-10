@@ -219,6 +219,23 @@ describe('the agent card renders in ALL THREE states', () => {
     await expect.element(page.getByText(`$ ${NPM_INSTALL}`)).toBeVisible();
   });
 
+  test.for([
+    { label: 'B · manual setup', toggle: MANUAL_TOGGLE, region: MANUAL_REGION, arrange: 'B' },
+    { label: 'C · developer resources', toggle: RESOURCES_TOGGLE, region: RESOURCES, arrange: 'C' },
+  ] as const)(
+    '$label: the toggle names the region it controls',
+    async ({ toggle, region, arrange }) => {
+      mocks.isFetched = true;
+      mocks.navSummary = arrange === 'B' ? { ...EMPTY_SUMMARY } : { ...SUMMARY_WITH_APPS };
+      await renderBody();
+
+      await expect.element(page.getByTestId(toggle)).toBeInTheDocument();
+      const controls = page.getByTestId(toggle).element().getAttribute('aria-controls');
+      expect(controls).toBeTruthy();
+      expect(page.getByTestId(region).element().id).toBe(controls);
+    }
+  );
+
   test('B · "Create your first app" survives as a secondary action after the manual setup', async () => {
     mocks.isFetched = true;
     mocks.navSummary = { ...EMPTY_SUMMARY };
@@ -275,7 +292,7 @@ describe('the agent card renders in ALL THREE states', () => {
     // `Collapse` renders a `height: 0; opacity: 0` WRAPPER; the browser matcher ignores the
     // wrapper's opacity and a clipped child keeps its own bounding box, so
     // `expect(card).not.toBeVisible()` FAILS against a correctly-collapsed panel — measured
-    // here, and already recorded in `GetStartedBody.browser.test.tsx` for the quickstart
+    // here, and already recorded in `GetStartedBody.browser.test.tsx` for the manual-setup
     // commands. The zero-height wrapper is the thing with an observable collapsed state.
     const region = page.getByTestId(RESOURCES);
     await expect.element(region).not.toBeVisible();

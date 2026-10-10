@@ -8,7 +8,7 @@ import {
   IconTerminal2,
 } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useId, useRef } from 'react';
 import { APPS_REQUEST_ACCESS_HREF } from '~/components/Apps/cliCommands';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
@@ -232,8 +232,8 @@ export function AppsBuildBody() {
   // ⚠️ THE FAILURE MODE THIS BUYS, STATED RATHER THAN DISCOVERED LATER: for an author whose
   // query is ENABLED, nothing bounds the wait. If `getNavSummary` never settles — the client
   // bundle fails to mount, a hang with no rejection — this renders the skeleton indefinitely,
-  // where the old code rendered state B: the wrong screen, but one carrying three copyable
-  // CLI commands and a live `/apps/submit` CTA. There is no timeout to lean on: the tRPC
+  // where the old code rendered state B: the wrong screen, but one carrying the setup steps
+  // and a live `/apps/submit` CTA. There is no timeout to lean on: the tRPC
   // links set no `AbortSignal`, and `queryRetry` only fires on a REJECTION, not on a hang. It
   // is accepted rather than fixed because it needs an already-broken client, and a
   // settle-deadline fallback would put a SECOND predicate in front of the render — the exact
@@ -362,6 +362,7 @@ function BuildResourcesStrip({
   onCopyAgentPrompt: () => void;
 }) {
   const [opened, { toggle }] = useDisclosure(false);
+  const regionId = useId();
   return (
     <Stack gap="xs">
       <Divider />
@@ -370,6 +371,7 @@ function BuildResourcesStrip({
         size="xs"
         onClick={toggle}
         aria-expanded={opened}
+        aria-controls={regionId}
         w="fit-content"
         leftSection={<IconTerminal2 size={16} />}
         data-testid="apps-build-resources-toggle"
@@ -385,7 +387,7 @@ function BuildResourcesStrip({
       >
         {opened ? 'Hide developer resources' : 'Developer resources'}
       </Button>
-      <Collapse in={opened} data-testid="apps-build-resources">
+      <Collapse in={opened} id={regionId} data-testid="apps-build-resources">
         <Stack gap="sm">
           <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
           <ManualSetupSteps onCopyCommand={onCopyCommand} />

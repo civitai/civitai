@@ -111,10 +111,11 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
  * ⚠️ TWO ACCEPTED COSTS OF THE TWO-TREE STRUCTURE. (a) The element type changes at the root and
  * at each row, so React remounts the card's ~40 nodes one commit after hydration —
  * sub-millisecond, one tick. (b) The caret is inline content in the animated tree only, so it
- * can push the prompt's last word onto a new line. The card leads the page, so that moves
- * everything below it by one line (~21px): at most roughly 0.03 CLS on a 667px-tall viewport,
- * under the 0.1 threshold, and not measured. Reserving its box was declined — `animation-name` is time-invariant and a
- * blink's opacity is not, so it would buy the box at the cost of the caret's only crisp guard.
+ * can push the prompt's last word onto a new line, moving everything below the card by one
+ * line (~21px): at most roughly 0.03 CLS on a 667px-tall viewport, under the 0.1 threshold,
+ * and not measured. Reserving its box was declined — `animation-name` is time-invariant and
+ * a blink's opacity is not, so it would buy the box at the cost of the caret's only crisp
+ * guard.
  */
 export function AgentOnboardingCard({
   onCopy,
