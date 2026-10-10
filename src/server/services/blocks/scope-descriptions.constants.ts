@@ -80,7 +80,7 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'collections:write:self': 'Bookmark (follow) collections on your behalf',
   'collections:read:private': 'Read your private collections',
   'posts:write:self':
-    "Publish posts to your profile from this app's own results — you approve each one",
+    "Upload images this app makes and publish posts to your profile from them or from this app's results — you approve each post",
   'goods:read:self': "See which of this app's items you already own",
   'goods:purchase:self': "Buy this app's items with your Buzz",
   'apps:store:items:write':

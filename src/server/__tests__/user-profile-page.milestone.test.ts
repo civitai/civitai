@@ -31,7 +31,7 @@ function fakeSsg(profile: { id: number } | null = { id: PROFILE_ID }) {
 
 const resolve = async (query: Record<string, string>, ssg = fakeSsg()) => {
   const resolver = getServerSideProps as unknown as (args: unknown) => Promise<unknown>;
-  await resolver({ ssg, ctx: { params: { username: 'ellie' }, query } });
+  await resolver({ ssg, ctx: { params: { username: query.username }, query } });
   return ssg.creatorJourney.isMilestoneShareable.prefetch;
 };
 
@@ -41,6 +41,23 @@ describe('profile page server render, ?milestone=', () => {
   it('prefetches whether the tier card renders, keyed as the layout queries it', async () => {
     const shareable = await resolve({ username: 'ellie', milestone: 'legend' });
     expect(shareable).toHaveBeenCalledWith({ userId: PROFILE_ID, slug: 'legend' });
+  });
+
+  // The layout queries `router.query.username` as typed. A prefetch under the slugified (lowercased)
+  // name is a cache miss there, and `/user/JustMaier?milestone=` rendered with no og:image at all.
+  it('prefetches under the route username as typed, not lowercased', async () => {
+    const ssg = fakeSsg();
+    await resolve({ username: 'JustMaier', milestone: 'supernova' }, ssg);
+    for (const query of [
+      ssg.user.getCreator.prefetch,
+      ssg.userProfile.get.fetch,
+      ssg.userProfile.overview.prefetch,
+    ])
+      expect(query).toHaveBeenCalledWith({ username: 'JustMaier' });
+
+    const plain = fakeSsg();
+    await resolve({ username: 'JustMaier' }, plain);
+    expect(plain.userProfile.get.prefetch).toHaveBeenCalledWith({ username: 'JustMaier' });
   });
 
   it('does not look it up without the param, for a non-tier value, or for a missing user', async () => {

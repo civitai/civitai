@@ -517,3 +517,256 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     replies.stop();
   });
 });
+
+/**
+ * MULTI-SELECT (`multiple: { max }`).
+ *
+ * A LoRA-family request carrying `multiple` opens the SAME native modal with its
+ * existing batch UI switched on (`limit` + `onSelectMultiple`) and answers with
+ * `selectedResources` — the picked resources in pick order, each through the
+ * same safe projection as a single pick; `[]` on dismiss. A request without the
+ * key is a single pick exactly as before (the suite above), and the last test
+ * here pins that such a request never switches the batch UI on.
+ */
+describe('PageBlockHost resource picker — multi-select', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  const lora = (id: number, modelId: number, name: string, words: string[]) =>
+    fakeResource({
+      id,
+      name: `v${id}`,
+      baseModel: 'SDXL 1.0',
+      trainedWords: words,
+      model: {
+        id: modelId,
+        name,
+        type: 'LORA',
+        poi: true,
+        minor: true,
+        userId: 5,
+      } as unknown as GenerationResource['model'],
+    });
+
+  test('passes the cap to the native modal as `limit` and switches on its batch UI', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', {
+      requestId: 'rq_multi_open',
+      resourceType: 'LORA',
+      baseModelGroup: 'SDXL',
+      multiple: { max: 3 },
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+
+    const props = lastResourceModalProps();
+    expect(props.limit).toBe(3);
+    expect(typeof props.onSelectMultiple).toBe('function');
+    // The options bag is the single-pick one: same two keys, same type filter,
+    // family hint still resolved. No maturity knob rides in with `multiple`.
+    expect(Object.keys(props.options as Record<string, unknown>).sort()).toEqual([
+      'canGenerate',
+      'resources',
+    ]);
+    expect(props.options?.canGenerate).toBe(true);
+    expect(props.options?.resources).toHaveLength(1);
+    expect(props.options?.resources?.[0].type).toBe('LORA');
+    expect(props.options?.resources?.[0].baseModels).toContain('SDXL 1.0');
+  });
+
+  test('a max above the cap opens the modal with limit 5', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', {
+      requestId: 'rq_multi_cap',
+      resourceType: 'LORA',
+      multiple: { max: 9 },
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(lastResourceModalProps().limit).toBe(5);
+  });
+
+  test('replies with the projected list IN PICK ORDER — no private fields', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', {
+      requestId: 'rq_multi_pick',
+      resourceType: 'LORA',
+      multiple: { max: 3 },
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+
+    // Picked in this order — ids deliberately not ascending, so a sort shows.
+    lastResourceModalProps().onSelectMultiple?.([
+      lora(303, 33, 'Third Alphabetically', ['zeta']),
+      lora(101, 11, 'First Alphabetically', []),
+      lora(202, 22, 'Second Alphabetically', ['alpha', 'beta']),
+    ]);
+
+    await vi.waitFor(() => {
+      const r = replies.last('RESOURCE_PICKER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_multi_pick',
+        selectedResources: [
+          {
+            versionId: 303,
+            modelId: 33,
+            modelName: 'Third Alphabetically',
+            versionName: 'v303',
+            baseModel: 'SDXL 1.0',
+            modelType: 'LORA',
+            strength: 1,
+            minStrength: -1,
+            maxStrength: 2,
+            trainedWords: ['zeta'],
+            clipSkip: null,
+          },
+          {
+            versionId: 101,
+            modelId: 11,
+            modelName: 'First Alphabetically',
+            versionName: 'v101',
+            baseModel: 'SDXL 1.0',
+            modelType: 'LORA',
+            strength: 1,
+            minStrength: -1,
+            maxStrength: 2,
+            trainedWords: [],
+            clipSkip: null,
+          },
+          {
+            versionId: 202,
+            modelId: 22,
+            modelName: 'Second Alphabetically',
+            versionName: 'v202',
+            baseModel: 'SDXL 1.0',
+            modelType: 'LORA',
+            strength: 1,
+            minStrength: -1,
+            maxStrength: 2,
+            trainedWords: ['alpha', 'beta'],
+            clipSkip: null,
+          },
+        ],
+      });
+    });
+    // A list reply never ALSO carries the single-pick field.
+    expect(replies.last('RESOURCE_PICKER_RESULT')!.payload).not.toHaveProperty('selected');
+    replies.stop();
+  });
+
+  test("the modal's one-click path (onSelect) still answers with a list, of one", async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', {
+      requestId: 'rq_multi_one',
+      resourceType: 'LORA',
+      multiple: { max: 4 },
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+
+    const props = lastResourceModalProps();
+    props.onSelect(lora(404, 44, 'Solo', []));
+    props.onClose?.(); // the modal closes itself after a pick — must not add a cancel
+
+    await vi.waitFor(() => {
+      const r = replies.last('RESOURCE_PICKER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_multi_one',
+        selectedResources: [
+          {
+            versionId: 404,
+            modelId: 44,
+            modelName: 'Solo',
+            versionName: 'v404',
+            baseModel: 'SDXL 1.0',
+            modelType: 'LORA',
+            strength: 1,
+            minStrength: -1,
+            maxStrength: 2,
+            trainedWords: [],
+            clipSkip: null,
+          },
+        ],
+      });
+    });
+    expect(
+      replies.received.filter(
+        (m) =>
+          m.type === 'RESOURCE_PICKER_RESULT' &&
+          (m.payload as { requestId?: string } | undefined)?.requestId === 'rq_multi_one'
+      )
+    ).toHaveLength(1);
+    replies.stop();
+  });
+
+  test('on cancel replies with an EMPTY list', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', {
+      requestId: 'rq_multi_cancel',
+      resourceType: 'LoCon',
+      multiple: { max: 2 },
+    });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    lastResourceModalProps().onClose?.();
+
+    await vi.waitFor(() => {
+      const r = replies.last('RESOURCE_PICKER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_multi_cancel', selectedResources: [] });
+    });
+    replies.stop();
+  });
+
+  test('`multiple` with a Checkpoint is REFUSED with an error — the modal never opens', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', {
+      requestId: 'rq_multi_ckpt',
+      resourceType: 'Checkpoint',
+      multiple: { max: 2 },
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('RESOURCE_PICKER_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_multi_ckpt',
+        error:
+          'OPEN_RESOURCE_PICKER: multiple is only supported for LoRA-family resource types, not Checkpoint.',
+      });
+    });
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    replies.stop();
+  });
+
+  // Invariant guard (green before and after): a request WITHOUT `multiple` must
+  // not switch the modal's batch UI on. The single-pick REPLY literal is pinned
+  // by "on select posts back ONLY the narrow pick" above.
+  test('a request without `multiple` opens a plain single-pick modal', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', { requestId: 'rq_plain', resourceType: 'LORA' });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+
+    const props = lastResourceModalProps();
+    expect(props.onSelectMultiple).toBeUndefined();
+    expect(props.limit).toBeUndefined();
+    expect(props.title).toBe('Choose a resource');
+  });
+});

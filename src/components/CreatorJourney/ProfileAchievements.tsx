@@ -25,7 +25,7 @@ type ProfileAchievements = RouterOutput['creatorJourney']['getProfileAchievement
 type Tier = ProfileAchievements['tiers'][number];
 type Achievement = ProfileAchievements['achievements'][number];
 
-export const SECRET_ACHIEVEMENT_LABEL = 'Secret achievement';
+export const SECRET_ACHIEVEMENT_LABEL = 'Special achievement';
 
 /** Cards about as wide as the journey page's shelf (four across its 960px container), wrapping. */
 export const BADGE_CARD_GRID = 'grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,220px)]';
@@ -110,7 +110,7 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
 
 const achievementGroups = [
   ...achievementTracks.map(({ key, title }) => ({ key, title })),
-  { key: 'secret', title: 'Secret' },
+  { key: 'secret', title: 'Special' },
 ];
 
 /**

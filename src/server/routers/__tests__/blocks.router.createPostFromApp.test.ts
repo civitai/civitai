@@ -609,7 +609,8 @@ describe('rate buckets', () => {
     await caller().createPostFromApp({ ...INPUT, confirmedImageCount: 3 });
 
     expect(mockCheckPostRate).toHaveBeenCalledTimes(1);
-    expect(mockCheckPostRate).toHaveBeenCalledWith('bki_alpha');
+    // (instance, viewer): the viewer half is the verified token subject (42).
+    expect(mockCheckPostRate).toHaveBeenCalledWith('bki_alpha', 42);
     // The per-image origin cost still lands on the publish bucket, so the post
     // path cannot be used to route around the per-image ceiling.
     expect(mockCheckPublishRate).toHaveBeenCalledWith('bki_alpha', 3);
@@ -625,21 +626,21 @@ describe('rate buckets', () => {
     expect(mockWriteBlockPost).not.toHaveBeenCalled();
   });
 
-  it('charges the APP bucket too, keyed on appId — the aggregate the instance bucket cannot see', async () => {
+  it('charges the APP bucket too, keyed on appId — the aggregate the per-viewer bucket cannot see', async () => {
     await caller().createPostFromApp(INPUT);
 
     expect(mockCheckPostAppRate).toHaveBeenCalledTimes(1);
     expect(mockCheckPostAppRate).toHaveBeenCalledWith('appblk-alpha');
     // 🔴 THE KEY IS THE CLAIM. Handing it the INSTANCE id would compile, pass
     // every other assertion in this file, and silently make the app ceiling a
-    // second copy of the per-instance one.
+    // copy of the instance-keyed one.
     expect(mockCheckPostAppRate).not.toHaveBeenCalledWith('bki_alpha');
   });
 
   it('🔴 REFUSES over the APP ceiling even when the instance bucket still allows', async () => {
-    // THE AGGREGATION GAP, directly. The per-instance bucket is keyed on the
-    // install, so an app with N installs gets N × its ceiling and nothing sees
-    // the total. Here the instance bucket says yes and the post is still refused.
+    // THE AGGREGATION GAP, directly. The first bucket is keyed on one viewer of
+    // one install, so an app with N of those gets N × its ceiling and nothing sees
+    // the total. Here that bucket says yes and the post is still refused.
     mockCheckPostRate.mockResolvedValue({ allowed: true });
     mockCheckPostAppRate.mockResolvedValue({ allowed: false, retryAfterSeconds: 900 });
 
