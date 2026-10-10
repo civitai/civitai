@@ -9,12 +9,20 @@ export function eventPointKeys(event: string) {
   return {
     // type -> points one action is worth
     weights: `${root}:weights` as const,
-    // `entityType:entityId` -> the hat it wears now (encodeHat). Written by the hat sync job; each app
-    // server loads it once, then follows hatsLog.
+    // `entityType:entityId` -> the hat it wears now (encodeHat). Written by the equip path and the
+    // hourly reconcile; each app server loads it once, then follows hatsLog.
     hats: `${root}:hats` as const,
     // Stream of changes to `hats` (fields k = entity key, v = encoded hat, '' when it came off).
     hatsLog: `${root}:hats-log` as const,
   } as const;
+}
+
+// One owner's hat write-through: the lock one pass holds, and the content callers that found it held
+// left for the holder's next pass.
+export function hatSyncKeys(ownerId: number) {
+  const root =
+    `${REDIS_SYS_KEYS.EVENT}:${REDIS_SUB_KEYS.EVENT.POINTS}:hat-sync:${ownerId}` as const;
+  return { lock: `${root}:lock` as const, pending: `${root}:pending` as const };
 }
 
 // When a scored event's points machinery runs at all: from the preview (or the start) until scoring

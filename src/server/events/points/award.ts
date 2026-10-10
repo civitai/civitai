@@ -29,9 +29,10 @@ import type {
 
 const DAY_S = 24 * 60 * 60;
 type SeenKey = ReturnType<ReturnType<typeof eventSeasonKeys>['seen']>;
-// How often an app server re-reads which entities wear a hat. A hat placed or moved starts earning
-// within this long plus the hat sync job's minute.
+// How often an app server reloads the scored events and their weights.
 const STATE_REFRESH_MS = 30 * 1000;
+// How often it applies the hat change log: a hat placed or moved starts earning within this long.
+export const HATS_FOLLOW_MS = 2 * 1000;
 // After a failed refresh, wait this long before trying again, so a persistent failure is not retried
 // by every request on the hot path.
 const REFRESH_RETRY_MS = 10 * 1000;
@@ -65,7 +66,7 @@ type LoadedEvent = {
 
 export type EventPointsRedis = Pick<
   typeof sysRedis,
-  'hGetAll' | 'sAdd' | 'sRem' | 'expire' | 'expireAt' | 'hIncrBy' | 'xRange' | 'xRevRange'
+  'hGetAll' | 'hmGet' | 'sAdd' | 'sRem' | 'expire' | 'expireAt' | 'hIncrBy' | 'xRange' | 'xRevRange'
 >;
 
 export type EventPointsFailure = 'redis' | 'ledger' | 'push';
@@ -128,6 +129,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   let loaded: LoadedEvent[] = [];
   let loadedAt = 0;
   let attemptedAt = 0;
+  let followedAt = 0;
   let loading: Promise<void> | undefined;
   // Live bucket keys this server already gave a TTL, so each gets one EXPIRE, not one per award.
   const bucketTtlSet = new Set<string>();
@@ -158,22 +160,25 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
   }
 
   // Applies the changes logged since the cursor. If the log was trimmed past the cursor, some changes
-  // are gone, so it reloads instead.
-  async function followHats(event: string, prev: LoadedEvent) {
+  // are gone, so it reloads instead. Usually nothing is new: one XRANGE that comes back empty.
+  async function followHats(event: string, prev: Pick<LoadedEvent, 'hats' | 'cursor'>) {
     const keys = eventPointKeys(event);
-    const [first] = await deps.redis.xRange(keys.hatsLog, '-', '+', { COUNT: 1 });
-    if (first && prev.cursor !== '0-0' && streamIdBefore(prev.cursor, first.id))
-      return loadHats(event);
-    if (first && prev.cursor === '0-0') return loadHats(event);
     const entries = await deps.redis.xRange(keys.hatsLog, `(${prev.cursor}`, '+');
     if (!entries.length) return { hats: prev.hats, cursor: prev.cursor };
+    if (prev.cursor === '0-0') return loadHats(event);
+    const [first] = await deps.redis.xRange(keys.hatsLog, '-', '+', { COUNT: 1 });
+    if (first && streamIdBefore(prev.cursor, first.id)) return loadHats(event);
+    // The log names what changed; the hash says what it is now. Writers race (hash, then log), so a
+    // logged value can be older than the hash, but the last entry for a key comes after its last write.
+    const changed = [...new Set(entries.map(({ message }) => message.k))];
+    const values = await deps.redis.hmGet(keys.hats, changed);
     // In place: reads are synchronous, so nothing sees a half-applied batch.
     const hats = prev.hats;
-    for (const { message } of entries) {
-      const hat = message.v ? decodeHat(message.v) : undefined;
-      if (hat) hats.set(message.k, hat);
-      else hats.delete(message.k);
-    }
+    changed.forEach((key, i) => {
+      const hat = values[i] ? decodeHat(values[i]!) : undefined;
+      if (hat) hats.set(key, hat);
+      else hats.delete(key);
+    });
     return { hats, cursor: entries[entries.length - 1].id };
   }
 
@@ -191,18 +196,32 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     }
     loaded = next;
     loadedAt = now.getTime();
+    followedAt = loadedAt;
   }
 
-  // Never blocks a caller on a refresh once something is loaded: a stale hat map for one refresh
+  async function followAll() {
+    await Promise.all(
+      loaded.map(async (event) => Object.assign(event, await followHats(event.def.name, event)))
+    );
+  }
+
+  // Never blocks a caller on a refresh once something is loaded: a stale hat map for one follow
   // interval is fine, a slow tracking request is not.
   function ensureFresh() {
     const now = deps.now().getTime();
-    const stale = now - loadedAt >= STATE_REFRESH_MS && now - attemptedAt >= REFRESH_RETRY_MS;
-    if (stale && !loading) {
-      attemptedAt = now;
-      loading = refresh()
-        .catch((error) => deps.logError('redis', 'eventPoints.refresh', error))
-        .finally(() => (loading = undefined));
+    if (!loading) {
+      const run = (fn: () => Promise<void>, name: string) => {
+        loading = fn()
+          .catch((error) => deps.logError('redis', name, error))
+          .finally(() => (loading = undefined));
+      };
+      if (now - loadedAt >= STATE_REFRESH_MS && now - attemptedAt >= REFRESH_RETRY_MS) {
+        attemptedAt = now;
+        run(refresh, 'eventPoints.refresh');
+      } else if (loadedAt && now - followedAt >= HATS_FOLLOW_MS) {
+        followedAt = now;
+        run(followAll, 'eventPoints.followHats');
+      }
     }
     return loadedAt === 0 ? loading : undefined;
   }

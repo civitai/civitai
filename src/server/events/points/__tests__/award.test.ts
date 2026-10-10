@@ -54,6 +54,9 @@ function fakeRedis() {
     async hGetAll(key: string) {
       return Object.fromEntries(hashes.get(key) ?? []);
     },
+    async hmGet(key: string, fields: string[]) {
+      return fields.map((field) => hashes.get(key)?.get(field) ?? null);
+    },
     // Real XRANGE argument order: start is the low end ('-' or an id, '(' for exclusive), end '+'.
     async xRange(key: string, start: string, end: string, opts?: { COUNT?: number }) {
       if (start === '+' || end === '-') return [];
@@ -80,6 +83,13 @@ function fakeRedis() {
     hashes.set(eventPointKeys(event).hats, hash);
     hash.set(entity, value);
   };
+  // Appends a log entry without touching the hash: a writer whose log entry lands after another's.
+  const logOnly = (event: string, entity: string, value: string) => {
+    const keys = eventPointKeys(event);
+    const log = streams.get(keys.hatsLog) ?? [];
+    streams.set(keys.hatsLog, log);
+    log.push({ id: `${1000 + ++seq}-0`, message: { k: entity, v: value } });
+  };
   const setHat = (event: string, entity: string, value: string) => {
     const keys = eventPointKeys(event);
     const hash = hashes.get(keys.hats) ?? new Map();
@@ -97,6 +107,7 @@ function fakeRedis() {
     ttls,
     setHat,
     setHatUnlogged,
+    logOnly,
     trimLog,
     setClock: (fn: () => number) => (clock = fn),
   };
@@ -502,6 +513,37 @@ describe('state refresh', () => {
     expect(engine.isHattedEntity('Image', 400)).toBe(false);
     await new Promise((r) => setTimeout(r, 0));
     expect(engine.isHattedEntity('Image', 400)).toBe(true);
+  });
+
+  it('follows the hat log every 2s, between the 30s reloads, with one read when nothing changed', async () => {
+    await engine.refresh();
+    const xRange = vi.spyOn(fake.redis, 'xRange');
+    now = new Date(now.getTime() + 2_000);
+    engine.isHattedEntity('Image', 100);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(xRange).toHaveBeenCalledTimes(1);
+
+    fake.setHat(EVENT.name, 'Image:400', encodeHat(HAT));
+    now = new Date(now.getTime() + 1_999);
+    engine.isHattedEntity('Image', 400);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(engine.isHattedEntity('Image', 400)).toBe(false);
+    now = new Date(now.getTime() + 1);
+    engine.isHattedEntity('Image', 400);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(engine.isHattedEntity('Image', 400)).toBe(true);
+  });
+
+  // Two writers race: A sets the hat, B removes it and logs the removal, then A logs its set. The
+  // hash says off, the last log entry says on; the follower must end up with what the hash says.
+  it('takes each changed key from the hash, not from the logged value', async () => {
+    await engine.refresh();
+    fake.setHat(EVENT.name, 'Image:100', '');
+    fake.logOnly(EVENT.name, 'Image:100', encodeHat(HAT));
+    now = new Date(now.getTime() + 2_000);
+    engine.isHattedEntity('Image', 100);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(engine.isHattedEntity('Image', 100)).toBe(false);
   });
 
   it('reloads the whole map when the change log was trimmed past where it had read', async () => {
