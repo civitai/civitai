@@ -1,0 +1,632 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcMod from '~/utils/trpc';
+import type * as CfUploadMod from '~/hooks/useCFImageUpload';
+import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
+import { UPLOAD_BYTES_MAX_PER_WINDOW } from '~/components/AppBlocks/imageUploadBytes';
+
+/**
+ * `OPEN_IMAGE_UPLOAD { bytes }` on the REAL PageBlockHost: an image the block made in its tab is
+ * uploaded with NO picker through the same store upload a picked image uses,
+ * persisted by `blocks.persistAppUploadImage`, and gated by the same scan poll — replying exactly
+ * once, with the moderated shape a picked `display` upload returns or `{ requestId, error }`.
+ *
+ * The store upload (`useCFImageUpload`) and the two server calls are the only stubs; the request
+ * parse, limits, uploader, poller and reply mapping all run for real.
+ */
+
+const h = vi.hoisted(() => ({
+  uploadToCF: vi.fn(),
+  persist: vi.fn(),
+  gate: vi.fn(),
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+vi.mock('~/hooks/useCFImageUpload', async (importOriginal) => ({
+  ...(await importOriginal<typeof CfUploadMod>()),
+  useCFImageUpload: () => ({
+    uploadToCF: h.uploadToCF,
+    files: [],
+    removeImage: vi.fn(),
+    resetFiles: vi.fn(),
+  }),
+}));
+
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  setTrpcBatchingEnabled: vi.fn(),
+  trpc: makeTrpcProxy({
+    'blocks.persistAppUploadImage': { useMutation: () => ({ mutateAsync: h.persist }) },
+    'blockImageUpload.gate': { useMutation: () => ({ mutateAsync: h.gate }) },
+    'apps.shared': makeInertSubRouter(),
+    'apps.storage': makeInertSubRouter(),
+  }),
+}));
+
+// eslint-disable-next-line import/first
+import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+
+const KEY = '33333333-3333-4333-8333-333333333333';
+const OBJECT_URL = 'blob:host/preview-of-upload';
+/** Distinct from every other number in this file, so a mixed-up id cannot pass. */
+const PERSISTED_ID = 78;
+const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48];
+const GIF = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00];
+const pngBytes = () => new Uint8Array(PNG).buffer;
+
+const SELECTED = {
+  imageId: PERSISTED_ID,
+  nsfwLevel: 1,
+  contentRating: 'pg',
+  url: 'https://image.civitai.com/xG/78/width=1200/original.jpeg',
+};
+const READY = { status: 'ready' as const, ...SELECTED };
+
+const SAME_ORIGIN_SRC = `${window.location.origin}/`;
+const baseProps = {
+  appBlockId: 'apb_test',
+  blockId: 'meta-fixer',
+  appId: 'app_test',
+  blockInstanceId: 'page_apb_test',
+  appName: 'Meta Fixer',
+  iframeSrc: SAME_ORIGIN_SRC,
+  surface: 'page-run' as const,
+  bootSkeleton: false,
+  sandbox: 'allow-scripts',
+  trustTier: 'internal' as const,
+  slug: 'meta-fixer',
+  token: 'tok_abc' as string | null,
+  expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+  declaredScopes: ['posts:write:self'],
+  missingScopes: [] as string[],
+  needsConsent: false,
+  tokenError: false,
+  viewer: { id: 42, username: 'tester' },
+  theme: 'light' as const,
+};
+
+function iframe() {
+  return page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+}
+
+function postFromBlock(type: string, payload?: unknown) {
+  const cw = iframe().contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
+  );
+}
+
+function listenForReply() {
+  const received: Array<{ type: string; payload: unknown }> = [];
+  const cw = iframe().contentWindow;
+  if (!cw) throw new Error('iframe contentWindow missing');
+  const handler = (e: MessageEvent) => {
+    const d = e.data as { type?: string; payload?: unknown } | null;
+    if (d && typeof d.type === 'string') received.push({ type: d.type, payload: d.payload });
+  };
+  cw.addEventListener('message', handler);
+  return {
+    of: (type: string) => received.filter((m) => m.type === type).map((m) => m.payload),
+    stop: () => cw.removeEventListener('message', handler),
+  };
+}
+
+/** EVERY IMAGE_UPLOAD_RESULT for one requestId — a list, so a second reply cannot hide. */
+function repliesFor(replies: ReturnType<typeof listenForReply>, requestId: string) {
+  return replies
+    .of('IMAGE_UPLOAD_RESULT')
+    .filter((p) => (p as { requestId: string }).requestId === requestId);
+}
+
+async function driveToReady() {
+  await vi.waitFor(() => {
+    if (!iframe().contentWindow) throw new Error('not mounted yet');
+  });
+  await vi.waitFor(() => {
+    postFromBlock('BLOCK_READY', {});
+    if (iframe().getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
+  });
+}
+
+/** Lets any reply that WOULD follow a settled request arrive before asserting there is none. */
+const settle = () => new Promise((r) => setTimeout(r, 150));
+
+beforeEach(() => {
+  useDialogStore.getState().closeAll();
+  h.uploadToCF
+    .mockReset()
+    .mockResolvedValue({ id: KEY, url: 'u', objectUrl: OBJECT_URL, type: 'image' });
+  h.persist.mockReset().mockResolvedValue({ imageId: PERSISTED_ID });
+  h.gate.mockReset().mockResolvedValue(READY);
+});
+
+describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
+  test('CROSS-FRAME: an ArrayBuffer from the opaque sandbox is uploaded with no picker and replies the moderated image once; a Uint8Array is refused', async () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
+    await vi.waitFor(() => {
+      if (!iframe().contentWindow) throw new Error('not mounted yet');
+    });
+    const el = iframe();
+    expect(el.getAttribute('sandbox')?.split(' ')).not.toContain('allow-same-origin');
+    const cw = el.contentWindow;
+
+    const echoes: Array<{ origin: string; data: { type?: string; payload?: unknown } }> = [];
+    const onEcho = (e: MessageEvent) => {
+      const d = e.data as { __xfEcho?: { type?: string; payload?: unknown } } | null;
+      if (e.source === cw && d && d.__xfEcho) echoes.push({ origin: e.origin, data: d.__xfEcho });
+    };
+    window.addEventListener('message', onEcho);
+    try {
+      // The `blockToken` in the first payload is a decoy: the host must use its own.
+      el.srcdoc =
+        `<script>
+        var sent = false;
+        function go() {
+          if (sent) return;
+          sent = true;
+          var png = new Uint8Array([${PNG.join(',')}]);
+          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_ab', bytes: png.buffer.slice(0), filename: 'fixed meta.png', blockToken: 'tok_evil' } }, '*');
+          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_u8', bytes: new Uint8Array(png) } }, '*');
+        }
+        window.addEventListener('message', function (e) {
+          if (e.source !== parent) return;
+          parent.postMessage({ __xfEcho: e.data }, '*');
+          if (e.data && e.data.type === 'BLOCK_INIT') go();
+        });
+        parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
+        setTimeout(go, 300);
+      </` + `script>`;
+
+      const uploadReplies = () =>
+        echoes.filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT').map((m) => m.data.payload);
+      await vi.waitFor(() => expect(uploadReplies()).toHaveLength(2));
+      await settle();
+      expect(uploadReplies()).toEqual(
+        expect.arrayContaining([
+          { requestId: 'rq_xf_ab', selected: SELECTED },
+          { requestId: 'rq_xf_u8', error: 'invalid image-upload request' },
+        ])
+      );
+      expect(uploadReplies()).toHaveLength(2);
+      expect(echoes.filter((m) => m.data.type === 'IMAGE_SCAN_RESOLVED')).toEqual([]);
+      // Positive control that the messages really crossed realms: an opaque sandbox posts as 'null'.
+      expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
+    } finally {
+      window.removeEventListener('message', onEcho);
+    }
+
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // The bytes reached the store upload unchanged, typed from their content.
+    expect(h.uploadToCF).toHaveBeenCalledTimes(1);
+    const file = h.uploadToCF.mock.calls[0][0] as File;
+    expect([file.name, file.type]).toEqual(['fixed meta.png', 'image/png']);
+    expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual(PNG);
+    expect(h.persist).toHaveBeenCalledWith({
+      blockToken: 'tok_abc',
+      url: KEY,
+      name: 'fixed meta.png',
+    });
+    // Gated on the PERSISTED id.
+    expect(h.gate).toHaveBeenCalledWith({ imageId: PERSISTED_ID });
+    // The upload hook's preview object URL is released rather than pinning the file in memory.
+    expect(revoke).toHaveBeenCalledWith(OBJECT_URL);
+    revoke.mockRestore();
+  });
+
+  test('asyncScan is ignored: one moderated reply, no pending handle, no push', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('OPEN_IMAGE_UPLOAD', {
+      requestId: 'rq_async',
+      bytes: pngBytes(),
+      asyncScan: true,
+    });
+
+    await vi.waitFor(() => expect(repliesFor(replies, 'rq_async')).toHaveLength(1));
+    await settle();
+    expect(repliesFor(replies, 'rq_async')).toEqual([
+      { requestId: 'rq_async', selected: SELECTED },
+    ]);
+    expect(replies.of('IMAGE_SCAN_RESOLVED')).toEqual([]);
+    replies.stop();
+  });
+
+  test('a persist refused by the publish bucket replies its message once and polls no scan', async () => {
+    h.persist.mockRejectedValueOnce(new Error('Rate limit exceeded, please retry shortly.'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_bucket', bytes: pngBytes() });
+    await vi.waitFor(() =>
+      expect(repliesFor(replies, 'rq_bucket')).toEqual([
+        { requestId: 'rq_bucket', error: 'Rate limit exceeded, please retry shortly.' },
+      ])
+    );
+    await settle();
+    expect(repliesFor(replies, 'rq_bucket')).toHaveLength(1);
+    expect(h.uploadToCF).toHaveBeenCalledTimes(1);
+    expect(h.gate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('every refusal and failure replies `{ requestId, error }` exactly once — never the bare cancelled shape', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_gif', bytes: new Uint8Array(GIF).buffer });
+    postFromBlock('OPEN_IMAGE_UPLOAD', {
+      requestId: 'rq_src',
+      bytes: pngBytes(),
+      purpose: 'generationSource',
+    });
+    const revoke = vi.spyOn(URL, 'revokeObjectURL');
+    h.persist.mockRejectedValueOnce(new Error('posting from apps is not enabled'));
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_persist', bytes: pngBytes() });
+
+    await vi.waitFor(() => {
+      expect(repliesFor(replies, 'rq_gif')).toHaveLength(1);
+      expect(repliesFor(replies, 'rq_src')).toHaveLength(1);
+      expect(repliesFor(replies, 'rq_persist')).toHaveLength(1);
+    });
+    // A persist that fails AFTER the store upload still releases the preview object URL.
+    expect(revoke).toHaveBeenCalledWith(OBJECT_URL);
+    revoke.mockRestore();
+
+    // The scan refusing the image (a thrown BAD_REQUEST from the gate).
+    h.gate.mockRejectedValueOnce(
+      Object.assign(new Error('that image was flagged during review — choose a different image'), {
+        data: { code: 'BAD_REQUEST' },
+      })
+    );
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_flag', bytes: pngBytes() });
+    await vi.waitFor(() => expect(repliesFor(replies, 'rq_flag')).toHaveLength(1));
+    await settle();
+
+    expect(
+      ['rq_gif', 'rq_src', 'rq_persist', 'rq_flag'].map((id) => repliesFor(replies, id))
+    ).toEqual([
+      [{ requestId: 'rq_gif', error: 'file type is not allowed' }],
+      [{ requestId: 'rq_src', error: 'invalid image-upload request' }],
+      [{ requestId: 'rq_persist', error: 'posting from apps is not enabled' }],
+      [
+        {
+          requestId: 'rq_flag',
+          error: 'that image was flagged during review — choose a different image',
+        },
+      ],
+    ]);
+    expect(replies.of('IMAGE_SCAN_RESOLVED')).toEqual([]);
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    replies.stop();
+  });
+
+  test('a requestId reused while its upload is in flight gets no reply of its own and spends nothing', async () => {
+    // The bridge itself drops a repeated requestId for 5 s (usePostMessage's replay dedup), so the
+    // reuse that reaches the host is a later one: move the clock past that, inside the 60 s window.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    try {
+      h.gate.mockResolvedValue({ status: 'pending' });
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_dup', bytes: pngBytes() });
+      await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(1));
+      offset = 6_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_dup', bytes: pngBytes() });
+      // The rest of the window's budget is still there: had the reuse been admitted or recorded,
+      // the last of these would be refused `busy`.
+      for (let i = 1; i < UPLOAD_BYTES_MAX_PER_WINDOW; i++) {
+        postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: `rq_more_${i}`, bytes: pngBytes() });
+      }
+      await vi.waitFor(() =>
+        expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW)
+      );
+      await settle();
+      expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW);
+      // Any reply to the reused id would settle the ORIGINAL request in the SDK, so there is none.
+      expect(repliesFor(replies, 'rq_dup')).toEqual([]);
+      expect(repliesFor(replies, `rq_more_${UPLOAD_BYTES_MAX_PER_WINDOW - 1}`)).toEqual([]);
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('CROSS-FRAME: an in-flight requestId re-sent with an INVALID payload gets no reply, and the original still settles with its real result', async () => {
+    // Past the bridge's 5 s replay dedup, so the re-send really reaches the host handler.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    // Hold the original in flight: persist does not settle until the re-send has been handled.
+    let releasePersist: (v: { imageId: number }) => void = () => undefined;
+    h.persist.mockImplementation(
+      () => new Promise<{ imageId: number }>((resolve) => (releasePersist = resolve))
+    );
+    renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
+    await vi.waitFor(() => {
+      if (!iframe().contentWindow) throw new Error('not mounted yet');
+    });
+    const el = iframe();
+    const cw = el.contentWindow;
+    const echoes: Array<{ origin: string; data: { type?: string; payload?: unknown } }> = [];
+    const onEcho = (e: MessageEvent) => {
+      const d = e.data as { __xfEcho?: { type?: string; payload?: unknown } } | null;
+      if (e.source === cw && d && d.__xfEcho) echoes.push({ origin: e.origin, data: d.__xfEcho });
+    };
+    window.addEventListener('message', onEcho);
+    try {
+      el.srcdoc =
+        `<script>
+        var sent = false;
+        var png = new Uint8Array([${PNG.join(',')}]);
+        function go() {
+          if (sent) return;
+          sent = true;
+          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: png.buffer.slice(0) } }, '*');
+        }
+        window.addEventListener('message', function (e) {
+          if (e.source !== parent) return;
+          if (e.data && e.data.__resend) {
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: new Uint8Array(png) } }, '*');
+            // Sentinel: same invalid payload on a FRESH id, sent after the re-send. Its reply
+            // proves the re-send was delivered and handled before we assert it got none.
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_sentinel', bytes: new Uint8Array(png) } }, '*');
+            return;
+          }
+          parent.postMessage({ __xfEcho: e.data }, '*');
+          if (e.data && e.data.type === 'BLOCK_INIT') go();
+        });
+        parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
+        setTimeout(go, 300);
+      </` + `script>`;
+
+      const repliesTo = (id: string) =>
+        echoes
+          .filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT')
+          .map((m) => m.data.payload)
+          .filter((p) => (p as { requestId?: string }).requestId === id);
+
+      await vi.waitFor(() => expect(h.persist).toHaveBeenCalledTimes(1));
+      offset = 6_000;
+      el.contentWindow?.postMessage({ __resend: true }, '*');
+      await vi.waitFor(() =>
+        expect(repliesTo('rq_xf_sentinel')).toEqual([
+          { requestId: 'rq_xf_sentinel', error: 'invalid image-upload request' },
+        ])
+      );
+      await settle();
+      // The re-send got nothing: any reply would settle the ORIGINAL request in the SDK.
+      expect(repliesTo('rq_xf_reuse')).toEqual([]);
+
+      releasePersist({ imageId: PERSISTED_ID });
+      await vi.waitFor(() => expect(repliesTo('rq_xf_reuse')).toHaveLength(1));
+      await settle();
+      expect(repliesTo('rq_xf_reuse')).toEqual([{ requestId: 'rq_xf_reuse', selected: SELECTED }]);
+      expect(h.uploadToCF).toHaveBeenCalledTimes(1);
+      expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
+    } finally {
+      window.removeEventListener('message', onEcho);
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('CROSS-FRAME: an in-flight bytes requestId re-sent as a PICKER request opens no modal and gets no reply, and the original still settles with its real result', async () => {
+    // Past the bridge's 5 s replay dedup, so the re-send really reaches the host handler.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    // Hold the original in flight: persist does not settle until the re-send has been handled.
+    let releasePersist: (v: { imageId: number }) => void = () => undefined;
+    h.persist.mockImplementation(
+      () => new Promise<{ imageId: number }>((resolve) => (releasePersist = resolve))
+    );
+    renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
+    await vi.waitFor(() => {
+      if (!iframe().contentWindow) throw new Error('not mounted yet');
+    });
+    const el = iframe();
+    const cw = el.contentWindow;
+    const echoes: Array<{ origin: string; data: { type?: string; payload?: unknown } }> = [];
+    const onEcho = (e: MessageEvent) => {
+      const d = e.data as { __xfEcho?: { type?: string; payload?: unknown } } | null;
+      if (e.source === cw && d && d.__xfEcho) echoes.push({ origin: e.origin, data: d.__xfEcho });
+    };
+    window.addEventListener('message', onEcho);
+    try {
+      el.srcdoc =
+        `<script>
+        var sent = false;
+        var png = new Uint8Array([${PNG.join(',')}]);
+        function go() {
+          if (sent) return;
+          sent = true;
+          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse', bytes: png.buffer.slice(0) } }, '*');
+        }
+        window.addEventListener('message', function (e) {
+          if (e.source !== parent) return;
+          if (e.data && e.data.__resend) {
+            // A PICKER request (no bytes) reusing the in-flight bytes id.
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_reuse' } }, '*');
+            // Sentinel: the same picker request on a FRESH id, sent after the re-send. Its modal
+            // proves the re-send was delivered and handled before we assert it opened none.
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_pick_fresh' } }, '*');
+            return;
+          }
+          parent.postMessage({ __xfEcho: e.data }, '*');
+          if (e.data && e.data.type === 'BLOCK_INIT') go();
+        });
+        parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
+        setTimeout(go, 300);
+      </` + `script>`;
+
+      const repliesTo = (id: string) =>
+        echoes
+          .filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT')
+          .map((m) => m.data.payload)
+          .filter((p) => (p as { requestId?: string }).requestId === id);
+      const dialogIds = () => useDialogStore.getState().dialogs.map((d) => d.id);
+
+      await vi.waitFor(() => expect(h.persist).toHaveBeenCalledTimes(1));
+      expect(dialogIds()).toEqual([]);
+      offset = 6_000;
+      el.contentWindow?.postMessage({ __resend: true }, '*');
+      await vi.waitFor(() => expect(dialogIds()).toContain('block-image-upload-rq_xf_pick_fresh'));
+      await settle();
+      // Only the fresh id's picker opened; the reused id opened none and got no reply — any reply
+      // would settle the ORIGINAL request in the SDK.
+      expect(dialogIds()).toEqual(['block-image-upload-rq_xf_pick_fresh']);
+      expect(repliesTo('rq_xf_pick_reuse')).toEqual([]);
+
+      releasePersist({ imageId: PERSISTED_ID });
+      await vi.waitFor(() => expect(repliesTo('rq_xf_pick_reuse')).toHaveLength(1));
+      await settle();
+      expect(repliesTo('rq_xf_pick_reuse')).toEqual([
+        { requestId: 'rq_xf_pick_reuse', selected: SELECTED },
+      ]);
+      expect(h.uploadToCF).toHaveBeenCalledTimes(1);
+      expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
+    } finally {
+      window.removeEventListener('message', onEcho);
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('once answered, a requestId is free again (the in-flight set is cleared on error and on a verdict)', async () => {
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    try {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      h.persist.mockRejectedValueOnce(new Error('posting from apps is not enabled'));
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_err', bytes: pngBytes() });
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_ok', bytes: pngBytes() });
+      await vi.waitFor(() => {
+        expect(repliesFor(replies, 'rq_err')).toHaveLength(1);
+        expect(repliesFor(replies, 'rq_ok')).toHaveLength(1);
+      });
+
+      offset = 6_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_err', bytes: pngBytes() });
+      await vi.waitFor(() => expect(repliesFor(replies, 'rq_err')).toHaveLength(2));
+      // Past the 60 s upload window too: three uploads already spent it.
+      offset = 61_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_ok', bytes: pngBytes() });
+      await vi.waitFor(() => expect(repliesFor(replies, 'rq_ok')).toHaveLength(2));
+      expect(repliesFor(replies, 'rq_err')[1]).toEqual({ requestId: 'rq_err', selected: SELECTED });
+      expect(repliesFor(replies, 'rq_ok')[1]).toEqual({ requestId: 'rq_ok', selected: SELECTED });
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('a picked async upload and a bytes upload sharing a requestId each settle independently', async () => {
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    const PICKED_ID = 500;
+    let pickedReady = false;
+    h.gate.mockImplementation(async ({ imageId }: { imageId: number }) =>
+      imageId === PICKED_ID
+        ? pickedReady
+          ? { ...READY, imageId: PICKED_ID }
+          : { status: 'pending' }
+        : READY
+    );
+    try {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      // The picker's async path: the modal accepts (persisted, scan pending) and closes.
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_x', asyncScan: true });
+      await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+      const dialog = useDialogStore.getState().dialogs[0];
+      (dialog.props as { onAccepted: (h: { imageId: number; url: string }) => void }).onAccepted({
+        imageId: PICKED_ID,
+        url: 'https://image.civitai.com/x/500.jpeg',
+      });
+      dialog.options?.onClose?.();
+      await vi.waitFor(() => expect(h.gate).toHaveBeenCalledWith({ imageId: PICKED_ID }));
+
+      // A bytes upload reusing the id, past the bridge's 5 s replay dedup.
+      offset = 6_000;
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_x', bytes: pngBytes() });
+      await vi.waitFor(() =>
+        expect(repliesFor(replies, 'rq_x')).toContainEqual({
+          requestId: 'rq_x',
+          selected: SELECTED,
+        })
+      );
+
+      // The picked upload's poller must have survived the bytes verdict.
+      pickedReady = true;
+      await vi.waitFor(
+        () =>
+          expect(replies.of('IMAGE_SCAN_RESOLVED')).toEqual([
+            {
+              requestId: 'rq_x',
+              imageId: PICKED_ID,
+              result: { status: 'scanned', image: { ...SELECTED, imageId: PICKED_ID } },
+            },
+          ]),
+        // The picked poller's next poll is on the scan backoff schedule (first retry at 2 s).
+        { timeout: 6_000 }
+      );
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test(`the ${
+    UPLOAD_BYTES_MAX_PER_WINDOW + 1
+  }th upload inside the window is busy and never uploads`, async () => {
+    h.gate.mockResolvedValue({ status: 'pending' });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    for (let i = 0; i <= UPLOAD_BYTES_MAX_PER_WINDOW; i++) {
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: `rq_${i}`, bytes: pngBytes() });
+    }
+    await vi.waitFor(() =>
+      expect(repliesFor(replies, `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`)).toEqual([
+        { requestId: `rq_${UPLOAD_BYTES_MAX_PER_WINDOW}`, error: 'busy' },
+      ])
+    );
+    await vi.waitFor(() => expect(h.uploadToCF).toHaveBeenCalledTimes(UPLOAD_BYTES_MAX_PER_WINDOW));
+    replies.stop();
+  });
+
+  test('no block token: replies an error and uploads nothing', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} token={null} />);
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_tok', bytes: pngBytes() });
+    await vi.waitFor(() =>
+      expect(repliesFor(replies, 'rq_tok')).toEqual([
+        { requestId: 'rq_tok', error: 'no block token' },
+      ])
+    );
+    expect(h.uploadToCF).not.toHaveBeenCalled();
+    expect(h.persist).not.toHaveBeenCalled();
+    replies.stop();
+  });
+});

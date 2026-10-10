@@ -416,6 +416,9 @@ export const INVENTORY = {
   // block→host REQUEST types + their replies). OPEN_IMAGE_UPLOAD's TYPE is unchanged
   // — async mode only adds an OPTIONAL `asyncScan` payload field — so no new entry
   // is needed here. Do NOT "add" IMAGE_SCAN_RESOLVED to this map.
+  //
+  // The `bytes` variant (an app's own image, no picker) is the same type and the same reply, so
+  // it needs no entry either.
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',

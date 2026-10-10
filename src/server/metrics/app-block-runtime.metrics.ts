@@ -474,18 +474,20 @@ export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevo
 }
 
 /**
- * The two post-from-app doors whose shared preamble can refuse an unhydratable
- * token subject: `blocks.createPostFromApp` (the write) and
- * `blocks.previewPostFromApp` (the read-only dry run).
+ * The post-from-app doors whose shared preamble can refuse an unhydratable
+ * token subject: `blocks.createPostFromApp` (the write),
+ * `blocks.previewPostFromApp` (the read-only dry run), and `upload` — the
+ * persist of an app's `bytes` upload, `blocks.persistAppUploadImage`.
  *
- * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Both procs run the identical
- * preamble, so a combined number would leave an operator unable to say whether a
- * spike cost anyone a real post. A refused `create` is a post the viewer intended
- * to make and did not get; a refused `preview` cost them a dialog. Those warrant
+ * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Every one of these runs the
+ * identical preamble, so a combined number would leave an operator unable to say
+ * whether a spike cost anyone a real post. A refused `create` is a post the viewer
+ * intended to make and did not get; a refused `preview` cost them a dialog; a
+ * refused `upload` cost them an image the app made, before any post. Those warrant
  * different urgency, and the label is the only thing that can tell them apart —
  * there is no per-request log to fall back on for this deployment.
  */
-export const APP_BLOCK_POST_SURFACES = ['preview', 'create'] as const;
+export const APP_BLOCK_POST_SURFACES = ['preview', 'create', 'upload'] as const;
 export type AppBlockPostSurface = (typeof APP_BLOCK_POST_SURFACES)[number];
 
 export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [

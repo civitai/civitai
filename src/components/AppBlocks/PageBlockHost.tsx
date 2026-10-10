@@ -65,7 +65,15 @@ import { projectSafeGenerationResource } from '~/server/schema/blocks/generation
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
+import { BlockImageBytesUploader } from './BlockImageBytesUploader';
 import type { BlockImageScanResult } from './blockImageScanLogic';
+import {
+  imageUploadResultFromScan,
+  processUploadBytes,
+  resolveImageUploadBytes,
+  UPLOAD_BYTES_INVALID_ERROR,
+  UPLOAD_BYTES_NO_TOKEN_ERROR,
+} from './imageUploadBytes';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
 import {
@@ -946,8 +954,19 @@ export function PageBlockHost({
   // BlockImageScanPoller (below) that survives the upload modal's close, polls
   // the authoritative scan gate, and on a verdict fires IMAGE_SCAN_RESOLVED then
   // removes itself. See the OPEN_IMAGE_UPLOAD handler + the render block.
+  // `replyOnScan` marks a `bytes` upload: its verdict is the IMAGE_UPLOAD_RESULT reply itself, not
+  // an IMAGE_SCAN_RESOLVED push after an early pending reply.
   const [imageScanPollers, setImageScanPollers] = useState<
-    Array<{ requestId: string; imageId: number }>
+    Array<{ requestId: string; imageId: number; replyOnScan?: boolean }>
+  >([]);
+  const [imageBytesUploads, setImageBytesUploads] = useState<
+    Array<{
+      requestId: string;
+      bytes: ArrayBuffer;
+      filename: string;
+      contentType: string;
+      blockToken: string;
+    }>
   >([]);
   const initSentRef = useRef<boolean>(false);
   const controllerRef = useRef<IframeInitController | null>(null);
@@ -3613,6 +3632,11 @@ export function PageBlockHost({
   // they never await, so the in-flight count above would be released before the
   // next message and bound nothing. Same ref-not-state reasoning.
   const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // Separate from saveBytesWindowRef: uploads have their own, longer window (imageUploadBytes.ts).
+  const uploadBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
+  // requestIds of unanswered `bytes` uploads. A reused id is dropped, not answered: the SDK settles
+  // by requestId, so any reply to it would also settle — and misreport — the original request.
+  const uploadBytesInFlightRef = useRef<Set<string>>(new Set());
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
@@ -3937,6 +3961,12 @@ export function PageBlockHost({
   //     url is an `orchestration…civitai.com` host that passes the img2img
   //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
   //
+  //   • `bytes` (an ArrayBuffer the block made — no picker, display only): see imageUploadBytes.ts.
+  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else.
+  //     Always BLOCKING: `asyncScan` is ignored, so the app never holds the id or a CDN url of
+  //     bytes the scan refused (the SDK already treats a blocking reply to an async request as
+  //     an immediately-scanned image).
+  //
   // Gate on status 'ready' (a pre-handshake block can't summon the modal) via the
   // same 'error'→'no_token' shim the consent/buzz handlers use. requestId threads
   // the reply so concurrent uploads never cross. A successful upload posts the
@@ -3985,6 +4015,46 @@ export function PageBlockHost({
       // never came from a promise anybody is awaiting.)
       if (!req) return;
       const { requestId, purpose, asyncScan } = req;
+      // A requestId whose `bytes` upload is still in flight gets NO reply, whatever this
+      // payload is (invalid, no token, a picker request): the SDK settles by requestId, so
+      // any reply here would settle the ORIGINAL request with this one's result.
+      if (uploadBytesInFlightRef.current.has(requestId)) return;
+
+      const bytesReq = resolveImageUploadBytes(raw);
+      if (bytesReq.kind !== 'none') {
+        if (bytesReq.kind === 'invalid') {
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_INVALID_ERROR });
+          return;
+        }
+        if (!token) {
+          reportNoToken('OPEN_IMAGE_UPLOAD');
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_NO_TOKEN_ERROR });
+          return;
+        }
+        const { result, recent } = processUploadBytes(
+          bytesReq,
+          uploadBytesWindowRef.current,
+          Date.now()
+        );
+        uploadBytesWindowRef.current = recent;
+        if (!result.ok) {
+          send('IMAGE_UPLOAD_RESULT', { requestId, error: result.error });
+          return;
+        }
+        uploadBytesInFlightRef.current.add(requestId);
+        const blockToken = token;
+        setImageBytesUploads((prev) => [
+          ...prev,
+          {
+            requestId,
+            bytes: bytesReq.bytes,
+            filename: result.filename,
+            contentType: result.contentType,
+            blockToken,
+          },
+        ]);
+        return;
+      }
 
       // generationSource: UNSCANNED private img2img source (orchestrator scans
       // the OUTPUT). Reply carries the source shape { url, width, height }; the
@@ -4039,7 +4109,7 @@ export function PageBlockHost({
                 selected: { status: 'pending', imageId, url },
               });
               setImageScanPollers((prev) =>
-                prev.some((p) => p.requestId === requestId)
+                prev.some((p) => p.requestId === requestId && !p.replyOnScan)
                   ? prev
                   : [...prev, { requestId, imageId }]
               );
@@ -4084,7 +4154,7 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode]);
+  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //
@@ -4933,11 +5003,40 @@ export function PageBlockHost({
           resolves the pending upload. */}
       {imageScanPollers.map((p) => (
         <BlockImageScanPoller
-          key={p.requestId}
+          key={`${p.replyOnScan ? 'bytes' : 'picked'}:${p.requestId}`}
           imageId={p.imageId}
           onResult={(result: BlockImageScanResult) => {
-            send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
-            setImageScanPollers((prev) => prev.filter((x) => x.requestId !== p.requestId));
+            if (p.replyOnScan) {
+              uploadBytesInFlightRef.current.delete(p.requestId);
+              send('IMAGE_UPLOAD_RESULT', imageUploadResultFromScan(p.requestId, result));
+            } else {
+              send('IMAGE_SCAN_RESOLVED', { requestId: p.requestId, imageId: p.imageId, result });
+            }
+            // The variant too, not just the id: a picked and a bytes upload may share a requestId.
+            setImageScanPollers((prev) =>
+              prev.filter((x) => !(x.requestId === p.requestId && x.replyOnScan === p.replyOnScan))
+            );
+          }}
+        />
+      ))}
+      {imageBytesUploads.map((u) => (
+        <BlockImageBytesUploader
+          key={u.requestId}
+          bytes={u.bytes}
+          filename={u.filename}
+          contentType={u.contentType}
+          blockToken={u.blockToken}
+          onPersisted={(imageId) => {
+            setImageBytesUploads((prev) => prev.filter((x) => x.requestId !== u.requestId));
+            setImageScanPollers((prev) => [
+              ...prev,
+              { requestId: u.requestId, imageId, replyOnScan: true },
+            ]);
+          }}
+          onError={(error) => {
+            setImageBytesUploads((prev) => prev.filter((x) => x.requestId !== u.requestId));
+            uploadBytesInFlightRef.current.delete(u.requestId);
+            send('IMAGE_UPLOAD_RESULT', { requestId: u.requestId, error });
           }}
         />
       ))}
