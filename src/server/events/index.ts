@@ -382,8 +382,6 @@ export const eventEngine = {
         remixWeight: eventDef.scoring.types.remix?.weight,
         modelLikeWeight: eventDef.scoring.types.modelLike?.weight,
         pointsCapPerDay: eventDef.scoring.capPerActorPerOwnerPerDay,
-        // Still read by the rules card until its copy moves to pointsCapPerDay.
-        viewerOwnerDailyCap: eventDef.scoring.capPerActorPerOwnerPerDay,
         newAccountDays: eventDef.scoring.newAccountDays,
       },
       decoration: decoration && {

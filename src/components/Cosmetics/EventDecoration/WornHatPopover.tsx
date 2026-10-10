@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { useWornHatLivePoints } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatStats } from '~/components/Events/ScoredEvent/HatStats';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -46,6 +47,8 @@ export function WornHatPopover({
     { event, ...wornOn },
     { enabled: opened }
   );
+  // While open, the hat's total follows the live points.
+  useWornHatLivePoints({ event, ...wornOn, topicId: opened ? data?.topicId : undefined });
   const definition = getEventDecorationDefinition(event);
 
   return (

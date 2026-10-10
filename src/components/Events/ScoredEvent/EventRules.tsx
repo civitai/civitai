@@ -208,14 +208,8 @@ function RuleCard({
   );
 }
 
-type Rules = NonNullable<EventData['rules']> &
-  // Scoring v2's ways to score. A tile shows once the event's rules carry its weight.
-  Partial<
-    Record<
-      'commentWeight' | 'stickerWeight' | 'remixWeight' | 'modelLikeWeight' | 'pointsCapPerDay',
-      number
-    >
-  >;
+// A tile shows once the event's rules carry its weight.
+type Rules = NonNullable<EventData['rules']>;
 type PointTileProps = { value: number; label: string; icon: Icon; color: string };
 
 /** One tile per way to score, from the weights the scoring job applies. Views are always 1. */

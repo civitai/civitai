@@ -45,6 +45,11 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   showErrorNotification: notify,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
+// The live points subscription needs the app's SignalProvider; record what the popover asks for.
+const livePoints = vi.hoisted(() => vi.fn());
+vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
+  useWornHatLivePoints: livePoints,
+}));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => null,
   EdgeMedia2: () => null,
@@ -66,6 +71,7 @@ const WORN = {
   team: 'Blue',
   url: 'u',
   owner: { id: 9, username: 'civbot', image: null },
+  topicId: 'a1b2c3d4e5f60718',
   points: 1234,
   impressions: 56789,
   reactions: 12,
@@ -84,6 +90,7 @@ beforeEach(() => {
   myHats.fetch.mockReset();
   dialogs.trigger.mockReset();
   notify.mockReset();
+  livePoints.mockReset();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -159,6 +166,21 @@ describe('a hatted feed card', () => {
       a.textContent?.includes('See the birthday event')
     );
     expect(link?.getAttribute('href')).toBe('/events/birthday2026');
+  });
+
+  // A feed of hatted cards must not subscribe to every hat: only an open popover follows its total.
+  it('follows the hat total live only while the popover is open', () => {
+    renderCard();
+    const topics = () => livePoints.mock.calls.map(([args]) => args.topicId);
+    expect(topics().length).toBeGreaterThan(0);
+    expect(topics().filter((t) => t !== undefined)).toEqual([]);
+    clickHat();
+    expect(livePoints.mock.calls.at(-1)![0]).toEqual({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+      topicId: 'a1b2c3d4e5f60718',
+    });
   });
 
   it('keeps the confetti, and the click never reaches the card or anything above it', () => {
