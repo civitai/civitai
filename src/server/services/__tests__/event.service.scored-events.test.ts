@@ -431,6 +431,19 @@ describe('getEventStandings decoration', () => {
     }
   });
 
+  // Standings are public; the top hats belong to other users.
+  it('sends each top hat without its claim key', async () => {
+    const hat = { userId: 7, cosmeticId: 21, team: 'Yellow', points: 5 };
+    scoring.getEventStandings.mockResolvedValueOnce({
+      teams: [],
+      topCosmetics: [{ ...hat, claimKey: 'tx-claim-8841' }],
+      topUsers: {},
+    });
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(JSON.stringify(res)).not.toContain('tx-claim-8841');
+    expect(res.topCosmetics).toStrictEqual([hat]);
+  });
+
   // The art is decoration: a failed lookup must cost the hats, never the standings.
   it('still answers when the join hat lookup fails', async () => {
     engine.getJoinHats.mockRejectedValueOnce(new Error('redis down'));

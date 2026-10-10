@@ -270,7 +270,8 @@ export function TopHats({ standings }: { standings: Standings }) {
           const cosmetic = standings.cosmetics[c.cosmeticId];
           return (
             <Paper
-              key={`${c.userId}:${c.cosmeticId}:${c.claimKey}`}
+              // Rank breaks the tie between two copies of one hat; the list is a fixed snapshot.
+              key={`${c.userId}:${c.cosmeticId}:${i}`}
               withBorder
               radius="md"
               className={EVENT_CARD_SURFACE}
