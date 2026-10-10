@@ -343,6 +343,37 @@ describe('the self-heal', () => {
     expect(calls.sync).toBe(1);
   });
 
+  it('does not retry a repair that met a held lock: the next reload asks again', async () => {
+    const fake = fakeRedis();
+    fake.strings.set(jobLockKey(SETTLE_JOB), 'the-hourly-run');
+    const { heal, calls } = pod(fake);
+    expect(await heal(EVENT.name, 'missing-count-base')).toBe('locked');
+    expect(calls.retries).toEqual([]);
+  });
+
+  // An earlier repair must not swallow a flip: hats placed while off are only found by a reconcile.
+  it('still heals a flip inside a repair cooldown', async () => {
+    const fake = fakeRedis();
+    const { heal, calls } = pod(fake);
+    expect(await heal(EVENT.name, 'empty-map')).toBe('ran');
+    expect(await heal(EVENT.name, 'missing-count-base')).toBe('cooldown');
+    expect(await heal(EVENT.name, 'switch-on')).toBe('ran');
+    expect(calls.sync).toBe(2);
+  });
+
+  // Unlike the route, the heal never runs unlocked: two settles at once share their staging keys.
+  it('reads a Redis error on the lock as held, never as free', async () => {
+    const fake = fakeRedis();
+    const set = fake.redis.set;
+    fake.redis.set = async (key, value, opts) => {
+      if (key === jobLockKey(SETTLE_JOB)) throw new Error('timeout');
+      return set(key, value, opts);
+    };
+    const { heal, calls } = pod(fake);
+    expect(await heal(EVENT.name, 'empty-map')).toBe('locked');
+    expect(calls.sync).toBe(0);
+  });
+
   it('does not stack a second heal on a pod whose first is still running', async () => {
     const fake = fakeRedis();
     let release!: () => void;
