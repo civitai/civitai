@@ -190,7 +190,7 @@ function rawStatement(text: string, offset: number): string {
 /** The `{ … }` object literal that starts at the first `{` at or after `from`. */
 function objectAfter(text: string, from: number): string {
   const open = text.indexOf('{', from);
-  // `create: data` is not a literal this file can read; an empty region fails every check.
+  // `create: data` is not a literal this file can read; an empty region fails every nested check.
   if (open === -1 || text.slice(from, open).trim() !== '') return '';
   let depth = 0;
   for (let i = open; i < text.length; i++) {
