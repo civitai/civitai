@@ -7,7 +7,9 @@ import type * as SignalClient from '~/utils/signal-client';
  * topicSend wiring. Only the signals client is faked. The ticker's other tests inject every dep.
  */
 
-const { topicSend } = vi.hoisted(() => ({ topicSend: vi.fn(async (..._a: unknown[]) => undefined) }));
+const { topicSend } = vi.hoisted(() => ({
+  topicSend: vi.fn(async (..._a: unknown[]) => undefined),
+}));
 vi.mock('~/utils/signal-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SignalClient>()),
   signalClient: { topicSend },
@@ -35,7 +37,11 @@ describe('tickEventPoints with its default deps', () => {
     );
     sys.get.mockResolvedValue(null);
     sys.hmGet.mockImplementation(async (key: string, fields: string[]) =>
-      key === keys.base('hat') ? ['30'] : key === keys.base('team') ? ['100', '50'] : fields.map(() => null)
+      key === keys.base('hat')
+        ? ['30']
+        : key === keys.base('team')
+        ? ['100', '50']
+        : fields.map(() => null)
     );
 
     await tickEventPoints(event);
