@@ -6828,9 +6828,11 @@ export const blocksRouter = router({
       // does NOT set while leaving the part it DOES set unbounded.
       //
       // Priced off the whatIf's `cost.base` / `cost.variable`, for the same reason
-      // the realized ones below are read off the raw response: `snapshot.cost` is
-      // deliberately `{ total }` only. Fail-closed behind the flag and
-      // non-throwing — an unavailable quote is simply no fee.
+      // the realized ones below are read off the raw response: the block-facing
+      // cost is `{ total, authorFee? }` and never itemises the base (see the
+      // disclosure boundary on `BlockWorkflowSnapshot.cost.authorFee`).
+      // Fail-closed behind the flag and non-throwing — an unavailable quote is
+      // simply no fee.
       //
       // 🔴 RESOLVED ONCE, HERE, AND READ BY ALL THREE CONSUMERS. The fee quote,
       // the fee charge and the spend-attribution row must agree on the generation
@@ -7176,12 +7178,13 @@ export const blocksRouter = router({
       let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
       // Hoisted for the same reason as `realizedTransactions` above: the
       // per-generation author-fee observation needs the orchestrator's BASE cost,
-      // and it is NOT reachable from `snapshot`. 🔴 `BlockWorkflowSnapshot.cost` is
-      // deliberately `{ total }` ONLY — that is the block-facing WIRE shape, and
-      // widening it would publish the platform's cost breakdown to every
-      // third-party app for a number no app has asked for. So the base is read off
-      // the raw orchestrator response here and passed to the attribution writer,
-      // never surfaced to the block.
+      // and it is NOT reachable from `snapshot`. 🔴 The block-facing WIRE shape is
+      // `{ total, authorFee? }` — the author's own fee is itemised by decision, and
+      // every other component, the base included, stays folded into `total`; no
+      // further breakdown field without a new decision (see the disclosure
+      // boundary on `BlockWorkflowSnapshot.cost.authorFee`). So the base is read
+      // off the raw orchestrator response here and passed to the attribution
+      // writer, never surfaced to the block.
       let realizedBaseCost: number | null = null;
       // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle
       // lower. Hoisted and threaded for the SAME reason as the base: nothing

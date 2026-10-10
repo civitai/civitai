@@ -43,12 +43,12 @@ import {
  * that governs whether a fee may be computed on it, and both must come from the
  * RAW ORCHESTRATOR RESPONSE — `submitted.cost.base` / `submitted.cost.variable`,
  * hoisted into `realizedBaseCost` / `realizedPriceIsCap` — and NEVER from
- * `snapshot`. `BlockWorkflowSnapshot.cost` is deliberately `{ total }` only,
- * because widening that wire shape would publish the platform's cost breakdown to
- * every third-party app; so `snapshot` cannot supply either, and a
- * `snapshot.cost?.base` in the router would be `undefined` silently. The asserted
- * count makes the ledger fail when the set GROWS (a new submit path added without
- * a base) as well as when it SHRINKS.
+ * `snapshot`. `BlockWorkflowSnapshot.cost` is `{ total, authorFee? }` — it
+ * itemises the author's own fee by decision and never the base or cap flag (see
+ * the disclosure boundary on its `authorFee`); so `snapshot` cannot supply
+ * either, and a `snapshot.cost?.base` in the router would be `undefined`
+ * silently. The asserted count makes the ledger fail when the set GROWS (a new
+ * submit path added without a base) as well as when it SHRINKS.
  *
  * ⚠️ THE COUNT WENT 3 → 4 ON 2026-09-17, AND THAT IS THE GUARD WORKING. A fourth
  * `recordSpendAttribution` call site — `submitPassThroughStepWorkflow` — landed
@@ -338,8 +338,8 @@ describe('author fee — the spend-attribution seam', () => {
 
   it('`realizedBaseCost` and `realizedPriceIsCap` are read from the orchestrator response', () => {
     // 🔴 The wire shape a block sees (`BlockWorkflowSnapshot.cost`) is
-    // `{ total }` only, so `snapshot` CANNOT supply either — they have to come
-    // off the raw submit response. This pins that, and pins the count, so a new
+    // `{ total, authorFee? }` only, so `snapshot` CANNOT supply either — they
+    // have to come off the raw submit response. This pins that, and pins the count, so a new
     // submit path cannot hoist a base from the total by copy-paste.
     //
     // 🔴 WHAT THIS GUARD DOES NOT COVER, STATED SO IT IS NOT MISTAKEN FOR
@@ -608,9 +608,9 @@ describe('author fee — the viewer-charge seam', () => {
 
   it('every charge site prices off the RAW orchestrator response, never `snapshot`', () => {
     // Same rule, same reason, as the attribution seam above: `snapshot.cost` is
-    // `{ total }` only, so a `snapshot.cost?.base` here is `undefined` silently —
-    // and `undefined` maps to a `base-unavailable` skip, i.e. the fee quietly
-    // stops charging on every generation with nothing to say so.
+    // `{ total, authorFee? }` only, so a `snapshot.cost?.base` here is
+    // `undefined` silently — and `undefined` maps to a `base-unavailable` skip,
+    // i.e. the fee quietly stops charging on every generation with nothing to say so.
     for (const site of charges) {
       expect(ownProps(site)).toContain('baseGenerationBuzz: realizedBaseCost');
       expect(ownProps(site)).toContain('priceIsCap: realizedPriceIsCap');

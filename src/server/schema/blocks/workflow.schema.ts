@@ -824,6 +824,17 @@ export type BlockWorkflowSnapshot = {
      * orchestrator price quote (it refuses before any fee is looked up), and the
      * kinds that price no fee. Absent means "not itemised", which an app must
      * not read as zero.
+     *
+     * 🔴 THE DISCLOSURE BOUNDARY — this is the one place it is explained. The
+     * cost an app sees is `{ total, authorFee? }` and nothing more: every other
+     * component of `total` — the generation base, other creators' licensing and
+     * lineage fees, the viewer's tips — stays folded into `total` and is NOT
+     * itemised. Showing the author fee is a deliberate product decision: the app
+     * is the fee's beneficiary and the fee formula is already public. It does let
+     * an app (or a viewer) bound the generation base and so roughly infer how much
+     * of `total` went to other parties; that consequence was accepted. Do NOT add
+     * any further breakdown field (base, licensing, lineage, tip) to this wire
+     * shape without a new decision.
      */
     authorFee?: number;
   };
