@@ -55,15 +55,7 @@
     "category": {
       "type": "string",
       "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories — this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
-      "enum": [
-        "generation",
-        "games",
-        "utility",
-        "discovery",
-        "moderation",
-        "analytics",
-        "other"
-      ]
+      "enum": ["generation", "games", "utility", "discovery", "moderation", "analytics", "other"]
     },
     "renderMode": {
       "type": "string",
@@ -134,7 +126,10 @@
       "maxLength": 256,
       "allOf": [
         { "$comment": "no leading '/' (absolute path)", "not": { "pattern": "^/" } },
-        { "$comment": "no backslash separators (Windows / '\\..' traversal)", "not": { "pattern": "\\\\" } },
+        {
+          "$comment": "no backslash separators (Windows / '\\..' traversal)",
+          "not": { "pattern": "\\\\" }
+        },
         { "$comment": "no '..' path-traversal segment", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
         { "$comment": "no Windows drive prefix (e.g. C:)", "not": { "pattern": "^[A-Za-z]:" } }
       ]
@@ -271,6 +266,71 @@
           "payload": {
             "type": "object",
             "description": "Optional OPAQUE payload copied verbatim onto the entitlement at purchase and handed back to your app unchanged. The platform never reads or interprets it. It is manifest-sourced rather than client-supplied precisely so that what an entitlement carries is something a moderator saw. Must serialize to at most 2048 bytes."
+          }
+        }
+      }
+    },
+    "analytics": {
+      "type": "object",
+      "description": "Optional CUSTOM EVENTS declaration. `events` names every event your app may send with `useBlockAnalytics().track(name, properties)` and the properties each event may carry. Manifest-governed and REVIEW-GATED: the declaration a moderator approves is the only one the platform will accept events against, so a reviewer can see what your app tracks. Properties are typed `enum` (a declared list of string values), `number` or `boolean` ONLY — free-text strings are deliberately not supported, so a value that is not one of an enum's declared strings is never recorded. That is what keeps prompts, emails and usernames out of this channel. Owners will see aggregates only, never individual events. NOTE: the platform does not record custom events yet; the declaration is validated at submit today so that apps can declare events ahead of collection going live. All bounds are kept in lockstep with src/shared/constants/block-analytics.constants.ts (a drift-guard test enforces equality); `parseManifestAnalytics` in that module is authoritative.",
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "type": "object",
+          "description": "Map of event name → declaration. At most 50 events. An event name is lowercase snake_case: a letter, then up to 63 of a-z, 0-9 or _.",
+          "maxProperties": 50,
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string",
+                "description": "Optional human-readable meaning of the event, shown to reviewers and in your analytics.",
+                "maxLength": 200
+              },
+              "properties": {
+                "type": "object",
+                "description": "Map of property name → declaration. At most 10 properties per event. A property name follows the same rule as an event name.",
+                "maxProperties": 10,
+                "propertyNames": { "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "description": "A string drawn from a declared list. Any other string sent for this property is dropped.",
+                      "additionalProperties": false,
+                      "required": ["type", "values"],
+                      "properties": {
+                        "type": { "const": "enum" },
+                        "values": {
+                          "type": "array",
+                          "description": "The allowed values: 1 to 50 distinct non-empty strings of at most 64 characters each.",
+                          "minItems": 1,
+                          "maxItems": 50,
+                          "uniqueItems": true,
+                          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "description": "A number.",
+                      "additionalProperties": false,
+                      "required": ["type"],
+                      "properties": { "type": { "const": "number" } }
+                    },
+                    {
+                      "type": "object",
+                      "description": "A boolean.",
+                      "additionalProperties": false,
+                      "required": ["type"],
+                      "properties": { "type": { "const": "boolean" } }
+                    }
+                  ]
+                }
+              }
+            }
           }
         }
       }
