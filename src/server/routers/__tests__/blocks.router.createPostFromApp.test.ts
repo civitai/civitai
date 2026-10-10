@@ -626,7 +626,7 @@ describe('rate buckets', () => {
     expect(mockWriteBlockPost).not.toHaveBeenCalled();
   });
 
-  it('charges the APP bucket too, keyed on appId — the aggregate the instance bucket cannot see', async () => {
+  it('charges the APP bucket too, keyed on appId — the aggregate the per-viewer bucket cannot see', async () => {
     await caller().createPostFromApp(INPUT);
 
     expect(mockCheckPostAppRate).toHaveBeenCalledTimes(1);

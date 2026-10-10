@@ -45,7 +45,8 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 // number is live and moving it is a separate decision with its own blast radius.
 //
 //   1. THE KEY IS NOT PER-PERSON, THOUGH EVERY SENTENCE ABOVE REASONS AS IF IT WERE.
-//      `blockInstanceId` is one viewer's iframe for a MODEL-SLOT install, but for a
+//      `blockInstanceId` names an INSTALL, not a person: for a MODEL-SLOT install it
+//      is one install on one model page, served to every visitor of that page; for a
 //      PAGE app it is the synthetic `page_<appBlockId>` and for a platform default
 //      it is `'pdb_' || app_block_id` — one string shared by EVERY concurrent viewer
 //      of that app, platform-wide. So for those surfaces "120 per 10 s" is an
@@ -117,11 +118,12 @@ export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 // read), a short window here would let a block post continuously at the ceiling.
 //
 // 🔴 KEYED ON THE INSTANCE **AND THE VIEWER**, for the reason the poll bucket
-// below argues in full. `blockInstanceId` is one viewer's iframe for a MODEL-SLOT
-// install, but for a PAGE app it is the synthetic `page_<appBlockId>` — one string
-// shared by every viewer of that app. Keyed on the instance alone, "3 per hour"
-// was therefore an allowance shared across all viewers of a page app: three posts
-// by anyone used up posting for everyone for the hour. The paragraph above reasons
+// below argues in full. `blockInstanceId` names an install, not a person: a
+// MODEL-SLOT install is served to every visitor of its model page, and for a PAGE
+// app it is the synthetic `page_<appBlockId>` — one string shared by every viewer
+// of that app. Keyed on the instance alone, "3 per hour" was therefore an allowance
+// shared across everyone using that install: three posts by anyone used up posting
+// for everyone for the hour. The paragraph above reasons
 // about one person posting a result, so the key has to be one person. `userId` is
 // the self-bound token subject, never client input, and `blockInstanceId` stays
 // in the key for the same `jti`-churn reason the other buckets give (a re-mint
@@ -190,8 +192,9 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 // 🔴 KEYED ON THE INSTALL **AND THE VIEWER**, WHICH IS WHERE THIS BUCKET DEPARTS
 // FROM THE CATALOG, PUBLISH, APP-AGGREGATE POST AND LLM BUCKETS (the per-viewer post
 // bucket and the training-dataset bucket follow this one instead). The catalog,
-// publish and LLM buckets key on `blockInstanceId` alone, and for a
-// MODEL-SLOT install that really is one viewer's iframe. For a PAGE app it is not:
+// publish and LLM buckets key on `blockInstanceId` alone. That id names an install,
+// not a person — a MODEL-SLOT install is served to every visitor of its model page —
+// and for a PAGE app the sharing is widest:
 // `src/pages/api/v1/block-tokens/index.ts` requires the synthetic `page_<appBlockId>`
 // form, and `block-registry.service.ts` mints `'pdb_' || app_block_id` for platform
 // defaults — ONE STRING SHARED BY EVERY CONCURRENT VIEWER OF THAT APP, platform-wide.
