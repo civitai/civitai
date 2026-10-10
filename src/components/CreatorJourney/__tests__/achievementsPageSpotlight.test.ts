@@ -4,6 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import '~/__tests__/mocks/db.mock';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
 const mocks = vi.hoisted(() => ({
@@ -12,7 +13,6 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ query: mocks.query }) }));
 vi.mock('~/server/utils/server-side-helpers', () => ({ createServerSideProps: () => undefined }));
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
 vi.mock('~/components/Profile/ProfileLayout2', () => ({ UserProfileLayout: () => null }));
 vi.mock('~/components/CreatorJourney/useProfileAchievements', () => ({
   useProfileAchievements: () => ({
