@@ -56,6 +56,11 @@ vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
   },
 }));
 vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({ MyEventHats: marker('hats') }));
+// The live points subscriptions need the app's SignalProvider; they render nothing.
+vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
+  useEventTeamsLivePoints: () => undefined,
+  MyHatsLivePoints: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: marker('shop') }));
 vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
   HatCatalogPreview: marker('catalog'),

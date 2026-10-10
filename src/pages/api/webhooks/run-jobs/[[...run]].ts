@@ -66,6 +66,7 @@ import {
   eventEngineLeaderboardUpdate,
   eventPointsHatSync,
 } from '~/server/jobs/event-engine-work';
+import { eventPointsTicker } from '~/server/jobs/event-points-ticker';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
@@ -192,6 +193,7 @@ export const jobs: Job[] = [
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
   eventPointsHatSync,
+  eventPointsTicker,
   ...csamJobs,
   resourceGenerationAvailability,
   cacheCleanup,

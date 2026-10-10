@@ -27,7 +27,7 @@ export const birthday2026 = createEvent(name, {
     heroVideo: { id: '2a717391-711f-4005-97df-16921dc25e07', title: 'Hats On' },
     dates: 'Nov 1 to Nov 30',
     summary:
-      'Four colour teams. Put party hats on your images, models and articles, and every view and reaction they get scores for your team.',
+      'Four colour teams. Put party hats on your images, models and articles. Views, reactions, comments, stickers, accepted remixes and model likes from signed-in members all score for your team.',
     steps: [
       {
         title: 'Join',
@@ -39,7 +39,7 @@ export const birthday2026 = createEvent(name, {
       },
       {
         title: 'Score for your team',
-        body: 'While your content wears a hat, its views and reactions count for your team. More hats on more content means more chances to score.',
+        body: "While your content wears a hat, its views, reactions, comments, stickers, accepted remixes and model likes from signed-in members count for your team. Hats keep earning while you're away, so there's nothing to do daily.",
       },
     ],
     prize: {
@@ -73,6 +73,11 @@ export const birthday2026 = createEvent(name, {
       {
         question: 'Do I keep hats bought during the tester and mod preview?',
         answer: 'Yes.',
+      },
+      {
+        question: 'Do I need to do anything every day?',
+        answer:
+          "No. A hat keeps earning while it's on your content, whether or not you visit. Place it once and it scores for your team while you're away.",
       },
       {
         question: 'Can I change teams?',

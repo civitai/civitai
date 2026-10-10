@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DecorationConstants from '~/shared/constants/event-decoration.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { hatTopicId } from '~/server/events/points/keys';
 
 /**
  * The service layer is where the scored-event routes meet the engine. These pin that every scored
@@ -31,6 +32,13 @@ const { engine, scoring } = vi.hoisted(() => ({
     getCosmeticScores: vi.fn(),
   },
 }));
+
+// Live totals from the points engine. Default: up, with nothing earned yet.
+const live = vi.hoisted(() => ({
+  getHatPoints: vi.fn(),
+  getTeamPoints: vi.fn(),
+}));
+vi.mock('~/server/events/points/read', () => live);
 
 vi.mock('~/server/events', () => ({ eventEngine: engine }));
 // The real cosmeticScoreKey: the service joins scores to hats with it.
@@ -71,7 +79,15 @@ const service = await import('~/server/services/event.service');
 const notStarted = () => {
   throw new Error("That event doesn't exist");
 };
-const scored = { name: 'birthday2026', teams: ['Yellow', 'Blue'] };
+const scored = {
+  name: 'birthday2026',
+  teams: ['Yellow', 'Blue'],
+  startDate: new Date('2026-11-01T00:00:00Z'),
+  endDate: new Date('2999-01-01T00:00:00Z'),
+  // A previewer's reads start here; the live totals are keyed by the real startDate regardless.
+  scoreFrom: new Date('2026-10-20T00:00:00Z'),
+};
+const season = { name: 'birthday2026', startDate: scored.startDate };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -79,6 +95,8 @@ beforeEach(() => {
   scoring.getEventStandings.mockResolvedValue({ teams: [], topCosmetics: [], topUsers: {} });
   scoring.getUserCosmeticScores.mockResolvedValue([]);
   scoring.getCosmeticScores.mockResolvedValue({});
+  live.getHatPoints.mockResolvedValue({});
+  live.getTeamPoints.mockResolvedValue({});
   covers.mockResolvedValue([]);
   engine.assertReadable.mockReset();
   decorations.getEventDecorationDefinition.mockImplementation(decorations.real);
@@ -246,8 +264,17 @@ describe('getMyEventHats', () => {
       },
     ]);
     scoring.getCosmeticScores.mockResolvedValue({
-      '9:31:claimed': { points: 140, impressions: 90, anonImpressions: 10, reactions: 4 },
+      '9:31:claimed': {
+        points: 140,
+        impressions: 90,
+        anonImpressions: 10,
+        reactions: 4,
+        comments: 3,
+        stickers: 2,
+        remixes: 1,
+      },
     });
+    live.getHatPoints.mockResolvedValue({ '9:31:claimed': 175 });
     covers.mockResolvedValue([{ entityType: 'Image', entityId: 500, id: 77, url: 'img' }]);
   });
 
@@ -268,12 +295,39 @@ describe('getMyEventHats', () => {
       [32, 'txn-9'],
     ]);
     expect(hats[0]).toMatchObject({
-      points: 140,
+      points: 175,
       impressions: 100,
       reactions: 4,
+      comments: 3,
+      stickers: 2,
+      remixes: 1,
+      topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'claimed' }),
       placedOn: { entityType: 'Image', entityId: 500, image: { id: 77 } },
     });
-    expect(hats[1]).toMatchObject({ points: 0, placedOn: null, movableAt: null });
+    expect(hats[1]).toMatchObject({ points: 0, comments: 0, placedOn: null, movableAt: null });
+  });
+
+  // A live read that answers is the total, even where it has nothing: the snapshot is only for when
+  // the live store is unreachable.
+  it('reads a hat missing from an answering live read as 0, not its snapshot', async () => {
+    live.getHatPoints.mockResolvedValue({});
+    const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(placed.points).toBe(0);
+  });
+
+  // Points are the live total; the per-type counts are the hourly snapshot's.
+  it("reads points live for every hat, keyed by the event's real start", async () => {
+    await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(live.getHatPoints).toHaveBeenCalledWith(season, [
+      { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' },
+      { ownerId: 9, cosmeticId: 32, claimKey: 'txn-9' },
+    ]);
+  });
+
+  it('falls back to the snapshot when the live totals are unreachable', async () => {
+    live.getHatPoints.mockRejectedValue(new Error('sysredis down'));
+    const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(placed.points).toBe(140);
   });
 
   it('says when a placed hat may move again, from the event decoration cooldown', async () => {
@@ -392,6 +446,57 @@ describe('getEventStandings decoration', () => {
     engine.getJoinHats.mockResolvedValueOnce([{ team: 'Yellow', url: 'cap-y' }]);
     const res = await service.getEventStandings({ event: 'birthday2026', viewer });
     expect(res.teamHats).toEqual([{ team: 'Yellow', url: 'cap-y' }]);
+  });
+
+  it('takes team totals live and re-ranks; history and top lists stay on the snapshot', async () => {
+    const history = [{ team: 'Yellow', scores: [] }];
+    scoring.getEventStandings.mockResolvedValue({
+      teams: [
+        { team: 'Yellow', score: 900, rank: 1 },
+        { team: 'Blue', score: 800, rank: 2 },
+      ],
+      history,
+      topCosmetics: [],
+      topUsers: {},
+    });
+    live.getTeamPoints.mockResolvedValue({ Yellow: 950, Blue: 1000 });
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(res.teams).toEqual([
+      { team: 'Blue', score: 1000, rank: 1 },
+      { team: 'Yellow', score: 950, rank: 2 },
+    ]);
+    expect(res.history).toBe(history);
+    expect(live.getTeamPoints).toHaveBeenCalledWith({ ...season, teams: scored.teams });
+  });
+
+  // After the end the page names a winner: it must be the settled one the prize payout reads.
+  it('shows the settled team totals once the event has ended, never live ones', async () => {
+    const teams = [
+      { team: 'Yellow', score: 900, rank: 1 },
+      { team: 'Blue', score: 800, rank: 2 },
+    ];
+    engine.getReadableScoredEvent.mockResolvedValue({
+      ...scored,
+      endDate: new Date(Date.now() - 1000),
+    });
+    scoring.getEventStandings.mockResolvedValue({ teams, topCosmetics: [], topUsers: {} });
+    live.getTeamPoints.mockResolvedValue({ Yellow: 950, Blue: 1000 });
+    const onDegraded = vi.fn();
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
+    expect(res.teams).toEqual(teams);
+    expect(live.getTeamPoints).not.toHaveBeenCalled();
+    // Settled by design, not a fallback: the answer stays edge-cacheable.
+    expect(onDegraded).not.toHaveBeenCalled();
+  });
+
+  it('keeps the snapshot team totals when the live totals are unreachable', async () => {
+    const teams = [{ team: 'Yellow', score: 900, rank: 1 }];
+    scoring.getEventStandings.mockResolvedValue({ teams, topCosmetics: [], topUsers: {} });
+    live.getTeamPoints.mockRejectedValue(new Error('sysredis down'));
+    const onDegraded = vi.fn();
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
+    expect(res.teams).toEqual(teams);
+    expect(onDegraded).toHaveBeenCalledTimes(1);
   });
 
   // The biggest-hats rows draw their owner with UserAvatar, which reads both of these.
@@ -550,24 +655,80 @@ describe('getWornEventHat', () => {
     } as never);
     (await profilePictures()).mockResolvedValueOnce({ 9: { id: 70, url: 'p.png' } } as never);
     scoring.getCosmeticScores.mockResolvedValue({
-      '9:31:claimed': { points: 12, impressions: 300, anonImpressions: 40, reactions: 7 },
+      '9:31:claimed': {
+        points: 12,
+        impressions: 300,
+        anonImpressions: 40,
+        reactions: 7,
+        comments: 5,
+        stickers: 4,
+        remixes: 3,
+      },
     });
+    live.getHatPoints.mockResolvedValue({ '9:31:claimed': 64 });
     expect(await read()).toEqual({
       cosmeticId: 31,
       name: 'Party Cap',
       team: 'Blue',
       url: 'blue.png',
       owner: { id: 9, username: 'civ', image: 'a.png', profilePicture: { id: 70, url: 'p.png' } },
-      points: 12,
+      topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'claimed' }),
+      // Live, not the snapshot's 12.
+      points: 64,
       impressions: 340,
       reactions: 7,
+      comments: 5,
+      stickers: 4,
+      remixes: 3,
     });
+    expect(live.getHatPoints).toHaveBeenCalledWith(season, [
+      { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' },
+    ]);
     expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
       { userId: 9, cosmeticId: 31, claimKey: 'claimed' },
     ]);
     // The wearer, not the viewer (id 1).
     expect(await userBasic()).toHaveBeenCalledWith([9]);
     expect(await profilePictures()).toHaveBeenCalledWith([9]);
+  });
+
+  it('falls back to the snapshot points when the live totals are unreachable', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+    scoring.getCosmeticScores.mockResolvedValue({
+      '9:31:claimed': { points: 12, impressions: 0, anonImpressions: 0, reactions: 0 },
+    });
+    live.getHatPoints.mockRejectedValue(new Error('sysredis down'));
+    const onDegraded = vi.fn();
+    expect(
+      await service.getWornEventHat({
+        event: 'birthday2026',
+        entityType: 'Image',
+        entityId: 5,
+        viewer,
+        onDegraded,
+      })
+    ).toMatchObject({ points: 12 });
+    // The route skips the edge cache for this answer.
+    expect(onDegraded).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a live answer as degraded', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+    const onDegraded = vi.fn();
+    await service.getWornEventHat({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+      viewer,
+      onDegraded,
+    });
+    expect(onDegraded).not.toHaveBeenCalled();
+  });
+
+  // The popover is public and edge-cached: the claim key (a purchase's transaction id) stays home.
+  it('never returns the claim key', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ ...row, claimKey: 'txn-secret-42' }]);
+    expect(JSON.stringify(await read())).not.toContain('txn-secret-42');
   });
 
   it('is null for a decoration whose data is not an event hat', async () => {

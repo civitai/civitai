@@ -85,22 +85,21 @@ export function EventRules({ data }: { data: EventData }) {
               ))}
             </div>
             <Text size="xs" c="dimmed">
-              Hats go on your own {wearsOn}. Models score views only: reactions aren&apos;t counted
-              for models.
+              Hats go on your own {wearsOn}.{' '}
+              {rules.modelLikeWeight === undefined
+                ? "Models score views only: reactions aren't counted for models."
+                : 'Models score views and thumbs-up reviews.'}
             </Text>
           </RuleCard>
           <RuleCard icon={IconScale} title="Keeping it fair">
             <Stack component="ul" gap={8} className="m-0 list-none p-0">
               <FairRule>
-                One person counts for at most {rules.viewerOwnerDailyCap} of a creator&apos;s posts
-                a day.
+                One person can earn a creator at most {rules.pointsCapPerDay} points a day.
               </FairRule>
               <FairRule>
                 Accounts made in the {rules.newAccountDays} days before the event don&apos;t count.
               </FairRule>
-              <FairRule>
-                Signed-out views count, up to a fair share. Bot-like browsing doesn&apos;t.
-              </FairRule>
+              <FairRule>Only signed-in people&apos;s views and reactions count.</FairRule>
               {cooldownMin > 0 && (
                 <FairRule>
                   A hat can move again {cooldownMin} {cooldownMin === 1 ? 'minute' : 'minutes'}{' '}
@@ -209,9 +208,8 @@ function RuleCard({
   );
 }
 
-type Rules = NonNullable<EventData['rules']> &
-  // Scoring v2's ways to score. A tile shows once the event's rules carry its weight.
-  Partial<Record<'commentWeight' | 'stickerWeight' | 'remixWeight', number>>;
+// A tile shows once the event's rules carry its weight.
+type Rules = NonNullable<EventData['rules']>;
 type PointTileProps = { value: number; label: string; icon: Icon; color: string };
 
 /** One tile per way to score, from the weights the scoring job applies. Views are always 1. */
