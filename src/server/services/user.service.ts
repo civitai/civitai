@@ -94,7 +94,6 @@ import {
 import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
-import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -698,7 +697,10 @@ export const getUserEngagedModelsByIds = async ({
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
     listModelEngagements(kyselyRead, { userId: id, modelIds }),
-    getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
+    // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+    import('~/server/services/resourceReview.service').then(({ getResourceReviewsByUserId }) =>
+      getResourceReviewsByUserId({ userId: id, recommended: true, modelIds })
+    ),
   ]);
 
   const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {

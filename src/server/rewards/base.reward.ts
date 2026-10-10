@@ -13,13 +13,12 @@ import {
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import {
-  createBuzzTransactionMany,
-  getMultipliersForUser,
-  getTransactionByExternalId,
-} from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
+
+// Loaded on first use: buzz.service reaches back into the image/user/model service cycle, and every
+// reward imports this file, so a static import pulled that cycle into each one.
+const buzzService = () => import('~/server/services/buzz.service');
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
@@ -183,7 +182,7 @@ export function createBuzzEvent<T>({
     // Display rather than money, but `getMultipliersForUser` can return a non-finite product, and
     // an advertised award of `Infinity` is still a bug. Not a complete census of readers: `claimBuzz`
     // is a fourth, in buzz.service.ts, and it pays.
-    const { rewardsMultiplier } = await getMultipliersForUser(userId);
+    const { rewardsMultiplier } = await (await buzzService()).getMultipliersForUser(userId);
     const multiplier = clampRewardMultiplier(rewardsMultiplier);
     if (multiplier !== 1) {
       data.awardAmount = Math.ceil(multiplier * data.awardAmount);
@@ -244,6 +243,7 @@ export function createBuzzEvent<T>({
       : `${event.type}:${event.forId}-${event.toUserId}-${event.byUserId}`;
 
   const sendAward = async (events: BuzzEventLog[]) => {
+    const { createBuzzTransactionMany } = await buzzService();
     return await withRetries(() =>
       createBuzzTransactionMany(
         events
@@ -332,7 +332,9 @@ export function createBuzzEvent<T>({
     const resolved = await (async () => {
       const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
       if (!definedKey) return null;
-      const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
+      const { rewardsMultiplier } = await (
+        await buzzService()
+      ).getMultipliersForUser(definedKey.toUserId);
       const transactionDetails = buzzEvent.getTransactionDetails
         ? await buzzEvent.getTransactionDetails(input, { ch: clickhouse, db: dbWrite })
         : undefined;
@@ -486,7 +488,9 @@ export function createBuzzEvent<T>({
     dedup: { hashField: string; cacheKey: string }
   ) => {
     try {
-      const paid = await getTransactionByExternalId(externalTransactionIdFor(event), {
+      const paid = await (
+        await buzzService()
+      ).getTransactionByExternalId(externalTransactionIdFor(event), {
         timeoutMs: LEDGER_LOOKUP_TIMEOUT_MS,
         retries: 0,
       });

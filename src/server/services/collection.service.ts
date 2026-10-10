@@ -56,7 +56,6 @@ import {
 } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
-import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getModeratedTags } from '~/server/services/system-cache';
 import { applyTagRules, insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
@@ -64,10 +63,6 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
 import type { GetModelsWithImagesAndModelVersions } from '~/server/services/model.service';
-import {
-  bustFeaturedModelsCache,
-  getModelsWithImagesAndModelVersions,
-} from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
@@ -119,6 +114,12 @@ import {
   freeGrantBaseline,
   isCollaboratorRow,
 } from '~/server/services/collection-permission.utils';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const modelService = () => import('~/server/services/model.service');
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const articleService = () => import('~/server/services/article.service');
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -1223,7 +1224,7 @@ export const saveItemInCollections = async ({
 
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
-    await bustFeaturedModelsCache();
+    await (await modelService()).bustFeaturedModelsCache();
     const versions = await dbRead.modelVersion.findMany({
       where: { id: input.modelId },
       select: { id: true },
@@ -2012,7 +2013,9 @@ export const getCollectionItemsByCollectionId = async ({
 
   const models =
     modelIds.length > 0
-      ? await getModelsWithImagesAndModelVersions({
+      ? await (
+          await modelService()
+        ).getModelsWithImagesAndModelVersions({
           user,
           input: {
             limit: modelIds.length,
@@ -2032,7 +2035,9 @@ export const getCollectionItemsByCollectionId = async ({
 
   const articles =
     articleIds.length > 0
-      ? await getArticles({
+      ? await (
+          await articleService()
+        ).getArticles({
           limit: articleIds.length,
           period: MetricTimeframe.AllTime,
           periodMode: 'stats',

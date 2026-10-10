@@ -7,7 +7,7 @@ import {
   getEntityMetricTasks,
 } from '~/server/metrics/metric-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { collectionsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex } from '~/server/search-index/collections.search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
