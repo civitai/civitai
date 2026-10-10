@@ -83,5 +83,15 @@ if (mode() !== 'off') {
   // eslint-disable-next-line no-empty-pattern
   afterAll(({}, suite) => {
     suite.meta.testCacheReads = [...reads];
+    // Every module whose evaluation STARTED in this file (`promise`), not only finished: one that
+    // threw inside a caught `import()` still shaped the result. A module a `vi.mock` factory
+    // replaced is in the map too, but never started; its stand-in is a separate `mock:` id.
+    // Absent on a vitest without this internal, and the reporter then walks the whole graph.
+    const loaded = globalThis.__vitest_worker__?.evaluatedModules?.idToModuleMap;
+    if (loaded instanceof Map) {
+      suite.meta.testCacheLoaded = [...loaded]
+        .filter(([id, node]) => !id.startsWith('mock:') && (node?.evaluated || node?.promise))
+        .map(([id]) => id);
+    }
   });
 }

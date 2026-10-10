@@ -218,7 +218,8 @@ export default class TestCacheReporter {
       .find((g) => g?.getModuleById(m.moduleId));
     if (!graph) return void (row.why = 'test file not in module graph');
 
-    const ids = new Set(core.closureOf(graph, m.moduleId));
+    const expand = core.expandOnlyLoaded(m.meta()?.testCacheLoaded, root);
+    const ids = new Set(core.closureOf(graph, m.moduleId, expand));
     for (const setup of m.project.config.setupFiles ?? []) {
       // The fs tracker is instrumentation, not an input: its closure (this cache's own code, which
       // imports child_process) is covered by the salt. Walking it marked EVERY test as reaching a

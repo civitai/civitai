@@ -199,8 +199,38 @@ export function shadowCandidates(rel) {
   return out;
 }
 
-/** Transitive imports in one vite environment's module graph. null when the root is absent. */
-export function closureOf(graph, id) {
+/**
+ * Which modules a test file's key walk may descend into: first-party modules its runner actually
+ * loaded (`loaded`, from fs-tracker.mjs), and anything that is not a repo file. The rest of the
+ * shared graph is what OTHER files loaded. Without `loaded` (a tracker that reported nothing),
+ * everything, as before. Case-insensitive, because Windows can hand the same file back in a
+ * different case.
+ */
+export function expandOnlyLoaded(loaded, root) {
+  if (!Array.isArray(loaded)) return () => true;
+  const rel = (id) => {
+    try {
+      return toRel(id, root);
+    } catch {
+      return null;
+    }
+  };
+  const ran = new Set(loaded.map((id) => rel(id)?.toLowerCase()));
+  return (id) => {
+    const r = rel(id);
+    return isCoveredElsewhere(r) || ran.has(r.toLowerCase());
+  };
+}
+
+/**
+ * Transitive imports in one vite environment's module graph. null when the root is absent.
+ *
+ * The graph is shared by every test file in the run, so a module one file replaces with a
+ * `vi.mock` factory still carries the imports another file loaded it with. `expand(id)` false keeps
+ * that module in the closure but stops the walk there: measured, a test that factory-mocks
+ * image.service was keyed on 9 modules run alone and 983 beside one real importer.
+ */
+export function closureOf(graph, id, expand = () => true) {
   const root = graph.getModuleById(id);
   if (!root) return null;
   const out = new Set();
@@ -211,7 +241,7 @@ export function closureOf(graph, id) {
       if (!dep?.id || seen.has(dep)) continue;
       seen.add(dep);
       out.add(dep.id);
-      stack.push(dep);
+      if (expand(dep.id)) stack.push(dep);
     }
   }
   return out;
