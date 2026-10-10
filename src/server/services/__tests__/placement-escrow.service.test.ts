@@ -2411,6 +2411,32 @@ describe('event points on approval', () => {
     ]);
   });
 
+  it('awards the submitter a remix when the owner accepts it into their remix gallery', async () => {
+    givenPlacement({ surface: 'remixGallery' });
+    await holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'remixGallery',
+      amount: 1000,
+    });
+
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    await settle();
+
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
+    expect(awardEventPoints).toHaveBeenCalledWith([
+      {
+        type: 'remix',
+        actorId: PLACER,
+        entityType: 'Image',
+        entityId: 99,
+        time: expect.any(Date),
+        sourceId: `Placement:remix:99:${PLACER}`,
+      },
+    ]);
+  });
+
   it('awards on the approval, before the payout runs', async () => {
     givenPlacement();
     await hold();
