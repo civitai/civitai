@@ -424,7 +424,8 @@ describe('standings', () => {
       '9:99:stale': JSON.stringify({ userId: 9, cosmeticId: 99, claimKey: 'stale', points: 5 }),
     });
     const ownersKey = hatsKey.replace(/:hats$/, ':owners');
-    store.hashes.set(`${ownersKey}:next`, { '9': JSON.stringify(['9:99:stale']) });
+    // An owner the new run does not have, pointing at a hat it does.
+    store.hashes.set(`${ownersKey}:next`, { '9': JSON.stringify(['2:22:claimed']) });
     allowPostgres();
     await settle();
     expect(

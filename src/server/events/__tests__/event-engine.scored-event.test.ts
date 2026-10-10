@@ -662,6 +662,11 @@ describe('scoring behind the flag', () => {
     mockScoring.hasStandingsSnapshot.mockResolvedValue(true);
     await eventEngine.updateLeaderboard(DURING);
     expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(2);
+    // Switched on, past the window it keeps settling until a run is final, stored snapshot or not.
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(past);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(3);
     mockScoring.hasStandingsSnapshot.mockResolvedValue(false);
   });
 
