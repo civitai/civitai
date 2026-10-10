@@ -9,6 +9,7 @@ import {
   eventSeasonKeys,
   hatField,
   LIVE_BUCKET_MS,
+  parseHatField,
   type EventPointSeason,
   type TotalScope,
 } from '~/server/events/points/keys';
@@ -16,6 +17,7 @@ import {
   eventPointsRefereeSql,
   eventPointsRefereeUsersSql,
 } from '~/server/events/points/referee.sql';
+import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
 import { sysRedis } from '~/server/redis/client';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -37,6 +39,7 @@ export type RefereeEvent = {
   name: string;
   startDate: Date;
   endDate: Date;
+  teams: readonly string[];
   previewFrom?: Date;
   scoring: EventScoring;
 };
@@ -281,16 +284,13 @@ async function finalDayTotals(event: RefereeEvent, window: Window) {
   `;
 }
 
-export type RefereeRedis = Pick<
-  typeof sysRedis,
-  'get' | 'hGetAll' | 'del' | 'hSet' | 'multi' | 'sAdd'
->;
+export type RefereeRedis = Pick<typeof sysRedis, 'get' | 'hGetAll' | 'del' | 'hSet' | 'multi'>;
 
 const TMP_SUFFIX = ':next';
 
 // Replaces the live base with the referee's totals and moves the cut, in one MULTI, so a reader
-// never sees the new base with the old cut (which would count the settled buckets twice). Hats whose
-// shown total moved go into the changed set, so the signals ticker pushes the correction.
+// never sees the new base with the old cut (which would count the settled buckets twice). Returns the
+// hats whose shown total moved, so the correction can be pushed.
 export async function resetLiveBase(
   redis: RefereeRedis,
   event: { name: string },
@@ -329,10 +329,7 @@ export async function resetLiveBase(
   }
   multi.set(keys.cut, String(newCutBucket));
   await multi.exec();
-
-  for (const part of chunk(changed, 1000))
-    await redis.sAdd(eventPointKeys(event.name).changed, part);
-  return changed.length;
+  return changed;
 }
 
 // Settles one season of a scored event: recompute the open days from the ledger, write them to the
@@ -354,10 +351,22 @@ export async function runEventPointsReferee(
     window.cut,
     refereeTotals([...final, ...rows])
   );
+  // This runs in a job: its corrections go out before it returns, not on a later window. Preview
+  // corrections are never pushed; `unpushed` counts live ones the pusher refused (paused or off).
+  // What the drain leaves unsent it logs itself.
+  let unpushed = 0;
+  if (season === 'live' && changed.length) {
+    for (const field of changed) {
+      const hat = parseHatField(field);
+      if (!hat || !markEventPointsDirty(event, hat, now)) unpushed++;
+    }
+    await drainEventPointsPush();
+  }
   return {
     season,
     rows: rows.length,
-    changed,
+    changed: changed.length,
+    unpushed,
     recomputeFrom: window.recomputeFrom.toISOString(),
   };
 }

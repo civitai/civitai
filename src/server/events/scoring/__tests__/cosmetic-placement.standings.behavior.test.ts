@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as SignalClient from '~/utils/signal-client';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -16,6 +17,16 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const ch = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query: ch.query } }));
+const signals = vi.hoisted(() => ({ topicSend: vi.fn(async (..._a: unknown[]) => undefined) }));
+vi.mock('~/utils/signal-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SignalClient>()),
+  signalClient: signals,
+}));
+const engine = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => engine.on,
+  isEventPointsEnabledSync: () => engine.on,
+}));
 
 const {
   getCosmeticScores,
@@ -26,7 +37,7 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
-const { eventSeasonKeys } = await import('~/server/events/points/keys');
+const { eventSeasonKeys, hatTopicId } = await import('~/server/events/points/keys');
 
 const MIGRATIONS = ['20261012130000_event_cosmetic_placement', '20261015120000_event_points'].map(
   (name) =>
@@ -399,6 +410,55 @@ describe('referee snapshot', () => {
       ['2026-11-05', 1, 'claimed', 3],
     ]);
     expect(hashes.get(keys.base('hat'))).toEqual({ '1:21:claimed': '18' });
+  });
+
+  // The referee runs in a job: its corrections reach the screens before it returns, read back
+  // through the live read path, never as a preview total.
+  it('pushes its corrections before it returns, and none for the preview season', async () => {
+    vi.useFakeTimers({ now: HOURLY, toFake: ['Date'] });
+    try {
+      redisMock.sysRedis.hmGet.mockImplementation(async (k: string, fields: string[]) =>
+        fields.map((f) => hashes.get(k)?.[f] ?? null)
+      );
+      signals.topicSend.mockClear();
+      const withPreview = { ...scored, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
+      const preview = await runEventPointsReferee(withPreview, 'preview', HOURLY);
+      // The preview run did settle and correct something, so its silence is the rule's doing.
+      expect(preview.changed).toBe(1);
+      expect(signals.topicSend).not.toHaveBeenCalled();
+
+      // Switched off, the live correction is counted as unpushed and nothing is sent.
+      engine.on = false;
+      const off = await runEventPointsReferee(scored, 'live', HOURLY);
+      engine.on = true;
+      expect(off).toEqual(expect.objectContaining({ changed: 1, unpushed: 1 }));
+      expect(signals.topicSend).not.toHaveBeenCalled();
+
+      // The same run with the switch on, from the same starting state.
+      strings.clear();
+      hashes.clear();
+      const live = await runEventPointsReferee(scored, 'live', HOURLY);
+      expect(live).toEqual(expect.objectContaining({ changed: 1, unpushed: 0 }));
+      const topicId = hatTopicId({ ownerId: 1, cosmeticId: 21, claimKey: 'claimed' });
+      expect(signals.topicSend.mock.calls).toEqual([
+        [
+          {
+            topic: 'event-points:scoretest:teams',
+            target: 'event-points:teams',
+            data: { event: 'scoretest', teams: { Yellow: 8, Blue: 0, Pink: 0, Green: 0 } },
+          },
+        ],
+        [
+          {
+            topic: `event-points:scoretest:hat:${topicId}`,
+            target: 'event-points:hat',
+            data: { event: 'scoretest', topicId, points: 8 },
+          },
+        ],
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   const refereeParams = () =>

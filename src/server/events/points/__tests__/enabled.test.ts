@@ -5,8 +5,8 @@ import type * as FliptClient from '~/server/flipt/client';
 
 /**
  * The engine's kill switch, through the real entry points: off, nothing reaches sysRedis or the
- * ledger; on (the control), the same calls do. The referee and ticker gates are pinned beside their
- * callers in event-engine.scored-event.test.ts and event-points-ticker.job.test.ts.
+ * ledger; on (the control), the same calls do. The referee's gate is pinned beside its caller in
+ * event-engine.scored-event.test.ts, and the live pusher's in push.test.ts.
  */
 
 const ENGINE_FLAG = 'event-points-engine';
@@ -71,7 +71,7 @@ const reaction = {
   sourceId: `ImageReaction:${IMAGE}:1`,
 };
 // The sysRedis mock is a proxy that creates each command on first access and does not enumerate
-// them, so the commands are named: every one the engine, sync, ticker and referee use.
+// them, so the commands are named: every one the engine, sync and referee use.
 const REDIS_COMMANDS = [
   'get',
   'set',

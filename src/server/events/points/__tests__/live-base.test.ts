@@ -6,9 +6,7 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
 const { refereeTotals, resetLiveBase } = await import('~/server/events/points/referee');
 const { readTotals } = await import('~/server/events/points/read');
-const { eventPointKeys, eventSeasonKeys, LIVE_BUCKET_MS, liveBucket } = await import(
-  '~/server/events/points/keys'
-);
+const { eventSeasonKeys, LIVE_BUCKET_MS, liveBucket } = await import('~/server/events/points/keys');
 
 // String, hash and set semantics, with MULTI applied only at EXEC and RENAME failing on a missing
 // source as Redis does. Every MULTI is recorded so a test can see what went in one transaction.
@@ -37,12 +35,6 @@ function fakeRedis() {
     },
     async del(key: string) {
       return remove(key);
-    },
-    async sAdd(key: string, members: string[]) {
-      const set = sets.get(key) ?? new Set();
-      sets.set(key, set);
-      members.forEach((m) => set.add(m));
-      return members.length;
     },
     multi() {
       const ops: (() => void)[] = [];
@@ -83,7 +75,6 @@ function fakeRedis() {
 
 const EVENT = { name: 'e', startDate: new Date('2026-11-01T00:00:00.000Z') };
 const keys = eventSeasonKeys(EVENT.name, 'live');
-const changedKey = eventPointKeys(EVENT.name).changed;
 
 const totals = (hat: Record<string, number>, team: Record<string, number> = {}, owner = {}) => ({
   hat: new Map(Object.entries(hat)),
@@ -122,8 +113,7 @@ describe('resetLiveBase', () => {
       // a: 10 + 5 settled = 15, unchanged; b: corrected down; c: came from live only; gone: removed.
       totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, { '1': 20 })
     );
-    expect(changed).toBe(2);
-    expect([...(fake.sets.get(changedKey) ?? [])].sort()).toEqual(['b', 'gone']);
+    expect(changed.sort()).toEqual(['b', 'gone']);
   });
 
   it('replaces each base wholesale and moves the cut in the same MULTI', async () => {
@@ -168,7 +158,7 @@ describe('resetLiveBase', () => {
   // A bucket id with a fraction names no live key, so reads after the end would find no buckets.
   it('stores a whole bucket as the cut when the season ends inside a bucket, settling that bucket', async () => {
     const fake = seeded();
-    await resetLiveBase(
+    const changed = await resetLiveBase(
       fake.redis as unknown as RefereeRedis,
       EVENT,
       'live',
@@ -177,7 +167,7 @@ describe('resetLiveBase', () => {
     );
     expect(fake.strings.get(keys.cut)).toBe(String(NEW_CUT));
     // c's bucket (NEW_CUT - 1) is settled into the base, so it is not a change.
-    expect([...(fake.sets.get(changedKey) ?? [])].sort()).toEqual(['gone']);
+    expect(changed).toEqual(['gone']);
   });
 
   it('on the first run (no cut yet) reports every hat with points', async () => {
@@ -189,8 +179,7 @@ describe('resetLiveBase', () => {
       cutAt(NEW_CUT),
       totals({ a: 3, b: 4 })
     );
-    expect(changed).toBe(2);
-    expect([...(fake.sets.get(changedKey) ?? [])].sort()).toEqual(['a', 'b']);
+    expect(changed.sort()).toEqual(['a', 'b']);
   });
 
   it('accepts what refereeTotals produces', async () => {

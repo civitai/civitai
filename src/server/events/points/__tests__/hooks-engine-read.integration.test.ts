@@ -31,6 +31,8 @@ vi.mock('~/server/services/buzz.service', () => ({
 }));
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
+const push = vi.hoisted(() => ({ markEventPointsDirty: vi.fn() }));
+vi.mock('~/server/events/points/push', () => push);
 
 const hooks = await import('~/server/events/points/hooks');
 const { getHatPoints, getTeamPoints, getOwnerPoints } = await import('~/server/events/points/read');
@@ -90,12 +92,10 @@ function installRedis() {
   return { sets };
 }
 
-let redis: ReturnType<typeof installRedis>;
-
 beforeAll(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
-  redis = installRedis();
+  installRedis();
   const keys = eventPointKeys(birthday2026.name);
   await redisMock.sysRedis.hSet(keys.hats, `Image:${IMAGE}`, encodeHat(HAT));
   await redisMock.sysRedis.hSet(keys.hats, `Model:${MODEL}`, encodeHat(HAT));
@@ -118,6 +118,7 @@ const ledgerTypes = () => ch.rows.map((r) => `${r.op}:${r.type}:${r.actorId}`);
 describe('hook -> engine -> ledger -> read, on the registered birthday2026 config', () => {
   it('earns every hooked type at its configured weight, readable per hat, team and owner', async () => {
     const weights = birthday2026.scoring!.types;
+    push.markEventPointsDirty.mockClear();
     await hooks.onReactionCreated({ entityType: 'image', entityId: IMAGE, userId: 1 });
     await hooks.onCommentCreated({ userId: 2, entityType: 'image', entityId: IMAGE, threadId: 0 });
     await hooks.onPlacementApproved({
@@ -195,10 +196,14 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
     expect(await getHatPoints(event, [HAT], NOW)).toEqual({ [hatField(HAT)]: expected });
     expect((await getTeamPoints({ ...event, teams: birthday2026.teams }, NOW)).Blue).toBe(expected);
     expect(await getOwnerPoints(event, [OWNER], NOW)).toEqual({ [String(OWNER)]: expected });
-    // The ticker's changed set names the hat.
-    expect([...(redis.sets.get(eventPointKeys(birthday2026.name).changed) ?? [])]).toEqual([
-      hatField(HAT),
-    ]);
+    // Every grant marks the hat for a live push, with the event's teams for the team push.
+    expect(push.markEventPointsDirty).toHaveBeenCalledTimes(6);
+    for (const [event, hat] of push.markEventPointsDirty.mock.calls) {
+      expect(event).toEqual(
+        expect.objectContaining({ name: birthday2026.name, teams: birthday2026.teams })
+      );
+      expect(hat).toEqual(HAT);
+    }
   });
 
   it('takes a removal through to the ledger and lets the person earn again', async () => {
