@@ -12,6 +12,7 @@ import {
 import { birthday2026 } from '~/server/events/birthday2026.event';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 import { eventPointSeason } from '~/server/events/points/keys';
+import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { runEventPointsReferee } from '~/server/events/points/referee';
 import { syncEventHats } from '~/server/events/points/sync';
 import {
@@ -178,6 +179,9 @@ export const eventEngine = {
     for (const eventDef of getScorableEvents(now)) {
       const scored = scoredEvent(eventDef);
       if (scored) {
+        // Kill switch off: no settling at all. The standings keep serving their last snapshot, and
+        // a scored event never falls through to the old leaderboard below.
+        if (!(await isEventPointsEnabled())) continue;
         // Keeps running past the end so the last hours and late data are settled; the referee clips
         // every window to the season's end.
         if (eventDef.endDate.getTime() + scored.scoring.finalizeAfterMs < now.getTime()) continue;

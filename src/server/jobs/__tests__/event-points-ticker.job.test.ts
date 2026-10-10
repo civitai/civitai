@@ -17,6 +17,12 @@ const { ticker, events } = vi.hoisted(() => ({
     },
   ],
 }));
+const killSwitch = vi.hoisted(() => ({ on: true }));
+// The engine's kill switch is on unless a test turns it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => killSwitch.on,
+  isEventPointsEnabledSync: () => killSwitch.on,
+}));
 vi.mock('~/server/events/points/ticker', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   ...ticker,
@@ -26,6 +32,18 @@ vi.mock('~/server/events/load-events', () => ({ loadEvents: async () => events }
 const { eventPointsTicker } = await import('~/server/jobs/event-points-ticker');
 
 describe('event-points-ticker job', () => {
+  it('runs no ticks while the engine is switched off', async () => {
+    ticker.runEventPointsTicker.mockReset();
+    ticker.runEventPointsTicker.mockResolvedValue({ ticks: 0 });
+    killSwitch.on = false;
+    await eventPointsTicker.run().result;
+    expect(ticker.runEventPointsTicker).not.toHaveBeenCalled();
+
+    killSwitch.on = true;
+    await eventPointsTicker.run().result;
+    expect(ticker.runEventPointsTicker).toHaveBeenCalledTimes(1);
+  });
+
   it("ticks the loaded events, handing each tick the run's deadline", async () => {
     ticker.runEventPointsTicker.mockImplementation(async (getEvents, deps) => {
       const [event] = await getEvents();

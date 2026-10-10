@@ -7,6 +7,7 @@ import {
   type GatedEvent,
 } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
+import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import {
   encodeHat,
   entityKey,
@@ -78,8 +79,9 @@ export function diffHats(current: Record<string, string>, desired: Map<string, s
 // Mirrors which content wears which hat into sysRedis, and seeds the live weights from the event
 // config where none are set. Runs every minute; the referee runs it too before settling.
 export async function syncEventHats(now = new Date()) {
-  const events = await loadEvents();
   const results: { event: string; set: number; removed: number }[] = [];
+  if (!(await isEventPointsEnabled())) return results;
+  const events = await loadEvents();
   for (const eventDef of events) {
     const { scoring } = eventDef;
     if (!scoring) continue;

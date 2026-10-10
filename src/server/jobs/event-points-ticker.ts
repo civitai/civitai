@@ -1,5 +1,6 @@
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { loadEvents } from '~/server/events/load-events';
+import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import type { TickerEvent } from '~/server/events/points/ticker';
 import { runEventPointsTicker, tickEventPoints } from '~/server/events/points/ticker';
 import { createJob } from '~/server/jobs/job';
@@ -38,6 +39,7 @@ export const eventPointsTicker = createJob(
   'event-points-ticker',
   '* * * * *',
   async (ctx) => {
+    if (!(await isEventPointsEnabled())) return { ticks: 0, stopped: false, disabled: true };
     return runEventPointsTicker(async () => getTickerEvents(await loadEvents(), new Date()), {
       now: Date.now,
       sleep: async (ms) => {

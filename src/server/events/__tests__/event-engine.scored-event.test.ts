@@ -24,7 +24,13 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
     mockSync: { syncEventHats: vi.fn() },
   })
 );
+const killSwitch = vi.hoisted(() => ({ on: true }));
 
+// The engine's kill switch is on unless a test turns it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => killSwitch.on,
+  isEventPointsEnabledSync: () => killSwitch.on,
+}));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));
@@ -72,6 +78,7 @@ const cosmeticIds: Record<string, string> = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  killSwitch.on = true;
   // Launched unless a test says otherwise; who the flag lets in is pinned in event-access.test.ts.
   testerFlag.reset({ public: true });
   redisMock.redis.hGet.mockImplementation(
@@ -438,6 +445,20 @@ describe('scoring behind the flag', () => {
     expect(synced).toBeLessThan(refereed);
     expect(refereed).toBeLessThan(refreshed);
     expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
+  });
+
+  // Off, a scored event settles nothing and must not fall through to the old donor leaderboard.
+  it('settles nothing and writes nothing while the engine is switched off', async () => {
+    killSwitch.on = false;
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockSync.syncEventHats).not.toHaveBeenCalled();
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
+    expect(mockScoring.refreshStandings).not.toHaveBeenCalled();
+    expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
+
+    killSwitch.on = true;
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
   });
 
   it('still refreshes the standings when the referee fails', async () => {
