@@ -26,6 +26,7 @@ import type {
 } from '~/server/events/points/types';
 
 const DAY_S = 24 * 60 * 60;
+type SeenKey = ReturnType<ReturnType<typeof eventSeasonKeys>['seen']>;
 // How often an app server re-reads which entities wear a hat. A hat placed or moved starts earning
 // within this long plus the hat sync job's minute.
 const STATE_REFRESH_MS = 30 * 1000;
@@ -241,7 +242,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     action: EventPointAction,
     hat: EventHat,
     keys: ReturnType<typeof eventSeasonKeys>,
-    seenKey: string,
+    seenKey: SeenKey,
     actor: string,
     rule: EventPointTypeRule,
     time: Date
@@ -317,7 +318,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       await ensureFresh();
       if (!loaded.length) return;
       const rows: EventPointLedgerRow[] = [];
-      const unmarked: { seenKey: string; actor: string }[] = [];
+      const unmarked: { seenKey: SeenKey; actor: string }[] = [];
       await Promise.all(
         loaded.flatMap((event) =>
           removals.map(async (removal) => {
