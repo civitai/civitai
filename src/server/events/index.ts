@@ -77,7 +77,9 @@ function scoredEvent(eventDef: EventDef) {
 }
 // Set by the hourly scoring once a scored event's final run has named its winner; its value is the
 // winning team, or NO_WINNER when no team ranked first. Either way scoring is done.
-const winnerKey = (event: string) => `${REDIS_KEYS.EVENT.EVENT_WINNER}:${event}` as const;
+// In sysRedis, which does not evict: losing it would name the winner again.
+const winnerKey = (event: string) =>
+  `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.WINNER}` as const;
 const NO_WINNER = 'none';
 async function flagWinnerCosmetic(eventDef: EventDef, winner: string) {
   const winnerCosmeticId = await eventDef.getTeamCosmetic(winner);
@@ -140,7 +142,7 @@ export const eventEngine = {
         // canWearEventDecorations). Its winner is named by the hourly scoring, on the first run that
         // settles the whole finalize window (updateLeaderboard), so its cleanup waits for that. While
         // the engine is switched off it waits too.
-        const scoredWinner = eventDef.scoring ? await redis.get(winnerKey(eventDef.name)) : null;
+        const scoredWinner = eventDef.scoring ? await sysRedis.get(winnerKey(eventDef.name)) : null;
         if (eventDef.scoring && (!scoredWinner || !(await isEventPointsEnabled()))) continue;
 
         // Get 1st place team
@@ -196,7 +198,7 @@ export const eventEngine = {
         if (!(await isEventPointsEnabled())) continue;
         // Keeps running past the end until a run has settled the whole finalize window and named
         // the winner; the referee clips every window to the season's end.
-        if (eventPointsWindow(scored).to < now && (await redis.get(winnerKey(eventDef.name))))
+        if (eventPointsWindow(scored).to < now && (await sysRedis.get(winnerKey(eventDef.name))))
           continue;
         // Before launch this is the preview, where only flagged users' hats earn (the hat sync
         // applies the flag), settled into its own season.
@@ -224,15 +226,14 @@ export const eventEngine = {
             message: (error as Error).message,
           }).catch(() => undefined);
         }
-        await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
-        // The first run that settles the whole finalize window names the winner, on the standings
-        // it just refreshed. A failed run names none, and the next hour's run tries again.
+        const standings = await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
+        // The first run that settles the whole finalize window names the winner, on the standings it
+        // just computed: the shared snapshot may be mid-rebuild from a replica by a request. A failed
+        // run names none, and the next hour's run tries again.
         if (final) {
-          const winner = (await this.getTeamScores(eventDef.name)).find(
-            ({ rank }) => rank === 1
-          )?.team;
+          const winner = standings.teams.find(({ rank }) => rank === 1)?.team;
           if (winner) await flagWinnerCosmetic(eventDef, winner);
-          await redis.set(winnerKey(eventDef.name), winner ?? NO_WINNER, {
+          await sysRedis.set(winnerKey(eventDef.name), winner ?? NO_WINNER, {
             EX: CLEANUP_MARKER_TTL_S,
           });
         }

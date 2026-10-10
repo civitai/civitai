@@ -66,6 +66,9 @@ let redisStore: Record<string, string> = {};
 // The options each key was last set with, so expiries are checked, not assumed.
 let redisSetOptions: Record<string, unknown> = {};
 const MARKER_TTL = { EX: 30 * 24 * 60 * 60 };
+// The winner record lives in sysRedis.
+let sysStore: Record<string, string> = {};
+let sysSetOptions: Record<string, unknown> = {};
 const DEPLOY_DAY = new Date('2026-10-09T12:00:00.000Z');
 // Cosmetic ids as the COSMETICS.IDS hash caches them: by name for the holiday events, by
 // event:design:team for join events (which look the cosmetic up by data, never by name).
@@ -96,7 +99,17 @@ beforeEach(() => {
     redisSetOptions[key] = options;
     return 'OK';
   });
-  mockScoring.getEventStandings.mockResolvedValue({
+  sysStore = {};
+  sysSetOptions = {};
+  redisMock.sysRedis.get.mockImplementation(async (key: string) => sysStore[key] ?? null);
+  redisMock.sysRedis.set.mockImplementation(
+    async (key: string, value: string, options?: unknown) => {
+      sysStore[key] = value;
+      sysSetOptions[key] = options;
+      return 'OK';
+    }
+  );
+  const standings = {
     teams: [
       { team: 'Pink', score: 30, rank: 1 },
       { team: 'Yellow', score: 20, rank: 2 },
@@ -106,7 +119,9 @@ beforeEach(() => {
     topCosmetics: [],
     topUsers: {},
     updatedAt: new Date(),
-  });
+  };
+  mockScoring.getEventStandings.mockResolvedValue(standings);
+  mockScoring.refreshStandings.mockResolvedValue(standings);
   mockReferee.runEventPointsReferee.mockResolvedValue({ season: 'live', rows: 0, changed: 0 });
   mockSync.syncEventHats.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
@@ -261,7 +276,7 @@ describe('end-of-event cleanup', () => {
 
   it('does nothing for holiday2024 on any day after its grace window, including birthday cleanup day', async () => {
     const birthdayCleanup = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 40 * HOUR);
-    redisStore[`eventWinner:${BIRTHDAY_2026_EVENT}`] = 'Pink';
+    sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
     await eventEngine.dailyReset(birthdayCleanup);
 
     expect(dbMock.dbWrite.userCosmetic.updateMany).not.toHaveBeenCalled();
@@ -303,7 +318,7 @@ describe('end-of-event cleanup', () => {
   });
 
   const close = BIRTHDAY_2026_ENDS_AT.getTime() + birthday2026.scoring!.finalizeAfterMs;
-  const winnerMarker = `eventWinner:${BIRTHDAY_2026_EVENT}`;
+  const winnerMarker = `event:${BIRTHDAY_2026_EVENT}:winner`;
   // The referee reports a run final once it settles the whole finalize window.
   const finalRun = () =>
     mockReferee.runEventPointsReferee.mockResolvedValueOnce({
@@ -316,20 +331,34 @@ describe('end-of-event cleanup', () => {
   it('names the winner on the first run that settles the whole finalize window', async () => {
     await eventEngine.updateLeaderboard(new Date(close));
     expect(winnerUpdates()).toHaveLength(0);
-    expect(redisStore[winnerMarker]).toBeUndefined();
+    expect(sysStore[winnerMarker]).toBeUndefined();
 
     finalRun();
     await eventEngine.updateLeaderboard(new Date(close + HOUR));
     const [update] = winnerUpdates();
     expect(update?.[1]).toBe(23); // Pink won
     expect((update?.[0] as TemplateStringsArray).join('?')).toContain("'true'::jsonb");
-    expect(redisStore[winnerMarker]).toBe('Pink');
+    expect(sysStore[winnerMarker]).toBe('Pink');
     // Outlives the 7-day grace window, so later runs keep seeing it and stop.
-    expect(redisSetOptions[winnerMarker]).toEqual(MARKER_TTL);
-    // On the standings that run refreshed, read after the refresh.
-    expect(mockScoring.refreshStandings.mock.invocationCallOrder.at(-1)!).toBeLessThan(
-      mockScoring.getEventStandings.mock.invocationCallOrder.at(-1)!
-    );
+    expect(sysSetOptions[winnerMarker]).toEqual(MARKER_TTL);
+  });
+
+  // A request can be rebuilding the shared snapshot from a replica meanwhile; the winner is read
+  // from the standings this run computed on the primary.
+  it('names the winner from the standings the final run computed, not the cached snapshot', async () => {
+    mockScoring.refreshStandings.mockResolvedValue({
+      teams: [
+        { team: 'Blue', score: 40, rank: 1 },
+        { team: 'Pink', score: 30, rank: 2 },
+      ],
+      topCosmetics: [],
+      topUsers: {},
+      updatedAt: new Date(),
+    });
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + HOUR));
+    expect(winnerUpdates().map(([, id]) => id)).toEqual([22]);
+    expect(sysStore[winnerMarker]).toBe('Blue');
   });
 
   it('keeps settling past the window until a run is final, then stops', async () => {
@@ -365,7 +394,7 @@ describe('end-of-event cleanup', () => {
   });
 
   it('ends scoring on a final run with no first-place team, naming no winner', async () => {
-    mockScoring.getEventStandings.mockResolvedValue({
+    mockScoring.refreshStandings.mockResolvedValue({
       teams: [],
       topCosmetics: [],
       topUsers: {},
@@ -376,7 +405,7 @@ describe('end-of-event cleanup', () => {
     await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
     expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
     expect(winnerUpdates()).toHaveLength(0);
-    expect(redisSetOptions[winnerMarker]).toEqual(MARKER_TTL);
+    expect(sysSetOptions[winnerMarker]).toEqual(MARKER_TTL);
 
     // ...and the cleanup, as before, has no winner to clean up with.
     await eventEngine.dailyReset(secondReset);
@@ -387,7 +416,7 @@ describe('end-of-event cleanup', () => {
     dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
     finalRun();
     await expect(eventEngine.updateLeaderboard(new Date(close + HOUR))).rejects.toThrow('db down');
-    expect(redisStore[winnerMarker]).toBeUndefined();
+    expect(sysStore[winnerMarker]).toBeUndefined();
   });
 
   it('cleans up only once the winner is named, with the recorded winner, without flagging it again', async () => {
@@ -399,7 +428,7 @@ describe('end-of-event cleanup', () => {
       expect(setKeys()).toEqual([]);
 
       // Blue is not first in the standings: the record, not the standings, decides.
-      redisStore[winnerMarker] = 'Blue';
+      sysStore[winnerMarker] = 'Blue';
       await eventEngine.dailyReset(secondReset);
       expect(onCleanup).toHaveBeenCalledWith(
         expect.objectContaining({ winner: 'Blue', winnerCosmeticId: 22 })
@@ -414,7 +443,7 @@ describe('end-of-event cleanup', () => {
   });
 
   it('waits to clean up while the engine is switched off', async () => {
-    redisStore[winnerMarker] = 'Pink';
+    sysStore[winnerMarker] = 'Pink';
     killSwitch.on = false;
     await eventEngine.dailyReset(secondReset);
     expect(setKeys()).toEqual([]);
@@ -464,7 +493,7 @@ describe('scored event is inert before it starts', () => {
   it('scores from the start until the winner is named, then stops', async () => {
     await eventEngine.updateLeaderboard(BIRTHDAY_2026_STARTS_AT);
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 23 * HOUR));
-    redisStore[`eventWinner:${BIRTHDAY_2026_EVENT}`] = 'Pink';
+    sysStore[`event:${BIRTHDAY_2026_EVENT}:winner`] = 'Pink';
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 25 * HOUR));
     expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(2);
     // Never the Buzz-bank leaderboard path.

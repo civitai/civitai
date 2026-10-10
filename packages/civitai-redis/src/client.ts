@@ -2652,7 +2652,6 @@ const REDIS_KEYS_UNPREFIXED = {
   EVENT: {
     BASE: 'event', // special case
     EVENT_CLEANUP: 'eventCleanup',
-    EVENT_WINNER: 'eventWinner',
     CACHE: 'packed:event',
   },
   COSMETICS: {
@@ -2778,6 +2777,7 @@ export const REDIS_SUB_KEYS = {
     MANUAL_ASSIGNMENTS: 'manual-assignments', //sys
     DISCORD_ROLES: 'discord-roles', // sys
     POINTS: 'points', // sys
+    WINNER: 'winner', // sys
   },
   QUEUES: {
     MERGING: 'merging', // sys
