@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { scanSource } from '../../../../test/source-scan';
 import { stripComments } from '../../../../test/strip-comments';
+import { crucibleImageSchema } from '~/server/schema/crucible.schema';
 
 /**
  * Seam guard for the server-owned `Image` columns `id`, `postId` and `index`.
@@ -30,6 +31,7 @@ import { stripComments } from '../../../../test/strip-comments';
  */
 
 const ROOT = process.cwd();
+const URL_UUID = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 
 // #region population 1: shared image schemas
 
@@ -295,8 +297,12 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   },
 };
 
-/** Every write that points a relation at an existing image by `imageId`, with its guard. */
-const CONNECT_BY_ID_LEDGER: Record<string, { sites: number; guard: string }> = {
+/** Every write pointing an `Image` relation at an existing row by id, with the guard that decides it. */
+const CONNECT_EXISTING_LEDGER: Record<
+  string,
+  { sites: number; guard: string; guardFollows?: boolean }
+> = {
+  // Covers `imageId` and `image.id` alike (`coverImageId = imageId ?? image?.id`).
   'src/server/services/collection.service.ts#upsertCollection': {
     sites: 1,
     guard:
@@ -306,10 +312,16 @@ const CONNECT_BY_ID_LEDGER: Record<string, { sites: number; guard: string }> = {
     sites: 1,
     guard: 'await assertUsableCollectionCover({ collectionId: id, imageId, userId, isModerator });',
   },
-  // `imageId` here is the id `resolveCoverImageId` returned, not a client value.
+  // Both ids are what `resolveCoverImageId` returned, not client values.
   'src/server/services/crucible.service.ts#updateCrucible': {
+    sites: 2,
+    guard: 'const heroImageId = changes.heroImage ? await resolveCoverImageId({',
+  },
+  // The `where` is reached only when the client sent no `id`, so it is always `-1`.
+  'src/server/services/user-profile.service.ts#updateUserProfile': {
     sites: 1,
-    guard: 'const imageId = changes.coverImage ? await resolveCoverImageId({',
+    guard: 'image !== undefined && !image?.id',
+    guardFollows: true,
   },
 };
 
@@ -320,7 +332,6 @@ const CONNECT_BY_ID_LEDGER: Record<string, { sites: number; guard: string }> = {
 const WRITE_CALL = /\.image\s*\.\s*(?:create|createMany|createManyAndReturn|upsert)\s*\(/g;
 const RAW_INSERT = /INSERT\s+INTO\s+(?:"?public"?\.)?"Image"/gi;
 const COVER_RESOLVER_CALL = /(?<![.\w])resolveCoverImageId\s*\(/g;
-const CONNECT_BY_IMAGE_ID = /\bconnect\s*:\s*\{\s*id\s*:\s*imageId\s*\}/g;
 const CREATE_IMAGE_CALL = /(?:(?<![.\w])|(?<=\bdeps\.))createImage\s*\(/g;
 
 /** Relation fields of type `Image` (or `Image?` / `Image[]`) on any Prisma model. */
@@ -338,6 +349,14 @@ const NESTED_CREATE = new RegExp(
   String.raw`\b(?:${IMAGE_RELATION_FIELDS.join(
     '|'
   )})\s*:[^;]{0,300}?\b(?:create|createMany|connectOrCreate|upsert)\s*:`,
+  'g'
+);
+
+/** A relation typed `Image` pointed at an existing row: `connect` or `connectOrCreate`'s `where`. */
+const CONNECT_EXISTING = new RegExp(
+  String.raw`\b(?:${IMAGE_RELATION_FIELDS.join(
+    '|'
+  )})\s*:[^;]{0,300}?\b(?:connect\s*:\s*\{\s*id\s*:|connectOrCreate\s*:\s*\{\s*where\s*:\s*\{\s*id\s*:)`,
   'g'
 );
 
@@ -375,7 +394,7 @@ function rawStatement(text: string, offset: number): string {
   return text.slice(offset, end === -1 ? text.length : end);
 }
 
-type Site = { key: string; region: string; body: string };
+type Site = { key: string; region: string; body: string; after: string };
 
 function sitesIn(file: string, text: string, re: RegExp): Site[] {
   return [...text.matchAll(re)].map((m) => {
@@ -387,7 +406,12 @@ function sitesIn(file: string, text: string, re: RegExp): Site[] {
         : re === NESTED_CREATE
         ? objectAfter(text, offset + m[0].length)
         : balanced(text, text.indexOf('(', offset + m[0].length - 1), '(', ')');
-    return { key: `${file}#${fn.name}`, region, body: text.slice(fn.start, offset) };
+    return {
+      key: `${file}#${fn.name}`,
+      region,
+      body: text.slice(fn.start, offset),
+      after: text.slice(offset, offset + 400),
+    };
   });
 }
 
@@ -574,17 +598,55 @@ describe('existing-image references', () => {
     expect(decided).toEqual(COVER_RESOLVER_CALLER_LEDGER);
   });
 
-  it('every connect-by-imageId write is classified, and its guard precedes it', () => {
-    const sites = collect(CONNECT_BY_IMAGE_ID);
+  it('every write pointing an Image relation at an existing row is classified, and guarded', () => {
+    const sites = collect(CONNECT_EXISTING);
     expect(countsOf(sites)).toEqual(
-      Object.fromEntries(Object.entries(CONNECT_BY_ID_LEDGER).map(([k, v]) => [k, v.sites]))
+      Object.fromEntries(Object.entries(CONNECT_EXISTING_LEDGER).map(([k, v]) => [k, v.sites]))
     );
     const missing = sites
-      .filter(
-        (site) => !normalized(site.body).includes(normalized(CONNECT_BY_ID_LEDGER[site.key].guard))
-      )
+      .filter((site) => {
+        const { guard, guardFollows } = CONNECT_EXISTING_LEDGER[site.key];
+        const text = guardFollows ? site.after : site.body;
+        return !normalized(text).includes(normalized(guard));
+      })
       .map((site) => site.key);
     expect(missing).toEqual([]);
+  });
+
+  it('the moderator-route resolver callers are reached only from moderator procedures', () => {
+    const routerFile = 'src/server/routers/challenge.router.ts';
+    const router = scan.code.get(routerFile)!;
+    const procedures = [
+      ...router.matchAll(/\n  (\w+): (\w+)\b([\s\S]*?)(?=\n  \w+: \w+\b|\n\}\);)/g),
+    ];
+    const moderatorOnly = Object.entries(COVER_RESOLVER_CALLER_LEDGER)
+      .filter(([, v]) => v.decision === 'moderator-route')
+      .map(([k]) => k.split('#')[1]);
+    expect(moderatorOnly.sort()).toEqual(['upsertChallenge', 'upsertChallengeEvent']);
+    for (const fn of moderatorOnly) {
+      const call = new RegExp(String.raw`\b${fn}\s*\(`);
+      const home = 'src/server/services/challenge.service.ts';
+      const callers = files.filter((f) => f !== home && call.test(scan.code.get(f)!));
+      expect(callers, fn).toEqual([routerFile]);
+      expect(scan.code.get(home)!.match(new RegExp(call, 'g')), fn).toHaveLength(1);
+      const via = procedures.filter(([, , , rest]) => call.test(rest)).map(([, , kind]) => kind);
+      expect(via, fn).toEqual(['moderatorProcedure']);
+    }
+  });
+
+  it('the resolver callers recorded as taking no id take a schema without one', () => {
+    expect(
+      Object.entries(COVER_RESOLVER_CALLER_LEDGER)
+        .filter(([, v]) => v.decision === 'input-has-no-id')
+        .map(([k]) => k.split('#')[0])
+    ).toEqual([
+      'src/server/services/crucible.service.ts',
+      'src/server/services/crucible.service.ts',
+    ]);
+    expect(crucibleImageSchema.shape).not.toHaveProperty('id');
+    expect(
+      crucibleImageSchema.parse({ url: URL_UUID, width: 1, height: 2, id: 7 } as never)
+    ).not.toHaveProperty('id');
   });
 });
 

@@ -266,7 +266,13 @@ const ImageCollection = ({
   return (
     <ImageContextMenuProvider
       additionalMenuItemsBefore={(image) => {
-        const canUpdateCover = !!permissions?.manage && !!image.id;
+        // Mirrors the server rule: a moderator, the caller's own image, or an accepted item.
+        const canUpdateCover =
+          !!permissions?.manage &&
+          !!image.id &&
+          (!!currentUser?.isModerator ||
+            image.collectionItemStatus === CollectionItemStatus.ACCEPTED ||
+            (image.userId ?? image.user?.id) === currentUser?.id);
 
         return (
           <>
