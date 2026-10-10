@@ -221,7 +221,7 @@ This grant is the client acting as itself, not on a user's behalf:
 - **Access token only.** The response has no `refresh_token`; the access token lives one hour
   (`expires_in: 3600`). Cache it and request a new one shortly before it expires or on a 401.
 - **Single-purpose.** A client-credentials token is only accepted on the endpoints its scope is
-  for (today the App Store catalog endpoints); everywhere else it authenticates nothing.
+  for (today the App Store catalog endpoints); everywhere else it is refused as a credential.
 
 The token's account is the client owner's. The scopes reserved for this grant are refused by every
 other flow (authorization code, device and app tokens), so they never appear on a consent screen.
