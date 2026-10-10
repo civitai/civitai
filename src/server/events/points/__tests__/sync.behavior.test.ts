@@ -68,13 +68,19 @@ afterAll(async () => {
 const place = (
   userId: number,
   entityId: number,
-  extra: { owner?: number; ended?: boolean; startedAt?: string; cosmeticId?: number } = {}
+  extra: {
+    owner?: number;
+    ended?: boolean;
+    startedAt?: string;
+    cosmeticId?: number;
+    entityType?: 'Image' | 'Model';
+  } = {}
 ) =>
   db.pg.query(
     `INSERT INTO "EventCosmeticPlacement"
        (event, "userId", "cosmeticId", "claimKey", team, "entityType", "entityId", "entityOwnerId",
         "startedAt", "endedAt")
-     VALUES ($1, $2, $3, 'claimed', 'Blue', 'Image', $4, $5, $6::timestamptz,
+     VALUES ($1, $2, $3, 'claimed', 'Blue', $8::"CosmeticEntity", $4, $5, $6::timestamptz,
              CASE WHEN $7 THEN now() ELSE NULL END)`,
     [
       EVENT.name,
@@ -84,6 +90,7 @@ const place = (
       extra.owner ?? userId,
       extra.startedAt ?? '2026-11-02T00:00:00Z',
       !!extra.ended,
+      extra.entityType ?? 'Image',
     ]
   );
 
@@ -209,6 +216,37 @@ describe('syncEventHats -> engine', () => {
     await engine.refresh();
     expect(engine.isHattedEntity('Image', 100)).toBe(true);
     expect(engine.isHattedEntity('Image', 101)).toBe(false);
+  });
+
+  // Model hats earn model thumbs up and views: the entity types come from the event's scoring config.
+  it('syncs hats on every entity type the event scores, not only images', async () => {
+    await place(OWNER, 300, { entityType: 'Model', cosmeticId: 8 });
+    await syncEventHats(LIVE);
+    expect(Object.keys(Object.fromEntries(hashes.get(keys.hats)!))).toEqual(['Model:300']);
+  });
+
+  // Before launch only flagged owners' hats may earn; the sync is what applies the flag.
+  it('during the preview, syncs only the hats of owners the flag is on for', async () => {
+    await place(OWNER, 100);
+    await place(OTHER, 102);
+    testerFlag.reset({ public: false, testers: [OTHER] });
+    dbMock.dbWrite.user.findMany.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) => where.id.in.map((id) => ({ id, isModerator: false }))) as never);
+    const PREVIEW = new Date(birthday2026.previewFrom!.getTime() + 24 * 60 * 60 * 1000);
+    await syncEventHats(PREVIEW);
+    expect(Object.keys(Object.fromEntries(hashes.get(keys.hats)!))).toEqual(['Image:102']);
+  });
+
+  it('takes every hat off, and logs it, outside any scoring phase', async () => {
+    await place(OWNER, 100);
+    await syncEventHats(LIVE);
+    // Before the preview opens there is no phase: nothing may earn.
+    await syncEventHats(new Date(birthday2026.previewFrom!.getTime() - 1));
+    expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({});
+    expect(log.at(-1)).toEqual({ k: 'Image:100', v: '' });
   });
 
   it('takes a hat off, and logs it, when its placement ends', async () => {
