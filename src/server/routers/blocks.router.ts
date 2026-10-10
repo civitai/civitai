@@ -6212,6 +6212,11 @@ export const blocksRouter = router({
    *
    * Cells run with bounded concurrency so one call cannot open an unbounded number
    * of upstream requests at once.
+   *
+   * 🔴 THE CALL HAS A TIME BUDGET (`BLOCK_ESTIMATE_BATCH_BUDGET_MS`). A cell not
+   * priced when it runs out — in flight or never started — is a failure snapshot
+   * with `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`, and the cells that did price are
+   * returned with it. No cell starts after the budget; a late result is discarded.
    */
   estimateWorkflowBatch: publicProcedure
     // Block-JWT-authed, like `estimateWorkflow`.
@@ -6249,19 +6254,52 @@ export const blocksRouter = router({
         });
       }
 
-      const snapshots = new Array<BlockWorkflowSnapshot>(input.bodies.length);
+      // 🔴 THE CALL HAS A BUDGET (`BLOCK_ESTIMATE_BATCH_BUDGET_MS`). When it runs out:
+      //   - the reply is built from the cells that finished, and every other cell is
+      //     `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`;
+      //   - no further cell is started: a worker only ever waits INSIDE a cell, so the
+      //     one `expired` check after that wait is what stops every worker;
+      //   - a cell still in flight is not cancelled, but its result is DISCARDED: the
+      //     worker drops it, and the reply is a copy taken at expiry anyway. Letting it
+      //     finish is safe because the per-cell path only quotes — nothing it runs
+      //     reserves, debits, persists a workflow or submits for real (see
+      //     `estimateBlockWorkflowCell`); at most it warms a read cache or bumps a
+      //     metric, exactly as a single estimate would.
+      const finished = new Array<BlockWorkflowSnapshot | undefined>(input.bodies.length);
       let next = 0;
+      let expired = false;
       const worker = async () => {
         while (next < input.bodies.length) {
           const index = next++;
-          snapshots[index] = await estimateBatchCell(ctx, claims, input.bodies[index]);
+          const snapshot = await estimateBatchCell(ctx, claims, input.bodies[index]);
+          if (expired) return;
+          finished[index] = snapshot;
         }
       };
-      await Promise.all(
-        Array.from(
-          { length: Math.min(BLOCK_ESTIMATE_BATCH_CONCURRENCY, input.bodies.length) },
-          worker
-        )
+      let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+      const budget = new Promise<void>((resolve) => {
+        budgetTimer = setTimeout(() => {
+          expired = true;
+          resolve();
+        }, BLOCK_ESTIMATE_BATCH_BUDGET_MS);
+      });
+      try {
+        await Promise.race([
+          Promise.all(
+            Array.from(
+              { length: Math.min(BLOCK_ESTIMATE_BATCH_CONCURRENCY, input.bodies.length) },
+              worker
+            )
+          ),
+          budget,
+        ]);
+      } finally {
+        expired = true;
+        clearTimeout(budgetTimer);
+      }
+      const snapshots = Array.from(
+        finished,
+        (snapshot) => snapshot ?? failedEstimateCell(BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR)
       );
 
       let total = 0;
@@ -9017,6 +9055,44 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
 const BLOCK_ESTIMATE_BATCH_CONCURRENCY = 4;
 
 /**
+ * The total time one `estimateWorkflowBatch` call may spend pricing cells. When it
+ * runs out the call replies with the cells that finished, and every other cell is
+ * a failure snapshot carrying `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`.
+ *
+ * WHY A CALL BUDGET AT ALL. One cell's orchestrator `whatif` is bounded per attempt
+ * (`WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS`, 8 s, in `services/orchestrator/workflows.ts`)
+ * and retried up to 3 attempts with 0.5 s + 1.5 s of backoff, so a single cell can
+ * take ~26 s. Cells run `BLOCK_ESTIMATE_BATCH_CONCURRENCY` (4) at a time, so a
+ * 16-cell call is 4 waves: ~104 s worst case without a budget. That is past the
+ * SDK's default request timeout (120 s for this request, minus the round trip),
+ * so one slow upstream would fail the whole grid client-side while this process
+ * kept working for a reply nobody reads.
+ *
+ * WHY 30 s. It is at least one cell's worst case (~26 s), so a cell that starts at
+ * once still ends on its own terms — priced, or failed with its own error — and
+ * the budget only cuts what an unhealthy upstream has queued behind it. And it is
+ * a quarter of the SDK's 120 s default, so the reply arrives long before a client
+ * using the default gives up, well within typical request timeouts.
+ */
+const BLOCK_ESTIMATE_BATCH_BUDGET_MS = 30_000;
+
+/**
+ * The error a cell carries when the call's budget ran out before it was priced —
+ * whether it was in flight or never started. A stable string: apps may match it to
+ * tell "not priced in time, retry later" apart from a refusal.
+ */
+const BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR = 'estimate timed out';
+
+/**
+ * A failed cell, in the shape a host builds for a failed single estimate
+ * (`failureSnapshot` in `components/AppBlocks/failureSnapshot.ts`). Every way a
+ * cell fails — a throw, or the call's budget running out — goes through this.
+ */
+function failedEstimateCell(error: string): BlockWorkflowSnapshot {
+  return { workflowId: 'failed', status: 'failed', error };
+}
+
+/**
  * The text a block is shown for a cell whose estimate threw — the same string a
  * host would have read off the single `estimateWorkflow` call's error.
  *
@@ -9071,7 +9147,7 @@ async function estimateBatchCell(
     const { snapshot } = await estimateBlockWorkflowCell(ctx, claims, { body: parsed.data });
     return snapshot;
   } catch (err) {
-    return { workflowId: 'failed', status: 'failed', error: estimateBatchCellErrorMessage(err) };
+    return failedEstimateCell(estimateBatchCellErrorMessage(err));
   }
 }
 

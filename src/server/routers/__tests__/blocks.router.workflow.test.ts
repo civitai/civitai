@@ -12412,4 +12412,92 @@ describe('blocks.estimateWorkflowBatch', () => {
     expect(mockSubmitWorkflow).toHaveBeenCalledTimes(12);
     expect(maxInFlight).toBe(4);
   });
+
+  it('replies at the 30 s call budget: fast cells priced, the rest "estimate timed out" in order, and no cell starts after it', async () => {
+    // Per-cell whatif durations and prices, keyed on the cell's marker. Prices are
+    // pairwise distinct so a reply in the wrong order cannot pass.
+    const delayMs: Record<string, number> = {
+      'cell-fa': 1_000,
+      'cell-sb': 60_000,
+      'cell-fc': 2_000,
+      'cell-sd': 60_000,
+      'cell-se': 60_000,
+      'cell-sf': 60_000,
+    };
+    const price: Record<string, number> = {
+      'cell-fa': 11,
+      'cell-sb': 101,
+      'cell-fc': 17,
+      'cell-sd': 103,
+      'cell-se': 107,
+      'cell-sf': 109,
+      'cell-gg': 113,
+      'cell-gh': 127,
+    };
+    const started: string[] = [];
+    mockSubmitWorkflow.mockImplementation(async (args: { body: unknown }) => {
+      const marker = /cell-[a-z0-9]+/.exec(JSON.stringify(args.body))?.[0] ?? 'unmarked';
+      started.push(marker);
+      await new Promise((resolve) => setTimeout(resolve, delayMs[marker] ?? 1_000));
+      return { id: '', status: 'succeeded', steps: [], cost: { total: price[marker] } };
+    });
+    vi.useFakeTimers();
+    try {
+      // 4 workers take fa, sb, fc, sd at t=0; fa and fc finish by 2 s and their
+      // workers take se and sf. All four slots are then held by 60 s cells, so gg
+      // and gh are still queued when the budget runs out at 30 s.
+      let reply:
+        | Awaited<ReturnType<ReturnType<typeof caller>['estimateWorkflowBatch']>>
+        | undefined;
+      const call = caller()
+        .estimateWorkflowBatch({
+          blockToken: 'tok',
+          bodies: [
+            step('cell-fa'),
+            step('cell-sb'),
+            step('cell-fc'),
+            step('cell-sd'),
+            step('cell-se'),
+            step('cell-sf'),
+            step('cell-gg'),
+            step('cell-gh'),
+          ],
+        })
+        .then((r) => {
+          reply = r;
+          return r;
+        });
+
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(reply, 'replied before the budget ran out').toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(reply, 'no reply at the 30 s budget').toBeDefined();
+      const result = await call;
+
+      const TIMED_OUT = { workflowId: 'failed', status: 'failed', error: 'estimate timed out' };
+      expect(result.snapshots.map((s) => s.cost?.total)).toEqual([
+        11,
+        undefined,
+        17,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
+      expect(result.snapshots[1]).toEqual(TIMED_OUT);
+      for (const i of [3, 4, 5, 6, 7]) expect(result.snapshots[i]).toEqual(TIMED_OUT);
+      expect(result.aggregate).toEqual({ total: 28, pricedCells: 2, cellCount: 8 });
+
+      // Let the in-flight slow cells finish. Their workers must not start the queued
+      // cells, and their late prices must not leak into the reply already sent.
+      const before = JSON.stringify(result);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(started).toEqual(['cell-fa', 'cell-sb', 'cell-fc', 'cell-sd', 'cell-se', 'cell-sf']);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(6);
+      expect(JSON.stringify(result)).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
