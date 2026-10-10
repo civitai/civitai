@@ -78,15 +78,20 @@ async function build(
   return contentHash;
 }
 
-/** A `CoocSql` that counts payload loads and can be made to fail. */
+/** A `CoocSql` that counts payload loads and queries still running, and can be made to fail. */
 function instrumented(sql: CoocSql) {
-  const state = { loads: 0, latestReads: 0, fail: false };
+  const state = { loads: 0, latestReads: 0, pending: 0, fail: false };
   const wrapped: CoocSql = {
     query: async (s) => {
       if (state.fail) throw new Error('replica unavailable');
       if (s.text.includes('"payload"')) state.loads++;
       if (s.text.includes('LIMIT 1')) state.latestReads++;
-      return sql.query(s);
+      state.pending++;
+      try {
+        return await sql.query(s);
+      } finally {
+        state.pending--;
+      }
     },
     execute: sql.execute,
   };
@@ -271,11 +276,16 @@ describe('CoocSnapshotHolder (production)', () => {
       onLoadFailure: (reason) => failures.push(reason),
     });
     void holder.resolve();
+    clock += COOC_SNAPSHOT_LOAD_TIMEOUT_MS;
     await vi.advanceTimersByTimeAsync(COOC_SNAPSHOT_LOAD_TIMEOUT_MS);
     expect(failures).toEqual(['load_failed']);
     expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
     expect(calls).toBe(1);
-    clock += COOC_SNAPSHOT_RETRY_MS;
+    // The retry is measured from the abandonment, not from when the check started.
+    clock += COOC_SNAPSHOT_RETRY_MS - 1;
+    void holder.resolve();
+    expect(calls).toBe(1);
+    clock += 1;
     void holder.resolve();
     expect(calls).toBe(2);
     await vi.advanceTimersByTimeAsync(COOC_SNAPSHOT_LOAD_TIMEOUT_MS);
@@ -339,7 +349,8 @@ describe('CoocSnapshotHolder (production)', () => {
     // The next poll sees the same rejected hash and does not download it again.
     clock += COOC_SNAPSHOT_POLL_MS;
     await holder.resolve();
-    await vi.waitFor(() => expect(probe.state.latestReads).toBe(3));
+    // Settled: the poll ran and no query (a re-download would be one) is still running.
+    await vi.waitFor(() => expect(probe.state).toMatchObject({ latestReads: 3, pending: 0 }));
     expect((await holder.resolve()).snapshot?.contentHash).toBe(old);
     expect(probe.state.loads).toBe(2); // the held one, and the mismatched one once
 
