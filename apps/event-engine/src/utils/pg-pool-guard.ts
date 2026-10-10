@@ -17,6 +17,11 @@ export function createGuardedPgPool(
  * package, while @civitai/db ships TypeScript source. Keep the two in step. Unguarded, a drop reaches
  * the uncaughtException handler in src/index.ts, which shuts the consumer down (or, before startup,
  * crashes it).
+ *
+ * Trade-off: the outbox poller's advisory-lock connection comes from this pool. If that one connection
+ * drops mid-sweep the lock is gone but the pod no longer exits, so it finishes the sweep on other
+ * connections while another pod may start one. FOR UPDATE SKIP LOCKED keeps the two from claiming the
+ * same row; the overlap ends with that sweep.
  */
 export function guardPgPool<P extends Pool>(pool: P, label: string, logError: PoolErrorLogFn): P {
   // One drop can reach both listeners (an idle client's error is re-emitted on the pool), so log

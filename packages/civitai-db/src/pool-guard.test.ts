@@ -62,7 +62,11 @@ async function waitForErrorOn(target: ErrorEmit['target']) {
   });
 }
 
-/** The guard's log lines for this drop, by message. One line per drop, never a duplicate. */
+/**
+ * The guard's log lines for this drop, by message. The guard dedupes by Error OBJECT, not by drop: a
+ * fake server's clean close yields one error, but a real failover (server FATAL, or a TCP reset) can
+ * give a checked-out client two distinct errors, so two lines.
+ */
 function loggedLines() {
   return consoleError.mock.calls
     .filter((args) => String(args[1]).includes(TERMINATED))

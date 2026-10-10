@@ -71,7 +71,9 @@ Kysely does not expose its dialect's pool.
 - **Dropped connections**: a dropped pg connection emits `'error'`, which crashes the process when
   nothing listens. `createPool`, `createClients` and `createKyselyClients` attach `guardPool`
   (`src/pool-guard.ts`): pool-level for idle clients, per-client for checked-out ones. Pre-built pools
-  passed in are not guarded here (`createPool` pools already are). ESLint bans `new Pool` /
-  `new pg.Pool` outside this package (`eslint-no-direct-pg-pool.cjs` at the repo root).
+  passed in are not guarded here (`createPool` pools already are). An ESLint rule
+  (`eslint-no-direct-pg-pool.cjs` at the repo root) bans `new Pool` / `new pg.Pool` outside this
+  package, but CI lints only changed files under `src/`, `packages/` and `apps/event-engine/`; in the
+  other apps it fires only when lint is run locally.
 
 Reference implementation: [apps/moderator/src/lib/server/db.ts](../../apps/moderator/src/lib/server/db.ts).
