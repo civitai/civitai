@@ -123,19 +123,22 @@ function client(via: 'pool' | 'tx', undo: Array<() => void>) {
     },
     eventFindFirst: async (args: {
       where: { appListingId: string; action: string; detail: string };
-      orderBy: unknown;
+      orderBy: Array<{ createdAt?: 'asc' | 'desc'; id?: 'asc' | 'desc' }>;
       select: Record<string, unknown>;
     }) => {
       ops.push(`${via}:reviewed`);
-      // Newest first: `events` is in insertion order.
-      const hit = [...events]
-        .reverse()
-        .find(
-          (e) =>
-            e.appListingId === args.where.appListingId &&
-            e.action === args.where.action &&
-            e.detail === args.where.detail
-        );
+      // `events` is in insertion order, which stands in for (createdAt, id). Honour the
+      // direction asked for, and refuse a query that does not ask, so "which end" is pinned.
+      const direction = args.orderBy?.[0]?.createdAt;
+      if (direction !== 'asc' && direction !== 'desc')
+        throw new Error('rating-change history read without a createdAt order');
+      const matching = events.filter(
+        (e) =>
+          e.appListingId === args.where.appListingId &&
+          e.action === args.where.action &&
+          e.detail === args.where.detail
+      );
+      const hit = direction === 'desc' ? matching[matching.length - 1] : matching[0];
       return hit ? pick(hit, args.select) : null;
     },
     eventCreate: async (args: { data: Event }) => {
@@ -392,6 +395,18 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
     await moderatorRerates(SHOT, NsfwLevel.PG);
 
     // The derived target is g; the newest REVIEW decision (pg13, not the older x) bounds it.
+    expect(ratingOf('apl_a')).toBe('pg13');
+  });
+
+  it('reads the NEWEST review decision when there are several, not the oldest', async () => {
+    // An older review held the listing at r; a later review relaxed that decision to pg.
+    seedMisScanned({ contentRating: 'r' });
+    events.push(reviewEvent('r'), reviewEvent('pg'));
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    // Newest (pg) is below the media target, so the correction lands on pg13. The older r
+    // would have held the listing at r.
     expect(ratingOf('apl_a')).toBe('pg13');
   });
 
