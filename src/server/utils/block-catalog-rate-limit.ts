@@ -45,13 +45,15 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 // number is live and moving it is a separate decision with its own blast radius.
 //
 //   1. THE KEY IS NOT PER-PERSON, THOUGH EVERY SENTENCE ABOVE REASONS AS IF IT WERE.
-//      `blockInstanceId` is one viewer's iframe for a MODEL-SLOT install, but for a
+//      `blockInstanceId` names an INSTALL, not a person: for a MODEL-SLOT install it
+//      is one install on one model page, served to every visitor of that page; for a
 //      PAGE app it is the synthetic `page_<appBlockId>` and for a platform default
 //      it is `'pdb_' || app_block_id` — one string shared by EVERY concurrent viewer
 //      of that app, platform-wide. So for those surfaces "120 per 10 s" is an
 //      app-wide ceiling, not a per-user one, and one viewer can be refused because
-//      of strangers' traffic. The new `:poll:` bucket below does NOT inherit this:
-//      it puts the viewer in the key, and says why.
+//      of strangers' traffic. The `:poll:`, `:post:` and `:training-dataset:`
+//      buckets below do NOT inherit this: each puts the viewer in the key, and the
+//      poll bucket says why.
 //   2. ITS TENANCY GREW, SO THE CEILING MOVED WITH IT — clawgate #569 plus its round-0
 //      audit. #569 first added FIVE bridge procedures to this bucket against an
 //      UNCHANGED ceiling sized for "a model/image selector" alone. That is a tightening
@@ -109,31 +111,48 @@ export const BLOCK_PUBLISH_RATE_LIMIT_WINDOW_SECONDS = 300;
 //     owner. Charging posts against the image bucket would let one 3-image post
 //     and one 60-image publish trade against each other, which is incoherent.
 //
-// 3 posts / hour / block instance. A real app posts a finished result once; three
-// gives room for a mistake and a retry without opening a spam faucet. The window
-// is long ON PURPOSE — unlike the catalog bucket (where a short window means a
-// tripped instance recovers in seconds, which is what you want for a read), a
-// short window here would let a block post continuously at the ceiling.
+// 3 posts / hour / (block instance, viewer). One person posts a finished result
+// once; three gives room for a mistake and a retry without opening a spam faucet.
+// The window is long ON PURPOSE — unlike the catalog bucket (where a short window
+// means a tripped instance recovers in seconds, which is what you want for a
+// read), a short window here would let a block post continuously at the ceiling.
 //
-// ⚠️ STATED LIMITS, so nobody reads this as more than it is: the bucket is keyed
-// on `blockInstanceId` (the same choice, for the same `jti`-churn reason, as the
-// other two), it is a FIXED window so a 2× burst across a boundary is reachable
-// by construction, and it FAILS OPEN on a Redis error. It is a cost ceiling, not
-// a security control. The controls that actually bound abuse are the self-dealing
-// guard, the per-source ownership proofs, and the per-post consent confirm.
+// 🔴 KEYED ON THE INSTANCE **AND THE VIEWER**, for the reason the poll bucket
+// below argues in full. `blockInstanceId` names an install, not a person: a
+// MODEL-SLOT install is served to every visitor of its model page, and for a PAGE
+// app it is the synthetic `page_<appBlockId>` — one string shared by every viewer
+// of that app. Keyed on the instance alone, "3 per hour" was therefore an allowance
+// shared across everyone using that install: three posts by anyone used up posting
+// for everyone for the hour. The paragraph above reasons
+// about one person posting a result, so the key has to be one person. `userId` is
+// the self-bound token subject, never client input, and `blockInstanceId` stays
+// in the key for the same `jti`-churn reason the other buckets give (a re-mint
+// must not buy a fresh bucket).
+//
+// This bucket therefore does not bound an APP's total on any surface. The
+// app-aggregate bucket below does, and it is unchanged.
+//
+// ⚠️ STATED LIMITS, so nobody reads this as more than it is: it is a FIXED window
+// so a 2× burst across a boundary is reachable by construction, and it FAILS OPEN
+// on a Redis error. It is a cost ceiling, not a security control. The controls
+// that actually bound abuse are the self-dealing guard, the per-source ownership
+// proofs, and the per-post consent confirm.
 export const BLOCK_POST_RATE_LIMIT_MAX = 3;
 export const BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS = 3600;
 
-// APP-AGGREGATE post bucket, keyed on `claims.appId`. The per-instance bucket
-// above bounds ONE INSTALL, so an app with N installs can post N × 3 per hour and
-// no ceiling anywhere sees the total. This is the aggregate the per-instance
-// bucket cannot express.
+// APP-AGGREGATE post bucket, keyed on `claims.appId`. The bucket above bounds ONE
+// VIEWER OF ONE INSTALL, so an app with N of those can post N × 3 per hour and no
+// ceiling anywhere sees the total. This is the aggregate that bucket cannot
+// express — and for a page app, whose viewers all share one instance id, it is
+// the only bound on the app as a whole.
 //
 // 🔴 HOW THE NUMBER WAS CHOSEN, STATED PLAINLY BECAUSE IT IS NOT DATA-DERIVED.
-// It is 100 × the per-instance ceiling: an app has to have 100 DISTINCT installs
-// each posting at their own hourly maximum, in the same hour, before this engages
-// at all. That is the whole rationale — there is no measurement behind it, and
-// the per-instance 3/hour it multiplies is itself an acknowledged guess. It is a
+// It is 100 × the per-(instance, viewer) ceiling: an app has to have 100 DISTINCT
+// (install, viewer) pairs each posting at their own hourly maximum, in the same
+// hour, before this engages at all. (It was picked when that bucket was keyed on
+// the install alone, as "100 distinct installs"; the number is unchanged.) That is
+// the whole rationale — there is no measurement behind it, and the 3/hour it
+// multiplies is itself an acknowledged guess. It is a
 // STARTING VALUE to be revised from the `block_scope_invocations` audit rows once
 // a real app has run on this path; the rows record every post outcome per app, so
 // the observed per-app hourly distribution is exactly what should replace it.
@@ -170,9 +189,12 @@ export const BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS = 3600;
 //      when the caller opts into the long poll — followed by an inline output
 //      moderation scan. They occupy the origin differently.
 //
-// 🔴 KEYED ON THE INSTALL **AND THE VIEWER**, WHICH IS THE ONE PLACE THIS BUCKET
-// DEPARTS FROM ITS FOUR SIBLINGS. They key on `blockInstanceId` alone, and for a
-// MODEL-SLOT install that really is one viewer's iframe. For a PAGE app it is not:
+// 🔴 KEYED ON THE INSTALL **AND THE VIEWER**, WHICH IS WHERE THIS BUCKET DEPARTS
+// FROM THE CATALOG, PUBLISH, APP-AGGREGATE POST AND LLM BUCKETS (the per-viewer post
+// bucket and the training-dataset bucket follow this one instead). The catalog,
+// publish and LLM buckets key on `blockInstanceId` alone. That id names an install,
+// not a person — a MODEL-SLOT install is served to every visitor of its model page —
+// and for a PAGE app the sharing is widest:
 // `src/pages/api/v1/block-tokens/index.ts` requires the synthetic `page_<appBlockId>`
 // form, and `block-registry.service.ts` mints `'pdb_' || app_block_id` for platform
 // defaults — ONE STRING SHARED BY EVERY CONCURRENT VIEWER OF THAT APP, platform-wide.
@@ -453,9 +475,15 @@ export async function checkBlockPublishRateLimit(
 }
 
 /**
- * Records ONE post against `blockInstanceId`'s post window and reports whether it
- * is within the per-instance ceiling. Distinct `:post:` sub-namespace so it can
+ * Records ONE post against this (instance, viewer)'s post window and reports
+ * whether it is within the ceiling. Distinct `:post:` sub-namespace so it can
  * NEVER contend with the catalog-read, publish or mint buckets.
+ *
+ * @param blockInstanceId the stable per-install identity from the verified token.
+ * @param userId the SELF-BOUND token subject — never client input. It is in the key
+ *   because `blockInstanceId` is `page_<appBlockId>` for a page app, i.e. shared by
+ *   every viewer of it; without this half the allowance would be shared across all
+ *   of that app's viewers. Argued at the constants.
  *
  * Weight is always 1 — a post is the unit, regardless of how many images it
  * carries. The per-image origin cost of adopting/persisting those images is
@@ -467,10 +495,11 @@ export async function checkBlockPublishRateLimit(
  * is not.
  */
 export async function checkBlockPostRateLimit(
-  blockInstanceId: string
+  blockInstanceId: string,
+  userId: number
 ): Promise<BlockCatalogRateLimitResult> {
   return checkFixedWindow(
-    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:post:${blockInstanceId}`,
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:post:${blockInstanceId}:${userId}`,
     BLOCK_POST_RATE_LIMIT_MAX,
     BLOCK_POST_RATE_LIMIT_WINDOW_SECONDS
   );
@@ -514,17 +543,18 @@ export async function checkBlockPollRateLimit(
 
 /**
  * Records ONE post against `appId`'s AGGREGATE post window — the ceiling the
- * per-instance bucket structurally cannot express, because it is keyed on the
- * install and an app has many of those.
+ * per-(instance, viewer) bucket structurally cannot express, because it is keyed
+ * on one viewer of one install and an app has many of those.
  *
  * Distinct `:post-app:` sub-namespace so it can never contend with the
- * per-instance `:post:` bucket, the publish, catalog or mint buckets. Weight is
- * always 1, the same unit as the per-instance bucket, so the two numbers are
+ * per-(instance, viewer) `:post:` bucket, the publish, catalog or mint buckets.
+ * Weight is always 1, the same unit as that bucket, so the two numbers are
  * directly comparable.
  *
  * 🔴 ADDITIVE, NOT A REPLACEMENT. The caller checks BOTH; either refusing refuses
- * the post. Neither subsumes the other: the per-instance bucket stops one install
- * spamming, this one stops an app aggregating that allowance across installs.
+ * the post. Neither subsumes the other: the `:post:` bucket stops one viewer of
+ * one install spamming, this one stops an app aggregating that allowance across
+ * installs and viewers.
  *
  * Same fail-open posture as every sibling limiter — a Redis incident must not
  * break a legitimate post. See `BLOCK_POST_APP_RATE_LIMIT_MAX` for how the
