@@ -106,19 +106,27 @@ export async function getEventData({ event, viewer }: EventInput & Viewer) {
   }
 }
 
-export async function getTeamScores({ event, viewer }: EventInput & Viewer) {
+export async function getTeamScores({
+  event,
+  viewer,
+  onDegraded,
+}: EventInput & Viewer & OnDegraded) {
   try {
     const access = await eventEngine.assertReadable(event, viewer);
-    return await eventEngine.getTeamScores(event, access);
+    return await eventEngine.getTeamScores(event, access, { onDegraded });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
 }
 
-export async function getTeamScoreHistory({ viewer, ...input }: TeamScoreHistoryInput & Viewer) {
+export async function getTeamScoreHistory({
+  viewer,
+  onDegraded,
+  ...input
+}: TeamScoreHistoryInput & Viewer & OnDegraded) {
   try {
     const access = await eventEngine.assertReadable(input.event, viewer);
-    return await eventEngine.getTeamScoreHistory(input, access);
+    return await eventEngine.getTeamScoreHistory(input, access, { onDegraded });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

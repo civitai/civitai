@@ -181,9 +181,7 @@ export const eventEngine = {
     for (const eventDef of getScorableEvents(now)) {
       const scored = scoredEvent(eventDef);
       if (scored) {
-        // Kill switch off: no settling at all. The standings keep serving their last snapshot, and
-        // a scored event never falls through to the old leaderboard below.
-        if (!(await isEventPointsEnabled())) continue;
+        // A scored event never falls through to the old leaderboard below.
         // Keeps running past the end so the last hours and late data are settled; the referee clips
         // every window to the season's end.
         if (eventDef.endDate.getTime() + scored.scoring.finalizeAfterMs < now.getTime()) continue;
@@ -191,24 +189,28 @@ export const eventEngine = {
         // applies the flag), settled into its own season.
         const phase = await getEventScoringPhase(eventDef, now);
         if (!phase) continue;
-        await syncEventHats(now);
-        const season = eventPointSeason(eventDef.startDate, now);
-        // A failed settle must not also freeze the standings snapshot or stop the other events.
-        try {
-          const result = await runEventPointsReferee(scored, season, now);
-          logToAxiom({
-            type: 'info',
-            name: 'event-points-referee',
-            event: eventDef.name,
-            ...result,
-          }).catch(() => undefined);
-        } catch (error) {
-          logToAxiom({
-            type: 'error',
-            name: 'event-points-referee',
-            event: eventDef.name,
-            message: (error as Error).message,
-          }).catch(() => undefined);
+        // Kill switch off: no settling at all, only the snapshot below, so the pages show the last
+        // settled numbers from the durable table rather than nothing.
+        if (await isEventPointsEnabled()) {
+          await syncEventHats(now);
+          const season = eventPointSeason(eventDef.startDate, now);
+          // A failed settle must not also freeze the standings snapshot or stop the other events.
+          try {
+            const result = await runEventPointsReferee(scored, season, now);
+            logToAxiom({
+              type: 'info',
+              name: 'event-points-referee',
+              event: eventDef.name,
+              ...result,
+            }).catch(() => undefined);
+          } catch (error) {
+            logToAxiom({
+              type: 'error',
+              name: 'event-points-referee',
+              event: eventDef.name,
+              message: (error as Error).message,
+            }).catch(() => undefined);
+          }
         }
         await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
         continue;
@@ -450,11 +452,12 @@ export const eventEngine = {
   // Ungated like getTeamScores.
   async getTeamScoreHistory(
     { event, window, start }: TeamScoreHistoryInput,
-    access: EventAccess = 'open'
+    access: EventAccess = 'open',
+    read?: Parameters<typeof getEventStandings>[1]
   ) {
     const eventDef = getEventDef(event);
     const scored = scoredEventFor(eventDef, access);
-    if (scored) return getScoredTeamScoreHistory(scored);
+    if (scored) return getScoredTeamScoreHistory(scored, read);
 
     // Get team scores from buzz accounts
     const accounts = this.getTeamAccounts(event);

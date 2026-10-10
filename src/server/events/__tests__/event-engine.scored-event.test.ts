@@ -348,6 +348,22 @@ describe('end-of-event cleanup', () => {
   });
 });
 
+describe('scored team reads', () => {
+  it('hands the degraded callback to the settled standings read', async () => {
+    const onDegraded = vi.fn();
+    await eventEngine.getTeamScores(BIRTHDAY_2026_EVENT, 'open', { onDegraded });
+    await eventEngine.getTeamScoreHistory({ event: BIRTHDAY_2026_EVENT }, 'open', { onDegraded });
+    expect(mockScoring.getEventStandings).toHaveBeenCalledWith(
+      expect.objectContaining({ name: BIRTHDAY_2026_EVENT }),
+      { onDegraded }
+    );
+    expect(mockScoring.getTeamScoreHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ name: BIRTHDAY_2026_EVENT }),
+      { onDegraded }
+    );
+  });
+});
+
 describe('scored event is inert before it starts', () => {
   const justBefore = new Date(BIRTHDAY_2026_STARTS_AT.getTime() - 1);
   const beforePreview = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1);
@@ -468,18 +484,36 @@ describe('scoring behind the flag', () => {
     expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
   });
 
-  // Off, a scored event settles nothing and must not fall through to the old donor leaderboard.
-  it('settles nothing and writes nothing while the engine is switched off', async () => {
+  // Off, a scored event settles nothing (no hat sync, no referee, so no ClickHouse read and no push)
+  // and must not fall through to the old donor leaderboard. It only snapshots the durable table, so
+  // the pages show the last settled numbers.
+  it('settles nothing while the engine is switched off, but still snapshots the standings', async () => {
     killSwitch.on = false;
     await eventEngine.updateLeaderboard(DURING);
     expect(mockSync.syncEventHats).not.toHaveBeenCalled();
     expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
-    expect(mockScoring.refreshStandings).not.toHaveBeenCalled();
+    expect(mockScoring.refreshStandings.mock.calls).toEqual([
+      [expect.objectContaining({ name: BIRTHDAY_2026_EVENT }), dbMock.dbWrite],
+    ]);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_STARTS_AT]);
     expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
 
     killSwitch.on = true;
     await eventEngine.updateLeaderboard(DURING);
     expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+  });
+
+  it('snapshots the preview from its own start while switched off, and nothing outside the window', async () => {
+    killSwitch.on = false;
+    testerFlag.reset({ public: false });
+    await eventEngine.updateLeaderboard(PREVIEW);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_PREVIEW_FROM]);
+    const finalize = birthday2026.scoring!.finalizeAfterMs;
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() - 1));
+    await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize + 1));
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(mockSync.syncEventHats).not.toHaveBeenCalled();
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
   });
 
   it('still refreshes the standings when the referee fails', async () => {

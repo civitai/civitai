@@ -74,13 +74,17 @@ export const eventRouter = router({
     .input(eventSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ ctx, input }) => getTeamScores({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) =>
+      getTeamScores({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+    ),
   getTeamScoreHistory: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(teamScoreHistorySchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ ctx, input }) => getTeamScoreHistory({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) =>
+      getTeamScoreHistory({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+    ),
   getCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)

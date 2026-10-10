@@ -238,10 +238,14 @@ describe('the other event reads are gated on the viewer too', () => {
 
   it('reads team scores and history as the window the viewer is in', async () => {
     engine.assertReadable.mockResolvedValue('preview');
-    await service.getTeamScores({ event: 'birthday2026', viewer });
-    await service.getTeamScoreHistory({ event: 'birthday2026', viewer });
-    expect(engine.getTeamScores).toHaveBeenCalledWith('birthday2026', 'preview');
-    expect(engine.getTeamScoreHistory).toHaveBeenCalledWith({ event: 'birthday2026' }, 'preview');
+    // Both routes are edge-cached: a read that fell back to zeros must be able to say so.
+    const onDegraded = vi.fn();
+    await service.getTeamScores({ event: 'birthday2026', viewer, onDegraded });
+    await service.getTeamScoreHistory({ event: 'birthday2026', viewer, onDegraded });
+    expect(engine.getTeamScores).toHaveBeenCalledWith('birthday2026', 'preview', { onDegraded });
+    expect(engine.getTeamScoreHistory).toHaveBeenCalledWith({ event: 'birthday2026' }, 'preview', {
+      onDegraded,
+    });
   });
 });
 
