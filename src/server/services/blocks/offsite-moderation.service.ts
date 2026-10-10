@@ -23,6 +23,7 @@ import {
 import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.service';
 import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import {
   assertListingAssetsScanCleanInTx,
   assertListingMeetsFloor,
@@ -1310,9 +1311,7 @@ async function queryModerationEvents(opts: {
       // See OWNER_HIDDEN_MODERATION_ACTIONS: an action about a THIRD PARTY's data
       // is withheld from the owner's history outright, because the owner select
       // keeps `reason` and the reason is about someone else.
-      ...(opts.ownerScoped
-        ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } }
-        : {}),
+      ...(opts.ownerScoped ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } } : {}),
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,
@@ -1924,7 +1923,7 @@ export async function republishOwnListing(opts: {
   // Set by the REVIEW arm; `null` means the republish went live immediately.
   let reviewReason: RepublishReviewReason | null = null;
 
-  await dbWrite.$transaction(async (tx) => {
+  const rating = await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
     if (listing.status !== 'removed') {
       throw new OffsiteModerationError(
@@ -2010,6 +2009,11 @@ export async function republishOwnListing(opts: {
       input.appListingId,
       listing.contentRating
     );
+    const ratingChange = {
+      slug: listing.slug,
+      before: listing.contentRating,
+      after: flooredRating,
+    };
 
     // 🔴 THE ASSET-CHANGE REVIEW GATE. Compare the listing's CURRENT reviewable asset
     // surface against the one recorded when the owner unpublished it (= the one a
@@ -2041,7 +2045,7 @@ export async function republishOwnListing(opts: {
         reviewReason,
         flooredRating,
       });
-      return;
+      return ratingChange;
     }
 
     const flipped = await tx.appListing.updateMany({
@@ -2083,6 +2087,12 @@ export async function republishOwnListing(opts: {
         after: { status: 'approved' },
       },
     });
+    return ratingChange;
+  });
+  await recordListingRatingChangeAfterCommit({
+    appListingId: input.appListingId,
+    ...rating,
+    actorUserId: userId,
   });
 
   // Post-commit, best-effort: warn when an on-site owner-republish restored the LISTING

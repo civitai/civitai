@@ -121,6 +121,8 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   // than second-person like the `owner-*` rows, because a MODERATOR did this, not the owner.
   // Blue, matching `claim`/`message-owner` — informational, not a takedown.
   'set-visibility': { label: 'Store visibility changed', color: 'blue' },
+  // The event's `reason` carries the before/after sentence; this is only its badge.
+  'rating-change': { label: 'Content rating changed', color: 'blue' },
   // App Blocks per-user STORAGE takedown — a moderator removed one USER's stored
   // rows from this app. 🔴 MOD-VIEW ONLY in practice: unlike every other entry
   // here, this action is withheld from the owner's own history

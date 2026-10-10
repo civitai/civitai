@@ -171,6 +171,15 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // transition because that is what it changed; this one changes none, so a `status` key
   // would describe a transition that did not happen.
   'set-visibility',
+  // The listing's content rating moved without anyone setting it by hand: a go-live or
+  // asset edit floored it at its media, a review replaced it, or a moderator re-rated one of
+  // its images (`app-listing-rating.ts` is the only writer). Changes no `status`.
+  //
+  // `reason` — the owner-facing sentence, e.g. "Rating changed G → R: store imagery was
+  //            rated R." The owner history shows only this, so it carries both values.
+  // `detail` — the cause: 'store-media' | 'image-review' | 'review'.
+  // `before` — { contentRating }.   `after` — { contentRating, imageIds }.
+  'rating-change',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

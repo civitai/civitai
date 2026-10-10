@@ -1,0 +1,508 @@
+import { Prisma } from '@prisma/client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type * as AppListingService from '~/server/services/blocks/app-listing.service';
+
+const { bustCatalog } = vi.hoisted(() => ({ bustCatalog: vi.fn(async () => undefined) }));
+vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingService>()),
+  bustAppListingCatalogCache: () => bustCatalog(),
+}));
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  reDeriveListingRatingInTx,
+  reDeriveListingRatingsForModeratedImage,
+} from '~/server/services/blocks/app-listing-rating-rederive.service';
+
+/**
+ * A moderator re-rated an image → the ratings of the live listings that use it.
+ *
+ * The db is an in-memory store behind the shared mock. Its reads HONOUR the `where` they are
+ * handed (and the raw lock statement's own text), so dropping a clause from the code changes
+ * what a case sees; `$transaction` snapshots and restores the store on a throw.
+ */
+
+type Listing = {
+  id: string;
+  slug: string;
+  kind: 'onsite' | 'offsite';
+  status: string;
+  revisionOfId: string | null;
+  contentRating: string | null;
+  iconId: number | null;
+  coverId: number | null;
+  /** The backing app's own rating; `undefined` = no backing block. */
+  declared?: string;
+};
+type Image = { id: number; nsfwLevel: number; ingestion: string };
+type Shot = { appListingId: string; imageId: number | null };
+type Event = {
+  appListingId: string;
+  slug: string;
+  action: string;
+  actorUserId: number | null;
+  reason: string;
+  detail: string;
+  before: unknown;
+  after: unknown;
+};
+
+let listings: Listing[];
+let images: Image[];
+let shots: Shot[];
+let events: Event[];
+let failEventInsert: boolean;
+let lockStatements: string[];
+
+type Fn = { mockImplementation: (f: (...a: never[]) => unknown) => void };
+const fake = (node: unknown, impl: (...a: never[]) => unknown) =>
+  (node as Fn).mockImplementation(impl);
+
+function installStore() {
+  const db = dbMock.dbWrite;
+
+  fake(
+    db.appListing.findMany,
+    async (args: {
+      where: {
+        status?: string;
+        revisionOfId?: null;
+        OR: Array<Record<string, unknown>>;
+      };
+    }) => {
+      const { where } = args;
+      // The three OR arms, each honoured only if the code asked for it.
+      const arms = JSON.stringify(where.OR);
+      const imageId = Number(arms.match(/\d+/)![0]);
+      return listings
+        .filter((l) => !('status' in where) || l.status === where.status)
+        .filter((l) => !('revisionOfId' in where) || l.revisionOfId === where.revisionOfId)
+        .filter(
+          (l) =>
+            (arms.includes('"iconId"') && l.iconId === imageId) ||
+            (arms.includes('"coverId"') && l.coverId === imageId) ||
+            (arms.includes('"screenshots"') &&
+              shots.some((s) => s.appListingId === l.id && s.imageId === imageId))
+        )
+        .map((l) => ({ id: l.id }));
+    }
+  );
+
+  fake(db.$queryRaw, async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const stmt = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+    const text = stmt.text.replace(/\s+/g, ' ').trim();
+    lockStatements.push(text);
+    const [id] = stmt.values as [string];
+    return listings
+      .filter((l) => l.id === id)
+      .filter((l) => !text.includes(`"status" = 'approved'`) || l.status === 'approved')
+      .filter((l) => !text.includes(`"revision_of_id" IS NULL`) || l.revisionOfId === null)
+      .map((l) => ({ id: l.id }));
+  });
+
+  fake(db.appListing.findUnique, async (args: { where: { id: string } }) => {
+    const l = listings.find((x) => x.id === args.where.id);
+    if (!l) return null;
+    return { ...l, appBlock: l.declared === undefined ? null : { contentRating: l.declared } };
+  });
+  fake(
+    db.appListingScreenshot.findMany,
+    async (args: { where: { appListingId: string; imageId?: { not: null } } }) =>
+      shots
+        .filter((s) => s.appListingId === args.where.appListingId)
+        .filter((s) => !args.where.imageId || s.imageId !== null)
+  );
+  fake(db.image.findMany, async (args: { where: { id: { in: number[] } } }) =>
+    images.filter((i) => args.where.id.in.includes(i.id))
+  );
+  fake(
+    db.appListing.update,
+    async (args: { where: { id: string }; data: { contentRating: string } }) => {
+      const l = listings.find((x) => x.id === args.where.id);
+      if (!l) throw new Error('row not found');
+      Object.assign(l, args.data);
+      return l;
+    }
+  );
+  fake(db.appListingModerationEvent.create, async (args: { data: Event }) => {
+    if (failEventInsert)
+      throw Object.assign(new Error('violates check constraint'), { code: '23514' });
+    events.push(args.data);
+    return args.data;
+  });
+  fake(db.$transaction, async (fn: (tx: unknown) => Promise<unknown>) => {
+    const snapshot = { listings: structuredClone(listings), events: structuredClone(events) };
+    try {
+      return await fn(db);
+    } catch (err) {
+      listings = snapshot.listings;
+      events = snapshot.events;
+      throw err;
+    }
+  });
+}
+
+const MOD = 9001;
+const ICON = 11;
+const COVER = 12;
+const SHOT = 13;
+
+/** Declared g, assets {PG, PG13, R}, stored r — the rating a mis-scanned R screenshot leaves. */
+function seedMisScanned(over: Partial<Listing> = {}) {
+  listings = [
+    {
+      id: 'apl_a',
+      slug: 'app-a',
+      kind: 'onsite',
+      status: 'approved',
+      revisionOfId: null,
+      contentRating: 'r',
+      iconId: ICON,
+      coverId: COVER,
+      declared: 'g',
+      ...over,
+    },
+  ];
+  images = [
+    { id: ICON, nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned' },
+    { id: COVER, nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned' },
+    { id: SHOT, nsfwLevel: NsfwLevel.R, ingestion: 'Scanned' },
+  ];
+  shots = [{ appListingId: 'apl_a', imageId: SHOT }];
+}
+
+/** The moderator's write: set the image, then run the hook with its previous level. */
+async function moderatorRerates(imageId: number, nsfwLevel: number) {
+  const image = images.find((i) => i.id === imageId)!;
+  const previousNsfwLevel = image.nsfwLevel;
+  image.nsfwLevel = nsfwLevel;
+  return reDeriveListingRatingsForModeratedImage({ imageId, previousNsfwLevel, actorUserId: MOD });
+}
+
+const ratingOf = (id: string) => listings.find((l) => l.id === id)!.contentRating;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  events = [];
+  failEventInsert = false;
+  lockStatements = [];
+  seedMisScanned();
+  installStore();
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+});
+
+describe('lowering after a moderator corrects a mis-scanned image', () => {
+  it('declared g, assets {PG, PG13, R}, stored r: R → PG lowers the listing to pg13, not g', async () => {
+    const changed = await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('pg13');
+    expect(changed).toEqual([{ appListingId: 'apl_a', before: 'r', after: 'pg13' }]);
+    expect(events).toEqual([
+      {
+        id: expect.stringMatching(/^alme_/),
+        appListingId: 'apl_a',
+        slug: 'app-a',
+        action: 'rating-change',
+        actorUserId: MOD,
+        reason: 'Rating lowered R → PG-13 after a moderator reviewed an image.',
+        detail: 'image-review',
+        before: { contentRating: 'r' },
+        after: { contentRating: 'pg13', imageIds: [SHOT] },
+      },
+    ]);
+    expect(bustCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('never goes below the app’s declared rating: declared r, every asset PG → stays r', async () => {
+    seedMisScanned({ declared: 'r', contentRating: 'x' });
+    images.find((i) => i.id === COVER)!.nsfwLevel = NsfwLevel.PG;
+    images.find((i) => i.id === SHOT)!.nsfwLevel = NsfwLevel.X;
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    // x was the X screenshot's doing, so it comes down — to the declared r, not to g.
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events.map((e) => e.after)).toEqual([{ contentRating: 'r', imageIds: [SHOT] }]);
+  });
+
+  it('declared r, stored r, every asset PG → untouched, no event', async () => {
+    seedMisScanned({ declared: 'r', contentRating: 'r' });
+    images.find((i) => i.id === COVER)!.nsfwLevel = NsfwLevel.PG;
+
+    const changed = await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(changed).toEqual([]);
+    expect(events).toEqual([]);
+    expect(bustCatalog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['still scanning', { ingestion: 'Pending', nsfwLevel: NsfwLevel.PG }],
+    ['blocked', { ingestion: 'Blocked', nsfwLevel: NsfwLevel.PG }],
+    ['scanned but never given a level', { ingestion: 'Scanned', nsfwLevel: 0 }],
+  ])('does not lower while another asset is %s', async (_label, cover) => {
+    Object.assign(images.find((i) => i.id === COVER)!, cover);
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+  });
+
+  it('does not lower while an asset’s Image row is missing', async () => {
+    images = images.filter((i) => i.id !== COVER);
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+  });
+
+  it('does not lower a rating the re-rated image never explained (a review override above the media)', async () => {
+    // Stored x, but the image was only ever R: something else put x there.
+    seedMisScanned({ contentRating: 'x' });
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('x');
+    expect(events).toEqual([]);
+  });
+
+  it('does not lower without the image’s previous level', async () => {
+    images.find((i) => i.id === SHOT)!.nsfwLevel = NsfwLevel.PG;
+
+    await reDeriveListingRatingsForModeratedImage({
+      imageId: SHOT,
+      previousNsfwLevel: null,
+      actorUserId: MOD,
+    });
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+  });
+
+  it('never lowers an off-site listing, even one with an app attached', async () => {
+    seedMisScanned({ kind: 'offsite' });
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+  });
+
+  it('never lowers an on-site listing that has no backing app to read a declared rating from', async () => {
+    seedMisScanned({ declared: undefined });
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+  });
+});
+
+describe('raising after a moderator re-rates an image upward', () => {
+  it('PG → X raises the listing to x and records it', async () => {
+    seedMisScanned({ contentRating: 'r' });
+
+    const changed = await moderatorRerates(ICON, NsfwLevel.X);
+
+    expect(ratingOf('apl_a')).toBe('x');
+    expect(changed).toEqual([{ appListingId: 'apl_a', before: 'r', after: 'x' }]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      action: 'rating-change',
+      actorUserId: MOD,
+      reason: 'Rating raised R → X after a moderator reviewed an image.',
+      detail: 'image-review',
+      before: { contentRating: 'r' },
+      after: { contentRating: 'x', imageIds: [ICON] },
+    });
+    expect(bustCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises an off-site listing too', async () => {
+    seedMisScanned({ kind: 'offsite', declared: undefined, contentRating: 'pg13' });
+    images.find((i) => i.id === SHOT)!.nsfwLevel = NsfwLevel.PG;
+
+    await moderatorRerates(COVER, NsfwLevel.R);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events.map((e) => e.reason)).toEqual([
+      'Rating raised PG-13 → R after a moderator reviewed an image.',
+    ]);
+  });
+
+  it('raises even while another asset is unscanned', async () => {
+    seedMisScanned({ contentRating: 'r' });
+    images.find((i) => i.id === COVER)!.ingestion = 'Pending';
+
+    await moderatorRerates(ICON, NsfwLevel.X);
+
+    expect(ratingOf('apl_a')).toBe('x');
+  });
+});
+
+describe('which listings are touched', () => {
+  it.each([
+    ['a shadow revision', { status: 'draft', revisionOfId: 'apl_parent' }],
+    ['an approved-status shadow', { status: 'approved', revisionOfId: 'apl_parent' }],
+    ['a draft', { status: 'draft' }],
+    ['a pending listing', { status: 'pending' }],
+    ['a removed listing', { status: 'removed' }],
+  ])('leaves %s alone, in both directions', async (_label, state) => {
+    seedMisScanned(state as Partial<Listing>);
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+    expect(ratingOf('apl_a')).toBe('r');
+
+    await moderatorRerates(ICON, NsfwLevel.X);
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+    expect(bustCatalog).not.toHaveBeenCalled();
+    // Not even locked: the lookup is what keeps non-live rows out of a transaction.
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('an image used by two listings moves both, each by its own rule', async () => {
+    listings.push({
+      id: 'apl_b',
+      slug: 'app-b',
+      kind: 'onsite',
+      status: 'approved',
+      revisionOfId: null,
+      contentRating: 'r',
+      iconId: SHOT,
+      coverId: null,
+      declared: 'pg',
+    });
+
+    const changed = await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('pg13');
+    expect(ratingOf('apl_b')).toBe('pg');
+    expect(changed.map((c) => c.appListingId)).toEqual(['apl_a', 'apl_b']);
+    expect(events.map((e) => [e.appListingId, e.slug])).toEqual([
+      ['apl_a', 'app-a'],
+      ['apl_b', 'app-b'],
+    ]);
+    expect(bustCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['icon', { iconId: 77 }],
+    ['cover', { coverId: 77 }],
+  ])('finds a listing that uses the image as its %s', async (_slot, slot) => {
+    seedMisScanned({ contentRating: 'pg13', ...slot });
+    images.push({ id: 77, nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned' });
+
+    await moderatorRerates(77, NsfwLevel.X);
+
+    expect(ratingOf('apl_a')).toBe('x');
+  });
+
+  it('an image no listing uses is a no-op: no transaction, no event, no cache bust', async () => {
+    images.push({ id: 404, nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned' });
+
+    const changed = await moderatorRerates(404, NsfwLevel.X);
+
+    expect(changed).toEqual([]);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+    expect(bustCatalog).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['left `approved`', { status: 'pending' }],
+    ['is a shadow revision', { revisionOfId: 'apl_parent' }],
+  ])('a listing that %s by the time it is locked is left alone', async (_label, state) => {
+    Object.assign(listings[0], state);
+    images.find((i) => i.id === ICON)!.nsfwLevel = NsfwLevel.X;
+
+    const result = await reDeriveListingRatingInTx(dbMock.dbWrite as never, {
+      appListingId: 'apl_a',
+      imageId: ICON,
+      previousNsfwLevel: NsfwLevel.PG,
+      actorUserId: MOD,
+    });
+
+    expect(result).toBeNull();
+    expect(ratingOf('apl_a')).toBe('r');
+  });
+
+  it('a listing the image was detached from between the lookup and the lock is left alone', async () => {
+    // Declared above stored, so there IS a raise pending — just not this image's to make.
+    seedMisScanned({ declared: 'x' });
+    shots = [];
+
+    const result = await reDeriveListingRatingInTx(dbMock.dbWrite as never, {
+      appListingId: 'apl_a',
+      imageId: SHOT,
+      previousNsfwLevel: NsfwLevel.R,
+      actorUserId: MOD,
+    });
+
+    expect(result).toBeNull();
+    expect(ratingOf('apl_a')).toBe('r');
+  });
+
+  it('locks the live row before reading it', async () => {
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(lockStatements).toEqual([
+      `SELECT "id" FROM "app_listings" WHERE "id" = $1 AND "status" = 'approved' AND "revision_of_id" IS NULL FOR UPDATE`,
+    ]);
+  });
+});
+
+describe('failure isolation', () => {
+  it('a rejected history insert rolls the rating back and does not throw', async () => {
+    failEventInsert = true;
+
+    const changed = await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(changed).toEqual([]);
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+    expect(bustCatalog).not.toHaveBeenCalled();
+  });
+
+  it('one listing failing does not stop the next', async () => {
+    listings.push({
+      id: 'apl_b',
+      slug: 'app-b',
+      kind: 'onsite',
+      status: 'approved',
+      revisionOfId: null,
+      contentRating: 'r',
+      iconId: SHOT,
+      coverId: null,
+      declared: 'g',
+    });
+    let calls = 0;
+    const update = dbMock.dbWrite.appListing.update as unknown as Fn;
+    update.mockImplementation((async (args: {
+      where: { id: string };
+      data: { contentRating: string };
+    }) => {
+      if (++calls === 1) throw new Error('deadlock detected');
+      Object.assign(listings.find((l) => l.id === args.where.id)!, args.data);
+    }) as never);
+
+    const changed = await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(ratingOf('apl_b')).toBe('g');
+    expect(changed).toEqual([{ appListingId: 'apl_b', before: 'r', after: 'g' }]);
+  });
+
+  it('a failed lookup does not throw', async () => {
+    (dbMock.dbWrite.appListing.findMany as unknown as Fn).mockImplementation((async () => {
+      throw new Error('connection refused');
+    }) as never);
+
+    await expect(moderatorRerates(SHOT, NsfwLevel.PG)).resolves.toEqual([]);
+    expect(ratingOf('apl_a')).toBe('r');
+  });
+});

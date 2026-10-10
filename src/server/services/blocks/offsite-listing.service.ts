@@ -56,6 +56,7 @@ import {
   resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import {
   isOwnerUnpublishedListing,
   readLastModerationAction,
@@ -3173,7 +3174,7 @@ export async function approveExternalRequest(opts: {
 
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
-  await dbWrite.$transaction(async (tx) => {
+  const rating = await dbWrite.$transaction(async (tx) => {
     // AUTHORITATIVE asset gate — re-read from the PRIMARY (`tx`), not the replica.
     // The sibling asset mutators (add/reorder/removeListingScreenshot,
     // setListingIcon/Cover) deliberately read+write dbWrite to avoid replica-lag
@@ -3395,6 +3396,13 @@ export async function approveExternalRequest(opts: {
       },
       data: { status: 'withdrawn' },
     });
+    return { before: primaryListing.contentRating, after: finalRating };
+  });
+  await recordListingRatingChangeAfterCommit({
+    appListingId,
+    slug: listing.slug,
+    ...rating,
+    actorUserId: reviewerUserId,
   });
 
   // Post-commit, best-effort: notify the listing OWNER their app went live. Emitted
@@ -3457,7 +3465,7 @@ async function applyApprovedRevision(opts: {
   // asset columns and leaves name/tagline/description/category/contentRating untouched.
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true, status: true, kind: true },
+    select: { id: true, slug: true, status: true, kind: true, contentRating: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
@@ -3486,7 +3494,9 @@ async function applyApprovedRevision(opts: {
   // of this path rather than merely intended.
   const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
 
-  await dbWrite.$transaction(async (tx) => {
+  const appliedRating = await dbWrite.$transaction(async (tx) => {
+    // Set by the off-site branch only; the on-site one leaves the rating alone.
+    let appliedOffsiteRating: OffsiteContentRating | null = null;
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
     // gate could pass on stale-complete state — re-assert here.
@@ -3685,6 +3695,7 @@ async function applyApprovedRevision(opts: {
         coverId: shadow.coverId,
         override: opts.contentRating,
       });
+      appliedOffsiteRating = finalRating;
       await tx.appListing.update({
         where: { id: parentId },
         data: {
@@ -3738,7 +3749,17 @@ async function applyApprovedRevision(opts: {
     await tx.appListing.deleteMany({
       where: { id: shadowId, revisionOfId: { not: null } },
     });
+    return appliedOffsiteRating;
   });
+  if (appliedRating != null) {
+    await recordListingRatingChangeAfterCommit({
+      appListingId: parentId,
+      slug: parent.slug,
+      before: parent.contentRating ?? null,
+      after: appliedRating,
+      actorUserId: reviewerUserId,
+    });
+  }
 
   // 🔴 Catalog bust. THIS PATH IS NOT COVERED BY THE ONE IN `approveExternalRequest` —
   // that caller `return`s into this function BEFORE reaching its bust, and it does so
