@@ -8,9 +8,14 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
-import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
+import type {
+  AppListingVisibility,
+  ListingAudienceFloor,
+  RestrictedListingAudience,
+} from '~/shared/utils/app-listing-visibility';
 import {
   listingVisibleInStore,
+  restrictedAudienceForViewer,
   VISIBILITY_ELIGIBLE_LISTING_STATUSES,
   visibilitiesVisibleToForStatus,
 } from '~/shared/utils/app-listing-visibility';
@@ -20,6 +25,7 @@ import {
 import {
   noteDegradedVisibilityRead,
   readListingVisibility,
+  readListingVisibilityManyForRender,
 } from '~/server/services/blocks/app-listing-visibility.service';
 import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
@@ -469,10 +475,15 @@ export function listingQueueFacts(listing: ListingQueueFactsSource): ListingQueu
  * ANY error, and the
  * row is not even consulted for it here. It defaults to {@link BETA_NOT_SET} so the many
  * existing fixtures and call sites that pass one argument keep working unchanged.
+ *
+ * `restrictedAudience` is passed IN for the same manual-apply reason AND because it is
+ * VIEWER-SCOPED: the caller derives it with `restrictedAudienceForViewer`. It defaults to
+ * `null`, so a caller that forgets it discloses nothing.
  */
 export function projectListingCard(
   row: HydratedListing,
-  beta: ListingBetaRead = BETA_NOT_SET
+  beta: ListingBetaRead = BETA_NOT_SET,
+  restrictedAudience: RestrictedListingAudience | null = null
 ): ListingCard {
   const recommend = recommendRollup(row.metric);
   return {
@@ -494,6 +505,7 @@ export function projectListingCard(
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
     // Number for on-site, `null` for off-site — see `cardOpenCount`.
     openCount: cardOpenCount(row),
+    restrictedAudience,
     kindData: cardKindData(row),
   };
 }
@@ -590,7 +602,12 @@ export async function getListingPreviewForReview(args: {
     // `connectRequestedScopes` is spread in here rather than living in
     // `listingHydrateSelect`, so the public grid never depends on its manual-apply
     // migration — see the note at that select. Same reason `revisionOfId` is spread.
-    select: { ...listingHydrateSelect, revisionOfId: true, connectRequestedScopes: true },
+    select: {
+      ...listingHydrateSelect,
+      revisionOfId: true,
+      connectRequestedScopes: true,
+      status: true,
+    },
   });
   if (!row) return null;
   // Same manual-apply guard as the public read — a moderator previewing a shadow must
@@ -618,13 +635,32 @@ export async function getListingPreviewForReview(args: {
   // its beta half anyway. Reading the parent here needs no clone, no ordering rule, and
   // cannot go stale.
   const betaSourceId = row.revisionOfId ?? args.listingId;
-  const [sourceRepo, beta] = await Promise.all([
+  // The visibility level is keyed on the PARENT for the same reason beta is: every level
+  // write targets the live listing, so a shadow's own column is never the source of truth.
+  const [sourceRepo, beta, levels] = await Promise.all([
     readListingSourceRepoUrl(args.listingId, dbRead),
     readListingBetaForRender(betaSourceId, dbRead),
+    readListingVisibilityManyForRender([betaSourceId], dbRead),
   ]);
+  // The caller is `moderatorProcedure`, so the viewer IS a moderator — who may always know
+  // the level. Stated through the shared rule rather than by passing the raw level through.
+  const restrictedAudience = restrictedAudienceForViewer({
+    visibility: levels.get(betaSourceId)?.visibility ?? null,
+    status: row.status,
+    floor: 'moderators',
+    isOwner: false,
+    isModerator: true,
+  });
   return {
-    card: projectListingCard(row, beta),
-    detail: projectListingDetail(row, [], sourceRepo.value, beta, row.connectRequestedScopes),
+    card: projectListingCard(row, beta, restrictedAudience),
+    detail: projectListingDetail(
+      row,
+      [],
+      sourceRepo.value,
+      beta,
+      row.connectRequestedScopes,
+      restrictedAudience
+    ),
   };
 }
 
@@ -671,10 +707,13 @@ export function projectListingDetail(
    * throwing — the safe direction for a permissions surface, and the same default shape
    * as its two neighbours.
    */
-  connectRequestedScopes: number | null = null
+  connectRequestedScopes: number | null = null,
+  /** Viewer-scoped — see `projectListingCard`. `null` by default: discloses nothing. */
+  restrictedAudience: RestrictedListingAudience | null = null
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
+    restrictedAudience,
     // Author-declared beta label + note. Passed IN for the SAME manual-apply reason as
     // `sourceRepoUrl` above — the columns are never named in `listingHydrateSelect`.
     // 🔴 `beta.isBeta`, NOT `beta.betaMessage != null`: an author may declare beta WITHOUT
@@ -1245,7 +1284,42 @@ export async function bustAppListingCatalogCache(): Promise<void> {
 // Read procs (over BOTH kinds, approved-only, public allowlist).
 // ---------------------------------------------------------------------------
 
+/**
+ * Who is looking, as far as the viewer-scoped `restrictedAudience` field needs to know.
+ *
+ * Defaults to {@link ANONYMOUS_LISTING_VIEWER} wherever it is optional: an omitted viewer is
+ * told nothing a cohort-admitted stranger would not be, which is the fail-closed direction.
+ */
+export type ListingViewer = { userId: number | null; isModerator: boolean };
+
+const ANONYMOUS_LISTING_VIEWER: ListingViewer = Object.freeze({
+  userId: null,
+  isModerator: false,
+});
+
+/**
+ * The one place a store read turns a listing's level into its viewer-scoped
+ * `restrictedAudience`. Ownership is the listing's `userId` — the creator chip's id — and
+ * never a client-supplied value.
+ */
+function restrictedAudienceForRow(
+  row: { status: string; user: { id: number } | null },
+  visibility: AppListingVisibility | null,
+  floor: ListingAudienceFloor,
+  viewer: ListingViewer
+): RestrictedListingAudience | null {
+  return restrictedAudienceForViewer({
+    visibility,
+    status: row.status,
+    floor,
+    isOwner: viewer.userId !== null && row.user !== null && row.user.id === viewer.userId,
+    isModerator: viewer.isModerator,
+  });
+}
+
 type ListAvailableListingsOpts = {
+  /** The viewer, for `restrictedAudience` only — never for which ROWS are returned. */
+  viewer?: ListingViewer;
   redCapable?: boolean;
   scope?: StoreVisibilityScope;
   /**
@@ -1467,15 +1541,31 @@ export async function listAvailableListings(
   const pageIds = trimmed.map((r: { id: string; sort_key: string }) => r.id);
   const listingIds = pageIds.filter((id) => !isAppSubListingId(id));
   const subListingIds = pageIds.filter((id) => isAppSubListingId(id));
-  // 🔴 IN PARALLEL, not serially: all three reads are keyed on ids already in hand. The beta
-  // read is render-tolerant (a failure renders every card as not-beta).
-  const [hydrated, betaById, subListingById] = await Promise.all([
+  // 🔴 IN PARALLEL, not serially: all four reads are keyed on ids already in hand. The beta
+  // and level reads are render-tolerant (a failure renders every card as not-beta / unbadged).
+  //
+  // 🔴 THE LEVEL IS READ LIVE HERE, NOT TAKEN FROM THE CACHED ID PAGE, and it is RE-CHECKED
+  // against this viewer (`restrictedAudienceForRow`) rather than assumed from the row having
+  // been admitted. An id page cached before its owner narrowed a listing can still carry
+  // that row for up to the TTL if a bust was missed; re-deriving means the stale card shows
+  // no badge instead of telling an excluded viewer how it is now restricted. A missing
+  // column — or any other read fault — degrades to an empty map ⇒ every card `null`; a
+  // cosmetic badge never fails the grid.
+  // `status` is spread in for that check only; it is never projected.
+  //
+  // SKIPPED for an anonymous `public`-floor viewer: no owner, no moderator, and the `public`
+  // floor admits no restricted level, so `restrictedAudienceForViewer` can only answer `null`
+  // and the read could never reach the response (the anonymous `/apps` grid and every public
+  // REST page). A signed-in viewer on the same floor still needs it — they may OWN a row.
+  const viewer = opts.viewer ?? ANONYMOUS_LISTING_VIEWER;
+  const levelCanDisclose = viewer.userId !== null || viewer.isModerator || floor !== 'public';
+  const [hydrated, betaById, subListingById, visibilityById] = await Promise.all([
     listingIds.length
       ? dbRead.appListing.findMany({
           where: { id: { in: listingIds } },
-          select: listingHydrateSelect,
+          select: { ...listingHydrateSelect, status: true },
         })
-      : Promise.resolve([] as HydratedListing[]),
+      : Promise.resolve([] as Array<HydratedListing & { status: string }>),
     listingIds.length
       ? readListingBetaManyForRender(listingIds, dbRead)
       : Promise.resolve(new Map<string, ListingBetaRead>()),
@@ -1483,8 +1573,11 @@ export async function listAvailableListings(
       browsingLevel: opts.viewerBrowsingLevel,
       redCapable,
     }),
+    levelCanDisclose
+      ? readListingVisibilityManyForRender(listingIds, dbRead)
+      : Promise.resolve(new Map<string, { visibility: AppListingVisibility | null }>()),
   ]);
-  const byId = new Map(hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r]));
+  const byId = new Map(hydrated.map((r) => [r.id, r] as const));
   const items: StoreGridItem[] = [];
   for (const id of pageIds) {
     const child = subListingById.get(id);
@@ -1496,7 +1589,20 @@ export async function listAvailableListings(
     // 🔴 `?? BETA_NOT_SET`, not `?? BETA_UNAVAILABLE`: a row present in `hydrated` but
     // absent from the beta map means the columns WERE readable and that listing simply had
     // no row when the second query ran.
-    if (row) items.push(projectListingCard(row, betaById.get(row.id) ?? BETA_NOT_SET));
+    if (row) {
+      items.push(
+        projectListingCard(
+          row,
+          betaById.get(row.id) ?? BETA_NOT_SET,
+          restrictedAudienceForRow(
+            row,
+            visibilityById.get(row.id)?.visibility ?? null,
+            floor,
+            viewer
+          )
+        )
+      );
+    }
   }
 
   return { items, nextCursor };
@@ -1516,6 +1622,8 @@ export async function getListingDetail(
     /** The viewer's audience floor. Defaults to `public` — see `listAvailableListings`
      *  for why the widest level is the least-privileged default. */
     floor?: ListingAudienceFloor;
+    /** The viewer, for `restrictedAudience` only. Defaults to anonymous. */
+    viewer?: ListingViewer;
   } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
@@ -1605,7 +1713,12 @@ export async function getListingDetail(
     collaborators,
     sourceRepo.value,
     beta,
-    row.connectRequestedScopes
+    row.connectRequestedScopes,
+    // The level gate above already admitted this viewer, and `restrictedAudienceForViewer`
+    // re-applies that same predicate rather than relying on it — so if this gate is ever
+    // widened (say, to let an owner open their own restricted listing), who is TOLD the level
+    // still stays the owner, moderators and the cohort the level admits.
+    restrictedAudienceForRow(row, level.visibility, floor, opts.viewer ?? ANONYMOUS_LISTING_VIEWER)
   );
 }
 

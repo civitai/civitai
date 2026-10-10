@@ -11,7 +11,7 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { IconApps, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
+import { IconApps, IconEyeOff, IconPlayerPlay, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -36,6 +36,7 @@ import {
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
 import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
+import { visibilityBadgeFor } from '~/components/Apps/listingVisibilityCopy';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -336,6 +337,7 @@ export function AppListingCard({
     card.coverUrl == null ? 'cover' : null,
   ].filter((v): v is string => v != null);
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
+  const visibilityBadge = visibilityBadgeFor(card.restrictedAudience);
 
   // 🔴 `@container` IS GONE, AND SO IS THE `hasMenu` PREDICATE THAT DROVE IT.
   // The card declared itself a query container for exactly ONE consumer: the
@@ -456,8 +458,9 @@ export function AppListingCard({
                   IT WAS, AND SAYING SO IS THE POINT. This sentence used to name the
                   creator chip "and every row of the meta block under it". The chip
                   is gone and the rollup moved out, so the meta block below the
-                  title holds only the two conditional badges — the rows the
-                  reservation actually aligns today are those badges and the
+                  title holds only the conditional badge row (Beta, the owner's
+                  Incomplete, the restricted-visibility badge) — the rows the
+                  reservation actually aligns today are that badge row and the
                   TAGLINE below the block. The action row and the stats line under
                   it are bottom-pinned by `mt="auto"`, so they were never affected
                   by title length and are not evidence for this reservation. The
@@ -487,42 +490,71 @@ export function AppListingCard({
                 {card.name}
               </TruncatedText>
             </Anchor>
-            {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape directly
-                below, with two deliberate differences: it is PUBLIC (that one is owner-only
-                — `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
-                carries no `betaMessage` to put in one. The note lives on the detail page,
-                where there is room to read it. `card.isBeta` is `false` both for "not in
-                beta" and while the manual-apply migration is outstanding. */}
-            {card.isBeta && (
-              <Badge
-                color="violet"
-                variant="light"
-                size="xs"
-                style={{ alignSelf: 'flex-start' }}
-                data-testid="apps-listing-card-beta"
-              >
-                Beta
-              </Badge>
-            )}
-            {showOwnerIncomplete && (
-              <Tooltip
-                label={`Missing ${missingFloorAssets.join(' and ')} — add ${
-                  missingFloorAssets.length > 1 ? 'them' : 'it'
-                } from Edit to complete your listing.`}
-                withArrow
-                multiline
-                w={220}
-              >
-                <Badge
-                  color="yellow"
-                  variant="light"
-                  size="xs"
-                  style={{ cursor: 'help', alignSelf: 'flex-start' }}
-                  data-testid="apps-listing-owner-incomplete"
-                >
-                  Incomplete
-                </Badge>
-              </Tooltip>
+            {/* 🔴 ONE HORIZONTAL, WRAPPING ROW FOR EVERY CONDITIONAL BADGE — not a stacked
+                row each. They used to be separate Stack children, so each one present added
+                a line to the meta block; with a third badge that would push the tagline (the
+                row the title reservation aligns, measured by the geometry guard in
+                `AppListingCard.browser.test.tsx`) down a further line per badge. In one
+                `Group` they share a line and wrap only when the card is too narrow for all
+                of them. Rendered only when at least one badge is, so a badge-less card's meta
+                block is unchanged. */}
+            {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
+              <Group gap={4} wrap="wrap" data-testid="apps-listing-card-badges">
+                {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape, with
+                    two deliberate differences: it is PUBLIC (that one is owner-only —
+                    `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
+                    carries no `betaMessage` to put in one. The note lives on the detail
+                    page, where there is room to read it. `card.isBeta` is `false` both for
+                    "not in beta" and while the manual-apply migration is outstanding. */}
+                {card.isBeta && (
+                  <Badge
+                    color="violet"
+                    variant="light"
+                    size="xs"
+                    data-testid="apps-listing-card-beta"
+                  >
+                    Beta
+                  </Badge>
+                )}
+                {/* RESTRICTED VISIBILITY. `restrictedAudience` is viewer-scoped by the server
+                    (owner, moderator, or a cohort the level admits), so this only formats
+                    it — `visibilityBadgeFor` holds the label/tooltip decisions where the
+                    blocking unit suite can reach them. */}
+                {visibilityBadge && (
+                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={220}>
+                    <Badge
+                      color="gray"
+                      variant="light"
+                      size="xs"
+                      leftSection={<IconEyeOff size={10} aria-hidden />}
+                      style={{ cursor: 'help' }}
+                      data-testid="apps-listing-card-visibility"
+                    >
+                      {visibilityBadge.label}
+                    </Badge>
+                  </Tooltip>
+                )}
+                {showOwnerIncomplete && (
+                  <Tooltip
+                    label={`Missing ${missingFloorAssets.join(' and ')} — add ${
+                      missingFloorAssets.length > 1 ? 'them' : 'it'
+                    } from Edit to complete your listing.`}
+                    withArrow
+                    multiline
+                    w={220}
+                  >
+                    <Badge
+                      color="yellow"
+                      variant="light"
+                      size="xs"
+                      style={{ cursor: 'help' }}
+                      data-testid="apps-listing-owner-incomplete"
+                    >
+                      Incomplete
+                    </Badge>
+                  </Tooltip>
+                )}
+              </Group>
             )}
           </Stack>
         </Group>

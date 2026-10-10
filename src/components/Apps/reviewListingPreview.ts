@@ -163,6 +163,9 @@ export function buildListingCardPreview(
     // deliberately left alone — out of scope here, and inert (`buildListingStatChips`
     // returns `[]` under `preview`). Do not cite it as precedent for reverting this.
     openCount: null,
+    // `null`: the review row carries no level, and `null` is the side that discloses nothing.
+    // The real moderator preview (`getListingPreviewForReview`) does carry it.
+    restrictedAudience: null,
     kindData: cardKindData(row),
   };
 }
@@ -218,6 +221,8 @@ export function buildListingDetailPreview(
     // Same limitation, same reason, same safe direction as the card builder's `isBeta`.
     isBeta: false,
     betaMessage: null,
+    // Same as the card builder's `restrictedAudience`.
+    restrictedAudience: null,
     description: null,
     // The mod REVIEW preview intentionally shows no collaborator byline: this row is
     // built from an in-review publish request, not from a live listing, so there is no

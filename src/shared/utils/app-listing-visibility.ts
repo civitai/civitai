@@ -344,3 +344,50 @@ export function listingVisibleInStore(args: {
   if (listingVisibilityRank(args.visibility) > listingVisibilityRank(cap)) return false;
   return viewerSeesListingVisibility(args.floor, args.visibility);
 }
+
+/**
+ * The levels that RESTRICT who reaches a listing — every level except `public`.
+ *
+ * Derived from the enum rather than hand-listed, so a new restricted cohort is a member
+ * automatically and the badge cannot silently skip it.
+ */
+export type RestrictedListingAudience = Exclude<AppListingVisibility, 'public'>;
+
+/**
+ * The listing's restricted audience AS THIS VIEWER MAY KNOW IT, for the store's
+ * "Testers only" / "Moderators only" / "Unlisted" badge — or `null`.
+ *
+ * 🔴 VIEWER-SCOPED, AND THAT IS WHY THIS IS NOT THE RAW COLUMN ON THE PUBLIC DTO. The level
+ * is an owner-only setting; `ListingVisibilityMenuModal` records why it stays off the card
+ * and detail DTOs. A viewer learns it only when they are:
+ *   · the OWNER, or a MODERATOR — the two parties who can already read or set it; or
+ *   · in a cohort the level ADMITS, by {@link listingVisibleInStore} — the same predicate the
+ *     store's own read gate uses, so there is no second rule here to drift from it. A tester
+ *     looking at a `testers` listing learns nothing they could not infer from seeing it.
+ *
+ * `private` admits no cohort, so it reaches only the owner and moderators: a `private`
+ * listing stays openable by URL (it is a discoverability setting, not access control), and
+ * an anonymous holder of that URL must not be told how it is restricted.
+ *
+ * 🔴 THE COHORT ARM RE-CHECKS THE LEVEL EVEN WHEN THE CALLER HAS ALREADY ADMITTED THE ROW.
+ * The store grid's id page is cached and the level is read live, so a page cached before an
+ * owner narrowed their listing can still carry it; re-deriving here means that stale row
+ * shows NO badge rather than disclosing the new, narrower level to a viewer it excludes.
+ *
+ * `null` / `public` ⇒ `null`: an unset level means "no choice expressed", and `public` is
+ * not a restriction, so neither renders anything.
+ */
+export function restrictedAudienceForViewer(args: {
+  visibility: AppListingVisibility | null;
+  status: string;
+  floor: ListingAudienceFloor;
+  isOwner: boolean;
+  isModerator: boolean;
+}): RestrictedListingAudience | null {
+  const { visibility } = args;
+  if (visibility === null || visibility === 'public') return null;
+  if (args.isOwner || args.isModerator) return visibility;
+  return listingVisibleInStore({ status: args.status, visibility, floor: args.floor })
+    ? visibility
+    : null;
+}
