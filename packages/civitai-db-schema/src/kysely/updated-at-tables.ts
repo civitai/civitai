@@ -88,6 +88,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'WildcardSetCategory',
   'app_block_publish_requests',
   'app_blocks',
+  'app_dev_sandbox',
   'app_listing_metrics',
   'app_listing_publish_requests',
   'app_listing_reports',

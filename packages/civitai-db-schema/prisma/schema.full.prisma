@@ -616,6 +616,7 @@ model User {
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
   appDevForgejoIdentity      AppDevForgejoIdentity?
+  appDevSandboxes            AppDevSandbox[]                 @relation("AppDevSandboxOwner")
   appListings                        AppListing[]
   appListingReviews                  AppListingReview[]
   appListingPublishRequestsSubmitted AppListingPublishRequest[] @relation("AppListingPublishRequestSubmitter")
@@ -2853,6 +2854,7 @@ model AppBlock {
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
+  devSandboxes       AppDevSandbox[] @relation("AppDevSandboxBlock")
   appListing         AppListing?
   // NB: App Listing Collaborators (seats / ownership events / ownership transfers)
   // are keyed to `AppListing`, NOT here — see the AppCollaborator model header. An
@@ -4549,6 +4551,138 @@ model AppDevForgejoIdentity {
   createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@map("app_dev_forgejo_identity")
+}
+
+/// Hosted agent sandbox (M2.5) — the DURABLE record of one user's sandbox for one
+/// app: the workspace volume, the agent transcript pointer, the user<->app mapping
+/// and the pause/resume state.
+///
+/// 🔴 THE DEV TUNNEL STAYS EPHEMERAL AND REDIS-ONLY, DELIBERATELY. A resume mints a
+/// FRESH host + keypair rather than restoring the old one, because nothing in the
+/// resume path needs tunnel continuity: the user's entry point is the stable
+/// `/apps/dev/<blockId>`, and BOTH the host-bound entry token and the `frame-src`
+/// CSP are re-derived on every SSR render. `startDevTunnel` already tears down any
+/// prior session for the same (user, blockId), so re-minting is the supported path,
+/// not new work. Do NOT "fix" this by persisting the tunnel session — that would
+/// re-open the hard-TTL reasoning the reaper, the idle reap and the authz
+/// self-close all depend on.
+///
+/// Design + the two costs that rotation imposes (orphan DNS per resume; the
+/// cumulative Buzz backstop resetting per resume):
+/// datapacket-talos `claudedocs/m2.5-durable-sandbox-state.md`.
+///
+/// `status` is TEXT, not a Prisma enum — matching AppBlock.status,
+/// AppBlockPublishRequest.status and AppCollaborator.status, and for the reason
+/// stated in the root CLAUDE.md ("Adding an enum value: DEPLOY FIRST"): Prisma
+/// deserializes enum columns strictly, so a row carrying a label the running client
+/// does not know throws on READ rather than on the write that created it. A CHECK
+/// constraint in the migration bounds the value instead, which fails loudly on
+/// WRITE in the code that introduced it.
+///
+/// MANUAL-APPLY (datapacket-talos rule #8): the main civitai DB (CNPG nvme0) does
+/// NOT run `prisma migrate deploy`. The committed SQL in
+/// `20261004180000_app_dev_sandbox` is applied BY A HUMAN, per environment
+/// (psql/retool); `_prisma_migrations` is not the source of truth. Fully ADDITIVE
+/// and DARK — no reader and no writer exists until M3, so the table is inert until
+/// then.
+model AppDevSandbox {
+  id String @id // sbx_<ULID>
+
+  userId Int  @map("user_id")
+  user   User @relation("AppDevSandboxOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The app's blockId. Carries identity across the whole lifecycle INCLUDING the
+  /// EPHEMERAL (never-submitted) case, which has no AppBlock row at all — the same
+  /// reason the dev-tunnel user index exists. Mirrors AppBlockPublishRequest.slug.
+  blockId String @map("block_id")
+
+  /// FK, populated only once an AppBlock row exists (i.e. after a moderator approves
+  /// a publish request). SetNull, NOT Cascade: deleting the block must leave this row
+  /// reachable by the janitor, because there is still a volume to delete — a cascade
+  /// would orphan storage with no handle left to it. The data flow is one-directional,
+  /// approval -> sandbox: this column is written BECAUSE a moderator approved, and
+  /// nothing here is an input to any approve gate.
+  appBlockId String?   @map("app_block_id")
+  appBlock   AppBlock? @relation("AppDevSandboxBlock", fields: [appBlockId], references: [id], onDelete: SetNull)
+
+  /// 'provisioning' | 'active' | 'paused' | 'resuming' | 'reaped' | 'failed'.
+  ///
+  /// 🔴 `reaped` IS THE ONLY TERMINAL STATE. `paused` AND `failed` BOTH STILL HOLD A
+  /// VOLUME, so neither is done, and the uniqueness index below excludes only
+  /// `reaped` for exactly that reason — a `failed` sandbox occupies the single live
+  /// slot for its pair until it is resumed or carried through the ordinary
+  /// retention path. Writing `failed` must therefore ALSO set
+  /// `retention_expires_at`, or the row holds storage on no clock; the retention
+  /// index covers both states so one sweep and one `warned_at` guard serve both.
+  /// `reaped` is the only state that has released its storage, and only the
+  /// retention janitor writes it.
+  status String @default("provisioning")
+  /// Human-readable detail, primarily a provisioning or resume failure reason.
+  /// Mirrors AppBlockPublishRequest.deployDetail.
+  statusDetail String? @map("status_detail")
+
+  /// The PVC backing the workspace (repo + node_modules). NULL until bound. This is
+  /// the janitor's delete handle. The namespace is a deployment constant and is
+  /// deliberately NOT stored.
+  volumeClaimName String? @map("volume_claim_name")
+  /// Object-storage KEY for the agent transcript — never the transcript itself.
+  /// Keeps rows small and makes a ban / account-deletion purge a single object
+  /// delete. Mirrors AppBlockPublishRequest.bundleKey.
+  transcriptKey String? @map("transcript_key")
+
+  /// The most recent `dev-<16hex>.<APPS_DOMAIN>` minted for this sandbox.
+  ///
+  /// 🔴 EXISTS SO THE DNS GC CAN RETRY, and that is the whole reason it is durable.
+  /// `deleteDevTunnelDns` is best-effort by design — it never throws, so it also never
+  /// retries, and it leaves no durable trace of a DELETE that did not land. A sandbox
+  /// mints a NEW host on every resume, so the number of records needing cleanup grows
+  /// with resume count; recording the host is what makes a missed cleanup
+  /// RECOVERABLE instead of unreachable. Once a session is torn down, the host is
+  /// recoverable from nowhere else: `deleteDevTunnelRoute` reads it off the
+  /// IngressRoute annotation, and that object is deleted by the teardown.
+  ///
+  /// It is also the only host -> sandbox reverse lookup available, which is what lets
+  /// the forwardAuth gate's host-keyed idle touch reach `last_active_at`.
+  /// NOT a credential: it is a public DNS name, and the only property that matters is
+  /// that it gets cleaned up.
+  lastTunnelHost String? @map("last_tunnel_host")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Last activity on EITHER axis — a gate hit on the tunnel, or agent-chat traffic.
+  /// Both, because a user reading the agent's output without reloading the iframe is
+  /// active, and an agent building with nobody watching is too. Drives idle
+  /// auto-pause and nothing else.
+  lastActiveAt DateTime? @map("last_active_at") @db.Timestamptz(6)
+  pausedAt     DateTime? @map("paused_at") @db.Timestamptz(6)
+
+  /// When a PAUSED volume becomes reclaimable. Set at pause, CLEARED on resume.
+  /// A timestamp rather than a duration: the retention policy can change without
+  /// re-dating existing rows, and the warning quotes the SAME column the janitor
+  /// reads — so a user cannot be warned about a different date than the one that
+  /// deletes their work.
+  retentionExpiresAt DateTime? @map("retention_expires_at") @db.Timestamptz(6)
+  /// When the retention warning was delivered. NULL = never warned, and the retention
+  /// janitor REFUSES to delete on a NULL. Makes "warn before deleting" a checkable
+  /// state rather than an intention — the only thing standing between a clock bug and
+  /// deleting a user's work.
+  warnedAt DateTime? @map("warned_at") @db.Timestamptz(6)
+  reapedAt DateTime? @map("reaped_at") @db.Timestamptz(6)
+
+  @@index([status, lastActiveAt], map: "app_dev_sandbox_idle_sweep_idx")
+  @@index([userId, status], map: "app_dev_sandbox_user_idx")
+  // RAW partial indexes (NOT expressible in Prisma — they carry WHERE clauses),
+  // created in the migration. The unique one mirrors the precedent of
+  // "app_block_publish_requests_one_pending_per_slug" and is load-bearing rather
+  // than hygiene: the provision path relies on its P2002 to close the read-then-write
+  // race, so two concurrent resumes cannot each provision a volume and leak one.
+  //   app_dev_sandbox_one_live_per_user_block UNIQUE (user_id, block_id)
+  //     WHERE status <> 'reaped'          -- `failed` still holds a volume, so it is
+  //                                       -- NOT terminal and keeps the live slot
+  //   app_dev_sandbox_retention_sweep_idx (retention_expires_at)
+  //     WHERE status IN ('paused','failed')
+  @@map("app_dev_sandbox")
 }
 
 model OauthConsent {
