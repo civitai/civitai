@@ -450,6 +450,21 @@ export async function getViewerEventDecorations({
   ) as typeof decorations;
 }
 
+/**
+ * Whether this viewer's decorations on this type are everyone's, so one answer can serve them all.
+ *
+ * 🔴 Non-empty as well as equal. Before launch the signed-out set is empty, and a cached empty
+ * answer would be served to a tester asking the same URL, hiding their preview. After a kill switch
+ * the signed-out set empties again, so hats stop being cached the moment the flag goes off.
+ */
+export async function isDecorationAnswerShared(entity: CosmeticEntity, viewer: EventViewer) {
+  const everyone = await getVisibleDecorationEvents(entity, undefined);
+  if (!everyone.size) return false;
+  if (!viewer) return true;
+  const mine = await getVisibleDecorationEvents(entity, viewer);
+  return mine.size === everyone.size && [...mine].every((event) => everyone.has(event));
+}
+
 const equippedHatSelect = {
   userId: true,
   equippedToId: true,
