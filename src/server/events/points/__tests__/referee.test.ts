@@ -163,6 +163,20 @@ describe('referee query params', () => {
     expect(withWeights.dailyTypes).toEqual(['view']);
   });
 
+  it('bounds adds by the cut and removals by the removal cut', () => {
+    const finalizing = { ...EVENT, scoring: { ...scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 } };
+    const ended = refereeQueryParams(
+      finalizing,
+      refereeWindow(finalizing, 'live', new Date('2026-12-01T12:07:00.000Z')),
+      undefined,
+      { hidden: [], newAccountMinId: 1 }
+    );
+    expect({ cut: ended.cut, removeCut: ended.removeCut }).toEqual({
+      cut: '2026-12-01 00:00:00.000',
+      removeCut: '2026-12-01 11:55:00.000',
+    });
+  });
+
   it('passes an array for every Array placeholder and a scalar otherwise', () => {
     const used = new Map([
       ...placeholders(eventPointsRefereeSql),
