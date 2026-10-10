@@ -315,6 +315,11 @@ import {
   isDefiniteOrchestratorSubmitRefusal,
 } from '~/server/services/orchestrator/submit-failure';
 import {
+  classifyQuoteFailure,
+  unquotedTrainingRefusal,
+  type PassThroughQuoteFailure,
+} from '~/server/services/blocks/pass-through-quote-failure';
+import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -10103,15 +10108,13 @@ function stampUnquotedTimeout(
  * The snapshot carries no `cost`: there is no price to show, and the declared
  * `maxBuzz` is not one.
  */
-const UNQUOTED_TRAINING_ERROR =
-  'Training needs a price quote and none could be obtained; try again.';
 function refuseUnquotedTraining(
   stepType: string,
-  quotedBuzz: number | null
+  quote: PassThroughQuote
 ): { snapshot: BlockWorkflowSnapshot } | null {
-  if (quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
+  if (quote.quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
   return {
-    snapshot: { workflowId: 'failed', status: 'failed', error: UNQUOTED_TRAINING_ERROR },
+    snapshot: { workflowId: 'failed', status: 'failed', ...unquotedTrainingRefusal(quote.failure) },
   };
 }
 
@@ -11431,9 +11434,9 @@ async function estimatePassThroughStepWorkflow(opts: {
   // an estimate must degrade to the declared ceiling when the mint fails, while a
   // submit that cannot mint must throw before it reserves anything.
   const token = await getOrchestratorToken(userId, ctx).catch(() => null);
-  let quotedBuzz: number | null = null;
+  let quote: PassThroughQuote = { quotedBuzz: null, failure: { kind: 'unavailable' } };
   if (token) {
-    quotedBuzz = await quotePassThroughBuzz({
+    quote = await quotePassThroughBuzz({
       claims,
       body,
       orchestratorStep,
@@ -11443,8 +11446,9 @@ async function estimatePassThroughStepWorkflow(opts: {
   } else {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
   }
+  const { quotedBuzz } = quote;
 
-  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  const refusal = refuseUnquotedTraining(body.$type, quote);
   if (refusal) return refusal;
 
   return {
@@ -11458,9 +11462,13 @@ async function estimatePassThroughStepWorkflow(opts: {
   };
 }
 
+type PassThroughQuote =
+  | { quotedBuzz: number }
+  | { quotedBuzz: null; failure: PassThroughQuoteFailure };
+
 /**
- * The orchestrator's live price for an already-built pass-through step, or
- * `null` if it could not be had.
+ * The orchestrator's live price for an already-built pass-through step, or a
+ * `null` price and why it could not be had.
  *
  * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
  * deliberately outside this, at both call sites, so a deterministic denial can
@@ -11496,7 +11504,7 @@ async function quotePassThroughBuzz(opts: {
    * denominator and falls when submit volume falls, which reads as healthy.
    */
   phase: 'estimate' | 'submit';
-}): Promise<number | null> {
+}): Promise<PassThroughQuote> {
   const { claims, body, orchestratorStep, token, phase } = opts;
   const [quoted, absent] =
     phase === 'estimate'
@@ -11518,13 +11526,30 @@ async function quotePassThroughBuzz(opts: {
     const total = quote.cost?.total;
     if (typeof total !== 'number' || !Number.isFinite(total)) {
       recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
-      return null;
+      return { quotedBuzz: null, failure: { kind: 'unpriced' } };
     }
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, quoted);
-    return Math.ceil(total);
-  } catch {
+    return { quotedBuzz: Math.ceil(total) };
+  } catch (e) {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
-    return null;
+    const failure = classifyQuoteFailure(e, JSON.stringify(body.input));
+    const response = getOrchestratorSubmitFailure(e);
+    void Promise.resolve(
+      logToAxiom({
+        name: 'block-pass-through-quote-failed',
+        type: failure.kind === 'rejected' ? 'warning' : 'error',
+        outcome: failure.kind,
+        phase,
+        stepType: body.$type,
+        appBlockId: claims.appBlockId,
+        code: e instanceof TRPCError ? e.code : null,
+        attempt: response?.attempt ?? null,
+        status: response?.status ?? null,
+        error: e instanceof Error ? e.message : String(e),
+        cause: e instanceof Error && e.cause instanceof Error ? e.cause.message : null,
+      })
+    ).catch(() => undefined);
+    return { quotedBuzz: null, failure };
   }
 }
 
@@ -11585,13 +11610,14 @@ async function submitPassThroughStepWorkflow(opts: {
   const tags = buildPassThroughWorkflowTags(claims, body.$type);
 
   const token = await getOrchestratorToken(userId, ctx);
-  const quotedBuzz = await quotePassThroughBuzz({
+  const quote = await quotePassThroughBuzz({
     claims,
     body,
     orchestratorStep,
     token,
     phase: 'submit',
   });
+  const { quotedBuzz } = quote;
 
   // 🔴 THE RESERVATION IS THE LARGER OF THE TWO, AND THE TIMEOUT IS STILL
   // `maxBuzz`. The declared ceiling is the floor because the job may accrue up
@@ -11670,7 +11696,7 @@ async function submitPassThroughStepWorkflow(opts: {
   // went through must get its replay (or CONFLICT while it is in flight), never
   // a "try again" that invites a second paid run. Still before any reservation,
   // and the claim is released so the key can be retried once a quote exists.
-  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  const refusal = refuseUnquotedTraining(body.$type, quote);
   if (refusal) {
     if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     return refusal;
