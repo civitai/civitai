@@ -12,8 +12,8 @@ import {
 } from '~/components/Apps/cliCommands';
 import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 
-export const MANUAL_SETUP_TOGGLE_TESTID = 'apps-manual-setup-toggle';
-export const MANUAL_SETUP_REGION_TESTID = 'apps-manual-setup';
+const MANUAL_SETUP_TOGGLE_TESTID = 'apps-manual-setup-toggle';
+const MANUAL_SETUP_REGION_TESTID = 'apps-manual-setup';
 
 type ManualSetupProps = {
   /** Fired on an attempted copy of any command. Optional so this stays props-only. */

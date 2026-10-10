@@ -1,11 +1,6 @@
-import { Alert, Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/core';
+import { Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import {
-  IconArrowRight,
-  IconBrandDiscord,
-  IconChevronDown,
-  IconTerminal2,
-} from '@tabler/icons-react';
+import { IconArrowRight, IconChevronDown, IconTerminal2 } from '@tabler/icons-react';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
@@ -17,7 +12,7 @@ import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualS
  * `component-preview` skill's default ("stories for one-off reviews can be deleted after;
  * stories for reusable components can stay"). The card is animated, so its tests can pin
  * behaviour but not whether it LOOKS right, and every future change to the ring, the caret
- * or the entrance needs the same five frames re-shot in both themes. Committed stories are
+ * or the entrance needs the same frames re-shot in both themes. Committed stories are
  * the existing convention here rather than a new one — no count is given, because the two
  * hand-maintained counts this family already shipped were both wrong; `find src -name
  * '*.stories.tsx'` is the answer.
@@ -115,25 +110,5 @@ export const WorkbenchStripOpen = () => {
 export const PitchProminentStatic = () => (
   <Frame>
     <AgentOnboardingCard tone="prominent" animated={false} />
-  </Frame>
-);
-
-/** The pitch card beside the invite-only Alert it shares state A with. */
-export const PitchWithAccessAlert = () => (
-  <Frame>
-    <Stack gap="xl">
-      <AgentOnboardingCard tone="prominent" />
-      <Alert color="blue" variant="light" title="Publishing is invite-only right now">
-        <Stack gap="sm" align="flex-start">
-          <Text size="sm">
-            Anyone can build and run an app locally today, with a coding agent or by hand with the
-            CLI.
-          </Text>
-          <Button variant="light" leftSection={<IconBrandDiscord size={16} />}>
-            Ask about access
-          </Button>
-        </Stack>
-      </Alert>
-    </Stack>
   </Frame>
 );

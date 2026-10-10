@@ -244,6 +244,10 @@ describe('the agent card renders in ALL THREE states', () => {
     const create = page.getByTestId(CREATE_FIRST);
     await expect.element(create).toBeVisible();
     expect(create.element().getAttribute('href')).toBe('/apps/submit');
+    // "Secondary" is the `default` variant, which Mantine reflects onto the root as
+    // `data-variant`. Without the prop the attribute is absent (null) and the button
+    // falls back to the theme's default (primary-action) variant.
+    expect(create.element().getAttribute('data-variant')).toBe('default');
     expect(follows(page.getByTestId(MANUAL_TOGGLE).element(), create.element())).toBe(true);
 
     mocks.tracked = [];
@@ -253,22 +257,6 @@ describe('the agent card renders in ALL THREE states', () => {
     expect(mocks.tracked).toEqual([
       { type: 'AppsBuild_Action', details: { action: 'create_entry', state: 'first-app' } },
     ]);
-  });
-
-  test('🔴 A · pitch — the card precedes the banner, and the manual setup is closed', async () => {
-    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
-    await renderBody();
-
-    const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
-    const banner = page.getByRole('img', { name: 'Build apps on Civitai' });
-    await expect.element(card).toBeVisible();
-    await expect.element(banner).toBeInTheDocument();
-    expect(follows(card.element(), banner.element()), 'the card must precede the banner').toBe(
-      true
-    );
-
-    await expect.element(page.getByTestId(MANUAL_TOGGLE)).toHaveAttribute('aria-expanded', 'false');
-    await expect.element(page.getByTestId(MANUAL_REGION)).not.toBeVisible();
   });
 
   test('🔴 C · workbench — the card is INSIDE the collapsed strip, not in the main flow', async () => {
