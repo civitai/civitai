@@ -172,6 +172,22 @@ describe('the auth/clamp mirror with generation-resources.ts', () => {
     expect(ctx.browsingLevel).toBe(3);
   });
 
+  it('resourceIntentPoolMerge picks the POOL_MERGE arm; absent, the service gets false', async () => {
+    await call({});
+    expect(mockGetResourceIntent.mock.calls[0][1]).toMatchObject({ poolMerge: false });
+
+    mockGetFeatureFlags.mockReturnValue({ resourceIntentJev: true, resourceIntentPoolMerge: true });
+    await call({});
+    expect(mockGetResourceIntent.mock.calls[1][1]).toMatchObject({ poolMerge: true });
+  });
+
+  it('resourceIntentPoolMerge alone does not open the route', async () => {
+    mockGetFeatureFlags.mockReturnValue({ resourceIntentPoolMerge: true });
+    const { res } = await call({});
+    expect(res.statusCode).toBe(404);
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
   it('serves the primitive result with the applied ceiling echoed', async () => {
     const { res } = await call({});
     expect(res.statusCode).toBe(200);
