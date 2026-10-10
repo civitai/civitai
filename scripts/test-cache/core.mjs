@@ -199,25 +199,29 @@ export function shadowCandidates(rel) {
   return out;
 }
 
+/** `toRel`, with an id it cannot parse read as "not a file in this repo". */
+export function relOrNull(id, root) {
+  try {
+    return toRel(id, root);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Which modules a test file's key walk may descend into: first-party modules its runner actually
  * loaded (`loaded`, from fs-tracker.mjs), and anything that is not a repo file. The rest of the
- * shared graph is what OTHER files loaded. Without `loaded` (a tracker that reported nothing),
- * everything, as before. Case-insensitive, because Windows can hand the same file back in a
- * different case.
+ * shared graph is what OTHER files loaded. Everything, as before, when `loaded` is missing or does
+ * not name the test file itself: a list that omits the one module certain to have loaded is not a
+ * record of what loaded. Case-insensitive, because Windows can hand the same file back in a
+ * different case. `relOf` is `relOrNull` bound to the root, memoised by the caller.
  */
-export function expandOnlyLoaded(loaded, root) {
+export function expandOnlyLoaded(loaded, testRel, relOf) {
   if (!Array.isArray(loaded)) return () => true;
-  const rel = (id) => {
-    try {
-      return toRel(id, root);
-    } catch {
-      return null;
-    }
-  };
-  const ran = new Set(loaded.map((id) => rel(id)?.toLowerCase()));
+  const ran = new Set(loaded.map((id) => relOf(id)?.toLowerCase()));
+  if (!ran.has(testRel.toLowerCase())) return () => true;
   return (id) => {
-    const r = rel(id);
+    const r = relOf(id);
     return isCoveredElsewhere(r) || ran.has(r.toLowerCase());
   };
 }

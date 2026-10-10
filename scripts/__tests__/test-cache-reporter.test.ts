@@ -3,6 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { recordsFor } from '../test-cache/core.mjs';
 import TestCacheReporter from '../test-cache/reporter.mjs';
 import TestCacheSequencer from '../test-cache/sequencer.mjs';
 
@@ -52,6 +53,7 @@ function testModule(
     setupFiles = [] as string[],
     edges = {} as Record<string, string[]>,
     loaded = undefined as string[] | undefined,
+    loadedSelf = true,
   } = {}
 ) {
   const abs = fwd(join(root, rel));
@@ -69,7 +71,7 @@ function testModule(
     },
     meta: () => ({
       testCacheReads: reads.map((r) => join(root, r)),
-      ...(loaded ? { testCacheLoaded: [abs, ...loaded.map(at)] } : {}),
+      ...(loaded ? { testCacheLoaded: [...(loadedSelf ? [abs] : []), ...loaded.map(at)] } : {}),
     }),
     diagnostic: () => ({}),
     state: () => (passed ? 'passed' : 'failed'),
@@ -195,16 +197,15 @@ describe('recording a pass', () => {
   });
 });
 
-/** The entries of the newest record for `rel`. */
+/** The entries of the one record for `rel`. */
 function entriesOf(rel: string): string[] {
-  const recDir = join(cacheDir, 'rec');
-  for (const d of readdirSync(recDir)) {
-    for (const f of readdirSync(join(recDir, d))) {
-      const { entries } = JSON.parse(readFileSync(join(recDir, d, f), 'utf8'));
-      if (entries[0] === rel) return entries;
-    }
-  }
-  throw new Error(`no record for ${rel}`);
+  const found = (recordsFor as (d: string, p: string, t: string) => { entries: string[] }[])(
+    cacheDir,
+    'unit',
+    rel
+  );
+  expect(found).toHaveLength(1);
+  return found[0].entries;
 }
 
 describe('modules the file never loaded', () => {
@@ -236,6 +237,21 @@ describe('modules the file never loaded', () => {
         loaded: ['a.ts', 'b.ts', 'M.TS'].map((r) => fwd(join(root, r)).toUpperCase()),
       }),
     ]);
+    expect(entriesOf('a.test.ts')).toContain('c.ts');
+  });
+
+  // A list that does not name the test file itself cannot be a record of what loaded: a vitest whose
+  // module-state fields changed would report nothing loaded, and narrow every key to direct imports.
+  it('walks the whole graph when the report does not include the test file itself', () => {
+    files();
+    run([testModule('a.test.ts', { ...shape, loaded: [], loadedSelf: false })]);
+    expect(entriesOf('a.test.ts')).toContain('c.ts');
+  });
+
+  // `?raw` and `?url` imports, and vitest's own `?_vitest_original` for importOriginal.
+  it('matches a loaded id that carries a query', () => {
+    files();
+    run([testModule('a.test.ts', { ...shape, loaded: ['a.ts', 'b.ts', 'm.ts?_vitest_original'] })]);
     expect(entriesOf('a.test.ts')).toContain('c.ts');
   });
 

@@ -1,8 +1,10 @@
 import { spawnSync } from 'child_process';
-import { mkdtempSync, readdirSync, readFileSync } from 'fs';
+import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
+
+import { recordsFor } from '../test-cache/core.mjs';
 
 /**
  * The one test that runs the cache for real: vitest, the real sequencer, reporter and fs tracker,
@@ -38,18 +40,15 @@ function runOnce(cacheDir: string) {
   return { status: r.status, last: JSON.parse(ledger[ledger.length - 1]) };
 }
 
-/** The entries of the one record whose test file is `rel`. */
+/** The entries of the one record for `rel`. */
 function entriesOf(cacheDir: string, rel: string): string[] {
-  const found: string[][] = [];
-  const recDir = join(cacheDir, 'rec');
-  for (const d of readdirSync(recDir)) {
-    for (const f of readdirSync(join(recDir, d))) {
-      const { entries } = JSON.parse(readFileSync(join(recDir, d, f), 'utf8'));
-      if (entries[0] === rel) found.push(entries);
-    }
-  }
+  const found = (recordsFor as (d: string, p: string, t: string) => { entries: string[] }[])(
+    cacheDir,
+    'unit-e2e',
+    rel
+  );
   expect(found).toHaveLength(1);
-  return found[0];
+  return found[0].entries;
 }
 
 describe('the cache, run for real', () => {
@@ -61,13 +60,13 @@ describe('the cache, run for real', () => {
     // Both fixtures, one of which is a happy-dom file: that one resolves a node builtin to a vite
     // virtual id, and a key that treats such an id as a path records nothing for it.
     expect({ recorded: cold.last.recorded, notRecorded: cold.last.notRecorded }).toEqual({
-      recorded: 4,
+      recorded: 7,
       notRecorded: {},
     });
 
     const warm = runOnce(cacheDir);
     expect(warm.status).toBe(0);
-    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 4 });
+    expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 7 });
   }, 300_000);
 
   // Both files import heavy.ts, so the run's shared graph carries heavy-dep.ts under it. Only the
@@ -84,5 +83,16 @@ describe('the cache, run for real', () => {
     expect(real).toEqual(expect.arrayContaining([`${dir}/heavy.ts`, `${dir}/heavy-dep.ts`]));
     expect(mocked).toContain(`${dir}/heavy.ts`);
     expect(mocked).not.toContain(`${dir}/heavy-dep.ts`);
+
+    // Each of these loaded heavy-dep.ts in a way that leaves no plain "evaluated" mark behind:
+    // vi.resetModules() after the test, a spy that runs the real module under a `mock:` id, and a
+    // module that threw partway through loading.
+    for (const file of ['heavy-reset', 'heavy-spy', 'throws']) {
+      expect(entriesOf(cacheDir, `${dir}/${file}.e2e.ts`)).toContain(`${dir}/heavy-dep.ts`);
+    }
+    // And the reset did not just switch the narrowing off: the module it factory-mocks is still
+    // keyed without the subtree heavy-real.e2e.ts loaded under it.
+    expect(real).toContain(`${dir}/sibling-dep.ts`);
+    expect(entriesOf(cacheDir, `${dir}/heavy-reset.e2e.ts`)).not.toContain(`${dir}/sibling-dep.ts`);
   }, 300_000);
 });

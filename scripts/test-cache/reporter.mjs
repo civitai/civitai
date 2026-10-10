@@ -33,14 +33,6 @@ export function fullyPassed(testModule) {
 
 const log = (msg) => console.error(msg);
 
-const relOrNull = (id, root) => {
-  try {
-    return core.toRel(id, root);
-  } catch {
-    return null;
-  }
-};
-
 export default class TestCacheReporter {
   onInit(vitest) {
     this.vitest = vitest;
@@ -77,7 +69,7 @@ export default class TestCacheReporter {
         // Never throws, so the tripwire below really is first: `toRel` can raise on a malformed
         // id, and a throw here would abort `record()` before a false skip could be reported. A
         // null file is refused by recordOne anyway ("test file outside the repo").
-        file: relOrNull(m.moduleId, root),
+        file: core.relOrNull(m.moduleId, root),
         project: m.project.name,
         ms:
           (d.prepareDuration ?? 0) +
@@ -218,7 +210,14 @@ export default class TestCacheReporter {
       .find((g) => g?.getModuleById(m.moduleId));
     if (!graph) return void (row.why = 'test file not in module graph');
 
-    const expand = core.expandOnlyLoaded(m.meta()?.testCacheLoaded, root);
+    // Memoised across files: each lists ~1000 ids, mostly the same ones, and converting them afresh
+    // per file benchmarked at ~4.5ms a file, ~11s of a full run's end.
+    this.relMemo ??= new Map();
+    const relOf = (id) => {
+      if (!this.relMemo.has(id)) this.relMemo.set(id, core.relOrNull(id, root));
+      return this.relMemo.get(id);
+    };
+    const expand = core.expandOnlyLoaded(m.meta()?.testCacheLoaded, testRel, relOf);
     const ids = new Set(core.closureOf(graph, m.moduleId, expand));
     for (const setup of m.project.config.setupFiles ?? []) {
       // The fs tracker is instrumentation, not an input: its closure (this cache's own code, which
