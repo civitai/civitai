@@ -244,9 +244,8 @@ export function importGraph(
 }
 
 /**
- * Every import cycle in `graph`: its strongly connected components of two or more modules, each
- * sorted, largest first. Tarjan's algorithm, iterative: the graph is deep enough to overflow the
- * stack recursively.
+ * Every import cycle in `graph`: strongly connected components of two or more modules, each sorted,
+ * largest first. Iterative Tarjan: the graph is deep enough to overflow the stack recursively.
  */
 export function importCycles(graph: Map<string, string[]>): string[][] {
   let next = 0;
