@@ -17,6 +17,7 @@ return 0`;
 const {
   isTombstone,
   rebuildEventRoster,
+  rosterTeam,
   reconcileEventRosters,
   syncEventRosterMembers,
   syncRosterMembersWith,
@@ -465,7 +466,7 @@ describe('team roster', () => {
     now = new Date(LIVE_NOW.getTime() + 61 * 60_000);
     await reconcileEventRosters({ ...s.deps, gate }, [EVENT]);
     expect(s.hashes.get(keys.members)?.has('1')).toBe(false);
-    expect(s.hashes.get(keys.members)?.get('2')).toBe('Blue');
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('2'))).toBe('Blue');
   });
 
   it('stops starting batches at the deadline and says it did not finish', async () => {
@@ -504,7 +505,7 @@ describe('team roster', () => {
       return snapshot;
     };
     await reconcileEventRosters({ ...s.deps, gate }, [EVENT]);
-    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
   });
 
@@ -558,7 +559,7 @@ describe('team roster', () => {
     expect(exact()).toBe(n);
     expect(s.zsets.get(keys.points('Blue', 'live'))?.size).toBe(n);
     expect(
-      [...(s.hashes.get(keys.members)?.values() ?? [])].filter((v) => v === 'Blue')
+      [...(s.hashes.get(keys.members)?.values() ?? [])].filter((v) => rosterTeam(v) === 'Blue')
     ).toHaveLength(n);
   });
 
@@ -607,7 +608,7 @@ describe('team roster', () => {
       },
     };
     expect(await syncRosterMembersWith(EVENT, [1], pruned)).toEqual({ listed: 1, removed: 0 });
-    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
   });
 
@@ -627,7 +628,7 @@ describe('team roster', () => {
       },
     };
     expect(await syncRosterMembersWith(EVENT, [1], stale)).toEqual({ listed: 1, removed: 0 });
-    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
   });
 
@@ -667,7 +668,7 @@ describe('team roster', () => {
     };
     await syncRosterMembersWith(EVENT, [1], churn);
     expect(n).toBe(3);
-    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
     expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1]);
   });
@@ -747,7 +748,7 @@ describe('team roster', () => {
     };
     await syncRosterMembersWith(EVENT, [1], slow);
     expect(calls).toBe(1);
-    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
     // A ban read by a sync that then stalls far past the bound still hides the member.
     s.db.set(2, member(2, { eligible: false }));
     await syncRosterMembersWith(EVENT, [2], s.deps);
@@ -796,5 +797,63 @@ describe('team roster', () => {
     await syncEventRosterMembers([1, 2, 5000], { onlyIfListed: true }, deps, [EVENT]);
     // Only 2, the one still listed.
     expect(loaded).toEqual([[2]]);
+  });
+
+  // Team names repeat: a gate that went Blue -> tombstone -> Blue while a sync ran must still read
+  // as changed to it, or its stale unlisting would hide a member who opted back in.
+  it('lets no stale unlisting hide a member who opted out and back in while it ran', async () => {
+    const s = setup([member(1)]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const stale: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        // This sync reads them as opted out...
+        s.db.set(1, member(1, { optedIn: false }));
+        const states = await s.deps.loadStates(event, ids);
+        // ...the opt-out syncs, then they opt back in and that syncs too, all before it writes.
+        await syncRosterMembersWith(EVENT, [1], s.deps);
+        s.db.set(1, member(1));
+        await syncRosterMembersWith(EVENT, [1], s.deps);
+        return states;
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], stale);
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+  });
+
+  it('writes a different gate value on every listing', async () => {
+    const s = setup([member(1)]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const first = s.hashes.get(keys.members)?.get('1');
+    await s.redis.hSet(keys.members, '1', 'x:1');
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const second = s.hashes.get(keys.members)?.get('1');
+    expect(rosterTeam(first)).toBe('Blue');
+    expect(rosterTeam(second)).toBe('Blue');
+    expect(second).not.toBe(first);
+  });
+
+  // A listing that lands between this sync's tombstone and its clear has its entries wiped by the
+  // clear; the sync sees the gate listed afterwards and derives that member again.
+  it('restores a listing whose entries its own clear wiped', async () => {
+    const s = setup([member(1, { optedIn: false })]);
+    const evalOf = s.redis.eval.bind(s.redis);
+    let raced = false;
+    (s.redis as { eval: typeof evalOf }).eval = async (script, args) => {
+      const result = await evalOf(script, args);
+      if (!raced && isTombstone(args.arguments[2])) {
+        raced = true;
+        // The member opts in and that sync lists them before this one clears.
+        s.db.set(1, member(1));
+        await syncRosterMembersWith(EVENT, [1], s.deps);
+      }
+      return result;
+    };
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    expect(raced).toBe(true);
+    expect(rosterTeam(s.hashes.get(keys.members)?.get('1'))).toBe('Blue');
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+    expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1]);
   });
 });

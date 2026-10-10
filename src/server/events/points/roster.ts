@@ -120,7 +120,7 @@ export async function readRosterPage(
   ]);
   const listed: RosterRow[] = [];
   ids.forEach((id, i) => {
-    if (teams[i] !== team) return;
+    if (gateTeam(teams[i]) !== team) return;
     const userId = Number(id);
     if (!Number.isInteger(userId) || userId <= 0) return;
     listed.push({
@@ -175,9 +175,15 @@ export async function listedOwnerTopics(
     named.map((n) => String(n.ownerId))
   );
   named.forEach(({ topicId, ownerId }, i) => {
-    if (gate[i] && !gate[i]!.startsWith(TOMBSTONE_PREFIX)) listed.set(topicId, ownerId);
+    if (gateTeam(gate[i])) listed.set(topicId, ownerId);
   });
   return listed;
 }
 // The gate's tombstone prefix (roster-sync.ts): a member hidden, not a team.
 export const TOMBSTONE_PREFIX = 'x:';
+// A listed gate value is the team plus a per-write suffix (roster-sync.ts), so a gate that goes
+// team -> tombstone -> same team still reads as changed to a sync that read the first one.
+export const LISTED_SEPARATOR = '#';
+// The team a gate value lists, or null for a tombstone or nothing.
+export const gateTeam = (value: string | null | undefined) =>
+  value && !value.startsWith(TOMBSTONE_PREFIX) ? value.split(LISTED_SEPARATOR)[0] || null : null;

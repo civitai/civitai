@@ -4,7 +4,13 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { loadEvents } from '~/server/events/load-events';
 import { eventPointSeason, seasonOwnerTopicId } from '~/server/events/points/keys';
 import { getOwnerPoints } from '~/server/events/points/read';
-import { eventRosterKeys, TOMBSTONE_PREFIX, type RosterHat } from '~/server/events/points/roster';
+import {
+  eventRosterKeys,
+  gateTeam,
+  LISTED_SEPARATOR,
+  TOMBSTONE_PREFIX,
+  type RosterHat,
+} from '~/server/events/points/roster';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 
@@ -116,8 +122,8 @@ export type RosterWriteRedis = Pick<
 const HIDDEN_PREFIX = TOMBSTONE_PREFIX;
 export const isTombstone = (value: string | null | undefined) =>
   !!value && value.startsWith(HIDDEN_PREFIX);
-export const rosterTeam = (value: string | null | undefined) =>
-  value && !isTombstone(value) ? value : null;
+export const rosterTeam = gateTeam;
+const listedValue = (team: string) => `${team}${LISTED_SEPARATOR}${randomUUID().slice(0, 8)}`;
 // Tombstones older than this go at the reconcile: long past any sync that read before them.
 const TOMBSTONE_TTL_MS = 60 * 60 * 1000;
 // A sync that has run this long gives up its writes (see syncRosterMembersWith): far inside the
@@ -206,6 +212,14 @@ export async function syncRosterMembersWith(
       })
     );
   await clearEntries(event, closed, deps);
+  // Another sync may have listed one of these between its tombstone and the clear above, and the
+  // clear took that listing's entries: derive those again.
+  if (closed.length) {
+    const after = await deps.redis.hmGet(keys.members, closed.map(String));
+    closed.forEach((id, i) => {
+      if (rosterTeam(after[i])) changed.push(id);
+    });
+  }
   const removed = closed.filter((id) => rosterTeam(previous.get(id))).length;
 
   // Listing writes the scores first and opens the gate last. Members go LIST_CONCURRENCY at a
@@ -274,7 +288,7 @@ export async function syncRosterMembersWith(
         )
       ),
     ]);
-    if (!(await gateWrite(s.userId, team))) changed.push(s.userId);
+    if (!(await gateWrite(s.userId, listedValue(team)))) changed.push(s.userId);
   }
 }
 const LIST_CONCURRENCY = 25;
