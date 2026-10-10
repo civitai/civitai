@@ -292,6 +292,12 @@ describe('syncEventHats -> engine', () => {
       await syncOwnerEventHats(OWNER, [image(100)], LIVE);
       expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({ 'Image:100': ownerHat() });
       expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
+      const sys = redisMock.sysRedis;
+      expect(sys.hSet.mock.invocationCallOrder[0]).toBeLessThan(
+        sys.xAdd.mock.invocationCallOrder[0]
+      );
+      // The placement it reads was written a moment ago, on the primary.
+      expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     });
 
     it('on a move, puts the hat on the new content and takes it off the old one', async () => {
