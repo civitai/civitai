@@ -16,7 +16,9 @@ import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hats = [{ cosmeticId: 31, claimKey: 'claimed', points: 5, moveCooldownLeftMs: 60_000 }];
+const hats = [
+  { cosmeticId: 31, claimKey: 'claimed', topicId: 't31', points: 5, moveCooldownLeftMs: 60_000 },
+];
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
@@ -37,6 +39,19 @@ let myHatsProps: Record<string, unknown> | undefined;
 vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({
   MyEventHats: (props: Record<string, unknown>) => {
     myHatsProps = props;
+    return null;
+  },
+}));
+// The live points subscriptions need the app's SignalProvider; record what the page asks for.
+const live = vi.hoisted(() => ({
+  teams: [] as [string, boolean][],
+  myHats: undefined as Record<string, unknown> | undefined,
+}));
+vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
+  useEventTeamsLivePoints: (event: string, enabled: boolean) =>
+    void live.teams.push([event, enabled]),
+  MyHatsLivePoints: (props: Record<string, unknown>) => {
+    live.myHats = props;
     return null;
   },
 }));
@@ -78,5 +93,30 @@ describe('ScoredEventSections: Your hats', () => {
     );
     expect(myHatsProps?.hats).toBe(hats);
     expect(myHatsProps?.fetchedAt).toBe(1_234_567);
+    // While the page is open it follows the team totals and each of the viewer's hats live.
+    expect(live.teams.at(-1)).toEqual(['birthday2026', true]);
+    expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'] });
+  });
+
+  // After the end the page names a winner; it must be the settled one the payout uses.
+  it('stops following the team totals once the event has ended', () => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const data = {
+      title: 'Birthday',
+      startDate: new Date(Date.now() - 120_000),
+      endDate: new Date(Date.now() - 60_000),
+    } as unknown as React.ComponentProps<typeof ScoredEventSections>['data'];
+    act(() =>
+      root!.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(ScoredEventSections, { event: 'birthday2026', data })
+        )
+      )
+    );
+    expect(live.teams.at(-1)).toEqual(['birthday2026', false]);
   });
 });

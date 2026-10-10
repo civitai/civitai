@@ -29,19 +29,65 @@ import type {
   TeamScoreHistoryInput,
   WornEventHatInput,
 } from '~/server/schema/event.schema';
-import type { CosmeticScoreKey } from '~/server/events/scoring/cosmetic-placement.service';
+import type {
+  CosmeticScore,
+  CosmeticScoreKey,
+} from '~/server/events/scoring/cosmetic-placement.service';
 import {
   cosmeticScoreKey,
   getCosmeticScores,
   getEventStandings as getScoredEventStandings,
   getUserCosmeticScores,
 } from '~/server/events/scoring/cosmetic-placement.service';
+import { hatField, hatTopicId } from '~/server/events/points/keys';
+import { getHatPoints, getTeamPoints } from '~/server/events/points/read';
+import type { EventHat } from '~/server/events/points/types';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
 
 // Every event read is gated on what the viewer may see (event-access.ts); a closed event reads as an
 // unknown one.
 type Viewer = { viewer: EventViewer };
+
+type SeasonEvent = { name: string; startDate: Date; teams: readonly string[] };
+// Called when a live read fell back to the snapshot, so an edge-cached route can skip caching it:
+// one sysRedis blip must not be served to everyone for minutes.
+type OnDegraded = { onDegraded?: () => void };
+
+// Live hat totals from the points engine. Null when sysRedis is unreachable, so the caller falls
+// back to the hourly snapshot rather than showing zero.
+async function liveHatPoints(
+  event: SeasonEvent,
+  hats: Omit<EventHat, 'team'>[],
+  onDegraded?: () => void
+) {
+  if (!hats.length) return {};
+  try {
+    return await getHatPoints({ name: event.name, startDate: event.startDate }, hats);
+  } catch (error) {
+    logSysRedisFailOpen('read-degraded', 'liveHatPoints', error, { event: event.name });
+    onDegraded?.();
+    return null;
+  }
+}
+
+// Per-type counts come from the hourly snapshot; the total comes live.
+function hatScore(
+  hat: Omit<EventHat, 'team'>,
+  score: CosmeticScore | undefined,
+  live: Record<string, number> | null
+) {
+  return {
+    topicId: hatTopicId(hat),
+    points: live ? live[hatField(hat)] ?? 0 : score?.points ?? 0,
+    impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
+    reactions: score?.reactions ?? 0,
+    comments: score?.comments ?? 0,
+    stickers: score?.stickers ?? 0,
+    remixes: score?.remixes ?? 0,
+  };
+}
 
 export function getViewerEventAccess({ event, viewer }: EventInput & Viewer) {
   return eventEngine.getAccess(event, viewer);
@@ -274,10 +320,18 @@ export async function getUserRank({
   }
 }
 
-export async function getEventStandings({ event, viewer }: EventInput & Viewer) {
+export async function getEventStandings({
+  event,
+  viewer,
+  onDegraded,
+}: EventInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const standings = await getScoredEventStandings(scored);
+    const [settled, live] = await Promise.all([
+      getScoredEventStandings(scored),
+      liveTeamPoints(scored, onDegraded),
+    ]);
+    const standings = withLiveTeamPoints(settled, live);
     const userIds = [
       ...new Set([
         ...standings.topCosmetics.map((x) => x.userId),
@@ -311,12 +365,51 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
         return [id, { name: c.name, url: typeof url === 'string' ? url : null }];
       })
     );
-    // A hat's claimKey stays with its owner; the page is public.
-    const topCosmetics = standings.topCosmetics.map(({ claimKey: _, ...hat }) => hat);
+    // Public and edge-cached: a bought hat's claim key is its purchase's transaction id, so each
+    // hat goes out under its opaque topic id instead.
+    const topCosmetics = standings.topCosmetics.map(({ claimKey, ...rest }) => ({
+      ...rest,
+      topicId: hatTopicId({ ownerId: rest.userId, cosmeticId: rest.cosmeticId, claimKey }),
+    }));
     return { ...standings, topCosmetics, users, cosmetics, teamHats };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
+}
+
+// Null once the event has ended: from then on the page names a winner, and it must be the one the
+// prize payout reads from the settled snapshot (eventEngine.getTeamScores), never a live total.
+async function liveTeamPoints(
+  event: SeasonEvent & { endDate: Date },
+  onDegraded?: () => void,
+  now = new Date()
+) {
+  if (event.endDate <= now) return null;
+  try {
+    return await getTeamPoints({
+      name: event.name,
+      startDate: event.startDate,
+      teams: event.teams,
+    });
+  } catch (error) {
+    logSysRedisFailOpen('read-degraded', 'liveTeamPoints', error, { event: event.name });
+    onDegraded?.();
+    return null;
+  }
+}
+
+// Team totals from the live engine, re-ranked. History and the top lists stay on the settled
+// snapshot.
+function withLiveTeamPoints<T extends { teams: { team: string; score: number; rank: number }[] }>(
+  standings: T,
+  live: Record<string, number> | null
+): T {
+  if (!live) return standings;
+  const teams = standings.teams
+    .map((t) => ({ ...t, score: live[t.team] ?? 0 }))
+    .sort((a, b) => b.score - a.score)
+    .map((t, i) => ({ ...t, rank: i + 1 }));
+  return { ...standings, teams };
 }
 
 type CatalogRow = { design: string | null; team: string | null; name: string; url: string | null };
@@ -432,9 +525,15 @@ export async function getMyEventHats({
     const placed = rows
       .filter((r) => r.equippedToType && r.equippedToId)
       .map((r) => ({ entityType: r.equippedToType!, entityId: r.equippedToId! }));
-    const [scores, entities] = await Promise.all([
+    const hats = rows.map((r) => ({
+      ownerId: user.id,
+      cosmeticId: r.cosmeticId,
+      claimKey: r.claimKey,
+    }));
+    const [scores, entities, live] = await Promise.all([
       getCosmeticScores(scored, keys),
       getPlaceableEntities(placed),
+      liveHatPoints(scored, hats),
     ]);
 
     const now = Date.now();
@@ -443,6 +542,7 @@ export async function getMyEventHats({
       const movableAt =
         placedAt && definition ? new Date(placedAt.getTime() + definition.moveCooldownMs) : null;
       const score = scores[cosmeticScoreKey({ userId: user.id, ...r })];
+      const hat = { ownerId: user.id, cosmeticId: r.cosmeticId, claimKey: r.claimKey };
       const entity =
         r.equippedToType && r.equippedToId
           ? entities.find((e) => e.entityType === r.equippedToType && e.entityId === r.equippedToId)
@@ -461,9 +561,7 @@ export async function getMyEventHats({
           movableAt && definition
             ? Math.min(definition.moveCooldownMs, Math.max(0, movableAt.getTime() - now))
             : 0,
-        points: score?.points ?? 0,
-        impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
-        reactions: score?.reactions ?? 0,
+        ...hatScore(hat, score, live),
       };
     });
   } catch (error) {
@@ -582,7 +680,8 @@ export async function getWornEventHat({
   entityType,
   entityId,
   viewer,
-}: WornEventHatInput & Viewer) {
+  onDegraded,
+}: WornEventHatInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
     const [row] = await dbRead.$queryRaw<WornHatRow[]>`
@@ -616,10 +715,12 @@ export async function getWornEventHat({
     if (!row || !isEventDecorationData(row.data)) return null;
     const team = row.data.team ?? null;
     const key = { userId: row.userId, cosmeticId: row.cosmeticId, claimKey: row.claimKey };
-    const [users, profilePictures, scores] = await Promise.all([
+    const hat = { ownerId: row.userId, cosmeticId: row.cosmeticId, claimKey: row.claimKey };
+    const [users, profilePictures, scores, live] = await Promise.all([
       userBasicCache.fetch([row.userId]),
       profilePictureCache.fetch([row.userId]),
       getCosmeticScores(scored, [key]),
+      liveHatPoints(scored, [hat], onDegraded),
     ]);
     const owner = users[row.userId];
     const score = scores[cosmeticScoreKey(key)];
@@ -637,9 +738,7 @@ export async function getWornEventHat({
               profilePicture: profilePictures[owner.id] ?? null,
             }
           : null,
-      points: score?.points ?? 0,
-      impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
-      reactions: score?.reactions ?? 0,
+      ...hatScore(hat, score, live),
     };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);

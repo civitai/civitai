@@ -252,7 +252,7 @@ const spotlights = (el: HTMLElement) =>
 
 describe('spotlight only where you can act (A9)', () => {
   it('the rules, steps and prize render as plain cards', () => {
-    const rules = { reactionWeight: 5, viewerOwnerDailyCap: 3, newAccountDays: 7 };
+    const rules = { reactionWeight: 5, pointsCapPerDay: 3, newAccountDays: 7 };
     const el = render(React.createElement(EventRules, { data: eventData({ rules }) }));
     expect(el.textContent).toContain('How points add up');
     expect(el.textContent).toContain('Champion badge');

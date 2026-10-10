@@ -46,6 +46,12 @@ const eventGate = middleware(async ({ ctx, input, next }) => {
   return next({ ctx: { cache: { ...ctx.cache, skip: true, canCache: false } } });
 });
 
+// A response that fell back from the live totals is not cached at the edge. edgeCacheIt re-reads
+// `skip` after the resolver runs (see home-block.controller for the same in-resolver opt-out).
+const skipEdgeCache = (ctx: { cache?: { skip?: boolean } | null }) => {
+  if (ctx.cache) ctx.cache.skip = true;
+};
+
 export const eventRouter = router({
   // What the viewer may do with an event: closed, preview, open or ended. Per viewer, so uncached.
   getAccess: publicProcedure
@@ -121,7 +127,9 @@ export const eventRouter = router({
     .input(eventSchema)
     .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(({ ctx, input }) => getEventStandings({ ...input, viewer: ctx.user })),
+    .query(({ ctx, input }) =>
+      getEventStandings({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+    ),
   getHatCatalog: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
@@ -139,12 +147,15 @@ export const eventRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ ctx, input }) => getEventCosmeticScores({ ...input, viewer: ctx.user })),
   // The hat on one card, read when its popover opens. The same for every viewer who sees the event.
+  // Short-lived at the edge: its points are a live total, and an open popover only moves on pushes.
   getWornHat: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(wornEventHatSchema)
     .use(eventGate)
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(({ ctx, input }) => getWornEventHat({ ...input, viewer: ctx.user })),
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(({ ctx, input }) =>
+      getWornEventHat({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+    ),
   // The caller's own hats and content: per user, so never cached.
   getMyHats: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

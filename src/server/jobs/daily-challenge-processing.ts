@@ -1088,6 +1088,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
+        eventPoints: false,
       });
       log('Comment sent', entry.imageId);
 
@@ -1098,6 +1099,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           entityId: entry.imageId,
           reaction: review.reaction,
           userId: judgingConfig.userId,
+          eventPoints: false,
         });
         log('Reaction sent', entry.imageId);
       } catch (error) {

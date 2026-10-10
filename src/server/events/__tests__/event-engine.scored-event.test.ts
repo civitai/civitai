@@ -11,15 +11,19 @@ import {
 import { EVENT_DECORATION_DEFINITIONS } from '~/shared/constants/event-decoration.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
 
-const { mockCreateNotification, mockRefresh, mockScoring } = vi.hoisted(() => ({
-  mockCreateNotification: vi.fn(),
-  mockRefresh: vi.fn<(type: string, ids: number[]) => Promise<undefined>>(async () => undefined),
-  mockScoring: {
-    getEventStandings: vi.fn(),
-    getTeamScoreHistory: vi.fn(),
-    runCosmeticPlacementScoring: vi.fn(),
-  },
-}));
+const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync } = vi.hoisted(
+  () => ({
+    mockCreateNotification: vi.fn(),
+    mockRefresh: vi.fn<(type: string, ids: number[]) => Promise<undefined>>(async () => undefined),
+    mockScoring: {
+      getEventStandings: vi.fn(),
+      getTeamScoreHistory: vi.fn(),
+      refreshStandings: vi.fn(),
+    },
+    mockReferee: { runEventPointsReferee: vi.fn() },
+    mockSync: { syncEventHats: vi.fn() },
+  })
+);
 
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
@@ -42,6 +46,8 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
 vi.mock('~/server/events/scoring/cosmetic-placement.service', () => mockScoring);
+vi.mock('~/server/events/points/referee', () => mockReferee);
+vi.mock('~/server/events/points/sync', () => mockSync);
 vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
 });
@@ -83,7 +89,8 @@ beforeEach(() => {
     topUsers: {},
     updatedAt: new Date(),
   });
-  mockScoring.runCosmeticPlacementScoring.mockResolvedValue({ synced: 0, scored: [] });
+  mockReferee.runEventPointsReferee.mockResolvedValue({ season: 'live', rows: 0, changed: 0 });
+  mockSync.syncEventHats.mockResolvedValue([]);
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
 
@@ -297,7 +304,7 @@ describe('end-of-event cleanup', () => {
     // ...and the hourly scoring runs up to that same instant and no further: the two cut-offs are one.
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize));
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + finalize + 1));
-    expect(mockScoring.runCosmeticPlacementScoring).toHaveBeenCalledTimes(1);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
   });
 
   it('does not mark cleanup done when flagging the winner fails', async () => {
@@ -324,7 +331,7 @@ describe('scored event is inert before it starts', () => {
     testerFlag.reset({ public: false });
     await eventEngine.updateLeaderboard(beforePreview);
     await eventEngine.dailyReset(beforePreview);
-    expect(mockScoring.runCosmeticPlacementScoring).not.toHaveBeenCalled();
+    expect(mockReferee.runEventPointsReferee).not.toHaveBeenCalled();
     expect(anyWrite()).toEqual([0, 0, 0, 0, 0]);
   });
 
@@ -350,7 +357,7 @@ describe('scored event is inert before it starts', () => {
     await eventEngine.updateLeaderboard(BIRTHDAY_2026_STARTS_AT);
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 23 * HOUR));
     await eventEngine.updateLeaderboard(new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 25 * HOUR));
-    expect(mockScoring.runCosmeticPlacementScoring).toHaveBeenCalledTimes(2);
+    expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(2);
     // Never the Buzz-bank leaderboard path.
     expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
   });
@@ -407,20 +414,45 @@ describe('join team lookup', () => {
 describe('scoring behind the flag', () => {
   const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * HOUR);
   const DURING = new Date(BIRTHDAY_2026_STARTS_AT.getTime() + 24 * HOUR);
-  const scoredWith = () => mockScoring.runCosmeticPlacementScoring.mock.calls.map(([e]) => e);
+  const settled = () =>
+    mockReferee.runEventPointsReferee.mock.calls.map(([e, season]) => ({ name: e.name, season }));
+  const standingsFrom = () =>
+    mockScoring.refreshStandings.mock.calls.map(([e]) => (e as { scoreFrom: Date }).scoreFrom);
 
-  it('scores the preview for flagged owners only, ending at the launch day', async () => {
+  // Which owners' hats earn in the preview is the hat sync's job (it applies the flag); this pins that
+  // the preview is settled as its own season, with standings read from the preview's start.
+  it('settles the preview as its own season, syncing hats first', async () => {
     testerFlag.reset({ public: false });
     await eventEngine.updateLeaderboard(PREVIEW);
-    expect(scoredWith()).toEqual([
+    expect(mockSync.syncEventHats).toHaveBeenCalledWith(PREVIEW);
+    expect(settled()).toEqual([{ name: BIRTHDAY_2026_EVENT, season: 'preview' }]);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_PREVIEW_FROM]);
+  });
+
+  // Standings are rebuilt right after the referee writes the snapshot: a replica may not have it yet.
+  it('syncs hats before settling, then rebuilds standings from the primary', async () => {
+    await eventEngine.updateLeaderboard(DURING);
+    const [synced] = mockSync.syncEventHats.mock.invocationCallOrder;
+    const [refereed] = mockReferee.runEventPointsReferee.mock.invocationCallOrder;
+    const [refreshed] = mockScoring.refreshStandings.mock.invocationCallOrder;
+    expect(synced).toBeLessThan(refereed);
+    expect(refereed).toBeLessThan(refreshed);
+    expect(mockScoring.refreshStandings.mock.calls[0][1]).toBe(dbMock.dbWrite);
+  });
+
+  it('still refreshes the standings when the referee fails', async () => {
+    const { logToAxiom } = await import('~/server/logging/client');
+    mockReferee.runEventPointsReferee.mockRejectedValueOnce(new Error('clickhouse down'));
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    // ...and the failure is reported, not swallowed.
+    expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: BIRTHDAY_2026_EVENT,
-        startDate: BIRTHDAY_2026_PREVIEW_FROM,
-        endDate: new Date('2026-11-01T00:00:00.000Z'),
-        scoreFrom: BIRTHDAY_2026_PREVIEW_FROM,
-        audienceFlag: 'birthday-2026',
-      }),
-    ]);
+        type: 'error',
+        name: 'event-points-referee',
+        message: 'clickhouse down',
+      })
+    );
   });
 
   it('scores everyone from the start, base on or off', async () => {
@@ -428,15 +460,11 @@ describe('scoring behind the flag', () => {
       testerFlag.reset({ public: isPublic });
       await eventEngine.updateLeaderboard(DURING);
     }
-    expect(scoredWith()).toEqual([
-      expect.objectContaining({
-        startDate: BIRTHDAY_2026_STARTS_AT,
-        endDate: BIRTHDAY_2026_ENDS_AT,
-        scoreFrom: BIRTHDAY_2026_STARTS_AT,
-        audienceFlag: undefined,
-      }),
-      expect.objectContaining({ audienceFlag: undefined, startDate: BIRTHDAY_2026_STARTS_AT }),
+    expect(settled()).toEqual([
+      { name: BIRTHDAY_2026_EVENT, season: 'live' },
+      { name: BIRTHDAY_2026_EVENT, season: 'live' },
     ]);
+    expect(standingsFrom()).toEqual([BIRTHDAY_2026_STARTS_AT, BIRTHDAY_2026_STARTS_AT]);
   });
 
   it('lets a tester join during the preview, and nobody else', async () => {

@@ -19,6 +19,7 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
@@ -2694,6 +2695,7 @@ export async function toggleReview({
   }
 
   await preventReplicationLag('resourceReview', userId);
+  void onModelReviewsChanged([{ modelId, userId }]);
 
   return setTo;
 }

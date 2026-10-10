@@ -13,6 +13,7 @@ import {
 } from '~/server/services/buzz.service';
 import { stickerPlacementAcceptedReward } from '~/server/rewards/active/stickerPlacementAccepted.reward';
 import { getPlacementConfig } from '~/server/services/placement.service';
+import { onPlacementApproved } from '~/server/events/points/hooks';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { isPlacementSpendType } from '~/shared/constants/placement.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -667,6 +668,11 @@ export async function settlePlacement({
   // retried webhook both land here — but this call moves no money of its own:
   // the payout below reads the winner's outcome off the row, not this action.
   if (count === 0 && placement.status !== status) return { settled: false, placement };
+
+  // Event points ride the approval itself, not the payout: a payout that throws is resumed by a
+  // sweeper that never fires this, and an award stamped after a slow payout could land after a
+  // takedown of the same placement.
+  if (count > 0 && status === 'approved') void onPlacementApproved(placement);
 
   await payOutPlacement(placement);
 
