@@ -4,7 +4,7 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
-import type { ApiKeyType } from '~/shared/utils/prisma/enums';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { CLIENT_CREDENTIALS_ONLY_SCOPES } from '~/shared/constants/token-scope.constants';
 
 const LAST_USED_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hour — don't update more frequently than this
@@ -23,7 +23,13 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
 
   const now = new Date();
   const apiKey = await dbWrite.apiKey.findFirst({
-    where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
+    where: {
+      key: token,
+      // A refresh token shares this table, hash and scope with its access token, but only the
+      // OAuth token endpoint may consume it. Filtering here also keeps its lastUsedAt untouched.
+      type: { not: ApiKeyType.Refresh },
+      OR: [{ expiresAt: { gte: now } }, { expiresAt: null }],
+    },
     select: {
       id: true,
       userId: true,
