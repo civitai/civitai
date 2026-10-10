@@ -15,6 +15,8 @@ const {
   selfHealCooldownKey,
   SETTLE_JOB,
   SETTLE_LOCK_S,
+  SWITCH_ON_RETRIES,
+  SWITCH_ON_RETRY_MS,
 } = await import('~/server/events/points/self-heal');
 const { acquireJobLock, jobLockKey } = await import('~/server/jobs/job-lock');
 const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventSeasonKeys } = await import(
@@ -128,12 +130,22 @@ type Fake = ReturnType<typeof fakeRedis>;
 // One pod's heal over the shared fake. `sync` is the reconcile: by default it writes HAT onto
 // Image:100, as the real one would from the placements.
 function pod(fake: Fake, overrides: Partial<SelfHealDeps> = {}) {
-  const calls = { sync: 0, referee: [] as string[], logs: [] as Record<string, unknown>[] };
+  const calls = {
+    sync: 0,
+    referee: [] as string[],
+    logs: [] as Record<string, unknown>[],
+    locks: [] as [string, number][],
+    retries: [] as { fn: () => void; ms: number }[],
+  };
   const healer = createEventPointsSelfHeal({
     isEnabled: async () => true,
     redis: fake.redis as unknown as SelfHealDeps['redis'],
-    acquireLock: (name, lockExpiration) =>
-      acquireJobLock(name, lockExpiration, fake.redis as unknown as JobLockRedis),
+    acquireLock: (name, lockExpiration) => {
+      calls.locks.push([name, lockExpiration]);
+      return acquireJobLock(name, lockExpiration, fake.redis as unknown as JobLockRedis, {
+        failOpen: false,
+      });
+    },
     loadEvent: async (name) =>
       (name === EVENT.name ? EVENT : undefined) as Awaited<ReturnType<SelfHealDeps['loadEvent']>>,
     syncEventHats: async () => {
@@ -149,6 +161,7 @@ function pod(fake: Fake, overrides: Partial<SelfHealDeps> = {}) {
     log: (entry) => void calls.logs.push(entry),
     now: () => NOW,
     pod: 'pod-a',
+    retryLater: (fn, ms) => void calls.retries.push({ fn, ms }),
     ...overrides,
   });
   return { heal: healer.heal, calls };
@@ -172,8 +185,8 @@ describe('the self-heal', () => {
         set: 1,
       }),
     ]);
-    expect(fake.strings.get(selfHealCooldownKey(EVENT.name))).toBe('empty-map');
-    expect(fake.ttls.get(selfHealCooldownKey(EVENT.name))).toBe(SELF_HEAL_COOLDOWN_S);
+    expect(fake.strings.get(selfHealCooldownKey(EVENT.name, 'empty-map'))).toBe('empty-map');
+    expect(fake.ttls.get(selfHealCooldownKey(EVENT.name, 'empty-map'))).toBe(SELF_HEAL_COOLDOWN_S);
     // The job lock is released when it is done.
     expect(fake.strings.has(jobLockKey(SETTLE_JOB))).toBe(false);
   });
@@ -182,7 +195,7 @@ describe('the self-heal', () => {
     const fake = fakeRedis();
     const { heal, calls } = pod(fake, { isEnabled: async () => false });
     expect(await heal(EVENT.name, 'empty-map')).toBe('off');
-    expect(calls).toEqual({ sync: 0, referee: [], logs: [] });
+    expect(calls).toEqual({ sync: 0, referee: [], logs: [], locks: [], retries: [] });
     expect(fake.strings.size).toBe(0);
   });
 
@@ -208,7 +221,7 @@ describe('the self-heal', () => {
     });
     const first = slow.heal(EVENT.name, 'empty-map');
     await vi.waitFor(() => expect(fake.strings.has(jobLockKey(SETTLE_JOB))).toBe(true));
-    fake.strings.delete(selfHealCooldownKey(EVENT.name));
+    fake.strings.delete(selfHealCooldownKey(EVENT.name, 'empty-map'));
     const other = pod(fake);
     expect(await other.heal(EVENT.name, 'empty-map')).toBe('locked');
     expect(other.calls.sync).toBe(0);
@@ -236,8 +249,72 @@ describe('the self-heal', () => {
     expect(calls.logs).toEqual([
       expect.objectContaining({ reason: 'switch-on', outcome: 'locked', pod: 'pod-a' }),
     ]);
-    expect(fake.strings.has(selfHealCooldownKey(EVENT.name))).toBe(true);
+    expect(fake.strings.has(selfHealCooldownKey(EVENT.name, 'switch-on'))).toBe(true);
     expect(fake.strings.get(jobLockKey(SETTLE_JOB))).toBe('the-hourly-run');
+  });
+
+  // The holder may be an hourly run that read the switch as off and reconciled nothing, and no
+  // reload asks again for a map that is not empty: only the flip's own retries get the hats in.
+  it('retries a flip that met a held lock until it gets the lock, past its own cooldown', async () => {
+    const fake = fakeRedis();
+    fake.strings.set(jobLockKey(SETTLE_JOB), 'the-hourly-run');
+    const { heal, calls } = pod(fake);
+    expect(await heal(EVENT.name, 'switch-on')).toBe('locked');
+    expect(calls.retries.map((r) => r.ms)).toEqual([SWITCH_ON_RETRY_MS]);
+    calls.retries.shift()!.fn();
+    await vi.waitFor(() => expect(calls.retries).toHaveLength(1));
+    expect(calls.sync).toBe(0);
+    fake.strings.delete(jobLockKey(SETTLE_JOB));
+    calls.retries.shift()!.fn();
+    await vi.waitFor(() => expect(calls.sync).toBe(1));
+    expect(calls.retries).toEqual([]);
+    expect(calls.logs.at(-1)).toEqual(
+      expect.objectContaining({ reason: 'switch-on', outcome: 'ran' })
+    );
+  });
+
+  it('gives up retrying a flip once the lock could no longer be the same hold', async () => {
+    const fake = fakeRedis();
+    fake.strings.set(jobLockKey(SETTLE_JOB), 'a-wedged-run');
+    const { heal, calls } = pod(fake);
+    await heal(EVENT.name, 'switch-on');
+    for (let i = 0; i < SWITCH_ON_RETRIES; i++) {
+      calls.retries.shift()!.fn();
+      await vi.waitFor(() => expect(calls.logs).toHaveLength(i + 2));
+    }
+    expect(calls.retries).toEqual([]);
+    expect(SWITCH_ON_RETRIES * SWITCH_ON_RETRY_MS).toBe(SETTLE_LOCK_S * 1000);
+  });
+
+  it('does not retry a repair that met a held lock: the next reload asks again', async () => {
+    const fake = fakeRedis();
+    fake.strings.set(jobLockKey(SETTLE_JOB), 'the-hourly-run');
+    const { heal, calls } = pod(fake);
+    expect(await heal(EVENT.name, 'missing-count-base')).toBe('locked');
+    expect(calls.retries).toEqual([]);
+  });
+
+  // An earlier repair must not swallow a flip: hats placed while off are only found by a reconcile.
+  it('still heals a flip inside a repair cooldown', async () => {
+    const fake = fakeRedis();
+    const { heal, calls } = pod(fake);
+    expect(await heal(EVENT.name, 'empty-map')).toBe('ran');
+    expect(await heal(EVENT.name, 'missing-count-base')).toBe('cooldown');
+    expect(await heal(EVENT.name, 'switch-on')).toBe('ran');
+    expect(calls.sync).toBe(2);
+  });
+
+  // Unlike the route, the heal never runs unlocked: two settles at once share their staging keys.
+  it('reads a Redis error on the lock as held, never as free', async () => {
+    const fake = fakeRedis();
+    const set = fake.redis.set;
+    fake.redis.set = async (key, value, opts) => {
+      if (key === jobLockKey(SETTLE_JOB)) throw new Error('timeout');
+      return set(key, value, opts);
+    };
+    const { heal, calls } = pod(fake);
+    expect(await heal(EVENT.name, 'empty-map')).toBe('locked');
+    expect(calls.sync).toBe(0);
   });
 
   it('does not stack a second heal on a pod whose first is still running', async () => {
@@ -275,7 +352,7 @@ describe('the self-heal', () => {
       }),
     ]);
     expect(fake.strings.has(jobLockKey(SETTLE_JOB))).toBe(false);
-    expect(fake.strings.has(selfHealCooldownKey(EVENT.name))).toBe(true);
+    expect(fake.strings.has(selfHealCooldownKey(EVENT.name, 'missing-count-base'))).toBe(true);
   });
 
   it('reconciles but does not settle when nothing is being scored yet', async () => {
@@ -297,20 +374,27 @@ describe('the self-heal', () => {
     expect(job.slice(0, job.indexOf('\n);'))).toContain('lockExpiration: 15 * 60');
     expect(SETTLE_LOCK_S).toBe(15 * 60);
   });
+
+  it('asks for that lock with that expiration', async () => {
+    const { heal, calls } = pod(fakeRedis());
+    await heal(EVENT.name, 'empty-map');
+    expect(calls.locks).toEqual([[SETTLE_JOB, SETTLE_LOCK_S]]);
+  });
 });
 
 describe('the engine asks for a heal', () => {
   function engineOver(fake: Fake, selfHeal = vi.fn()) {
+    const logError = vi.fn();
     const engine = createEventPointsEngine({
       redis: fake.redis as unknown as EventPointsRedis,
       insertLedger: async () => undefined,
       loadScoredEvents: async () => [EVENT],
       now: () => NOW,
-      logError: vi.fn(),
+      logError,
       onGrant: () => undefined,
       selfHeal,
     });
-    return { engine, selfHeal };
+    return { engine, selfHeal, logError };
   }
   const countBase = eventSeasonKeys(EVENT.name, 'live').base('count');
 
@@ -339,6 +423,8 @@ describe('the engine asks for a heal', () => {
     await engine.refresh();
     // The check ran (the control for the silence below), and asked for nothing.
     await vi.waitFor(() => expect(hGet).toHaveBeenCalledWith(countBase, COUNT_BASE_MARK));
+    // Let the check's read resolve and anything it would ask for land.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(selfHeal).not.toHaveBeenCalled();
   });
 
@@ -362,10 +448,35 @@ describe('the engine asks for a heal', () => {
     fake.redis.hGet = async () => {
       throw new Error('down');
     };
-    const { engine, selfHeal } = engineOver(fake);
+    const { engine, selfHeal, logError } = engineOver(fake);
     await expect(engine.refresh()).resolves.toBeUndefined();
+    await vi.waitFor(() =>
+      expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.checkHealth', expect.any(Error))
+    );
     expect(selfHeal).not.toHaveBeenCalled();
     expect(await engine.isHattedEntityOnceLoaded('Image', 100)).toBe(true);
+  });
+
+  // The widened pin: hats in the map but no count base, so the counts sit on the snapshot; the
+  // engine's own heal settles without waiting for the hourly job.
+  it('with a hat map and no count base, settles through its own heal', async () => {
+    const fake = fakeRedis();
+    fake.placeHat(EVENT.name, 'Image:100', encodeHat(HAT));
+    const healer = pod(fake);
+    const engine = createEventPointsEngine({
+      redis: fake.redis as unknown as EventPointsRedis,
+      insertLedger: async () => undefined,
+      loadScoredEvents: async () => [EVENT],
+      now: () => NOW,
+      logError: vi.fn(),
+      onGrant: () => undefined,
+      selfHeal: (event, reason) => void healer.heal(event, reason),
+    });
+    await engine.refresh();
+    await vi.waitFor(() => expect(healer.calls.referee).toEqual(['live']));
+    expect(healer.calls.logs).toEqual([
+      expect.objectContaining({ reason: 'missing-count-base', outcome: 'ran' }),
+    ]);
   });
 
   // The pin: switched on with an empty map, the engine earns without waiting for the hourly job.

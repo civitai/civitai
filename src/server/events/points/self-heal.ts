@@ -21,10 +21,16 @@ export const SETTLE_JOB = 'event-engine-leaderboard-update';
 export const SETTLE_LOCK_S = 15 * 60;
 // One heal per event per window, across every pod, whatever happened to the last one: a genuinely
 // empty event (no hats placed), or one the referee has nothing to settle for yet, would otherwise
-// heal on every reload.
+// heal on every reload. A flip has its own window, so an earlier repair cannot swallow it.
 export const SELF_HEAL_COOLDOWN_S = 15 * 60;
-export const selfHealCooldownKey = (event: string) =>
-  `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:self-heal-cooldown` as const;
+export const selfHealCooldownKey = (event: string, reason: SelfHealReason) =>
+  `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:self-heal-cooldown:${
+    reason === 'switch-on' ? 'switch-on' : 'repair'
+  }` as const;
+// A flip that finds the settle lock held tries again this often, for as long as the lock can be held:
+// nothing else asks again, and the holder may be an hourly run that read the switch as off.
+export const SWITCH_ON_RETRY_MS = 60 * 1000;
+export const SWITCH_ON_RETRIES = SETTLE_LOCK_S / 60;
 
 type HealedEvent = Awaited<ReturnType<typeof loadEvents>>[number];
 
@@ -39,6 +45,7 @@ export type SelfHealDeps = {
   log: (entry: Record<string, unknown>) => void;
   now: () => Date;
   pod: string | undefined;
+  retryLater: (fn: () => void, ms: number) => void;
 };
 
 export function createEventPointsSelfHeal(deps: SelfHealDeps) {
@@ -47,7 +54,8 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
 
   // Never throws. Every outcome but 'busy' and 'off' is logged, so the next switch-on shows in
   // Axiom which pod healed, why, and how long after the flag read on.
-  async function heal(name: string, reason: SelfHealReason): Promise<SelfHealOutcome> {
+  // `retry`: a flip's retry after a held lock, which its own cooldown must not stop.
+  async function heal(name: string, reason: SelfHealReason, retry = 0): Promise<SelfHealOutcome> {
     if (inFlight.has(name)) return 'busy';
     inFlight.add(name);
     const entry = { name: 'event-points', fn: 'selfHeal', event: name, reason, pod: deps.pod };
@@ -55,16 +63,20 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
       if (!(await deps.isEnabled())) return 'off';
       const eventDef = await deps.loadEvent(name);
       if (!eventDef?.scoring) return 'unknown';
-      const cooled = await deps.redis.set(selfHealCooldownKey(name), reason, {
-        NX: true,
-        EX: SELF_HEAL_COOLDOWN_S,
-      });
-      if (!cooled) return 'cooldown';
+      if (!retry) {
+        const cooled = await deps.redis.set(selfHealCooldownKey(name, reason), reason, {
+          NX: true,
+          EX: SELF_HEAL_COOLDOWN_S,
+        });
+        if (!cooled) return 'cooldown';
+      }
       // Held: the hourly job (or another pod's heal) is doing this same work now. The cooldown
-      // stays, so the pods do not queue up behind it.
+      // stays, so the pods do not queue up behind it; a flip retries, as only it may be missed.
       const lock = await deps.acquireLock(SETTLE_JOB, SETTLE_LOCK_S);
       if (!lock) {
-        deps.log({ ...entry, type: 'info', outcome: 'locked' });
+        deps.log({ ...entry, type: 'info', outcome: 'locked', retry });
+        if (reason === 'switch-on' && retry < SWITCH_ON_RETRIES)
+          deps.retryLater(() => void heal(name, reason, retry + 1), SWITCH_ON_RETRY_MS);
         return 'locked';
       }
       try {
@@ -103,7 +115,9 @@ function getSelfHeal() {
   selfHeal ??= createEventPointsSelfHeal({
     isEnabled: () => isEventPointsEnabled().catch(() => false),
     redis: sysRedis,
-    acquireLock: (name, lockExpiration) => acquireJobLock(name, lockExpiration),
+    // Unlike the route, never run unlocked: the hourly job does this work anyway.
+    acquireLock: (name, lockExpiration) =>
+      acquireJobLock(name, lockExpiration, sysRedis, { failOpen: false }),
     loadEvent: async (name) => (await loadEvents()).find((e) => e.name === name),
     syncEventHats,
     getScoringPhase: (event, now) => getEventScoringPhase(event, now),
@@ -111,6 +125,7 @@ function getSelfHeal() {
     log: (entry) => void logToAxiom(entry).catch(() => undefined),
     now: () => new Date(),
     pod: env.PODNAME,
+    retryLater: (fn, ms) => void setTimeout(fn, ms).unref?.(),
   });
   return selfHeal;
 }

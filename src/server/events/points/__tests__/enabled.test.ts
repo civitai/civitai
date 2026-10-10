@@ -248,9 +248,15 @@ describe('the impression filter', () => {
 // Hats placed while the engine was off never reached the hat map; a flip to on asks for the
 // reconcile at once instead of leaving them out until the hourly job.
 describe('a flip to on', () => {
+  // A flip's heal is a detached listener that loads the scored events, then imports the heal.
+  const settleHeals = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.dynamicImportSettled();
+  };
+
   it('asks each scored event for a heal, once per flip, and never while staying on or off', async () => {
     // Earlier cases flip the switch too; let their heals land before counting this one's.
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await settleHeals();
     selfHeal.healEventPoints.mockClear();
     setFlag(false);
     isEventPointsEnabledSync();
@@ -263,7 +269,7 @@ describe('a flip to on', () => {
     );
     setFlag(true);
     isEventPointsEnabledSync();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await settleHeals();
     expect(selfHeal.healEventPoints).toHaveBeenCalledTimes(1);
   });
 
@@ -277,7 +283,7 @@ describe('a flip to on', () => {
     fresh.isEventPointsEnabledSync();
     setFlag(false);
     fresh.isEventPointsEnabledSync();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await settleHeals();
     expect(listener).not.toHaveBeenCalled();
     // The control: the same module does call it on a flip.
     setFlag(true);

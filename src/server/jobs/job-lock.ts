@@ -35,17 +35,21 @@ export const jobLockKey = (name: string) => `${REDIS_SYS_KEYS.JOB}:${name}` as c
 
 export type JobLockRedis = Pick<NonNullable<typeof sysRedis>, 'set' | 'eval'>;
 
+// Not `withDistributedLock` (utils/distributed-lock.ts): this one must be the run-jobs route's own
+// key, never waits, and caps the hold at the job's lockExpiration.
 // Atomically acquire the job lock. Returns null if another run already holds it.
 // Uses SET NX (atomic check-and-set) instead of the old GET-then-SET, which let
 // two concurrent triggers both pass the check and run the same job in parallel
 // (e.g. the duplicate ingest-images cron triggers).
+// `failOpen: false` reads an unreachable Redis as held, for a caller that can skip a run.
 export async function acquireJobLock(
   name: string,
   lockExpiration: number,
-  redis: JobLockRedis | undefined = sysRedis
+  redis: JobLockRedis | undefined = sysRedis,
+  { failOpen = true }: { failOpen?: boolean } = {}
 ): Promise<JobLock | null> {
   // Redis unavailable — fail open (run without a lock), matching prior behavior.
-  if (!redis) return NOOP_LOCK;
+  if (!redis) return failOpen ? NOOP_LOCK : null;
   const key = jobLockKey(name);
 
   const token = `${env.PODNAME ?? 'unknown'}:${Date.now()}-${Math.random()}`;
@@ -61,7 +65,7 @@ export async function acquireJobLock(
       { type: 'job-lock', message: 'acquire-error', job: name, error: (e as Error)?.message },
       'webhooks'
     ).catch();
-    return NOOP_LOCK;
+    return failOpen ? NOOP_LOCK : null;
   }
   if (acquired !== 'OK') return null;
 

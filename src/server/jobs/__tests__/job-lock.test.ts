@@ -82,6 +82,34 @@ describe('acquireJobLock', () => {
     fake.redis.set.mockRejectedValueOnce(new Error('down'));
     expect(await acquireJobLock('some-job', 60, fake.typed)).toBe(NOOP_LOCK);
   });
+
+  // For a caller that can skip a run (the event points self-heal), unreachable means held.
+  it('reads an acquire error as held when asked not to fail open', async () => {
+    const fake = fakeRedis();
+    fake.redis.set.mockRejectedValueOnce(new Error('down'));
+    expect(await acquireJobLock('some-job', 60, fake.typed, { failOpen: false })).toBeNull();
+  });
+
+  it('refreshes with its own token, and stops refreshing once released', async () => {
+    vi.useFakeTimers();
+    const fake = fakeRedis();
+    const lock = await acquireJobLock('some-job', 600, fake.typed);
+    const token = fake.strings.get(jobLockKey('some-job'));
+    fake.ttls.set(jobLockKey('some-job'), 1);
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(fake.redis.eval).toHaveBeenLastCalledWith(expect.not.stringContaining('"del"'), {
+      keys: [jobLockKey('some-job')],
+      arguments: [token, '10'],
+    });
+    expect(fake.ttls.get(jobLockKey('some-job'))).toBe(10);
+    await lock!.release();
+    await lock!.release();
+    const calls = fake.redis.eval.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fake.redis.eval.mock.calls.length).toBe(calls);
+    // One refresh, one release: a second release sends nothing.
+    expect(calls).toBe(2);
+  });
 });
 
 describe('the run-jobs route', () => {
