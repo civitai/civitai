@@ -25,7 +25,16 @@ module.exports = {
   // generated client, not package runtime source, so it's out of scope.
   plugins: ['import', '@typescript-eslint'],
   ignorePatterns: ['**/prisma/**'],
+  overrides: [
+    {
+      // @civitai/db is where pools are built (and guarded); tests may build their own.
+      files: ['civitai-db/src/**', '**/*.test.ts', '**/*.spec.ts'],
+      rules: { 'no-restricted-syntax': 'off' },
+    },
+  ],
   rules: {
+    // `new Pool` / `new pg.Pool` outside @civitai/db — see eslint-no-direct-pg-pool.cjs.
+    ...require('../eslint-no-direct-pg-pool.cjs'),
     'import/no-extraneous-dependencies': [
       'error',
       {

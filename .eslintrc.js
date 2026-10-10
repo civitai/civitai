@@ -6,6 +6,8 @@
 // from eslintrc makes @eslint/eslintrc reject it and then crash formatting the
 // error ("Converting circular structure to JSON"), so lint silently never runs.
 // Enforced by the `eslint-config-next: "15"` entry in package.json `pnpm.overrides`.
+const noDirectPgPool = require('./eslint-no-direct-pg-pool.cjs');
+
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -227,6 +229,10 @@ module.exports = {
     // cover all of `src/` and will show them.
     'local-rules/no-hand-enumerated-trpc-mock': 'error',
 
+    // `new Pool` / `new pg.Pool` outside @civitai/db. Reasoning in eslint-no-direct-pg-pool.cjs;
+    // the allowlist is the override below.
+    ...noDirectPgPool,
+
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 
@@ -423,6 +429,22 @@ module.exports = {
       files: ['**/*.test.ts', '**/*.test.tsx', '**/__tests__/**/*.ts', '**/__tests__/**/*.tsx'],
       rules: {
         'local-rules/no-unbounded-paging-fake': 'error',
+      },
+    },
+    {
+      // Where a direct pg Pool is allowed (see eslint-no-direct-pg-pool.cjs). Tests and scripts are
+      // short-lived. The auth hub's pool is deliberately standalone, so it must attach the same
+      // listeners itself.
+      files: [
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        '**/__tests__/**',
+        'scripts/**',
+        'apps/*/scripts/**',
+        'apps/auth/src/lib/server/db/db.ts',
+      ],
+      rules: {
+        'no-restricted-syntax': 'off',
       },
     },
   ],

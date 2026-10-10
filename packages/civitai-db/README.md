@@ -68,5 +68,12 @@ Kysely does not expose its dialect's pool.
   numbers, not strings. Registration is lazy (per-factory-call), so merely importing `@civitai/db`
   elsewhere (the Prisma path) never flips global pg parsing.
 - **`pg` is transitive**: declare it in the app only if you `import 'pg'` directly.
+- **Dropped connections**: a pg connection that drops (a failover drops all of them at once) emits an
+  `'error'` event, and with no listener that crashes the process. Every pool `createPool`,
+  `createClients` and `createKyselyClients` builds is passed through `guardPool` (`src/pool-guard.ts`),
+  which logs instead: on the pool for idle clients, and on each client for one that is checked out
+  (pg-pool removes its own client listener during checkout, so a pool-level listener alone misses
+  that case). Pre-built pools you pass in are not guarded here — `createPool` pools already are. ESLint
+  bans `new Pool` / `new pg.Pool` outside this package (`eslint-no-direct-pg-pool.cjs` at the repo root).
 
 Reference implementation: [apps/moderator/src/lib/server/db.ts](../../apps/moderator/src/lib/server/db.ts).

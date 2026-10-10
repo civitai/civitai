@@ -1,5 +1,6 @@
 import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { Pool, types, type PoolConfig } from 'pg';
+import { guardPool } from './pool-guard';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
 export { sql } from 'kysely';
@@ -152,14 +153,10 @@ export function createKyselyClients<DB>(
 
   const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
 
-  // node-postgres emits 'error' on the POOL when an IDLE client dies — a managed database dropping idle
-  // connections, a network blip, a laptop sleeping. `error` is a special event in Node: with no listener
-  // it is rethrown, so an idle-connection drop takes down the process or fails the next request rather
-  // than being retired quietly. The pool already discards the bad client; this only stops the throw.
-  const guard = (p: Pool) => {
-    p.on('error', (err) => console.error('[db] idle client error (pool will recycle it)', err));
-    return p;
-  };
+  // A dropped connection must not surface as a listenerless 'error' event, which crashes the process:
+  // guardPool covers both the idle-client (pool) and the checked-out-client (per-client) paths.
+  // Pre-built pools are the caller's to guard (createPool does).
+  const guard = (p: Pool) => guardPool(p, 'kysely');
 
   const primaryPool = pool ?? guard(new Pool(config));
   const primary = make(primaryPool);
