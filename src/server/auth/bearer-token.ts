@@ -5,10 +5,20 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { Subject } from '~/server/http/orchestrator/api-key-spend';
 import type { BuzzLimit } from '~/server/schema/api-key.schema';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
+import { CLIENT_CREDENTIALS_ONLY_SCOPES } from '~/shared/constants/token-scope.constants';
 
 const LAST_USED_DEBOUNCE_MS = 60 * 60 * 1000; // 1 hour — don't update more frequently than this
 
-export async function getSessionFromBearerToken(key: string) {
+export type BearerTokenOptions = {
+  /** Accept a client-credentials token; only the catalog endpoints pass this. */
+  allowClientCredentialsOnly?: boolean;
+};
+
+/**
+ * The session a bearer credential stands for, or null. A client-credentials token is
+ * single-purpose: it resolves to no session unless the caller opts in.
+ */
+export async function getSessionFromBearerToken(key: string, options: BearerTokenOptions = {}) {
   const token = generateSecretHash(key.trim());
 
   const now = new Date();
@@ -25,6 +35,12 @@ export async function getSessionFromBearerToken(key: string) {
     },
   });
   if (!apiKey) return null;
+  if (
+    !options.allowClientCredentialsOnly &&
+    ((apiKey.tokenScope ?? 0) & CLIENT_CREDENTIALS_ONLY_SCOPES) !== 0
+  ) {
+    return null;
+  }
 
   // Update lastUsedAt (debounced — at most once per hour, fire-and-forget)
   if (!apiKey.lastUsedAt || now.getTime() - apiKey.lastUsedAt.getTime() > LAST_USED_DEBOUNCE_MS) {

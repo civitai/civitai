@@ -29,7 +29,7 @@ export async function resolveCatalogCaller(req: NextApiRequest): Promise<Catalog
   const match = typeof header === 'string' ? BEARER_RE.exec(header) : null;
   if (!match || requestCarriesQueryToken(req)) throw invalid();
 
-  const session = await getSessionFromBearerToken(match[1]);
+  const session = await getSessionFromBearerToken(match[1], { allowClientCredentialsOnly: true });
   if (
     !session?.user ||
     session.apiKeyType !== ApiKeyType.Access ||

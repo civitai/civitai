@@ -20,7 +20,7 @@ const { mockSession, mockUpsert, mockWithdraw, mockList } = vi.hoisted(() => ({
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/auth/bearer-token', () => ({
-  getSessionFromBearerToken: (key: string) => mockSession(key),
+  getSessionFromBearerToken: (key: string, options?: unknown) => mockSession(key, options),
 }));
 vi.mock('~/server/services/blocks/app-sub-listing.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubListingService>()),
@@ -89,7 +89,7 @@ describe('resolveCatalogCaller', () => {
       clientId: CLIENT,
       parentListingId: PARENT,
     });
-    expect(mockSession).toHaveBeenCalledWith(TOKEN);
+    expect(mockSession).toHaveBeenCalledWith(TOKEN, { allowClientCredentialsOnly: true });
     expect(dbMock.dbRead.appListing.findMany.mock.calls[0][0]).toMatchObject({
       where: {
         connectClientId: CLIENT,

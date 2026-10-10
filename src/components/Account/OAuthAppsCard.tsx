@@ -634,7 +634,8 @@ function EditAppModal({
       description: description.trim(),
       redirectUris: uris,
       allowedOrigins: originsParsed.value,
-      allowedScopes: tokenScope,
+      // Opt-in bits above `Full` are not editable here; the server keeps the client's own.
+      allowedScopes: tokenScope & TokenScope.Full,
     });
   };
 

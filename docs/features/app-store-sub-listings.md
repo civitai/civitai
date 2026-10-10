@@ -67,12 +67,13 @@ as that client and keeps the store in step with its own catalog.
 `app_sub_listing_parents` row is enabled and has a `link_template`: an https URL with exactly one
 `{id}`, e.g. `https://games.example.com/?game={id}`. The client is confidential and has
 `client_credentials` in its grants and `AppStoreCatalogWrite` (268435456) in its allowed scopes.
-Those two client settings can only be set by hand, and editing the client's scopes in the OAuth
-apps page drops the bit.
+Those two client settings can only be set by hand: the OAuth apps page can neither add nor remove
+the bit, and an edit there keeps it.
 
 **Token:** the client-credentials grant on the hub's token endpoint, asking for
 `scope=268435456`. The token carries `AppStoreCatalogWrite` and `UserRead` only, lives an hour and
-has no refresh token; see `docs/auth/oauth-developer-docs.md` → Client Credentials Flow.
+has no refresh token. It is single-purpose: it is only accepted on the catalog endpoints. See
+`docs/auth/oauth-developer-docs.md` → Client Credentials Flow.
 
 ```
 POST https://auth.civitai.com/api/auth/oauth/token
