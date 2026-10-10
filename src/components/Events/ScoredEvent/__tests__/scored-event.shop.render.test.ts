@@ -326,16 +326,27 @@ describe('standings rows (A7)', () => {
       );
     });
 
-    it('in the preview, says the preview is scoring now', () => {
-      const el = render(
+    const pending = (liveTotals: boolean) =>
+      render(
         React.createElement(TeamStandings, {
-          standings: standings(),
+          standings: { ...standings(), liveTotals } as React.ComponentProps<
+            typeof TeamStandings
+          >['standings'],
           startDate: utcStart,
           preview: true,
         })
-      );
-      expect(el.querySelector('[data-testid="chart-pending"]')?.textContent).toBe(
+      ).querySelector('[data-testid="chart-pending"]')?.textContent;
+
+    it('in the preview, says the preview is scoring now', () => {
+      expect(pending(true)).toBe(
         "Competition hasn't started yetThe preview is scoring now and draws its first point after the first hour. The competition starts Nov 11."
+      );
+    });
+
+    // Kill switch off: the preview is not scoring, so it does not say it is.
+    it('in the preview with the engine switched off, only says when scoring starts', () => {
+      expect(pending(false)).toBe(
+        "Competition hasn't started yetThere will be a graph of every team's points here. Scoring starts Nov 11."
       );
     });
   });

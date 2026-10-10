@@ -48,6 +48,7 @@ import {
   seasonTeamsTopicId,
   type EventPointSeason,
 } from '~/server/events/points/keys';
+import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { getHatPoints, getTeamPoints } from '~/server/events/points/read';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -346,9 +347,10 @@ export async function getEventStandings({
 }: EventInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const [settled, live] = await Promise.all([
+    const [settled, live, engineOn] = await Promise.all([
       getScoredEventStandings(scored, { onDegraded }),
       liveTeamPoints(scored, onDegraded),
+      isEventPointsEnabled().catch(() => false),
     ]);
     const standings = withLiveTeamPoints(settled, live);
     const userIds = [
@@ -398,8 +400,9 @@ export async function getEventStandings({
     }));
     // What the page subscribes to and marks for the live team totals.
     const teamsTopicId = seasonTeamsTopicId(scored.name, season);
-    // Whether the team totals came from the live engine, so the page does not call them hourly.
-    const liveTotals = live !== null;
+    // Whether the team totals came from the live engine and it is running, so the page does not call
+    // them hourly. With the kill switch off they are still read live but no longer move.
+    const liveTotals = live !== null && engineOn;
     return { ...standings, topCosmetics, teamsTopicId, liveTotals, users, cosmetics, teamHats };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);

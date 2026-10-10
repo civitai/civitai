@@ -191,7 +191,8 @@ export function TeamStandings({
         ) : (
           <ChartPending
             startDate={startDate}
-            preview={preview}
+            // With the engine switched off the preview is not scoring, whatever its dates say.
+            preview={preview && !!standings.liveTotals}
             colors={standings.teams.map((t) => teamColor(t.team))}
           />
         )}

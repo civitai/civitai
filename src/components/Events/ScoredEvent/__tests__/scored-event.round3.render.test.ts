@@ -163,6 +163,14 @@ describe('Your hats cards', () => {
     expect(stats.lastElementChild?.textContent).toBe('Counts update hourly');
   });
 
+  // Once the event has ended the counts are final: nothing updates hourly any more.
+  it('drops the hourly note once the event has ended', () => {
+    const card = cards([hat({ placedOn: placed })], true).querySelector('[data-testid="my-hat"]')!;
+    const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
+    expect(stats.querySelector('[data-way="views"]')).not.toBeNull();
+    expect(stats.querySelector('[data-testid="hat-stats-counts-note"]')).toBeNull();
+  });
+
   // Justin, 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above
   // the 2x2, side by side only from 13rem, and its cells show whole thousands.
   it('stacks the points above the four ways on a narrow card, with whole thousands', () => {
