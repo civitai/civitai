@@ -1,25 +1,34 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 
+import { sessionClient } from '~/server/auth/session-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import { PARENT_LINK_TEMPLATE_SQL } from '~/server/services/blocks/app-sub-listing-store.service';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
+import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
 } from '~/server/services/apps/shared-content-safety';
 import { newAppSubListingId } from '~/server/utils/app-block-ids';
-import { checkSubListingWriteRateLimit } from '~/server/utils/shared-storage-rate-limit';
+import {
+  checkSubListingSyncRateLimit,
+  checkSubListingWriteRateLimit,
+} from '~/server/utils/shared-storage-rate-limit';
 import {
   APP_SUB_LISTING_CONTENT_RATINGS,
   APP_SUB_LISTING_ITEM_KEY_MAX,
   APP_SUB_LISTING_TAGLINE_MAX,
   APP_SUB_LISTING_TITLE_MAX,
+  isAppSubListingId,
   isRatingAtLeastAsStrict,
+  isValidSubListingExternalId,
   isValidSubListingSubPath,
+  subListingExternalHref,
   type AppSubListingStatus,
 } from '~/shared/constants/app-sub-listing.constants';
 import type { SessionUser } from '~/types/session';
@@ -32,7 +41,8 @@ import type {
  * App Store sub-listings — the write path.
  *
  * Writers: the app (through the `upsert` and `withdraw` block-token endpoints, as the item's
- * author), the in-app withdraw / moderator hide of the matching shared row, and moderators on
+ * author), an off-site parent's platform (through the `/api/v1/catalog/items` endpoints), the
+ * in-app withdraw / moderator hide of the matching shared row, and moderators on
  * `/apps/review`. A write busts the store catalog cache when it changes what the cached id
  * page can contain.
  *
@@ -56,7 +66,13 @@ export type SubListingErrorCode =
   | 'not_found'
   | 'invalid_transition'
   | 'conflict'
-  | 'unavailable';
+  | 'unavailable'
+  | 'invalid_token'
+  | 'insufficient_scope'
+  | 'parent_ambiguous'
+  | 'creator_not_linked'
+  | 'creator_not_found'
+  | 'author_mismatch';
 
 export class SubListingError extends Error {
   constructor(
@@ -70,10 +86,10 @@ export class SubListingError extends Error {
   }
 }
 
-/** Map a missing-table error to the 503 every caller expects; rethrow anything else. */
+/** Map a missing table or column to the 503 every caller expects; rethrow anything else. */
 function rethrowUnavailable(err: unknown): never {
   if (err instanceof SubListingError) throw err;
-  if (isMissingTableError(err)) {
+  if (isMissingTableError(err) || isMissingColumnError(err)) {
     throw new SubListingError(503, 'unavailable', 'Store items are not available yet');
   }
   throw err;
@@ -172,6 +188,16 @@ function sameContent(a: SubListingContent, b: SubListingContent): boolean {
     a.subPath === b.subPath &&
     a.contentRating === b.contentRating
   );
+}
+
+function liveContent(row: SubListingContent): SubListingContent {
+  return {
+    title: row.title,
+    tagline: row.tagline,
+    imageId: row.imageId,
+    subPath: row.subPath,
+    contentRating: row.contentRating,
+  };
 }
 
 const CLEAR_PENDING = {
@@ -379,18 +405,22 @@ type WriteOutcome = UpsertSubListingResult & { catalogAffected: boolean };
 
 const MAX_WRITE_ATTEMPTS = 3;
 
+const notYourItem = () =>
+  new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
+
 async function writeSubListing(
-  parent: ResolvedParent,
+  parent: Pick<ResolvedParent, 'id' | 'maxPerAuthor'>,
   itemKey: string,
   authorUserId: number,
   content: SubListingContent,
+  authorMismatch: () => SubListingError = notYourItem,
   attempt = 1
 ): Promise<WriteOutcome> {
   const again = () => {
     if (attempt >= MAX_WRITE_ATTEMPTS) {
       throw new SubListingError(409, 'conflict', 'The item changed while saving, retry');
     }
-    return writeSubListing(parent, itemKey, authorUserId, content, attempt + 1);
+    return writeSubListing(parent, itemKey, authorUserId, content, authorMismatch, attempt + 1);
   };
   const activeCount = () =>
     dbWrite.appSubListing.count({
@@ -431,9 +461,7 @@ async function writeSubListing(
     }
   }
 
-  if (existing.authorUserId !== authorUserId) {
-    throw new SubListingError(403, 'not_your_item', 'Only the item author can publish it');
-  }
+  if (existing.authorUserId !== authorUserId) throw authorMismatch();
   const status = existing.status as AppSubListingStatus;
 
   // A moderator's hide is a lock the app cannot lift.
@@ -480,14 +508,7 @@ async function writeSubListing(
   }
 
   // Approved: keep the live version and stage the edit, unless it changes nothing.
-  const live: SubListingContent = {
-    title: existing.title,
-    tagline: existing.tagline,
-    imageId: existing.imageId,
-    subPath: existing.subPath,
-    contentRating: existing.contentRating,
-  };
-  if (sameContent(live, content)) {
+  if (sameContent(liveContent(existing), content)) {
     if (existing.pendingSubmittedAt && !(await casUpdate({ ...CLEAR_PENDING }))) return again();
     return { id: existing.id, status, pendingEdit: false, catalogAffected: false };
   }
@@ -616,6 +637,328 @@ export async function listMySubListings(args: {
   }
 }
 
+/**
+ * The off-site listings `clientId` may sync items onto: approved, top-level, linked to the
+ * client, with an enabled parent row carrying a link template.
+ */
+function catalogParentWhere(clientId: string) {
+  return {
+    connectClientId: clientId,
+    kind: 'offsite',
+    revisionOfId: null,
+    status: 'approved',
+    subListingParent: { is: { enabled: true, linkTemplate: { not: null } } },
+  } satisfies Prisma.AppListingWhereInput;
+}
+
+/**
+ * The one listing `clientId` syncs. Nothing in a request selects it: none → 403, and more than
+ * one (no index makes `connect_client_id` unique) is a configuration error → 409.
+ */
+export async function resolveCatalogParentId(clientId: string): Promise<string> {
+  let rows: { id: string }[];
+  try {
+    rows = await dbRead.appListing.findMany({
+      where: catalogParentWhere(clientId),
+      select: { id: true },
+      take: 2,
+    });
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+  if (rows.length === 0) {
+    throw new SubListingError(403, 'not_enabled', 'This client has no store listing to sync');
+  }
+  if (rows.length > 1) {
+    throw new SubListingError(
+      409,
+      'parent_ambiguous',
+      'This client is linked to more than one store listing'
+    );
+  }
+  return rows[0].id;
+}
+
+type CatalogParent = {
+  id: string;
+  ownerUserId: number;
+  contentRating: string | null;
+  maxPerAuthor: number;
+  linkTemplate: string;
+};
+
+async function readCatalogParent(
+  parentListingId: string,
+  clientId: string
+): Promise<CatalogParent> {
+  try {
+    const listing = await dbRead.appListing.findFirst({
+      where: { ...catalogParentWhere(clientId), id: parentListingId },
+      select: {
+        id: true,
+        userId: true,
+        contentRating: true,
+        subListingParent: { select: { maxPerAuthor: true, linkTemplate: true } },
+      },
+    });
+    const linkTemplate = listing?.subListingParent?.linkTemplate;
+    if (!listing || !linkTemplate) {
+      throw new SubListingError(403, 'not_enabled', 'This client has no store listing to sync');
+    }
+    return {
+      id: listing.id,
+      ownerUserId: listing.userId,
+      contentRating: listing.contentRating,
+      maxPerAuthor: listing.subListingParent?.maxPerAuthor ?? 0,
+      linkTemplate,
+    };
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+}
+
+export const upsertCatalogItemBodySchema = z
+  .object({
+    title: z.string().max(1000),
+    tagline: z.string().max(2000).nullish(),
+    contentRating: z.enum(APP_SUB_LISTING_CONTENT_RATINGS).nullish(),
+    creatorUserId: z.number().int().positive().nullish(),
+  })
+  .strict();
+
+function assertExternalId(externalId: string) {
+  if (!isValidSubListingExternalId(externalId)) {
+    throw new SubListingError(
+      400,
+      'invalid_body',
+      'The item id must be 1-64 letters, digits, _ or -'
+    );
+  }
+}
+
+/**
+ * The card's author: the listing owner, or a creator who has consented to the token's own
+ * client (signed in to the platform with Civitai). Either must pass the shared-write trust check.
+ */
+async function resolveCatalogAuthor(
+  parent: CatalogParent,
+  clientId: string,
+  creatorUserId: number | null | undefined
+): Promise<SessionUser> {
+  const authorId = creatorUserId ?? parent.ownerUserId;
+  if (authorId !== parent.ownerUserId) {
+    const consent = await dbRead.oauthConsent.findUnique({
+      where: { userId_clientId: { userId: authorId, clientId } },
+      select: { id: true },
+    });
+    if (!consent) {
+      throw new SubListingError(
+        403,
+        'creator_not_linked',
+        'The creator has not signed in to this app with Civitai'
+      );
+    }
+  }
+  const user = (await sessionClient.getSessionUserById(authorId)) as SessionUser | null;
+  if (!user) throw new SubListingError(404, 'creator_not_found', 'Creator not found');
+  const hasLinkedOAuth =
+    !user.emailVerified && (await dbRead.account.count({ where: { userId: authorId } })) > 0;
+  try {
+    assertSharedWriteTrust(user, hasLinkedOAuth);
+  } catch {
+    throw new SubListingError(403, 'untrusted', 'The creator cannot publish store items yet');
+  }
+  return user;
+}
+
+export type UpsertCatalogSubListingResult = UpsertSubListingResult & { href: string };
+
+/**
+ * Publish or edit an off-site parent's catalog item, keyed by its platform id. The same
+ * moderation rules as an in-app publish apply (new and edited items wait for a moderator, a
+ * hide is a lock); an identical re-sync writes nothing and is not rate limited.
+ */
+export async function upsertCatalogSubListing(args: {
+  parentListingId: string;
+  clientId: string;
+  externalId: string;
+  body: unknown;
+}): Promise<UpsertCatalogSubListingResult> {
+  assertExternalId(args.externalId);
+  const parsed = upsertCatalogItemBodySchema.safeParse(args.body);
+  if (!parsed.success) throw new SubListingError(400, 'invalid_body', 'Invalid request body');
+  const content = cleanContent({
+    itemKey: args.externalId,
+    title: parsed.data.title,
+    tagline: parsed.data.tagline,
+    subPath: args.externalId,
+    contentRating: parsed.data.contentRating,
+  });
+
+  const parent = await readCatalogParent(args.parentListingId, args.clientId);
+  const href = subListingExternalHref(parent.linkTemplate, args.externalId);
+  if (!href) {
+    throw new SubListingError(400, 'invalid_body', 'The item id does not form a valid link');
+  }
+  if (!isRatingAtLeastAsStrict(content.contentRating, parent.contentRating)) {
+    throw new SubListingError(
+      400,
+      'rating_too_loose',
+      "contentRating may not be less mature than the app's own rating"
+    );
+  }
+  const author = await resolveCatalogAuthor(parent, args.clientId, parsed.data.creatorUserId);
+  const authorMismatch = () =>
+    new SubListingError(409, 'author_mismatch', 'This item is attributed to another creator');
+
+  try {
+    const existing = await dbWrite.appSubListing.findUnique({
+      where: {
+        parentListingId_itemKey: { parentListingId: parent.id, itemKey: args.externalId },
+      },
+    });
+    if (existing) {
+      if (existing.authorUserId !== author.id) throw authorMismatch();
+      const status = existing.status as AppSubListingStatus;
+      const unchanged =
+        (status === 'approved' || status === 'pending') &&
+        !existing.pendingSubmittedAt &&
+        sameContent(liveContent(existing), content);
+      if (status === 'hidden' || unchanged) {
+        return { id: existing.id, status, pendingEdit: false, href };
+      }
+    }
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+
+  const rate = await checkSubListingSyncRateLimit(parent.id);
+  if (!rate.allowed) {
+    throw new SubListingError(
+      429,
+      'rate_limited',
+      'Too many store item updates, retry later',
+      rate.retryAfterSeconds
+    );
+  }
+
+  try {
+    const safe = await assertSharedTextSafe({
+      title: content.title,
+      body: content.tagline ?? undefined,
+      userId: author.id,
+      isModerator: false,
+    });
+    content.title = safe.title;
+    content.tagline = safe.body ?? null;
+  } catch (err) {
+    if (err instanceof SharedContentBlockedError) {
+      throw new SubListingError(400, 'text_rejected', 'The title or tagline was not accepted');
+    }
+    throw err;
+  }
+
+  try {
+    const { catalogAffected, ...result } = await writeSubListing(
+      parent,
+      args.externalId,
+      author.id,
+      content,
+      authorMismatch
+    );
+    if (catalogAffected) await bustCatalog();
+    return { ...result, href };
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+}
+
+/** Withdraw a catalog item, whoever authored it. A hidden item stays hidden. */
+export async function withdrawCatalogSubListing(args: {
+  parentListingId: string;
+  externalId: string;
+}): Promise<{ ok: true; withdrawn: boolean }> {
+  assertExternalId(args.externalId);
+  const rate = await checkSubListingSyncRateLimit(args.parentListingId);
+  if (!rate.allowed) {
+    throw new SubListingError(
+      429,
+      'rate_limited',
+      'Too many store item updates, retry later',
+      rate.retryAfterSeconds
+    );
+  }
+  try {
+    const count = await transitionActive({
+      where: { parentListingId: args.parentListingId, itemKey: args.externalId },
+      data: { status: 'withdrawn', ...CLEAR_PENDING },
+    });
+    return { ok: true, withdrawn: count > 0 };
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+}
+
+export const CATALOG_LIST_PAGE_SIZE = 100;
+
+export type CatalogSubListing = {
+  externalId: string;
+  id: string;
+  status: AppSubListingStatus;
+  title: string;
+  creatorUserId: number;
+  pendingEdit: boolean;
+  statusReason: string | null;
+  editRejectionReason: string | null;
+  updatedAt: Date;
+};
+
+/** Every item under the parent, oldest first, for the platform to diff against its catalog. */
+export async function listCatalogSubListings(args: {
+  parentListingId: string;
+  cursor?: string;
+}): Promise<{ items: CatalogSubListing[]; nextCursor: string | null }> {
+  if (args.cursor !== undefined && !isAppSubListingId(args.cursor)) {
+    throw new SubListingError(400, 'invalid_body', 'Invalid cursor');
+  }
+  try {
+    const rows = await dbRead.appSubListing.findMany({
+      where: { parentListingId: args.parentListingId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: CATALOG_LIST_PAGE_SIZE + 1,
+      ...(args.cursor ? { cursor: { id: args.cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        itemKey: true,
+        status: true,
+        title: true,
+        authorUserId: true,
+        pendingSubmittedAt: true,
+        statusReason: true,
+        editRejectionReason: true,
+        updatedAt: true,
+      },
+    });
+    const page = rows.slice(0, CATALOG_LIST_PAGE_SIZE);
+    return {
+      items: page.map((r) => ({
+        externalId: r.itemKey,
+        id: r.id,
+        status: r.status as AppSubListingStatus,
+        title: r.title,
+        creatorUserId: r.authorUserId,
+        pendingEdit: r.pendingSubmittedAt != null,
+        statusReason: r.statusReason,
+        editRejectionReason: r.editRejectionReason,
+        updatedAt: r.updatedAt,
+      })),
+      nextCursor: rows.length > CATALOG_LIST_PAGE_SIZE ? page[page.length - 1].id : null,
+    };
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+}
+
 export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
   itemKey: string;
@@ -701,6 +1044,8 @@ export type SubListingQueueRow = {
   itemKey: string;
   parent: { id: string; slug: string; name: string };
   author: { id: number; username: string | null; image: string | null };
+  /** Where an off-site parent's card links to; null for an on-site parent. */
+  externalHref: string | null;
   live: SubListingContent & { imageUrl: string | null };
   pending: (SubListingContent & { imageUrl: string | null; submittedAt: Date }) | null;
   createdAt: Date;
@@ -741,19 +1086,26 @@ export async function listSubListingQueue(
         createdAt: true,
         moderatedAt: true,
         updatedAt: true,
-        parentListing: { select: { id: true, slug: true, name: true } },
+        parentListing: { select: { id: true, slug: true, name: true, kind: true } },
         author: { select: { id: true, username: true, image: true } },
       },
     });
     const page = rows.slice(0, input.limit);
+    const templates = await readParentLinkTemplates(
+      page.filter((r) => r.parentListing.kind === 'offsite').map((r) => r.parentListing.id)
+    );
     return {
       items: page.map((r) => ({
         id: r.id,
         status: r.status as AppSubListingStatus,
         statusReason: r.statusReason,
         itemKey: r.itemKey,
-        parent: r.parentListing,
+        parent: { id: r.parentListing.id, slug: r.parentListing.slug, name: r.parentListing.name },
         author: r.author,
+        externalHref:
+          r.parentListing.kind === 'offsite'
+            ? subListingExternalHref(templates.get(r.parentListing.id), r.subPath)
+            : null,
         live: {
           title: r.title,
           tagline: r.tagline,
@@ -785,6 +1137,17 @@ export async function listSubListingQueue(
   }
 }
 
+/** Each parent's link template; empty before the manual-apply column exists. */
+async function readParentLinkTemplates(parentIds: string[]): Promise<Map<string, string>> {
+  if (parentIds.length === 0) return new Map();
+  const rows = await dbRead.$queryRaw<{ id: string; link_template: string | null }[]>(Prisma.sql`
+    SELECT sp.parent_listing_id AS id, ${PARENT_LINK_TEMPLATE_SQL} AS link_template
+    FROM app_sub_listing_parents sp
+    WHERE sp.parent_listing_id IN (${Prisma.join([...new Set(parentIds)])})
+  `);
+  return new Map(rows.flatMap((r) => (r.link_template ? [[r.id, r.link_template] as const] : [])));
+}
+
 /** The pending count for the tab label: new pending rows plus staged edits. */
 export async function countSubListingQueue(): Promise<number> {
   try {
@@ -802,8 +1165,10 @@ async function isSharedItemLive(row: {
 }): Promise<boolean> {
   const parent = await dbRead.appListing.findUnique({
     where: { id: row.parentListingId },
-    select: { appBlock: { select: { blockId: true } } },
+    select: { kind: true, appBlock: { select: { blockId: true } } },
   });
+  // An off-site parent's items have no shared row: its platform withdraws them instead.
+  if (parent?.kind === 'offsite') return true;
   if (!parent?.appBlock) return false;
   const item = await readSharedItemForSubListing(parent.appBlock.blockId, row.itemKey);
   // Same author as the card: a key the app reused for someone else's item is not this item.

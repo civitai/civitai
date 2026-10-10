@@ -66,4 +66,45 @@ describe('AppSubListingCard', () => {
     expect(getSubListingHref(CARD, true)).toBe(CARD.runHref);
     expect(getSubListingHref(CARD, false)).toBe('/apps/store-preview/custom-generators');
   });
+
+  describe('an off-site parent’s item', () => {
+    const EXTERNAL: SubListingCard = {
+      ...CARD,
+      kind: 'offsite',
+      parent: { id: 'apl_G', slug: 'civitai-games', name: 'Civitai Games', iconUrl: null },
+      runHref: 'https://games.example.com/?game=neon-drift',
+      external: true,
+    };
+
+    test.each([true, false])(
+      'opens on its platform in a new tab (canOpenPage %s)',
+      async (canOpenPage) => {
+        renderWithProviders(<AppSubListingCard card={EXTERNAL} canOpenPage={canOpenPage} />);
+        const cta = page.getByTestId('apps-sub-listing-cta');
+        await expect.element(cta).toHaveTextContent('Play');
+        for (const el of [cta.element(), page.getByText('Neon Portraits').element()]) {
+          const a = el.closest('a');
+          expect(a?.getAttribute('href')).toBe(EXTERNAL.runHref);
+          expect(a?.getAttribute('target')).toBe('_blank');
+          expect(a?.getAttribute('rel')).toBe('noopener noreferrer');
+        }
+        // The chip still leads to the parent's store page on Civitai.
+        expect(hrefOf(page.getByTestId('apps-sub-listing-parent-chip').element())).toBe(
+          '/apps/store-preview/civitai-games'
+        );
+      }
+    );
+
+    test('an on-site card never opens in a new tab (negative control)', async () => {
+      renderWithProviders(<AppSubListingCard card={CARD} canOpenPage />);
+      const cta = page.getByTestId('apps-sub-listing-cta');
+      await expect.element(cta).toHaveTextContent('Open');
+      expect(cta.element().closest('a')?.getAttribute('target')).toBeNull();
+    });
+
+    test('getSubListingHref returns the external link whether or not pages can open', () => {
+      expect(getSubListingHref(EXTERNAL, true)).toBe(EXTERNAL.runHref);
+      expect(getSubListingHref(EXTERNAL, false)).toBe(EXTERNAL.runHref);
+    });
+  });
 });

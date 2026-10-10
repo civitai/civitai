@@ -46,6 +46,7 @@ import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabiliti
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import {
   connectScopesSubsetOfCeiling,
+  consentableScopes,
   validateConnectScopeJustifications,
   SENSITIVE_TOKEN_SCOPES,
   tokenScopeMaskToList,
@@ -433,7 +434,8 @@ export async function loadConnectClientForListing(
       message: 'you can only list an OAuth client you own',
     });
   }
-  return { id: client.id, allowedScopes: client.allowedScopes };
+  // A client_credentials-only bit is never something a user is asked to consent to.
+  return { id: client.id, allowedScopes: consentableScopes(client.allowedScopes) };
 }
 
 /**
@@ -515,7 +517,7 @@ export async function deriveScopePatch(opts: {
       message: 'you can only list an OAuth client you own',
     });
   }
-  const connectAllowedScopes = client.allowedScopes;
+  const connectAllowedScopes = consentableScopes(client.allowedScopes);
   // SERVER-AUTHORITATIVE snapshot: the disclosed set is ALWAYS the client's CURRENT
   // allowedScopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
   // from the stored snapshot is then a MATERIAL change (patchHasMaterialChange) → the
@@ -2291,7 +2293,7 @@ export async function getMyListingForEdit(opts: {
       where: { id: listing.connectClientId },
       select: { allowedScopes: true },
     });
-    connectAllowedScopes = client?.allowedScopes ?? null;
+    connectAllowedScopes = client ? consentableScopes(client.allowedScopes) : null;
   }
 
   return {

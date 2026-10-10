@@ -30,6 +30,12 @@ describe('openid-configuration', () => {
     expect(doc.scopes_supported).toContain(String(TokenScope.AppBlocksDevTunnel));
   });
 
+  it('lists AppStoreCatalogWrite in scopes_supported and still advertises client_credentials', async () => {
+    const doc = await discovery();
+    expect(doc.scopes_supported).toContain('268435456');
+    expect(doc.grant_types_supported).toContain('client_credentials');
+  });
+
   it('still advertises the endpoints that existed before introspection', async () => {
     const doc = await discovery();
     expect(doc.token_endpoint).toMatch(/\/api\/auth\/oauth\/token$/);

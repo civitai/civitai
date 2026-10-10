@@ -5,7 +5,7 @@ import { isInternalRequest } from '$lib/server/auth/internal';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { getClientIp } from '$lib/server/auth/request';
 import { parseBody } from '$lib/server/oauth/http';
-import { hasScope } from '$lib/server/oauth/scope';
+import { hasScope, isScopeGrantable } from '$lib/server/oauth/scope';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { createAppAccessToken } from '$lib/server/oauth/token-helpers';
@@ -52,7 +52,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   const scope = requestedScope | TokenScope.UserRead;
-  if (!hasScope(client.allowedScopes | TokenScope.UserRead, scope)) {
+  if (!isScopeGrantable(client.allowedScopes, scope, 'user')) {
     return bad('invalid_scope', 'Scope exceeds what the client is allowed');
   }
 

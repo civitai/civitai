@@ -234,3 +234,23 @@ describe('device-token +server — the poll is bounded per sign-in, not per flee
     expect(h.hGet).not.toHaveBeenCalled();
   });
 });
+
+describe('device-token +server — client_credentials-only scopes', () => {
+  it('refuses to mint AppStoreCatalogWrite even when the client ceiling carries it', async () => {
+    const scope = TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, scope: scope.toString() });
+    h.clientRow = { allowedScopes: scope };
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.createPair).not.toHaveBeenCalled();
+  });
+});
