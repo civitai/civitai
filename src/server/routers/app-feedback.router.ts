@@ -34,8 +34,11 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 /**
  * `AppBlocksSubmit`, the bit the CLI's other app-management calls require (see
  * `blocks.getMyAppAnalytics`), not a bit inside `Full`: it is opt-in, so a token holding only
- * ordinary scopes stays refused. `getEligibility`, `create` and `mod*` are left un-annotated on
- * purpose (filing feedback as the user; moderator reach), so do not annotate them to match.
+ * ordinary scopes stays refused. Only the four procedures a token caller needs carry it.
+ * `hasAnyForListing` is left out because only the web editor calls it and `listForListing`
+ * already answers it; `getEligibility`, `create` and `mod*` because they would let a token file
+ * feedback as the user or carry moderator reach. Annotate by what a token caller needs, not to
+ * match a sibling.
  */
 const ownerInboxTokenScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
@@ -68,7 +71,6 @@ export const appFeedbackRouter = router({
 
   // Whether the editor offers the Feedback tab at all. Same authz and visibility as the list.
   hasAnyForListing: protectedProcedure
-    .meta(ownerInboxTokenScope)
     .input(hasAnyAppFeedbackForListingSchema)
     .query(({ ctx, input }) => hasAnyAppFeedbackForListing({ userId: ctx.user.id, input })),
 

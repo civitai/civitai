@@ -76,13 +76,6 @@ const ANNOTATED: AnnotatedProc[] = [
     reaches: [{ userId: 1001, input: { appListingId: 'lst_1', limit: 50 } }],
   },
   {
-    name: 'hasAnyForListing',
-    user: owner,
-    input: { appListingId: 'lst_1', userId: 1 },
-    mock: svc.hasAnyAppFeedbackForListing,
-    reaches: [{ userId: 1001, input: { appListingId: 'lst_1' } }],
-  },
-  {
     name: 'countNewForMyListings',
     user: owner,
     input: undefined,
@@ -122,6 +115,12 @@ const ANNOTATED: AnnotatedProc[] = [
 ];
 
 const UNANNOTATED: Proc[] = [
+  {
+    name: 'hasAnyForListing',
+    user: owner,
+    input: { appListingId: 'lst_1' },
+    mock: svc.hasAnyAppFeedbackForListing,
+  },
   {
     name: 'getEligibility',
     user: moderator,
@@ -175,7 +174,7 @@ describe('appFeedback token-scope gate', () => {
   // Read off the built router, so an un-annotated procedure reads as `null` rather than being
   // indistinguishable from one annotated with Full. Lists every procedure: adding one, or adding
   // or dropping an annotation, fails here until the scope decision is written down.
-  it('exactly the five owner-side procedures require AppBlocksSubmit', () => {
+  it('exactly the four procedures a token caller needs require AppBlocksSubmit', () => {
     const procedures = appFeedbackRouter._def.procedures as unknown as Record<
       string,
       { _def: { meta?: { requiredScope?: number; blockApiKeys?: boolean } } }
@@ -187,7 +186,7 @@ describe('appFeedback token-scope gate', () => {
       getEligibility: null,
       create: null,
       listForListing: { requiredScope: 33554432 },
-      hasAnyForListing: { requiredScope: 33554432 },
+      hasAnyForListing: null,
       setOwnerStatus: { requiredScope: 33554432 },
       flagAbusive: { requiredScope: 33554432 },
       countNewForMyListings: { requiredScope: 33554432 },
