@@ -1,5 +1,5 @@
 import { spawnSync } from 'child_process';
-import { mkdtempSync, readFileSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, statSync, utimesSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
@@ -64,9 +64,20 @@ describe('the cache, run for real', () => {
       notRecorded: {},
     });
 
+    // Age every record, so a hit that refreshes it is visible: eviction goes by mtime, and a record
+    // the real sequencer hits must move to the front of that order.
+    const recDir = join(cacheDir, 'rec');
+    const old = Date.now() / 1000 - 86_400;
+    const files = readdirSync(recDir).flatMap((id) =>
+      readdirSync(join(recDir, id)).map((n) => join(recDir, id, n))
+    );
+    expect(files).toHaveLength(8);
+    for (const f of files) utimesSync(f, old, old);
+
     const warm = runOnce(cacheDir);
     expect(warm.status).toBe(0);
     expect({ ran: warm.last.ran, skipped: warm.last.skipped }).toEqual({ ran: 0, skipped: 8 });
+    expect(files.filter((f) => statSync(f).mtimeMs / 1000 > old + 3600)).toHaveLength(8);
   }, 300_000);
 
   // Both files import heavy.ts, so the run's shared graph carries heavy-dep.ts under it. Only the
