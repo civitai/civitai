@@ -403,6 +403,8 @@ Some Civitai actions are **only available to session-authenticated users**, rega
 - Creator-program bank/extract/withdraw (`creator-program.*`)
 - Direct user-to-club buzz transfers (`buzz.depositClubFunds`)
 
+API-key and connected-app management (`apiKey.add`, `apiKey.setBuzzLimit`, `apiKey.delete`, `oauthConsent.setBuzzLimit`, `oauthConsent.revokeApp`) accepts a browser session or a full-scope personal API key. OAuth access tokens (at any scope), System keys and reduced-scope keys get `403 FORBIDDEN`.
+
 Buzz-spending operations that flow through the orchestrator (image generation, training, scanning, recommenders) **are** available to tokens — that's the entire point of the OAuth/API key surface. The orchestrator enforces buzz spend on its side using each token's per-subject budget.
 
 ## /api/v1/me — token introspection
@@ -458,4 +460,4 @@ type BuzzBudget =
 - **rollover** — calendar-based reset driven by a cron expression. Cron syntax matches Hangfire Cronos.
 - Optional `currencies` restricts the cap to specific buzz pools (e.g. `["yellow"]`).
 
-Civitai's UI today only exposes a single sliding budget (limit + day/week/month period), but the JSON shape supports the full set. Programmatic clients with a Full-scope key can set any combination via the tRPC `apiKey.setBuzzLimit` and `oauthConsent.setBuzzLimit` mutations. A token cannot modify the limit on its own subject — use a different management key or session auth.
+Civitai's UI today only exposes a single sliding budget (limit + day/week/month period), but the JSON shape supports the full set. A full-scope personal API key can set any combination via the tRPC `apiKey.setBuzzLimit` and `oauthConsent.setBuzzLimit` mutations; OAuth access tokens, System keys and reduced-scope keys cannot call them. A key cannot modify its own limit — use a different personal key or session auth.
