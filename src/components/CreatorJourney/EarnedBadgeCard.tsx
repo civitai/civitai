@@ -21,6 +21,8 @@ export type EarnedBadge = {
   track: string;
   threshold?: number | null;
   description: string | null;
+  /** A special achievement's hint, kept above its description once earned. */
+  hint?: string | null;
   achievedAt: Date | null;
 };
 
@@ -71,11 +73,18 @@ export function EarnedBadgeCard({
           </Text>
         </div>
       ) : (
-        badge.description && (
-          <Text size="xs" c="dimmed">
-            {badge.description}
-          </Text>
-        )
+        <>
+          {badge.hint && (
+            <Text size="xs" c="dimmed" fs="italic">
+              {badge.hint}
+            </Text>
+          )}
+          {badge.description && (
+            <Text size="xs" c="dimmed">
+              {badge.description}
+            </Text>
+          )}
+        </>
       )}
       <div className="mt-auto flex w-full flex-col items-center gap-2">
         <SpotlightDivider />

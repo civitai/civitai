@@ -2565,6 +2565,10 @@ export type CreatorMilestone = {
   track: string;
   threshold: number | null;
   hidden: Generated<boolean>;
+  /**
+   * A hidden milestone left off the Creator Journey list entirely until the viewer earns it.
+   */
+  unlisted: Generated<boolean>;
   hint: string | null;
   name: string;
   description: string | null;

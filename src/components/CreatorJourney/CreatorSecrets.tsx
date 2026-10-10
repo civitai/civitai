@@ -18,7 +18,7 @@ export function CreatorSecrets({ secrets }: { secrets: Secret[] }) {
     <Stack gap="sm" style={accentVar(SECRET_ACCENT)}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <Title order={2} size="h3">
-          Hidden Achievements
+          Special Achievements
         </Title>
         <Text size="sm" c="dimmed" className="tabular-nums">
           {found} of {secrets.length} found
@@ -64,6 +64,11 @@ function SecretTile({ secret }: { secret: Secret }) {
         </Text>
         {secret.earned ? (
           <>
+            {secret.hint && (
+              <Text size="xs" c="dimmed" fs="italic">
+                {secret.hint}
+              </Text>
+            )}
             {secret.description && (
               <Text size="xs" c="dimmed">
                 {secret.description}

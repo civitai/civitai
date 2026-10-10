@@ -5202,6 +5202,8 @@ model CreatorMilestone {
   track        String
   threshold    Int?
   hidden       Boolean                @default(false)
+  /// A hidden milestone left off the Creator Journey list entirely until the viewer earns it.
+  unlisted     Boolean                @default(false)
   hint         String?
   name         String
   description  String?

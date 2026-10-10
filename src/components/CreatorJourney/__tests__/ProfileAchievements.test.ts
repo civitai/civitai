@@ -93,8 +93,8 @@ describe('profile achievement cards', () => {
         },
       })
     );
-    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Secret achievement');
-    expect(card.textContent).toContain('Secret achievement');
+    expect(SECRET_ACHIEVEMENT_LABEL).toBe('Special achievement');
+    expect(card.textContent).toContain('Special achievement');
     expect(card.textContent).not.toContain('Creator Score');
   });
 
