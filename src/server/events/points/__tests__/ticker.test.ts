@@ -13,7 +13,12 @@ import {
 } from '~/server/events/points/ticker';
 import { eventPointsTicker, getTickerEvents } from '~/server/jobs/event-points-ticker';
 
-const event = { name: 'birthday2026', startDate: new Date('2026-11-01'), teams: ['Blue', 'Pink'] };
+const event = {
+  name: 'birthday2026',
+  startDate: new Date('2026-11-01'),
+  endDate: new Date('2999-01-01'),
+  teams: ['Blue', 'Pink'],
+};
 const hat = (i: number) => ({ ownerId: i, cosmeticId: 7, claimKey: `claim-${i}` });
 type Sent = { topic: string; target: string; data: Record<string, unknown> };
 
@@ -71,7 +76,7 @@ describe('tickEventPoints', () => {
         data: { event: 'birthday2026', topicId: hatTopicId(hat(2)), points: 20 },
       },
     ]);
-    expect(result).toEqual({ drained: 2, sent: 3, failed: 0, dropped: 0 });
+    expect(result).toEqual({ drained: 2, sent: 3, failed: 0, dropped: 0, stopped: false });
     // The season comes from the event passed in, so both reads must get it whole.
     expect(deps.getHatPoints).toHaveBeenCalledWith(event, [hat(1), hat(2)]);
     expect(deps.getTeamPoints).toHaveBeenCalledWith(event);
@@ -106,6 +111,7 @@ describe('tickEventPoints', () => {
       sent: 0,
       failed: 0,
       dropped: 0,
+      stopped: false,
     });
     expect(sent).toEqual([]);
     expect(deps.getTeamPoints).not.toHaveBeenCalled();
@@ -113,6 +119,12 @@ describe('tickEventPoints', () => {
 
   // The signals client's lane allows 30 in flight with a bounded queue that every push on the pod
   // shares; a tick filling it would shed chat and buzz pushes.
+  // With the stop below, one run can time out at most SEND_CONCURRENCY + FAILURES_TO_STOP - 1 calls;
+  // the breaker every push on the pod shares opens at 10 in 60s, and runs are a minute apart.
+  it('can never time out enough calls in one run to open the shared breaker alone', () => {
+    expect(2 * (SEND_CONCURRENCY + FAILURES_TO_STOP - 1)).toBeLessThan(10);
+  });
+
   it(`never has more than ${SEND_CONCURRENCY} sends in flight`, async () => {
     const { deps } = fakeDeps(Array.from({ length: 200 }, (_, i) => hat(i + 1)));
     let inFlight = 0;
@@ -123,8 +135,7 @@ describe('tickEventPoints', () => {
       inFlight--;
     });
     await tickEventPoints(event, deps);
-    expect(SEND_CONCURRENCY).toBe(10);
-    expect(peak).toBe(10);
+    expect(peak).toBe(SEND_CONCURRENCY);
     expect(deps.topicSend).toHaveBeenCalledTimes(201);
   });
 
@@ -140,6 +151,7 @@ describe('tickEventPoints', () => {
       sent: 2,
       failed: 1,
       dropped: 0,
+      stopped: false,
     });
     expect(sent.map((s) => s.data.topicId ?? 'teams')).toEqual(['teams', hatTopicId(hat(2))]);
     expect(remaining()).toBe(0);
@@ -152,10 +164,41 @@ describe('tickEventPoints', () => {
       throw new Error('timeout');
     });
     const result = await tickEventPoints(event, deps);
-    expect(FAILURES_TO_STOP).toBe(3);
-    // The first wave of 10 is in flight; the two workers that fail before the third failure lands
-    // each start one more, and nothing starts after it: 12 attempted of 51.
-    expect(result).toEqual({ drained: 50, sent: 0, failed: 12, dropped: 39 });
+    // The first wave of 3 is in flight; the worker that fails before the second failure lands starts
+    // one more, and nothing starts after it: 4 attempted of 51.
+    expect(result).toEqual({ drained: 50, sent: 0, failed: 4, dropped: 47, stopped: true });
+  });
+
+  it('keeps sending through fewer failures than FAILURES_TO_STOP', async () => {
+    const { deps } = fakeDeps(Array.from({ length: 20 }, (_, i) => hat(i + 1)));
+    let n = 0;
+    deps.topicSend = vi.fn(async () => {
+      if (++n === 5) throw new Error('blip');
+    });
+    expect(await tickEventPoints(event, deps)).toEqual({
+      drained: 20,
+      sent: 20,
+      failed: 1,
+      dropped: 0,
+      stopped: false,
+    });
+  });
+
+  // After the end the page names the settled winner; a live team push must not reach it.
+  it('stops pushing team totals once the event has ended, and still pushes hats', async () => {
+    const { deps, sent } = fakeDeps([hat(1)]);
+    await tickEventPoints(event, deps, new Date('2999-01-01'));
+    expect(sent.map((s) => s.target)).toEqual([SignalMessages.EventPointsHat]);
+    expect(deps.getTeamPoints).not.toHaveBeenCalled();
+  });
+
+  it('rejects the tick, sending nothing, when a live read fails', async () => {
+    const { deps, sent } = fakeDeps([hat(1)]);
+    deps.getTeamPoints = vi.fn(async () => {
+      throw new Error('sysredis down');
+    });
+    await expect(tickEventPoints(event, deps)).rejects.toThrow('sysredis down');
+    expect(sent).toEqual([]);
   });
 
   it('still pushes the hats when the team send fails', async () => {
@@ -219,6 +262,27 @@ describe('runEventPointsTicker', () => {
       isCanceled: () => n >= 2,
     });
     expect(ticks).toBe(2);
+  });
+
+  it('ends the run when a tick stopped on signals failures', async () => {
+    const seen: string[] = [];
+    const h = harness(async () => undefined);
+    const { ticks, stopped } = await runEventPointsTicker(
+      () => [
+        { ...event, name: 'a' },
+        { ...event, name: 'b' },
+      ],
+      {
+        ...h.deps,
+        tick: async (e) => {
+          seen.push(e.name);
+          return { stopped: seen.length === 3 };
+        },
+      }
+    );
+    // Tick 1: a, b. Tick 2: a stops it; b is not ticked and no tick 3 runs.
+    expect(seen).toEqual(['a', 'b', 'a']);
+    expect({ ticks, stopped }).toEqual({ ticks: 2, stopped: true });
   });
 
   it("one event's failure does not skip the next event or the next tick", async () => {

@@ -51,15 +51,23 @@ import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.ser
 type Viewer = { viewer: EventViewer };
 
 type SeasonEvent = { name: string; startDate: Date; teams: readonly string[] };
+// Called when a live read fell back to the snapshot, so an edge-cached route can skip caching it:
+// one sysRedis blip must not be served to everyone for minutes.
+type OnDegraded = { onDegraded?: () => void };
 
 // Live hat totals from the points engine. Null when sysRedis is unreachable, so the caller falls
 // back to the hourly snapshot rather than showing zero.
-async function liveHatPoints(event: SeasonEvent, hats: Omit<EventHat, 'team'>[]) {
+async function liveHatPoints(
+  event: SeasonEvent,
+  hats: Omit<EventHat, 'team'>[],
+  onDegraded?: () => void
+) {
   if (!hats.length) return {};
   try {
     return await getHatPoints({ name: event.name, startDate: event.startDate }, hats);
   } catch (error) {
     logSysRedisFailOpen('read-degraded', 'liveHatPoints', error, { event: event.name });
+    onDegraded?.();
     return null;
   }
 }
@@ -312,12 +320,16 @@ export async function getUserRank({
   }
 }
 
-export async function getEventStandings({ event, viewer }: EventInput & Viewer) {
+export async function getEventStandings({
+  event,
+  viewer,
+  onDegraded,
+}: EventInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
     const [settled, live] = await Promise.all([
       getScoredEventStandings(scored),
-      liveTeamPoints(scored),
+      liveTeamPoints(scored, onDegraded),
     ]);
     const standings = withLiveTeamPoints(settled, live);
     const userIds = [
@@ -361,7 +373,11 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
 
 // Null once the event has ended: from then on the page names a winner, and it must be the one the
 // prize payout reads from the settled snapshot (eventEngine.getTeamScores), never a live total.
-async function liveTeamPoints(event: SeasonEvent & { endDate: Date }, now = new Date()) {
+async function liveTeamPoints(
+  event: SeasonEvent & { endDate: Date },
+  onDegraded?: () => void,
+  now = new Date()
+) {
   if (event.endDate <= now) return null;
   try {
     return await getTeamPoints({
@@ -371,6 +387,7 @@ async function liveTeamPoints(event: SeasonEvent & { endDate: Date }, now = new 
     });
   } catch (error) {
     logSysRedisFailOpen('read-degraded', 'liveTeamPoints', error, { event: event.name });
+    onDegraded?.();
     return null;
   }
 }
@@ -657,7 +674,8 @@ export async function getWornEventHat({
   entityType,
   entityId,
   viewer,
-}: WornEventHatInput & Viewer) {
+  onDegraded,
+}: WornEventHatInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
     const [row] = await dbRead.$queryRaw<WornHatRow[]>`
@@ -696,7 +714,7 @@ export async function getWornEventHat({
       userBasicCache.fetch([row.userId]),
       profilePictureCache.fetch([row.userId]),
       getCosmeticScores(scored, [key]),
-      liveHatPoints(scored, [hat]),
+      liveHatPoints(scored, [hat], onDegraded),
     ]);
     const owner = users[row.userId];
     const score = scores[cosmeticScoreKey(key)];

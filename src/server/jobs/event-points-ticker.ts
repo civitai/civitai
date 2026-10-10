@@ -27,7 +27,7 @@ export function getTickerEvents(
         e.startDate <= now &&
         e.endDate.getTime() + TICK_AFTER_END_MS >= now.getTime()
     )
-    .map(({ name, startDate, teams }) => ({ name, startDate, teams }));
+    .map(({ name, startDate, endDate, teams }) => ({ name, startDate, endDate, teams }));
 }
 
 // Pushes live hat and team totals over signals. The scheduler's finest grain is a minute and the

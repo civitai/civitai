@@ -490,8 +490,10 @@ describe('getEventStandings decoration', () => {
     const teams = [{ team: 'Yellow', score: 900, rank: 1 }];
     scoring.getEventStandings.mockResolvedValue({ teams, topCosmetics: [], topUsers: {} });
     live.getTeamPoints.mockRejectedValue(new Error('sysredis down'));
-    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    const onDegraded = vi.fn();
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
     expect(res.teams).toEqual(teams);
+    expect(onDegraded).toHaveBeenCalledTimes(1);
   });
 
   // The biggest-hats rows draw their owner with UserAvatar, which reads both of these.
@@ -693,7 +695,31 @@ describe('getWornEventHat', () => {
       '9:31:claimed': { points: 12, impressions: 0, anonImpressions: 0, reactions: 0 },
     });
     live.getHatPoints.mockRejectedValue(new Error('sysredis down'));
-    expect(await read()).toMatchObject({ points: 12 });
+    const onDegraded = vi.fn();
+    expect(
+      await service.getWornEventHat({
+        event: 'birthday2026',
+        entityType: 'Image',
+        entityId: 5,
+        viewer,
+        onDegraded,
+      })
+    ).toMatchObject({ points: 12 });
+    // The route skips the edge cache for this answer.
+    expect(onDegraded).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a live answer as degraded', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+    const onDegraded = vi.fn();
+    await service.getWornEventHat({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+      viewer,
+      onDegraded,
+    });
+    expect(onDegraded).not.toHaveBeenCalled();
   });
 
   // The popover is public and edge-cached: the claim key (a purchase's transaction id) stays home.

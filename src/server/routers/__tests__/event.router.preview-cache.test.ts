@@ -185,6 +185,28 @@ it('event.getWornHat asks the service about this content, for this viewer', asyn
   );
 });
 
+// Points are live totals: the popover's response is short-lived at the edge, and a response that
+// fell back to the snapshot because the live store was unreachable is not cached at all, so one
+// sysRedis blip is never served to everyone.
+describe.each([
+  ['getWornHat', 'getWornEventHat', 60],
+  ['getStandings', 'getEventStandings', 180],
+] as const)('event.%s live points caching', (name, serviceFn, ttl) => {
+  beforeEach(() => Object.assign(access, { viewer: 'open', signedOut: 'open' }));
+
+  it(`caches a live answer for ${ttl}s`, async () => {
+    expect((await runChain(name)).root.cache.edgeTTL).toBe(ttl);
+  });
+
+  it('does not cache an answer that fell back to the snapshot', async () => {
+    service[serviceFn].mockImplementationOnce(async (opts: unknown) => {
+      (opts as { onDegraded?: () => void }).onDegraded?.();
+      return { ok: 1 };
+    });
+    expect(willEdgeCache((await runChain(name)).root.cache)).toBe(false);
+  });
+});
+
 describe('event.getDonors Redis cache', () => {
   it('never stores a response the public would not get, and stores one it would', async () => {
     Object.assign(access, { viewer: 'open', signedOut: 'closed' });

@@ -11,9 +11,16 @@ import type { EventHat } from './types';
 export const MAX_HAT_SENDS_PER_TICK = 200;
 export const TICK_MS = 5_000;
 // The scheduler fires once a minute; the run ticks until here, so it ends before the next one.
+// Its trigger request is only abandoned about an hour in (see delete-old-training-data.ts), so a
+// 55s run needs no keepLockOnDisconnect.
 export const TICK_WINDOW_MS = 55_000;
 
-export type TickerEvent = { name: string; startDate: Date; teams: readonly string[] };
+export type TickerEvent = {
+  name: string;
+  startDate: Date;
+  endDate: Date;
+  teams: readonly string[];
+};
 type Hat = Omit<EventHat, 'team'>;
 
 // Narrows a tick's hats to those someone is watching. Identity until the signals service exposes
@@ -37,33 +44,46 @@ const defaultDeps: TickDeps = {
   topicSend: (args) => signalClient.topicSend(args),
 };
 
-// Sends one tick runs at once. The signals client's shared lane allows 30 in flight with a bounded
-// queue and a circuit breaker every push on the pod shares, so a tick must never fill it.
-export const SEND_CONCURRENCY = 10;
-// Failed sends after which a tick stops sending: signals is struggling, and more timeouts would only
-// push the shared breaker open for the pod's other pushes (chat, buzz, generation).
-export const FAILURES_TO_STOP = 3;
+// The signals client's lane and circuit breaker are shared by every push on the pod (chat, buzz,
+// generation); the breaker opens at 10 timeouts in 60s (SIGNALS_CIRCUIT_TRIP_THRESHOLD). A tick
+// sends at most SEND_CONCURRENCY at once and starts nothing after FAILURES_TO_STOP failures, and a
+// tick that stops ends the whole run: one run can time out at most
+// SEND_CONCURRENCY + FAILURES_TO_STOP - 1 = 4 calls, so two runs a minute apart stay under 10.
+export const SEND_CONCURRENCY = 3;
+export const FAILURES_TO_STOP = 2;
 
 type Send = Parameters<TickDeps['topicSend']>[0];
 
 // One tick for one event: push the team totals, then the new total of every hat that moved. A
 // failed or skipped send is dropped, never re-queued, so a signals outage cannot grow the changed
-// set; the next move of that hat, or the screen's next read, catches it up.
-export async function tickEventPoints(event: TickerEvent, deps: TickDeps = defaultDeps) {
+// set; the next move of that hat, or the screen's next read, catches it up. A failed read loses the
+// drained hats the same way.
+export async function tickEventPoints(
+  event: TickerEvent,
+  deps: TickDeps = defaultDeps,
+  now = new Date()
+) {
   const drained = await deps.drainChangedHats(event, MAX_HAT_SENDS_PER_TICK);
-  if (!drained.length) return { drained: 0, sent: 0, failed: 0, dropped: 0 };
+  if (!drained.length) return { drained: 0, sent: 0, failed: 0, dropped: 0, stopped: false };
   const hats = await deps.selectWatchedHats(event, drained);
+  // Once the event has ended the page names a winner from the settled standings; live team totals
+  // must not reach it.
+  const ended = event.endDate <= now;
   const [points, teams] = await Promise.all([
     hats.length ? deps.getHatPoints(event, hats) : ({} as Record<string, number>),
     // Any drained hat moved its team's total, watched or not.
-    deps.getTeamPoints(event),
+    ended ? null : deps.getTeamPoints(event),
   ]);
   const queue: Send[] = [
-    {
-      topic: eventTeamsTopic(event.name),
-      target: SignalMessages.EventPointsTeams,
-      data: { event: event.name, teams },
-    },
+    ...(teams
+      ? [
+          {
+            topic: eventTeamsTopic(event.name),
+            target: SignalMessages.EventPointsTeams,
+            data: { event: event.name, teams },
+          },
+        ]
+      : []),
     ...hats.map((hat) => {
       const topicId = hatTopicId(hat);
       return {
@@ -99,30 +119,34 @@ export async function tickEventPoints(event: TickerEvent, deps: TickDeps = defau
       failed,
       dropped,
     }).catch(() => undefined);
-  return { drained: drained.length, sent, failed, dropped };
+  return { drained: drained.length, sent, failed, dropped, stopped: failed >= FAILURES_TO_STOP };
 }
 
 type TickerRunDeps = {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   isCanceled: () => boolean;
-  tick: (event: TickerEvent) => Promise<unknown>;
+  tick: (event: TickerEvent) => Promise<{ stopped?: boolean } | void>;
 };
 
 // One scheduler run: a tick every TICK_MS until TICK_WINDOW_MS has passed. A tick that runs long
 // shortens the wait before the next, never stacks two. One event's failure skips that event for
-// this tick only.
+// this tick only; a tick that stopped on signals failures ends the run (see SEND_CONCURRENCY).
 export async function runEventPointsTicker(
   getEvents: () => Promise<TickerEvent[]> | TickerEvent[],
   { now, sleep, isCanceled, tick }: TickerRunDeps
 ) {
   const start = now();
   let ticks = 0;
-  while (!isCanceled()) {
+  let stopped = false;
+  while (!isCanceled() && !stopped) {
     const tickStart = now();
     for (const event of await getEvents()) {
       try {
-        await tick(event);
+        if ((await tick(event))?.stopped) {
+          stopped = true;
+          break;
+        }
       } catch (error) {
         logToAxiom({
           type: 'error',
@@ -133,10 +157,11 @@ export async function runEventPointsTicker(
       }
     }
     ticks++;
+    if (stopped) break;
     const next = tickStart + TICK_MS;
     if (Math.max(next, now()) - start >= TICK_WINDOW_MS) break;
     const wait = next - now();
     if (wait > 0) await sleep(wait);
   }
-  return { ticks };
+  return { ticks, stopped };
 }

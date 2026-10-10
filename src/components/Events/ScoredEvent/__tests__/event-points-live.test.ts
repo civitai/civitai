@@ -30,7 +30,12 @@ describe('what the ticker sends, the client reads', () => {
     const hat = { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' };
     const sent: { target: string; data: Record<string, unknown> }[] = [];
     await tickEventPoints(
-      { name: 'birthday2026', startDate: new Date('2026-11-01'), teams: ['Blue'] },
+      {
+        name: 'birthday2026',
+        startDate: new Date('2026-11-01'),
+        endDate: new Date('2999-01-01'),
+        teams: ['Blue'],
+      },
       {
         drainChangedHats: vi.fn(async () => [hat]),
         selectWatchedHats: async (_e, hats) => hats,
