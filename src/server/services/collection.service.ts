@@ -113,6 +113,7 @@ import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import { liveInviteWhere } from '~/server/services/collection-invite.utils';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
@@ -1417,6 +1418,7 @@ export const upsertCollection = async ({
                         (sanitizeProvenance(
                           image?.meta as Record<string, unknown> | null | undefined
                         ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
+                      metadata: stripBlockProvenanceMetadata(image.metadata),
                       userId,
                       resources: undefined,
                       id: undefined,

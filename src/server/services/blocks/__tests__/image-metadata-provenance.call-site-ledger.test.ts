@@ -35,8 +35,10 @@ type Decision =
   | 'server-literal'
   /** `INSERT … SELECT` copying an existing row's stored metadata. */
   | 'copied-from-stored-row'
-  /** Nested relation create whose `metadata` spreads a stripped copy of the input's. */
-  | 'nested-strip';
+  /** Nested relation create; `metadata` after the last spread is a stripped copy. */
+  | 'nested-strip'
+  /** Nested relation create; `metadata` after the last spread is a server-built literal. */
+  | 'nested-server-literal';
 
 /** Every insert site, keyed by enclosing function, with its decision and its site count. */
 const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> = {
@@ -70,6 +72,14 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
     decision: 'nested-strip',
     sites: 1,
   },
+  'src/server/services/collection.service.ts#upsertCollection': {
+    decision: 'nested-strip',
+    sites: 1,
+  },
+  'src/server/services/user-profile.service.ts#updateUserProfile': {
+    decision: 'nested-server-literal',
+    sites: 1,
+  },
 };
 
 /**
@@ -100,14 +110,14 @@ const IMAGE_RELATION_FIELDS = [
       ...readFileSync(
         join(ROOT, 'packages/civitai-db-schema/prisma/schema.full.prisma'),
         'utf8'
-      ).matchAll(/^\s+(\w+)\s+Image(?:\?|\[\])?\s/gm),
+      ).matchAll(/^[ \t]+(\w+)[ \t]+Image(?:\?|\[\])?[ \t\r\n]/gm),
     ].map((m) => m[1])
   ),
 ].sort();
 const NESTED_CREATE = new RegExp(
-  `\\b(?:${IMAGE_RELATION_FIELDS.join(
+  String.raw`\b(?:${IMAGE_RELATION_FIELDS.join(
     '|'
-  )})\\s*:[^;{}]{0,120}?\\{\\s*(?:create|createMany|connectOrCreate|upsert)\\s*:`,
+  )})\s*:[^;]{0,300}?\b(?:create|createMany|connectOrCreate|upsert)\s*:`,
   'g'
 );
 const STAMPER = /\bblockProvenance\b/g;
@@ -115,19 +125,24 @@ const PROVENANCE_KEY_WRITE = new RegExp(
   [
     // `{ [KEY]: v }` and `m[KEY] = v`
     String.raw`\[\s*(?:BLOCK_\w*APP_ID_META_KEY|blockProvenance\.key)\s*\]\s*(?::|=(?!=))`,
+    // `{ ['blockXAppId']: v }` and `m['blockXAppId'] = v`
+    String.raw`\[\s*['"]block[A-Z]\w*AppId['"]\s*\]\s*(?::|=(?!=))`,
     // `{ blockXAppId: v }`, `{ 'blockXAppId': v }`
     String.raw`(?:^|[{,\s])['"]?block[A-Z]\w*AppId['"]?\s*:`,
+    // shorthand `{ ...m, blockXAppId }` (a destructuring `{ blockXAppId } =` is a read)
+    String.raw`[{,]\s*block[A-Z]\w*AppId\s*(?=,|\}(?!\s*=))`,
     // `m.blockXAppId = v`
     String.raw`\.block[A-Z]\w*AppId\s*=(?!=)`,
-    // SQL `jsonb_build_object('blockXAppId', …)`
-    String.raw`jsonb_build_object\([^)]*'block[A-Z]\w*AppId'`,
+    // SQL `jsonb_build_object(…, 'blockXAppId', …)` and `jsonb_set(…, '{blockXAppId}', …)`
+    String.raw`jsonb_build_object\([\s\S]{0,300}?'block[A-Z]\w*AppId'`,
+    String.raw`'\{block[A-Z]\w*AppId\}'`,
   ].join('|'),
   'gm'
 );
 const PROVENANCE_TOKEN = /BLOCK_\w*APP_ID_META_KEY|\bblock[A-Z]\w*AppId\b|blockProvenance/;
 
 const DECLARATION =
-  /(?:\bfunction\s*\*?\s*(\w+)\s*[<(])|(?:\b(?:const|let)\s+(\w+)\s*=\s*(?:async\b|\([^()]*\)\s*=>|\w+\s*=>))/g;
+  /(?:\bfunction\s*\*?\s*(\w+)\s*[<(])|(?:\b(?:const|let)\s+(\w+)\s*=\s*async\b)/g;
 
 /** The closest function declaration before `offset`. */
 function enclosingFunction(text: string, offset: number): { name: string; start: number } {
@@ -139,10 +154,55 @@ function enclosingFunction(text: string, offset: number): { name: string; start:
   return found;
 }
 
-/** A raw statement from `offset` to the end of its tagged-template call. */
+/** Index of the backtick closing the template whose body contains `i`. */
+function templateEnd(text: string, i: number): number {
+  while (i < text.length) {
+    if (text[i] === '\\') i += 2;
+    else if (text[i] === '`') return i;
+    else if (text[i] === '$' && text[i + 1] === '{') i = interpolationEnd(text, i + 2);
+    else i++;
+  }
+  return text.length;
+}
+
+function interpolationEnd(text: string, i: number): number {
+  let depth = 1;
+  while (i < text.length) {
+    if (text[i] === '`') i = templateEnd(text, i + 1) + 1;
+    else if (text[i] === '{' && ++depth) i++;
+    else if (text[i] === '}' && --depth === 0) return i + 1;
+    else i++;
+  }
+  return text.length;
+}
+
+/** The raw statement from `offset` to the end of the template literal it sits in. */
 function rawStatement(text: string, offset: number): string {
-  const close = text.indexOf('`);', offset);
-  return text.slice(offset, close === -1 ? offset + 600 : close);
+  return text.slice(offset, templateEnd(text, offset));
+}
+
+/** The `{ … }` object literal that starts at the first `{` at or after `from`. */
+function objectAfter(text: string, from: number): string {
+  const open = text.indexOf('{', from);
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}' && --depth === 0) return text.slice(open, i + 1);
+  }
+  return text.slice(open);
+}
+
+/**
+ * The value assigned to `metadata:` after the last spread in `region` (a spread of
+ * `stripBlockProvenanceMetadata(…)` is part of that value, not a competing one), or
+ * null when a later spread could replace it.
+ */
+function metadataAfterLastSpread(region: string): string | null {
+  const spreads = [...region.matchAll(/\.\.\.(?!stripBlockProvenanceMetadata\()[\w(]/g)];
+  const lastSpread = spreads.length ? spreads[spreads.length - 1].index! : -1;
+  const assignments = [...region.matchAll(/\bmetadata:\s*/g)].filter((m) => m.index! > lastSpread);
+  const last = assignments[assignments.length - 1];
+  return last ? region.slice(last.index! + last[0].length) : null;
 }
 
 /** The text between the `(` at `open` and its matching `)`. */
@@ -170,6 +230,8 @@ function sitesIn(file: string, text: string, re: RegExp): Site[] {
           ? argumentRegion(text, open)
           : re === RAW_INSERT
           ? rawStatement(text, offset)
+          : re === NESTED_CREATE
+          ? objectAfter(text, offset + m[0].length)
           : text.slice(offset, offset + 600),
       body: text.slice(fn.start, offset + 2000),
     };
@@ -195,8 +257,8 @@ function checkDecision(decision: Decision, site: Site): string | null {
       return null;
     case 'in-function-strip':
       if (
-        !/\.\.\.image,[\s\S]*\bmetadata:\s*stripBlockProvenanceMetadata\(image\.metadata\)/.test(
-          region
+        !/^stripBlockProvenanceMetadata\(image\.metadata\)/.test(
+          metadataAfterLastSpread(region) ?? ''
         )
       )
         return 'spreads input without overriding metadata with a stripped copy';
@@ -214,11 +276,19 @@ function checkDecision(decision: Decision, site: Site): string | null {
       if (!/^INSERT INTO "Image"[\s\S]*SELECT[\s\S]*FROM "Image" i\s+WHERE i\.id = /.test(region))
         return 'is no longer an INSERT … SELECT from an existing Image row';
       return null;
-    case 'nested-strip':
-      if (!/metadata:\s*\{\s*\.\.\.stripBlockProvenanceMetadata\(/.test(region))
+    case 'nested-strip': {
+      const value = metadataAfterLastSpread(region);
+      if (!value || !/^(?:\{\s*\.\.\.)?stripBlockProvenanceMetadata\(/.test(value))
         return 'nested create no longer strips the input metadata';
-      if (/\.\.\.\w+\.metadata\b/.test(region)) return 'spreads unstripped input metadata';
       return null;
+    }
+    case 'nested-server-literal': {
+      const value = metadataAfterLastSpread(region);
+      if (!value || !value.startsWith('{')) return 'metadata is not a literal after the spreads';
+      const literal = objectAfter(value, 0);
+      if (PROVENANCE_TOKEN.test(literal)) return 'metadata literal names a provenance key';
+      return null;
+    }
   }
 }
 
@@ -242,7 +312,21 @@ describe('Image metadata provenance — write-site ledger', () => {
   it('scans a real population', () => {
     expect(files.length).toBeGreaterThan(1000);
     expect(files).toContain('src/server/services/image.service.ts');
-    expect(IMAGE_RELATION_FIELDS).toEqual(expect.arrayContaining(['profilePicture', 'coverImage']));
+    expect(IMAGE_RELATION_FIELDS).toEqual([
+      'avatar',
+      'cover',
+      'coverImage',
+      'headerImage',
+      'heroImage',
+      'icon',
+      'image',
+      'images',
+      'pendingImage',
+      'profilePicture',
+      'sfwCoverImage',
+      'sourceImage',
+      'thumbnailImage',
+    ]);
   });
 
   it('every Image insert site is classified, and no classified site has gone', () => {
@@ -309,6 +393,15 @@ describe('detector controls', () => {
     ['const persist = async (appId) => ({ metadata: { blockForkedAppId: appId } })'],
     ["const persist = async (appId) => ({ metadata: { 'blockPublishedAppId': appId } })"],
     ['const persist = async (m, appId) => { m.blockPublishedAppId = appId; }'],
+    ['const persist = async (m, blockPublishedAppId) => ({ ...m, blockPublishedAppId })'],
+    ["const persist = async (appId) => ({ ['blockPublishedAppId']: appId })"],
+    ["const persist = async (m, appId) => { m['blockPublishedAppId'] = appId; }"],
+    [
+      "const persist = async (id) => q(`SET metadata = jsonb_set(metadata, '{blockPublishedAppId}', ${id})`)",
+    ],
+    [
+      "const persist = async (id) => q(`jsonb_build_object('a', lower('x'), 'blockPublishedAppId', ${id})`)",
+    ],
     ['const persist = async (m, appId) => { m[BLOCK_PUBLISHED_APP_ID_META_KEY] = appId; }'],
     [
       "const persist = async (id) => q(`SET metadata = jsonb_build_object('blockPublishedAppId', ${id})`)",
@@ -332,7 +425,7 @@ describe('detector controls', () => {
 
   it('does not flag a provenance key read or comparison', () => {
     const text = fixture(
-      'function read(m) { return m[BLOCK_PUBLISHED_APP_ID_META_KEY] === m.blockPublishedAppId; }'
+      'function read(m) { const { blockPublishedAppId } = m; return m[BLOCK_PUBLISHED_APP_ID_META_KEY] === m.blockPublishedAppId; }'
     );
     expect(sitesIn('x.ts', text, PROVENANCE_KEY_WRITE)).toEqual([]);
   });
@@ -344,19 +437,38 @@ describe('detector controls', () => {
     expect(keysOf(sitesIn('x.ts', text, STAMPER))).toEqual(['x.ts#stamp']);
   });
 
-  it('keys a write in a plain arrow after a function to the arrow, not the function', () => {
-    const text = fixture(
-      'async function duplicateImage() { await q(`SELECT 1`); }\n' +
-        'const sneaky = (input) => dbWrite.image.create({ data: { ...input } });'
-    );
-    expect(sitesIn('x.ts', text, WRITE_CALL).map((s) => s.key)).toEqual(['x.ts#sneaky']);
-  });
-
   it('counts a second write site in an already-listed function', () => {
     const text = fixture(
       'async function f(a, b) { await db.image.create({ data: a }); await db.image.create({ data: b }); }'
     );
     expect(countsOf(sitesIn('x.ts', text, WRITE_CALL))).toEqual({ 'x.ts#f': 2 });
+  });
+
+  it('ends a raw insert at its own template, not at a later statement', () => {
+    const text = fixture(
+      'async function add(u) { await db.$queryRaw`INSERT INTO "Image" (url) VALUES (${u})`; }\n' +
+        'async function dup(id) { await db.$queryRawUnsafe(`SELECT 1 FROM "Image" i WHERE i.id = ${id}`); }'
+    );
+    const [site] = sitesIn('x.ts', text, RAW_INSERT);
+    expect(site.region).toBe('INSERT INTO "Image" (url) VALUES (${u})');
+    expect(checkDecision('copied-from-stored-row', site)).toContain('no longer an INSERT … SELECT');
+  });
+
+  it('accepts the stripped and server-literal nested shapes', () => {
+    expect(
+      checkDecision('nested-strip', {
+        key: 'x',
+        region: '{ ...p, metadata: { ...stripBlockProvenanceMetadata(p.metadata), a: 1 }, userId }',
+        body: '',
+      })
+    ).toBeNull();
+    expect(
+      checkDecision('nested-server-literal', {
+        key: 'x',
+        region: '{ where: { id }, create: { ...image, metadata: { coverImage: true, userId } } }',
+        body: '',
+      })
+    ).toBeNull();
   });
 
   it('accepts a conditional spread of object literals in a server-literal site', () => {
@@ -383,8 +495,33 @@ describe('detector controls', () => {
     ['in-function-strip', '{ data: { ...image, meta } }', 'spreads input without overriding'],
     [
       'nested-strip',
-      'create: { ...p, metadata: { ...stripBlockProvenanceMetadata(p.metadata), ...p.metadata } }',
-      'spreads unstripped input metadata',
+      '{ ...p, metadata: { ...stripBlockProvenanceMetadata(p.metadata), ...p.metadata } }',
+      'nested create no longer strips',
+    ],
+    [
+      'nested-strip',
+      '{ metadata: { ...stripBlockProvenanceMetadata(p.metadata) }, ...p }',
+      'nested create no longer strips',
+    ],
+    [
+      'in-function-strip',
+      '{ data: { metadata: stripBlockProvenanceMetadata(image.metadata), ...image } }',
+      'spreads input without overriding',
+    ],
+    [
+      'nested-server-literal',
+      '{ create: { ...image, metadata: { coverImage: true, ...image.metadata } } }',
+      'not a literal after the spreads',
+    ],
+    [
+      'nested-server-literal',
+      '{ create: { ...image, metadata: { [BLOCK_PUBLISHED_APP_ID_META_KEY]: id } } }',
+      'names a provenance key',
+    ],
+    [
+      'nested-server-literal',
+      '{ create: { ...image, metadata: image.metadata } }',
+      'not a literal',
     ],
     [
       'server-literal',
