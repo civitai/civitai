@@ -59,7 +59,7 @@ type LoadedEvent = {
 
 export type EventPointsRedis = Pick<
   typeof sysRedis,
-  'hGetAll' | 'sAdd' | 'sRem' | 'expire' | 'expireAt' | 'hIncrBy' | 'xRange' | 'xRevRange'
+  'hGetAll' | 'hmGet' | 'sAdd' | 'sRem' | 'expire' | 'expireAt' | 'hIncrBy' | 'xRange' | 'xRevRange'
 >;
 
 export type EventPointsFailure = 'redis' | 'ledger';
@@ -159,13 +159,17 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     if (prev.cursor === '0-0') return loadHats(event);
     const [first] = await deps.redis.xRange(keys.hatsLog, '-', '+', { COUNT: 1 });
     if (first && streamIdBefore(prev.cursor, first.id)) return loadHats(event);
+    // The log names what changed; the hash says what it is now. Writers race (hash, then log), so a
+    // logged value can be older than the hash, but the last entry for a key comes after its last write.
+    const changed = [...new Set(entries.map(({ message }) => message.k))];
+    const values = await deps.redis.hmGet(keys.hats, changed);
     // In place: reads are synchronous, so nothing sees a half-applied batch.
     const hats = prev.hats;
-    for (const { message } of entries) {
-      const hat = message.v ? decodeHat(message.v) : undefined;
-      if (hat) hats.set(message.k, hat);
-      else hats.delete(message.k);
-    }
+    changed.forEach((key, i) => {
+      const hat = values[i] ? decodeHat(values[i]!) : undefined;
+      if (hat) hats.set(key, hat);
+      else hats.delete(key);
+    });
     return { hats, cursor: entries[entries.length - 1].id };
   }
 

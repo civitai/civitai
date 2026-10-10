@@ -51,6 +51,7 @@ const {
   equipCosmeticToEntity,
   getEventDecorationsForEntity,
   revokeCosmeticsFromUsers,
+  unassignCosmetic,
   unequipCosmetic,
 } = await import('~/server/services/cosmetic.service');
 const { equipCosmeticSchema, unequipCosmeticSchema } = await import(
@@ -556,10 +557,16 @@ describe('hats are kept after the event ends', () => {
 
 // The live hat map is written in the same request (sync.behavior.test.ts runs what these calls do).
 describe('a hat placement change writes through to the live hat map', () => {
-  it('on equip, for the content it went on', async () => {
+  it('on equip, for the content it went on, after the placement is written', async () => {
     db.userCosmetic.findFirst.mockResolvedValue(hatRow());
     await equipHat();
     expect(hatSync.owner.mock.calls).toEqual([[OWNER, [{ entityType: 'Image', entityId: IMAGE }]]]);
+    expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      Math.max(
+        db.$executeRaw.mock.invocationCallOrder.at(-1)!,
+        ...db.userCosmetic.updateMany.mock.invocationCallOrder
+      )
+    );
   });
 
   it('on a move, for the content it left too', async () => {
@@ -600,22 +607,55 @@ describe('a hat placement change writes through to the live hat map', () => {
     expect(hatSync.owner).not.toHaveBeenCalled();
     await unequip();
     expect(hatSync.owner.mock.calls).toEqual([[OWNER, [{ entityType: 'Image', entityId: IMAGE }]]]);
+    expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.userCosmetic.updateMany.mock.invocationCallOrder.at(-1)!
+    );
   });
 
-  it('on revoke, for every holder and the content each wore it on', async () => {
-    db.userCosmetic.findMany.mockResolvedValue([
-      { userId: OWNER, equippedToId: IMAGE, equippedToType: 'Image' },
-      { userId: 8, equippedToId: 9, equippedToType: 'Model' },
-    ]);
-    db.userCosmetic.deleteMany.mockResolvedValue({ count: 2 });
-    await revokeCosmeticsFromUsers({ userIds: [OWNER, 8], cosmeticIds: [1] });
-    expect(hatSync.owners.mock.calls).toEqual([
+  const heldHats = [
+    { userId: OWNER, equippedToId: IMAGE, equippedToType: 'Image', cosmetic: { data: HAT } },
+    { userId: 8, equippedToId: 9, equippedToType: 'Model', cosmetic: { data: HAT } },
+    // A frame never earns, so it never reaches the hat map.
+    { userId: 8, equippedToId: 10, equippedToType: 'Image', cosmetic: { data: FRAME } },
+  ];
+  const removedHats = [
+    [
       [
-        [
-          { userId: OWNER, entityType: 'Image', entityId: IMAGE },
-          { userId: 8, entityType: 'Model', entityId: 9 },
-        ],
+        { userId: OWNER, entityType: 'Image', entityId: IMAGE },
+        { userId: 8, entityType: 'Model', entityId: 9 },
       ],
-    ]);
+    ],
+  ];
+
+  it('on revoke, for every holder’s event hats, after the delete', async () => {
+    db.userCosmetic.findMany.mockResolvedValue(heldHats);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 3 });
+    await revokeCosmeticsFromUsers({ userIds: [OWNER, 8], cosmeticIds: [1] });
+    expect(hatSync.owners.mock.calls).toEqual(removedHats);
+    expect(hatSync.owners.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.userCosmetic.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('not on a revoke of cosmetics that are not event hats', async () => {
+    db.userCosmetic.findMany.mockResolvedValue([heldHats[2]]);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 1 });
+    await revokeCosmeticsFromUsers({ userIds: [8], cosmeticIds: [1] });
+    expect(hatSync.owners).not.toHaveBeenCalled();
+  });
+
+  it('on a moderator unassign, for the event hats it deleted, after the delete', async () => {
+    db.userCosmetic.findMany.mockResolvedValue(heldHats);
+    db.userCosmetic.deleteMany.mockResolvedValue({ count: 3 });
+    await unassignCosmetic({ cosmeticId: 1, userIds: [OWNER, 8] });
+    expect(db.userCosmetic.findMany.mock.calls[0][0].where).toEqual({
+      cosmeticId: 1,
+      userId: { in: [OWNER, 8] },
+      equippedToId: { not: null },
+    });
+    expect(hatSync.owners.mock.calls).toEqual(removedHats);
+    expect(hatSync.owners.mock.invocationCallOrder[0]).toBeGreaterThan(
+      db.userCosmetic.deleteMany.mock.invocationCallOrder[0]
+    );
   });
 });

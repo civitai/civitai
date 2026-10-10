@@ -426,6 +426,30 @@ export async function getEventDecorationsForEntity({
   return visible;
 }
 
+const equippedHatSelect = {
+  userId: true,
+  equippedToId: true,
+  equippedToType: true,
+  cosmetic: { select: { data: true } },
+} as const;
+
+// Event hats among deleted holdings come off the live hat map; other cosmetics never earn.
+function writeThroughRemovedEventHats(
+  rows: {
+    userId: number;
+    equippedToId: number | null;
+    equippedToType: CosmeticEntity | null;
+    cosmetic?: { data: unknown } | null;
+  }[]
+) {
+  const hats = rows.flatMap(({ userId, equippedToId, equippedToType, cosmetic }) =>
+    equippedToId && equippedToType && isEventDecorationData(cosmetic?.data)
+      ? [{ userId, entityType: equippedToType, entityId: equippedToId }]
+      : []
+  );
+  if (hats.length) void syncOwnersEventHats(hats);
+}
+
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {
   await cosmeticEntityCaches[type].refresh(ids);
   await eventDecorationEntityCaches[type].refresh(ids);
@@ -537,7 +561,7 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
       equippedToId: { not: null },
     },
-    select: { userId: true, equippedToId: true, equippedToType: true },
+    select: equippedHatSelect,
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
@@ -547,13 +571,7 @@ export async function revokeCosmeticsFromUsers({
       ...claimKeyFilter,
     },
   });
-  void syncOwnersEventHats(
-    equipped.flatMap(({ userId, equippedToId, equippedToType }) =>
-      equippedToId && equippedToType
-        ? [{ userId, entityType: equippedToType, entityId: equippedToId }]
-        : []
-    )
-  );
+  writeThroughRemovedEventHats(equipped);
 
   await userCosmeticCache.refresh(uniqueUserIds);
   await refreshOwnedStickerCache(uniqueUserIds);
@@ -657,9 +675,14 @@ export async function unassignCosmetic({
   userIds: number[];
 }) {
   if (userIds.length === 0) return { count: 0 };
+  const equipped = await dbWrite.userCosmetic.findMany({
+    where: { cosmeticId, userId: { in: userIds }, equippedToId: { not: null } },
+    select: equippedHatSelect,
+  });
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
+  writeThroughRemovedEventHats(equipped);
   await refreshOwnedStickerCache(userIds);
   return { count: result.count };
 }

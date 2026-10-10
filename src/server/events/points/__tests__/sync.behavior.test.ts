@@ -27,9 +27,13 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 });
 const { testerFlag } = await import('~/test-utils/testerFlagFake');
 
-const { desiredEventHats, syncEventHats, syncOwnerEventHats } = await import(
-  '~/server/events/points/sync'
-);
+const {
+  HAT_SYNC_MAX_PASSES,
+  desiredEventHats,
+  syncEventHats,
+  syncOwnerEventHats,
+  syncOwnersEventHats,
+} = await import('~/server/events/points/sync');
 const { createEventPointsEngine } = await import('~/server/events/points/award');
 const { encodeHat, eventPointKeys } = await import('~/server/events/points/keys');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
@@ -110,6 +114,8 @@ beforeEach(async () => {
   const raw = pgliteRaw(db.pg);
   dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+  // clearAllMocks keeps implementations; the preview tests set this one.
+  dbMock.dbWrite.user.findMany.mockReset();
 });
 
 describe('desiredEventHats: which placements may earn', () => {
@@ -201,8 +207,32 @@ describe('syncEventHats -> engine', () => {
         return opts?.COUNT ? rows.slice(0, opts.COUNT) : rows;
       }
     );
+    // The owner lock and its pending set, with SET NX and SPOP semantics.
+    strings.clear();
+    sets.clear();
+    sys.set.mockImplementation(async (key: string, value: string, opts?: { NX?: boolean }) => {
+      if (opts?.NX && strings.has(key)) return null;
+      strings.set(key, value);
+      return 'OK';
+    });
+    sys.exists.mockImplementation(async (key: string) => Number(strings.has(key)));
+    sys.del.mockImplementation(async (key: string) => Number(strings.delete(key)));
+    sys.sAdd.mockImplementation(async (key: string, members: string[]) => {
+      const set = sets.get(key) ?? new Set<string>();
+      sets.set(key, set);
+      members.forEach((m) => set.add(m));
+      return members.length;
+    });
+    sys.pExpire.mockResolvedValue(true);
+    sys.sPop.mockImplementation(async (key: string) => {
+      const members = [...(sets.get(key) ?? [])];
+      sets.delete(key);
+      return members;
+    });
     testerFlag.reset({ public: true });
   });
+  const strings = new Map<string, string>();
+  const sets = new Map<string, Set<string>>();
 
   const LIVE = new Date('2026-11-05T12:00:00.000Z');
   const keys = eventPointKeys(birthday2026.name);
@@ -385,6 +415,118 @@ describe('syncEventHats -> engine', () => {
       expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
     });
 
+    it('writes nothing once the event’s points window has closed', async () => {
+      await place(OWNER, 100);
+      const AFTER = new Date(
+        birthday2026.endDate.getTime() + birthday2026.scoring!.finalizeAfterMs + 1
+      );
+      await syncOwnerEventHats(OWNER, [image(100)], AFTER);
+      expect(log).toEqual([]);
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
+    });
+
+    it('follows a real equip and unequip through the placement trigger', async () => {
+      await db.pg.exec(`
+        INSERT INTO "Cosmetic" (id, type, data) VALUES
+          (50, 'ContentDecoration', '{"event": "${birthday2026.name}", "team": "Blue"}');
+        INSERT INTO "Image" (id, "userId") VALUES (600, ${OWNER});
+        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES (${OWNER}, 50, 'claimed');
+      `);
+      try {
+        await db.pg.exec(
+          `UPDATE "UserCosmetic" SET "equippedToId" = 600, "equippedToType" = 'Image' WHERE "cosmeticId" = 50`
+        );
+        await syncOwnerEventHats(OWNER, [image(600)], LIVE);
+        const hat = encodeHat({
+          ownerId: OWNER,
+          cosmeticId: 50,
+          claimKey: 'claimed',
+          team: 'Blue',
+        });
+        expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({ 'Image:600': hat });
+        await db.pg.exec(
+          `UPDATE "UserCosmetic" SET "equippedToId" = NULL, "equippedToType" = NULL WHERE "cosmeticId" = 50`
+        );
+        await syncOwnerEventHats(OWNER, [image(600)], LIVE);
+        expect(log).toEqual([
+          { k: 'Image:600', v: hat },
+          { k: 'Image:600', v: '' },
+        ]);
+      } finally {
+        await db.pg.exec(`
+          DELETE FROM "UserCosmetic" WHERE "cosmeticId" = 50;
+          DELETE FROM "Image" WHERE id = 600;
+          DELETE FROM "Cosmetic" WHERE id = 50;
+        `);
+      }
+    });
+
+    it('a revoke takes every hat of every holder off', async () => {
+      await place(OWNER, 100);
+      await place(OWNER, 101, { cosmeticId: 8 });
+      await place(OTHER, 102);
+      await syncOwnerEventHats(OWNER, [], LIVE);
+      await syncOwnerEventHats(OTHER, [], LIVE);
+      expect([...hashes.get(keys.hats)!.keys()].sort()).toEqual([
+        'Image:100',
+        'Image:101',
+        'Image:102',
+      ]);
+      await db.pg.exec(`UPDATE "EventCosmeticPlacement" SET "endedAt" = now()`);
+      await syncOwnersEventHats([
+        { userId: OWNER, entityType: 'Image', entityId: 100 },
+        { userId: OWNER, entityType: 'Image', entityId: 101 },
+        { userId: OTHER, entityType: 'Image', entityId: 102 },
+      ]);
+      expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({});
+      expect(log.slice(3).map((e) => e.v)).toEqual(['', '', '']);
+    });
+
+    // Equip then a quick unequip: two passes for one owner. Unserialized, the older read could land
+    // last and leave the hat on after it came off.
+    it('serializes one owner’s passes so the older read never lands last', async () => {
+      await place(OWNER, 100);
+      const raw = pgliteRaw(db.pg);
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let gated = false;
+      dbMock.dbWrite.$queryRaw.mockImplementation((async (...args: unknown[]) => {
+        const rows = await (raw.queryRaw as (...a: unknown[]) => Promise<unknown>)(...args);
+        if (!gated) {
+          gated = true;
+          await gate;
+        }
+        return rows;
+      }) as never);
+      const equip = syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      await vi.waitFor(() => expect(gated).toBe(true));
+      await endPlacement(100);
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      release();
+      await equip;
+      expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({});
+      expect(log.at(-1)).toEqual({ k: 'Image:100', v: '' });
+    });
+
+    it('gives up after a bounded number of passes, and says so', async () => {
+      await place(OWNER, 100);
+      // Someone always arrives while it runs.
+      redisMock.sysRedis.sPop.mockImplementation(async () => ['*']);
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(HAT_SYNC_MAX_PASSES);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ fn: 'runOwnerHatSync', ownerId: OWNER })
+      );
+    });
+
+    it('still writes the hat when Redis cannot take the lock', async () => {
+      await place(OWNER, 100);
+      redisMock.sysRedis.set.mockRejectedValue(new Error('redis down'));
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
+    });
+
     it('leaves another owner’s hat on touched content to the reconcile', async () => {
       hashes.set(keys.hats, new Map([['Image:100', ownerHat(OTHER)]]));
       await syncOwnerEventHats(OWNER, [image(100)], LIVE);
@@ -464,6 +606,20 @@ describe('syncEventHats -> engine', () => {
       // In step: nothing to fix, nothing logged.
       await syncEventHats(LIVE);
       expect(fixes()).toHaveLength(1);
+    });
+
+    // The scan reads the replica; an unequip can land between that read and the reconcile's write.
+    it('re-derives what it found on the primary, so a stale scan cannot put a hat back on', async () => {
+      await place(OWNER, 100);
+      const raw = pgliteRaw(db.pg);
+      dbMock.dbRead.$queryRaw.mockImplementationOnce((async (...args: unknown[]) => {
+        const rows = await (raw.queryRaw as (...a: unknown[]) => Promise<unknown>)(...args);
+        await endPlacement(100);
+        return rows;
+      }) as never);
+      await syncEventHats(LIVE);
+      expect(Object.fromEntries(hashes.get(keys.hats) ?? [])).toEqual({});
+      expect(log).toEqual([]);
     });
   });
 });

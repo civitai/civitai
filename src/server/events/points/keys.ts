@@ -19,6 +19,14 @@ export function eventPointKeys(event: string) {
   } as const;
 }
 
+// One owner's hat write-through: the lock one pass holds, and the content callers that found it held
+// left for the holder's next pass.
+export function hatSyncKeys(ownerId: number) {
+  const root =
+    `${REDIS_SYS_KEYS.EVENT}:${REDIS_SUB_KEYS.EVENT.POINTS}:hat-sync:${ownerId}` as const;
+  return { lock: `${root}:lock` as const, pending: `${root}:pending` as const };
+}
+
 // When a scored event's points machinery runs at all: from the preview (or the start) until scoring
 // finalizes. Whether an action counts is narrower (it must also fall before endDate).
 export const eventPointsWindow = (event: {
