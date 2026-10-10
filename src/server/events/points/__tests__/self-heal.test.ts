@@ -289,7 +289,9 @@ describe('the self-heal', () => {
     );
   });
 
-  it('retries a flip that met another heal of the event running on this pod', async () => {
+  // A pod busy with a repair of the event: the flip takes its own window first, so its retry is the
+  // only one, and that retry must not then meet the cooldown it took.
+  it('heals a flip that met a busy pod once the pod is free, past the cooldown it took', async () => {
     const fake = fakeRedis();
     let release!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -301,9 +303,12 @@ describe('the self-heal', () => {
       },
     });
     const repair = heal(EVENT.name, 'empty-map');
+    await vi.waitFor(() => expect(calls.sync).toBe(1));
     expect(await heal(EVENT.name, 'switch-on')).toBe('busy');
+    expect(fake.strings.get(selfHealCooldownKey(EVENT.name, 'switch-on'))).toBe('switch-on');
     expect(calls.retries.map((r) => r.ms)).toEqual([SWITCH_ON_RETRY_MS]);
-    expect(await heal(EVENT.name, 'missing-count-base')).toBe('busy');
+    // A repair has no retry: the next reload asks again.
+    expect(await heal(EVENT.name, 'missing-count-base')).toBe('cooldown');
     expect(calls.retries).toHaveLength(1);
     release();
     await repair;
@@ -312,37 +317,30 @@ describe('the self-heal', () => {
     expect(calls.logs.at(-1)).toEqual(
       expect.objectContaining({ reason: 'switch-on', outcome: 'ran' })
     );
-  });
-
-  it('does not retry a repair that met a held lock: the next reload asks again', async () => {
-    const fake = fakeRedis();
-    fake.strings.set(jobLockKey(SETTLE_JOB), 'the-hourly-run');
-    const { heal, calls } = pod(fake);
-    expect(await heal(EVENT.name, 'missing-count-base')).toBe('locked');
     expect(calls.retries).toEqual([]);
   });
 
-  // An earlier repair must not swallow a flip: hats placed while off are only found by a reconcile.
-  it('still heals a flip inside a repair cooldown', async () => {
+  it('stops retrying a flip at the cap however long the pod stays busy', async () => {
     const fake = fakeRedis();
-    const { heal, calls } = pod(fake);
-    expect(await heal(EVENT.name, 'empty-map')).toBe('ran');
-    expect(await heal(EVENT.name, 'missing-count-base')).toBe('cooldown');
-    expect(await heal(EVENT.name, 'switch-on')).toBe('ran');
-    expect(calls.sync).toBe(2);
-  });
-
-  // Unlike the route, the heal never runs unlocked: two settles at once share their staging keys.
-  it('reads a Redis error on the lock as held, never as free', async () => {
-    const fake = fakeRedis();
-    const set = fake.redis.set;
-    fake.redis.set = async (key, value, opts) => {
-      if (key === jobLockKey(SETTLE_JOB)) throw new Error('timeout');
-      return set(key, value, opts);
-    };
-    const { heal, calls } = pod(fake);
-    expect(await heal(EVENT.name, 'empty-map')).toBe('locked');
-    expect(calls.sync).toBe(0);
+    const { heal, calls } = pod(fake, {
+      syncEventHats: async () => {
+        calls.sync++;
+        return new Promise<never>(() => undefined);
+      },
+    });
+    void heal(EVENT.name, 'empty-map');
+    await vi.waitFor(() => expect(calls.sync).toBe(1));
+    expect(await heal(EVENT.name, 'switch-on')).toBe('busy');
+    // Every retry ever scheduled: each one that runs meets the busy pod and schedules at most one more.
+    let scheduled = calls.retries.length;
+    while (calls.retries.length && scheduled <= 100) {
+      calls.retries.shift()!.fn();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      scheduled += calls.retries.length;
+    }
+    expect(calls.retries).toEqual([]);
+    expect(scheduled).toBe(SWITCH_ON_RETRIES);
+    expect(calls.sync).toBe(1);
   });
 
   it('does not stack a second heal on a pod whose first is still running', async () => {

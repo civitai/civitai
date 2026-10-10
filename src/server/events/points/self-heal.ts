@@ -53,36 +53,44 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
   // A heal already running on this pod: a slow settle must not stack a second one behind it.
   const inFlight = new Set<string>();
 
-  // Never throws. Every outcome but 'busy' and 'off' is logged, so the next switch-on shows in
-  // Axiom which pod healed, why, and how long after the flag read on.
-  // `retry`: a flip's retry after a held lock, which its own cooldown must not stop.
-  async function heal(name: string, reason: SelfHealReason, retry = 0): Promise<SelfHealOutcome> {
-    if (inFlight.has(name)) {
-      // A flip must not be lost behind another heal of this event on this pod.
-      if (reason === 'switch-on' && retry < SWITCH_ON_RETRIES)
-        deps.retryLater(() => void heal(name, reason, retry), SWITCH_ON_RETRY_MS);
-      return 'busy';
-    }
-    inFlight.add(name);
+  // Never throws. Every outcome but 'busy', 'off' and 'cooldown' is logged, so the next switch-on
+  // shows in Axiom which pod healed, why, and how long after the flag read on.
+  // `attempt`: 0 for a fresh ask, which must win the cooldown; n for a flip's nth retry, which
+  // already holds it.
+  async function heal(name: string, reason: SelfHealReason, attempt = 0): Promise<SelfHealOutcome> {
     const entry = { name: 'event-points', fn: 'selfHeal', event: name, reason, pod: deps.pod };
+    // Only a flip retries: nothing else asks again for a stale map that is not empty. Each retry
+    // counts, so a pod that stays busy, or a lock that stays held, cannot keep one going.
+    const retryFlip = () => {
+      if (reason === 'switch-on' && attempt < SWITCH_ON_RETRIES)
+        deps.retryLater(() => void heal(name, reason, attempt + 1), SWITCH_ON_RETRY_MS);
+    };
+    let owned = false;
     try {
       if (!(await deps.isEnabled())) return 'off';
       const eventDef = await deps.loadEvent(name);
       if (!eventDef?.scoring) return 'unknown';
-      if (!retry) {
+      if (!attempt) {
         const cooled = await deps.redis.set(selfHealCooldownKey(name, reason), reason, {
           NX: true,
           EX: SELF_HEAL_COOLDOWN_S,
         });
         if (!cooled) return 'cooldown';
       }
+      // From here this pod owns the window. Another heal of this event running here (a slow settle
+      // must not stack a second one) is doing this work; a flip still retries behind it.
+      if (inFlight.has(name)) {
+        retryFlip();
+        return 'busy';
+      }
+      inFlight.add(name);
+      owned = true;
       // Held: the hourly job (or another pod's heal) is doing this same work now. The cooldown
-      // stays, so the pods do not queue up behind it; a flip retries, as only it may be missed.
+      // stays, so the pods do not queue up behind it.
       const lock = await deps.acquireLock(SETTLE_JOB, SETTLE_LOCK_S);
       if (!lock) {
-        deps.log({ ...entry, type: 'info', outcome: 'locked', retry });
-        if (reason === 'switch-on' && retry < SWITCH_ON_RETRIES)
-          deps.retryLater(() => void heal(name, reason, retry + 1), SWITCH_ON_RETRY_MS);
+        deps.log({ ...entry, type: 'info', outcome: 'locked', attempt });
+        retryFlip();
         return 'locked';
       }
       try {
@@ -109,7 +117,7 @@ export function createEventPointsSelfHeal(deps: SelfHealDeps) {
       deps.log({ ...entry, type: 'error', outcome: 'failed', message: (error as Error).message });
       return 'failed';
     } finally {
-      inFlight.delete(name);
+      if (owned) inFlight.delete(name);
     }
   }
 
