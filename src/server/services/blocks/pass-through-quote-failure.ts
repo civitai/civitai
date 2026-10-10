@@ -1,17 +1,23 @@
 import { TRPCError } from '@trpc/server';
 import { isLikelySafeMessage } from '~/server/services/orchestrator/provider-errors';
-import { getOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
+import {
+  getOrchestratorSubmitFailure,
+  isOrchestratorMissingBlob,
+} from '~/server/services/orchestrator/submit-failure';
 
 /**
  * Why a pass-through step has no price quote.
  *
  * - `rejected`    — the orchestrator answered the request with a 4xx that refuses the
  *                   request itself; retrying the same body will not help. `reason` is
- *                   set only when its message is safe to show.
+ *                   the orchestrator's message only when it is safe to show, or a fixed
+ *                   host-written sentence (a training image that no longer exists).
  * - `unavailable` — no usable answer: a network failure, a timeout, a 5xx, a rate
- *                   limit, a token that could not be minted or was refused, a funds
- *                   refusal, or a failure before the request was sent. Nothing from
- *                   the failure is forwarded.
+ *                   limit, a token that was refused or (estimate only — a submit
+ *                   that cannot mint throws before quoting) could not be minted, a
+ *                   funds refusal, or a failure before the request was sent (other than a
+ *                   blob the orchestrator says is gone). Nothing from the failure is
+ *                   forwarded.
  * - `unpriced`    — the orchestrator answered without a finite total.
  */
 export type PassThroughQuoteFailure =
@@ -43,6 +49,10 @@ const UNSAFE_LOCATION_PATTERNS: RegExp[] = [
   /\b[\w-]+(?:\.[\w-]+)+:\d{2,5}\b/, // host:port
   /\.(?:svc|local|internal|cluster|lan|corp)\b/i, // private DNS suffixes
 ];
+
+/** Host-written; nothing from the refresh failure is forwarded. */
+export const MISSING_BLOB_REASON =
+  'An image in the training data is no longer available. Upload it again.';
 
 const OPAQUE_TOKEN = /[A-Za-z0-9_-]{24,}/g;
 
@@ -89,6 +99,13 @@ const NOT_A_REQUEST_REFUSAL = new Set([401, 403, 408, 429]);
  * so it is `unavailable`.
  */
 export function classifyQuoteFailure(err: unknown, callerText: string): PassThroughQuoteFailure {
+  // A blob-URL refresh that failed before the quote was sent is `unavailable`, EXCEPT
+  // when the orchestrator answered that the blob is gone: the same body can never
+  // succeed, so "try again" would be wrong. A refresh that failed in transit stays
+  // `unavailable` — it says nothing about the blob.
+  if (err instanceof TRPCError && isOrchestratorMissingBlob(err)) {
+    return { kind: 'rejected', reason: MISSING_BLOB_REASON };
+  }
   const response = getOrchestratorSubmitFailure(err);
   if (!(err instanceof TRPCError) || !response) return { kind: 'unavailable' };
   const { status } = response;
@@ -97,6 +114,29 @@ export function classifyQuoteFailure(err: unknown, callerText: string): PassThro
   }
   const reason = safeQuoteReason(err.message, callerText);
   return reason === undefined ? { kind: 'rejected' } : { kind: 'rejected', reason };
+}
+
+/**
+ * Recorded orchestrator statuses that are the viewer's own doing, not a fault of ours:
+ * 403 insufficient funds, 429 rate limit.
+ */
+const VIEWER_CAUSED_STATUSES = new Set([403, 429]);
+
+/**
+ * The log level for a swallowed quote failure, from THIS classification rather than
+ * the generic tRPC client-fault table: that table counts UNAUTHORIZED and every
+ * BAD_REQUEST as a client fault, but here a 401 is our own service token refused, a
+ * 408 is an upstream timeout, and an unannotated BAD_REQUEST is a blob refresh that
+ * failed in transit — all ours. Only an outcome caused by the request or the viewer
+ * is a warning.
+ */
+export function quoteFailureLogLevel(
+  failure: PassThroughQuoteFailure,
+  err: unknown
+): 'warning' | 'error' {
+  if (failure.kind === 'rejected') return 'warning';
+  const status = getOrchestratorSubmitFailure(err)?.status;
+  return status !== undefined && VIEWER_CAUSED_STATUSES.has(status) ? 'warning' : 'error';
 }
 
 /** The `error` / `errorCode` pair a block receives for an unquoted training step. */

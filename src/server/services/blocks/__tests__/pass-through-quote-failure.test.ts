@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import {
   classifyQuoteFailure,
+  quoteFailureLogLevel,
   safeQuoteReason,
   unquotedTrainingRefusal,
 } from '~/server/services/blocks/pass-through-quote-failure';
-import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
+import {
+  annotateOrchestratorMissingBlob,
+  annotateOrchestratorSubmitFailure,
+} from '~/server/services/orchestrator/submit-failure';
 
 const GENERIC = 'Training needs a price quote and none could be obtained; try again.';
 const OWN_KEY = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
@@ -119,6 +123,20 @@ describe('what a block receives for a failed training quote', () => {
     expect(refusalFor(err)).toEqual({ error: GENERIC, errorCode: 'training-quote-rejected' });
   });
 
+  it('a blob the orchestrator says is gone is a rejection with a host-written sentence', () => {
+    const err = new TRPCError({
+      code: 'BAD_REQUEST',
+      message:
+        'Failed to refresh image URL for blob: BLOB1.jpeg. Please try uploading the image again.',
+    });
+    annotateOrchestratorMissingBlob(err);
+    expect(refusalFor(err)).toEqual({
+      error:
+        'Training could not be priced: An image in the training data is no longer available. Upload it again.',
+      errorCode: 'training-quote-rejected',
+    });
+  });
+
   it('an unpriced answer has its own code', () => {
     expect(unquotedTrainingRefusal({ kind: 'unpriced' })).toEqual({
       error: GENERIC,
@@ -138,5 +156,39 @@ describe('safeQuoteReason', () => {
     expect(safeQuoteReason('Learning rate must be at most 0.001.', '{}')).toBe(
       'Learning rate must be at most 0.001.'
     );
+  });
+});
+
+describe('quoteFailureLogLevel', () => {
+  const levelFor = (err: unknown) => quoteFailureLogLevel(classifyQuoteFailure(err, '{}'), err);
+  const missingBlob = () => {
+    const err = new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to refresh.' });
+    annotateOrchestratorMissingBlob(err);
+    return err;
+  };
+
+  it.each([
+    ['a 400 rejection', orchestratorError('BAD_REQUEST', 'Epochs is bad.', 400)],
+    ['a 404 rejection', orchestratorError('BAD_REQUEST', 'Not found.', 404)],
+    ['a blob that is gone', missingBlob()],
+    ['a 403 insufficient funds', orchestratorError('BAD_REQUEST', 'Insufficient funds.', 403)],
+    ['a 429 rate limit', orchestratorError('TOO_MANY_REQUESTS', 'Slow down!', 429)],
+  ])('%s is a warning', (_name, err) => {
+    expect(levelFor(err)).toBe('warning');
+  });
+
+  it.each([
+    ['a 401 (our token refused)', orchestratorError('UNAUTHORIZED', 'Denied.', 401)],
+    ['a 408 upstream timeout', orchestratorError('BAD_REQUEST', 'Request timed out.', 408)],
+    ['a 500', orchestratorError('SERVICE_UNAVAILABLE', 'Down.', 500)],
+    [
+      'a blob refresh that failed in transit',
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Failed to refresh.' }),
+    ],
+    ['an unannotated rate limit', new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'x' })],
+    ['a timeout', new TRPCError({ code: 'TIMEOUT', message: 'x' })],
+    ['an unrecognised throw', new Error('boom')],
+  ])('%s is an error', (_name, err) => {
+    expect(levelFor(err)).toBe('error');
   });
 });

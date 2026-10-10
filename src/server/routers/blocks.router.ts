@@ -9,7 +9,7 @@ import {
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
-import { classifyErrorFault, logToAxiom } from '~/server/logging/client';
+import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
   BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
@@ -316,6 +316,7 @@ import {
 } from '~/server/services/orchestrator/submit-failure';
 import {
   classifyQuoteFailure,
+  quoteFailureLogLevel,
   unquotedTrainingRefusal,
   type PassThroughQuoteFailure,
 } from '~/server/services/blocks/pass-through-quote-failure';
@@ -11537,9 +11538,7 @@ async function quotePassThroughBuzz(opts: {
     void Promise.resolve(
       logToAxiom({
         name: 'block-pass-through-quote-failed',
-        // A rate limit or other client-fault code is not an error-level event; a
-        // rejection is always a client-fault code (BAD_REQUEST).
-        type: classifyErrorFault(e) === 'client' ? 'warning' : 'error',
+        type: quoteFailureLogLevel(failure, e),
         outcome: failure.kind,
         phase,
         stepType: body.$type,
