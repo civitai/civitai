@@ -8,13 +8,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { recordBlockCustomEvents } from '~/server/metrics/app-block-runtime.metrics';
 import type { BlockEventBatchInput } from '~/server/schema/track.schema';
 import type { SessionUser } from '~/types/session';
-import { getBlockEventDaySalt } from '~/server/services/blocks/block-event-day-salt';
 import { blockEventRateLimiter } from '~/server/services/blocks/block-event-rate-limit';
 import {
-  normalizeViewerIp,
+  ANONYMOUS_VIEWER_KEY,
   rateLimitAddressKey,
   signedInViewerKey,
-  signedOutViewerKey,
 } from '~/server/services/blocks/block-event-viewer-key';
 import {
   getApprovedAppBlockAnalytics,
@@ -40,7 +38,7 @@ export type AppBlockEventRow = {
   blockInstanceId: string;
   eventName: string;
   userId: number;
-  /** UInt64 as a decimal string; see `block-event-viewer-key.ts`. */
+  /** UInt64 as a decimal string; `'0'` for a signed-out viewer. See `block-event-viewer-key.ts`. */
   viewerKey: string;
   isAnon: 0 | 1;
   isOwner: 0 | 1;
@@ -70,21 +68,34 @@ export const BLOCK_EVENT_INSERT_TIMEOUT_MS = 5_000;
 export const BLOCK_EVENT_MAX_INFLIGHT_INSERTS = 32;
 let inflightInserts = 0;
 
+/** The environment variable a deployment sets to `production` to be allowed to write. */
+export const DEPLOYMENT_ENVIRONMENT_VAR = 'CIVITAI_DEPLOYMENT_ENVIRONMENT';
+
 /**
  * Whether this process may write. Non-production deployments can be configured with the
  * production ClickHouse, and a row written from one is indistinguishable from a real one.
  *
- * Both signals must be clear, because each misses deployments the other catches: `IS_PREVIEW` is
- * not set on every non-production deployment, and a non-production deployment can be missing its
- * cache-key namespace. A deployment that sets neither is taken for production.
+ * FAILS CLOSED: a write needs the deployment to say, by exact value, that it is production. An
+ * absent, empty or unrecognised value skips the write, so a deployment nobody configured cannot
+ * write. `IS_PREVIEW` and a non-empty cache-key namespace still veto it, so a non-production
+ * deployment that inherits the variable by copying another's environment does not write either.
  */
 export function isProductionDeployment(
-  signals: { isPreview: boolean; cacheKeyNamespace: string } = {
+  signals: {
+    deploymentEnvironment: string | undefined;
+    isPreview: boolean;
+    cacheKeyNamespace: string;
+  } = {
+    deploymentEnvironment: process.env[DEPLOYMENT_ENVIRONMENT_VAR],
     isPreview,
     cacheKeyNamespace: CACHE_KEY_NAMESPACE,
   }
 ): boolean {
-  return !signals.isPreview && signals.cacheKeyNamespace === '';
+  return (
+    signals.deploymentEnvironment === 'production' &&
+    !signals.isPreview &&
+    signals.cacheKeyNamespace === ''
+  );
 }
 
 export type ClassifiedEvent = Pick<
@@ -204,13 +215,12 @@ export async function ingestBlockEvents(args: {
 }): Promise<{ written: Promise<void> }> {
   const { events, req, res, nowMs = Date.now() } = args;
   const done = { written: Promise.resolve() };
-  // The address keys a budget and a unique-viewer key, so only the address the edge attested is
-  // used: the transport peer behind a reverse proxy is the proxy, which would fold every such
-  // viewer into one key. Requests without that attestation share one budget and their
-  // signed-out rows are dropped. The attestation is a pair of headers, so this holds only while
-  // the origin is not reachable except through the edge.
-  const clientIp = normalizeViewerIp(getEdgeAttestedClientIp(req));
-  const budgetKey = clientIp ? rateLimitAddressKey(clientIp) : 'unknown';
+  // The client address keys ONLY the in-memory budget; it never reaches a row. Client addresses
+  // cannot be trusted enough to identify viewers, so this is a cost control, not an identity.
+  // Without the edge's attestation a request shares one fallback budget rather than taking the
+  // transport peer, which behind a reverse proxy is the proxy.
+  const clientIp = getEdgeAttestedClientIp(req);
+  const budgetKey = clientIp ? rateLimitAddressKey(clientIp) : 'unattested';
 
   // Cheapest gates first, and both before the session is resolved: once the approved set is
   // cached an unknown app costs a Map lookup, and an over-budget caller costs arithmetic. The
@@ -238,9 +248,10 @@ export async function ingestBlockEvents(args: {
       admittedRows += granted;
     }
   }
+  if (!clientIp) recordBlockCustomEvents('unattested_address', admittedRows);
   if (admitted.length === 0) return done;
 
-  // Identity comes from the session and the trusted client address, never from the body.
+  // Identity comes from the session, never from the body.
   let viewer: SessionUser | undefined;
   try {
     viewer = (await getServerAuthSession({ req, res }))?.user;
@@ -251,23 +262,8 @@ export async function ingestBlockEvents(args: {
   }
   const signedIn = !!viewer && typeof viewer.id === 'number';
 
-  let viewerKey: string;
-  if (viewer && signedIn) {
-    viewerKey = signedInViewerKey(viewer.id);
-  } else {
-    if (!clientIp) {
-      recordBlockCustomEvents('no_client_ip', admittedRows);
-      return done;
-    }
-    const salt = await getBlockEventDaySalt(nowMs);
-    if (!salt) {
-      // Dropped, not stored under a placeholder key: the salt contract forbids a local fallback,
-      // and a shared placeholder would read as one very active viewer.
-      recordBlockCustomEvents('salt_unavailable', admittedRows);
-      return done;
-    }
-    viewerKey = signedOutViewerKey(salt, clientIp);
-  }
+  // A signed-out viewer is not keyed: unique viewers are counted for signed-in viewers only.
+  const viewerKey = viewer && signedIn ? signedInViewerKey(viewer.id) : ANONYMOUS_VIEWER_KEY;
 
   const rows: AppBlockEventRow[] = [];
   const counts = { accepted: 0, undeclared: 0, undeclaredProp: 0, invalidValue: 0, badInstance: 0 };

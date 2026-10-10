@@ -9,9 +9,10 @@ import type * as RateLimitModule from '~/server/services/blocks/block-event-rate
 
 /**
  * POST /api/track/block-event, driven through the real ingest: the real approved-app cache (over
- * the database mock), the real manifest parser, the real viewer-key, salt and rate-limit modules
- * (over a fake shared store) and the real prom counter. Only the edges are stubbed: the session,
- * the ClickHouse client, the private-run predicate and the deployment signals.
+ * the database mock), the real manifest parser, the real viewer-key and rate-limit modules and the
+ * real prom counter. Only the edges are stubbed: the session, the ClickHouse client, the
+ * private-run predicate and the deployment signals. Redis is the canonical mock, and every case
+ * fails if the ingest touches it (see `redisTouched`).
  *
  * `PublicEndpoint` is replaced by a pass-through that records the allowed methods, so the method
  * gate itself (which that wrapper owns) is not exercised here; what is pinned is that the route
@@ -113,37 +114,38 @@ const APPROVED_ROWS = [
 ];
 
 const DAY_1_NOON = Date.UTC(2031, 2, 14, 12, 0, 0);
-const DAY_1_SALT_KEY = 'system:blocks:event-day-salt:2031-03-14';
 const VIEWER_IP = '198.51.100.23';
 
-// ── the fake shared store ────────────────────────────────────────────────────
+// ── Redis must never be touched ──────────────────────────────────────────────
 
-type Entry = { value: string; expiresAtSec: number };
-const store = new Map<string, Entry>();
-let storeDown = false;
-
-function live(key: string): Entry | undefined {
-  const entry = store.get(key);
-  if (entry && entry.expiresAtSec * 1000 <= Date.now()) {
-    store.delete(key);
-    return undefined;
-  }
-  return entry;
-}
-
-function installStore() {
-  redisMock.sysRedis.set.mockImplementation(
-    async (key: string, value: string, opts?: { NX?: boolean; EXAT?: number }) => {
-      if (storeDown) throw new Error('store down');
-      if (opts?.NX && live(key)) return null;
-      store.set(key, { value, expiresAtSec: opts?.EXAT ?? Number.POSITIVE_INFINITY });
-      return 'OK';
+/** Every call made to any command of either canonical Redis client, by command path. */
+function redisTouched(): string[] {
+  const touched: string[] = [];
+  for (const [root, node] of [
+    ['redis', redisMock.redis],
+    ['sysRedis', redisMock.sysRedis],
+  ] as const) {
+    for (const command of [
+      'get',
+      'set',
+      'incr',
+      'incrBy',
+      'expire',
+      'ttl',
+      'del',
+      'exists',
+      'mGet',
+      'hGet',
+      'hSet',
+    ]) {
+      if (
+        (node as unknown as Record<string, { mock: { calls: unknown[] } }>)[command].mock.calls
+          .length > 0
+      )
+        touched.push(`${root}.${command}`);
     }
-  );
-  redisMock.sysRedis.get.mockImplementation(async (key: string) => {
-    if (storeDown) throw new Error('store down');
-    return live(key)?.value ?? null;
-  });
+  }
+  return touched;
 }
 
 // ── harness ──────────────────────────────────────────────────────────────────
@@ -258,7 +260,7 @@ async function outcomeDelta(fn: () => Promise<unknown>): Promise<Record<string, 
 }
 
 beforeEach(() => {
-  // Fresh module instances per test: the approved-app cache, the limiter and the salt cache are
+  // Fresh module instances per test: the approved-app cache and the limiter are
   // all process state.
   vi.resetModules();
   vi.clearAllMocks();
@@ -269,9 +271,9 @@ beforeEach(() => {
   envStore.cacheKeyNamespace = '';
   sessionStore.session = null;
   chStore.present = true;
-  store.clear();
-  storeDown = false;
-  installStore();
+  // Fail closed means unset skips the write, so the positive signal is set for every case and a
+  // case about the gate overrides it.
+  vi.stubEnv('CIVITAI_DEPLOYMENT_ENVIRONMENT', 'production');
   mockGetSession.mockReset();
   mockInsert.mockReset();
   mockInsert.mockImplementation(async () => undefined);
@@ -282,6 +284,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+  // No path of the ingest uses Redis; a call here would be a new storage dependency.
+  expect(redisTouched()).toEqual([]);
 });
 
 // ── the request gates ────────────────────────────────────────────────────────
@@ -579,30 +584,21 @@ describe('POST /api/track/block-event — identity is server-derived', () => {
     expect(insertedRows()[0].viewerKey).toBe('6590179527920541835');
   });
 
-  it('stamps a signed-out viewer from the shared salt and the client address', async () => {
-    store.set(DAY_1_SALT_KEY, { value: 'fixed-salt-one', expiresAtSec: Number.POSITIVE_INFINITY });
-    await post({ events: [event()] });
+  it('🔴 writes a signed-out row with the unknown-viewer key "0", as a string', async () => {
+    const delta = await outcomeDelta(() => post({ events: [event()] }));
     const [row] = insertedRows();
     expect(row).toMatchObject({ userId: 0, isAnon: 1, isOwner: 0 });
-    // sha256('a:fixed-salt-one:198.51.100.23'), computed outside this codebase.
-    expect(row.viewerKey).toBe('3198637992741954959');
+    expect(row.viewerKey).toBe('0');
     expect(typeof row.viewerKey).toBe('string');
+    expect(delta).toEqual({ accepted: 1 });
   });
 
-  it('gives an IPv4-mapped spelling of the same address the same key', async () => {
-    store.set(DAY_1_SALT_KEY, { value: 'fixed-salt-one', expiresAtSec: Number.POSITIVE_INFINITY });
-    await post({ events: [event()] }, { ip: '::ffff:198.51.100.23' });
-    await post({ events: [event()] }, { ip: '::FFFF:c633:6417' });
-    expect(insertedRows().map((r) => r.viewerKey)).toEqual([
-      '3198637992741954959',
-      '3198637992741954959',
-    ]);
-  });
-
-  it('a different salt gives the same address a different key', async () => {
-    store.set(DAY_1_SALT_KEY, { value: 'fixed-salt-two', expiresAtSec: Number.POSITIVE_INFINITY });
-    await post({ events: [event()] });
-    expect(insertedRows()[0].viewerKey).toBe('797095255822839956');
+  it('gives every signed-out viewer the same key, whatever their address', async () => {
+    await post({ events: [event()] }, { ip: '198.51.100.23' });
+    await post({ events: [event()] }, { ip: '203.0.113.9' });
+    await post({ events: [event()] }, { ip: '2001:db8::1' });
+    await post({ events: [event()] }, { ip: null });
+    expect(insertedRows().map((r) => r.viewerKey)).toEqual(['0', '0', '0', '0']);
   });
 
   it('🔴 ignores identity, ownership and time sent in the body', async () => {
@@ -674,60 +670,13 @@ describe('POST /api/track/block-event — identity is server-derived', () => {
     expect(mockGetSession).toHaveBeenCalledTimes(1);
   });
 
-  it('drops a signed-out row when no client address resolves, but writes a signed-in one', async () => {
+  it('writes a signed-out row even when no client address resolves, and counts it', async () => {
     const anon = await outcomeDelta(() => post({ events: [event(), event()] }, { ip: null }));
-    expect(mockInsert).not.toHaveBeenCalled();
-    expect(anon).toEqual({ no_client_ip: 2 });
-
-    sessionStore.session = { user: { id: OTHER_VIEWER } };
-    await post({ events: [event()] }, { ip: null });
-    expect(insertedRows()).toHaveLength(1);
-  });
-});
-
-// ── the shared daily salt ────────────────────────────────────────────────────
-
-describe('POST /api/track/block-event — the daily salt', () => {
-  it('🔴 two processes sharing one store give one address the SAME key, and a new one next day', async () => {
-    const processA = await loadHandler();
-    await post({ events: [event()] }, { handler: processA });
-    vi.resetModules();
-    const processB = await loadHandler();
-    expect(processB).not.toBe(processA);
-    await post({ events: [event()] }, { handler: processB });
-
-    const [fromA, fromB] = insertedRows().map((r) => r.viewerKey);
-    expect(fromA).toMatch(/^[0-9]+$/);
-    expect(fromB).toBe(fromA);
-
-    vi.setSystemTime(DAY_1_NOON + 24 * 3_600_000);
-    await post({ events: [event()] }, { handler: processA });
-    await post({ events: [event()] }, { handler: processB });
-    const [, , nextA, nextB] = insertedRows().map((r) => r.viewerKey);
-    expect(nextA).toMatch(/^[0-9]+$/);
-    expect(nextA).not.toBe(fromA);
-    expect(nextB).toBe(nextA);
-  });
-
-  it('🔴 store down: a signed-out row is dropped and counted, a signed-in row is still written', async () => {
-    storeDown = true;
-    const anon = await outcomeDelta(() => post({ events: [event(), event(), event()] }));
-    expect(mockInsert).not.toHaveBeenCalled();
-    expect(anon).toEqual({ salt_unavailable: 3 });
-
-    sessionStore.session = { user: { id: OTHER_VIEWER } };
-    const signedIn = await outcomeDelta(() => post({ events: [event()] }));
-    expect(insertedRows()).toEqual([
-      expect.objectContaining({ userId: 9102, viewerKey: '988994381281639022' }),
+    expect(insertedRows().map((r) => [r.isAnon, r.viewerKey])).toEqual([
+      [1, '0'],
+      [1, '0'],
     ]);
-    expect(signedIn).toEqual({ accepted: 1 });
-  });
-
-  it('a signed-in request never asks the store for a salt', async () => {
-    sessionStore.session = { user: { id: OTHER_VIEWER } };
-    await post({ events: [event()] });
-    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
+    expect(anon).toEqual({ accepted: 2, unattested_address: 2 });
   });
 });
 
@@ -784,11 +733,23 @@ describe('POST /api/track/block-event — what is withheld', () => {
   });
 
   it.each([
-    ['a preview deployment', { isPreview: true, cacheKeyNamespace: 'preview' }],
-    ['IS_PREVIEW alone', { isPreview: true, cacheKeyNamespace: '' }],
-    ['a cache namespace alone', { isPreview: false, cacheKeyNamespace: 'next' }],
-  ])('🔴 %s validates but does not insert', async (_label, signals) => {
-    Object.assign(envStore, signals);
+    ['the production signal is absent', { env: undefined }],
+    ['the production signal is empty', { env: '' }],
+    ['the production signal has another value', { env: 'staging' }],
+    ['the production signal differs in case', { env: 'Production' }],
+    ['the production signal has whitespace', { env: ' production' }],
+    ['IS_PREVIEW is set, despite the signal', { isPreview: true, cacheKeyNamespace: '' }],
+    [
+      'a cache namespace is set, despite the signal',
+      { isPreview: false, cacheKeyNamespace: 'next' },
+    ],
+  ])('🔴 %s: validates but does not insert', async (_label, signals) => {
+    if ('env' in signals) {
+      if (signals.env === undefined) vi.stubEnv('CIVITAI_DEPLOYMENT_ENVIRONMENT', undefined);
+      else vi.stubEnv('CIVITAI_DEPLOYMENT_ENVIRONMENT', signals.env);
+    } else {
+      Object.assign(envStore, signals);
+    }
     const delta = await outcomeDelta(async () => {
       const res = await post({
         events: [
@@ -805,7 +766,8 @@ describe('POST /api/track/block-event — what is withheld', () => {
     expect(delta).toEqual({ non_prod_skipped: 3, unknown_app: 1, invalid_value: 1 });
   });
 
-  it('the production deployment (neither signal set) inserts the same batch', async () => {
+  it('the production deployment (signal exactly "production", no veto) inserts the same batch', async () => {
+    expect(process.env.CIVITAI_DEPLOYMENT_ENVIRONMENT).toBe('production');
     const delta = await outcomeDelta(() =>
       post({ events: [event(), event({ eventName: 'not_declared' })] })
     );
@@ -955,23 +917,30 @@ describe('POST /api/track/block-event — the block instance id', () => {
 });
 
 describe('POST /api/track/block-event — which address is trusted', () => {
-  it('🔴 ignores an address header that the edge did not attest', async () => {
-    store.set(DAY_1_SALT_KEY, { value: 'fixed-salt-one', expiresAtSec: Number.POSITIVE_INFINITY });
-    const delta = await outcomeDelta(() => post({ events: [event()] }, { noEdge: true }));
-    expect(mockInsert).not.toHaveBeenCalled();
-    expect(delta).toEqual({ no_client_ip: 1 });
+  it('🔴 budgets an unattested address header under the shared fallback, not its own', async () => {
+    const handler = await loadHandler();
+    const batch = { events: Array.from({ length: 50 }, () => event()) };
+    // Two full bursts from one attested address use up that address's budget...
+    await post(batch, { handler, ip: '198.51.100.23' });
+    await post(batch, { handler, ip: '198.51.100.23' });
+    expect(insertedRows()).toHaveLength(100);
+    // ...the same address WITHOUT the edge's attestation is not that address: it gets the
+    // fallback budget, which is still full.
+    const delta = await outcomeDelta(() =>
+      post(batch, { handler, noEdge: true, ip: '198.51.100.23' })
+    );
+    expect(insertedRows()).toHaveLength(150);
+    expect(delta).toEqual({ accepted: 50, unattested_address: 50 });
   });
 
   it('🔴 does not fall back to the transport peer, which behind a proxy is the proxy', async () => {
-    store.set(DAY_1_SALT_KEY, { value: 'fixed-salt-one', expiresAtSec: Number.POSITIVE_INFINITY });
-    const delta = await outcomeDelta(() =>
-      post({ events: [event()] }, { noEdge: true, socketIp: '10.20.30.40' })
-    );
-    expect(mockInsert).not.toHaveBeenCalled();
-    expect(delta).toEqual({ no_client_ip: 1 });
-    // Positive control: the same request with the edge's attestation is written.
-    await post({ events: [event()] }, { socketIp: '10.20.30.40' });
-    expect(insertedRows().map((r) => r.viewerKey)).toEqual(['3198637992741954959']);
+    const handler = await loadHandler();
+    const batch = { events: Array.from({ length: 50 }, () => event()) };
+    // Two different peers without attestation share ONE budget: the peer is not used.
+    await post(batch, { handler, noEdge: true, socketIp: '10.20.30.40' });
+    await post(batch, { handler, noEdge: true, socketIp: '10.20.30.41' });
+    await post(batch, { handler, noEdge: true, socketIp: '10.20.30.42' });
+    expect(insertedRows()).toHaveLength(100);
   });
 
   it('gives callers with no trusted address ONE shared budget, whatever header they send', async () => {
@@ -994,16 +963,6 @@ describe('POST /api/track/block-event — which address is trusted', () => {
     expect(insertedRows()).toHaveLength(100);
     await post(batch, { handler, ip: '2001:db8:aa:bc::1' });
     expect(insertedRows()).toHaveLength(150);
-  });
-
-  it('still keys a signed-out viewer on the whole IPv6 address', async () => {
-    store.set(DAY_1_SALT_KEY, { value: 'salt-A', expiresAtSec: Number.POSITIVE_INFINITY });
-    await post({ events: [event()] }, { ip: '2001:DB8:0:0:0:0:0:1' });
-    await post({ events: [event()] }, { ip: '2001:db8::2' });
-    const [first, second] = insertedRows().map((r) => r.viewerKey);
-    // sha256('a:salt-A:2001:db8::1'), computed outside this codebase.
-    expect(first).toBe('13312981865497890023');
-    expect(second).not.toBe(first);
   });
 });
 

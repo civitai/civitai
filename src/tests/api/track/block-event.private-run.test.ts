@@ -1,8 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as CivitaiRedis from '@civitai/redis';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * The custom-events ingest and the REAL private-run predicate together.
@@ -86,12 +85,17 @@ async function post(): Promise<number> {
 }
 
 beforeEach(() => {
+  vi.stubEnv('CIVITAI_DEPLOYMENT_ENVIRONMENT', 'production');
   vi.resetModules();
   vi.clearAllMocks();
   mockInsert.mockImplementation(async () => undefined);
   mockFlag.isAppBlocksPrivateRunEnabled.mockResolvedValue(true);
   mockAccess.resolvePrivateRunAccess.mockResolvedValue({ allowed: true, audience: 'moderator' });
   sessionStore.session = { user: REVIEWER };
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe('custom events and the real private-run predicate', () => {
@@ -120,7 +124,6 @@ describe('custom events and the real private-run predicate', () => {
   it('writes the row for a signed-out viewer without doing the predicate work', async () => {
     world('stale');
     sessionStore.session = null;
-    redisMock.sysRedis.get.mockResolvedValue('a-shared-salt');
     expect(await post()).toBe(1);
     expect(mockFlag.isAppBlocksPrivateRunEnabled).not.toHaveBeenCalled();
     expect(mockAccess.resolvePrivateRunAccess).not.toHaveBeenCalled();

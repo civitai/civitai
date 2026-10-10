@@ -431,24 +431,24 @@ hand before the route deploys). **Nothing calls it yet**: neither host forwards
   from comparing the viewer with the app's owner. A block instance id that is
   not shaped like a platform id (for a page, not that app's own page id) is
   stored empty.
-- **Unique viewers without storing an address.** Each row carries a `viewerKey`
-  hash. For a signed-in viewer it is derived from the user id. For a signed-out
-  viewer it is derived from the client address and a random salt that every
-  server process shares for one UTC day and that expires from the shared store
-  shortly after it, so the address itself is never written and a signed-out
-  viewer's key changes daily. A process that cannot obtain the day's salt drops
-  signed-out rows rather than storing them under a weaker key, and so does a
-  request that carries no edge-attested client address.
+- **Unique viewers are signed-in viewers only.** Each row carries a `viewerKey`:
+  a hash of the user id for a signed-in viewer, and `0` ("unknown viewer") for
+  a signed-out one. Nothing derived from a client address is stored for
+  signed-out viewers; their activity is reported as event counts, never as
+  unique viewers.
 - **Private runs are excluded.** A private run is of an app that is not
   approved, and those rows are dropped. The impression writers' server-derived
   predicate is also consulted, for an app that has just left the approved set.
 - **A public beacon.** Like the impression beacon it is same-origin but
   unauthenticated, so anyone can post events for an approved app. The
   declared-only filter bounds what can be stored, and a per-process budget per
-  client address and app bounds how much each process accepts.
-- **Deployments that identify as non-production do not write.** They run the
-  same validation and skip the insert; a deployment carrying neither
-  non-production signal is treated as production.
+  client address and app bounds how much each process accepts. The address is
+  used in memory for that budget only and is never stored.
+- **Only a deployment that says it is production writes.** A write needs
+  `CIVITAI_DEPLOYMENT_ENVIRONMENT=production` (exact value) and no
+  non-production signal (`IS_PREVIEW`, a cache-key namespace). Every other
+  deployment, including one where the variable is unset, runs the same
+  validation and skips the insert.
 - **Counts**: `civitai_app_block_custom_events_total{outcome}` (no per-app
   label; the per-app breakdown is the table).
 

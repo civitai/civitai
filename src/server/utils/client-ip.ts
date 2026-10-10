@@ -412,7 +412,7 @@ function canonicalizeIpv6(ip: string): string {
   return ip;
 }
 
-export function normalizeIp(ip: string): string {
+function normalizeIp(ip: string): string {
   if (isIP(ip) !== 6) return ip;
 
   const canonical = canonicalizeIpv6(ip);

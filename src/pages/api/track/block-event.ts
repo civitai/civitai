@@ -8,8 +8,8 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 //
 // Public and unauthenticated like its sibling beacons, so anyone can post events for any approved
 // app. What bounds that is in `ingestBlockEvents`: only events and properties the app's approved
-// manifest declares are stored, identity is taken from the session and the trusted client
-// address, and each client address has a per-app budget.
+// manifest declares are stored, identity is taken from the session only, and each client address
+// has a per-app budget.
 //
 // Always answers 200 once the body is well-formed: a beacon has no reader, and a write failure
 // must not surface to the page.

@@ -1977,12 +1977,6 @@ export const REDIS_SYS_KEYS = {
      */
     CUSTOM_COMFY_SETTLE: 'system:blocks:custom-comfy-settle',
     /**
-     * App Blocks custom events: the day's random salt for signed-out viewer keys, keyed
-     * `${EVENT_DAY_SALT}:<UTC yyyy-mm-dd>`. Created set-if-absent and expired just after its day.
-     * See src/server/services/blocks/block-event-day-salt.ts before reading or writing it.
-     */
-    EVENT_DAY_SALT: 'system:blocks:event-day-salt',
-    /**
      * MOD REVIEW SANDBOX "run for real" (#2831) — AGGREGATE Buzz-spend ceiling
      * for a moderator opting IN to run an UNAPPROVED review app for real against
      * their OWN account. Keyed `${REVIEW_RUN_FOR_REAL_BUZZ_CAP}:<modUserId>:<publishRequestId>`

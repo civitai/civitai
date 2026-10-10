@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  normalizeViewerIp,
+  ANONYMOUS_VIEWER_KEY,
   rateLimitAddressKey,
   signedInViewerKey,
-  signedOutViewerKey,
 } from '../block-event-viewer-key';
 
 // Every expected key below was computed OUTSIDE this codebase (python hashlib: the first 8 bytes
@@ -17,57 +16,17 @@ describe('viewer keys', () => {
     expect(signedInViewerKey(userId)).toBe(expected);
   });
 
-  it.each([
-    ['salt-A', '203.0.113.7', '830607531308821364'],
-    // Above 2^63: a signed read of the same bytes would be negative.
-    ['salt-A', '2001:db8::1', '13312981865497890023'],
-    ['salt-B', '203.0.113.7', '6720762144893895305'],
-  ])('signed-out salt %s ip %s -> %s', (salt, ip, expected) => {
-    expect(signedOutViewerKey(salt, ip)).toBe(expected);
-  });
-
   it('is a decimal string even where a JS number could not hold the value', () => {
-    const key = signedOutViewerKey('salt-A', '2001:db8::1');
+    const key = signedInViewerKey(42);
     expect(typeof key).toBe('string');
-    expect(key).toMatch(/^[0-9]+$/);
     expect(BigInt(key) > BigInt(Number.MAX_SAFE_INTEGER)).toBe(true);
     // The corruption the string form exists to avoid: the nearest double is a different integer.
     expect(BigInt(Number(key)).toString()).not.toBe(key);
   });
-});
 
-describe('normalizeViewerIp', () => {
-  it.each([
-    ['203.0.113.7', '203.0.113.7'],
-    ['  203.0.113.7 ', '203.0.113.7'],
-    // IPv4-mapped IPv6, in each spelling, is the IPv4 address.
-    ['::ffff:203.0.113.7', '203.0.113.7'],
-    ['::FFFF:203.0.113.7', '203.0.113.7'],
-    ['::ffff:cb00:7107', '203.0.113.7'],
-    ['0:0:0:0:0:ffff:cb00:7107', '203.0.113.7'],
-    // IPv6: lower case, zero-compressed, leading zeros dropped.
-    ['2001:DB8:0:0:0:0:0:1', '2001:db8::1'],
-    ['2001:0db8:0000:0000:0000:0000:0000:0001', '2001:db8::1'],
-    ['2001:db8::1', '2001:db8::1'],
-  ])('%s -> %s', (input, expected) => {
-    expect(normalizeViewerIp(input)).toBe(expected);
-  });
-
-  it.each([['unknown'], [''], ['not-an-ip'], ['203.0.113.7, 198.51.100.1'], ['fe80::1%eth0']])(
-    'refuses %j',
-    (input) => {
-      expect(normalizeViewerIp(input)).toBeNull();
-    }
-  );
-
-  it.each([[undefined], [null], [7], [['203.0.113.7']]])('refuses the non-string %j', (input) => {
-    expect(normalizeViewerIp(input)).toBeNull();
-  });
-
-  it('gives one key to every spelling of one address', () => {
-    const spellings = ['203.0.113.7', '::ffff:203.0.113.7', '::FFFF:CB00:7107'];
-    const keys = spellings.map((ip) => signedOutViewerKey('salt-A', normalizeViewerIp(ip)!));
-    expect(new Set(keys)).toEqual(new Set(['830607531308821364']));
+  it('a signed-out viewer is the unknown-viewer key 0, which no signed-in key can equal', () => {
+    expect(ANONYMOUS_VIEWER_KEY).toBe('0');
+    for (const userId of [0, 1, 42, 9102]) expect(signedInViewerKey(userId)).not.toBe('0');
   });
 });
 
