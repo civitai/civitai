@@ -1,6 +1,6 @@
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { loadEvents } from '~/server/events/load-events';
-import { isEventPointsEnabled } from '~/server/events/points/enabled';
+import { isEventPointsEnabled, isEventPointsEnabledSync } from '~/server/events/points/enabled';
 import type { TickerEvent } from '~/server/events/points/ticker';
 import { runEventPointsTicker, tickEventPoints } from '~/server/events/points/ticker';
 import { createJob } from '~/server/jobs/job';
@@ -45,7 +45,8 @@ export const eventPointsTicker = createJob(
       sleep: async (ms) => {
         await sleep(ms);
       },
-      isCanceled: () => ctx.status === 'canceled',
+      // Switched off mid-run, the run stops at the next tick rather than sending for the rest of it.
+      isCanceled: () => ctx.status === 'canceled' || !isEventPointsEnabledSync(),
       tick: (event, deadline) => tickEventPoints(event, undefined, { deadline }),
     });
   },

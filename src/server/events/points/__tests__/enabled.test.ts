@@ -52,10 +52,11 @@ const { encodeHat, eventPointKeys } = await import('~/server/events/points/keys'
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const NOW = new Date('2026-11-05T12:00:00.000Z');
-// A flip waits out the switch's reading cache, as a real one waits for the next read.
+// A flip waits out the switch's reading cache, as a real one waits for the next read. A literal,
+// not SWITCH_READ_MS, so a longer cache fails here instead of being waited out.
 const setFlag = (value: boolean | null) => {
   flag.value = value;
-  vi.setSystemTime(Date.now() + SWITCH_READ_MS);
+  vi.setSystemTime(Date.now() + 5_000);
 };
 const IMAGE = 100;
 const HAT = { ownerId: 10, cosmeticId: 7, claimKey: 'claimed', team: 'Blue' };
@@ -67,9 +68,37 @@ const reaction = {
   entityId: IMAGE,
   sourceId: `ImageReaction:${IMAGE}:1`,
 };
-// Every sysRedis command, so a new write path on any command is seen.
+// The sysRedis mock is a proxy that creates each command on first access and does not enumerate
+// them, so the commands are named: every one the engine, sync, ticker and referee use.
+const REDIS_COMMANDS = [
+  'get',
+  'set',
+  'del',
+  'expire',
+  'expireAt',
+  'hGetAll',
+  'hmGet',
+  'hSet',
+  'hSetNX',
+  'hDel',
+  'hIncrBy',
+  'sAdd',
+  'sRem',
+  'sPop',
+  'xAdd',
+  'xRange',
+  'xRevRange',
+  'xTrim',
+  'multi',
+  'rename',
+] as const;
 const redisCalls = () =>
-  Object.values(sys).reduce((n, fn) => n + (vi.isMockFunction(fn) ? fn.mock.calls.length : 0), 0);
+  REDIS_COMMANDS.reduce(
+    (n, command) =>
+      n +
+      (sys as unknown as Record<string, { mock: { calls: unknown[] } }>)[command].mock.calls.length,
+    0
+  );
 
 beforeAll(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -122,6 +151,16 @@ describe('the kill switch reading', () => {
     expect(syncReads.engine - reads).toBe(2);
   });
 
+  it('reuses one reading for at most 5 seconds', () => {
+    expect(SWITCH_READ_MS).toBe(5_000);
+  });
+
+  it('reads off, without throwing, when Flipt fails to initialise', async () => {
+    setFlag(null);
+    ensureInit.mockRejectedValueOnce(new Error('flipt down'));
+    await expect(isEventPointsEnabled()).resolves.toBe(false);
+  });
+
   it('reads off before Flipt has initialised, and starts it initialising', () => {
     setFlag(null);
     expect(isEventPointsEnabledSync()).toBe(false);
@@ -148,6 +187,8 @@ describe('the engine entry points', () => {
     expect(await award.isHattedEntityOnceLoaded('Image', IMAGE)).toBe(true);
     expect(award.isHattedEntity('Image', IMAGE)).toBe(true);
     expect(ch.rows.map((r) => r.op)).toEqual(['add', 'remove']);
+    // The control for the off cases' zero: the same calls are seen by the count.
+    expect(redisCalls()).toBeGreaterThan(0);
   });
 
   // With the hats loaded, only the switch can make these answer false.
@@ -193,5 +234,6 @@ describe('the hat sync', () => {
     setFlag(true);
     await syncEventHats(NOW);
     expect(sys.hSetNX).toHaveBeenCalled();
+    expect(redisCalls()).toBeGreaterThan(0);
   });
 });

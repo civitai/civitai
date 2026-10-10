@@ -44,6 +44,20 @@ describe('event-points-ticker job', () => {
     expect(ticker.runEventPointsTicker).toHaveBeenCalledTimes(1);
   });
 
+  it('stops a running loop when the engine is switched off mid-run', async () => {
+    const canceled: boolean[] = [];
+    ticker.runEventPointsTicker.mockImplementation(async (_getEvents, deps) => {
+      canceled.push(deps.isCanceled());
+      killSwitch.on = false;
+      canceled.push(deps.isCanceled());
+      return { ticks: 0 };
+    });
+    killSwitch.on = true;
+    await eventPointsTicker.run().result;
+    killSwitch.on = true;
+    expect(canceled).toEqual([false, true]);
+  });
+
   it("ticks the loaded events, handing each tick the run's deadline", async () => {
     ticker.runEventPointsTicker.mockImplementation(async (getEvents, deps) => {
       const [event] = await getEvents();
