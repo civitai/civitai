@@ -37,7 +37,12 @@ export const COOC_SNAPSHOT_LOAD_TIMEOUT_MS = 120_000;
 export const COOC_FIRST_LOAD_WAIT_MS = 10_000;
 const STUDY_SNAPSHOTS_HELD = 2;
 
-export type CoocFallbackReason = 'no_snapshot' | 'load_failed' | 'spec_mismatch' | 'loading';
+export type CoocFallbackReason =
+  | 'no_snapshot'
+  | 'load_failed'
+  | 'spec_mismatch'
+  | 'snapshot_unservable'
+  | 'loading';
 export type ServedCooc = { contentHash: string; scores: CoocScores };
 export type CoocServing =
   | { snapshot: ServedCooc; fallbackReason: null }
@@ -144,12 +149,17 @@ export class CoocSnapshotHolder {
    */
   private fail(error: unknown, at: number, snapshot: string | null = null) {
     const mismatch = error instanceof CoocSpecMismatchError;
-    const reason: CoocFallbackReason = mismatch ? 'spec_mismatch' : 'load_failed';
     // A spec mismatch or a snapshot whose stored bytes fail verification fails the same way on
     // every re-read; only a new build can fix it. Remember it and keep the poll. Anything else
-    // (database, network, timeout) may pass on a retry, 60 s later.
+    // (database, network, timeout, an allocation failure while decoding) may pass on a retry,
+    // 60 s later.
     const unservable =
       snapshot !== null && (mismatch || error instanceof CoocSnapshotUnservableError);
+    const reason: CoocFallbackReason = mismatch
+      ? 'spec_mismatch'
+      : unservable
+      ? 'snapshot_unservable'
+      : 'load_failed';
     if (unservable) this.rejected = snapshot;
     this.nextCheckAt = unservable ? this.pollAfter(at) : at + COOC_SNAPSHOT_RETRY_MS;
     if (!this.served) this.reason = reason;

@@ -10,7 +10,8 @@
 --   coocSpecHash        RESOURCE_INTENT_COOC_SPEC_HASH (resource-intent-cooc/spec.ts).
 --   poolMergeSpecHash   RESOURCE_INTENT_POOL_MERGE_SPEC_HASH (resource-intent-pool-merge.ts).
 --   coocFallback        1 when no production snapshot was served and the list is BASE alone.
---   coocFallbackReason  why: no_snapshot, load_failed, spec_mismatch or loading.
+--   coocFallbackReason  why: no_snapshot, load_failed, spec_mismatch, snapshot_unservable or
+--                       loading.
 
 ALTER TABLE default.resourceIntentShadow
   ADD COLUMN IF NOT EXISTS arm LowCardinality(String) DEFAULT 'hybrid_10',

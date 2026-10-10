@@ -1,6 +1,8 @@
+import { brotliCompressSync } from 'zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CoocCountAccumulator,
+  deserializeCoocCounts,
   serializeCoocCounts,
   serializeTrainImageIds,
 } from '~/server/services/resource-intent-cooc/build';
@@ -28,7 +30,14 @@ import {
   CoocSnapshotKindMismatchError,
   type CoocSql,
 } from '~/server/services/resource-intent-cooc/store';
+import type * as CoocBuild from '~/server/services/resource-intent-cooc/build';
 import { asFixtureWriter, freshDb } from './resource-intent-cooc.harness';
+
+// The real decoder, which one test makes fail once the way it would out of memory.
+vi.mock('~/server/services/resource-intent-cooc/build', async (importOriginal) => {
+  const actual = await importOriginal<typeof CoocBuild>();
+  return { ...actual, deserializeCoocCounts: vi.fn(actual.deserializeCoocCounts) };
+});
 
 /** The serving holder over the real migration (PGlite) and the real store. Synthetic data only. */
 
@@ -83,13 +92,18 @@ async function build(
   return contentHash;
 }
 
-/** A `CoocSql` that counts payload loads and queries still running, and can be made to fail. */
+/**
+ * A `CoocSql` that counts payload loads and queries still running, and can be made to fail: every
+ * query (`fail`) or only the payload query (`failPayload`).
+ */
 function instrumented(sql: CoocSql) {
-  const state = { loads: 0, latestReads: 0, pending: 0, fail: false };
+  const state = { loads: 0, latestReads: 0, pending: 0, fail: false, failPayload: false };
   const wrapped: CoocSql = {
     query: async (s) => {
       if (state.fail) throw new Error('replica unavailable');
       if (s.text.includes('"payload"')) state.loads++;
+      if (state.failPayload && s.text.includes('"payload"'))
+        throw new Error('connection terminated unexpectedly');
       if (s.text.includes('LIMIT 1')) state.latestReads++;
       state.pending++;
       try {
@@ -196,6 +210,86 @@ describe('CoocSnapshotHolder (production)', () => {
     expect((await holder.resolve()).snapshot?.contentHash).toBe(hash);
   });
 
+  it('🔴 a failed payload read is not remembered: the same snapshot is re-read at 60 s and served', async () => {
+    const { sql } = await freshDb();
+    const hash = await build(sql, 'production', { token: 'zephyr', model: 77 });
+    const probe = instrumented(sql);
+    const failures: string[] = [];
+    let clock = 1_000_000;
+    const holder = new CoocSnapshotHolder({
+      sql: () => probe.sql,
+      now: () => clock,
+      random: () => 0,
+      onLoadFailure: (reason) => failures.push(reason),
+    });
+    // The newest snapshot is found; only its load fails.
+    probe.state.failPayload = true;
+    expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+    expect(failures).toEqual(['load_failed']);
+    expect(probe.state).toMatchObject({ latestReads: 1, loads: 1 });
+
+    probe.state.failPayload = false;
+    clock += COOC_SNAPSHOT_RETRY_MS - 1;
+    expect((await holder.resolve()).fallbackReason).toBe('load_failed');
+    expect(probe.state).toMatchObject({ latestReads: 1, loads: 1 });
+    clock += 1;
+    expect((await holder.resolve()).snapshot?.contentHash).toBe(hash);
+    expect(probe.state).toMatchObject({ latestReads: 2, loads: 2 });
+  });
+
+  // Buffer and ArrayBuffer: live failures, as Node and V8 throw them. Brotli and zlib cannot be
+  // made to fail allocating here, so those carry the codes Node gives them.
+  const allocationFailure = (allocate: () => unknown) => {
+    try {
+      allocate();
+    } catch (e) {
+      return e;
+    }
+    throw new Error('allocation unexpectedly succeeded');
+  };
+  it.each([
+    ['a Buffer', () => allocationFailure(() => Buffer.allocUnsafe(2 ** 52))],
+    ['an ArrayBuffer', () => allocationFailure(() => new ArrayBuffer(2 ** 52))],
+    [
+      "brotli's ring buffer",
+      () =>
+        Object.assign(new Error('Decompression failed'), {
+          code: 'ERR__ERROR_ALLOC_RING_BUFFER_1',
+        }),
+    ],
+    [
+      "zlib's state",
+      () =>
+        Object.assign(new Error('Initialization failed'), {
+          code: 'ERR_ZLIB_INITIALIZATION_FAILED',
+        }),
+    ],
+  ])(
+    '🔴 running out of memory allocating %s while decoding a good snapshot is retried at 60 s, not remembered',
+    async (_what, failure) => {
+      const { sql } = await freshDb();
+      const hash = await build(sql, 'production', { token: 'zephyr', model: 77 });
+      const probe = instrumented(sql);
+      const errors: unknown[] = [];
+      let clock = 1_000_000;
+      const holder = new CoocSnapshotHolder({
+        sql: () => probe.sql,
+        now: () => clock,
+        random: () => 0,
+        onLoadFailure: (_reason, error) => errors.push(error),
+      });
+      const error = failure();
+      vi.mocked(deserializeCoocCounts).mockRejectedValueOnce(error);
+      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+      // The allocation error itself, not a corrupt-payload refusal wrapping it.
+      expect(errors).toEqual([error]);
+
+      clock += COOC_SNAPSHOT_RETRY_MS;
+      expect((await holder.resolve()).snapshot?.contentHash).toBe(hash);
+      expect(probe.state.loads).toBe(2);
+    }
+  );
+
   it('a failed check keeps serving the snapshot already held', async () => {
     const { sql } = await freshDb();
     const hash = await build(sql, 'production', { token: 'zephyr', model: 77 });
@@ -263,8 +357,24 @@ describe('CoocSnapshotHolder (production)', () => {
         );
       },
     ],
+    [
+      // A RangeError that is bad bytes, not low memory: a float64 marker with 2 of its 8 bytes.
+      'a payload that matches its hash but msgpack reads past its end',
+      CoocSnapshotCorruptError,
+      /Offset is outside the bounds/,
+      async (db: PGliteLike, hash: string) => {
+        const bad = brotliCompressSync(Buffer.from([0xcb, 0, 0]));
+        const badHash = coocContentHash('production', bad);
+        await asFixtureWriter(db, () =>
+          db.query(
+            `UPDATE "ResourceIntentCoocSnapshot" SET "payload" = $1, "contentHash" = $2 WHERE "contentHash" = $3`,
+            [bad, badHash, hash]
+          )
+        );
+      },
+    ],
   ])(
-    '🔴 a snapshot with %s is load_failed once, not re-downloaded every 60 s; a new build still loads',
+    '🔴 a snapshot with %s is snapshot_unservable once, not re-downloaded every 60 s; a new build still loads',
     async (_what, errorClass, message, corrupt) => {
       const { db, sql } = await freshDb();
       await corrupt(
@@ -281,8 +391,11 @@ describe('CoocSnapshotHolder (production)', () => {
         random: () => 0,
         onLoadFailure: (reason, error) => (failures.push(reason), errors.push(error)),
       });
-      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
-      expect(failures).toEqual(['load_failed']);
+      expect(await holder.resolve()).toEqual({
+        snapshot: null,
+        fallbackReason: 'snapshot_unservable',
+      });
+      expect(failures).toEqual(['snapshot_unservable']);
       // The refusal this case means to reach, not some other error.
       expect(errors[0]).toBeInstanceOf(errorClass);
       expect((errors[0] as Error).message).toMatch(message);
@@ -290,13 +403,19 @@ describe('CoocSnapshotHolder (production)', () => {
 
       // Not the transient 60 s retry: nothing is read at all until the poll.
       clock += COOC_SNAPSHOT_RETRY_MS;
-      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+      expect(await holder.resolve()).toEqual({
+        snapshot: null,
+        fallbackReason: 'snapshot_unservable',
+      });
       expect(probe.state).toMatchObject({ latestReads: 1, loads: 1 });
       // At the poll the same snapshot is still the newest: checked, not downloaded again.
       clock += COOC_SNAPSHOT_POLL_MS;
-      expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
+      expect(await holder.resolve()).toEqual({
+        snapshot: null,
+        fallbackReason: 'snapshot_unservable',
+      });
       expect(probe.state).toMatchObject({ latestReads: 2, loads: 1 });
-      expect(failures).toEqual(['load_failed']);
+      expect(failures).toEqual(['snapshot_unservable']);
 
       const fresh = await build(sql, 'production', { token: 'yarrow', model: 99 });
       clock += COOC_SNAPSHOT_POLL_MS;
