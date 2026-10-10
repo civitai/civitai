@@ -5,6 +5,7 @@ import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   eventPointKeys,
+  eventPointsWindow,
   eventSeasonKeys,
   hatField,
   LIVE_BUCKET_MS,
@@ -26,6 +27,13 @@ const SETTLE_LAG_MS = 10 * 60 * 1000;
 // The hour (UTC) whose run recomputes the whole season, picking up late removals and bans on days
 // the hourly runs treat as final.
 const FULL_RECOMPUTE_HOUR = 3;
+// Removals stop counting this long before the finalize window closes. The last referee run is the
+// hourly run before the window's end, and it settles only to a bucket SETTLE_LAG_MS back; the winner
+// is named right after. Lifted once the winner waits for a run that settles the whole window.
+export const REMOVAL_CUTOFF_MS = SETTLE_LAG_MS + 60 * 60 * 1000 + LIVE_BUCKET_MS;
+// Server-side cap on each referee query, under the ClickHouse client's 300s request timeout: a
+// longer cap would leave the query running on the server after the client has given up on it.
+export const REFEREE_QUERY_MAX_SECONDS = 270;
 
 export type RefereeEvent = {
   name: string;
@@ -54,18 +62,25 @@ export type RefereeRow = {
 const startOfUtcDay = (time: Date) =>
   new Date(Date.UTC(time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate()));
 
-// The season's window, the cut-off this run settles to (a bucket boundary at least SETTLE_LAG_MS in
-// the past, never past the season's end), and the first day it recomputes: the day before the cut's
-// day, or the whole season on the nightly full run.
+// The season's window: the cut-off adds settle to (a bucket boundary at least SETTLE_LAG_MS in the
+// past, never past the season's end), the cut-off removals settle to (the same boundary, but running
+// on through the live season's finalize window), and the first day it recomputes: the day before the
+// cut's day, or the whole season on the nightly full run and on every run once the season has ended.
 export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now: Date) {
   const start = season === 'preview' ? event.previewFrom ?? event.startDate : event.startDate;
   const end = season === 'preview' ? event.startDate : event.endDate;
   const settled = Math.floor((now.getTime() - SETTLE_LAG_MS) / LIVE_BUCKET_MS) * LIVE_BUCKET_MS;
   const cut = new Date(Math.min(settled, end.getTime()));
-  const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR;
+  // A takedown in the finalize window must still net out the add it pairs with, before the winner
+  // is decided on these totals.
+  const removeEnd =
+    season === 'live' ? eventPointsWindow(event).to.getTime() - REMOVAL_CUTOFF_MS : end.getTime();
+  const removeCut = new Date(Math.min(settled, Math.max(removeEnd, end.getTime())));
+  // Once the season has ended a late removal can reach any day, so no day is final.
+  const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR || settled >= end.getTime();
   const dayBefore = new Date(startOfUtcDay(cut).getTime() - DAY_MS);
   const recomputeFrom = full || dayBefore < start ? start : dayBefore;
-  return { start, cut, recomputeFrom };
+  return { start, cut, removeCut, recomputeFrom };
 }
 
 // Totals per hat, team and owner: the final days from the snapshot plus the recomputed rows.
@@ -123,6 +138,7 @@ export function refereeQueryParams(
     seasonStart: formatClickhouseDateTime64(window.start),
     recomputeFrom: formatClickhouseDateTime64(window.recomputeFrom),
     cut: formatClickhouseDateTime64(window.cut),
+    removeCut: formatClickhouseDateTime64(window.removeCut),
     cap: event.scoring.capPerActorPerOwnerPerDay,
     types: types.map(([type]) => type),
     // The live weights, so the referee and the live totals agree; the config fills any gap.
@@ -151,6 +167,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window) {
   const result = await clickhouse.query({
     query: eventPointsRefereeUsersSql,
     format: 'JSONEachRow',
+    clickhouse_settings: { max_execution_time: REFEREE_QUERY_MAX_SECONDS },
     query_params: params,
   });
   const [users] = await result.json<{ actors: number[]; owners: number[] }>();
@@ -180,7 +197,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window) {
   return { hidden, newAccountMinId: first?.id ?? MAX_INT32 };
 }
 
-async function queryReferee(event: RefereeEvent, window: Window) {
+export async function queryReferee(event: RefereeEvent, window: Window) {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
   const [weights, restricted] = await Promise.all([
     sysRedis.hGetAll(eventPointKeys(event.name).weights),
@@ -192,7 +209,7 @@ async function queryReferee(event: RefereeEvent, window: Window) {
     // A whole-season run on the nightly pass groups every first of the season; spill to disk rather
     // than fail on memory, and allow it the time.
     clickhouse_settings: {
-      max_execution_time: 600,
+      max_execution_time: REFEREE_QUERY_MAX_SECONDS,
       max_bytes_before_external_group_by: '8000000000',
       max_bytes_before_external_sort: '8000000000',
     },

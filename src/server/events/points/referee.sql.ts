@@ -7,7 +7,8 @@
 // because whether an action is a first depends on the whole season.
 //
 // Rules, in the order the query applies them:
-// - Only rows in [seasonStart, cut) count.
+// - Adds count only in [seasonStart, cut). Removals are read on to removeCut, past the season's end
+//   through the finalize window, so a late takedown still nets out its add.
 // - A sourceId names one (kind, entity, person), e.g. one person's reactions on one image. Its adds
 //   count only while its latest row is an add: removing the last reaction nets it out, reacting
 //   again brings it back.
@@ -20,14 +21,14 @@
 // - Each kept action is worth its type's weight. Per (UTC day, owner, person), in time order, weights
 //   are credited until the cap; the action that crosses it gets what was left.
 //
-// Params: event, seasonStart, recomputeFrom, cut, cap, types (Array(String)), weights (Array(UInt32),
+// Params: event, seasonStart, recomputeFrom, cut, removeCut, cap, types (Array(String)), weights (Array(UInt32),
 // aligned with types), dailyTypes (Array(String)), restrictedUsers (Array(Int32)), newAccountMinId.
 export const eventPointsRefereeSql = /* sql */ `
 WITH
   seasonRows AS (
     SELECT * FROM event_point_events
     WHERE event = {event:String}
-      AND time >= {seasonStart:DateTime64(3)} AND time < {cut:DateTime64(3)}
+      AND time >= {seasonStart:DateTime64(3)} AND time < {removeCut:DateTime64(3)}
       AND (NOT has({dailyTypes:Array(String)}, type) OR time >= {recomputeFrom:DateTime64(3)})
   ),
   firsts AS (
@@ -37,9 +38,11 @@ WITH
       min(time) AS firstTime,
       argMin((ownerId, cosmeticId, claimKey, team), time) AS hat
     FROM seasonRows
-    WHERE op = 'add'
+    WHERE op = 'add' AND time < {cut:DateTime64(3)}
       AND (sourceId = '' OR (type, actorId, sourceId) IN (
-        SELECT type, actorId, sourceId FROM seasonRows WHERE sourceId != ''
+        SELECT type, actorId, sourceId FROM seasonRows
+        -- A re-add after the cut is after the season, so it cannot revive an add its removal took back.
+        WHERE sourceId != '' AND (op = 'remove' OR time < {cut:DateTime64(3)})
         GROUP BY type, actorId, sourceId HAVING argMax(op, time) = 'add'
       ))
       -- NOT IN builds a hash set; has() scans the array for every row.
@@ -92,7 +95,8 @@ ORDER BY day, userId, cosmeticId, claimKey
 `;
 
 // Everyone the recomputed rows could credit or be credited by, so their accounts can be checked in
-// Postgres. Same window as the query above.
+// Postgres. Bounded by the adds' cut: a removal only takes back an add, whose actor and owner are
+// already here.
 export const eventPointsRefereeUsersSql = /* sql */ `
 SELECT groupUniqArray(actorId) AS actors, groupUniqArray(ownerId) AS owners
 FROM event_point_events
