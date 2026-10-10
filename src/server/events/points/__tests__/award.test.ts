@@ -612,6 +612,21 @@ describe('isKnownHatTopic', () => {
     expect(await engine.isKnownHatTopic('another-event', hatTopicId(HAT))).toBe(false);
   });
 
+  it('rebuilds its index when the 2s follow has to reload the whole map', async () => {
+    const THIRD = { ...HAT, claimKey: 'third' };
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
+    // A change the log no longer holds: the follow must reload the map rather than replay the log.
+    fake.setHatUnlogged(EVENT.name, 'Image:401', encodeHat(OTHER));
+    fake.setHat(EVENT.name, 'Image:402', encodeHat(THIRD));
+    fake.trimLog(EVENT.name, 1);
+    // Past the follow interval, inside the full refresh's: the follow, not refresh(), runs.
+    now = new Date(now.getTime() + 2_500);
+    await vi.waitFor(async () =>
+      expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(THIRD))).toBe(true)
+    );
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(true);
+  });
+
   it('follows the hat map: a hat placed is known, a hat taken off is not', async () => {
     expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(false);
     fake.setHat(EVENT.name, 'Image:300', encodeHat(OTHER));

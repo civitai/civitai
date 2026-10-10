@@ -160,7 +160,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       const hat = decodeHat(value);
       if (hat) hats.set(key, hat);
     }
-    return { hats, cursor: last?.id ?? '0-0' };
+    // A fresh map: any topic-id index built over the old one no longer applies.
+    return { hats, cursor: last?.id ?? '0-0', topicIds: undefined };
   }
 
   // Applies the changes logged since the cursor. If the log was trimmed past the cursor, some changes
