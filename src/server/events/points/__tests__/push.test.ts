@@ -29,8 +29,7 @@ type Sent = Parameters<PushDeps['topicSend']>[0];
 function setup(overrides: Partial<PushDeps> = {}) {
   const sent: Sent[] = [];
   const deps: PushDeps = {
-    selectWatchedHats: vi.fn(async (_e, hats) => hats),
-    selectWatchedTeams: vi.fn(async () => true),
+    selectWatched: vi.fn(async (_e, hats, teams) => ({ hats, teams })),
     // Each hat's total is its owner id, so a payload shows which hat it carries.
     getHatPoints: vi.fn(async (_e, hats) =>
       Object.fromEntries(hats.map((h) => [hatField(h), h.ownerId]))
@@ -160,7 +159,7 @@ describe('event points pusher', () => {
         // fail, succeed, fail, succeed...: 3 failures, never 2 in a row
         if (call++ % 2 === 0) throw new Error('flaky');
       }),
-      selectWatchedTeams: vi.fn(async () => false),
+      selectWatched: vi.fn(async (_e, hats) => ({ hats, teams: false })),
     });
     for (let owner = 1; owner <= 6; owner++) pusher.markDirty(event, hat(owner), NOW);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
@@ -200,7 +199,7 @@ describe('event points pusher', () => {
           throw new Error('timeout');
         }
       }),
-      selectWatchedTeams: vi.fn(async () => false),
+      selectWatched: vi.fn(async (_e, hats) => ({ hats, teams: false })),
     });
     // Three single failures, each followed by a success, inside one cool-off.
     for (let i = 0; i < 3; i++) {
@@ -238,12 +237,11 @@ describe('event points pusher', () => {
 
   it('reads nothing for a scope nobody is watching', async () => {
     const { pusher, sent, deps } = setup({
-      selectWatchedHats: vi.fn(async () => []),
-      selectWatchedTeams: vi.fn(async () => false),
+      selectWatched: vi.fn(async () => ({ hats: [], teams: false })),
     });
     pusher.markDirty(event, HAT, NOW);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
-    expect(deps.selectWatchedHats).toHaveBeenCalledTimes(1);
+    expect(deps.selectWatched).toHaveBeenCalledTimes(1);
     expect(deps.getHatPoints).not.toHaveBeenCalled();
     expect(deps.getTeamPoints).not.toHaveBeenCalled();
     expect(sent).toEqual([]);
@@ -303,8 +301,10 @@ describe('event points pusher', () => {
 
   it('pushes only the hats and team standings the seams say are watched', async () => {
     const { pusher, sent } = setup({
-      selectWatchedHats: vi.fn(async (_e, hats) => hats.filter((h) => h.ownerId === 11)),
-      selectWatchedTeams: vi.fn(async () => false),
+      selectWatched: vi.fn(async (_e, hats) => ({
+        hats: hats.filter((h) => h.ownerId === 11),
+        teams: false,
+      })),
     });
     pusher.markDirty(event, HAT, NOW);
     pusher.markDirty(event, hat(11), NOW);

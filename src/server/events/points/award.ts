@@ -14,6 +14,7 @@ import {
   eventPointsWindow,
   eventSeasonKeys,
   hatField,
+  hatTopicId,
   liveBucket,
   utcDay,
 } from '~/server/events/points/keys';
@@ -399,7 +400,34 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     return isHattedEntity(entityType, entityId);
   }
 
-  return { awardEventPoints, removeEventPoints, isHattedEntity, isHattedEntityOnceLoaded, refresh };
+  // The topic ids of the hats this server knows per event, rebuilt only when its hat map has moved.
+  const topicIds = new Map<string, { cursor: string; size: number; ids: Set<string> }>();
+  // Whether a hat topic id names a hat this server knows for the event. For the watch endpoint, so a
+  // client cannot fill the interest set with ids that name nothing.
+  async function isKnownHatTopic(event: string, topicId: string) {
+    await ensureFresh();
+    const loadedEvent = loaded.find((l) => l.def.name === event);
+    if (!loadedEvent) return false;
+    let known = topicIds.get(event);
+    if (!known || known.cursor !== loadedEvent.cursor || known.size !== loadedEvent.hats.size) {
+      known = {
+        cursor: loadedEvent.cursor,
+        size: loadedEvent.hats.size,
+        ids: new Set([...loadedEvent.hats.values()].map(hatTopicId)),
+      };
+      topicIds.set(event, known);
+    }
+    return known.ids.has(topicId);
+  }
+
+  return {
+    awardEventPoints,
+    removeEventPoints,
+    isHattedEntity,
+    isHattedEntityOnceLoaded,
+    isKnownHatTopic,
+    refresh,
+  };
 }
 
 // Event-scoped dedupe keys live until two days after scoring finalizes.
@@ -469,3 +497,5 @@ export const isHattedEntity = (entityType: string, entityId: number) =>
 export const isHattedEntityOnceLoaded = async (entityType: string, entityId: number) =>
   (await isEventPointsEnabled().catch(() => false)) &&
   getEngine().isHattedEntityOnceLoaded(entityType, entityId);
+export const isKnownHatTopic = (event: string, topicId: string) =>
+  getEngine().isKnownHatTopic(event, topicId);

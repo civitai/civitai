@@ -69,6 +69,18 @@ vi.mock('react-chartjs-2', () => ({
   },
 }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
+// Formats as the real one does, without its digit columns, so the text reads as on screen.
+vi.mock('~/components/Metrics/AnimatedCount', () => ({
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
+}));
 
 const { TeamHatShelf } = await import('~/components/Events/ScoredEvent/TeamHatShelf');
 const { HatCatalogPreview } = await import('~/components/Events/ScoredEvent/HatCatalogPreview');

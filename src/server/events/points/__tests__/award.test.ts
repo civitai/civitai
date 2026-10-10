@@ -11,9 +11,8 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 const { cappedGrant, createEventPointsEngine, streamIdBefore } = await import(
   '~/server/events/points/award'
 );
-const { encodeHat, eventPointKeys, eventSeasonKeys, hatField, liveBucket } = await import(
-  '~/server/events/points/keys'
-);
+const { encodeHat, eventPointKeys, eventSeasonKeys, hatField, hatTopicId, liveBucket } =
+  await import('~/server/events/points/keys');
 
 // A small Redis with real set, hash and stream semantics: the engine's correctness is in how it
 // combines SADD and HINCRBY results, so a fake that records calls would test nothing.
@@ -601,6 +600,31 @@ describe('isHattedEntity', () => {
     await engine.refresh();
     expect(engine.isHattedEntity('Image', 100)).toBe(true);
     expect(engine.isHattedEntity('Image', 101)).toBe(false);
+  });
+});
+
+describe('isKnownHatTopic', () => {
+  const OTHER = { ...HAT, claimKey: 'other' };
+
+  it('knows the topic of a hat on this server, and nothing else', async () => {
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(false);
+    expect(await engine.isKnownHatTopic('another-event', hatTopicId(HAT))).toBe(false);
+  });
+
+  it('follows the hat map: a hat placed is known, a hat taken off is not', async () => {
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(false);
+    fake.setHat(EVENT.name, 'Image:300', encodeHat(OTHER));
+    fake.setHat(EVENT.name, 'Image:100', '');
+    now = new Date(now.getTime() + 31 * 1000);
+    await engine.refresh();
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);
+  });
+
+  it('knows nothing while its hat map cannot load, rather than reading anywhere else', async () => {
+    build({ loadScoredEvents: () => Promise.reject(new Error('down')) });
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);
   });
 });
 

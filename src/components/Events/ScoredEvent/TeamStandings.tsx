@@ -21,6 +21,7 @@ import {
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -139,8 +140,8 @@ export function TeamStandings({
                         Team {t.team}
                         {mine && ' · you'}
                       </Text>
-                      <Text fw={800} className="tabular-nums">
-                        {numberWithCommas(t.score)}
+                      <Text fw={800} className="tabular-nums" data-testid="team-score">
+                        <AnimatedCount value={t.score} abbreviate={false} resetKey={t.team} />
                       </Text>
                     </Group>
                     <Progress
@@ -296,7 +297,7 @@ export function TopHats({ standings }: { standings: Standings }) {
                   />
                 </Stack>
                 <Text fw={800} c={teamColor(c.team)} className="tabular-nums">
-                  {numberWithCommas(c.points)}
+                  <AnimatedCount value={c.points} abbreviate={false} resetKey={c.topicId} />
                 </Text>
               </Group>
             </Paper>

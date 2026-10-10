@@ -54,7 +54,13 @@ vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
     live.myHats = props;
     return null;
   },
+  TopHatsLivePoints: () => null,
 }));
+// Every section counts as in view; the in-view gating is tested in event-points-watch.test.ts.
+vi.mock('~/hooks/useInView', () => ({
+  useInView: () => ({ ref: { current: null }, inView: true }),
+}));
+
 vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({ ScoredEventHero: () => null }));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: () => null }));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () => null }));
@@ -95,7 +101,7 @@ describe('ScoredEventSections: Your hats', () => {
     expect(myHatsProps?.fetchedAt).toBe(1_234_567);
     // While the page is open it follows the team totals and each of the viewer's hats live.
     expect(live.teams.at(-1)).toEqual(['birthday2026', true]);
-    expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'] });
+    expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'], inView: true });
   });
 
   // After the end the page names a winner; it must be the settled one the payout uses.
