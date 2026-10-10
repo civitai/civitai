@@ -194,7 +194,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window) {
   return { hidden, newAccountMinId: first?.id ?? MAX_INT32 };
 }
 
-async function queryReferee(event: RefereeEvent, window: Window) {
+export async function queryReferee(event: RefereeEvent, window: Window) {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
   const [weights, restricted] = await Promise.all([
     sysRedis.hGetAll(eventPointKeys(event.name).weights),

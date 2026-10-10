@@ -4,6 +4,7 @@ vi.mock('~/server/events', () => ({ eventEngine: {} }));
 vi.mock('~/server/events/points/sync', () => ({ syncEventHats: vi.fn() }));
 
 const { eventEngineLeaderboardUpdate } = await import('~/server/jobs/event-engine-work');
+const { REFEREE_QUERY_MAX_SECONDS } = await import('~/server/events/points/referee');
 
 describe('event-engine-leaderboard-update job', () => {
   // REMOVAL_CUTOFF_MS assumes a referee run at the top of every hour.
@@ -18,5 +19,9 @@ describe('event-engine-leaderboard-update job', () => {
       lockExpiration: 15 * 60,
       keepLockOnDisconnect: true,
     });
+    // The referee runs its two ClickHouse queries one after the other, inside this lock.
+    expect(eventEngineLeaderboardUpdate.options.lockExpiration).toBeGreaterThan(
+      2 * REFEREE_QUERY_MAX_SECONDS
+    );
   });
 });

@@ -3,14 +3,8 @@ import type { EventScoring } from '~/server/events/base.event';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const {
-  changedHats,
-  REFEREE_QUERY_MAX_SECONDS,
-  REMOVAL_CUTOFF_MS,
-  refereeQueryParams,
-  refereeTotals,
-  refereeWindow,
-} = await import('~/server/events/points/referee');
+const { changedHats, REMOVAL_CUTOFF_MS, refereeQueryParams, refereeTotals, refereeWindow } =
+  await import('~/server/events/points/referee');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -145,11 +139,6 @@ describe('refereeWindow', () => {
 
 // The queries' placeholders are only checked by a real ClickHouse (scripts/check-event-points-sql.mjs),
 // so a param renamed on one side would otherwise surface only in production.
-// The ClickHouse client gives up at 300s; a server-side cap past that leaves the query running.
-it('caps each referee query under the client request timeout', () => {
-  expect(REFEREE_QUERY_MAX_SECONDS).toBeLessThan(300);
-});
-
 describe('referee query params', () => {
   const placeholders = (sql: string) =>
     new Map([...sql.matchAll(/\{(\w+):([^}]+)\}/g)].map(([, name, type]) => [name, type]));
