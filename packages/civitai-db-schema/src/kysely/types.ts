@@ -659,6 +659,10 @@ export type AppSubListingParent = {
   parent_listing_id: string;
   enabled: Generated<boolean>;
   max_per_author: Generated<number>;
+  /**
+   * The https URL an off-site parent's store cards open, with one `{id}` (manual-apply column).
+   */
+  link_template: string | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };

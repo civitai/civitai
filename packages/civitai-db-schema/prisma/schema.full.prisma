@@ -3514,6 +3514,8 @@ model AppSubListingParent {
   parentListing   AppListing @relation("AppSubListingParentSwitch", fields: [parentListingId], references: [id], onDelete: Cascade)
   enabled         Boolean    @default(false)
   maxPerAuthor    Int        @default(20) @map("max_per_author")
+  /// The https URL an off-site parent's store cards open, with one `{id}` (manual-apply column).
+  linkTemplate    String?    @map("link_template")
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

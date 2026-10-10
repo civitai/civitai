@@ -198,7 +198,7 @@ Responses:
 
 ## Client Credentials Flow
 
-For server-to-server communication (no user context):
+For server-to-server communication (the client acts as itself):
 
 ```
 POST https://auth.civitai.com/api/auth/oauth/token
@@ -210,7 +210,21 @@ grant_type=client_credentials
 &scope=SCOPE_BITMASK
 ```
 
-The token acts on behalf of the client owner's account, scoped to the client's allowed permissions.
+This grant is the client acting as itself, not on a user's behalf:
+
+- **Confidential clients only.** The client must hold a secret and have `client_credentials` in its
+  grants; a public client is refused (`invalid_grant`), whatever secret it sends.
+- **Client-credentials scopes only.** The token may carry only the scopes reserved for this grant,
+  today `AppStoreCatalogWrite` (268435456), plus `UserRead`, and only within the client's allowed
+  scopes. Anything else is `invalid_scope`, even a scope the client may request through the other
+  flows.
+- **Access token only.** The response has no `refresh_token`; the access token lives one hour
+  (`expires_in: 3600`). Cache it and request a new one shortly before it expires or on a 401.
+- **Single-purpose.** A client-credentials token is only accepted on the endpoints its scope is
+  for (today the App Store catalog endpoints); everywhere else it is refused as a credential.
+
+The token's account is the client owner's. The scopes reserved for this grant are refused by every
+other flow (authorization code, device and app tokens), so they never appear on a consent screen.
 
 ## Revoking Tokens
 
@@ -282,7 +296,8 @@ Active token:
 
 Anything else returns `200 {"active": false}` — unknown token, expired token, a refresh token, a
 personal API key (a different key type; only OAuth **access** tokens introspect as active), a
-missing `token` parameter, or a live token whose **owner's account is closed or suspended**. The
+client-credentials token (single-purpose), a missing `token` parameter, or a live token whose
+**owner's account is closed or suspended**. The
 endpoint never distinguishes those cases.
 
 So `active` covers the subject as well as the token: `active: true` means the token is live *and*
@@ -328,8 +343,10 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 | **Full**           | **33554431** | All permissions                                 |
 
 > **Opt-in scopes are not in `Full`.** `AppBlocksSubmit` (33554432), `AppBlocksDevTunnel`
-> (67108864) and `LinkConnect` (134217728) are granted only to clients whose registration lists
-> them, and are deliberately excluded from `Full` so an existing key is never silently widened.
+> (67108864), `LinkConnect` (134217728) and `AppStoreCatalogWrite` (268435456) are granted only to
+> clients whose registration lists them, and are deliberately excluded from `Full` so an existing
+> key is never silently widened. `AppStoreCatalogWrite` is issued only through the
+> [Client Credentials Flow](#client-credentials-flow).
 
 ### Common Scope Combinations
 

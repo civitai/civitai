@@ -1,5 +1,5 @@
 import { Anchor, Avatar, Badge, Button, Card, Group, Stack, Text } from '@mantine/core';
-import { IconEye, IconPlayerPlay } from '@tabler/icons-react';
+import { IconExternalLink, IconEye, IconPlayerPlay } from '@tabler/icons-react';
 import Link from 'next/link';
 import { ListingCover } from '~/components/Apps/AppListingCard';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
@@ -14,12 +14,16 @@ import {
 import type { SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * Where a sub-listing card goes: into the parent app at the item, when the viewer can open
- * app pages, otherwise the parent's store page (the run route would 404 for them).
+ * Where a sub-listing card goes. An off-site item opens on its platform. An on-site item opens
+ * in the parent app when the viewer can open app pages, otherwise the parent's store page (the
+ * run route would 404 for them).
  */
 export function getSubListingHref(card: SubListingCard, canOpenPage: boolean): string {
+  if (card.external) return card.runHref;
   return canOpenPage ? card.runHref : getListingDetailHref(card.parent.slug);
 }
+
+const EXTERNAL_LINK_PROPS = { target: '_blank', rel: 'noopener noreferrer' } as const;
 
 export interface AppSubListingCardProps {
   card: SubListingCard;
@@ -30,6 +34,19 @@ export interface AppSubListingCardProps {
 export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCardProps) {
   const href = getSubListingHref(card, canOpenPage);
   const parentHref = getListingDetailHref(card.parent.slug);
+  const title = (
+    <TruncatedText
+      size="xl"
+      fw={700}
+      lh={LISTING_CARD_TITLE_LINE_HEIGHT}
+      c="white"
+      clampLines={LISTING_CARD_TITLE_LINES}
+      tooltipLabel={card.name}
+      style={{ minHeight: LISTING_CARD_TITLE_MIN_HEIGHT }}
+    >
+      {card.name}
+    </TruncatedText>
+  );
   return (
     <Card
       padding="md"
@@ -64,19 +81,27 @@ export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCa
             in {card.parent.name}
           </Badge>
         </Group>
-        <Anchor component={Link} href={href} underline="hover" c="inherit" style={{ minWidth: 0 }}>
-          <TruncatedText
-            size="xl"
-            fw={700}
-            lh={LISTING_CARD_TITLE_LINE_HEIGHT}
-            c="white"
-            clampLines={LISTING_CARD_TITLE_LINES}
-            tooltipLabel={card.name}
-            style={{ minHeight: LISTING_CARD_TITLE_MIN_HEIGHT }}
+        {card.external ? (
+          <Anchor
+            href={href}
+            {...EXTERNAL_LINK_PROPS}
+            underline="hover"
+            c="inherit"
+            style={{ minWidth: 0 }}
           >
-            {card.name}
-          </TruncatedText>
-        </Anchor>
+            {title}
+          </Anchor>
+        ) : (
+          <Anchor
+            component={Link}
+            href={href}
+            underline="hover"
+            c="inherit"
+            style={{ minWidth: 0 }}
+          >
+            {title}
+          </Anchor>
+        )}
         {card.creator.username && (
           <Anchor
             component={Link}
@@ -94,17 +119,32 @@ export function AppSubListingCard({ card, canOpenPage = false }: AppSubListingCa
           </Text>
         )}
         <Group mt="auto" pt={LISTING_ACTION_ROW_PT_PX} mih={LISTING_ACTION_ROW_HEIGHT_PX}>
-          <Button
-            component={Link}
-            href={href}
-            size="sm"
-            variant="light"
-            leftSection={canOpenPage ? <IconPlayerPlay size={16} /> : <IconEye size={16} />}
-            style={{ flexGrow: 1 }}
-            data-testid="apps-sub-listing-cta"
-          >
-            {canOpenPage ? 'Open' : `View ${card.parent.name}`}
-          </Button>
+          {card.external ? (
+            <Button
+              component="a"
+              href={href}
+              {...EXTERNAL_LINK_PROPS}
+              size="sm"
+              variant="light"
+              rightSection={<IconExternalLink size={16} />}
+              style={{ flexGrow: 1 }}
+              data-testid="apps-sub-listing-cta"
+            >
+              Play
+            </Button>
+          ) : (
+            <Button
+              component={Link}
+              href={href}
+              size="sm"
+              variant="light"
+              leftSection={canOpenPage ? <IconPlayerPlay size={16} /> : <IconEye size={16} />}
+              style={{ flexGrow: 1 }}
+              data-testid="apps-sub-listing-cta"
+            >
+              {canOpenPage ? 'Open' : `View ${card.parent.name}`}
+            </Button>
+          )}
         </Group>
       </Stack>
     </Card>
