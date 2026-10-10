@@ -25,6 +25,10 @@ const SETTLE_LAG_MS = 10 * 60 * 1000;
 // The hour (UTC) whose run recomputes the whole season, picking up late removals and bans on days
 // the hourly runs treat as final.
 const FULL_RECOMPUTE_HOUR = 3;
+// Removals stop counting this long before the finalize window closes. The last referee run is the
+// hourly run before the window's end, and it settles only to a bucket SETTLE_LAG_MS back; the winner
+// is named right after. Lifted once the winner waits for a run that settles the whole window.
+export const REMOVAL_CUTOFF_MS = SETTLE_LAG_MS + 60 * 60 * 1000 + LIVE_BUCKET_MS;
 
 export type RefereeEvent = {
   name: string;
@@ -63,8 +67,9 @@ export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now
   const cut = new Date(Math.min(settled, end.getTime()));
   // A takedown in the finalize window must still net out the add it pairs with, before the winner
   // is decided on these totals.
-  const removeEnd = season === 'live' ? eventPointsWindow(event).to : end;
-  const removeCut = new Date(Math.min(settled, removeEnd.getTime()));
+  const removeEnd =
+    season === 'live' ? eventPointsWindow(event).to.getTime() - REMOVAL_CUTOFF_MS : end.getTime();
+  const removeCut = new Date(Math.min(settled, Math.max(removeEnd, end.getTime())));
   // Once the season has ended a late removal can reach any day, so no day is final.
   const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR || settled >= end.getTime();
   const dayBefore = new Date(startOfUtcDay(cut).getTime() - DAY_MS);

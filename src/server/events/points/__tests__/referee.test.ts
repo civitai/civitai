@@ -3,9 +3,8 @@ import type { EventScoring } from '~/server/events/base.event';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { changedHats, refereeQueryParams, refereeTotals, refereeWindow } = await import(
-  '~/server/events/points/referee'
-);
+const { changedHats, REMOVAL_CUTOFF_MS, refereeQueryParams, refereeTotals, refereeWindow } =
+  await import('~/server/events/points/referee');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -63,9 +62,16 @@ describe('refereeWindow', () => {
       expect(recomputeFrom.toISOString()).toBe('2026-11-01T00:00:00.000Z');
     });
 
-    it('stops settling removals when the finalize window closes', () => {
+    it('stops settling removals 75 minutes before the finalize window closes', () => {
+      expect(REMOVAL_CUTOFF_MS).toBe(75 * 60 * 1000);
       const { removeCut } = refereeWindow(FINALIZING, 'live', new Date('2026-12-02T05:00:00.000Z'));
-      expect(removeCut.toISOString()).toBe('2026-12-02T00:00:00.000Z');
+      expect(removeCut.toISOString()).toBe('2026-12-01T22:45:00.000Z');
+    });
+
+    // The last run before the window closes must settle every removal that still counts.
+    it('settles every counted removal by the last run before the window closes', () => {
+      const last = refereeWindow(FINALIZING, 'live', new Date('2026-12-01T23:00:00.000Z'));
+      expect(last.removeCut.toISOString()).toBe('2026-12-01T22:45:00.000Z');
     });
 
     it('recomputes the whole season from the first run whose cut reaches the end', () => {
