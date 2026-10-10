@@ -17,6 +17,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
   awardEventPoints,
   removeEventPoints,
   isHattedEntity: (entityType: string, entityId: number) => hatted.has(`${entityType}:${entityId}`),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    hatted.has(`${entityType}:${entityId}`),
 }));
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLag>()),
@@ -55,6 +57,7 @@ describe('toggleReview event points', () => {
     await toggleReview({ modelId: MODEL, userId: AUTHOR, modelVersionId: 20, setTo: true });
     await settle();
 
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
     expect(awardEventPoints).toHaveBeenCalledWith([modelLike]);
   });
 
@@ -69,6 +72,7 @@ describe('toggleReview event points', () => {
     await toggleReview({ modelId: MODEL, userId: AUTHOR, modelVersionId: 20, setTo: false });
     await settle();
 
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
   });
 });

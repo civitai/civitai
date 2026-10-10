@@ -14,6 +14,7 @@
 // - People in restrictedUsers (banned, deleted, excluded from leaderboards) neither give nor earn.
 //   Actors with an id from newAccountMinId (registered inside the new-account window) give nothing.
 //   Both are read from Postgres "User" by the caller.
+// - Nobody earns from acting on their own hat.
 // - Each person counts once per (type, entity) for the whole season, or once per UTC day for types
 //   listed in dailyTypes; the earliest surviving add is the one kept, with the hat it was on.
 // - Each kept action is worth its type's weight. Per (UTC day, owner, person), in time order, weights
@@ -45,6 +46,7 @@ WITH
       AND actorId NOT IN {restrictedUsers:Array(Int32)}
       AND ownerId NOT IN {restrictedUsers:Array(Int32)}
       AND actorId < {newAccountMinId:Int32}
+      AND actorId != ownerId
     GROUP BY type, actorId, entityType, entityId, onceKey
   ),
   weighted AS (

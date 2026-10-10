@@ -17,6 +17,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
   awardEventPoints,
   removeEventPoints,
   isHattedEntity: (entityType: string, entityId: number) => hatted.has(`${entityType}:${entityId}`),
+  isHattedEntityOnceLoaded: async (entityType: string, entityId: number) =>
+    hatted.has(`${entityType}:${entityId}`),
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedCommentContent: vi.fn(async () => undefined),
@@ -64,6 +66,7 @@ describe('CommentV2 event points', () => {
     await upsertComment({ userId: USER, entityType: 'image', entityId: 7, content: 'hi' });
     await settle();
 
+    expect(awardEventPoints).toHaveBeenCalledTimes(1);
     expect(awardEventPoints).toHaveBeenCalledWith([
       {
         type: 'comment',
@@ -94,6 +97,7 @@ describe('CommentV2 event points', () => {
     await deleteComment({ id: 456 });
     await settle();
 
+    expect(removeEventPoints).toHaveBeenCalledTimes(1);
     expect(removeEventPoints).toHaveBeenCalledWith([
       expect.objectContaining({ type: 'comment', sourceId: `CommentV2:Image:7:${USER}` }),
     ]);

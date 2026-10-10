@@ -18,7 +18,12 @@ import type { PlacementSurface, PlacementTargetType } from '~/shared/utils/place
 import type { Session } from '~/types/session';
 import { dbWrite } from '~/server/db/client';
 import { handleLogError } from '~/server/utils/errorHandling';
-import { awardEventPoints, isHattedEntity, removeEventPoints } from './award';
+import {
+  awardEventPoints,
+  isHattedEntity,
+  isHattedEntityOnceLoaded,
+  removeEventPoints,
+} from './award';
 import type { EventPointAction, EventPointEntityType, EventPointType } from './types';
 
 const POINT_ENTITY_TYPES: ReadonlySet<string> = new Set<EventPointEntityType>([
@@ -107,7 +112,7 @@ async function removeIfLast(
     Pick<EventPointAction, 'time'>,
   stillHas: () => Promise<number>
 ) {
-  if (!isHattedEntity(action.entityType, action.entityId)) return;
+  if (!(await isHattedEntityOnceLoaded(action.entityType, action.entityId))) return;
   if ((await stillHas()) > 0) return;
   await removeEventPoints([action]);
 }
@@ -344,7 +349,7 @@ export async function onModelReviewsChanged(
       const key = `${modelId}:${userId}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (!isHattedEntity('Model', modelId)) continue;
+      if (!(await isHattedEntityOnceLoaded('Model', modelId))) continue;
       const action = {
         type: 'modelLike' as const,
         actorId: userId,

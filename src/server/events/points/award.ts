@@ -360,7 +360,14 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     return loaded.some((event) => event.hats.has(key));
   }
 
-  return { awardEventPoints, removeEventPoints, isHattedEntity, refresh };
+  // For removals, which must not skip like the first awards do: an un-react on a server that has not
+  // loaded yet would leave its add counting at the referee.
+  async function isHattedEntityOnceLoaded(entityType: string, entityId: number) {
+    await ensureFresh();
+    return isHattedEntity(entityType, entityId);
+  }
+
+  return { awardEventPoints, removeEventPoints, isHattedEntity, isHattedEntityOnceLoaded, refresh };
 }
 
 // Event-scoped dedupe keys live until two days after scoring finalizes.
@@ -415,3 +422,5 @@ export const removeEventPoints = (removals: EventPointRemoval[]) =>
   getEngine().removeEventPoints(removals);
 export const isHattedEntity = (entityType: string, entityId: number) =>
   getEngine().isHattedEntity(entityType, entityId);
+export const isHattedEntityOnceLoaded = (entityType: string, entityId: number) =>
+  getEngine().isHattedEntityOnceLoaded(entityType, entityId);
