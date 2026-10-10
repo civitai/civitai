@@ -112,7 +112,8 @@ export const eventTeamsTopic = (event: string) =>
 // are not: their ids are keyed with a server secret and reach a client only through a read the
 // preview lets it make, so a public client cannot guess one. 128 bits, the secret never leaves here.
 // The schema only asks for a string: with an empty key the ids would be computable by anyone, so a
-// short one refuses to make them, and the preview's live updates stop rather than go public.
+// short one refuses to make them. Every preview read and push that needs an id then fails, closed;
+// the live season never asks for one.
 const MIN_KEY_LENGTH = 8;
 export function previewTopicId(event: string, member: string) {
   if ((env.NEXTAUTH_SECRET?.length ?? 0) < MIN_KEY_LENGTH)
