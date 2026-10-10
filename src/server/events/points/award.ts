@@ -1,12 +1,17 @@
 import type { EventScoring } from '~/server/events/base.event';
 import { loadEvents } from '~/server/events/load-events';
-import { isEventPointsEnabled, isEventPointsEnabledSync } from '~/server/events/points/enabled';
+import {
+  isEventPointsEnabled,
+  isEventPointsEnabledSync,
+  onEventPointsSwitchOn,
+} from '~/server/events/points/enabled';
 import { clickhouse } from '~/server/clickhouse/client';
 import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
+  COUNT_BASE_MARK,
   countField,
   decodeHat,
   entityKey,
@@ -21,6 +26,7 @@ import {
   utcDay,
 } from '~/server/events/points/keys';
 import { markEventPointsDirty } from '~/server/events/points/push';
+import type { SelfHealReason } from '~/server/events/points/self-heal';
 import type {
   EventHat,
   EventPointAction,
@@ -76,7 +82,16 @@ type TopicIndex = { season: EventPointSeason; ids: Map<string, number> };
 
 export type EventPointsRedis = Pick<
   typeof sysRedis,
-  'hGetAll' | 'hmGet' | 'sAdd' | 'sRem' | 'expire' | 'expireAt' | 'hIncrBy' | 'xRange' | 'xRevRange'
+  | 'hGet'
+  | 'hGetAll'
+  | 'hmGet'
+  | 'sAdd'
+  | 'sRem'
+  | 'expire'
+  | 'expireAt'
+  | 'hIncrBy'
+  | 'xRange'
+  | 'xRevRange'
 >;
 
 export type EventPointsFailure = 'redis' | 'ledger' | 'push';
@@ -97,6 +112,8 @@ export type EventPointsDeps = {
   logError: (kind: EventPointsFailure, fn: string, error: unknown, extra?: object) => void;
   // Called once an award has moved the hat's live totals, so they can be pushed to screens.
   onGrant: (def: ScoredEventDef, hat: EventHat, time: Date) => void;
+  // Asks for the hourly reconcile and settle now (self-heal.ts); never waited on.
+  selfHeal: (event: string, reason: SelfHealReason) => void;
 };
 
 export type EventPointLedgerRow = {
@@ -218,6 +235,25 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     loaded = next;
     loadedAt = now.getTime();
     followedAt = loadedAt;
+    void checkHealth(next, now);
+  }
+
+  // On each full reload: an empty hat map earns nothing, and no count base leaves the counts on the
+  // snapshot, until the hourly job runs. Either asks for that job's work now.
+  async function checkHealth(events: LoadedEvent[], now: Date) {
+    for (const { def, hats } of events) {
+      try {
+        if (!hats.size) {
+          deps.selfHeal(def.name, 'empty-map');
+          continue;
+        }
+        const keys = eventSeasonKeys(def.name, eventPointSeason(def.startDate, now));
+        if (!(await deps.redis.hGet(keys.base('count'), COUNT_BASE_MARK)))
+          deps.selfHeal(def.name, 'missing-count-base');
+      } catch (error) {
+        deps.logError('redis', 'eventPoints.checkHealth', error);
+      }
+    }
   }
 
   async function followAll() {
@@ -512,9 +548,28 @@ function getEngine() {
       );
     },
     onGrant: markEventPointsDirty,
+    selfHeal: healDetached,
   });
   return engine;
 }
+
+// Loaded on first use: the heal brings the referee and the reconcile, which the award path never
+// needs. A heal asked for while the switch is off does nothing.
+function healDetached(event: string, reason: SelfHealReason) {
+  if (!isEventPointsEnabledSync()) return;
+  void import('~/server/events/points/self-heal')
+    .then(({ healEventPoints }) => healEventPoints(event, reason))
+    .catch((error) =>
+      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error }).catch(
+        () => undefined
+      )
+    );
+}
+
+// A flip to on: whatever the hat map holds, hats placed while off are missing from it.
+onEventPointsSwitchOn(async () => {
+  for (const def of await loadScoredEvents(new Date())) healDetached(def.name, 'switch-on');
+});
 
 // Records actions that may earn event points. Never throws and never needs awaiting for
 // correctness; await it only to keep a test deterministic. With the kill switch off, all four are

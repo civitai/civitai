@@ -11,6 +11,13 @@ import {
 export const SWITCH_READ_MS = 5_000;
 
 let reading: { on: boolean; at: number } | undefined;
+const switchOnListeners = new Set<() => unknown>();
+
+// Called, detached, when a reading in this process goes from off to on.
+export function onEventPointsSwitchOn(listener: () => unknown) {
+  switchOnListeners.add(listener);
+  return () => void switchOnListeners.delete(listener);
+}
 
 // The event points engine's kill switch, synchronous for the impression hot path: an in-process
 // evaluation at most every SWITCH_READ_MS. Off unless the flag reads true: a missing flag and a
@@ -26,7 +33,14 @@ export function isEventPointsEnabledSync() {
     void ensureFliptInitialized().catch(() => undefined);
     return false;
   }
+  const was = reading?.on;
   reading = { on: on === true, at: now };
+  // A flip this process saw, not its first reading after boot: an off engine wrote no hats.
+  if (was === false && reading.on)
+    for (const listener of switchOnListeners)
+      void Promise.resolve()
+        .then(listener)
+        .catch(() => undefined);
   return reading.on;
 }
 

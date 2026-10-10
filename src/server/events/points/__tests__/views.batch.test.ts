@@ -16,7 +16,10 @@ const { awardEventPoints, getSession, hatted } = vi.hoisted(() => ({
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => true,
   isEventPointsEnabledSync: () => true,
+  onEventPointsSwitchOn: () => () => undefined,
 }));
+// The engine's self-heal runs the reconcile and settle: tested in self-heal.test.ts, not here.
+vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: unknown) => handler,
 }));

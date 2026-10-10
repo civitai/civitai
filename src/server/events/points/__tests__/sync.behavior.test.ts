@@ -20,7 +20,10 @@ const killSwitch = vi.hoisted(() => ({ on: true }));
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => killSwitch.on,
   isEventPointsEnabledSync: () => killSwitch.on,
+  onEventPointsSwitchOn: () => () => undefined,
 }));
+// The engine's self-heal runs the reconcile and settle: tested in self-heal.test.ts, not here.
+vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;

@@ -58,6 +58,9 @@ function fakeRedis() {
       hash.set(field, String(next));
       return next;
     },
+    async hGet(key: string, field: string) {
+      return hashes.get(key)?.get(field) ?? null;
+    },
     async hGetAll(key: string) {
       return Object.fromEntries(hashes.get(key) ?? []);
     },
@@ -152,6 +155,8 @@ function build(overrides: Partial<EventPointsDeps> = {}) {
     now: () => now,
     logError: () => undefined,
     onGrant: (def, hat, time) => void granted.push({ event: def.name, hat, time }),
+    // Asked for on every reload here (no count base): self-heal.test.ts covers when and what.
+    selfHeal: () => undefined,
     ...overrides,
   });
 }
