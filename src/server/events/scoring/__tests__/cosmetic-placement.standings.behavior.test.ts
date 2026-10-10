@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -22,6 +22,8 @@ vi.mock('~/utils/signal-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SignalClient>()),
   signalClient: signals,
 }));
+const failOpen = vi.hoisted(() => ({ log: vi.fn() }));
+vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: failOpen.log }));
 const engine = vi.hoisted(() => ({ on: true }));
 vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabled: async () => engine.on,
@@ -33,6 +35,7 @@ const {
   getEventStandings,
   getTeamScoreHistory,
   getUserCosmeticScores,
+  hasStandingsSnapshot,
   refreshStandings,
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
@@ -103,6 +106,97 @@ afterAll(async () => {
   await db.pg.close();
 });
 
+// sysRedis as a key-value store: the hourly job writes the snapshot here and every read serves it.
+const store = {
+  values: new Map<string, unknown>(),
+  hashes: new Map<string, Record<string, string>>(),
+};
+function fakeSysRedis() {
+  store.values.clear();
+  store.hashes.clear();
+  const sys = redisMock.sysRedis;
+  sys.packed.get.mockImplementation(
+    async (k: string) => structuredClone(store.values.get(k)) ?? null
+  );
+  sys.packed.set.mockImplementation(async (k: string, v: unknown) => {
+    store.values.set(k, structuredClone(v));
+    return 'OK';
+  });
+  sys.exists.mockImplementation(async (k: string) => Number(store.values.has(k)));
+  sys.hGet.mockImplementation(async (k: string, f: string) => store.hashes.get(k)?.[f] ?? null);
+  sys.hmGet.mockImplementation(async (k: string, fields: string[]) =>
+    fields.map((f) => store.hashes.get(k)?.[f] ?? null)
+  );
+  sys.hSet.mockImplementation(async (k: string, v: Record<string, string>) => {
+    store.hashes.set(k, { ...(store.hashes.get(k) ?? {}), ...v });
+    return Object.keys(v).length;
+  });
+  sys.del.mockImplementation(
+    async (keys: string[]) => keys.filter((k) => store.hashes.delete(k)).length
+  );
+  sys.multi.mockImplementation(() => {
+    const ops: (() => void)[] = [];
+    const tx = {
+      rename: (a: string, b: string) => {
+        ops.push(() => {
+          store.hashes.set(b, store.hashes.get(a)!);
+          store.hashes.delete(a);
+        });
+        return tx;
+      },
+      del: (keys: string[]) => (ops.push(() => keys.forEach((k) => store.hashes.delete(k))), tx),
+      exec: async () => ops.forEach((op) => op()),
+    };
+    return tx;
+  });
+}
+
+// Every read below runs with this on: the only proof that a read never touches Postgres. Raw, unsafe,
+// transactional and the delegates a score read could plausibly reach for all throw, and since the
+// reads fail soft (a thrown error can be swallowed into the same zeros), each test also ends by
+// asserting none of them was called at all.
+let forbidden: { mockClear: () => void; mock: { calls: unknown[] } }[] = [];
+function forbidPostgres() {
+  const refuse = (async () => {
+    throw new Error('Postgres on the request path');
+  }) as never;
+  forbidden = [];
+  for (const client of [dbMock.dbWrite, dbMock.dbRead]) {
+    const methods = [
+      ...['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe', '$transaction'].map(
+        (m) => client[m]
+      ),
+      ...['eventCosmeticScoreDaily', 'userCosmetic', 'user', 'cosmetic'].flatMap((model) =>
+        ['findMany', 'findFirst', 'findUnique', 'groupBy', 'aggregate', 'count'].map(
+          (m) => client[model][m]
+        )
+      ),
+    ];
+    for (const method of methods) {
+      method.mockImplementation(refuse);
+      method.mockClear();
+      forbidden.push(method);
+    }
+  }
+}
+// The job again, between reads.
+function allowPostgres() {
+  forbidden = [];
+  dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(db.pg).queryRaw as never);
+}
+afterEach(() => {
+  const called = forbidden.filter((method) => method.mock.calls.length).length;
+  forbidden = [];
+  expect(called, 'Postgres was called after forbidPostgres()').toBe(0);
+});
+
+// The hourly job's write, then Postgres goes away.
+async function settle(...events: (typeof event & { scoreFrom?: Date })[]) {
+  for (const e of events.length ? events : [event])
+    await refreshStandings(e, dbMock.dbWrite as never);
+  forbidPostgres();
+}
+
 beforeEach(async () => {
   await db.pg.exec(`TRUNCATE "EventCosmeticScoreDaily"`);
   vi.clearAllMocks();
@@ -115,7 +209,7 @@ beforeEach(async () => {
   // ordering, not atomicity.
   dbMock.dbWrite.$transaction.mockImplementation((async (ops: Promise<unknown>[]) =>
     Promise.all(ops)) as never);
-  redisMock.redis.packed.get.mockResolvedValue(null);
+  fakeSysRedis();
 });
 
 type Day = {
@@ -152,6 +246,19 @@ async function stored() {
   return res.rows.map((r) => [r.day, r.userId, r.claimKey, r.points]);
 }
 
+const zeroStandings = {
+  teams: [
+    { team: 'Yellow', score: 0, rank: 1 },
+    { team: 'Blue', score: 0, rank: 2 },
+    { team: 'Pink', score: 0, rank: 3 },
+    { team: 'Green', score: 0, rank: 4 },
+  ],
+  history: event.teams.map((team) => ({ team, scores: [] })),
+  topCosmetics: [],
+  topUsers: {},
+  updatedAt: new Date(0),
+};
+
 describe('standings', () => {
   beforeEach(async () => {
     await insertDays([
@@ -167,6 +274,7 @@ describe('standings', () => {
   });
 
   it('totals and ranks teams, leaving banned, deleted and excluded users out', async () => {
+    await settle();
     const { teams } = await getEventStandings(event);
     expect(teams).toEqual([
       { team: 'Blue', score: 25, rank: 1 },
@@ -177,6 +285,7 @@ describe('standings', () => {
   });
 
   it('ranks cosmetic instances, so two copies of one design score separately', async () => {
+    await settle();
     const { topCosmetics, topUsers } = await getEventStandings(event);
     expect(topCosmetics.map((c) => [c.userId, c.claimKey, c.points])).toEqual([
       [2, 'claimed', 25],
@@ -190,6 +299,7 @@ describe('standings', () => {
   });
 
   it('builds cumulative history per team from the same snapshot', async () => {
+    await settle();
     const history = await getTeamScoreHistory(event);
     const blue = history.find((h) => h.team === 'Blue')!;
     expect(blue.scores.map((s) => [s.date.toISOString().slice(0, 10), s.score])).toEqual([
@@ -200,6 +310,7 @@ describe('standings', () => {
   });
 
   it('reads per-cosmetic and per-user scores across days', async () => {
+    await settle();
     const scores = await getCosmeticScores(event, [
       { userId: 2, cosmeticId: 22, claimKey: 'claimed' },
       { userId: 1, cosmeticId: 21, claimKey: 'txn-1' },
@@ -209,13 +320,29 @@ describe('standings', () => {
       '2:22:claimed': 25,
       '1:21:txn-1': 4,
     });
+    expect(scores['2:22:claimed']).toEqual({
+      userId: 2,
+      cosmeticId: 22,
+      claimKey: 'claimed',
+      team: 'Blue',
+      points: 25,
+      impressions: 25,
+      anonImpressions: 0,
+      reactions: 0,
+      comments: 0,
+      stickers: 0,
+      remixes: 0,
+      modelLikes: 0,
+    });
     expect((await getUserCosmeticScores(event, 1)).map((c) => [c.claimKey, c.points])).toEqual([
       ['claimed', 20],
       ['txn-1', 4],
     ]);
+    expect(await getUserCosmeticScores(event, 9)).toEqual([]);
   });
 
   it('keeps a hidden owner per-cosmetic score readable (standings hide it, cosmetic reads do not)', async () => {
+    await settle();
     const scores = await getCosmeticScores(event, [
       { userId: BANNED, cosmeticId: 23, claimKey: 'claimed' },
     ]);
@@ -225,48 +352,133 @@ describe('standings', () => {
   it('builds the hourly snapshot from the client it is given, not a replica that has not caught up', async () => {
     // A lagging replica: it has none of the rows.
     dbMock.dbRead.$queryRaw.mockImplementation((async () => []) as never);
-    await refreshStandings(event, dbMock.dbWrite as never);
-    const snapshot = redisMock.redis.packed.set.mock.calls.at(-1)?.[1] as {
-      teams: { team: string; score: number }[];
-    };
-    expect(snapshot.teams.find((t) => t.team === 'Yellow')?.score).toBe(24);
+    await settle();
+    expect((await getEventStandings(event)).teams.find((t) => t.team === 'Yellow')?.score).toBe(24);
+    expect((await getUserCosmeticScores(event, 1)).map((c) => c.points)).toEqual([20, 4]);
   });
 
-  it('rebuilds a cold snapshot on a request from the replica, not the primary', async () => {
-    dbMock.dbWrite.$queryRaw.mockClear();
-    const { teams } = await getEventStandings(event);
-    expect(teams[0]).toEqual({ team: 'Blue', score: 25, rank: 1 });
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
-    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  it('writes the standings with no expiry, so the final numbers outlive the event', async () => {
+    await settle();
+    const writes = redisMock.sysRedis.packed.set.mock.calls;
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toHaveLength(2);
+    expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
   });
 
-  it('rebuilds a cold snapshot once however many requests miss at the same time', async () => {
-    dbMock.dbRead.$queryRaw.mockClear();
-    await getEventStandings({ ...event, name: 'warmup-other' });
-    const perBuild = dbMock.dbRead.$queryRaw.mock.calls.length;
-    dbMock.dbRead.$queryRaw.mockClear();
-    const results = await Promise.all(Array.from({ length: 5 }, () => getEventStandings(event)));
-    expect(perBuild).toBeGreaterThan(0);
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(perBuild);
-    expect(new Set(results).size).toBe(1);
+  it('replaces the hat totals on each run: a hat whose days were removed reads as unsettled', async () => {
+    await settle();
+    await db.pg.exec(`DELETE FROM "EventCosmeticScoreDaily" WHERE "claimKey" = 'txn-1'`);
+    allowPostgres();
+    await settle();
+    expect(
+      await getCosmeticScores(event, [{ userId: 1, cosmeticId: 21, claimKey: 'txn-1' }])
+    ).toEqual({});
+    expect((await getUserCosmeticScores(event, 1)).map((c) => c.claimKey)).toEqual(['claimed']);
   });
 
-  it('lets go of a finished rebuild, so a later miss builds again', async () => {
-    const solo = { ...event, name: 'release-check' };
-    await getEventStandings(solo);
-    dbMock.dbRead.$queryRaw.mockClear();
-    await getEventStandings(solo);
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
+  it('clears the hat totals when a run finds no rows at all', async () => {
+    await settle();
+    await db.pg.exec(`TRUNCATE "EventCosmeticScoreDaily"`);
+    allowPostgres();
+    await settle();
+    expect(
+      await getCosmeticScores(event, [{ userId: 2, cosmeticId: 22, claimKey: 'claimed' }])
+    ).toEqual({});
+    expect(await getUserCosmeticScores(event, 2)).toEqual([]);
   });
 
-  it('lets go of a failed rebuild, so the next miss retries instead of rethrowing it', async () => {
-    const solo = { ...event, name: 'reject-check' };
-    dbMock.dbRead.$queryRaw.mockRejectedValueOnce(new Error('replica down'));
-    await expect(getEventStandings(solo)).rejects.toThrow('replica down');
-    await expect(getEventStandings(solo)).resolves.toMatchObject({ teams: expect.any(Array) });
+  it('serves an event the job has not settled yet as every team at zero, never reading Postgres', async () => {
+    forbidPostgres();
+    const onDegraded = vi.fn();
+    expect(await getEventStandings(event, { onDegraded })).toEqual(zeroStandings);
+    // Not the real standings: an edge-cached route must not keep it.
+    expect(onDegraded).toHaveBeenCalledTimes(1);
+    expect(await getTeamScoreHistory(event)).toEqual(zeroStandings.history);
+    expect(
+      await getCosmeticScores(event, [{ userId: 2, cosmeticId: 22, claimKey: 'claimed' }])
+    ).toEqual({});
+    expect(await getUserCosmeticScores(event, 2)).toEqual([]);
+    // A miss, not a failure.
+    expect(failOpen.log).not.toHaveBeenCalled();
   });
 
-  it('serves standings and history from the cached snapshot without querying', async () => {
+  it('knows whether a snapshot is stored, for this window only', async () => {
+    expect(await hasStandingsSnapshot(event)).toBe(false);
+    await settle();
+    expect(await hasStandingsSnapshot(event)).toBe(true);
+    expect(await hasStandingsSnapshot({ ...event, scoreFrom: new Date('2026-10-09') })).toBe(false);
+  });
+
+  it('does not call a settled read degraded', async () => {
+    await settle();
+    const onDegraded = vi.fn();
+    expect((await getEventStandings(event, { onDegraded })).teams[0].team).toBe('Blue');
+    expect(onDegraded).not.toHaveBeenCalled();
+    expect(failOpen.log).not.toHaveBeenCalled();
+  });
+
+  it('never folds hats a crashed earlier run left half-written into the new totals', async () => {
+    await settle();
+    const hatsKey = [...store.hashes.keys()].find((k) => k.endsWith(':hats'))!;
+    store.hashes.set(`${hatsKey}:next`, {
+      '9:99:stale': JSON.stringify({ userId: 9, cosmeticId: 99, claimKey: 'stale', points: 5 }),
+    });
+    const ownersKey = hatsKey.replace(/:hats$/, ':owners');
+    // An owner the new run does not have, pointing at a hat it does.
+    store.hashes.set(`${ownersKey}:next`, { '9': JSON.stringify(['2:22:claimed']) });
+    allowPostgres();
+    await settle();
+    expect(
+      await getCosmeticScores(event, [{ userId: 9, cosmeticId: 99, claimKey: 'stale' }])
+    ).toEqual({});
+    expect(await getUserCosmeticScores(event, 9)).toEqual([]);
+    // Positive control: the run itself landed.
+    expect(Object.keys(store.hashes.get(hatsKey)!)).toContain('2:22:claimed');
+  });
+
+  it('keeps serving the previous totals whole when a run fails partway through writing', async () => {
+    await settle();
+    await insertDays([day('2026-11-04', 2, 22, 'claimed', 'Blue', 100)]);
+    allowPostgres();
+    // The hat totals write, then the owner index fails: the new totals are written but must not be
+    // what a reader sees.
+    const sys = redisMock.sysRedis;
+    sys.hSet.mockClear();
+    sys.hSet
+      .mockImplementationOnce(sys.hSet.getMockImplementation()!)
+      .mockRejectedValueOnce(new Error('sysRedis down'));
+    await expect(refreshStandings(event, dbMock.dbWrite as never)).rejects.toThrow('sysRedis down');
+    expect(sys.hSet).toHaveBeenCalledTimes(2);
+    forbidPostgres();
+    const key = { userId: 2, cosmeticId: 22, claimKey: 'claimed' };
+    expect((await getCosmeticScores(event, [key]))['2:22:claimed']?.points).toBe(25);
+    expect((await getUserCosmeticScores(event, 1)).map((c) => c.points)).toEqual([20, 4]);
+  });
+
+  it('serves zeros when sysRedis is unreachable on a request, and says it degraded', async () => {
+    await settle();
+    redisMock.sysRedis.packed.get.mockRejectedValue(new Error('sysRedis down'));
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('sysRedis down'));
+    redisMock.sysRedis.hmGet.mockRejectedValue(new Error('sysRedis down'));
+    const onDegraded = vi.fn();
+    expect(await getEventStandings(event, { onDegraded })).toEqual(zeroStandings);
+    expect(
+      await getCosmeticScores(
+        event,
+        [{ userId: 2, cosmeticId: 22, claimKey: 'claimed' }],
+        onDegraded
+      )
+    ).toEqual({});
+    expect(await getUserCosmeticScores(event, 2, onDegraded)).toEqual([]);
+    expect(onDegraded).toHaveBeenCalledTimes(3);
+    expect(failOpen.log.mock.calls.map(([kind, where]) => [kind, where])).toEqual([
+      ['read-degraded', 'getEventStandings'],
+      ['read-degraded', 'getCosmeticScores'],
+      ['read-degraded', 'getUserCosmeticScores'],
+    ]);
+  });
+
+  it('serves standings and history from the stored snapshot without querying', async () => {
     const cached = {
       teams: [{ team: 'Green', score: 7, rank: 1 }],
       history: [{ team: 'Green', scores: [{ date: new Date('2026-11-02T00:00:00Z'), score: 7 }] }],
@@ -274,12 +486,11 @@ describe('standings', () => {
       topUsers: {},
       updatedAt: new Date(),
     };
-    redisMock.redis.packed.get.mockResolvedValue(cached);
+    redisMock.sysRedis.packed.get.mockResolvedValue(cached);
+    forbidPostgres();
 
     expect(await getEventStandings(event)).toBe(cached);
     expect(await getTeamScoreHistory(event)).toBe(cached.history);
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
@@ -297,6 +508,7 @@ describe('scoreFrom', () => {
   });
 
   it('keeps preview days out of every read once the event has started', async () => {
+    await settle(event, preview);
     const { teams, history } = await getEventStandings(event);
     expect(teams.find((t) => t.team === 'Yellow')?.score).toBe(3);
     expect(history.find((h) => h.team === 'Yellow')!.scores.map((x) => x.score)).toEqual([3]);
@@ -306,6 +518,7 @@ describe('scoreFrom', () => {
   });
 
   it('positive control: read from the preview start, the same rows include the preview day', async () => {
+    await settle(preview, event);
     expect((await getUserCosmeticScores(preview, 1))[0]?.points).toBe(10);
     const key = { userId: 1, cosmeticId: 21, claimKey: 'claimed' };
     expect((await getCosmeticScores(preview, [key]))['1:21:claimed']?.points).toBe(10);
@@ -314,13 +527,6 @@ describe('scoreFrom', () => {
       score: 10,
       rank: 1,
     });
-  });
-
-  it('never stores a preview snapshot where the event reads its own', async () => {
-    await getEventStandings(preview);
-    await getEventStandings(event);
-    const keys = redisMock.redis.packed.set.mock.calls.map(([k]) => k);
-    expect(new Set(keys).size).toBe(2);
   });
 });
 

@@ -18,19 +18,9 @@ import type { SimpleUser } from '~/server/selectors/user.selector';
 export type LeaderboardEntry = {
   id: number;
   userId: number;
-  imageId: number;
   score: number;
   position: number | null;
-  createdAt: Date;
   user: SimpleUser;
-  image: {
-    id: number;
-    name: string | null;
-    url: string;
-    nsfwLevel: number;
-    width: number | null;
-    height: number | null;
-  };
 };
 
 export type CrucibleLeaderboardProps = {
@@ -58,7 +48,7 @@ export type CrucibleLeaderboardProps = {
  *
  * Features:
  * - Entries ranked by placing, then unplaced entries by ELO score
- * - Entry thumbnail, score, and position
+ * - Score and position
  * - Crown icons for top 3 positions (gold, silver, bronze)
  * - Highlights current user's entries
  * - Pagination for many entries

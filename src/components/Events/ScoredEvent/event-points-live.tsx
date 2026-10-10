@@ -41,7 +41,7 @@ export function readTeamsPush(push: unknown, event: string) {
 }
 
 /** The rows with the pushed total on the matching hat; the same array when nothing changed. */
-export function applyHatPoints<T extends { topicId: string; points: number }>(
+export function applyHatPoints<T extends { topicId: string | null; points: number }>(
   rows: T[] | undefined,
   topicId: string,
   points: number

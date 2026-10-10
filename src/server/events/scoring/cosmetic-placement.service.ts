@@ -1,7 +1,9 @@
+import { chunk } from 'lodash-es';
 import { hatField } from '~/server/events/points/keys';
-import { dbRead, type dbWrite } from '~/server/db/client';
+import type { dbRead, dbWrite } from '~/server/db/client';
 import type { EventScoring, TeamScore } from '~/server/events/base.event';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 export type ScoredEvent = {
   name: string;
@@ -48,12 +50,6 @@ export type EventStandings = {
   topCosmetics: CosmeticScore[];
   topUsers: Record<string, { userId: number; points: number }[]>;
   updatedAt: Date;
-};
-
-// Keyed by the first counted day too, so a preview snapshot is never served as the event's.
-const standingsKey = (event: StandingsEvent) => {
-  const fromDay = scoreFromDay(event).toISOString().slice(0, 10);
-  return `${REDIS_KEYS.EVENT.CACHE}:${event.name}:standings:${fromDay}` as const;
 };
 
 // Banned, deleted and leaderboard-excluded users drop out of the standings (team totals, history and
@@ -131,65 +127,135 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
   return { teams, history, topCosmetics, topUsers, updatedAt: new Date() } satisfies EventStandings;
 }
 
-export async function refreshStandings(event: StandingsEvent, db: typeof dbWrite | typeof dbRead) {
-  const standings = await computeStandings(event, db);
-  await redis.packed.set(standingsKey(event), standings, { EX: 2 * 60 * 60 });
-  return standings;
-}
+// What the request path serves, written by the hourly job and never rebuilt on a request: the
+// standings, and each hat's season totals with an index of each owner's hats. On sysRedis, not the
+// evicting cache, so the final numbers outlive the event once the job stops writing.
+// Keyed by the first counted day too, so a preview snapshot is never served as the event's.
+const snapshotKeys = (event: StandingsEvent) => {
+  const fromDay = scoreFromDay(event).toISOString().slice(0, 10);
+  const root = `${REDIS_SYS_KEYS.EVENT}:${event.name}:snapshot:${fromDay}` as const;
+  return {
+    standings: `${root}:standings` as const,
+    hats: `${root}:hats` as const,
+    owners: `${root}:owners` as const,
+  };
+};
 
-// A miss rebuilds once per pod, however many requests arrive while it runs: the four aggregates
-// cover the whole event, and a miss comes when the page is busiest.
-const rebuilding = new Map<string, Promise<EventStandings>>();
-
-// Served from the snapshot the hourly job writes; a miss (no run for 2h) recomputes once here.
-export async function getEventStandings(event: StandingsEvent) {
-  const key = standingsKey(event);
-  const cached = await redis.packed.get<EventStandings>(key);
-  if (cached) return cached;
-  let pending = rebuilding.get(key);
-  if (!pending) {
-    // Request path: a cold snapshot is rebuilt from the replica, never the primary.
-    pending = refreshStandings(event, dbRead).finally(() => rebuilding.delete(key));
-    rebuilding.set(key, pending);
-  }
-  return pending;
-}
-
-export async function getTeamScoreHistory(event: StandingsEvent) {
-  return (await getEventStandings(event)).history;
-}
-
-export async function getUserCosmeticScores(event: StandingsEvent, userId: number) {
-  return dbRead.$queryRaw<CosmeticScore[]>`
-    SELECT "userId", "cosmeticId", "claimKey", team,
+async function hatTotals(event: StandingsEvent, db: typeof dbWrite | typeof dbRead) {
+  return db.$queryRaw<CosmeticScore[]>`
+    SELECT "userId", "cosmeticId", "claimKey", min(team) AS team,
       sum(points)::int AS points, sum(impressions)::int AS impressions,
       sum("anonImpressions")::int AS "anonImpressions", sum(reactions)::int AS reactions,
       sum(comments)::int AS comments, sum(stickers)::int AS stickers, sum(remixes)::int AS remixes,
       sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND day >= ${scoreFromDay(event)}::date AND "userId" = ${userId}
-    GROUP BY "userId", "cosmeticId", "claimKey", team
-    ORDER BY points DESC
+    WHERE event = ${event.name} AND day >= ${scoreFromDay(event)}::date
+    GROUP BY "userId", "cosmeticId", "claimKey"
   `;
 }
 
-export async function getCosmeticScores(event: StandingsEvent, keys: CosmeticScoreKey[]) {
+// Written to temporary keys and renamed into place together, so a reader never sees half a run.
+async function writeHatTotals(event: StandingsEvent, hats: CosmeticScore[]) {
+  const keys = snapshotKeys(event);
+  const owners = new Map<number, string[]>();
+  for (const hat of hats)
+    owners.set(hat.userId, [...(owners.get(hat.userId) ?? []), cosmeticScoreKey(hat)]);
+  const next = { hats: `${keys.hats}:next` as const, owners: `${keys.owners}:next` as const };
+  await sysRedis.del([next.hats, next.owners]);
+  for (const part of chunk(hats, 1000))
+    await sysRedis.hSet(
+      next.hats,
+      Object.fromEntries(part.map((hat) => [cosmeticScoreKey(hat), JSON.stringify(hat)]))
+    );
+  for (const part of chunk([...owners], 1000))
+    await sysRedis.hSet(
+      next.owners,
+      Object.fromEntries(part.map(([ownerId, fields]) => [String(ownerId), JSON.stringify(fields)]))
+    );
+  const multi = sysRedis.multi();
+  if (hats.length) multi.rename(next.hats, keys.hats).rename(next.owners, keys.owners);
+  else multi.del([keys.hats, keys.owners]);
+  await multi.exec();
+}
+
+// Run by the hourly job right after the referee, from the primary: a lagging replica would freeze
+// stale numbers into the snapshot until the next run.
+export async function refreshStandings(event: StandingsEvent, db: typeof dbWrite | typeof dbRead) {
+  const standings = await computeStandings(event, db);
+  await writeHatTotals(event, await hatTotals(event, db));
+  await sysRedis.packed.set(snapshotKeys(event).standings, standings);
+  return standings;
+}
+
+export async function hasStandingsSnapshot(event: StandingsEvent) {
+  return (await sysRedis.exists(snapshotKeys(event).standings)) > 0;
+}
+
+const emptyStandings = (event: StandingsEvent): EventStandings => ({
+  teams: event.teams.map((team, i) => ({ team, score: 0, rank: i + 1 })),
+  history: event.teams.map((team) => ({ team, scores: [] })),
+  topCosmetics: [],
+  topUsers: {},
+  updatedAt: new Date(0),
+});
+
+type StandingsRead = { onDegraded?: () => void };
+
+// Before the job's first run, or while sysRedis is unreachable, every team shows zero. Neither is
+// the real standings, so an edge-cached route is told not to keep it.
+export async function getEventStandings(event: StandingsEvent, { onDegraded }: StandingsRead = {}) {
+  try {
+    const cached = await sysRedis.packed.get<EventStandings>(snapshotKeys(event).standings);
+    if (cached) return cached;
+  } catch (error) {
+    logSysRedisFailOpen('read-degraded', 'getEventStandings', error, { event: event.name });
+  }
+  onDegraded?.();
+  return emptyStandings(event);
+}
+
+export async function getTeamScoreHistory(event: StandingsEvent, read?: StandingsRead) {
+  return (await getEventStandings(event, read)).history;
+}
+
+const parseScores = (values: (string | null | undefined)[]) =>
+  values.flatMap((value) => (value ? [JSON.parse(value) as CosmeticScore] : []));
+
+// A hat the job has not settled yet has no entry, and its per-type counts read as zero; so does
+// every hat while sysRedis is unreachable.
+export async function getUserCosmeticScores(
+  event: StandingsEvent,
+  userId: number,
+  onDegraded?: () => void
+) {
+  const keys = snapshotKeys(event);
+  try {
+    const owned = await sysRedis.hGet(keys.owners, String(userId));
+    const fields = JSON.parse(owned ?? '[]') as string[];
+    if (!fields.length) return [];
+    const scores = parseScores(await sysRedis.hmGet(keys.hats, fields));
+    return scores.sort((a, b) => b.points - a.points);
+  } catch (error) {
+    logSysRedisFailOpen('read-degraded', 'getUserCosmeticScores', error, { event: event.name });
+    onDegraded?.();
+    return [];
+  }
+}
+
+export async function getCosmeticScores(
+  event: StandingsEvent,
+  keys: CosmeticScoreKey[],
+  onDegraded?: () => void
+) {
   if (!keys.length) return {} as Record<string, CosmeticScore>;
-  const rows = await dbRead.$queryRaw<CosmeticScore[]>`
-    SELECT s."userId", s."cosmeticId", s."claimKey", s.team,
-      sum(s.points)::int AS points, sum(s.impressions)::int AS impressions,
-      sum(s."anonImpressions")::int AS "anonImpressions", sum(s.reactions)::int AS reactions,
-      sum(s.comments)::int AS comments, sum(s.stickers)::int AS stickers,
-      sum(s.remixes)::int AS remixes, sum(s."modelLikes")::int AS "modelLikes"
-    FROM "EventCosmeticScoreDaily" s
-    JOIN unnest(
-      ${keys.map((k) => k.userId)}::int[],
-      ${keys.map((k) => k.cosmeticId)}::int[],
-      ${keys.map((k) => k.claimKey)}::text[]
-    ) AS k("userId", "cosmeticId", "claimKey")
-      ON k."userId" = s."userId" AND k."cosmeticId" = s."cosmeticId" AND k."claimKey" = s."claimKey"
-    WHERE s.event = ${event.name} AND s.day >= ${scoreFromDay(event)}::date
-    GROUP BY s."userId", s."cosmeticId", s."claimKey", s.team
-  `;
-  return Object.fromEntries(rows.map((r) => [cosmeticScoreKey(r), r]));
+  try {
+    const scores = parseScores(
+      await sysRedis.hmGet(snapshotKeys(event).hats, [...new Set(keys.map(cosmeticScoreKey))])
+    );
+    return Object.fromEntries(scores.map((s) => [cosmeticScoreKey(s), s]));
+  } catch (error) {
+    logSysRedisFailOpen('read-degraded', 'getCosmeticScores', error, { event: event.name });
+    onDegraded?.();
+    return {} as Record<string, CosmeticScore>;
+  }
 }
