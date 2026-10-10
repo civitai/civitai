@@ -36,7 +36,8 @@ vi.mock('~/server/events/points/push', () => push);
 
 const hooks = await import('~/server/events/points/hooks');
 const { getHatTotals, getTeamPoints, getOwnerPoints } = await import('~/server/events/points/read');
-const { encodeHat, eventPointKeys, hatField } = await import('~/server/events/points/keys');
+const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventPointSeason, eventSeasonKeys, hatField } =
+  await import('~/server/events/points/keys');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const NOW = new Date('2026-11-05T12:00:00.000Z');
@@ -193,6 +194,10 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
       weights.view!.weight;
     expect(expected).toBe(51);
     const event = { name: birthday2026.name, startDate: birthday2026.startDate };
+    // No count base yet: the points are live, the counts are left to the snapshot.
+    expect((await getHatTotals(event, [HAT], NOW)).counts).toBeNull();
+    const seasonKeys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, NOW));
+    await redisMock.sysRedis.hIncrBy(seasonKeys.base('count'), COUNT_BASE_MARK, 1);
     // One of each way earned, counted live beside the points (modelLike is not a shown count).
     expect(await getHatTotals(event, [HAT], NOW)).toEqual({
       points: { [hatField(HAT)]: expected },

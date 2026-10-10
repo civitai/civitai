@@ -84,6 +84,10 @@ export function parseHatField(field: string): Omit<EventHat, 'team'> | undefined
 // The type goes first: the hat field ends in a claim key that may hold colons.
 export const countField = (type: EventPointType, hat: Omit<EventHat, 'team'>) =>
   `${type}:${hatField(hat)}`;
+// Set in every count base the referee writes. Until one exists (before the first settle after the
+// counts went live, or for an event settled before that) the live counts are incomplete, so readers
+// fall back to the snapshot's. No colon, so no countField can equal it.
+export const COUNT_BASE_MARK = 'settled';
 
 export const entityKey = (entityType: EventPointEntityType, entityId: number) =>
   `${entityType}:${entityId}`;

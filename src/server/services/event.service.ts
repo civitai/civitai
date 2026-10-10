@@ -73,7 +73,7 @@ async function liveHatTotals(
   hats: Omit<EventHat, 'team'>[],
   onDegraded?: () => void
 ): Promise<LiveHatTotals | null> {
-  if (!hats.length) return { points: {}, counts: {} };
+  if (!hats.length) return { points: {}, counts: null };
   try {
     return await getHatTotals({ name: event.name, startDate: event.startDate }, hats);
   } catch (error) {
@@ -83,9 +83,9 @@ async function liveHatTotals(
   }
 }
 
-// Points and counts come live, or both from the hourly snapshot when the live read failed. The
-// topic id is the current season's: in the preview, a keyed one only a read the preview allows hands
-// out (points/keys.ts).
+// Points and counts come live, or from the hourly snapshot when the live read failed (counts also
+// until the referee has written a live count base). The topic id is the current season's: in the
+// preview, a keyed one only a read the preview allows hands out (points/keys.ts).
 function hatScore(
   event: SeasonEvent,
   season: EventPointSeason,
@@ -94,7 +94,7 @@ function hatScore(
   live: LiveHatTotals | null
 ) {
   const field = hatField(hat);
-  const counts = live ? live.counts[field] : score;
+  const counts = live?.counts ? live.counts[field] : score;
   return {
     topicId: seasonHatTopicId(event.name, hat, season),
     points: live ? live.points[field] ?? 0 : score?.points ?? 0,

@@ -370,6 +370,20 @@ describe('getMyEventHats', () => {
     ]);
   });
 
+  // Before the referee has written a live count base, the live buckets hold only part of the counts.
+  it('reads points live and counts from the snapshot until there is a live count base', async () => {
+    live.getHatTotals.mockResolvedValue({ points: { '9:31:claimed': 175 }, counts: null });
+    const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(placed).toMatchObject({
+      points: 175,
+      impressions: 100,
+      reactions: 4,
+      comments: 3,
+      stickers: 2,
+      remixes: 1,
+    });
+  });
+
   it('falls back to the snapshot for points and counts when the live totals are unreachable', async () => {
     live.getHatTotals.mockRejectedValue(new Error('sysredis down'));
     const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
@@ -982,10 +996,19 @@ describe('getWornEventHat', () => {
   it('falls back to the snapshot points when the live totals are unreachable', async () => {
     wearing();
     inHatMap('claimed');
-    scoring.getCosmeticScores.mockResolvedValue({ '9:31:claimed': settled('claimed', 12) });
+    scoring.getCosmeticScores.mockResolvedValue({
+      '9:31:claimed': settled('claimed', 12, { impressions: 6, reactions: 5, remixes: 2 }),
+    });
     live.getHatTotals.mockRejectedValue(new Error('sysredis down'));
     const onDegraded = vi.fn();
-    expect(await read(onDegraded)).toMatchObject({ points: 12 });
+    expect(await read(onDegraded)).toMatchObject({
+      points: 12,
+      impressions: 6,
+      reactions: 5,
+      comments: 0,
+      stickers: 0,
+      remixes: 2,
+    });
     // The route skips the edge cache for this answer.
     expect(onDegraded).toHaveBeenCalledTimes(1);
   });

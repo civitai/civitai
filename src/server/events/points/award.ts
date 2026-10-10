@@ -312,19 +312,30 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         const bucket = liveBucket(time);
         const field = hatField(hat);
         const live = [
-          [keys.live(bucket, 'hat'), field, grant],
-          [keys.live(bucket, 'team'), hat.team, grant],
-          [keys.live(bucket, 'owner'), String(hat.ownerId), grant],
-          [keys.live(bucket, 'count'), countField(action.type, hat), 1],
+          [keys.live(bucket, 'hat'), field],
+          [keys.live(bucket, 'team'), hat.team],
+          [keys.live(bucket, 'owner'), String(hat.ownerId)],
         ] as const;
-        await Promise.all(live.map(([key, f, by]) => deps.redis.hIncrBy(key, f, by)));
+        const countKey = keys.live(bucket, 'count');
+        // The count is display only: its failure must cost the points neither their push nor their
+        // TTL, and its key no TTL mark it never earned.
+        const [, counted] = await Promise.all([
+          Promise.all(live.map(([key, f]) => deps.redis.hIncrBy(key, f, grant))),
+          deps.redis.hIncrBy(countKey, countField(action.type, hat), 1).then(
+            () => true,
+            (error) => {
+              deps.logError('redis', 'eventPoints.liveCount', error);
+              return false;
+            }
+          ),
+        ]);
         // A push is only display: its failure must not cost the buckets their TTL.
         try {
           deps.onGrant(def, hat, time);
         } catch (error) {
           deps.logError('push', 'eventPoints.onGrant', error);
         }
-        for (const [key] of live) {
+        for (const key of [...live.map(([key]) => key), ...(counted ? [countKey] : [])]) {
           if (bucketTtlSet.has(key)) continue;
           if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
           bucketTtlSet.add(key);

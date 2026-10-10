@@ -6,7 +6,9 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
 const { refereeTotals, resetLiveBase } = await import('~/server/events/points/referee');
 const { getHatTotals, readTotals } = await import('~/server/events/points/read');
-const { eventSeasonKeys, LIVE_BUCKET_MS, liveBucket } = await import('~/server/events/points/keys');
+const { COUNT_BASE_MARK, eventSeasonKeys, LIVE_BUCKET_MS, liveBucket } = await import(
+  '~/server/events/points/keys'
+);
 
 // String, hash and set semantics, with MULTI applied only at EXEC and RENAME failing on a missing
 // source as Redis does. Every MULTI is recorded so a test can see what went in one transaction.
@@ -132,7 +134,7 @@ describe('resetLiveBase', () => {
       totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, {}, { 'view:a': 3 })
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15', b: '4', c: '1' });
-    expect(fake.hashes.get(keys.base('count'))).toEqual({ 'view:a': '3' });
+    expect(fake.hashes.get(keys.base('count'))).toEqual({ 'view:a': '3', settled: '1' });
     expect(fake.hashes.get(keys.base('team'))).toEqual({ Yellow: '20' });
     // No owner totals this run: the stale base is deleted, not left behind.
     expect(fake.hashes.has(keys.base('owner'))).toBe(false);
@@ -149,6 +151,22 @@ describe('resetLiveBase', () => {
     ]);
     // No staging key survives.
     expect([...fake.hashes.keys()].filter((k) => k.endsWith(':next'))).toEqual([]);
+  });
+
+  // A count base the referee wrote, even an empty one, says the live counts are complete.
+  it('writes the count base with its mark even when no hat has a count', async () => {
+    const fake = seeded();
+    await resetLiveBase(
+      fake.redis as unknown as RefereeRedis,
+      EVENT,
+      'live',
+      cutAt(NEW_CUT),
+      totals({ a: 15 })
+    );
+    expect(fake.hashes.get(keys.base('count'))).toEqual({ [COUNT_BASE_MARK]: '1' });
+    expect(fake.transactions[0]).toContain(
+      `rename ${keys.base('count')}:next ${keys.base('count')}`
+    );
   });
 
   it('clears a leftover staging key before writing it, so a crashed run cannot leak fields', async () => {
@@ -214,6 +232,7 @@ describe('resetLiveBase', () => {
     expect(fake.hashes.get(keys.base('count'))).toEqual({
       'view:1:7:claimed': '1',
       'reaction:1:7:claimed': '1',
+      settled: '1',
     });
   });
 });
@@ -228,13 +247,17 @@ describe('getHatTotals', () => {
     const fake = fakeRedis();
     fake.strings.set(keys.cut, String(NOW_BUCKET - 1));
     fake.hashes.set(keys.base('hat'), { [field]: '30' });
-    fake.hashes.set(keys.base('count'), { [`view:${field}`]: '20', [`remix:${field}`]: '1' });
+    fake.hashes.set(keys.base('count'), {
+      [COUNT_BASE_MARK]: '1',
+      [`view:${field}`]: '20',
+      [`remix:${field}`]: '40',
+    });
     fake.hashes.set(keys.live(NOW_BUCKET, 'hat'), { [field]: '6' });
     fake.hashes.set(keys.live(NOW_BUCKET, 'count'), {
       [`view:${field}`]: '1',
-      [`reaction:${field}`]: '1',
-      [`comment:${field}`]: '2',
-      [`sticker:${field}`]: '3',
+      [`reaction:${field}`]: '3',
+      [`comment:${field}`]: '5',
+      [`sticker:${field}`]: '7',
     });
     const result = await getHatTotals(
       EVENT,
@@ -245,9 +268,41 @@ describe('getHatTotals', () => {
     expect(result).toEqual({
       points: { [field]: 36 },
       counts: {
-        [field]: { impressions: 21, reactions: 1, comments: 2, stickers: 3, remixes: 1 },
+        [field]: { impressions: 21, reactions: 3, comments: 5, stickers: 7, remixes: 40 },
       },
     });
+  });
+
+  // Before the referee has written a count base, the live buckets hold only what earned since the
+  // deploy: no counts, so the reader falls back to the snapshot's, while the points stay live.
+  it('reads no counts until a count base exists, and points all the same', async () => {
+    const fake = fakeRedis();
+    fake.strings.set(keys.cut, String(NOW_BUCKET - 1));
+    fake.hashes.set(keys.base('hat'), { [field]: '30' });
+    fake.hashes.set(keys.live(NOW_BUCKET, 'count'), { [`view:${field}`]: '1' });
+    expect(await getHatTotals(EVENT, [HAT], NOW, fake.redis as unknown as PointsReadRedis)).toEqual(
+      { points: { [field]: 30 }, counts: null }
+    );
+  });
+
+  // The referee swaps both bases and moves the cut in one MULTI; a read that saw the old cut before
+  // it and the new one after re-reads, so points and counts both come from the new base.
+  it('re-reads both scopes when the cut moves mid-read', async () => {
+    const fake = fakeRedis();
+    const OLD = NOW_BUCKET - 2;
+    const NEW = NOW_BUCKET - 1;
+    fake.hashes.set(keys.base('hat'), { [field]: '15' });
+    fake.hashes.set(keys.base('count'), { [COUNT_BASE_MARK]: '1', [`view:${field}`]: '9' });
+    fake.hashes.set(keys.live(OLD, 'hat'), { [field]: '5' });
+    fake.hashes.set(keys.live(OLD, 'count'), { [`view:${field}`]: '4' });
+    fake.hashes.set(keys.live(NEW, 'hat'), { [field]: '1' });
+    fake.hashes.set(keys.live(NEW, 'count'), { [`view:${field}`]: '2' });
+    const cuts = [OLD, NEW, NEW, NEW];
+    const redis = { ...fake.redis, get: vi.fn(async () => String(cuts.shift())) };
+    const result = await getHatTotals(EVENT, [HAT], NOW, redis as unknown as PointsReadRedis);
+    expect(result.points).toEqual({ [field]: 16 });
+    expect(result.counts?.[field].impressions).toBe(11);
+    expect(redis.get).toHaveBeenCalledTimes(4);
   });
 
   // One read of the cut each side for both scopes: the counts and the points always agree on it.

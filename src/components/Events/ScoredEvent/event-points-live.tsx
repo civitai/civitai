@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import type { HatCounts } from '~/server/events/points/read';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
@@ -27,9 +28,16 @@ const WATCH_BATCH = 50;
 
 const isPoints = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
-// The per-type counts a hat push carries, by the getMyHats / getWornHat row fields they replace.
-const HAT_COUNT_KEYS = ['impressions', 'reactions', 'comments', 'stickers', 'remixes'] as const;
-export type HatPushCounts = Partial<Record<(typeof HAT_COUNT_KEYS)[number], number>>;
+// The counts a hat push carries, named as the getMyHats / getWornHat rows name them. Every key of the
+// server's HatCounts, so a count added there fails to compile here until it is read.
+const HAT_COUNT_KEYS = Object.keys({
+  impressions: true,
+  reactions: true,
+  comments: true,
+  stickers: true,
+  remixes: true,
+} satisfies Record<keyof HatCounts, true>) as (keyof HatCounts)[];
+export type HatPushCounts = Partial<HatCounts>;
 
 /** A hat push for this event, or null for anything else. Counts keep only numeric known fields. */
 export function readHatPush(push: unknown, event: string) {

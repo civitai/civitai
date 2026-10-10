@@ -390,6 +390,16 @@ describe('event points pusher', () => {
     expect(sent).toEqual([teamsSend(), hatSend(HAT, 0, false)]);
   });
 
+  // No count base yet: the screens keep the counts they read rather than take zeros.
+  it('sends no counts before the referee has written a count base', async () => {
+    const { pusher, sent } = setup({
+      getHatTotals: vi.fn(async () => ({ points: { [hatField(HAT)]: 4 }, counts: null })),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(sent).toEqual([teamsSend(), hatSend(HAT, 4, false)]);
+  });
+
   it('reads nothing for a scope nobody is watching', async () => {
     const { pusher, sent, deps } = setup({
       selectWatched: vi.fn(async () => ({ hats: [], teams: false })),

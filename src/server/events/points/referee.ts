@@ -7,6 +7,7 @@ import {
   eventPointKeys,
   eventPointSeason,
   eventPointsWindow,
+  COUNT_BASE_MARK,
   countField,
   eventSeasonKeys,
   hatField,
@@ -346,16 +347,17 @@ export async function resetLiveBase(
     : [...totals.hat.keys()];
 
   const scopes: TotalScope[] = ['hat', 'team', 'owner', 'count'];
+  const bases = { ...totals, count: new Map([...totals.count, [COUNT_BASE_MARK, 1]]) };
   for (const scope of scopes) {
     const tmp = `${keys.base(scope)}${TMP_SUFFIX}` as const;
     await redis.del(tmp);
-    for (const part of chunk([...totals[scope].entries()], 1000))
+    for (const part of chunk([...bases[scope].entries()], 1000))
       await redis.hSet(tmp, Object.fromEntries(part.map(([k, v]) => [k, String(v)])));
   }
   const multi = redis.multi();
   for (const scope of scopes) {
     const tmp = `${keys.base(scope)}${TMP_SUFFIX}`;
-    if (totals[scope].size) multi.rename(tmp, keys.base(scope));
+    if (bases[scope].size) multi.rename(tmp, keys.base(scope));
     else multi.del(keys.base(scope));
   }
   multi.set(keys.cut, String(newCutBucket));

@@ -230,6 +230,39 @@ describe('awardEventPoints', () => {
     expect(livePoints('count', countField('reaction', HAT))).toBe(0);
   });
 
+  // The count is display only. Failing, it must not cost the points their push or their TTLs, and
+  // its key must not be marked as given a TTL it never got.
+  it('keeps the points, their push and their TTLs when the count increment fails', async () => {
+    const hIncrBy = fake.redis.hIncrBy;
+    const errors: string[] = [];
+    let countDown = true;
+    build({
+      redis: {
+        ...fake.redis,
+        hIncrBy: (async (key: string, field: string, by: number) => {
+          if (countDown && key.endsWith(':count')) throw new Error('count shard down');
+          return hIncrBy(key, field, by);
+        }) as typeof hIncrBy,
+      },
+      logError: (kind, fn) => void errors.push(`${kind}:${fn}`),
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(errors).toEqual(['redis:eventPoints.liveCount']);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+    expect(granted).toHaveLength(1);
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    const bucket = liveBucket(now);
+    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    for (const scope of ['hat', 'team', 'owner'] as const)
+      expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
+    expect(fake.ttls.has(keys.live(bucket, 'count'))).toBe(false);
+    // The next grant in the bucket that does count gives the count key its TTL.
+    countDown = false;
+    await engine.awardEventPoints([reaction(2)]);
+    expect(livePoints('count', countField('reaction', HAT))).toBe(1);
+    expect(fake.ttls.get(keys.live(bucket, 'count'))).toBe(ttl);
+  });
+
   it('counts a granted action on its hat, at one HINCRBY more than the points', async () => {
     const hIncrBy = fake.redis.hIncrBy;
     const calls: string[] = [];

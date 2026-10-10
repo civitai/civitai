@@ -1,4 +1,5 @@
 import {
+  COUNT_BASE_MARK,
   countField,
   eventPointSeason,
   eventSeasonKeys,
@@ -95,7 +96,8 @@ const HAT_COUNT_TYPES = Object.entries(HAT_COUNT_FIELDS) as [
   keyof HatCounts
 ][];
 
-// Live points and counts per hat, keyed by hatField.
+// Live points and counts per hat, keyed by hatField. Counts are null until the referee has written
+// a count base (COUNT_BASE_MARK).
 export async function getHatTotals(
   event: PointsEvent,
   hats: Omit<EventHat, 'team'>[],
@@ -107,11 +109,15 @@ export async function getHatTotals(
     event,
     {
       hat: unique.map(hatField),
-      count: unique.flatMap((hat) => HAT_COUNT_TYPES.map(([type]) => countField(type, hat))),
+      count: [
+        COUNT_BASE_MARK,
+        ...unique.flatMap((hat) => HAT_COUNT_TYPES.map(([type]) => countField(type, hat))),
+      ],
     },
     now,
     redis
   );
+  if (!count[COUNT_BASE_MARK]) return { points, counts: null };
   const counts: Record<string, HatCounts> = {};
   for (const hat of unique)
     counts[hatField(hat)] = Object.fromEntries(

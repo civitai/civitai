@@ -241,7 +241,7 @@ export function createEventPointsPusher(deps: PushDeps) {
                 event: name,
                 topicId,
                 points: hatTotals?.points[field] ?? 0,
-                counts: hatTotals?.counts[field],
+                counts: hatTotals?.counts?.[field],
               },
             },
             putBack: () => void entryFor(event).hats.set(hatField(hat), hat),

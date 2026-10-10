@@ -623,6 +623,7 @@ describe('referee snapshot', () => {
       'sticker:1:21:claimed': '4',
       'remix:1:21:claimed': '5',
       'modelLike:1:21:claimed': '6',
+      settled: '1',
     });
   });
 
