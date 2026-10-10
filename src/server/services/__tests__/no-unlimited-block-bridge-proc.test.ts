@@ -154,7 +154,7 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   estimateWorkflowBatch: {
     buckets: ['catalog', 'estimate-cells'],
-    why: 'The batch twin of estimateWorkflow. ONE catalog token per call, like a single estimate, plus the cell-WEIGHTED estimate-cells bucket keyed per (install, viewer): each cell is still an orchestrator whatif, so the call alone would let the cell cap multiply cost quotes for the price of one request.',
+    why: 'The batch twin of estimateWorkflow. ONE catalog token per call, like a single estimate, plus the cell-WEIGHTED estimate-cells bucket, keyed per install like catalog so the bound does not grow with viewers: each cell is still an orchestrator whatif, so the call alone would let the cell cap multiply cost quotes for the price of one request.',
   },
   getImagesByIds: {
     buckets: ['catalog'],

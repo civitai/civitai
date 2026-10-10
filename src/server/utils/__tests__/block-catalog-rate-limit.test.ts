@@ -95,13 +95,14 @@ describe('checkBlockCatalogRateLimit', () => {
  * The ESTIMATE-CELLS bucket: what `blocks.estimateWorkflowBatch` charges per CELL,
  * on top of the one catalog token it charges per call.
  *
- * The ceiling and window are pinned as LITERALS (64 cells / 10 s) rather than read
+ * The ceiling and window are pinned as LITERALS (150 cells / 10 s) rather than read
  * from the module's constants: an assertion built from the constant it checks
  * moves with it and can never notice the number changing.
  */
 describe('checkBlockEstimateCellsRateLimit', () => {
-  // Install AND viewer are both in the key; the catalog key above has no viewer.
-  const CELLS_KEY = 'blocks:token-rate-limit:estimate-cells:page_apb_grid:4207';
+  // The install alone — NOT the viewer — exactly like the catalog key above. A
+  // per-viewer key would let the install-wide total grow with the viewer count.
+  const CELLS_KEY = 'blocks:token-rate-limit:estimate-cells:page_apb_grid';
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -109,9 +110,9 @@ describe('checkBlockEstimateCellsRateLimit', () => {
     mockRedis.ttl.mockResolvedValue(10);
   });
 
-  it('charges the bucket the CELL COUNT, on a key holding the install and the viewer', async () => {
+  it('charges the bucket the CELL COUNT, on a key holding the install', async () => {
     mockRedis.incrBy.mockResolvedValue(11);
-    const res = await checkBlockEstimateCellsRateLimit('page_apb_grid', 4207, 11);
+    const res = await checkBlockEstimateCellsRateLimit('page_apb_grid', 11);
     expect(res).toEqual({ allowed: true });
     expect(mockRedis.incrBy).toHaveBeenCalledTimes(1);
     expect(mockRedis.incrBy).toHaveBeenCalledWith(CELLS_KEY, 11);
@@ -120,36 +121,36 @@ describe('checkBlockEstimateCellsRateLimit', () => {
   it('arms a 10 s window on the first charge of a window', async () => {
     // First charge of a fresh window: the counter comes back equal to the weight.
     mockRedis.incrBy.mockResolvedValue(11);
-    await checkBlockEstimateCellsRateLimit('page_apb_grid', 4207, 11);
+    await checkBlockEstimateCellsRateLimit('page_apb_grid', 11);
     expect(mockRedis.expire).toHaveBeenCalledWith(CELLS_KEY, 10);
   });
 
-  it('allows the 64th cell of a window and refuses the 65th', async () => {
-    mockRedis.incrBy.mockResolvedValue(64);
-    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 4207, 16)).toEqual({
+  it('allows the 150th cell of a window and refuses the 151st', async () => {
+    mockRedis.incrBy.mockResolvedValue(150);
+    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 16)).toEqual({
       allowed: true,
     });
-    mockRedis.incrBy.mockResolvedValue(65);
+    mockRedis.incrBy.mockResolvedValue(151);
     mockRedis.ttl.mockResolvedValue(7);
-    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 4207, 1)).toEqual({
+    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 1)).toEqual({
       allowed: false,
       retryAfterSeconds: 7,
     });
   });
 
-  it('two viewers of one install do not share a window', async () => {
+  it('does not share a window with the catalog bucket the same call charges', async () => {
     mockRedis.incrBy.mockResolvedValue(3);
-    await checkBlockEstimateCellsRateLimit('page_apb_grid', 4207, 3);
-    await checkBlockEstimateCellsRateLimit('page_apb_grid', 9113, 3);
-    expect(mockRedis.incrBy.mock.calls.map((c) => c[0])).toEqual([
-      'blocks:token-rate-limit:estimate-cells:page_apb_grid:4207',
-      'blocks:token-rate-limit:estimate-cells:page_apb_grid:9113',
+    await checkBlockEstimateCellsRateLimit('page_apb_grid', 3);
+    await checkBlockCatalogRateLimit('page_apb_grid');
+    expect(mockRedis.incrBy.mock.calls).toEqual([
+      ['blocks:token-rate-limit:estimate-cells:page_apb_grid', 3],
+      ['blocks:token-rate-limit:catalog:page_apb_grid', 1],
     ]);
   });
 
   it('redis throws → FAIL OPEN, like every sibling bucket', async () => {
     mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
-    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 4207, 16)).toEqual({
+    expect(await checkBlockEstimateCellsRateLimit('page_apb_grid', 16)).toEqual({
       allowed: true,
     });
   });

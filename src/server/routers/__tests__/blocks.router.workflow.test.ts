@@ -12342,8 +12342,8 @@ describe('blocks.estimateWorkflowBatch', () => {
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith('page_apb_grid');
     expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledTimes(1);
-    // (install, viewer, cells) — 3 cells, viewer 42.
-    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledWith('page_apb_grid', 42, 3);
+    // (install, cells) — the install alone, like the catalog bucket; 3 cells.
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledWith('page_apb_grid', 3);
   });
 
   it('an EMPTY list fails the whole call before anything is charged', async () => {

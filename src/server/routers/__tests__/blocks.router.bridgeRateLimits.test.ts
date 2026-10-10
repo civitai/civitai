@@ -506,11 +506,11 @@ describe('blocks.estimateWorkflowBatch — one catalog token, plus the cells buc
       blockToken: 'tok',
       bodies: [cell, cell, cell],
     });
-    // One token for the call, three cells for the cells bucket (install, viewer, count).
+    // One token for the call, three cells for the cells bucket (install, count).
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
     expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith(INSTANCE);
     expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledTimes(1);
-    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledWith(INSTANCE, VIEWER, 3);
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledWith(INSTANCE, 3);
     // It RESOLVED — a per-cell failure is a result, never a refusal of the call.
     expect(result.snapshots).toHaveLength(3);
     expect(result.aggregate.cellCount).toBe(3);

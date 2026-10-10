@@ -6186,20 +6186,19 @@ export const blocksRouter = router({
    *   1. The CATALOG bucket, weight 1, per `blockInstanceId` — exactly what one
    *      single estimate costs. A 16-cell grid used to take 16 of an allowance a
    *      page app shares between every viewer and every other read; it now takes 1.
-   *   2. The ESTIMATE-CELLS bucket, weight = cell count, per (install, viewer).
+   *   2. The ESTIMATE-CELLS bucket, weight = cell count, per `blockInstanceId`.
    *      Each cell is still an orchestrator `whatif`, so weight 1 alone would let
-   *      one caller start `MAX × BLOCK_ESTIMATE_BATCH_MAX_CELLS` cost quotes per
-   *      window for the price of `MAX` requests. This bucket bounds one viewer's
-   *      batch cells per window instead of letting the cell cap multiply them.
+   *      a caller start `C × N` cost quotes per window for the price of `C`
+   *      requests. Keyed per install like the catalog bucket (not per viewer), so
+   *      the bound below does not grow with the number of viewers.
    *
-   * Upstream cost quotes per catalog window, per block instance (C = the catalog
-   * ceiling, K = the cell ceiling, N = the cell cap; all in
-   * `block-catalog-rate-limit.ts` and `block-estimate-batch.constants.ts`):
-   *   - before this procedure:            C, shared by every viewer of the install;
-   *   - after, one viewer:                (C - ceil(K / N)) + K;
-   *   - after, V viewers of one page app: (C - B) + min(B × N, V × K) for B batch
-   *     calls, so at most C × N, and only once V × K >= C × N.
-   * With weight 1 alone the last line's ceiling would be reachable by ONE viewer.
+   * Upstream cost quotes per window, per block instance (C = the catalog ceiling,
+   * K = the cell ceiling, N = the cell cap; all in `block-catalog-rate-limit.ts`
+   * and `block-estimate-batch.constants.ts`):
+   *   - before this procedure: C (single estimates only);
+   *   - after: (C - B) single estimates + min(B × N, K) batch cells for B batch
+   *     calls, at most (C - ceil(K / N)) + K, whatever the number of viewers.
+   * With weight 1 alone it would be C × N.
    *
    * Both fail open on a Redis incident and both THROW when they refuse, like
    * `estimateWorkflow` and for its reason: an estimate has no workflow and no money
@@ -6230,10 +6229,9 @@ export const blocksRouter = router({
           message: 'Rate limit exceeded, please retry shortly.',
         });
       }
-      // The cell bucket is keyed on the viewer, so the viewer is resolved for the
-      // call. Every arm of the single estimate refuses an anonymous subject too.
-      const userId = parseSubjectUserId(claims.sub);
-      if (userId == null) {
+      // Every arm of the single estimate refuses an anonymous subject, so a batch
+      // from one is refused whole, before any cell is charged.
+      if (parseSubjectUserId(claims.sub) == null) {
         throw new TRPCError({
           code: 'UNAUTHORIZED',
           message: 'estimate requires authenticated viewer',
@@ -6241,7 +6239,6 @@ export const blocksRouter = router({
       }
       const cellRate = await checkBlockEstimateCellsRateLimit(
         claims.blockInstanceId,
-        userId,
         input.bodies.length
       );
       if (!cellRate.allowed) {
