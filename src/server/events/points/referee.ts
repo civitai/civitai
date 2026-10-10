@@ -336,21 +336,20 @@ export async function runEventPointsReferee(
   );
   // This runs in a job: its corrections go out before it returns, not on a later window. Preview
   // corrections are never pushed; `unpushed` counts live ones the pusher refused (paused or off).
+  // What the drain leaves unsent it logs itself.
   let unpushed = 0;
-  let unsent = 0;
   if (season === 'live' && changed.length) {
     for (const field of changed) {
       const hat = parseHatField(field);
       if (!hat || !markEventPointsDirty(event, hat, now)) unpushed++;
     }
-    unsent = (await drainEventPointsPush()).left;
+    await drainEventPointsPush();
   }
   return {
     season,
     rows: rows.length,
     changed: changed.length,
     unpushed,
-    unsent,
     recomputeFrom: window.recomputeFrom.toISOString(),
   };
 }

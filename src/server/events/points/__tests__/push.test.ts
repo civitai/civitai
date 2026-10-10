@@ -357,8 +357,11 @@ describe('event points pusher', () => {
   it('drain stops when awards mark faster than it sends, even on a frozen clock', async () => {
     let owner = 1_000;
     const { pusher } = setup({
-      // Each send marks a hat nobody has marked yet, so the set never shrinks.
-      topicSend: vi.fn(async () => void pusher.markDirty(event, hat(owner++), NOW)),
+      // Each send marks a hat nobody has marked yet, so the set does not shrink. Bounded, so a drain
+      // that ignores the stall still ends, and fails on the count instead of hanging.
+      topicSend: vi.fn(async () => {
+        if (owner < 1_000 + 10 * MAX_SENDS_PER_FLUSH) pusher.markDirty(event, hat(owner++), NOW);
+      }),
     });
     for (let o = 1; o <= 250; o++) pusher.markDirty(event, hat(o), NOW);
     // No timers are advanced, so the fake clock never reaches the deadline.

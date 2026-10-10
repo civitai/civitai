@@ -431,14 +431,14 @@ describe('referee snapshot', () => {
       engine.on = false;
       const off = await runEventPointsReferee(scored, 'live', HOURLY);
       engine.on = true;
-      expect(off).toEqual(expect.objectContaining({ changed: 1, unpushed: 1, unsent: 0 }));
+      expect(off).toEqual(expect.objectContaining({ changed: 1, unpushed: 1 }));
       expect(signals.topicSend).not.toHaveBeenCalled();
 
       // The same run with the switch on, from the same starting state.
       strings.clear();
       hashes.clear();
       const live = await runEventPointsReferee(scored, 'live', HOURLY);
-      expect(live).toEqual(expect.objectContaining({ changed: 1, unpushed: 0, unsent: 0 }));
+      expect(live).toEqual(expect.objectContaining({ changed: 1, unpushed: 0 }));
       const topicId = hatTopicId({ ownerId: 1, cosmeticId: 21, claimKey: 'claimed' });
       expect(signals.topicSend.mock.calls).toEqual([
         [
