@@ -18,7 +18,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
     mockScoring: {
       getEventStandings: vi.fn(),
       getTeamScoreHistory: vi.fn(),
-      hasStandingsSnapshot: vi.fn(async (_e: unknown) => false),
+      hasStandingsSnapshot: vi.fn<(event: unknown) => Promise<boolean>>(async () => false),
       refreshStandings: vi.fn(),
     },
     mockReferee: { runEventPointsReferee: vi.fn() },
