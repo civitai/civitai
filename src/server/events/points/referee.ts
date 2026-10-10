@@ -29,6 +29,9 @@ const FULL_RECOMPUTE_HOUR = 3;
 // hourly run before the window's end, and it settles only to a bucket SETTLE_LAG_MS back; the winner
 // is named right after. Lifted once the winner waits for a run that settles the whole window.
 export const REMOVAL_CUTOFF_MS = SETTLE_LAG_MS + 60 * 60 * 1000 + LIVE_BUCKET_MS;
+// Server-side cap on each referee query, under the ClickHouse client's 300s request timeout: a
+// longer cap would leave the query running on the server after the client has given up on it.
+export const REFEREE_QUERY_MAX_SECONDS = 270;
 
 export type RefereeEvent = {
   name: string;
@@ -161,6 +164,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window) {
   const result = await clickhouse.query({
     query: eventPointsRefereeUsersSql,
     format: 'JSONEachRow',
+    clickhouse_settings: { max_execution_time: REFEREE_QUERY_MAX_SECONDS },
     query_params: params,
   });
   const [users] = await result.json<{ actors: number[]; owners: number[] }>();
@@ -202,7 +206,7 @@ async function queryReferee(event: RefereeEvent, window: Window) {
     // A whole-season run on the nightly pass groups every first of the season; spill to disk rather
     // than fail on memory, and allow it the time.
     clickhouse_settings: {
-      max_execution_time: 600,
+      max_execution_time: REFEREE_QUERY_MAX_SECONDS,
       max_bytes_before_external_group_by: '8000000000',
       max_bytes_before_external_sort: '8000000000',
     },

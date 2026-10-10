@@ -3,8 +3,14 @@ import type { EventScoring } from '~/server/events/base.event';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
-const { changedHats, REMOVAL_CUTOFF_MS, refereeQueryParams, refereeTotals, refereeWindow } =
-  await import('~/server/events/points/referee');
+const {
+  changedHats,
+  REFEREE_QUERY_MAX_SECONDS,
+  REMOVAL_CUTOFF_MS,
+  refereeQueryParams,
+  refereeTotals,
+  refereeWindow,
+} = await import('~/server/events/points/referee');
 const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
   '~/server/events/points/referee.sql'
 );
@@ -68,10 +74,15 @@ describe('refereeWindow', () => {
       expect(removeCut.toISOString()).toBe('2026-12-01T22:45:00.000Z');
     });
 
-    // The last run before the window closes must settle every removal that still counts.
+    // The last run before the window closes must settle every removal that still counts, wherever
+    // in the final hour it falls.
     it('settles every counted removal by the last run before the window closes', () => {
-      const last = refereeWindow(FINALIZING, 'live', new Date('2026-12-01T23:00:00.000Z'));
-      expect(last.removeCut.toISOString()).toBe('2026-12-01T22:45:00.000Z');
+      const close = new Date('2026-12-02T00:00:00.000Z').getTime();
+      for (let minute = 0; minute < 60; minute++) {
+        const run = new Date(close - minute * 60 * 1000);
+        const { removeCut } = refereeWindow(FINALIZING, 'live', run);
+        expect(removeCut.getTime(), run.toISOString()).toBe(close - REMOVAL_CUTOFF_MS);
+      }
     });
 
     it('recomputes the whole season from the first run whose cut reaches the end', () => {
@@ -79,6 +90,17 @@ describe('refereeWindow', () => {
       expect(at('2026-12-01T00:10:00.000Z').toISOString()).toBe('2026-11-01T00:00:00.000Z');
       expect(at('2026-11-30T23:59:00.000Z').toISOString()).toBe('2026-11-29T00:00:00.000Z');
     });
+  });
+
+  // With a finalize window shorter than the cutoff, removals must never stop before the adds do.
+  it('settles removals at least as far as adds when the finalize window is short', () => {
+    for (const finalizeAfterMs of [0, 30 * 60 * 1000]) {
+      const event = { ...EVENT, scoring: { ...scoring, finalizeAfterMs } };
+      for (const time of ['2026-11-30T23:40:00.000Z', '2026-12-01T12:07:00.000Z']) {
+        const { cut, removeCut } = refereeWindow(event, 'live', new Date(time));
+        expect(removeCut.getTime(), `${finalizeAfterMs} ${time}`).toBe(cut.getTime());
+      }
+    }
   });
 
   it('settles removals to the same cut as adds while the season runs, and in the preview', () => {
@@ -123,6 +145,11 @@ describe('refereeWindow', () => {
 
 // The queries' placeholders are only checked by a real ClickHouse (scripts/check-event-points-sql.mjs),
 // so a param renamed on one side would otherwise surface only in production.
+// The ClickHouse client gives up at 300s; a server-side cap past that leaves the query running.
+it('caps each referee query under the client request timeout', () => {
+  expect(REFEREE_QUERY_MAX_SECONDS).toBeLessThan(300);
+});
+
 describe('referee query params', () => {
   const placeholders = (sql: string) =>
     new Map([...sql.matchAll(/\{(\w+):([^}]+)\}/g)].map(([, name, type]) => [name, type]));

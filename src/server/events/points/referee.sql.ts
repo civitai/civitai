@@ -95,7 +95,8 @@ ORDER BY day, userId, cosmeticId, claimKey
 `;
 
 // Everyone the recomputed rows could credit or be credited by, so their accounts can be checked in
-// Postgres. Same window as the query above.
+// Postgres. Bounded by the adds' cut: a removal only takes back an add, whose actor and owner are
+// already here.
 export const eventPointsRefereeUsersSql = /* sql */ `
 SELECT groupUniqArray(actorId) AS actors, groupUniqArray(ownerId) AS owners
 FROM event_point_events

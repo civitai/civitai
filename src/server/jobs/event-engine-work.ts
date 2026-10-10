@@ -22,8 +22,9 @@ export const eventEngineLeaderboardUpdate = createJob(
   async () => {
     await eventEngine.updateLeaderboard();
   },
-  // Outlasts the referee's 600s ClickHouse query, so a retry cannot start a second run beside it.
-  { lockExpiration: 15 * 60 }
+  // Outlasts both referee queries (REFEREE_QUERY_MAX_SECONDS each), and stays held when the
+  // scheduler hangs up, so its retry cannot start a second run beside a long one.
+  { lockExpiration: 15 * 60, keepLockOnDisconnect: true }
 );
 
 // export const eventEngineApplyDiscordRoles = createJob(
