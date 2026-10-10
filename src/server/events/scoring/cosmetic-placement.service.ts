@@ -73,11 +73,12 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
       AND (u."bannedAt" IS NOT NULL OR u."deletedAt" IS NOT NULL OR u."excludeFromLeaderboards")
   `;
   const hiddenIds = hidden.map((u) => u.id);
+  // NOT IN over a subquery is hashed; <> ALL(array) compares every row with the whole array.
 
   const teamDays = await db.$queryRaw<{ team: string; day: Date; points: number }[]>`
     SELECT team, day, sum(points)::int AS points
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" <> ALL(${hiddenIds}::int[])
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
     GROUP BY team, day
     ORDER BY day
   `;
@@ -106,7 +107,7 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
       sum(comments)::int AS comments, sum(stickers)::int AS stickers, sum(remixes)::int AS remixes,
       sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
-    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" <> ALL(${hiddenIds}::int[])
+    WHERE event = ${event.name} AND day >= ${fromDay}::date AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
     GROUP BY "userId", "cosmeticId", "claimKey", team
     ORDER BY points DESC
     LIMIT ${TOP_COSMETICS}
@@ -118,7 +119,7 @@ async function computeStandings(event: StandingsEvent, db: typeof dbWrite | type
         row_number() OVER (PARTITION BY team ORDER BY sum(points) DESC) AS rn
       FROM "EventCosmeticScoreDaily"
       WHERE event = ${event.name} AND day >= ${fromDay}::date
-        AND "userId" <> ALL(${hiddenIds}::int[])
+        AND "userId" NOT IN (SELECT unnest(${hiddenIds}::int[]))
       GROUP BY team, "userId"
     ) ranked
     WHERE rn <= ${TOP_USERS_PER_TEAM}
