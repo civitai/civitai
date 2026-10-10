@@ -70,6 +70,7 @@ import {
   purgeResizeCache,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueForWorkflow } from '~/server/services/technique.service';
@@ -1243,8 +1244,15 @@ export const addPostImage = async ({
   meta,
   user,
   externalDetailsUrl,
+  assertPostOwnedBy,
   ...props
-}: ImageSchema & { user: SessionUser; postId: number; generationWorkflowId?: string }) => {
+}: ImageSchema & {
+  user: SessionUser;
+  postId: number;
+  generationWorkflowId?: string;
+  /** Shared across a request that adds several images to one post; see `createPostOwnerCheck`. */
+  assertPostOwnedBy?: AssertPostOwnedBy;
+}) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
@@ -1339,6 +1347,7 @@ export const addPostImage = async ({
     ...imageProps,
     meta,
     verifiedSourceImageIds,
+    assertPostOwnedBy,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,

@@ -12,7 +12,7 @@ import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
 import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
@@ -104,7 +104,7 @@ export const upsertArticleInput = z.object({
   content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  coverImage: imageSchema.nullish(),
+  coverImage: imageReferenceInputSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),

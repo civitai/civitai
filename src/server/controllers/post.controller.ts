@@ -25,6 +25,7 @@ import { sendMessagesToCollaborators } from '~/server/services/entity-collaborat
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -173,8 +174,16 @@ export const createPostWithImagesHandler = async ({
     // 2) Attach each image in order.
     const sortedImages = [...images].sort((a, b) => a.index - b.index);
     const attachedImageIds: number[] = [];
+    // createImage's own primary-DB post-owner check runs once per request per post;
+    // addPostImage keeps its existing per-image check.
+    const assertPostOwnedBy = createPostOwnerCheck();
     for (const image of sortedImages) {
-      const attached = await addPostImage({ ...image, postId: post.id, user: ctx.user });
+      const attached = await addPostImage({
+        ...image,
+        postId: post.id,
+        user: ctx.user,
+        assertPostOwnedBy,
+      });
       attachedImageIds.push(attached.id);
     }
 
