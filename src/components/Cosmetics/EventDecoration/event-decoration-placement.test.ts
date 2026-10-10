@@ -249,9 +249,11 @@ it("home blocks hold the cards past the right edge out of a hat's reach", () => 
     'm'
   );
   expect(Number(source.match(spacer)?.[1])).toBe(ITEM_BLEED - 8);
-  // A row-flow grid would place cards into that column.
-  expect(declared('src/components/HomeBlocks/HomeBlock.module.scss', '&.gridRow::after {')).toBe(
-    true
+  // A row-flow grid would place cards into that column, and the scrolling layouts would scroll
+  // past the last card into it.
+  expect(source).toMatch(/^\s*&\.gridRow::after \{\s*display: none;\s*\}/m);
+  expect(source).toMatch(
+    /@container \(max-width: theme\('screens\.md'\)\) \{[^}]*&::after \{\s*display: none;\s*\}/
   );
 });
 
