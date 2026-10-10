@@ -118,6 +118,7 @@ const ledgerTypes = () => ch.rows.map((r) => `${r.op}:${r.type}:${r.actorId}`);
 describe('hook -> engine -> ledger -> read, on the registered birthday2026 config', () => {
   it('earns every hooked type at its configured weight, readable per hat, team and owner', async () => {
     const weights = birthday2026.scoring!.types;
+    push.markEventPointsDirty.mockClear();
     await hooks.onReactionCreated({ entityType: 'image', entityId: IMAGE, userId: 1 });
     await hooks.onCommentCreated({ userId: 2, entityType: 'image', entityId: IMAGE, threadId: 0 });
     await hooks.onPlacementApproved({

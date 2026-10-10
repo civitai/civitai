@@ -70,6 +70,11 @@ export function createEventPointsPusher(deps: PushDeps) {
   // When each failure inside the last cool-off happened.
   let failureTimes: number[] = [];
   let openUntil = 0;
+  // While a drain runs, its deadline: no send starts after it, in the drain's flushes or in a flush
+  // the timer had already started.
+  let sendBy = Infinity;
+  // The cap's drops are logged once per server, not once per mark.
+  let capLogged = false;
 
   const isOpen = () => Date.now() < openUntil;
 
@@ -94,7 +99,12 @@ export function createEventPointsPusher(deps: PushDeps) {
     if (time < event.startDate || isOpen() || !deps.isEnabled()) return false;
     const entry = entryFor(event);
     const field = hatField(hat);
-    if (entry.hats.size >= MAX_DIRTY_HATS && !entry.hats.has(field)) return false;
+    if (entry.hats.size >= MAX_DIRTY_HATS && !entry.hats.has(field)) {
+      if (!capLogged)
+        logPush('warning', event.name, { message: 'dirty hats at cap, marks dropped' });
+      capLogged = true;
+      return false;
+    }
     entry.hats.set(field, hat);
     entry.teams = true;
     schedule();
@@ -181,8 +191,8 @@ export function createEventPointsPusher(deps: PushDeps) {
     timer = undefined;
   }
 
-  // Starts no send after `deadline`; what it did not start is dirty again for the next window.
-  async function flushOnce(deadline: number) {
+  // Starts no send after `sendBy`; what it did not start is dirty again for the next window.
+  async function flushOnce() {
     clearTimer();
     if (isOpen() || !deps.isEnabled()) return dirty.clear();
     const queue = await collect(MAX_SENDS_PER_FLUSH);
@@ -190,7 +200,7 @@ export function createEventPointsPusher(deps: PushDeps) {
     let sent = 0;
     let failed = 0;
     const worker = async () => {
-      while (next < queue.length && !isOpen() && Date.now() < deadline) {
+      while (next < queue.length && !isOpen() && Date.now() < sendBy) {
         const { send } = queue[next++];
         try {
           await deps.topicSend(send);
@@ -198,7 +208,8 @@ export function createEventPointsPusher(deps: PushDeps) {
           failuresInARow = 0;
         } catch {
           failed++;
-          recordFailure();
+          // A send still in flight when the breaker opened must not open it again.
+          if (!isOpen()) recordFailure();
         }
       }
     };
@@ -214,8 +225,8 @@ export function createEventPointsPusher(deps: PushDeps) {
   }
 
   // One window's flush. Anything over the bound, or marked while it ran, waits for the next window.
-  function flush(deadline = Infinity) {
-    flushing ??= flushOnce(deadline).finally(() => {
+  function flush() {
+    flushing ??= flushOnce().finally(() => {
       flushing = undefined;
       schedule();
     });
@@ -226,16 +237,24 @@ export function createEventPointsPusher(deps: PushDeps) {
     [...dirty.values()].reduce((n, d) => n + d.hats.size + (d.teams ? 1 : 0), 0);
 
   // Flushes now, and again until nothing is dirty or `maxMs` has passed, for a job that must get its
-  // pushes out before it ends. It starts no send after `maxMs`, so it overruns by at most the sends
-  // already in flight. It also stops once a flush leaves no fewer dirty topics than it found, as when
-  // awards mark faster than it sends. What is left goes out on the normal window.
+  // pushes out before it ends. No send starts after `maxMs`, including in a flush the timer had
+  // already started, so it overruns by the sends in flight and a flush's reads. It also stops once a
+  // flush leaves no fewer dirty topics than it found, as when awards mark faster than it sends. What
+  // is left goes out on the normal window.
   async function drain(maxMs: number) {
     const deadline = Date.now() + maxMs;
-    while (dirty.size && Date.now() < deadline) {
+    sendBy = Math.min(sendBy, deadline);
+    try {
+      while (dirty.size && Date.now() < deadline) {
+        await flushing;
+        const before = pending();
+        await flush();
+        if (pending() >= before) break;
+      }
+      // A flush the timer started may still be running; it stops at the deadline too.
       await flushing;
-      const before = pending();
-      await flush(deadline);
-      if (pending() >= before) break;
+    } finally {
+      sendBy = Infinity;
     }
     const left = pending();
     if (left) logPush('warning', undefined, { message: 'drain timed out', left });

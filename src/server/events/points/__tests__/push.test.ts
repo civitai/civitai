@@ -211,7 +211,7 @@ describe('event points pusher', () => {
     }
     expect(pusher.isOpen()).toBe(false);
     // A cool-off later, a fourth failure is the only recent one.
-    await vi.advanceTimersByTimeAsync(BREAKER_COOL_OFF_MS);
+    await vi.advanceTimersByTimeAsync(BREAKER_COOL_OFF_MS + 1);
     failNext = 1;
     pusher.markDirty(event, hat(1), new Date());
     pusher.markDirty(event, hat(2), new Date());
@@ -352,6 +352,48 @@ describe('event points pusher', () => {
     expect(left).toBe(251 - 30);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS + 20_000);
     expect(sent).toHaveLength(251);
+  });
+
+  it('drain holds a flush the timer already started to its deadline', async () => {
+    const { pusher, sent } = setup({
+      topicSend: vi.fn(async (args: Sent) => {
+        await new Promise((r) => setTimeout(r, 100));
+        sent.push(args);
+      }),
+    });
+    for (let owner = 1; owner <= 250; owner++) pusher.markDirty(event, hat(owner), NOW);
+    // The window's flush starts its 200 sends, 3 every 100ms.
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    let done = false;
+    const drained = pusher.drain(500).then((r) => ((done = true), r));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(done).toBe(true);
+    // 5 rounds of 3 inside the deadline, not the timer flush's 200.
+    expect(sent).toHaveLength(15);
+    expect((await drained).left).toBe(251 - 15);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS + 20_000);
+    expect(sent).toHaveLength(251);
+  });
+
+  it('a send that fails after the breaker opened does not open it again', async () => {
+    let call = 0;
+    const { pusher } = setup({
+      topicSend: vi.fn(async () => {
+        const n = call++;
+        // Failures spread out (never 2 in a row) open it on the 4th, at call 9; calls 10 and 11 are
+        // already in flight, and fail a second later.
+        await new Promise((r) => setTimeout(r, n >= 10 ? 1_000 : 10));
+        if (n % 3 === 0 || n >= 10) throw new Error('timeout');
+      }),
+    });
+    for (let owner = 1; owner <= 50; owner++) pusher.markDirty(event, hat(owner), NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS + 100);
+    expect(pusher.isOpen()).toBe(true);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(call).toBe(12);
+    // Opened at about +1040ms; a re-open by the late failures would hold it to about +62040ms.
+    await vi.advanceTimersByTimeAsync(BREAKER_COOL_OFF_MS - 2_100 + 500);
+    expect(pusher.isOpen()).toBe(false);
   });
 
   it('drain stops when awards mark faster than it sends, even on a frozen clock', async () => {
