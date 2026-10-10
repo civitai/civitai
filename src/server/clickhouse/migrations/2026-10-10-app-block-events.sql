@@ -28,9 +28,27 @@
 -- There is no free-text column: every string stored is a platform id or a value an approved
 -- manifest declared.
 --
--- 🔴 THE RAW IP IS NOT STORED. A signed-out viewer's `viewerKey` is a hash of the IP with a
--- server-secret salt that rotates daily (a guessable salt would let the hash be reversed by brute
--- force), so uniqExact(viewerKey) across days counts a returning signed-out visitor once per day.
+-- `viewerKey` is the unique-viewer key, computed in Node by the ingest as the first 8 bytes of a
+-- sha256 digest read big-endian:
+--   createHash('sha256').update(input).digest().readBigUInt64BE(0)
+-- where input is 'u:' + userId for a signed-in viewer, and 'a:' + daySalt + ':' + ip for a
+-- signed-out one. It exceeds 2^53, so send it as a decimal STRING in JSONEachRow. SQL computes the
+-- same value with reinterpretAsUInt64(reverse(substring(SHA256(input), 1, 8))).
+--
+-- 🔴 SALT CONTRACT — "THE RAW IP IS NOT STORED" HOLDS ONLY UNDER IT. `daySalt` is RANDOM per UTC
+-- day, held only in memory or a store with a TTL of that day, then destroyed. It is NEVER derived
+-- from a long-lived secret (no HMAC(secret, date)): IPv4 is only 2^32 addresses, so anyone holding a
+-- derivable salt can reverse every signed-out row for the full 400-day retention.
+--
+-- Because a signed-out key rotates daily, distinct keys grow with the length of the range (one
+-- returning visitor counts once per day). The read path should use uniqCombined rather than
+-- uniqExact for week-bucketed ranges (over 60 days), where uniqExact's memory grows with the
+-- distinct count.
+--
+-- 🔴 AN ABSENT MAP KEY READS AS THE TYPE DEFAULT, not NULL: numProps['k'] = 0, boolProps['k'] = 0,
+-- enumProps['k'] = ''. A property is optional per event, so every aggregate must gate on presence:
+--   avgIf(numProps['k'], mapContains(numProps, 'k'))
+--   countIf(mapContains(boolProps, 'k') AND boolProps['k'] = 1)   -- and = 0 for false
 --
 -- Retention: 400 days, which must stay above `MAX_RANGE_DAYS` in
 -- src/server/services/blocks/app-analytics.service.ts.
@@ -46,8 +64,8 @@ CREATE TABLE IF NOT EXISTS default.appBlockEvents
   eventName LowCardinality(String),
   -- viewer; 0 = signed out
   userId Int32,
-  -- 'u:<userId>' | 'a:<daily-salted ip sha256 hex>'
-  viewerKey String,
+  -- see the header for the derivation and the salt contract
+  viewerKey UInt64,
   isAnon UInt8,
   isOwner UInt8,
   enumProps Map(LowCardinality(String), LowCardinality(String)),
