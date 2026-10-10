@@ -8,6 +8,7 @@ import {
   type GatedEvent,
 } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
+import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import {
   decodeHat,
   encodeHat,
@@ -125,6 +126,7 @@ const logSyncError = (fn: string, error: unknown, extra: object) =>
 // referee runs it too before settling. Every difference it fixes is a write-through that was missed.
 export async function syncEventHats(now = new Date()) {
   const results: { event: string; set: number; removed: number }[] = [];
+  if (!(await isEventPointsEnabled())) return results;
   for (const eventDef of await hatSyncEvents(now)) {
     // One event failing (an unreadable flag throws) must not stop the others' hats syncing.
     try {
@@ -179,6 +181,7 @@ export async function syncOwnerEventHats(
   now = new Date()
 ) {
   try {
+    if (!(await isEventPointsEnabled())) return;
     for (const eventDef of await hatSyncEvents(now)) {
       try {
         await syncOwnerOneEvent(eventDef, ownerId, touched, now);

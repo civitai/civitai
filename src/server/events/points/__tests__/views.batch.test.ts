@@ -12,6 +12,11 @@ const { awardEventPoints, getSession, hatted } = vi.hoisted(() => ({
   hatted: new Set<string>(),
 }));
 
+// The engine's kill switch is on here; enabled.test.ts covers it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => true,
+  isEventPointsEnabledSync: () => true,
+}));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: unknown) => handler,
 }));

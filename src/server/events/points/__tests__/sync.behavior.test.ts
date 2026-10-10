@@ -15,6 +15,12 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * engine, the seam the engine and hook suites each fake.
  */
 
+// The engine's kill switch is on here unless a test turns it off.
+const killSwitch = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => killSwitch.on,
+  isEventPointsEnabledSync: () => killSwitch.on,
+}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 vi.mock('~/server/flipt/tester-segment', async () => {
   return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
@@ -100,6 +106,7 @@ const place = (
 beforeEach(async () => {
   await db.pg.exec(`TRUNCATE "EventCosmeticPlacement"`);
   vi.clearAllMocks();
+  killSwitch.on = true;
   const raw = pgliteRaw(db.pg);
   dbMock.dbRead.$queryRaw.mockImplementation(raw.queryRaw as never);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
@@ -362,6 +369,21 @@ describe('syncEventHats -> engine', () => {
         }
       }
     );
+
+    it('writes nothing, and reads nothing, with the kill switch off', async () => {
+      await place(OWNER, 100);
+      killSwitch.on = false;
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      await syncEventHats(LIVE);
+      expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+      expect(redisMock.sysRedis.hDel).not.toHaveBeenCalled();
+      expect(log).toEqual([]);
+      expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+      // Switched back on, the same calls write: the silence above is the switch.
+      killSwitch.on = true;
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
+    });
 
     it('leaves another owner’s hat on touched content to the reconcile', async () => {
       hashes.set(keys.hats, new Map([['Image:100', ownerHat(OTHER)]]));

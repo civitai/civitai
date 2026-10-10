@@ -9,6 +9,11 @@ const { awardEventPoints, removeEventPoints, hatted } = vi.hoisted(() => ({
   hatted: new Set<string>(),
 }));
 
+// The engine's kill switch is on here; enabled.test.ts covers it off.
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => true,
+  isEventPointsEnabledSync: () => true,
+}));
 vi.mock('~/server/events/points/award', async (importOriginal) => ({
   ...(await importOriginal<typeof Award>()),
   awardEventPoints,
