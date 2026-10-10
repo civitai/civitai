@@ -28,9 +28,9 @@ const HOUR = 60 * 60 * 1000;
 const future = () => new Date(Date.now() + HOUR);
 const SCOPE = 0b1011;
 
-// One user's credentials: an OAuth access/refresh pair minted together (same client, same scope),
-// a personal key, and an expired access token. Ids, keys and owners are pairwise distinct so a
-// result can only have come from the row the test meant.
+// An OAuth access/refresh pair minted together (same client, same scope), a personal key, a system
+// key and an expired access token. Ids, keys and owners are pairwise distinct, so a result names
+// its row.
 const ROWS: Row[] = [
   {
     id: 11,
@@ -52,7 +52,7 @@ const ROWS: Row[] = [
     buzzLimit: null,
     clientId: 'client-a',
     type: 'Refresh',
-    expiresAt: new Date(Date.now() + 30 * 24 * HOUR),
+    expiresAt: new Date(Date.now() + 2 * HOUR),
   },
   {
     id: 13,
@@ -76,12 +76,22 @@ const ROWS: Row[] = [
     type: 'Access',
     expiresAt: new Date(Date.now() - HOUR),
   },
+  {
+    id: 15,
+    key: 'system-key',
+    userId: 105,
+    tokenScope: SCOPE,
+    lastUsedAt: null,
+    buzzLimit: null,
+    clientId: null,
+    type: 'System',
+    expiresAt: future(),
+  },
 ];
 
 /**
- * Evaluates the Prisma `where` the code under test builds against ROWS, so the tests hold
- * whichever way the filter is spelled. An operator it does not know throws rather than being
- * ignored, so a clause can never silently match everything.
+ * Evaluates the Prisma `where` under test against ROWS. An operator or field it does not know
+ * throws, so a respelled filter fails loudly instead of silently matching everything.
  */
 function matchesValue(value: unknown, cond: unknown): boolean {
   if (cond === null || typeof cond !== 'object' || cond instanceof Date) {
@@ -155,6 +165,12 @@ describe('getSessionFromBearerToken credential type', () => {
     expect(session?.user?.id).toBe(103);
     expect(session?.apiKeyType).toBe('User');
     expect(session?.subject).toEqual({ type: 'apiKey', id: 13 });
+  });
+
+  it('accepts a system key', async () => {
+    const session = await getSessionFromBearerToken('system-key');
+    expect(session?.user?.id).toBe(105);
+    expect(session?.apiKeyType).toBe('System');
   });
 
   it('does not accept an expired access token', async () => {

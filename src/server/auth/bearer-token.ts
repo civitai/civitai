@@ -25,9 +25,10 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   const apiKey = await dbWrite.apiKey.findFirst({
     where: {
       key: token,
-      // A refresh token shares this table, hash and scope with its access token, but only the
-      // OAuth token endpoint may consume it. Filtering here also keeps its lastUsedAt untouched.
-      type: { not: ApiKeyType.Refresh },
+      // Refresh tokens live in this table with the same hash and scope as their access token, but
+      // only the OAuth token endpoint may consume them. An allowlist, so a new key type is refused
+      // here until someone decides it is a bearer credential.
+      type: { in: [ApiKeyType.System, ApiKeyType.User, ApiKeyType.Access] },
       OR: [{ expiresAt: { gte: now } }, { expiresAt: null }],
     },
     select: {
