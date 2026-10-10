@@ -5,7 +5,8 @@ import { parseManifestAnalytics } from '../block-analytics.constants';
 /**
  * `parseManifestAnalytics` — the custom-events declaration parser. Pins that it
  * is TOTAL (never throws) and STRIPS an invalid event rather than repairing it.
- * The validator suite pins the error messages; this one pins `events`.
+ * The validator suite pins each error message; this one pins `events` (plus the
+ * messages of one stripping case).
  *
  * Fixture counts (3 enum values, 2 events, …) are chosen to differ from every
  * bound the module exports, so a mutant that returns a bound cannot pass.
