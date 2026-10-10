@@ -105,6 +105,7 @@ import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { stripImageForInfiniteWire } from '~/server/utils/image-infinite-wire';
 import { deriveUnmatchedResources } from '~/server/utils/unmatched-resources';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import {
   getBaseModelFromResources,
   getUserFollows,
@@ -6491,8 +6492,7 @@ export const getImagesByEntity = async ({
 
 /** An image may only be written into a post owned by the image's own user. */
 async function assertPostOwnedBy({ postId, userId }: { postId: number; userId: number }) {
-  const post = await dbWrite.post.findUnique({ where: { id: postId }, select: { userId: true } });
-  if (!post || post.userId !== userId) throw throwAuthorizationError();
+  if ((await getEntityOwnerId('Post', postId, dbWrite)) !== userId) throw throwAuthorizationError();
 }
 
 export async function createImage({

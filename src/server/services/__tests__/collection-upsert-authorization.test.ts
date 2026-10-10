@@ -630,34 +630,86 @@ describe('upsertCollection cover image', () => {
       input: { id: COLLECTION_ID, name: 'Covered', image, userId: actorId, isMember: true },
     } as never);
 
-  it('refuses an existing image the caller neither owns nor has in the collection', async () => {
+  const OTHER_USER = 31_337;
+  const imageOwnedBy = (userId: number | null) =>
+    mockDbWrite.image.findUnique.mockResolvedValue(userId === null ? null : { userId });
+  const acceptedItem = (found: boolean) =>
+    mockDbWrite.collectionItem.findFirst.mockResolvedValue(found ? { id: 1 } : null);
+
+  it('refuses an existing image the caller neither owns nor has as an accepted item', async () => {
     arrange({ actorId: MANAGER_ID });
-    mockDbWrite.image.count.mockResolvedValue(0);
+    imageOwnedBy(OTHER_USER);
+    acceptedItem(false);
 
     await expect(save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' })).rejects.toThrow(
       /invalid cover image/i
     );
 
-    expect(mockDbWrite.image.count).toHaveBeenCalledWith({
-      where: {
-        id: EXISTING_IMAGE,
-        OR: [
-          { userId: MANAGER_ID },
-          { collectionItems: { some: { collectionId: COLLECTION_ID } } },
-        ],
-      },
+    expect(mockDbWrite.collectionItem.findFirst).toHaveBeenCalledWith({
+      where: { imageId: EXISTING_IMAGE, collectionId: COLLECTION_ID, status: 'ACCEPTED' },
+      select: { id: true },
     });
     expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
   });
 
-  it('accepts an existing image the check finds usable', async () => {
+  it('accepts an accepted item of the collection that someone else owns', async () => {
     arrange({ actorId: MANAGER_ID });
-    mockDbWrite.image.count.mockResolvedValue(1);
+    imageOwnedBy(OTHER_USER);
+    acceptedItem(true);
 
     await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
 
     const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
     expect(image.connectOrCreate.where).toEqual({ id: EXISTING_IMAGE });
+  });
+
+  it('accepts the caller’s own image without an item lookup', async () => {
+    arrange({ actorId: MANAGER_ID });
+    imageOwnedBy(MANAGER_ID);
+    acceptedItem(false);
+
+    await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
+
+    expect(mockDbWrite.collectionItem.findFirst).not.toHaveBeenCalled();
+    expect(mockDbWrite.collection.update).toHaveBeenCalled();
+  });
+
+  it('refuses a cover given as imageId the same way', async () => {
+    arrange({ actorId: MANAGER_ID });
+    imageOwnedBy(OTHER_USER);
+    acceptedItem(false);
+
+    await expect(
+      upsertCollection({
+        input: {
+          id: COLLECTION_ID,
+          name: 'Covered',
+          imageId: EXISTING_IMAGE,
+          userId: MANAGER_ID,
+          isMember: true,
+        },
+      } as never)
+    ).rejects.toThrow(/invalid cover image/i);
+  });
+
+  it('lets a moderator use any existing image', async () => {
+    arrange({ actorId: MANAGER_ID });
+    imageOwnedBy(OTHER_USER);
+    acceptedItem(false);
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Covered',
+        image: { id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' },
+        userId: MANAGER_ID,
+        isModerator: true,
+        isMember: true,
+      },
+    } as never);
+
+    expect(mockDbWrite.image.findUnique).not.toHaveBeenCalled();
+    expect(mockDbWrite.collection.update).toHaveBeenCalled();
   });
 
   it('re-saves the current cover without a check', async () => {
@@ -673,7 +725,7 @@ describe('upsertCollection cover image', () => {
 
     await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
 
-    expect(mockDbWrite.image.count).not.toHaveBeenCalled();
+    expect(mockDbWrite.image.findUnique).not.toHaveBeenCalled();
     expect(mockDbWrite.collection.update).toHaveBeenCalled();
   });
 
@@ -690,6 +742,6 @@ describe('upsertCollection cover image', () => {
     });
     expect(image.connectOrCreate.create).not.toHaveProperty('postId');
     expect(image.connectOrCreate.create).not.toHaveProperty('index');
-    expect(mockDbWrite.image.count).not.toHaveBeenCalled();
+    expect(mockDbWrite.image.findUnique).not.toHaveBeenCalled();
   });
 });

@@ -163,6 +163,15 @@ describe('route inputs: server-owned image columns', () => {
     else expect(parsed).not.toHaveProperty('id');
   });
 
+  it.each(ROUTE_IMAGE_FIELDS.filter(([, , o]) => o.keepsId))(
+    '%s accepts only a positive integer id',
+    (_route, schema) => {
+      for (const id of [0, -1, 1.5]) {
+        expect(schema.safeParse(withServerColumns({ id })).success).toBe(false);
+      }
+    }
+  );
+
   it.each(ROUTE_IMAGE_FIELDS.filter(([, , o]) => !o.indexed))(
     '%s drops index',
     (_route, schema) => {
@@ -191,17 +200,30 @@ describe('route inputs: server-owned image columns', () => {
 });
 
 describe('pickClientImageColumns', () => {
-  it('copies only client columns', () => {
+  it('copies exactly the client columns', () => {
+    const client = {
+      name: 'n.png',
+      url: URL_KEY,
+      hash: 'h',
+      height: 11,
+      width: 13,
+      type: 'video',
+      mimeType: 'video/mp4',
+      sizeKB: 17,
+      meta: { prompt: 'p' },
+      metadata: { duration: 19 },
+    };
     const picked = pickClientImageColumns({
-      ...withServerColumns(),
+      ...client,
+      id: 23,
+      postId: 29,
+      index: 31,
       userId: OTHER_USER,
       ingestion: 'Scanned',
-      meta: { prompt: 'p' },
+      toolIds: [37],
     });
-    expect(Object.keys(picked).sort()).toEqual(['height', 'meta', 'name', 'type', 'url', 'width']);
-    expect(CLIENT_IMAGE_COLUMNS).not.toEqual(expect.arrayContaining(['id']));
-    expect(CLIENT_IMAGE_COLUMNS).not.toEqual(expect.arrayContaining(['postId']));
-    expect(CLIENT_IMAGE_COLUMNS).not.toEqual(expect.arrayContaining(['index']));
+    expect(picked).toEqual(client);
+    expect([...CLIENT_IMAGE_COLUMNS].sort()).toEqual(Object.keys(client).sort());
   });
 });
 

@@ -352,7 +352,9 @@ beforeEach(async () => {
     store.images.filter((i) => matches(i, where))
   );
   dbMock.dbWrite.image.create.mockImplementation(async ({ data }: any) => {
-    const row = image(data.id, data.userId, {
+    // `createImage` never writes an `id`; the store assigns it from the `key-<id>/` url.
+    const id = data.id ?? Number(/^key-(\d+)\//.exec(data.url ?? '')?.[1]);
+    const row = image(id, data.userId, {
       metadata: data.metadata ?? null,
       url: data.url ?? `key-${data.id}/original.jpeg`,
       ingestion: data.ingestion ?? 'Pending',

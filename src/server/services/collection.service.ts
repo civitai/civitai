@@ -1266,7 +1266,7 @@ function withStoredModeratorMetadata(
 }
 
 /**
- * An existing image may become a collection's cover when the caller owns it or it is already an
+ * An existing image may become a collection's cover when the caller owns it or it is an accepted
  * item of that collection. Co-managers can set covers, so ownership alone would be too narrow.
  */
 async function assertUsableCollectionCover({
@@ -1281,13 +1281,12 @@ async function assertUsableCollectionCover({
   isModerator?: boolean;
 }) {
   if (isModerator) return;
-  const usable = await dbWrite.image.count({
-    where: {
-      id: imageId,
-      OR: [{ userId }, { collectionItems: { some: { collectionId } } }],
-    },
+  if ((await getEntityOwnerId('Image', imageId, dbWrite)) === userId) return;
+  const item = await dbWrite.collectionItem.findFirst({
+    where: { imageId, collectionId, status: CollectionItemStatus.ACCEPTED },
+    select: { id: true },
   });
-  if (!usable) throw throwAuthorizationError('Invalid cover image');
+  if (!item) throw throwAuthorizationError('Invalid cover image');
 }
 
 export const upsertCollection = async ({
@@ -1682,7 +1681,7 @@ export const updateCollectionCoverImage = async ({
     throw throwAuthorizationError('You do not have permission to manage this collection');
   }
 
-  // TODO if necessary, check image ownership here
+  await assertUsableCollectionCover({ collectionId: id, imageId, userId, isModerator });
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
