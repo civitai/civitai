@@ -115,7 +115,7 @@ const scoring: EventScoring = {
   newAccountDays: 7,
   finalizeAfterMs: 24 * 60 * 60 * 1000,
 };
-const EVENT = { name: 'birthday2026', startDate: START, endDate: END, scoring };
+const EVENT = { name: 'birthday2026', startDate: START, endDate: END, teams: ['Yellow'], scoring };
 const OWNER = 10;
 const HAT = { ownerId: OWNER, cosmeticId: 7, claimKey: 'claimed', team: 'Yellow' };
 const HAT_FIELD = hatField(HAT);
@@ -124,6 +124,7 @@ let now: Date;
 let fake: ReturnType<typeof fakeRedis>;
 let ledger: EventPointLedgerRow[];
 let engine: ReturnType<typeof createEventPointsEngine>;
+let granted: { event: string; hat: object; time: Date }[];
 
 function build(overrides: Partial<EventPointsDeps> = {}) {
   engine = createEventPointsEngine({
@@ -132,6 +133,7 @@ function build(overrides: Partial<EventPointsDeps> = {}) {
     loadScoredEvents: async () => [EVENT],
     now: () => now,
     logError: () => undefined,
+    onGrant: (def, hat, time) => void granted.push({ event: def.name, hat, time }),
     ...overrides,
   });
 }
@@ -151,6 +153,7 @@ beforeEach(() => {
   fake = fakeRedis();
   fake.setClock(() => now.getTime());
   ledger = [];
+  granted = [];
   fake.setHat(EVENT.name, 'Image:100', encodeHat(HAT));
   build();
 });
@@ -314,12 +317,54 @@ describe('awardEventPoints', () => {
     ]);
   });
 
-  it('queues the hat for a signals push when its total moves, and only then', async () => {
-    const changed = () => [...(fake.sets.get(eventPointKeys(EVENT.name).changed) ?? [])];
+  it('reports the grant for a live push when the total moves, and only then', async () => {
     await engine.awardEventPoints([reaction(OWNER)]);
-    expect(changed()).toEqual([]);
+    expect(granted).toEqual([]);
     await engine.awardEventPoints([reaction(1)]);
-    expect(changed()).toEqual([HAT_FIELD]);
+    expect(granted).toEqual([{ event: EVENT.name, hat: HAT, time: now }]);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+  });
+
+  it('a push that throws neither fails the award nor costs the live buckets their TTL', async () => {
+    const errors: string[] = [];
+    build({
+      onGrant: () => {
+        throw new Error('pusher broke');
+      },
+      logError: (kind, fn) => void errors.push(`${kind}:${fn}`),
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(errors).toEqual(['push:eventPoints.onGrant']);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+    expect(ledger).toHaveLength(1);
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    const bucket = liveBucket(now);
+    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    for (const scope of ['hat', 'team', 'owner'] as const)
+      expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
+  });
+
+  it('does not report the grant when a live increment fails', async () => {
+    const hIncrBy = fake.redis.hIncrBy;
+    const liveBucketKey = /:live:[0-9]+:/;
+    const failedKeys: string[] = [];
+    build({
+      redis: {
+        ...fake.redis,
+        hIncrBy: (async (key: string, field: string, by: number) => {
+          if (liveBucketKey.test(key)) {
+            failedKeys.push(key);
+            throw new Error('down');
+          }
+          return hIncrBy(key, field, by);
+        }) as typeof hIncrBy,
+      },
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    // The award got as far as the live increments (past the cap), and they failed.
+    expect(failedKeys.length).toBe(3);
+    expect(ledger).toHaveLength(1);
+    expect(granted).toEqual([]);
   });
 
   it('expires day-scoped keys an hour after their UTC day, and event keys after finalization', async () => {

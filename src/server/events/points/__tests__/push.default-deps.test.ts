@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as SignalClient from '~/utils/signal-client';
 
 /**
- * tickEventPoints with its default deps: the real drain and reads over sysRedis, and the real
- * topicSend wiring. Only the signals client is faked. The ticker's other tests inject every dep.
+ * The pusher with its default deps: the real reads over sysRedis and the real topicSend wiring. Only
+ * the signals client and the kill switch's reading are faked. The pusher's other tests inject every
+ * dep.
  */
 
 const { topicSend } = vi.hoisted(() => ({
@@ -15,8 +16,14 @@ vi.mock('~/utils/signal-client', async (importOriginal) => ({
   signalClient: { topicSend },
 }));
 
-const { tickEventPoints } = await import('~/server/events/points/ticker');
-const { eventPointKeys, eventPointSeason, eventSeasonKeys, hatTopicId } = await import(
+const engine = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => engine.on,
+  isEventPointsEnabledSync: () => engine.on,
+}));
+
+const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');
+const { eventPointSeason, eventSeasonKeys, hatTopicId } = await import(
   '~/server/events/points/keys'
 );
 
@@ -28,13 +35,23 @@ const event = {
 };
 const HAT = { ownerId: 10, cosmeticId: 7, claimKey: 'claimed' };
 
-describe('tickEventPoints with its default deps', () => {
-  it('drains the changed set, reads the totals and sends them through the signals client', async () => {
+beforeEach(() => topicSend.mockClear());
+
+describe('the pusher with its default deps', () => {
+  it('reads the kill switch: off, an award marks and sends nothing', async () => {
+    engine.on = false;
+    try {
+      markEventPointsDirty(event, HAT, new Date());
+      expect(await drainEventPointsPush()).toEqual({ left: 0 });
+      expect(topicSend).not.toHaveBeenCalled();
+    } finally {
+      engine.on = true;
+    }
+  });
+
+  it('reads the totals and sends them through the signals client', async () => {
     const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
     const sys = redisMock.sysRedis;
-    sys.sPop.mockImplementation(async (key: string) =>
-      key === eventPointKeys(event.name).changed ? ['10:7:claimed'] : []
-    );
     sys.get.mockResolvedValue(null);
     sys.hmGet.mockImplementation(async (key: string, fields: string[]) =>
       key === keys.base('hat')
@@ -44,7 +61,8 @@ describe('tickEventPoints with its default deps', () => {
         : fields.map(() => null)
     );
 
-    await tickEventPoints(event);
+    markEventPointsDirty(event, HAT, new Date());
+    expect(await drainEventPointsPush()).toEqual({ left: 0 });
 
     const topicId = hatTopicId(HAT);
     expect(topicSend.mock.calls).toEqual([
