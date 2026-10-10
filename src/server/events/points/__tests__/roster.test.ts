@@ -606,7 +606,7 @@ describe('team roster', () => {
         return states;
       },
     };
-    await syncRosterMembersWith(EVENT, [1], pruned);
+    expect(await syncRosterMembersWith(EVENT, [1], pruned)).toEqual({ listed: 1, removed: 0 });
     expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
   });
@@ -626,7 +626,7 @@ describe('team roster', () => {
         return states;
       },
     };
-    await syncRosterMembersWith(EVENT, [1], stale);
+    expect(await syncRosterMembersWith(EVENT, [1], stale)).toEqual({ listed: 1, removed: 0 });
     expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
   });
@@ -641,52 +641,124 @@ describe('team roster', () => {
         return s.deps.loadStates(event, ids);
       },
     };
-    await syncRosterMembersWith(EVENT, [1], churn);
+    expect(await syncRosterMembersWith(EVENT, [1], churn)).toEqual({ listed: 0, removed: 0 });
     expect(n).toBe(3);
     expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
     expect(s.allKeysHolding('1')).toEqual([]);
   });
 
-  it('stops re-deriving an event long after its scores are final, but still prunes', async () => {
-    let now = LIVE_NOW;
-    const s = setup([member(1), member(2)], LIVE_NOW);
-    s.deps.now = () => now;
+  // Giving up must not wipe a listing another sync made meanwhile: it clears only members the gate
+  // does not list.
+  it('gives up without clearing a member that another sync listed meanwhile', async () => {
+    const s = setup([member(1)]);
+    let n = 0;
+    const churn: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        n++;
+        if (n < 3) await s.redis.hSet(keys.members, '1', `x:churn-${n}`);
+        else {
+          // The last attempt is overtaken by a real listing, made by another sync.
+          await s.redis.hSet(keys.members, '1', 'x:before-other');
+          await syncRosterMembersWith(EVENT, [1], s.deps);
+        }
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], churn);
+    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+    expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1]);
+  });
+
+  // An ended event is still re-derived every hour: it is the net under a ban or opt-out whose own
+  // sync failed, on a roster that stays public.
+  it('keeps re-deriving an ended event, so a missed ban is still caught', async () => {
+    const s = setup([member(1)], LIVE_NOW);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    s.db.set(1, member(1, { eligible: false }));
+    const gate = async () => Object.fromEntries(s.hashes.get(keys.members) ?? []);
+    s.deps.now = () => new Date('2027-06-01T00:00:00.000Z');
+    await reconcileEventRosters({ ...s.deps, gate }, [EVENT]);
+    expect(s.allKeysHolding('1')).toEqual([]);
+  });
+
+  it('writes its unlistings before it reads owner points', async () => {
+    const s = setup([member(1), member(2)]);
     await syncRosterMembersWith(EVENT, [1, 2], s.deps);
     s.db.set(2, member(2, { optedIn: false }));
-    await syncRosterMembersWith(EVENT, [2], s.deps);
-    const loaded = vi.fn(s.deps.loadStates);
-    const gate = async () => Object.fromEntries(s.hashes.get(keys.members) ?? []);
-    const ended = { ...EVENT, resyncUntil: new Date(LIVE_NOW.getTime() + 60_000) };
-    now = new Date(LIVE_NOW.getTime() + 2 * 60 * 60_000);
-    await reconcileEventRosters({ ...s.deps, loadStates: loaded, gate }, [ended]);
-    expect(loaded).not.toHaveBeenCalled();
-    expect(s.hashes.get(keys.members)?.has('2')).toBe(false);
-    // Before the cutoff it re-derives.
-    await reconcileEventRosters({ ...s.deps, loadStates: loaded, gate }, [
-      { ...EVENT, resyncUntil: new Date(now.getTime() + 1) },
-    ]);
-    expect(loaded).toHaveBeenCalledTimes(1);
+    const order: string[] = [];
+    const evalOf = s.redis.eval.bind(s.redis);
+    (s.redis as { eval: typeof evalOf }).eval = async (script, args) => {
+      order.push(`gate:${args.arguments[0]}`);
+      return evalOf(script, args);
+    };
+    await syncRosterMembersWith(EVENT, [1, 2], {
+      ...s.deps,
+      ownerPoints: async (event, ids, now) => {
+        order.push('points');
+        return s.deps.ownerPoints(event, ids, now);
+      },
+    });
+    expect(order.indexOf('gate:2')).toBeLessThan(order.indexOf('points'));
+  });
+
+  // A sync that stalls past STALL_MS writes nothing, and derives again from fresh reads.
+  it('lets no stalled sync write a stale read', async () => {
+    let now = LIVE_NOW.getTime();
+    const s = setup([member(1)], LIVE_NOW);
+    s.deps.now = () => new Date(now);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    let calls = 0;
+    const stale: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        const states = await s.deps.loadStates(event, ids);
+        // The first read stalls for eleven minutes, during which the member opted out.
+        if (calls++ === 0) {
+          now += 11 * 60_000;
+          s.db.set(1, member(1, { optedIn: false }));
+        }
+        return states;
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], stale);
+    expect(calls).toBe(2);
+    expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
+    expect(s.allKeysHolding('1')).toEqual([]);
+  });
+
+  it('writes a different tombstone each time, even in the same millisecond', async () => {
+    const s = setup([member(1, { optedIn: false })]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const first = s.hashes.get(keys.members)?.get('1');
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const second = s.hashes.get(keys.members)?.get('1');
+    expect(isTombstone(first)).toBe(true);
+    expect(isTombstone(second)).toBe(true);
+    expect(second).not.toBe(first);
   });
 
   it('syncs in batches of 500, skips the hidden on a listed-only change, and survives a failing event', async () => {
     const states = Array.from({ length: 1_001 }, (_, i) => member(i + 1));
     const s = setup(states);
-    const loaded: number[] = [];
+    const loaded: number[][] = [];
     const deps: RosterSyncDeps = {
       ...s.deps,
       loadStates: async (event, ids) => {
         if (event.name === 'broken') throw new Error('db down');
-        loaded.push(ids.length);
+        loaded.push(ids);
         return s.deps.loadStates(event, ids);
       },
     };
     const ids = states.map((x) => x.userId);
     await syncEventRosterMembers(ids, {}, deps, [{ ...EVENT, name: 'broken' }, EVENT]);
-    expect(loaded).toEqual([500, 500, 1]);
+    expect(loaded.map((ids) => ids.length)).toEqual([500, 500, 1]);
     // Now hide one: a listed-only change skips them, and the never-listed are skipped too.
     await s.redis.hSet(keys.members, '1', 'x:1');
     loaded.length = 0;
     await syncEventRosterMembers([1, 2, 5000], { onlyIfListed: true }, deps, [EVENT]);
-    expect(loaded).toEqual([1]);
+    // Only 2, the one still listed.
+    expect(loaded).toEqual([[2]]);
   });
 });

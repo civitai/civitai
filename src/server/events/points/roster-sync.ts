@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { chunk } from 'lodash-es';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadEvents } from '~/server/events/load-events';
@@ -17,9 +18,6 @@ export type RosterEvent = {
   startDate: Date;
   teams: readonly string[];
   join: { claimKey: string; design: string };
-  // After this the hourly reconcile stops re-deriving members (their totals are final), but still
-  // prunes tombstones. Absent: never stops.
-  resyncUntil?: Date;
 };
 
 // What Postgres says about one user, for one event.
@@ -122,6 +120,14 @@ export const rosterTeam = (value: string | null | undefined) =>
   value && !isTombstone(value) ? value : null;
 // Tombstones older than this go at the reconcile: long past any sync that read before them.
 const TOMBSTONE_TTL_MS = 60 * 60 * 1000;
+// A sync that has run this long gives up its writes (see syncRosterMembersWith): far inside the
+// tombstone TTL, so nothing it read can have been pruned.
+const STALL_MS = 10 * 60 * 1000;
+// Unique per write, so every unlisting changes the gate, even two in the same millisecond.
+export const tombstone = (at: Date) =>
+  `${HIDDEN_PREFIX}${at.getTime()}:${randomUUID().slice(0, 8)}`;
+export const tombstoneTime = (value: string) =>
+  Number(value.slice(HIDDEN_PREFIX.length).split(':')[0]) || 0;
 // Deletes each field (ARGV pairs: field, value) only if it still holds that value.
 const DELETE_IF_UNCHANGED = `for i = 1, #ARGV, 2 do
 if redis.call('HGET', KEYS[1], ARGV[i]) == ARGV[i + 1] then redis.call('HDEL', KEYS[1], ARGV[i]) end
@@ -174,13 +180,17 @@ export async function syncRosterMembersWith(
   const unlisted = states.filter((s) => !isListed(s, event));
   // Members whose gate changed under this sync: re-derived from fresh reads below.
   const changed: number[] = [];
-  const gateWrite = (userId: number, value: string) =>
-    deps.redis
-      .eval(LIST_IF_UNCHANGED, {
-        keys: [keys.members],
-        arguments: [String(userId), previous.get(userId) ?? '', value],
-      })
-      .then((opened) => Number(opened) === 1);
+  // A sync that stalled so long that the tombstones it might have read could be pruned since
+  // treats every write as refused, and derives again from fresh reads.
+  const stalled = () => deps.now().getTime() - now.getTime() > STALL_MS;
+  const gateWrite = async (userId: number, value: string) => {
+    if (stalled()) return false;
+    const opened = await deps.redis.eval(LIST_IF_UNCHANGED, {
+      keys: [keys.members],
+      arguments: [String(userId), previous.get(userId) ?? '', value],
+    });
+    return Number(opened) === 1;
+  };
 
   // Unlisting closes the gate first, so no read can pair a remaining score with a listed member.
   // Everyone unlisted gets a fresh tombstone, listed before or not: a ban or an opt-out can land
@@ -190,7 +200,7 @@ export async function syncRosterMembersWith(
   for (const group of chunk(unlisted, LIST_CONCURRENCY))
     await Promise.all(
       group.map(async (s) => {
-        if (await gateWrite(s.userId, `${HIDDEN_PREFIX}${now.getTime()}`)) closed.push(s.userId);
+        if (await gateWrite(s.userId, tombstone(now))) closed.push(s.userId);
         else changed.push(s.userId);
       })
     );
@@ -317,13 +327,8 @@ export async function rosterEvents(now = new Date()): Promise<RosterEvent[]> {
       startDate: e.startDate,
       teams: e.teams,
       join: e.join!,
-      resyncUntil: new Date(
-        e.endDate.getTime() + (e.scoring?.finalizeAfterMs ?? 0) + RESYNC_AFTER_FINAL_MS
-      ),
     }));
 }
-// How long after an event's scores are final the reconcile keeps re-deriving its roster.
-const RESYNC_AFTER_FINAL_MS = 3 * 24 * 60 * 60 * 1000;
 
 // For write paths that may change someone's listing (a hat bought or put on, a ban). Never throws: a
 // failure only leaves the entry stale until the hourly reconcile. `onlyIfListed` is for changes that
@@ -394,10 +399,7 @@ export async function reconcileEventRosters(
       const gate = await deps.gate(event.name);
       const now = deps.now().getTime();
       const stale = Object.entries(gate)
-        .filter(
-          ([, v]) =>
-            isTombstone(v) && now - Number(v.slice(HIDDEN_PREFIX.length)) > TOMBSTONE_TTL_MS
-        )
+        .filter(([, v]) => isTombstone(v) && now - tombstoneTime(v) > TOMBSTONE_TTL_MS)
         .map(([id]) => id);
       // Each only if it still holds the tombstone read: a sync may have listed them since.
       if (stale.length)
@@ -405,7 +407,6 @@ export async function reconcileEventRosters(
           keys: [eventRosterKeys(event.name).members],
           arguments: stale.flatMap((id) => [id, gate[id]]),
         });
-      if (event.resyncUntil && now > event.resyncUntil.getTime()) continue;
       const ids = Object.entries(gate)
         .filter(([, v]) => rosterTeam(v))
         .map(([id]) => Number(id));

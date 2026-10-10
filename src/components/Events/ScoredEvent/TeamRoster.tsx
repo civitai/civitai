@@ -51,7 +51,7 @@ export function TeamRoster({
     trpc.event.getTeamRoster.useInfiniteQuery(input, {
       getNextPageParam: (page) => page.nextCursor,
     });
-  // The roster is edge-cached for about a minute, so a refetch right after opting out can still
+  // The roster is edge-cached (about 90s with stale-while-revalidate), so a refetch right after opting out can still
   // list you: your own status, read uncached, decides your own card.
   const currentUser = useCurrentUser();
   const { data: status } = trpc.event.getMyRosterStatus.useQuery(
@@ -216,7 +216,7 @@ function RosterOptIn({ event }: { event: string }) {
       />
       {optedIn && status?.listedTeam && (
         <Text size="xs" c="dimmed">
-          You&apos;re on the roster. It can take a minute to show for everyone.
+          You&apos;re on the roster. It can take a couple of minutes to show for everyone.
         </Text>
       )}
       {optedIn && status && !status.listedTeam && (
