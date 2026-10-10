@@ -10,6 +10,7 @@ import {
 } from '~/server/services/placement-escrow.service';
 import { createFreePlacement } from '~/server/services/free-placement.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { spendStickerUsesFor } from '~/server/services/sticker.service';
 import {
@@ -1082,6 +1083,7 @@ async function removeApprovedSticker({
       takenDownById: userId,
     },
   });
+  if (count > 0) void onPlacementsTakenDown([placement.id]);
 
   return { settled: count > 0 };
 }

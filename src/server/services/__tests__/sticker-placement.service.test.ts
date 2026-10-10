@@ -9,6 +9,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import type * as Caches from '~/server/redis/caches';
+import type * as Hooks from '~/server/events/points/hooks';
 import {
   CosmeticFlag,
   STICKER_NSFW_ONLY_REFUSAL,
@@ -56,6 +57,13 @@ vi.mock('~/server/services/placement-escrow.service', () => ({
 
 const assertCanPlace = vi.fn(async () => undefined);
 vi.mock('~/server/services/placement-moderation.service', () => ({ assertCanPlace }));
+// The event points hook, so an owner's takedown can be seen handing its id over. The hook's own
+// behaviour is tested in src/server/events/points/__tests__/hooks.test.ts.
+const onPlacementsTakenDown = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<typeof Hooks>()),
+  onPlacementsTakenDown,
+}));
 
 const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
@@ -931,6 +939,14 @@ describe('the owner cannot remove a sticker for a week after approving it', () =
     // `settlePlacement` claims `WHERE status = 'pending'`, so routing a live row
     // through it would report success and change nothing.
     expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('hands the takedown to the event points hook', async () => {
+    givenApproved(STICKER_REMOVAL_LOCK_HOURS + 1);
+
+    await actOnStickerPlacement({ placementId: PLACEMENT, action: 'remove', userId: OWNER });
+
+    expect(onPlacementsTakenDown).toHaveBeenCalledWith([PLACEMENT]);
   });
 
   /**
