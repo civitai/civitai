@@ -81,8 +81,9 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
  * superset — additive DROP+ADD CHECK), `message-owner` by
  * `20260824120000_app_listing_mod_action_message_owner`, `purge-user-storage` by
- * `20260912120000_app_listing_mod_action_purge_user_storage`, and `set-visibility` by
- * `20261004120000_app_listing_mod_action_set_visibility`. A drift here would let a proc
+ * `20260912120000_app_listing_mod_action_purge_user_storage`, `set-visibility` by
+ * `20261004120000_app_listing_mod_action_set_visibility`, and `rating-change` by
+ * `20261010130000_app_listing_mod_action_rating_change`. A drift here would let a proc
  * write an `action` the DB rejects (23514). The action-agreement unit test pins this
  * tuple against the LATEST action-CHECK migration's IN-list.
  *

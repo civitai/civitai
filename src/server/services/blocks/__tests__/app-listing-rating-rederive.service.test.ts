@@ -55,13 +55,101 @@ let shots: Shot[];
 let events: Event[];
 let failEventInsert: boolean;
 let lockStatements: string[];
+/** Every store call, in order, tagged with the client it went through. */
+let ops: string[];
+let failUpdateFor: string | null;
 
 type Fn = { mockImplementation: (f: (...a: never[]) => unknown) => void };
 const fake = (node: unknown, impl: (...a: never[]) => unknown) =>
   (node as Fn).mockImplementation(impl);
 
+/** Only the keys a Prisma `select` asked for, so a dropped projection field reads undefined. */
+function pick(row: Record<string, unknown>, select: Record<string, unknown>) {
+  return Object.fromEntries(Object.keys(select).map((k) => [k, row[k]]));
+}
+
+/**
+ * One client over the store. `via` tags every call in `ops`, and only writes made through
+ * the `tx` client are undone when its transaction throws — so the tests can tell a statement
+ * that ran inside the transaction from one that ran beside it on the pool.
+ */
+function client(via: 'pool' | 'tx', undo: Array<() => void>) {
+  return {
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const stmt = Prisma.sql(strings, ...(values as Prisma.Sql[]));
+      const text = stmt.text.replace(/\s+/g, ' ').trim();
+      ops.push(`${via}:lock`);
+      lockStatements.push(text);
+      const [id] = stmt.values as [string];
+      return listings
+        .filter((l) => l.id === id)
+        .filter((l) => !text.includes(`"status" = 'approved'`) || l.status === 'approved')
+        .filter((l) => !text.includes(`"revision_of_id" IS NULL`) || l.revisionOfId === null)
+        .map((l) => ({ id: l.id }));
+    },
+    listingFindUnique: async (args: { where: { id: string }; select: Record<string, unknown> }) => {
+      ops.push(`${via}:listing`);
+      const l = listings.find((x) => x.id === args.where.id);
+      if (!l) return null;
+      return pick(
+        { ...l, appBlock: l.declared === undefined ? null : { contentRating: l.declared } },
+        args.select
+      );
+    },
+    shotsFindMany: async (args: { where: { appListingId: string; imageId?: { not: null } } }) => {
+      ops.push(`${via}:shots`);
+      return shots
+        .filter((s) => s.appListingId === args.where.appListingId)
+        .filter((s) => !args.where.imageId || s.imageId !== null);
+    },
+    imageFindMany: async (args: {
+      where: { id: { in: number[] } };
+      select: Record<string, unknown>;
+    }) => {
+      ops.push(`${via}:images`);
+      return images.filter((i) => args.where.id.in.includes(i.id)).map((i) => pick(i, args.select));
+    },
+    listingUpdate: async (args: { where: { id: string }; data: { contentRating: string } }) => {
+      ops.push(`${via}:update`);
+      if (failUpdateFor === args.where.id) throw new Error('deadlock detected');
+      const l = listings.find((x) => x.id === args.where.id);
+      if (!l) throw new Error('row not found');
+      const previous = l.contentRating;
+      undo.push(() => {
+        listings.find((x) => x.id === args.where.id)!.contentRating = previous;
+      });
+      Object.assign(l, args.data);
+      return l;
+    },
+    eventCreate: async (args: { data: Event }) => {
+      ops.push(`${via}:event`);
+      if (failEventInsert)
+        throw Object.assign(new Error('violates check constraint'), { code: '23514' });
+      events.push(args.data);
+      undo.push(() => {
+        events = events.filter((e) => e !== args.data);
+      });
+      return args.data;
+    },
+  };
+}
+
+function prismaShape(c: ReturnType<typeof client>) {
+  return {
+    $queryRaw: c.$queryRaw,
+    appListing: { findUnique: c.listingFindUnique, update: c.listingUpdate },
+    appListingScreenshot: { findMany: c.shotsFindMany },
+    image: { findMany: c.imageFindMany },
+    appListingModerationEvent: { create: c.eventCreate },
+  };
+}
+
+/** A `tx` for calling the in-transaction function directly. */
+const directTx = () => prismaShape(client('tx', [])) as never;
+
 function installStore() {
   const db = dbMock.dbWrite;
+  const pool = client('pool', []);
 
   fake(
     db.appListing.findMany,
@@ -72,6 +160,7 @@ function installStore() {
         OR: Array<Record<string, unknown>>;
       };
     }) => {
+      ops.push('pool:lookup');
       const { where } = args;
       // The three OR arms, each honoured only if the code asked for it.
       const arms = JSON.stringify(where.OR);
@@ -89,56 +178,18 @@ function installStore() {
         .map((l) => ({ id: l.id }));
     }
   );
-
-  fake(db.$queryRaw, async (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const stmt = Prisma.sql(strings, ...(values as Prisma.Sql[]));
-    const text = stmt.text.replace(/\s+/g, ' ').trim();
-    lockStatements.push(text);
-    const [id] = stmt.values as [string];
-    return listings
-      .filter((l) => l.id === id)
-      .filter((l) => !text.includes(`"status" = 'approved'`) || l.status === 'approved')
-      .filter((l) => !text.includes(`"revision_of_id" IS NULL`) || l.revisionOfId === null)
-      .map((l) => ({ id: l.id }));
-  });
-
-  fake(db.appListing.findUnique, async (args: { where: { id: string } }) => {
-    const l = listings.find((x) => x.id === args.where.id);
-    if (!l) return null;
-    return { ...l, appBlock: l.declared === undefined ? null : { contentRating: l.declared } };
-  });
-  fake(
-    db.appListingScreenshot.findMany,
-    async (args: { where: { appListingId: string; imageId?: { not: null } } }) =>
-      shots
-        .filter((s) => s.appListingId === args.where.appListingId)
-        .filter((s) => !args.where.imageId || s.imageId !== null)
-  );
-  fake(db.image.findMany, async (args: { where: { id: { in: number[] } } }) =>
-    images.filter((i) => args.where.id.in.includes(i.id))
-  );
-  fake(
-    db.appListing.update,
-    async (args: { where: { id: string }; data: { contentRating: string } }) => {
-      const l = listings.find((x) => x.id === args.where.id);
-      if (!l) throw new Error('row not found');
-      Object.assign(l, args.data);
-      return l;
-    }
-  );
-  fake(db.appListingModerationEvent.create, async (args: { data: Event }) => {
-    if (failEventInsert)
-      throw Object.assign(new Error('violates check constraint'), { code: '23514' });
-    events.push(args.data);
-    return args.data;
-  });
+  fake(db.$queryRaw, pool.$queryRaw as never);
+  fake(db.appListing.findUnique, pool.listingFindUnique as never);
+  fake(db.appListingScreenshot.findMany, pool.shotsFindMany as never);
+  fake(db.image.findMany, pool.imageFindMany as never);
+  fake(db.appListing.update, pool.listingUpdate as never);
+  fake(db.appListingModerationEvent.create, pool.eventCreate as never);
   fake(db.$transaction, async (fn: (tx: unknown) => Promise<unknown>) => {
-    const snapshot = { listings: structuredClone(listings), events: structuredClone(events) };
+    const undo: Array<() => void> = [];
     try {
-      return await fn(db);
+      return await fn(prismaShape(client('tx', undo)));
     } catch (err) {
-      listings = snapshot.listings;
-      events = snapshot.events;
+      undo.reverse().forEach((u) => u());
       throw err;
     }
   });
@@ -174,11 +225,16 @@ function seedMisScanned(over: Partial<Listing> = {}) {
 }
 
 /** The moderator's write: set the image, then run the hook with its previous level. */
-async function moderatorRerates(imageId: number, nsfwLevel: number) {
+async function moderatorRerates(imageId: number, nsfwLevel: number, allowLower = true) {
   const image = images.find((i) => i.id === imageId)!;
   const previousNsfwLevel = image.nsfwLevel;
   image.nsfwLevel = nsfwLevel;
-  return reDeriveListingRatingsForModeratedImage({ imageId, previousNsfwLevel, actorUserId: MOD });
+  return reDeriveListingRatingsForModeratedImage({
+    imageId,
+    previousNsfwLevel,
+    actorUserId: MOD,
+    allowLower,
+  });
 }
 
 const ratingOf = (id: string) => listings.find((l) => l.id === id)!.contentRating;
@@ -188,6 +244,8 @@ beforeEach(() => {
   events = [];
   failEventInsert = false;
   lockStatements = [];
+  ops = [];
+  failUpdateFor = null;
   seedMisScanned();
   installStore();
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -252,6 +310,15 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
     expect(events).toEqual([]);
   });
 
+  it('does not lower while the re-rated image itself is unscanned', async () => {
+    images.find((i) => i.id === SHOT)!.ingestion = 'Pending';
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+  });
+
   it('does not lower while an asset’s Image row is missing', async () => {
     images = images.filter((i) => i.id !== COVER);
 
@@ -278,6 +345,7 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
       imageId: SHOT,
       previousNsfwLevel: null,
       actorUserId: MOD,
+      allowLower: true,
     });
 
     expect(ratingOf('apl_a')).toBe('r');
@@ -300,6 +368,25 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
 
     expect(ratingOf('apl_a')).toBe('r');
     expect(events).toEqual([]);
+  });
+});
+
+describe('a Knights consensus (allowLower: false)', () => {
+  it('does not lower a listing', async () => {
+    const changed = await moderatorRerates(SHOT, NsfwLevel.PG, false);
+
+    expect(changed).toEqual([]);
+    expect(ratingOf('apl_a')).toBe('r');
+    expect(events).toEqual([]);
+  });
+
+  it('still raises one', async () => {
+    await moderatorRerates(ICON, NsfwLevel.X, false);
+
+    expect(ratingOf('apl_a')).toBe('x');
+    expect(events.map((e) => e.reason)).toEqual([
+      'Rating raised R → X after a moderator reviewed an image.',
+    ]);
   });
 });
 
@@ -390,6 +477,17 @@ describe('which listings are touched', () => {
     expect(bustCatalog).toHaveBeenCalledTimes(1);
   });
 
+  it('an image in two slots of one listing is one asset', async () => {
+    seedMisScanned({ contentRating: 'pg13', iconId: SHOT, coverId: SHOT });
+    images.find((i) => i.id === SHOT)!.nsfwLevel = NsfwLevel.PG13;
+
+    await moderatorRerates(SHOT, NsfwLevel.X);
+
+    expect(ratingOf('apl_a')).toBe('x');
+    expect(ops.filter((o) => o === 'tx:update')).toHaveLength(1);
+    expect(events.map((e) => e.after)).toEqual([{ contentRating: 'x', imageIds: [SHOT] }]);
+  });
+
   it.each([
     ['icon', { iconId: 77 }],
     ['cover', { coverId: 77 }],
@@ -420,11 +518,12 @@ describe('which listings are touched', () => {
     Object.assign(listings[0], state);
     images.find((i) => i.id === ICON)!.nsfwLevel = NsfwLevel.X;
 
-    const result = await reDeriveListingRatingInTx(dbMock.dbWrite as never, {
+    const result = await reDeriveListingRatingInTx(directTx(), {
       appListingId: 'apl_a',
       imageId: ICON,
       previousNsfwLevel: NsfwLevel.PG,
       actorUserId: MOD,
+      allowLower: true,
     });
 
     expect(result).toBeNull();
@@ -436,18 +535,40 @@ describe('which listings are touched', () => {
     seedMisScanned({ declared: 'x' });
     shots = [];
 
-    const result = await reDeriveListingRatingInTx(dbMock.dbWrite as never, {
+    const result = await reDeriveListingRatingInTx(directTx(), {
       appListingId: 'apl_a',
       imageId: SHOT,
       previousNsfwLevel: NsfwLevel.R,
       actorUserId: MOD,
+      allowLower: true,
     });
 
     expect(result).toBeNull();
     expect(ratingOf('apl_a')).toBe('r');
   });
 
-  it('locks the live row before reading it', async () => {
+  it('a lowering runs lock → reads → write → history, all inside the transaction', async () => {
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(ops).toEqual([
+      'pool:lookup',
+      'tx:lock',
+      'tx:listing',
+      'tx:listing',
+      'tx:shots',
+      'tx:images',
+      'tx:update',
+      'tx:event',
+    ]);
+  });
+
+  it('a raise writes its history on the pool, after the transaction', async () => {
+    await moderatorRerates(ICON, NsfwLevel.X);
+
+    expect(ops.slice(-2)).toEqual(['tx:update', 'pool:event']);
+  });
+
+  it('the lock statement names the live row and nothing else', async () => {
     await moderatorRerates(SHOT, NsfwLevel.PG);
 
     expect(lockStatements).toEqual([
@@ -457,7 +578,24 @@ describe('which listings are touched', () => {
 });
 
 describe('failure isolation', () => {
-  it('a rejected history insert rolls the rating back and does not throw', async () => {
+  it('a RAISE survives a rejected history insert: the rating moves, the event is missing', async () => {
+    failEventInsert = true;
+
+    const changed = await moderatorRerates(ICON, NsfwLevel.X);
+
+    expect(ratingOf('apl_a')).toBe('x');
+    expect(changed).toEqual([{ appListingId: 'apl_a', before: 'r', after: 'x' }]);
+    expect(events).toEqual([]);
+    expect(bustCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed cache bust does not throw', async () => {
+    bustCatalog.mockRejectedValueOnce(new Error('cache bus down'));
+
+    await expect(moderatorRerates(SHOT, NsfwLevel.PG)).resolves.toHaveLength(1);
+  });
+
+  it('a LOWERING with a rejected history insert rolls the rating back and does not throw', async () => {
     failEventInsert = true;
 
     const changed = await moderatorRerates(SHOT, NsfwLevel.PG);
@@ -480,15 +618,7 @@ describe('failure isolation', () => {
       coverId: null,
       declared: 'g',
     });
-    let calls = 0;
-    const update = dbMock.dbWrite.appListing.update as unknown as Fn;
-    update.mockImplementation((async (args: {
-      where: { id: string };
-      data: { contentRating: string };
-    }) => {
-      if (++calls === 1) throw new Error('deadlock detected');
-      Object.assign(listings.find((l) => l.id === args.where.id)!, args.data);
-    }) as never);
+    failUpdateFor = 'apl_a';
 
     const changed = await moderatorRerates(SHOT, NsfwLevel.PG);
 

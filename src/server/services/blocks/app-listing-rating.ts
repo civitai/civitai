@@ -19,7 +19,7 @@ export const RATING_CHANGE_ACTION =
  * Why a listing's stored rating moved. Stored in the event's `detail`.
  *   - `store-media`  — a go-live or moderator asset edit floored the rating at its media.
  *   - `image-review` — a moderator re-rated one of the listing's images.
- *   - `review`       — a moderator's review set it (off-site derive-and-replace, or an override).
+ *   - `review`       — any other go-live move: a review's derive-and-replace or override.
  */
 export type ListingRatingChangeCause = 'store-media' | 'image-review' | 'review';
 
@@ -173,6 +173,8 @@ export async function recordListingRatingChangeAfterCommit(args: {
   }
 }
 
+// Stricter than `isImageReviewed` on purpose: a moderator's lock on an image whose scan never
+// finished counts as reviewed for display, but must not be what lets a rating drop.
 const isSettled = (asset: ListingRatingAsset) =>
   asset.ingestion === ImageIngestionStatus.Scanned && (asset.nsfwLevel ?? 0) > 0;
 

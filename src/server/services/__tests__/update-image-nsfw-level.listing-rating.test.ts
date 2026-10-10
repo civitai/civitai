@@ -6,8 +6,9 @@ import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rede
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 
-// Which writes of an image's level reach the store-listing rating re-derive: a moderator's
-// own decision does; a user's vote and a Knights consensus do not.
+// Which writes of an image's level reach the store-listing rating re-derive, and with what
+// licence: a moderator's own decision may lower a listing, a Knights consensus may only
+// raise one, and a user's vote does not reach it at all.
 
 const reDerive = vi.fn<typeof ReDerive.reDeriveListingRatingsForModeratedImage>(async () => []);
 
@@ -98,6 +99,7 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
       imageId: IMAGE_ID,
       previousNsfwLevel: NsfwLevel.R,
       actorUserId: MOD,
+      allowLower: true,
     });
     // After the image write, so the hook reads the new level.
     expect(dbMock.dbWrite.image.update.mock.invocationCallOrder[0]).toBeLessThan(
@@ -105,7 +107,7 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
     );
   });
 
-  it('a Knights consensus locks through the moderator branch but does not reach the hook', async () => {
+  it('a Knights consensus locks through the moderator branch and may only raise', async () => {
     await updateImageNsfwLevel({
       id: IMAGE_ID,
       nsfwLevel: NsfwLevel.PG13,
@@ -114,8 +116,13 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
       activity: 'setNsfwLevelKono',
     } as never);
 
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
-    expect(reDerive).not.toHaveBeenCalled();
+    expect(reDerive).toHaveBeenCalledTimes(1);
+    expect(reDerive).toHaveBeenCalledWith({
+      imageId: IMAGE_ID,
+      previousNsfwLevel: NsfwLevel.R,
+      actorUserId: MOD,
+      allowLower: false,
+    });
   });
 
   it('a user’s rating vote does not reach the hook', async () => {

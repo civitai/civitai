@@ -6,6 +6,7 @@ import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-m
 import {
   RATING_CHANGE_ACTION,
   listingRatingChangeReason,
+  loadListingRatingAssets,
   ratingDrivingImageIds,
   recordListingRatingChange,
   recordListingRatingChangeAfterCommit,
@@ -148,11 +149,17 @@ describe('the rating-change event', () => {
     vi.clearAllMocks();
     dbMock.dbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 } as never);
     dbMock.dbWrite.appListingScreenshot.findMany.mockResolvedValue([{ imageId: 3 }] as never);
-    dbMock.dbWrite.image.findMany.mockResolvedValue([
-      { id: 1, nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned' },
-      { id: 2, nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned' },
-      { id: 3, nsfwLevel: NsfwLevel.R, ingestion: 'Scanned' },
-    ] as never);
+    // Returns only the selected columns, so a dropped `select` key reads undefined here too.
+    dbMock.dbWrite.image.findMany.mockImplementation((async (args: {
+      select: Record<string, true>;
+    }) =>
+      [
+        { id: 1, nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned' },
+        { id: 2, nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned' },
+        { id: 3, nsfwLevel: NsfwLevel.R, ingestion: 'Scanned' },
+      ].map((row) =>
+        Object.fromEntries(Object.keys(args.select).map((k) => [k, row[k as keyof typeof row]]))
+      )) as never);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
 
@@ -221,6 +228,34 @@ describe('the rating-change event', () => {
 
     expect(dbMock.dbWrite.appListing.findUnique).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('after commit: a failed asset read is swallowed, and warned about', async () => {
+    dbMock.dbWrite.appListing.findUnique.mockRejectedValue(new Error('connection refused'));
+
+    await expect(recordListingRatingChangeAfterCommit(change)).resolves.toBeUndefined();
+    expect(create).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(
+      '[listing-rating] rating changed (g → r) on apl_1 but its history event was not written: connection refused'
+    );
+  });
+
+  it('loadListingRatingAssets keeps each image’s scan state beside its level', async () => {
+    expect(await loadListingRatingAssets(dbMock.dbWrite, 'apl_1')).toEqual([
+      { imageId: 1, nsfwLevel: NsfwLevel.PG, ingestion: 'Scanned' },
+      { imageId: 2, nsfwLevel: NsfwLevel.PG13, ingestion: 'Scanned' },
+      { imageId: 3, nsfwLevel: NsfwLevel.R, ingestion: 'Scanned' },
+    ]);
+  });
+
+  it('an image filling two slots is one asset, and is named once', async () => {
+    dbMock.dbWrite.appListing.findUnique.mockResolvedValue({ iconId: 3, coverId: 3 } as never);
+
+    await recordListingRatingChangeAfterCommit(change);
+
+    expect(create.mock.calls[0][0].data).toMatchObject({
+      after: { contentRating: 'r', imageIds: [3] },
+    });
   });
 
   it('after commit: a rejected insert is swallowed', async () => {
