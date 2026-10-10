@@ -23,9 +23,10 @@ import { stripComments } from '../../../../../test/strip-comments';
  * characters of the same statement. A nested create built in a helper is found only when
  * that key (or a parameter named like one) sits within that window.
  *
- * The ledgers count sites per enclosing function, which is the nearest `function` or
- * `const x = async` declaration before the site; a site in a plain arrow is counted under
- * the declaration above it.
+ * The write-site and provenance-key ledgers count sites per enclosing function; the
+ * stamper ledger records which functions name `blockProvenance` at all. The enclosing
+ * function is the nearest `function` or `const x = async` declaration before the site; a
+ * site in a plain arrow is attributed to the declaration above it.
  */
 
 const ROOT = process.cwd();
@@ -89,13 +90,14 @@ const WRITE_SITE_LEDGER: Record<string, { decision: Decision; sites: number }> =
 };
 
 /**
- * Every function that names `blockProvenance`: `createImage`, which declares it, and the
- * callers that pass it — the only legitimate stampers.
+ * The set of functions that may name `blockProvenance`: `createImage`, which declares it,
+ * and the callers that pass it — the only legitimate stampers. Membership, not a mention
+ * count, so refactoring inside a listed function does not churn this list.
  */
-const STAMPER_LEDGER: Record<string, number> = {
-  'src/server/services/image.service.ts#createImage': 8,
-  'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': 1,
-};
+const STAMPER_FUNCTIONS: string[] = [
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
+  'src/server/services/image.service.ts#createImage',
+];
 
 /**
  * Every site that writes a provenance key as an object key. `createImage` is the one
@@ -363,8 +365,8 @@ describe('Image metadata provenance — write-site ledger', () => {
 });
 
 describe('Image metadata provenance — stamper ledger', () => {
-  it('only the recorded functions name blockProvenance', () => {
-    expect(countsOf(collect(STAMPER))).toEqual(STAMPER_LEDGER);
+  it('only the recorded functions name blockProvenance, and each still does', () => {
+    expect(keysOf(collect(STAMPER))).toEqual([...STAMPER_FUNCTIONS].sort());
   });
 
   it('only the recorded sites write a provenance key as an object key', () => {
@@ -497,7 +499,7 @@ describe('detector controls', () => {
     expect(countsOf(sitesIn('x.ts', text, PROVENANCE_KEY_WRITE))).toEqual({
       'x.ts#createImage': 2,
     });
-    expect(countsOf(sitesIn('x.ts', text, STAMPER))).toEqual({ 'x.ts#createImage': 4 });
+    expect(keysOf(sitesIn('x.ts', text, STAMPER))).toEqual(['x.ts#createImage']);
   });
 
   it('accepts a conditional spread of object literals in a server-literal site', () => {

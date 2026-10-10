@@ -5,7 +5,6 @@ vi.mock('~/server/utils/created-image-media-probe', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { addPostImageSchema } from '~/server/schema/post.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { profilePictureSchema } from '~/server/schema/user.schema';
 import {
@@ -22,12 +21,10 @@ import {
 const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 const SERVER_APP_ID = 'verified-app-77';
 
-// Client-shaped metadata: every provenance key (listed, and one only the pattern knows),
-// plus unrelated keys that must survive untouched — including near-misses of the pattern.
+// Client-shaped metadata: every provenance key, plus unrelated keys that must survive
+// untouched — including near-misses of the key and a copy nested inside a value.
 const CLIENT_METADATA = {
   blockPublishedAppId: 'client-app-1',
-  blockUploadedAppId: 'client-app-2',
-  blockForkedAppId: 'client-app-3',
   size: 12345,
   width: 640,
   blockedAppId: 'not-provenance',
@@ -52,18 +49,12 @@ beforeEach(() => {
 });
 
 describe('block provenance metadata keys', () => {
-  it('lists the published and uploaded keys', () => {
-    expect([...BLOCK_PROVENANCE_METADATA_KEYS].sort()).toEqual([
-      'blockPublishedAppId',
-      'blockUploadedAppId',
-    ]);
+  it('lists the published key', () => {
+    expect([...BLOCK_PROVENANCE_METADATA_KEYS]).toEqual(['blockPublishedAppId']);
   });
 
   it.each([
     ['blockPublishedAppId', true],
-    ['blockUploadedAppId', true],
-    ['blockForkedAppId', true],
-    ['blockAppId', false],
     ['blockedAppId', false],
     ['publishedAppId', false],
     ['blockPublishedAppIds', false],
@@ -104,19 +95,6 @@ describe('createImage', () => {
     } as never);
 
     expect(createdMetadata()).toEqual({ ...UNRELATED, blockPublishedAppId: SERVER_APP_ID });
-  });
-
-  it('writes the uploaded key from blockProvenance too', async () => {
-    await createImage({
-      url: KEY,
-      userId: 1,
-      type: 'image',
-      skipIngestion: true,
-      metadata: { size: 9 },
-      blockProvenance: { key: 'blockUploadedAppId', appId: SERVER_APP_ID },
-    } as never);
-
-    expect(createdMetadata()).toEqual({ size: 9, blockUploadedAppId: SERVER_APP_ID });
   });
 
   it('writes provenance onto a row that had no metadata', async () => {
@@ -192,17 +170,5 @@ describe('input schemas', () => {
   it('profilePictureSchema drops provenance keys and keeps the rest', () => {
     const parsed = profilePictureSchema.parse({ url: KEY, metadata: { ...CLIENT_METADATA } });
     expect(parsed.metadata).toEqual(UNRELATED);
-  });
-
-  it('addPostImageSchema drops provenance keys and keeps the rest', () => {
-    const parsed = addPostImageSchema.parse({
-      url: KEY,
-      postId: 1,
-      index: 0,
-      metadata: { ...CLIENT_METADATA },
-      blockProvenance: { key: 'blockPublishedAppId', appId: 'client-app-1' },
-    });
-    expect(parsed.metadata).toEqual(UNRELATED);
-    expect(parsed).not.toHaveProperty('blockProvenance');
   });
 });

@@ -7,7 +7,6 @@ import { toStringList } from '~/utils/array-helpers';
 import { isBetweenToday } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
-import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -233,11 +232,7 @@ export const addPostImageSchema = z.object({
     }, imageMetaSchema.nullish())
     .nullish(),
   type: z.enum(MediaType).default(MediaType.image),
-  metadata: z
-    .object({})
-    .passthrough()
-    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
-    .optional(),
+  metadata: z.object({}).passthrough().optional(),
   generationWorkflowId: z.string().optional(),
   externalDetailsUrl: z.url().optional(),
 });
