@@ -323,17 +323,20 @@ describe('IframeHost NACKs a page-only REQUEST-style message instead of hanging'
     });
     const rows = beacon.buffered();
     // The labels are read off the REAL host, not a harness prop — that is the
-    // whole point: `host` is what tells a declared page-only N/A apart from a
-    // missing bridge, and `app_block_id` is the attribution.
+    // whole point: the real host's `host` label is what the dispatcher reads
+    // against the parity INVENTORY, and GET_VIEWER is declared N/A for the model
+    // slot, so the row is `not_applicable` (a declared refusal), not `no_handler`
+    // (a missing bridge). `app_block_id` is the attribution.
     expect(rows).toContainEqual(
       expect.objectContaining({
         appBlockId: 'apb_test',
         host: 'IframeHost',
         type: 'GET_VIEWER',
-        outcome: 'no_handler',
+        outcome: 'not_applicable',
       })
     );
-    // …and the mount's own handled traffic is there too, so `no_handler` has a
+    expect(rows.some((r) => r.outcome === 'no_handler')).toBe(false);
+    // …and the mount's own handled traffic is there too, so the refusal has a
     // denominator rather than being the only thing this host ever reports.
     expect(rows.some((r) => r.outcome === 'handled' && r.host === 'IframeHost')).toBe(true);
     replies.stop();

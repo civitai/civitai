@@ -9,6 +9,7 @@ import {
   BRIDGE_NACK_NO_TOKEN,
   type BridgeHost,
   type BridgeMessageOutcome,
+  unhandledOutcomeFor,
 } from './bridgeTelemetry';
 
 /**
@@ -41,10 +42,12 @@ import {
  * three are present in 0.14.0 — zero of them is ahead. Measure it.
  *
  * ⚠️ And the consequence is worse than an absence, not better: the reports do not
- * vanish, they land on `no_handler` under the NEW type — unclamped, since it would
- * be an INVENTORY key — so `validator_rejected` sits at the zero the HELP string
- * tells a reader to read as a rollout gap while the signal is filed under another
- * outcome entirely.
+ * vanish, they land on an unhandled-message outcome under the NEW type — unclamped,
+ * since it would be an INVENTORY key — so `validator_rejected` sits at the zero the
+ * HELP string tells a reader to read as a rollout gap while the signal is filed
+ * under another outcome entirely. Which one depends on how the new key is
+ * declared: `no_handler` if `'required'`, but `not_applicable` if it copies this
+ * entry's per-host N/A rationale — the likelier edit, and the quieter series.
  *
  * It is still strictly better than the bare literal it replaced — it catches an
  * outright key deletion and a typo in either place. But NOTHING here closes the
@@ -61,9 +64,11 @@ interface UsePostMessageOptions {
    * Which host owns this bridge. Drives the `host` label on
    * `civitai_app_block_bridge_messages_total` and is REQUIRED so a new host
    * cannot be wired up without deciding what it reports as — an unlabelled host
-   * would silently merge into another host's series, and the whole point of the
-   * `no_handler` outcome is that it is per-host (a page-only message unhandled on
-   * the model slot is the expected state; unhandled on the page host is a bug).
+   * would silently merge into another host's series. It also decides the outcome
+   * of an unhandled message: a type the parity INVENTORY declares N/A for this
+   * host (a page-only request on the model slot, RESIZE_IFRAME on the page host)
+   * reports `not_applicable`; a type declared `'required'` here, or absent from
+   * the INVENTORY, reports `no_handler` — the missing-bridge signal.
    */
   host: BridgeHost;
   /**
@@ -397,7 +402,11 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // lock out legitimate BLOCK_ERROR reporting.
       const subscribers = handlersRef.current.get(data.type);
       if (!subscribers || subscribers.size === 0) {
-        report(data.type, 'no_handler');
+        // `not_applicable` when the parity INVENTORY declares this type N/A for
+        // this host (e.g. RESIZE_IFRAME on the full-viewport page host), else
+        // `no_handler` (declared `'required'` here, or not in the INVENTORY). The
+        // label is the ONLY thing that differs — the NACK below runs for both.
+        report(data.type, unhandledOutcomeFor(data.type, host));
         // NACK: a REQUEST-style message with no handler is the expensive silence
         // — the block awaits a reply that will never come and hangs to its SDK
         // timeout class (30s default, 120s workflow, 600s human-in-the-loop).
@@ -464,7 +473,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       report(data.type, 'handled');
       for (const handler of subscribers) handler(data.payload);
     },
-    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock]
+    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock, host]
   );
 
   useEffect(() => {

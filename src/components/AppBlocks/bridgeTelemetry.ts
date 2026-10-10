@@ -1,4 +1,5 @@
 import { INVENTORY } from './hostHandlerParity';
+import type { BridgeHost, BridgeMessageOutcome } from './bridgeLabels';
 
 /**
  * App Blocks postMessage BRIDGE telemetry — the INVENTORY-dependent half.
@@ -59,6 +60,35 @@ export type { BridgeMessageOutcome, BridgeHost } from './bridgeLabels';
  */
 export function boundBridgeMessageType(type: string): string {
   return Object.prototype.hasOwnProperty.call(INVENTORY, type) ? type : 'other';
+}
+
+/**
+ * The outcome to record for a message that reached NO registered handler on
+ * `host`: `'not_applicable'` when `hostHandlerParity`'s INVENTORY declares the type
+ * N/A for that host (a rationale string rather than `'required'`), otherwise
+ * `'no_handler'` — which therefore covers exactly two cases: a type the INVENTORY
+ * marks `'required'` on this host (a missing bridge) and a type the INVENTORY does
+ * not declare at all.
+ *
+ * 🔴 DERIVED FROM THE INVENTORY, NEVER A HAND LIST. The N/A column is the one
+ * declaration of "this host does not handle this on purpose"; a second list here
+ * would drift from it the first time a page-only affordance gains a slot handler.
+ *
+ * `hasOwnProperty.call`, not `type in INVENTORY`: the type is block-supplied, and a
+ * prototype key (`'toString'`, `'constructor'`) would otherwise resolve to a
+ * function whose `[host]` is `undefined` — not `'required'` — and be filed as a
+ * declared N/A.
+ *
+ * Only the label is decided here. Whether the block gets a NACK is the dispatcher's
+ * separate question and does not depend on this result.
+ */
+export function unhandledOutcomeFor(
+  type: string,
+  host: BridgeHost
+): Extract<BridgeMessageOutcome, 'no_handler' | 'not_applicable'> {
+  if (!Object.prototype.hasOwnProperty.call(INVENTORY, type)) return 'no_handler';
+  const spec = (INVENTORY as Record<string, Record<BridgeHost, string>>)[type];
+  return spec[host] === 'required' ? 'no_handler' : 'not_applicable';
 }
 
 /**

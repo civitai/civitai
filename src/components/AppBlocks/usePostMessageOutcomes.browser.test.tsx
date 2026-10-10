@@ -4,7 +4,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { usePostMessage } from '~/components/AppBlocks/usePostMessage';
-import type { BridgeMessageOutcome } from '~/components/AppBlocks/bridgeTelemetry';
+import type { BridgeHost, BridgeMessageOutcome } from '~/components/AppBlocks/bridgeTelemetry';
 
 /**
  * The BRIDGE OUTCOME COUNTER, driven through the real dispatcher.
@@ -17,7 +17,13 @@ import type { BridgeMessageOutcome } from '~/components/AppBlocks/bridgeTelemetr
  * then UNREGISTER it and prove the SAME message now reports `no_handler`. One
  * variable moves, both arms are read, and the before/after pair is the evidence.
  *
- * FIVE of the six outcomes are dispatcher-side and are all exercised against the
+ * 🔴 WHICH HOST A `no_handler` TEST MOUNTS IS PART OF ITS PREMISE. An unhandled
+ * type the parity INVENTORY declares N/A for the harness's host reports
+ * `not_applicable`, not `no_handler` — `GET_VIEWER` is N/A on `IframeHost` and
+ * `'required'` on `PageBlockHost`. So every `no_handler` arm below mounts the host
+ * on which its type is required, and the split itself is pinned in its own block.
+ *
+ * SIX of the seven outcomes are dispatcher-side and are all exercised against the
  * real hook here — including `validator_rejected`, which the dispatcher produces
  * from the block's own `BLOCK_MESSAGE_REJECTED` report rather than observing.
  * `no_token` is the one HANDLER-side report and is pinned on the hosts themselves,
@@ -33,9 +39,11 @@ type Recorded = { type: string; outcome: BridgeMessageOutcome; appBlockId: strin
 function Harness({
   onOutcome,
   registered: initiallyRegistered,
+  host = 'IframeHost',
 }: {
   onOutcome: (e: Recorded) => void;
   registered: boolean;
+  host?: BridgeHost;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [handledPayloads, setHandledPayloads] = useState(0);
@@ -50,7 +58,7 @@ function Harness({
   const { onMessage } = usePostMessage({
     iframeRef,
     expectedOrigin: window.location.origin,
-    host: 'IframeHost',
+    host,
     appBlockId: 'apb_test',
     onOutcome,
   });
@@ -104,7 +112,11 @@ function listenOnBlock() {
   };
 }
 
-async function mount(props: { onOutcome: (e: Recorded) => void; registered: boolean }) {
+async function mount(props: {
+  onOutcome: (e: Recorded) => void;
+  registered: boolean;
+  host?: BridgeHost;
+}) {
   const utils = renderWithProviders(<Harness {...props} />);
   await vi.waitFor(() => {
     if (!iframeEl().contentWindow) throw new Error('not mounted yet');
@@ -119,7 +131,8 @@ function countOf(rec: Recorded[], outcome: BridgeMessageOutcome, type = 'GET_VIE
 describe('usePostMessage bridge outcome counter', () => {
   test('NEGATIVE CONTROL: unregistering the handler flips the SAME message from handled to no_handler', async () => {
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    // PageBlockHost: GET_VIEWER is `'required'` there, so unhandled is a real gap.
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'PageBlockHost' });
 
     // ── ARM 1: handler REGISTERED ────────────────────────────────────────────
     postFromBlock('GET_VIEWER', { requestId: 'rq_a' });
@@ -213,12 +226,14 @@ describe('usePostMessage bridge outcome counter', () => {
     // Nothing awaits a reply to these, so a NACK would be an unsolicited push
     // with no listener — noise on the wire that fixes nothing. The counter is the
     // whole remedy for this class.
+    // NAVIGATE on PageBlockHost: fire-and-forget AND `'required'` there, so this
+    // is the no_handler arm of the class (TRACK_EVENT is N/A on both hosts).
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: false });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'PageBlockHost' });
     const replies = listenOnBlock();
-    postFromBlock('TRACK_EVENT', { requestId: 'rq_ff' });
+    postFromBlock('NAVIGATE', { requestId: 'rq_ff' });
     await vi.waitFor(() => {
-      if (countOf(recorded, 'no_handler', 'TRACK_EVENT') !== 1) throw new Error('not counted yet');
+      if (countOf(recorded, 'no_handler', 'NAVIGATE') !== 1) throw new Error('not counted yet');
     });
     // Give any stray reply a chance to land before asserting its absence.
     await new Promise((r) => setTimeout(r, 50));
@@ -230,7 +245,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // The unhandled branch sits BEFORE the inbound rate limiter on purpose, so
     // answering it needs its own budget or the branch is a postMessage amplifier.
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: false });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'PageBlockHost' });
     const replies = listenOnBlock();
     for (let i = 0; i < 45; i++) postFromBlock('GET_VIEWER', { requestId: `rq_flood_${i}` });
     await vi.waitFor(() => {
@@ -238,6 +253,91 @@ describe('usePostMessage bridge outcome counter', () => {
     });
     await new Promise((r) => setTimeout(r, 50));
     expect(replies.of('VIEWER_RESULT')).toHaveLength(30);
+    replies.stop();
+  });
+
+  // ── Declared N/A vs a missing handler ──────────────────────────────────────
+  // An unhandled type the parity INVENTORY marks N/A for the CURRENT host reports
+  // `not_applicable`; one marked `'required'` there, or not in the INVENTORY,
+  // reports `no_handler`. Only the label differs — the wire reply does not.
+
+  test('RESIZE_IFRAME unhandled on PageBlockHost (declared N/A) reports not_applicable, once, unanswered', async () => {
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'PageBlockHost' });
+    const replies = listenOnBlock();
+    postFromBlock('RESIZE_IFRAME', { height: 480 });
+    await vi.waitFor(() => {
+      if (recorded.length === 0) throw new Error('nothing recorded');
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(recorded).toEqual([
+      {
+        appBlockId: 'apb_test',
+        host: 'PageBlockHost',
+        type: 'RESIZE_IFRAME',
+        outcome: 'not_applicable',
+      },
+    ]);
+    expect(replies.all()).toEqual([]);
+    replies.stop();
+  });
+
+  test('the SAME RESIZE_IFRAME unhandled on IframeHost (required there) is still no_handler', async () => {
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'IframeHost' });
+    postFromBlock('RESIZE_IFRAME', { height: 480 });
+    await vi.waitFor(() => {
+      if (recorded.length === 0) throw new Error('nothing recorded');
+    });
+    expect(recorded).toEqual([
+      { appBlockId: 'apb_test', host: 'IframeHost', type: 'RESIZE_IFRAME', outcome: 'no_handler' },
+    ]);
+  });
+
+  test('a REQUIRED request type unhandled on PageBlockHost is no_handler', async () => {
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'PageBlockHost' });
+    postFromBlock('GET_VIEWER', { requestId: 'rq_required' });
+    await vi.waitFor(() => {
+      if (recorded.length === 0) throw new Error('nothing recorded');
+    });
+    expect(recorded).toEqual([
+      { appBlockId: 'apb_test', host: 'PageBlockHost', type: 'GET_VIEWER', outcome: 'no_handler' },
+    ]);
+  });
+
+  test.each(['IframeHost', 'PageBlockHost'] as const)(
+    'a type the INVENTORY does not declare is no_handler on %s',
+    async (host) => {
+      const recorded: Recorded[] = [];
+      await mount({ onOutcome: (e) => recorded.push(e), registered: false, host });
+      postFromBlock('NOT_A_REAL_MESSAGE', { requestId: 'rq_unknown' });
+      await vi.waitFor(() => {
+        if (recorded.length === 0) throw new Error('nothing recorded');
+      });
+      expect(recorded).toEqual([
+        { appBlockId: 'apb_test', host, type: 'NOT_A_REAL_MESSAGE', outcome: 'no_handler' },
+      ]);
+    }
+  );
+
+  test('a declared-N/A REQUEST type is still NACKed — only the label changes', async () => {
+    // GET_VIEWER is N/A on the model slot. The block is awaiting VIEWER_RESULT, so
+    // the error reply must still go out: relabelling must not reintroduce a hang.
+    const recorded: Recorded[] = [];
+    await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'IframeHost' });
+    const replies = listenOnBlock();
+    postFromBlock('GET_VIEWER', { requestId: 'rq_na_nack' });
+    await vi.waitFor(() => {
+      if (replies.of('VIEWER_RESULT').length === 0) throw new Error('no NACK yet');
+    });
+    expect(replies.of('VIEWER_RESULT')[0].payload).toEqual({
+      requestId: 'rq_na_nack',
+      error: 'unsupported on this host',
+    });
+    expect(recorded).toEqual([
+      { appBlockId: 'apb_test', host: 'IframeHost', type: 'GET_VIEWER', outcome: 'not_applicable' },
+    ]);
     replies.stop();
   });
 
