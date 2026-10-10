@@ -293,6 +293,12 @@ export const resourceIntentResponseSchema = z.strictObject({
    * route is dark behind `resourceIntentJev`.
    */
   insightFallback: z.boolean(),
+  /**
+   * POOL_MERGE arm only (absent on the HYBRID_10 arm): no co-occurrence snapshot could be served,
+   * so the list is BASE's popularity top `cap`, through the same gates. Not `degraded`, for the
+   * reason `insightFallback` is not.
+   */
+  coocFallback: z.boolean().optional(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),

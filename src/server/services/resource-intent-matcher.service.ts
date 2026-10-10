@@ -17,6 +17,11 @@ import {
   type ResourceIntentStyleFamily,
 } from '~/server/schema/resource-intent.schema';
 import {
+  poolMergeBaseWidth,
+  poolMergeModelIds,
+  POOL_MERGE_COOC_LIST_MODELS,
+} from '~/server/services/resource-intent-pool-merge';
+import {
   loadResourceInsights,
   RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE,
   RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
@@ -303,9 +308,7 @@ async function searchShortlistModels(
   filter: string | null,
   poolCap: number
 ): Promise<ModelSearchIndexRecord[]> {
-  const client = searchClient;
-  if (!client) return [];
-  const request: SearchParams = {
+  return searchModelIndex({
     filter: filter ?? undefined,
     // 🔴 Popularity ONLY: no role filter and no quality key — see this module's header.
     sort: ['metrics.thumbsUpCount:desc'],
@@ -313,7 +316,12 @@ async function searchShortlistModels(
     // zero versions (the coverage and baseModel filters are nested-array matches), so the
     // pool can be narrower than `poolCap`.
     limit: poolCap,
-  };
+  });
+}
+
+async function searchModelIndex(request: SearchParams): Promise<ModelSearchIndexRecord[]> {
+  const client = searchClient;
+  if (!client) return [];
   try {
     const results = await withMeiliResourceSelect(
       (searchSignal) =>
@@ -507,4 +515,60 @@ export async function findResourceIntentCandidates(
     pool,
     basePool,
   };
+}
+
+/**
+ * The POOL_MERGE arm's list, exactly as the co-occurrence screen gated and merged it.
+ *
+ * Co-occurrence: the candidates (best first) under the seed's filter AND `id IN candidates`, one
+ * page as wide as the candidate list and unsorted, re-sorted by candidate rank, one version per
+ * model. BASE: `seedBasePool`'s page, one version per model, `poolMergeBaseWidth(cap)` wide.
+ */
+export async function findPoolMergeCandidates(
+  criteria: ResourceIntentCriteria,
+  opts: {
+    browsingLevel: number;
+    coverage: ResourceIntentCoverage;
+    cap: number;
+    coocCandidates: readonly number[];
+  }
+): Promise<{ entries: ResourceIntentShortlistEntry[]; coocGated: number }> {
+  if (criteria.role === 'none') return { entries: [], coocGated: 0 };
+  const cap = clampResourceIntentCap(opts.cap);
+  const cands = opts.coocCandidates;
+  const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
+  const filter = buildResourceIntentFilter({
+    modelTypes: criteria.modelTypes,
+    baseModels,
+    browsingLevel: opts.browsingLevel,
+    coverage: opts.coverage,
+  });
+  const [deep, hits] = await Promise.all([
+    searchShortlistModels(filter, RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT),
+    cands.length
+      ? searchModelIndex({
+          filter: and(filter, inArray('id', cands)) ?? undefined,
+          limit: cands.length,
+        })
+      : Promise.resolve([]),
+  ]);
+  const basePool = expandOneVersionPerModel(deep, {
+    baseModels,
+    coverage: opts.coverage,
+    cap: poolMergeBaseWidth(cap),
+  });
+  const candRank = new Map(cands.map((id, i) => [id, i]));
+  const docs = [...hits].sort((x, y) => (candRank.get(x.id) ?? 1e9) - (candRank.get(y.id) ?? 1e9));
+  const gated = cands.length
+    ? expandOneVersionPerModel(docs, { baseModels, coverage: opts.coverage, cap: cands.length })
+    : [];
+  const coocList = gated.slice(0, POOL_MERGE_COOC_LIST_MODELS);
+  // A model on both lists expands from the same document through the same gates: same version.
+  const byModel = new Map([...basePool, ...coocList].map((e) => [e.modelId, e]));
+  const entries = poolMergeModelIds(
+    coocList.map((e) => e.modelId),
+    basePool.map((e) => e.modelId),
+    cap
+  ).map((id) => byModel.get(id) as ResourceIntentShortlistEntry);
+  return { entries, coocGated: gated.length };
 }

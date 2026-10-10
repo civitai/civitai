@@ -40,7 +40,8 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * request is up to three vendor calls (stage 1, then two stage-3 calls in
  * parallel). Flag: `resourceIntentJev` (Flipt
  * `resource-intent-jev`, default-deny when absent) is checked BEFORE the
- * response cache so a dark flag never reads, never spends.
+ * response cache so a dark flag never reads, never spends. Behind it,
+ * `resourceIntentPoolMerge` picks the co-occurrence POOL_MERGE list over HYBRID_10.
  *
  * Any failure inside the primitive returns 200 with `degraded: true` and empty
  * suggestions — never a stack trace, never fabricated suggestions. ⚠️ ONE
@@ -99,7 +100,10 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   try {
     // Coverage is resolved INSIDE the service, on the cache-miss path only —
     // a Flipt eval on every cache hit would be pure waste.
-    const result = await getResourceIntent(parsed.data, { browsingLevel });
+    const result = await getResourceIntent(parsed.data, {
+      browsingLevel,
+      poolMerge: !!features.resourceIntentPoolMerge,
+    });
     res.status(200).json({
       ...result,
       // Echo the applied ceiling (advisory — the clamp is authoritative).
