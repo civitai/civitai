@@ -774,9 +774,21 @@ export const getImageResourcesHandler = async ({
   }
 };
 
-export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
+export const getEntitiesCoverImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetEntitiesCoverImage;
+  ctx: Context;
+}) => {
   try {
-    return await getEntityCoverImage({ ...input, include: ['tags'] });
+    return await getEntityCoverImage({
+      ...input,
+      include: ['tags'],
+      // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
+      // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
+      eventDecorationViewer: ctx.user,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

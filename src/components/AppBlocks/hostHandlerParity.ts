@@ -568,8 +568,9 @@ export const INVENTORY = {
   },
   // Host download bridge (Batch-D item 1) — the host fetches an image in its
   // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
-  // no `allow-downloads`). Two variants: an origin-allowlisted OWN-output `url`,
-  // or a cross-user `imageId` routed through the gated per-viewer read. PAGE-ONLY
+  // no `allow-downloads`). Three variants: an origin-allowlisted OWN-output `url`,
+  // a cross-user `imageId` routed through the gated per-viewer read, or block-made
+  // `bytes` classified by content (image / JSON / text only). PAGE-ONLY
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.

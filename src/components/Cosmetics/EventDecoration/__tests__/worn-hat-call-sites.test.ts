@@ -27,8 +27,10 @@ const CALL_SITES: [file: string, expected: string][] = [
     "eventDecorationOn={{ entityType: 'Image', entityId: data.id }}",
   ],
   [
+    // A Showcase card wears the hat of what it stands for; getGenericCardWornOn is pinned in
+    // generic-image-card-worn-on.test.ts.
     'src/components/Cards/GenericImageCard.tsx',
-    "eventDecorationOn={{ entityType: 'Image', entityId: image.id }}",
+    'eventDecorationOn={getGenericCardWornOn(image.id, entityType, entityId)}',
   ],
   [
     'src/components/Image/Infinite/ImagesCard.tsx',

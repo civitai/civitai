@@ -1,7 +1,7 @@
 // The contract of the event points engine: a ledger of plain facts in ClickHouse, live totals in
 // sysRedis, and an hourly referee that recomputes the exact score from the ledger alone.
-// Design: every action that can earn points goes through `awardEventPoints`, which decides in one
-// Lua call whether the action is a first and how much of it fits under the per-creator cap.
+// Every action that can earn points goes through `awardEventPoints`: an atomic SADD decides whether
+// it is a first, and an atomic HINCRBY on the per-creator cap decides how much of it fits.
 
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
@@ -44,8 +44,13 @@ export type EventPointAction = {
   entityId: number;
   // When the action happened; defaults to now.
   time?: Date;
-  // Id of the source row (reaction, comment, placement, review), so a later removal can net it out.
+  // Names one (kind, entity, person), e.g. `ImageReaction:{imageId}:{userId}`, NOT a row id: a
+  // person's earning on an entity counts while the latest ledger row for this id is an add, so a
+  // removal is sent only when their last qualifying row there goes.
   sourceId?: string;
+  // The actor's account, when the caller already has it (the session user). Lets the live total skip
+  // new and banned accounts at once; without it they are only dropped by the hourly referee.
+  actor?: { createdAt?: Date | null; bannedAt?: Date | null };
 };
 
 // A removal nets out an earlier action by its sourceId. It writes a ledger row only; live totals

@@ -64,6 +64,7 @@ import { entityModerationJobs } from '~/server/jobs/entity-moderation';
 import {
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
+  eventPointsHatSync,
 } from '~/server/jobs/event-engine-work';
 import { eventPointsTicker } from '~/server/jobs/event-points-ticker';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
@@ -191,6 +192,7 @@ export const jobs: Job[] = [
   ...bountyJobs,
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
+  eventPointsHatSync,
   eventPointsTicker,
   ...csamJobs,
   resourceGenerationAvailability,
