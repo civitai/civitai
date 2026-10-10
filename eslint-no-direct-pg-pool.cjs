@@ -10,8 +10,9 @@
 //
 // Limits: matches by name, so an aliased import (`import { Pool as P } from 'pg'; new P()`) is not
 // caught, and a non-pg class named `Pool` would be. apps/event-engine/src/common has its own
-// `root: true` config that does not include it. CI lints only changed files under src/, packages/ and
-// apps/event-engine/ (.github/workflows/lint.yml), so in the other apps it is a local-lint check only.
+// `root: true` config that does not include it. CI (.github/workflows/lint.yml) blocks only in newly
+// added .ts/.tsx files under src/, packages/ and apps/event-engine/; modified files there are
+// report-only, and in the other apps it is a local-lint check only.
 const message =
   'Build pg pools with @civitai/db (createPool / createClients / createKyselyClients), which attach ' +
   'guardPool: without its listeners a dropped DB connection crashes the process. A pool that must ' +
