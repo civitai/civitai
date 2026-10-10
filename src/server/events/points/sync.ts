@@ -325,6 +325,8 @@ async function runOwnerHatSync(
     await syncOwnerPass(ownerId, next, now, scope);
     return;
   }
+  // What it still holds, including content other callers left, goes back for whoever runs next.
+  await sysRedis.sAdd(lock.pending, [PENDING_ALL, ...next]).catch(() => undefined);
   void logToAxiom({
     type: 'warning',
     name: 'event-points',

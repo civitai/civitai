@@ -229,7 +229,8 @@ describe('syncEventHats -> engine', () => {
       sets.delete(key);
       return members;
     });
-    // The two compare-and-act scripts the lock uses: delete, or extend, only while it is ours.
+    // The two compare-and-act scripts the lock uses: delete, or extend, only while it is ours. Told
+    // apart by the command name as sync.ts spells it.
     sys.eval.mockImplementation(
       async (
         script: string,
@@ -422,6 +423,9 @@ describe('syncEventHats -> engine', () => {
       expect(log).toEqual([]);
       expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
       expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+      expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+      expect(redisMock.sysRedis.hmGet).not.toHaveBeenCalled();
+      expect(redisMock.sysRedis.hGetAll).not.toHaveBeenCalled();
       // Switched back on, the same calls write: the silence above is the switch.
       killSwitch.on = true;
       await syncOwnerEventHats(OWNER, [image(100)], LIVE);
@@ -520,6 +524,18 @@ describe('syncEventHats -> engine', () => {
       await equip;
       expect(Object.fromEntries(hashes.get(keys.hats)!)).toEqual({});
       expect(log.at(-1)).toEqual({ k: 'Image:100', v: '' });
+      // A crashed holder must not block the owner for good, nor its waiters' content outlive it.
+      const sys = redisMock.sysRedis;
+      for (const [key, , opts] of sys.set.mock.calls.filter(([key]) => key === lock.lock)) {
+        expect(key).toBe(lock.lock);
+        expect(opts).toEqual({ NX: true, PX: expect.any(Number) });
+        expect(opts.PX).toBeGreaterThan(0);
+      }
+      expect(sys.pExpire).toHaveBeenCalledWith(lock.pending, expect.any(Number));
+      expect(sys.pExpire.mock.calls[0][1]).toBeGreaterThan(0);
+      const renewals = sys.eval.mock.calls.filter(([script]) => script.includes("'PEXPIRE'"));
+      expect(renewals.length).toBeGreaterThan(0);
+      for (const [, { arguments: args }] of renewals) expect(Number(args[1])).toBeGreaterThan(0);
     });
 
     it('gives up after a bounded number of passes, and says so', async () => {
@@ -534,6 +550,27 @@ describe('syncEventHats -> engine', () => {
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({ fn: 'runOwnerHatSync', ownerId: OWNER })
       );
+      // What it took from the last arrival goes back for whoever runs next.
+      expect([...(sets.get(lock.pending) ?? [])]).toEqual(['*']);
+    });
+
+    it('runs its pass anyway when it never gets the lock and the holder keeps letting go', async () => {
+      await place(OWNER, 100);
+      redisMock.sysRedis.set.mockResolvedValue(null);
+      redisMock.sysRedis.exists.mockResolvedValue(0);
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(2 * HAT_SYNC_MAX_PASSES);
+      expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
+    });
+
+    it('still writes when renewing the lock fails, and says so', async () => {
+      await place(OWNER, 100);
+      redisMock.sysRedis.eval.mockRejectedValueOnce(new Error('redis blip'));
+      await syncOwnerEventHats(OWNER, [image(100)], LIVE);
+      expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ fn: 'runOwnerHatSync.renew', ownerId: OWNER })
+      );
     });
 
     // A pass that outlives the lock must neither write after losing it nor free the next holder's.
@@ -546,10 +583,10 @@ describe('syncEventHats -> engine', () => {
         return rows;
       }) as never);
       await syncOwnerEventHats(OWNER, [image(100)], LIVE);
-      expect(log).toEqual([]);
       expect(strings.get(lock.lock)).toBe('another-holder');
       // It left its content for that holder.
       expect([...(sets.get(lock.pending) ?? [])]).toEqual(['*', 'Image:100']);
+      expect(log).toEqual([]);
     });
 
     it('takes the lock itself when the holder let go before it could leave its content', async () => {
