@@ -22,6 +22,7 @@ vi.mock('~/server/events/points/enabled', () => ({
   isEventPointsEnabledSync: () => engine.on,
 }));
 
+const { logToAxiom } = await import('~/server/logging/client');
 const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');
 const { eventPointKeys, eventPointSeason, eventSeasonKeys, hatTopicId } = await import(
   '~/server/events/points/keys'
@@ -96,9 +97,13 @@ describe('the pusher with its default deps', () => {
     totals();
     markAll();
     zmScore().mockRejectedValue(new Error('redis down'));
+    vi.mocked(logToAxiom).mockClear();
     markEventPointsDirty(event, HAT, new Date());
     expect(await drainEventPointsPush()).toEqual({ left: 0 });
     expect(topicSend).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(logToAxiom).mock.calls.map(([e]) => (e as { message?: string }).message)
+    ).toEqual(['interest set read failed']);
   });
 
   it('pushes only the watched topic', async () => {

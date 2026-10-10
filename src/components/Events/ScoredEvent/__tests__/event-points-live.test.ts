@@ -111,6 +111,34 @@ describe('applyHatPoints', () => {
   });
 });
 
+describe('applyTopHatPoints', () => {
+  const standings = {
+    updatedAt: 1,
+    topCosmetics: [
+      { topicId: 'a', points: 30 },
+      { topicId: 'b', points: 20 },
+      { topicId: 'c', points: 10 },
+    ],
+  };
+
+  it('puts the pushed total on its row and re-sorts by points', () => {
+    expect(live.applyTopHatPoints(standings, 'c', 25)).toEqual({
+      updatedAt: 1,
+      topCosmetics: [
+        { topicId: 'a', points: 30 },
+        { topicId: 'c', points: 25 },
+        { topicId: 'b', points: 20 },
+      ],
+    });
+  });
+
+  it('returns the same object for a hat not in the list, or an unchanged total', () => {
+    expect(live.applyTopHatPoints(standings, 'zz', 99)).toBe(standings);
+    expect(live.applyTopHatPoints(standings, 'b', 20)).toBe(standings);
+    expect(live.applyTopHatPoints(undefined, 'a', 1)).toBeUndefined();
+  });
+});
+
 describe('applyTeamPoints', () => {
   const standings = {
     teams: [

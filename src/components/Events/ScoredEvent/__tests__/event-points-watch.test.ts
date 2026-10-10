@@ -16,6 +16,7 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 const mutate = vi.fn();
 const setStandings = vi.fn();
+// The tRPC proxy hands every hook the same utils object.
 const topics: (string | undefined)[] = [];
 const handlers = new Map<string, (raw: unknown) => void>();
 
@@ -25,7 +26,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: makeTrpcProxy(
       { 'event.watchPoints': { useMutation: () => ({ mutate }) } },
-      { useUtils: () => ({ event: { getStandings: { setData: setStandings } } }) }
+      {
+        useUtils: () => ({
+          event: { getStandings: { setData: setStandings }, getMyHats: { setData: vi.fn() } },
+        }),
+      }
     ),
   };
 });
@@ -86,7 +91,7 @@ describe('team totals', () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
-  it('a teams push re-ranks the standings the section renders', () => {
+  it('a teams push re-ranks the cached standings the section renders from', () => {
     renderTeams(true);
     act(() =>
       handlers.get(SignalMessages.EventPointsTeams)!({
@@ -108,6 +113,59 @@ describe('team totals', () => {
         { team: 'Blue', score: 50, rank: 2 },
       ],
     });
+  });
+});
+
+describe('top hats', () => {
+  const ids = ['b'.padStart(16, '0'), 'a'.padStart(16, '0')];
+  const renderTop = (topicIds: string[], inView: boolean) =>
+    act(() =>
+      root!.render(
+        React.createElement(live.TopHatsLivePoints, { event: 'birthday2026', topicIds, inView })
+      )
+    );
+
+  it('in view: subscribes and marks; a push re-sorts the cached top hats', () => {
+    renderTop(ids, true);
+    expect(topics.filter(Boolean).sort()).toEqual(
+      ids.map((id) => `event-points:birthday2026:hat:${id}`).sort()
+    );
+    expect(mutate).toHaveBeenCalledTimes(1);
+    act(() =>
+      handlers.get(SignalMessages.EventPointsHat)!({
+        event: 'birthday2026',
+        topicId: ids[1],
+        points: 9,
+      })
+    );
+    const [input, update] = setStandings.mock.calls[0];
+    expect(input).toEqual({ event: 'birthday2026' });
+    expect(
+      update({
+        topCosmetics: [
+          { topicId: ids[0], points: 5 },
+          { topicId: ids[1], points: 1 },
+        ],
+      })
+    ).toEqual({
+      topCosmetics: [
+        { topicId: ids[1], points: 9 },
+        { topicId: ids[0], points: 5 },
+      ],
+    });
+  });
+
+  it('a re-ranked list is the same watch: no new mark', () => {
+    renderTop(ids, true);
+    renderTop([...ids].reverse(), true);
+    expect(mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('out of view: subscribes to nothing and marks nothing', () => {
+    renderTop(ids, false);
+    act(() => vi.advanceTimersByTime(live.WATCH_REFRESH_MS * 2));
+    expect(topics.filter(Boolean)).toEqual([]);
+    expect(mutate).not.toHaveBeenCalled();
   });
 });
 

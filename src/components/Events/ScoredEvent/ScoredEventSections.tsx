@@ -115,7 +115,8 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
         <TopHatsLivePoints
           event={event}
           topicIds={standings.topCosmetics.slice(0, 10).map((c) => c.topicId)}
-          inView={topHatsView.inView}
+          // Frozen with the team totals once ended: the page names the settled result.
+          inView={topHatsView.inView && !ended}
         />
         <TopHats standings={standings} />
       </div>

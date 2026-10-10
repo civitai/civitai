@@ -78,8 +78,9 @@ export function applyTopHatPoints<
  */
 export function useWatchEventPoints(event: string, topics: string[], active: boolean) {
   const { mutate } = trpc.event.watchPoints.useMutation();
-  // A stable dependency for the effect: the same topics in the same order are the same watch.
-  const key = active && topics.length ? topics.join(',') : '';
+  // A stable dependency for the effect: the same topics in any order are the same watch, so a
+  // re-ranked list does not mark again (marks share one per-caller rate limit).
+  const key = active && topics.length ? [...topics].sort().join(',') : '';
   useEffect(() => {
     if (!key) return;
     const all = key.split(',');

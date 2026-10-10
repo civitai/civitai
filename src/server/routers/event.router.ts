@@ -168,12 +168,13 @@ export const eventRouter = router({
     .input(eventSchema)
     .query(({ ctx, input }) => getPlaceableEventContent({ user: ctx.user, ...input })),
   // Marks live point topics as on screen, so the pusher sends them (events/points/watch.ts). Called on
-  // view and every 30s while in view; no Postgres on this path. A client refreshing a few sections
-  // makes about 2 a minute, so 20 a minute leaves room without letting one caller churn the set.
+  // view and every 30s while in view; no Postgres on this path. A page refreshing its sections makes
+  // about 6 a minute, plus one per section scrolled into view and one per 50 hats; anonymous viewers
+  // share a bucket per IP. 60 a minute leaves room for that without letting one caller churn the set.
   watchPoints: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(watchEventPointsSchema)
-    .use(rateLimit({ limit: 20, period: 60 }))
+    .use(rateLimit({ limit: 60, period: 60 }))
     .mutation(({ input }) => markEventPointsWatched(input)),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })

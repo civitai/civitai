@@ -1,5 +1,6 @@
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
 import { eventPointKeys } from '~/server/events/points/keys';
+import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 
 // The interest set: which live topics someone has on screen. A client marks a topic while it is in
@@ -34,6 +35,8 @@ export type MarkWatchDeps = {
   // The scored event by name, or undefined when there is none.
   getEvent: (name: string) => Promise<WatchEvent | undefined>;
   isKnownHatTopic: (event: string, topicId: string) => Promise<boolean>;
+  // Called when the cap refuses topics, with how many.
+  logCapReached?: (event: string, refused: number) => void;
 };
 
 // Marks topics as on screen for the next WATCH_TTL_MS. Writes nothing with the engine switched off,
@@ -62,17 +65,25 @@ export async function markWatched(
   const key = eventPointKeys(name).watch;
   await deps.redis.zRemRangeByScore(key, '-inf', now);
   const [size, scores] = await Promise.all([deps.redis.zCard(key), deps.redis.zmScore(key, valid)]);
-  // Topics already in the set always refresh; new ones only while there is room.
+  // Topics already in the set always refresh; new ones only while there is room. The team totals are
+  // one topic every viewer of the page shares, so they always have room: a set full of hats must not
+  // turn them off for everyone. The size is read before the write, so concurrent calls can overshoot
+  // the cap by up to MAX_TOPICS_PER_MARK each.
   let room = Math.max(0, MAX_WATCHED_PER_EVENT - Number(size));
-  const marked = valid.filter((_, i) => scores[i] != null || room-- > 0);
+  const marked = valid.filter(
+    (topic, i) => scores[i] != null || topic === TEAMS_WATCH || room-- > 0
+  );
+  if (marked.length < valid.length) deps.logCapReached?.(name, valid.length - marked.length);
   if (!marked.length) return 0;
   const lapse = now + WATCH_TTL_MS;
-  await deps.redis.zAdd(
-    key,
-    marked.map((value) => ({ score: lapse, value }))
-  );
-  // The set itself goes once the event's pushes are over.
-  await deps.redis.pExpireAt(key, endsAt + WATCH_TTL_MS);
+  await Promise.all([
+    deps.redis.zAdd(
+      key,
+      marked.map((value) => ({ score: lapse, value }))
+    ),
+    // The set itself goes once the event's pushes are over.
+    deps.redis.pExpireAt(key, endsAt + WATCH_TTL_MS),
+  ]);
   return marked.length;
 }
 
@@ -94,5 +105,13 @@ export const defaultMarkWatchDeps = (
   redis: sysRedis,
   now: Date.now,
   isEnabled: isEventPointsEnabled,
+  logCapReached: (event, refused) =>
+    void logToAxiom({
+      type: 'warning',
+      name: 'event-points-watch',
+      event,
+      message: 'interest set at its cap, topics refused',
+      refused,
+    }).catch(() => undefined),
   ...deps,
 });

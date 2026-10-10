@@ -622,6 +622,21 @@ describe('isKnownHatTopic', () => {
     expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);
   });
 
+  it('keeps a hat known while any entry still wears it', async () => {
+    fake.setHat(EVENT.name, 'Image:301', encodeHat(HAT));
+    now = new Date(now.getTime() + 31 * 1000);
+    await engine.refresh();
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
+    fake.setHat(EVENT.name, 'Image:100', '');
+    now = new Date(now.getTime() + 31 * 1000);
+    await engine.refresh();
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
+    fake.setHat(EVENT.name, 'Image:301', '');
+    now = new Date(now.getTime() + 31 * 1000);
+    await engine.refresh();
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);
+  });
+
   it('knows nothing while its hat map cannot load, rather than reading anywhere else', async () => {
     build({ loadScoredEvents: () => Promise.reject(new Error('down')) });
     expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);

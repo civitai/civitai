@@ -150,6 +150,28 @@ describe('markWatched', () => {
     expect(fake.set(KEY).has(hatId(3))).toBe(false);
   });
 
+  it('always has room for the team totals, and reports what the cap refused', async () => {
+    const logCapReached = vi.fn();
+    for (let i = 0; i < MAX_WATCHED_PER_EVENT; i++) fake.set(KEY).set(`m${i}`, NOW + 60_000);
+    expect(await mark([hatId(1), TEAMS_WATCH], deps({ logCapReached }))).toBe(1);
+    expect(fake.set(KEY).get(TEAMS_WATCH)).toBe(NOW + WATCH_TTL_MS);
+    expect(fake.set(KEY).has(hatId(1))).toBe(false);
+    expect(logCapReached).toHaveBeenCalledWith(EVENT.name, 1);
+  });
+
+  it('marks exactly at the start and at the end of finalization', async () => {
+    now = EVENT.startDate.getTime();
+    expect(await mark([TEAMS_WATCH])).toBe(1);
+    now = EVENT.endDate.getTime() + EVENT.finalizeAfterMs;
+    expect(await mark([TEAMS_WATCH])).toBe(1);
+  });
+
+  it('treats a switch that cannot be read as off', async () => {
+    const isEnabled = vi.fn(() => Promise.reject(new Error('flipt down')));
+    expect(await mark([TEAMS_WATCH], deps({ isEnabled }))).toBe(0);
+    expect(fake.writes).toEqual([]);
+  });
+
   it('trims lapsed marks before counting, so they free room', async () => {
     for (let i = 0; i < MAX_WATCHED_PER_EVENT; i++) fake.set(KEY).set(`m${i}`, NOW - 1);
     expect(await mark([hatId(1)])).toBe(1);
