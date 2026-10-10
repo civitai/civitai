@@ -1,4 +1,9 @@
-import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import {
+  ensureFliptInitialized,
+  FLIPT_FEATURE_FLAGS,
+  getFliptClientSync,
+  isFliptSync,
+} from '~/server/flipt/client';
 
 // How long one reading of the switch is reused. The Flipt client caches only evaluations that
 // succeed, so with the flag missing every check would otherwise be an uncached evaluation that
@@ -15,7 +20,12 @@ export function isEventPointsEnabledSync() {
   const now = Date.now();
   if (reading && now - reading.at < SWITCH_READ_MS) return reading.on;
   const on = isFliptSync(FLIPT_FEATURE_FLAGS.EVENT_POINTS_ENGINE);
-  if (on === null) void ensureFliptInitialized().catch(() => undefined);
+  // Not initialised yet: off, but not remembered, so a caller that waits for the client is not
+  // handed this reading. A missing flag on a live client is remembered like any other answer.
+  if (on === null && !getFliptClientSync()) {
+    void ensureFliptInitialized().catch(() => undefined);
+    return false;
+  }
   reading = { on: on === true, at: now };
   return reading.on;
 }

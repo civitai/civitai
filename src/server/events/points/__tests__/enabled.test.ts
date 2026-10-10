@@ -13,6 +13,7 @@ const ENGINE_FLAG = 'event-points-engine';
 const flag = vi.hoisted(() => ({ value: false as boolean | null }));
 const ensureInit = vi.hoisted(() => vi.fn(async () => undefined));
 const syncReads = vi.hoisted(() => ({ engine: 0 }));
+const client = vi.hoisted(() => ({ ready: true }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   // Only the kill switch varies; every other flag (the event's own launch flag) reads on.
@@ -23,6 +24,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
     return flag.value;
   },
   ensureFliptInitialized: ensureInit,
+  getFliptClientSync: () => (client.ready ? {} : null),
 }));
 const ch = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
 vi.mock('~/server/clickhouse/client', () => ({
@@ -163,8 +165,24 @@ describe('the kill switch reading', () => {
 
   it('reads off before Flipt has initialised, and starts it initialising', () => {
     setFlag(null);
+    client.ready = false;
+    try {
+      expect(isEventPointsEnabledSync()).toBe(false);
+      expect(ensureInit).toHaveBeenCalled();
+    } finally {
+      client.ready = true;
+    }
+  });
+
+  // A synchronous read before the client exists must not answer for a caller that can wait.
+  it('does not hand a pre-initialisation off to a caller that waits for the client', async () => {
+    // An uninitialised client answers null; it then initialises with the flag on, inside the window.
+    setFlag(null);
+    client.ready = false;
     expect(isEventPointsEnabledSync()).toBe(false);
-    expect(ensureInit).toHaveBeenCalled();
+    client.ready = true;
+    flag.value = true;
+    await expect(isEventPointsEnabled()).resolves.toBe(true);
   });
 });
 
