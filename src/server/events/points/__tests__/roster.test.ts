@@ -10,8 +10,17 @@ type EvalArgs = { keys: string[]; arguments: string[] };
 const LIST_IF_UNCHANGED_AS_MEASURED = `local v = redis.call('HGET', KEYS[1], ARGV[1]) or ''
 if v == ARGV[2] then redis.call('HSET', KEYS[1], ARGV[1], ARGV[3]) return 1 end
 return 0`;
-const { isTombstone, rebuildEventRoster, reconcileEventRosters, syncRosterMembersWith } =
-  await import('~/server/events/points/roster-sync');
+const DELETE_IF_UNCHANGED_AS_MEASURED = `for i = 1, #ARGV, 2 do
+if redis.call('HGET', KEYS[1], ARGV[i]) == ARGV[i + 1] then redis.call('HDEL', KEYS[1], ARGV[i]) end
+end
+return 0`;
+const {
+  isTombstone,
+  rebuildEventRoster,
+  reconcileEventRosters,
+  syncEventRosterMembers,
+  syncRosterMembersWith,
+} = await import('~/server/events/points/roster-sync');
 const { seasonOwnerTopicId } = await import('~/server/events/points/keys');
 
 // A small Redis with real sorted-set and hash semantics, including ZADD's NX / XX conditions: the
@@ -64,11 +73,12 @@ function fakeRedis() {
       for (const m of list(members)) if (z(key).delete(m)) n++;
       return n;
     },
-    // Highest first; ties by member, descending, as Redis orders them under REV.
-    async zRangeWithScores(key: string, start: number, stop: number) {
+    // Lowest first, ties by member, as Redis orders them; REV reverses both.
+    async zRangeWithScores(key: string, start: number, stop: number, opts?: { REV?: boolean }) {
       const rows = [...z(key)]
         .map(([value, score]) => ({ value, score }))
-        .sort((a, b) => b.score - a.score || (a.value < b.value ? 1 : -1));
+        .sort((a, b) => a.score - b.score || (a.value < b.value ? -1 : 1));
+      if (opts?.REV) rows.reverse();
       return rows.slice(start, stop + 1);
     },
     async zCard(key: string) {
@@ -96,14 +106,22 @@ function fakeRedis() {
     async hGet(key: string, field: string) {
       return h(key).get(field) ?? null;
     },
-    // The one script the roster runs: HSET only if the field still holds what the caller read. The
-    // fake can only act out the script it knows, so any other text fails here, loudly. What the
-    // real script does on a real Redis was measured once against redis:7 (PR body).
-    async eval(script: string, { keys: [key], arguments: [field, expected, value] }: EvalArgs) {
-      if (script !== LIST_IF_UNCHANGED_AS_MEASURED) throw new Error(`unexpected script: ${script}`);
-      if ((h(key).get(field) ?? '') !== expected) return 0;
-      h(key).set(field, value);
-      return 1;
+    // The roster's two scripts: HSET, or HDEL per pair, only if the field still holds what the
+    // caller read. The fake can only act out the scripts it knows, so any other text fails here,
+    // loudly. What the real scripts do on a real Redis was measured against redis:7 (PR body).
+    async eval(script: string, { keys: [key], arguments: args }: EvalArgs) {
+      if (script === LIST_IF_UNCHANGED_AS_MEASURED) {
+        const [field, expected, value] = args;
+        if ((h(key).get(field) ?? '') !== expected) return 0;
+        h(key).set(field, value);
+        return 1;
+      }
+      if (script === DELETE_IF_UNCHANGED_AS_MEASURED) {
+        for (let i = 0; i < args.length; i += 2)
+          if (h(key).get(args[i]) === args[i + 1]) h(key).delete(args[i]);
+        return 0;
+      }
+      throw new Error(`unexpected script: ${script}`);
     },
   };
   // Every key that still names `member`, apart from a tombstone in the gate, which names nobody.
@@ -245,7 +263,11 @@ describe('team roster', () => {
     ]);
     await syncRosterMembersWith(EVENT, [1, 2, 3, 4, 5], s.deps);
     expect([...s.zsets.values()].every((z) => z.size === 0)).toBe(true);
-    expect([...s.hashes.values()].every((h) => h.size === 0)).toBe(true);
+    // The gate holds only tombstones for them; every other hash is empty.
+    const gate = [...(s.hashes.get(keys.members)?.values() ?? [])];
+    expect(gate).toHaveLength(5);
+    expect(gate.every(isTombstone)).toBe(true);
+    for (const id of ['1', '2', '3', '4', '5']) expect(s.allKeysHolding(id)).toEqual([]);
   });
 
   it('takes every trace of a member down when they opt out, are banned or excluded', async () => {
@@ -355,7 +377,7 @@ describe('team roster', () => {
         const states = await s.deps.loadStates(event, ids);
         // The opt-out commits and syncs while this one is between its reads and its writes.
         s.db.set(1, member(1, { optedIn: false }));
-        await syncRosterMembersWith(EVENT, [1], s.deps, { hide: true });
+        await syncRosterMembersWith(EVENT, [1], s.deps);
         return states;
       },
     };
@@ -364,14 +386,14 @@ describe('team roster', () => {
     expect((await s.read('hats')).rows).toEqual([]);
   });
 
-  it('also stops a first opt-in still in flight, when the opt-out hides on request', async () => {
+  it('also stops a first opt-in still in flight, when an opt-out lands during it', async () => {
     const s = setup([member(1)]);
     const inFlight: RosterSyncDeps = {
       ...s.deps,
       loadStates: async (event, ids) => {
         const states = await s.deps.loadStates(event, ids);
         s.db.set(1, member(1, { optedIn: false }));
-        await syncRosterMembersWith(EVENT, [1], s.deps, { hide: true });
+        await syncRosterMembersWith(EVENT, [1], s.deps);
         return states;
       },
     };
@@ -380,19 +402,50 @@ describe('team roster', () => {
     expect((await s.read('newest')).rows).toEqual([]);
   });
 
-  it('writes no tombstone for someone who was never listed, unless asked to hide them', async () => {
-    const s = setup([member(1, { eligible: false })]);
-    await syncRosterMembersWith(EVENT, [1], s.deps);
-    expect(s.hashes.get(keys.members)?.has('1') ?? false).toBe(false);
-    await syncRosterMembersWith(EVENT, [1], s.deps, { hide: true });
-    expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
+  // A ban, deletion or exclusion is not an opt-out, and the member may never have been listed:
+  // it must still stop a first opt-in already in flight.
+  it('stops a first opt-in still in flight when a ban lands during it', async () => {
+    const s = setup([member(1)]);
+    const inFlight: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        const states = await s.deps.loadStates(event, ids);
+        s.db.set(1, member(1, { eligible: false }));
+        await syncRosterMembersWith(EVENT, [1], s.deps);
+        return states;
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], inFlight);
+    expect(s.allKeysHolding('1')).toEqual([]);
+    expect((await s.read('points')).rows).toEqual([]);
+  });
+
+  // A refused listing takes back only its own leftovers: if another sync listed the member
+  // meanwhile, that listing stands.
+  it('keeps a listing another sync made while this one was refused', async () => {
+    const s = setup([member(1)]);
+    const raced: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        const states = await s.deps.loadStates(event, ids);
+        // An opt-out, then an opt-in again, both complete while this one is mid-flight.
+        s.db.set(1, member(1, { optedIn: false }));
+        await syncRosterMembersWith(EVENT, [1], s.deps);
+        s.db.set(1, member(1));
+        await syncRosterMembersWith(EVENT, [1], s.deps);
+        return states;
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], raced);
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+    expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1]);
   });
 
   it('lists a member again once they opt back in', async () => {
     const s = setup([member(1)]);
     await syncRosterMembersWith(EVENT, [1], s.deps);
     s.db.set(1, member(1, { optedIn: false }));
-    await syncRosterMembersWith(EVENT, [1], s.deps, { hide: true });
+    await syncRosterMembersWith(EVENT, [1], s.deps);
     s.db.set(1, member(1));
     await syncRosterMembersWith(EVENT, [1], s.deps);
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
@@ -404,7 +457,7 @@ describe('team roster', () => {
     s.deps.now = () => now;
     await syncRosterMembersWith(EVENT, [1, 2], s.deps);
     s.db.set(1, member(1, { optedIn: false }));
-    await syncRosterMembersWith(EVENT, [1], s.deps, { hide: true });
+    await syncRosterMembersWith(EVENT, [1], s.deps);
     const gate = async () => Object.fromEntries(s.hashes.get(keys.members) ?? []);
     now = new Date(LIVE_NOW.getTime() + 30 * 60_000);
     await reconcileEventRosters({ ...s.deps, gate }, [EVENT]);
@@ -432,5 +485,97 @@ describe('team roster', () => {
       complete: true,
     });
     expect(synced).toHaveBeenCalledTimes(1);
+  });
+
+  // The reconcile reads the gate, then prunes old tombstones by name. A member listed again in
+  // between must not lose their gate entry to the prune.
+  it('never prunes a tombstone that a sync turned back into a listing', async () => {
+    let now = LIVE_NOW;
+    const s = setup([member(1)], LIVE_NOW);
+    s.deps.now = () => now;
+    s.db.set(1, member(1, { optedIn: false }));
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    now = new Date(LIVE_NOW.getTime() + 2 * 60 * 60_000);
+    const gate = async () => {
+      const snapshot = Object.fromEntries(s.hashes.get(keys.members) ?? []);
+      // The member opts back in after the snapshot, before the prune.
+      s.db.set(1, member(1));
+      await syncRosterMembersWith(EVENT, [1], s.deps);
+      return snapshot;
+    };
+    await reconcileEventRosters({ ...s.deps, gate }, [EVENT]);
+    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+  });
+
+  // A heal can stop between batches. Each member is re-derived and overwritten, never added to,
+  // so a later run finishes from where it stopped: everyone eligible listed once, at their exact
+  // total.
+  it('finishes a re-base that a deadline stopped mid-way, with exact totals and nobody missing', async () => {
+    const n = 1_200;
+    const states = Array.from({ length: n }, (_, i) => member(i + 1));
+    const points = Object.fromEntries(states.map((x) => [x.userId, x.userId * 3]));
+    let now = LIVE_NOW.getTime();
+    const s = setup(states, LIVE_NOW, points);
+    s.deps.now = () => new Date(now);
+    await syncRosterMembersWith(
+      EVENT,
+      states.map((x) => x.userId),
+      s.deps
+    );
+    // Drift: live increments past the settled totals, as between referee runs.
+    for (const x of states)
+      await addRosterPoints(s.redis as never, EVENT.name, 'Blue', 'live', x.userId, 1000);
+    const gate = async () => Object.fromEntries(s.hashes.get(keys.members) ?? []);
+    // Each batch's Postgres read moves the clock past the deadline: one batch, then it stops.
+    const slow: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        now += 60_000;
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    const first = await reconcileEventRosters({ ...slow, gate }, [EVENT], {
+      deadline: now + 1,
+    });
+    expect(first).toEqual({ complete: false });
+    const drifted = async () =>
+      (
+        await readRosterPage(
+          { event: EVENT.name, team: 'Blue', sort: 'points', season: 'live', offset: 0, limit: 48 },
+          s.redis as never
+        )
+      ).total;
+    expect(await drifted()).toBe(n);
+    const exact = () =>
+      states.filter(
+        (x) => s.zsets.get(keys.points('Blue', 'live'))?.get(String(x.userId)) === x.userId * 3
+      ).length;
+    // Some re-based, the rest still drifted.
+    expect(exact()).toBeGreaterThan(0);
+    expect(exact()).toBeLessThan(n);
+    expect(await reconcileEventRosters({ ...s.deps, gate }, [EVENT])).toEqual({ complete: true });
+    expect(exact()).toBe(n);
+    expect(s.zsets.get(keys.points('Blue', 'live'))?.size).toBe(n);
+    expect(
+      [...(s.hashes.get(keys.members)?.values() ?? [])].filter((v) => v === 'Blue')
+    ).toHaveLength(n);
+  });
+
+  it('syncs only listed members on a change that cannot list anyone, in one gate read', async () => {
+    const s = setup([member(1), member(2)]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const loaded: number[][] = [];
+    const deps: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        loaded.push(ids);
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    await syncEventRosterMembers([1, 2, 2], { onlyIfListed: true }, deps, [EVENT]);
+    expect(loaded).toEqual([[1]]);
+    await syncEventRosterMembers([1, 2], {}, deps, [EVENT]);
+    expect(loaded).toEqual([[1], [1, 2]]);
   });
 });

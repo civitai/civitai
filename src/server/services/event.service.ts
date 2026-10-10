@@ -923,17 +923,9 @@ export async function setRosterOptIn({
       mergeInto: { [ROSTER_SETTING]: { [scored.name]: optIn } },
       location: 'event.service:setRosterOptIn',
     });
-    // Outside the roster's window (after the end) an opt-in only changes the setting; an opt-out
-    // still takes the entries down.
-    const rosterEvent =
-      (await rosterEvents()).find((e) => e.name === scored.name) ??
-      (!optIn && scored.join
-        ? { name: scored.name, startDate: scored.startDate, teams: scored.teams, join: scored.join }
-        : undefined);
-    if (rosterEvent)
-      await syncRosterMembersWith(rosterEvent, [user.id], defaultRosterSyncDeps(), {
-        hide: !optIn,
-      });
+    // Before the event's preview there is no roster yet: only the setting changes.
+    const rosterEvent = (await rosterEvents()).find((e) => e.name === scored.name);
+    if (rosterEvent) await syncRosterMembersWith(rosterEvent, [user.id], defaultRosterSyncDeps());
     const team = await sysRedis.hGet(eventRosterKeys(scored.name).members, String(user.id));
     return { optedIn: optIn, listedTeam: rosterTeam(team) };
   } catch (error) {

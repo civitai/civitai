@@ -367,15 +367,20 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
             }
           ),
           // The roster's points sort (roster.ts) is display only, like the count. Only an owner
-          // already listed is touched, and its key has no TTL to set.
-          addRosterPoints(
-            deps.redis,
-            def.name,
-            hat.team,
-            eventPointSeason(def.startDate, time),
-            hat.ownerId,
-            grant
-          ).catch((error) => deps.logError('redis', 'eventPoints.rosterPoints', error)),
+          // already listed is touched, and its key has no TTL to set. Started inside a promise, so
+          // even a synchronous throw costs only the roster, never the grant's push.
+          Promise.resolve()
+            .then(() =>
+              addRosterPoints(
+                deps.redis,
+                def.name,
+                hat.team,
+                eventPointSeason(def.startDate, time),
+                hat.ownerId,
+                grant
+              )
+            )
+            .catch((error) => deps.logError('redis', 'eventPoints.rosterPoints', error)),
         ]);
         // A push is only display: its failure must not cost the buckets their TTL.
         try {

@@ -31,7 +31,7 @@ import {
 } from '~/server/search-index';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
-import { syncEventRosterMember } from '~/server/events/points/roster-sync';
+import { syncEventRosterMember, syncEventRosterMembers } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats, syncOwnersEventHats } from '~/server/events/points/sync';
 import {
   getEventDecorationDefinition,
@@ -477,8 +477,11 @@ function writeThroughRemovedEventHats(
       : []
   );
   if (hats.length) void syncOwnersEventHats(hats);
-  for (const userId of new Set(hats.map((h) => h.userId)))
-    void syncEventRosterMember(userId, { onlyIfListed: true });
+  if (hats.length)
+    void syncEventRosterMembers(
+      hats.map((h) => h.userId),
+      { onlyIfListed: true }
+    );
 }
 
 async function refreshEntityDecorationCaches(type: CosmeticEntity, ids: number[]) {

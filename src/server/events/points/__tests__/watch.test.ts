@@ -278,11 +278,21 @@ describe('readWatched', () => {
 describe('markWatched, roster owner topics', () => {
   const owner = (n: number) => `o${n.toString(16).padStart(31, '0')}`;
   const LISTED = new Set([owner(1)]);
-  const withRoster = () => deps({ isListedOwnerTopic: async (_e, id) => LISTED.has(id) });
+  const lookups: string[][] = [];
+  const withRoster = () =>
+    deps({
+      listedOwnerTopics: async (_e, ids) => {
+        lookups.push(ids);
+        return new Set(ids.filter((id) => LISTED.has(id)));
+      },
+    });
 
   it('marks an owner topic only while that owner is listed on the roster', async () => {
-    expect(await mark([owner(1), owner(2)], withRoster())).toBe(1);
-    expect([...fake.set(KEY).keys()]).toEqual([owner(1)]);
+    lookups.length = 0;
+    expect(await mark([owner(1), owner(2), hatId(1)], withRoster())).toBe(2);
+    expect([...fake.set(KEY).keys()].sort()).toEqual([hatId(1), owner(1)].sort());
+    // One roster read for every owner topic in the call, and none for a hat.
+    expect(lookups).toEqual([[owner(1), owner(2)]]);
   });
 
   it('refuses owner topics when nothing can say who is listed, or the lookup fails', async () => {
@@ -291,7 +301,7 @@ describe('markWatched, roster owner topics', () => {
       await mark(
         [owner(1)],
         deps({
-          isListedOwnerTopic: async () => {
+          listedOwnerTopics: async () => {
             throw new Error('redis down');
           },
         })

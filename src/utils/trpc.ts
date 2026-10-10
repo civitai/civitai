@@ -222,6 +222,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getPartners',
   'event.getRewards',
   'event.getStandings',
+  'event.getTeamRoster',
   'event.getTeamScoreHistory',
   'event.getTeamScores',
   'event.getWornHat',

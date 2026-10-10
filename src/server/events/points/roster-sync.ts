@@ -54,18 +54,23 @@ export async function loadRosterMemberStates(
       hats: RosterHat[] | null;
     }[]
   >`
+    -- The event's decorations, read once: joined per user, Cosmetic would be scanned per user.
+    WITH ev AS MATERIALIZED (
+      SELECT id, data ->> 'team' AS team, data ->> 'design' AS design
+      FROM "Cosmetic"
+      WHERE type = 'ContentDecoration' AND data ->> 'event' = ${event.name}
+    )
     SELECT u.id AS "userId",
       (u.settings -> ${ROSTER_SETTING} ->> ${event.name}) = 'true' AS "optedIn",
       (u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards") AS eligible,
       j.team, j."obtainedAt" AS "joinedAt", h.hats
     FROM "User" u
     LEFT JOIN LATERAL (
-      SELECT c.data ->> 'team' AS team, uc."obtainedAt"
+      SELECT ev.team, uc."obtainedAt"
       FROM "UserCosmetic" uc
-      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+      JOIN ev ON ev.id = uc."cosmeticId"
       WHERE uc."userId" = u.id AND uc."claimKey" = ${event.join.claimKey}
-        AND c.type = 'ContentDecoration'
-        AND c.data ->> 'event' = ${event.name} AND c.data ->> 'design' = ${event.join.design}
+        AND ev.design = ${event.join.design}
       ORDER BY uc."obtainedAt", uc."cosmeticId"
       LIMIT 1
     ) j ON true
@@ -79,9 +84,8 @@ export async function loadRosterMemberStates(
           (SELECT min(si."unitAmount") FROM "CosmeticShopItem" si
             WHERE si."cosmeticId" = uc."cosmeticId") AS price
         FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        WHERE uc."userId" = u.id AND c.type = 'ContentDecoration'
-          AND c.data ->> 'event' = ${event.name}
+        JOIN ev ON ev.id = uc."cosmeticId"
+        WHERE uc."userId" = u.id
       ) x
     ) h ON true
     WHERE u.id = ANY(${userIds}::int[])
@@ -115,6 +119,11 @@ export const rosterTeam = (value: string | null | undefined) =>
   value && !isTombstone(value) ? value : null;
 // Tombstones older than this go at the reconcile: long past any sync that read before them.
 const TOMBSTONE_TTL_MS = 60 * 60 * 1000;
+// Deletes each field (ARGV pairs: field, value) only if it still holds that value.
+const DELETE_IF_UNCHANGED = `for i = 1, #ARGV, 2 do
+if redis.call('HGET', KEYS[1], ARGV[i]) == ARGV[i + 1] then redis.call('HDEL', KEYS[1], ARGV[i]) end
+end
+return 0`;
 // Opens the gate only if it still holds what this sync read before it read Postgres. A sync that
 // read someone as opted in just before they opted out finds the opt-out's tombstone and lists
 // nobody.
@@ -140,16 +149,14 @@ const seasonsFrom = (event: RosterEvent, now: Date) =>
     : (['live'] as const);
 
 // Brings these users' roster entries up to date with Postgres. Returns how many are listed and
-// how many entries were removed, for the reconcile's log. `hide` is for an opt-out: it leaves a
-// tombstone even for someone not listed yet, in case their opt-in's sync is still in flight.
+// how many entries were removed, for the reconcile's log.
 //
 // The gate is read before Postgres, and both reads go to the primary: that order is what lets the
 // compare-and-set below refuse a sync that read Postgres before an unlisting it has not seen.
 export async function syncRosterMembersWith(
   event: RosterEvent,
   userIds: number[],
-  deps: RosterSyncDeps,
-  { hide = false }: { hide?: boolean } = {}
+  deps: RosterSyncDeps
 ) {
   const ids = [...new Set(userIds)].filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return { listed: 0, removed: 0 };
@@ -170,14 +177,16 @@ export async function syncRosterMembersWith(
     : {};
 
   // Unlisting closes the gate first, so no read can pair a remaining score with a listed member.
-  // Anyone with a gate entry, or anyone hidden on request, gets a fresh tombstone. Everyone else
-  // never had one, and writing one for every banned stranger would only grow the hash.
+  // Everyone unlisted gets a fresh tombstone, listed before or not: a ban or an opt-out can land
+  // while someone's first opt-in is still in flight, and only a changed gate stops that listing.
+  // The reconcile prunes them after TOMBSTONE_TTL_MS.
   const removed = unlisted.filter((s) => rosterTeam(previous.get(s.userId))).length;
-  const toHide = unlisted.filter((s) => hide || previous.get(s.userId));
-  if (toHide.length)
+  if (unlisted.length)
     await deps.redis.hSet(
       keys.members,
-      Object.fromEntries(toHide.map((s) => [String(s.userId), `${HIDDEN_PREFIX}${now.getTime()}`]))
+      Object.fromEntries(
+        unlisted.map((s) => [String(s.userId), `${HIDDEN_PREFIX}${now.getTime()}`])
+      )
     );
   await clearEntries(
     event,
@@ -227,8 +236,11 @@ export async function syncRosterMembersWith(
       keys: [keys.members],
       arguments: [member, was ?? '', team],
     });
-    // Unlisted while this ran: take back what it just wrote.
-    if (Number(opened) !== 1) await clearEntries(event, [s.userId], deps);
+    if (Number(opened) === 1) return;
+    // Refused: the gate changed while this ran. Take back what it wrote, unless another sync
+    // listed them meanwhile (its entries are the same member's, and current).
+    const [current] = await deps.redis.hmGet(keys.members, [member]);
+    if (!rosterTeam(current)) await clearEntries(event, [s.userId], deps);
   }
 }
 const LIST_CONCURRENCY = 25;
@@ -258,8 +270,8 @@ const teamKeys = (keys: ReturnType<typeof eventRosterKeys>, team: string) => [
 const allTopicIds = (event: RosterEvent, userId: number) =>
   (['preview', 'live'] as const).map((season) => seasonOwnerTopicId(event.name, userId, season));
 
-// Every sync reads the primary (see syncRosterMembersWith). About 1.6ms a member, measured on prod
-// with 16 members, so a 40k reconcile is about a minute of light indexed reads an hour.
+// Every sync reads the primary (see syncRosterMembersWith). The member query measured 105-443ms per
+// 500 users on the prod replica (2026-10), so a 40k reconcile is roughly 10-35s of reads.
 export const defaultRosterSyncDeps = (
   db: Pick<typeof dbRead, '$queryRaw'> = dbWrite
 ): RosterSyncDeps => ({
@@ -269,11 +281,12 @@ export const defaultRosterSyncDeps = (
   now: () => new Date(),
 });
 
-// The events a roster write applies to: those with a join, from their preview to their end.
+// The events a roster write applies to: those with a join, from their preview on. No end: a roster
+// stays readable after its event, so a ban or an opt-out then must still take a member off it.
 export async function rosterEvents(now = new Date()): Promise<RosterEvent[]> {
   const events = await loadEvents();
   return events
-    .filter((e) => e.scoring && e.join && now >= (e.previewFrom ?? e.startDate) && now < e.endDate)
+    .filter((e) => e.scoring && e.join && now >= (e.previewFrom ?? e.startDate))
     .map((e) => ({ name: e.name, startDate: e.startDate, teams: e.teams, join: e.join! }));
 }
 
@@ -281,22 +294,38 @@ export async function rosterEvents(now = new Date()): Promise<RosterEvent[]> {
 // failure only leaves the entry stale until the hourly reconcile. `onlyIfListed` is for changes that
 // can alter a listed member's entry but never list anyone (a hat bought or worn): it skips the
 // Postgres read for everyone not listed, which is nearly everyone.
-export async function syncEventRosterMember(
-  userId: number,
-  { event: onlyEvent, onlyIfListed = false }: { event?: string; onlyIfListed?: boolean } = {}
+export function syncEventRosterMember(userId: number, options: SyncMembersOptions = {}) {
+  return syncEventRosterMembers([userId], options);
+}
+
+type SyncMembersOptions = { event?: string; onlyIfListed?: boolean };
+
+// The same for many users at once (a bulk takedown): one gate read and RECONCILE_BATCH users per
+// Postgres query, one batch at a time, instead of a sync per user all at once.
+export async function syncEventRosterMembers(
+  userIds: number[],
+  { event: onlyEvent, onlyIfListed = false }: SyncMembersOptions = {},
+  deps: RosterSyncDeps = defaultRosterSyncDeps(),
+  events?: RosterEvent[]
 ) {
   try {
-    for (const event of await rosterEvents()) {
+    const ids = [...new Set(userIds)];
+    if (!ids.length) return;
+    for (const event of events ?? (await rosterEvents())) {
       if (onlyEvent && event.name !== onlyEvent) continue;
-      if (
-        onlyIfListed &&
-        !rosterTeam(await sysRedis.hGet(eventRosterKeys(event.name).members, String(userId)))
-      )
-        continue;
-      await syncRosterMembersWith(event, [userId], defaultRosterSyncDeps());
+      let todo = ids;
+      if (onlyIfListed) {
+        const gate = await deps.redis.hmGet(eventRosterKeys(event.name).members, ids.map(String));
+        todo = ids.filter((_, i) => rosterTeam(gate[i]));
+      }
+      for (const batch of chunk(todo, RECONCILE_BATCH))
+        await syncRosterMembersWith(event, batch, deps);
     }
   } catch (error) {
-    logRoster('error', 'syncEventRosterMember', { userId, error: (error as Error).message });
+    logRoster('error', 'syncEventRosterMembers', {
+      users: userIds.length,
+      error: (error as Error).message,
+    });
   }
 }
 
@@ -326,7 +355,12 @@ export async function reconcileEventRosters(
             isTombstone(v) && now - Number(v.slice(HIDDEN_PREFIX.length)) > TOMBSTONE_TTL_MS
         )
         .map(([id]) => id);
-      if (stale.length) await deps.redis.hDel(eventRosterKeys(event.name).members, stale);
+      // Each only if it still holds the tombstone read: a sync may have listed them since.
+      if (stale.length)
+        await deps.redis.eval(DELETE_IF_UNCHANGED, {
+          keys: [eventRosterKeys(event.name).members],
+          arguments: stale.flatMap((id) => [id, gate[id]]),
+        });
       const ids = Object.entries(gate)
         .filter(([, v]) => rosterTeam(v))
         .map(([id]) => Number(id));

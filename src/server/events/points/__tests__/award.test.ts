@@ -840,6 +840,22 @@ describe('roster points', () => {
     expect(fake.zsets.get(rosterPoints())?.get(String(OWNER))).toBe(50);
   });
 
+  // Points sort by this season: a preview grant goes to the preview's set, not the live one.
+  it("adds a preview grant to the preview season's roster points", async () => {
+    const previewSet = eventRosterKeys(EVENT.name).points('Yellow', 'preview');
+    fake.zsets.set(previewSet, new Map([[String(OWNER), 0]]));
+    listOwner();
+    now = new Date('2026-10-20T12:00:00.000Z');
+    build({
+      loadScoredEvents: async () => [
+        { ...EVENT, previewFrom: new Date('2026-10-10T00:00:00.000Z') },
+      ],
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(fake.zsets.get(previewSet)?.get(String(OWNER))).toBe(5);
+    expect(fake.zsets.get(rosterPoints())?.get(String(OWNER))).toBe(0);
+  });
+
   it('lists nobody: an owner not on the roster gets no roster entry', async () => {
     await engine.awardEventPoints([reaction(1)]);
     expect(livePoints('owner', '10')).toBe(5);

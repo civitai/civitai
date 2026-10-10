@@ -30,8 +30,8 @@ export async function markEventPointsWatched(
         };
       },
       isKnownHatTopic,
-      isListedOwnerTopic: async (name, topicId) =>
-        (await listedOwnerTopics(name, [topicId])).has(topicId),
+      listedOwnerTopics: async (name, topicIds) =>
+        new Set((await listedOwnerTopics(name, topicIds)).keys()),
       canWatchPreview: async (name) => {
         const event = await findScored(name);
         return !!event && (await getEventAccess(event, viewer)) === 'preview';
