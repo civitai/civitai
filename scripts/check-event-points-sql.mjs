@@ -32,6 +32,8 @@ if (mutant) {
 const H10 = [10, 7, 'claimed', 'Yellow'];
 const H10B = [10, 9, 'cosmetic-purchase-x', 'Yellow'];
 const H11 = [11, 8, 'claimed', 'Blue'];
+// A new account's hat: new accounts cannot give, but they still earn.
+const H1000 = [1000, 9, 'claimed', 'Pink'];
 const ledger = [];
 const add = (time, type, actorId, entityId, hat, sourceId = '', op = 'add', more = {}) =>
   ledger.push([
@@ -79,6 +81,7 @@ add('2026-11-01 12:00:00', 'reaction', 13, 105, H10B, 'R:105:13');
 add('2026-11-01 08:00:00', 'reaction', 4, 100, H10, 'R:100:4');
 add('2026-11-01 08:00:00', 'reaction', 1000, 100, H10, 'R:100:1000');
 add('2026-11-01 08:00:00', 'reaction', 6, 500, H11, 'R:500:6');
+add('2026-11-01 08:00:00', 'reaction', 3, 600, H1000, 'R:600:3');
 // Another event's row, and rows outside the season window: before its start and at the cut.
 add('2026-11-01 08:00:00', 'reaction', 14, 106, H10, 'R:106:14', 'add', { event: 'other' });
 add('2026-10-31 23:59:00', 'reaction', 7, 100, H10, 'R:100:7');
@@ -103,6 +106,7 @@ sql = one(sql, 'WITH\n', `WITH\n${fixtures}\n`);
 const full = [
   ['2026-11-01', 10, 7, 'claimed', 'Yellow', 5 + 45 + 1 + 5 + 20 + 5 + 5, 46, 4, 1, 1, 0, 1],
   ['2026-11-01', 10, 9, 'cosmetic-purchase-x', 'Yellow', 5, 0, 0, 0, 0, 1, 0],
+  ['2026-11-01', 1000, 9, 'claimed', 'Pink', 5, 0, 1, 0, 0, 0, 0],
   ['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0],
 ];
 // The hourly run from day two: day one is final and not returned, and actor 9's day-two log is not a

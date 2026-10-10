@@ -318,7 +318,6 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       await ensureFresh();
       if (!loaded.length) return;
       const rows: EventPointLedgerRow[] = [];
-      const unmarked: { seenKey: SeenKey; actor: string }[] = [];
       await Promise.all(
         loaded.flatMap((event) =>
           removals.map(async (removal) => {
@@ -339,20 +338,15 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
             const seenKey = keys.seen(removal.type, removal.entityType, removal.entityId);
             const actor = String(removal.actorId);
             const removed = await deps.redis.sRem(seenKey, actor);
-            if (removed) unmarked.push({ seenKey, actor });
             if (removed || hat) rows.push(ledgerRow(event.def.name, removal, 'remove', hat, time));
           })
         )
       );
-      if (!rows.length) return;
-      try {
-        await deps.insertLedger(rows);
-      } catch (error) {
-        // The add still counts at the referee, so put the marks back: otherwise a re-add would earn
-        // live points the referee never confirms.
-        deps.logError('ledger', 'eventPoints.insertRemovals', error, { rows: rows.length });
-        await Promise.allSettled(unmarked.map((m) => deps.redis.sAdd(m.seenKey, m.actor)));
-      }
+      // A failed insert does not put the marks back. Whether a rejected insert committed is unknown
+      // (an async insert can land after the client times out); restoring the mark over a landed
+      // removal would block the re-add forever, while not restoring only lets a re-add show live
+      // points for up to an hour until the referee nets it out.
+      if (rows.length) await deps.insertLedger(rows);
     } catch (error) {
       deps.logError('ledger', 'eventPoints.remove', error, { count: removals.length });
     }

@@ -386,18 +386,21 @@ describe('when the ledger write fails', () => {
     expect(ledger.map((r) => r.actorId)).toEqual([1]);
   });
 
-  it('puts a removal’s dedupe mark back, so a re-add cannot earn live points the referee never confirms', async () => {
+  // 🔴 Deliberate: a failed REMOVAL insert does NOT put the dedupe mark back. A rejected insert may
+  // still have landed; restoring the mark over a landed removal would block the person's re-add
+  // forever (the referee then sees remove as the latest row). Not restoring costs only live points
+  // shown until the next referee run. If you are about to add a restore here, read award.ts first.
+  it('leaves a failed removal unmarked, so a re-add is written to the ledger and earns again', async () => {
     await engine.awardEventPoints([reaction(1)]);
     build({
       insertLedger: async () => {
-        throw new Error('clickhouse down');
+        throw new Error('clickhouse timeout');
       },
     });
     await engine.removeEventPoints([reaction(1)]);
     build();
     await engine.awardEventPoints([reaction(1)]);
-    expect(ledger.map((r) => r.op)).toEqual(['add']);
-    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+    expect(ledger.map((r) => `${r.op}:${r.actorId}`)).toEqual(['add:1', 'add:1']);
   });
 });
 
@@ -417,6 +420,21 @@ describe('when Redis fails after the dedupe mark', () => {
     await engine.awardEventPoints([reaction(1)]);
     expect(ledger.map((r) => [r.op, r.actorId])).toEqual([['add', 1]]);
     expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.liveGrant', expect.any(Error));
+  });
+
+  it('keeps the other actions in the batch earning live', async () => {
+    build({
+      redis: {
+        ...fake.redis,
+        hIncrBy: async (key: string, field: string, by: number) => {
+          if (field === '1') throw new Error('redis timeout');
+          return fake.redis.hIncrBy(key, field, by);
+        },
+      },
+    });
+    await engine.awardEventPoints([reaction(1), reaction(2)]);
+    expect(ledger.map((r) => r.actorId)).toEqual([1, 2]);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
   });
 });
 

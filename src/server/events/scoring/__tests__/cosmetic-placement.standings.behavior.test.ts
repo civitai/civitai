@@ -40,7 +40,9 @@ const db = { pg: null as unknown as PGlite };
 const BANNED = 3;
 const DELETED = 4;
 const EXCLUDED = 5;
-const NEWBIE = 6;
+// Registered first inside the new-account window, but deleted: the threshold skips it.
+const DELETED_NEWBIE = 6;
+const NEWBIE = 7;
 
 const event = {
   name: 'scoretest',
@@ -69,12 +71,12 @@ beforeAll(async () => {
       "createdAt" timestamp(3) NOT NULL DEFAULT '2020-01-01'
     );
     -- Ids in registration order. The new-account window opens 2026-10-25 00:00: user 2 registered a
-    -- second before it, NEWBIE on it, user 7 after.
+    -- second before it, DELETED_NEWBIE on it, NEWBIE a second later, user 8 after.
     INSERT INTO "User" ("id", "bannedAt", "deletedAt", "excludeFromLeaderboards", "createdAt") VALUES
       (1, NULL, NULL, false, '2020-01-01'), (2, NULL, NULL, false, '2026-10-24 23:59:59'),
       (${BANNED}, now(), NULL, false, '2026-10-24'), (${DELETED}, NULL, now(), false, '2026-10-24'),
-      (${EXCLUDED}, NULL, NULL, true, '2026-10-24'), (${NEWBIE}, NULL, NULL, false, '2026-10-25'),
-      (7, NULL, NULL, false, '2026-10-30');
+      (${EXCLUDED}, NULL, NULL, true, '2026-10-24'), (${DELETED_NEWBIE}, NULL, now(), false, '2026-10-25'),
+      (${NEWBIE}, NULL, NULL, false, '2026-10-25 00:00:01'), (8, NULL, NULL, false, '2026-10-30');
   `);
   // A multi-statement string runs as one implicit transaction, which CREATE INDEX CONCURRENTLY
   // refuses; it is applied on its own, as the migration says.
@@ -316,7 +318,7 @@ describe('referee snapshot', () => {
   beforeEach(() => {
     strings.clear();
     hashes.clear();
-    involved = { actors: [1, 2, BANNED, DELETED, EXCLUDED, NEWBIE, 7], owners: [1, BANNED] };
+    involved = { actors: [1, 2, BANNED, DELETED, EXCLUDED, NEWBIE, 8], owners: [1, BANNED] };
     const sys = redisMock.sysRedis;
     sys.get.mockImplementation(async (k: string) => strings.get(k) ?? null);
     sys.hGetAll.mockImplementation(async (k: string) => ({ ...(hashes.get(k) ?? {}) }));
@@ -382,6 +384,15 @@ describe('referee snapshot', () => {
     const { restrictedUsers, newAccountMinId } = refereeParams();
     expect([...restrictedUsers].sort()).toEqual([BANNED, DELETED, EXCLUDED]);
     expect(newAccountMinId).toBe(NEWBIE);
+  });
+
+  it('restricts no one as new when nobody registered inside the window', async () => {
+    await runEventPointsReferee(
+      { ...scored, scoring: { ...scored.scoring, newAccountDays: 0 } },
+      'live',
+      HOURLY
+    );
+    expect(refereeParams().newAccountMinId).toBe(2147483647);
   });
 
   it('looks the involved people up in chunks, finding a restricted one past the first chunk', async () => {
