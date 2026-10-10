@@ -44,6 +44,7 @@ import {
   hatField,
   seasonHatTopicId,
   seasonTeamsTopicId,
+  type EventPointSeason,
 } from '~/server/events/points/keys';
 import { getHatPoints, getTeamPoints } from '~/server/events/points/read';
 import type { EventHat } from '~/server/events/points/types';
@@ -81,12 +82,13 @@ async function liveHatPoints(
 // season's: in the preview, a keyed one only a read the preview allows hands out (points/keys.ts).
 function hatScore(
   event: SeasonEvent,
+  season: EventPointSeason,
   hat: Omit<EventHat, 'team'>,
   score: CosmeticScore | undefined,
   live: Record<string, number> | null
 ) {
   return {
-    topicId: seasonHatTopicId(event.name, hat, eventPointSeason(event.startDate, new Date())),
+    topicId: seasonHatTopicId(event.name, hat, season),
     points: live ? live[hatField(hat)] ?? 0 : score?.points ?? 0,
     impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
     reactions: score?.reactions ?? 0,
@@ -552,6 +554,7 @@ export async function getMyEventHats({
     ]);
 
     const now = Date.now();
+    const season = eventPointSeason(scored.startDate, new Date(now));
     return rows.map((r) => {
       const placedAt = r.placedAt ? new Date(r.placedAt) : null;
       const movableAt =
@@ -576,7 +579,7 @@ export async function getMyEventHats({
           movableAt && definition
             ? Math.min(definition.moveCooldownMs, Math.max(0, movableAt.getTime() - now))
             : 0,
-        ...hatScore(scored, hat, score, live),
+        ...hatScore(scored, season, hat, score, live),
       };
     });
   } catch (error) {
@@ -753,7 +756,7 @@ export async function getWornEventHat({
               profilePicture: profilePictures[owner.id] ?? null,
             }
           : null,
-      ...hatScore(scored, hat, score, live),
+      ...hatScore(scored, eventPointSeason(scored.startDate, new Date()), hat, score, live),
     };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);

@@ -326,6 +326,8 @@ describe('getMyEventHats', () => {
       previewTopicId('birthday2026', '9:32:txn-9'),
     ];
     expect(first.map((h) => h.topicId)).toEqual(keyed);
+    // Read as the caller, so the gate decides on them: a tester gets past it, nobody else does.
+    expect(engine.getReadableScoredEvent).toHaveBeenCalledWith('birthday2026', user);
     expect(again.map((h) => h.topicId)).toEqual(keyed);
     expect(keyed[0]).not.toBe(hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'claimed' }));
   });
@@ -593,8 +595,10 @@ describe('getEventStandings decoration', () => {
     expect(res.teamsTopicId).toBe(previewTopicId('birthday2026', 'teams'));
     expect(again.topCosmetics[0].topicId).toBe(keyed);
     expect(again.teamsTopicId).toBe(res.teamsTopicId);
-    // The key never goes out with the ids it makes (the test env's NEXTAUTH_SECRET).
-    expect(JSON.stringify(res)).not.toContain('test-secret');
+    // The key never goes out with the ids it makes.
+    const { env } = await import('~/env/server');
+    expect(env.NEXTAUTH_SECRET.length).toBeGreaterThan(0);
+    expect(JSON.stringify(res)).not.toContain(env.NEXTAUTH_SECRET);
     expect(JSON.stringify(res)).not.toContain(claimKey);
   });
 
@@ -759,6 +763,7 @@ describe('getWornEventHat', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
     at(PREVIEW_NOW);
     expect((await read())?.topicId).toBe(previewTopicId('birthday2026', '9:31:claimed'));
+    expect(engine.getReadableScoredEvent).toHaveBeenCalledWith('birthday2026', viewer);
   });
 
   it('falls back to the snapshot points when the live totals are unreachable', async () => {

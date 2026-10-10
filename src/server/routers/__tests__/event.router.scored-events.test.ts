@@ -15,6 +15,7 @@ const { service } = vi.hoisted(() => ({
     getMyEventHats: vi.fn(async () => []),
     getPlaceableEventContent: vi.fn(async () => []),
     getEventHatCatalog: vi.fn(async () => []),
+    getWornEventHat: vi.fn(async () => null),
   },
 }));
 
@@ -134,5 +135,33 @@ describe('scored-event route access', () => {
       "That event doesn't exist"
     );
     expect(service.getEventHatCatalog).not.toHaveBeenCalled();
+  });
+
+  // The public reads that hand out topic ids: in the preview, only a viewer the gate lets in may get
+  // the keyed ones, so the gate must stand in front of each.
+  it('refuses getStandings and getWornHat for an event the viewer cannot read', async () => {
+    service.getViewerEventAccess.mockResolvedValue('closed');
+    try {
+      const anon = callerFor(undefined);
+      await expect(anon.getStandings({ event: 'birthday2026' })).rejects.toThrow(
+        "That event doesn't exist"
+      );
+      await expect(
+        anon.getWornHat({ event: 'birthday2026', entityType: 'Image', entityId: 5 })
+      ).rejects.toThrow("That event doesn't exist");
+      expect(service.getEventStandings).not.toHaveBeenCalled();
+      expect(service.getWornEventHat).not.toHaveBeenCalled();
+    } finally {
+      service.getViewerEventAccess.mockResolvedValue('open');
+    }
+    // The control: let in, both reach the service.
+    await callerFor(undefined).getStandings({ event: 'birthday2026' });
+    await callerFor(undefined).getWornHat({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+    });
+    expect(service.getEventStandings).toHaveBeenCalledTimes(1);
+    expect(service.getWornEventHat).toHaveBeenCalledTimes(1);
   });
 });

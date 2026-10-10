@@ -111,7 +111,12 @@ export const eventTeamsTopic = (event: string) =>
 // The live season's topics are named by public facts, so anyone can subscribe to them. The preview's
 // are not: their ids are keyed with a server secret and reach a client only through a read the
 // preview lets it make, so a public client cannot guess one. 128 bits, the secret never leaves here.
+// The schema only asks for a string: with an empty key the ids would be computable by anyone, so a
+// short one refuses to make them, and the preview's live updates stop rather than go public.
+const MIN_KEY_LENGTH = 8;
 export function previewTopicId(event: string, member: string) {
+  if ((env.NEXTAUTH_SECRET?.length ?? 0) < MIN_KEY_LENGTH)
+    throw new Error('No server secret to key preview topic ids with');
   return createHmac('sha256', env.NEXTAUTH_SECRET)
     .update(`event-points:preview:${event}:${member}`)
     .digest('hex')
@@ -124,9 +129,9 @@ export const seasonHatTopicId = (
   season: EventPointSeason
 ) => (season === 'live' ? hatTopicId(hat) : previewTopicId(event, hatField(hat)));
 // The team standings' id in a season: the live one is the interest-set member `teams`.
+export const TEAMS_TOPIC_ID = 'teams';
 export const seasonTeamsTopicId = (event: string, season: EventPointSeason) =>
   season === 'live' ? TEAMS_TOPIC_ID : previewTopicId(event, TEAMS_TOPIC_ID);
-export const TEAMS_TOPIC_ID = 'teams';
 export const seasonTeamsTopic = (event: string, topicId: string) =>
   topicId === TEAMS_TOPIC_ID
     ? eventTeamsTopic(event)

@@ -45,9 +45,28 @@ describe('topic ids', () => {
     expect(seasonHatTopicId('birthday2026', HAT, 'preview')).not.toBe(unkeyed);
   });
 
+  // The schema accepts any string: an empty or short key would make the ids computable by anyone.
+  it('refuses to make a preview id without a real key, and live ids never need one', () => {
+    const real = env.NEXTAUTH_SECRET;
+    try {
+      for (const key of ['', 'short']) {
+        (env as { NEXTAUTH_SECRET: string }).NEXTAUTH_SECRET = key;
+        expect(() => previewTopicId('birthday2026', 'teams')).toThrow(
+          'No server secret to key preview topic ids with'
+        );
+        expect(seasonHatTopicId('birthday2026', HAT, 'live')).toBe(hatTopicId(HAT));
+        expect(seasonTeamsTopicId('birthday2026', 'live')).toBe('teams');
+      }
+    } finally {
+      (env as { NEXTAUTH_SECRET: string }).NEXTAUTH_SECRET = real;
+    }
+    // The control: with the real key back, it makes one.
+    expect(previewTopicId('birthday2026', 'teams')).toMatch(/^[0-9a-f]{32}$/);
+  });
+
   it('preview ids differ from live ones, between events and between hats, and are stable', () => {
     const preview = seasonHatTopicId('birthday2026', HAT, 'preview');
-    expect(preview).not.toContain(hatTopicId(HAT));
+    expect(preview).not.toBe(seasonHatTopicId('birthday2026', HAT, 'live'));
     expect(seasonHatTopicId('other', HAT, 'preview')).not.toBe(preview);
     expect(seasonHatTopicId('birthday2026', { ...HAT, claimKey: 'b' }, 'preview')).not.toBe(
       preview
