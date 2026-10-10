@@ -30,7 +30,10 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof EventsUtils>()),
   useTeamColor: () => () => 'pink',
 }));
-vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({ EdgeMedia: () => null }));
+// Marks what it would load, so a test can see whether the hero asks for the film.
+vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
+  EdgeMedia: ({ src }: { src: string }) => React.createElement('span', { 'data-edge-media': src }),
+}));
 // The real player needs a scroller and media APIs; this one records what it was told.
 vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
   EdgeVideo: (props: Record<string, unknown>) =>
@@ -106,9 +109,13 @@ describe('hero play button', () => {
 
   it.each([
     [84.6, 'Watch · 1:25'],
+    [84.5, 'Watch · 1:25'],
     [59.5, 'Watch · 1:00'],
     [undefined, 'Watch'],
     [0, 'Watch'],
+    [0.4, 'Watch'],
+    [-5, 'Watch'],
+    [Infinity, 'Watch'],
   ])('reads a length of %s as %s', (duration, label) => {
     const page = hero({}, { heroVideo: { ...VIDEO, duration } });
     expect(watchButton(page)?.textContent).toBe(label);
@@ -118,8 +125,17 @@ describe('hero play button', () => {
   // the page touches the file until the viewer presses Watch.
   it('loads nothing of the film before Watch is pressed', () => {
     const create = vi.spyOn(document, 'createElement');
-    hero();
-    expect(create.mock.calls.filter(([tag]) => tag === 'video')).toEqual([]);
+    const fetch = vi.spyOn(globalThis, 'fetch');
+    const page = hero();
+    // The spy sees the hero being built, so an empty list below is a real absence.
+    expect(create.mock.calls.some(([tag]) => tag === 'div')).toBe(true);
+    expect(
+      create.mock.calls.filter(([tag]) => ['video', 'audio', 'source', 'link'].includes(tag))
+    ).toEqual([]);
+    expect(fetch.mock.calls.filter(([url]) => String(url).includes(VIDEO.id))).toEqual([]);
+    // Nothing rendered names the film: no media element, no preload, no source.
+    expect(page.innerHTML).not.toContain(VIDEO.id);
+    expect(page.querySelector('[data-edge-media=art]')).not.toBeNull();
   });
 
   it('is absent without a film', () => {
@@ -156,7 +172,7 @@ describe('EventVideoModal', () => {
       (b) => b.textContent === 'Join and get your free hat'
     );
 
-  it('plays the film the hero measured, with sound and the browser controls', () => {
+  it('plays the uploaded film, with sound and the browser controls', () => {
     const video = modal().querySelector('video');
     expect({ ...video?.dataset }).toEqual({
       src: VIDEO.id,

@@ -271,6 +271,8 @@ function HeroVideoButton({
   video: { id: string; title: string; duration?: number };
   onClick: () => void;
 }) {
+  const seconds = video.duration ?? 0;
+
   return (
     <UnstyledButton
       onClick={onClick}
@@ -283,7 +285,9 @@ function HeroVideoButton({
           <IconPlayerPlayFilled size={32} />
         </span>
         <span className="rounded-full bg-dark-9/70 px-3 py-1 text-sm font-semibold text-white backdrop-blur-sm">
-          {video.duration ? `Watch · ${filmLength(video.duration)}` : 'Watch'}
+          {Number.isFinite(seconds) && Math.round(seconds) > 0
+            ? `Watch · ${filmLength(seconds)}`
+            : 'Watch'}
         </span>
       </span>
     </UnstyledButton>
