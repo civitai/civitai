@@ -196,11 +196,17 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
     expect(await getHatPoints(event, [HAT], NOW)).toEqual({ [hatField(HAT)]: expected });
     expect((await getTeamPoints({ ...event, teams: birthday2026.teams }, NOW)).Blue).toBe(expected);
     expect(await getOwnerPoints(event, [OWNER], NOW)).toEqual({ [String(OWNER)]: expected });
-    // Every grant marks the hat for a live push, with the event's teams for the team push.
+    // Every grant marks the hat for a live push, with the event's teams for the team push, and its
+    // preview start, from which the pusher takes marks.
+    expect(birthday2026.previewFrom).toBeInstanceOf(Date);
     expect(push.markEventPointsDirty).toHaveBeenCalledTimes(6);
     for (const [event, hat] of push.markEventPointsDirty.mock.calls) {
       expect(event).toEqual(
-        expect.objectContaining({ name: birthday2026.name, teams: birthday2026.teams })
+        expect.objectContaining({
+          name: birthday2026.name,
+          teams: birthday2026.teams,
+          previewFrom: birthday2026.previewFrom,
+        })
       );
       expect(hat).toEqual(HAT);
     }
