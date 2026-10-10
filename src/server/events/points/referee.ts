@@ -51,18 +51,24 @@ export type RefereeRow = {
 const startOfUtcDay = (time: Date) =>
   new Date(Date.UTC(time.getUTCFullYear(), time.getUTCMonth(), time.getUTCDate()));
 
-// The season's window, the cut-off this run settles to (a bucket boundary at least SETTLE_LAG_MS in
-// the past, never past the season's end), and the first day it recomputes: the day before the cut's
-// day, or the whole season on the nightly full run.
+// The season's window: the cut-off adds settle to (a bucket boundary at least SETTLE_LAG_MS in the
+// past, never past the season's end), the cut-off removals settle to (the same boundary, but running
+// on through the live season's finalize window), and the first day it recomputes: the day before the
+// cut's day, or the whole season on the nightly full run and on every run once the season has ended.
 export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now: Date) {
   const start = season === 'preview' ? event.previewFrom ?? event.startDate : event.startDate;
   const end = season === 'preview' ? event.startDate : event.endDate;
   const settled = Math.floor((now.getTime() - SETTLE_LAG_MS) / LIVE_BUCKET_MS) * LIVE_BUCKET_MS;
   const cut = new Date(Math.min(settled, end.getTime()));
-  const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR;
+  // A takedown in the finalize window must still net out the add it pairs with, before the winner
+  // is decided on these totals.
+  const finalize = season === 'live' ? event.scoring.finalizeAfterMs : 0;
+  const removeCut = new Date(Math.min(settled, end.getTime() + finalize));
+  // Once the season has ended a late removal can reach any day, so no day is final.
+  const full = now.getUTCHours() === FULL_RECOMPUTE_HOUR || settled >= end.getTime();
   const dayBefore = new Date(startOfUtcDay(cut).getTime() - DAY_MS);
   const recomputeFrom = full || dayBefore < start ? start : dayBefore;
-  return { start, cut, recomputeFrom };
+  return { start, cut, removeCut, recomputeFrom };
 }
 
 // Totals per hat, team and owner: the final days from the snapshot plus the recomputed rows.
@@ -120,6 +126,7 @@ export function refereeQueryParams(
     seasonStart: formatClickhouseDateTime64(window.start),
     recomputeFrom: formatClickhouseDateTime64(window.recomputeFrom),
     cut: formatClickhouseDateTime64(window.cut),
+    removeCut: formatClickhouseDateTime64(window.removeCut),
     cap: event.scoring.capPerActorPerOwnerPerDay,
     types: types.map(([type]) => type),
     // The live weights, so the referee and the live totals agree; the config fills any gap.

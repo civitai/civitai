@@ -60,6 +60,8 @@ for (let i = 0; i < 45; i++)
   add(`2026-11-01 04:${String(i).padStart(2, '0')}:00`, 'view', 2, 110 + i, H10);
 add('2026-11-01 05:00:00', 'remix', 2, 200, H10B, 'P:remix:200:2');
 add('2026-11-01 05:01:00', 'reaction', 2, 161, H10, 'R:161:2');
+// The cap is per creator: past 50 on owner 10, a view to another creator's hat still earns.
+add('2026-11-01 05:02:00', 'view', 2, 601, H1000);
 // ...and on day two the cap starts over: a view to the same creator earns again.
 add('2026-11-02 04:00:00', 'view', 2, 110, H10);
 // Actor 3: the same view twice on day one counts once, and again on day two.
@@ -90,6 +92,12 @@ add('2026-10-31 23:59:00', 'reaction', 7, 100, H10, 'R:100:7');
 // Actor 7 reacted in the preview and again in the event: the preview row must not hide the event's.
 add('2026-11-01 13:00:00', 'reaction', 7, 100, H10, 'R:100:7');
 add('2026-11-03 00:00:00', 'reaction', 8, 100, H10, 'R:100:8');
+// The season ends at the cut, but removals keep landing through the finalize window (to removeCut):
+// actor 15's takedown after the end nets out a day-one add; actor 16's, after removeCut, does not.
+add('2026-11-01 10:30:00', 'reaction', 15, 108, H10, 'R:108:15');
+add('2026-11-03 06:00:00', 'reaction', 15, 108, H10, 'R:108:15', 'remove');
+add('2026-11-01 10:31:00', 'reaction', 16, 109, H10, 'R:109:16');
+add('2026-11-03 13:00:00', 'reaction', 16, 109, H10, 'R:109:16', 'remove');
 
 const q = (v) => (typeof v === 'number' ? String(v) : `'${v}'`);
 const rows = (list) => list.map((r) => `(${r.map(q).join(', ')})`).join(', ');
@@ -106,9 +114,9 @@ sql = one(sql, 'WITH\n', `WITH\n${fixtures}\n`);
 // day, userId, cosmeticId, claimKey, team, points, views, reactions, comments, stickers, remixes,
 // modelLikes
 const full = [
-  ['2026-11-01', 10, 7, 'claimed', 'Yellow', 5 + 45 + 1 + 5 + 20 + 5 + 5, 46, 4, 1, 1, 0, 1],
+  ['2026-11-01', 10, 7, 'claimed', 'Yellow', 5 + 45 + 1 + 5 + 20 + 5 + 5 + 5, 46, 5, 1, 1, 0, 1],
   ['2026-11-01', 10, 9, 'cosmetic-purchase-x', 'Yellow', 5, 0, 0, 0, 0, 1, 0],
-  ['2026-11-01', 1000, 9, 'claimed', 'Pink', 5, 0, 1, 0, 0, 0, 0],
+  ['2026-11-01', 1000, 9, 'claimed', 'Pink', 5 + 1, 1, 1, 0, 0, 0, 0],
   ['2026-11-02', 10, 7, 'claimed', 'Yellow', 2, 2, 0, 0, 0, 0, 0],
 ];
 // The hourly run from day two: day one is final and not returned, and actor 9's day-two log is not a
@@ -130,6 +138,7 @@ async function run(recomputeFrom) {
       seasonStart: '2026-11-01 00:00:00.000',
       recomputeFrom,
       cut: '2026-11-03 00:00:00.000',
+      removeCut: '2026-11-03 12:00:00.000',
       cap: 50,
       types: ['view', 'reaction', 'comment', 'sticker', 'remix', 'modelLike'],
       weights: [1, 5, 5, 10, 25, 5],

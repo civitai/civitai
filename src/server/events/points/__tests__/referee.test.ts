@@ -42,14 +42,48 @@ describe('refereeWindow', () => {
     expect(cut.toISOString()).toBe('2026-11-01T00:00:00.000Z');
   });
 
-  it('never settles past the end of the live season either', () => {
-    const { cut, recomputeFrom } = refereeWindow(
-      EVENT,
-      'live',
-      new Date('2026-12-01T12:07:00.000Z')
-    );
+  it('never settles adds past the end of the live season either', () => {
+    const { cut } = refereeWindow(EVENT, 'live', new Date('2026-12-01T12:07:00.000Z'));
     expect(cut.toISOString()).toBe('2026-12-01T00:00:00.000Z');
-    expect(recomputeFrom.toISOString()).toBe('2026-11-30T00:00:00.000Z');
+  });
+
+  // The winner is decided on the totals after the finalize window, so a takedown inside it must
+  // still net out its add, whichever day that add was on.
+  describe('after the live season ends', () => {
+    const FINALIZING = { ...EVENT, scoring: { ...scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 } };
+
+    it('settles removals on through the finalize window, and recomputes the whole season', () => {
+      const { cut, removeCut, recomputeFrom } = refereeWindow(
+        FINALIZING,
+        'live',
+        new Date('2026-12-01T12:07:00.000Z')
+      );
+      expect(cut.toISOString()).toBe('2026-12-01T00:00:00.000Z');
+      expect(removeCut.toISOString()).toBe('2026-12-01T11:55:00.000Z');
+      expect(recomputeFrom.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    });
+
+    it('stops settling removals when the finalize window closes', () => {
+      const { removeCut } = refereeWindow(FINALIZING, 'live', new Date('2026-12-02T05:00:00.000Z'));
+      expect(removeCut.toISOString()).toBe('2026-12-02T00:00:00.000Z');
+    });
+
+    it('recomputes the whole season from the first run whose cut reaches the end', () => {
+      const at = (time: string) => refereeWindow(FINALIZING, 'live', new Date(time)).recomputeFrom;
+      expect(at('2026-12-01T00:10:00.000Z').toISOString()).toBe('2026-11-01T00:00:00.000Z');
+      expect(at('2026-11-30T23:59:00.000Z').toISOString()).toBe('2026-11-29T00:00:00.000Z');
+    });
+  });
+
+  it('settles removals to the same cut as adds while the season runs, and in the preview', () => {
+    const live = refereeWindow(EVENT, 'live', new Date('2026-11-05T12:07:30.000Z'));
+    expect(live.removeCut).toEqual(live.cut);
+    const preview = refereeWindow(
+      { ...EVENT, scoring: { ...scoring, finalizeAfterMs: 24 * 60 * 60 * 1000 } },
+      'preview',
+      new Date('2026-11-01T03:00:00.000Z')
+    );
+    expect(preview.removeCut.toISOString()).toBe('2026-11-01T00:00:00.000Z');
   });
 
   it('recomputes from the day before the cut on an hourly run', () => {
