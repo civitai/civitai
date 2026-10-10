@@ -32,7 +32,8 @@ export function searchEventDecorationQuery(
   const flagged = !!definition.featureFlag && !!features[definition.featureFlag];
   if (now < definition.startsAt && !flagged) return null;
   // Pages in hit order, so loading more never changes an earlier page's key; each page sorted and
-  // deduped, which is the one spelling the server accepts and the edge caches.
+  // deduped, which is the one spelling the server accepts and the edge caches. Not `chunkIds`: it
+  // dedupes across the whole list, so a repeated hit would shift every later page's boundary.
   const pages: number[][] = [];
   for (let i = 0; i < hitIds.length; i += SEARCH_HITS_PER_PAGE)
     pages.push([...new Set(hitIds.slice(i, i + SEARCH_HITS_PER_PAGE))].sort((a, b) => a - b));

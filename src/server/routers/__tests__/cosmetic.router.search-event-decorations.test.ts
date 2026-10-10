@@ -117,6 +117,36 @@ describe('cosmetic.getEventDecorationsForSearch after launch', () => {
     expect(willEdgeCache(cache)).toBe(false);
   });
 
+  it.each([
+    ['a different set of the same size', [OTHER_EVENT]],
+    ['fewer events than the signed out', []],
+  ])('does not cache a viewer who sees %s', async (_, seen) => {
+    arrange([EVENT], { [TESTER]: seen });
+    const { cache, result } = call({ id: TESTER });
+    await result;
+    expect(willEdgeCache(cache)).toBe(false);
+  });
+
+  it('answers from the same read of the viewer that decided the caching', async () => {
+    // A tester whose preview event drops out of one flag read and back into the next: the answer
+    // must be built from the read that matched the signed out, or preview hats get cached.
+    let reads = 0;
+    visibleEvents.mockImplementation(async (_entity: string, viewer?: { id: number }) => {
+      if (!viewer) return new Set([EVENT]);
+      reads++;
+      return new Set(reads === 1 ? [EVENT] : [EVENT, OTHER_EVENT]);
+    });
+    decorationFetch.Model.mockResolvedValue({
+      1: decoration(1),
+      3: { ...decoration(3), data: { type: 'hat', event: OTHER_EVENT, url: 'hat.png' } },
+    });
+    publicFetch.Model.mockResolvedValue({ 1: { id: 1 }, 3: { id: 3 } });
+    const { cache, result } = call({ id: TESTER });
+    expect(Object.keys(await result)).toEqual(['1']);
+    expect(willEdgeCache(cache)).toBe(true);
+    expect(reads).toBe(1);
+  });
+
   it('does not cache after a kill switch, when the signed out see nothing again', async () => {
     // The base flag goes off post-launch: no shared answer exists, so nothing is cached and an
     // edge copy from before outlives it by no more than its TTL.

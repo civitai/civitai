@@ -178,6 +178,34 @@ describe('useSearchEventDecorations', () => {
     unmount();
   });
 
+  it('asks for the next page when more hits load, and merges a page that answers late', () => {
+    let current = hits.slice(0, 50);
+    const { result, rerender, unmount } = renderHook(() =>
+      useSearchEventDecorations(current, current, { entity: 'Model' })
+    );
+    expect(state.asked).toHaveLength(1);
+    const firstPage = state.asked[0].input;
+
+    state.results = [{ data: { 1: hat(1) }, dataUpdatedAt: 1 }];
+    current = hits;
+    rerender();
+    expect(state.asked.map((x) => x.input)).toEqual([
+      firstPage,
+      { entityType: 'Model', ids: hits.slice(50).map((x) => x.id) },
+    ]);
+    const wornNow = () => result.current.filter((x) => 'eventDecoration' in x).map((x) => x.id);
+    expect(wornNow()).toEqual([1]);
+
+    // Only the second page answers; the first page's result is unchanged.
+    state.results = [
+      { data: { 1: hat(1) }, dataUpdatedAt: 1 },
+      { data: { 55: hat(55) }, dataUpdatedAt: 2 },
+    ];
+    rerender();
+    expect(wornNow()).toEqual([1, 55]);
+    unmount();
+  });
+
   it('sends no request for an unflagged viewer in the preview', () => {
     vi.setSystemTime(inPreview);
     state.results = [{ data: { 1: hat(1) }, dataUpdatedAt: 1 }];
@@ -200,23 +228,50 @@ describe('useSearchEventDecorations', () => {
   });
 });
 
+const readSource = (relative: string) =>
+  readFileSync(path.resolve(__dirname, '../../..', relative), 'utf8').replace(
+    /\/\*[\s\S]*?\*\//g,
+    ''
+  );
+
+/** The props of a JSX element's opening tag. */
+function openingTag(source: string, tag: string) {
+  const start = source.indexOf(`<${tag}`);
+  expect(start, `<${tag}> not found`).toBeGreaterThan(-1);
+  const firstLine = source.slice(start, source.indexOf('\n', start));
+  if (firstLine.trimEnd().endsWith('>')) return firstLine;
+  const close = source.slice(start).search(/\n\s*\/?>/);
+  return source.slice(start, start + close);
+}
+
 describe('the search grids', () => {
-  // Wiring only: the behaviour is pinned above. Each grid must render the decorated list.
+  // Wiring only: the behaviour is pinned above. Each grid must render the decorated list, in every
+  // element that hands the items to the cards.
   it.each([
-    ['models', 'Model', 'data={decorated as any}'],
-    ['images', 'Image', 'data={decorated as any}'],
-    ['articles', 'Article', 'data={decorated}'],
-  ])('%s asks for its hats and renders them', (page, entity, render) => {
-    const source = readFileSync(
-      path.resolve(__dirname, `../../../pages/search/${page}.tsx`),
-      'utf8'
-    );
-    const call = source
-      .split('\n')
-      .find((line) => line.includes('const decorated = useSearchEventDecorations('));
-    expect(call?.trim()).toMatch(/^const decorated = useSearchEventDecorations\(hits, items\b/);
+    ['models', 'Model', [['MasonryGrid', 'data={decorated as any}']]],
+    [
+      'images',
+      'Image',
+      [
+        ['ImagesProvider', 'images={decorated as any}'],
+        ['MasonryColumnsVirtual', 'data={decorated as any}'],
+      ],
+    ],
+    ['articles', 'Article', [['MasonryGridVirtual', 'data={decorated}']]],
+  ])('%s asks for its hats and renders them', (page, entity, sites) => {
+    const source = readSource(`pages/search/${page}.tsx`);
+    const callAt = source.indexOf('const decorated = useSearchEventDecorations(');
+    const call = source.slice(callAt, source.indexOf('\n', callAt)).trim();
+    expect(call).toMatch(/^const decorated = useSearchEventDecorations\(hits, items\b/);
     expect(call).toContain(`{ entity: '${entity}' });`);
-    expect(source).toContain(render);
-    expect(source).not.toMatch(/data=\{items( as any)?\}/);
+    // Above the first early return, or the hook count changes between renders.
+    expect(callAt).toBeLessThan(source.indexOf('if (hits.length === 0)'));
+    for (const [tag, prop] of sites) expect(openingTag(source, tag)).toContain(prop);
+  });
+
+  it('pages the index by the same size the hat lookup chunks by', () => {
+    expect(readSource('components/Search/SearchLayout.tsx')).toContain(
+      '<Configure hitsPerPage={SEARCH_HITS_PER_PAGE}'
+    );
   });
 });
