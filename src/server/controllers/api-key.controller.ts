@@ -78,10 +78,8 @@ export async function setBuzzLimitHandler({
 }) {
   const { user } = ctx;
 
-  // Self-modify guard: a token must not be able to raise/clear the limit on
-  // its own subject. Session auth (subject == null) is unaffected.
-  const subject = (ctx as unknown as { subject?: { type: string; id: number | string } | null })
-    .subject;
+  // A key must not raise or clear its own limit; the credential gate alone allows it.
+  const { subject } = ctx;
   if (subject && subject.type === 'apiKey' && subject.id === input.id) {
     throw new TRPCError({
       code: 'FORBIDDEN',

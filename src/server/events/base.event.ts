@@ -246,8 +246,9 @@ export type EventPageCopy = {
   // CDN image id for the hero art. Keep its subject on the right: the left side sits under the copy.
   heroImage?: string;
   // A short film about the event, as a CDN video id. The hero puts a play button on its art that
-  // opens it; `title` names it in the button's label and the player's heading.
-  heroVideo?: { id: string; title: string };
+  // opens it; `title` names it in the button's label and the player's heading. `duration` is the
+  // file's length in seconds, as its own header states it; the button shows it, or just "Watch".
+  heroVideo?: { id: string; title: string; duration?: number };
   // Shown verbatim on the hero's date badge, e.g. "Nov 11 to Nov 25"; without it the badge formats
   // startDate and endDate in the viewer's timezone.
   dates?: string;

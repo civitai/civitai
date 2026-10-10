@@ -38,6 +38,7 @@ export const getServerProxySSGHelpers = async (
       signal: new AbortController().signal,
       tokenScope: TokenScope.Full,
       apiKeyId: undefined,
+      apiKeyType: undefined,
       subject: undefined,
     },
     // Phase 2 of the superjson → devalue migration: SSR runs server-side, so its

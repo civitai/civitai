@@ -7,6 +7,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -81,6 +82,7 @@ export const createContext = async ({
   // controller signatures can collapse them to required fields when the caller
   // already knows the request is token-auth'd.
   const apiKeyId = (req as any).context?.apiKeyId as number | undefined;
+  const apiKeyType = ((req as any).context?.apiKeyType ?? undefined) as ApiKeyType | undefined;
   const subject = (req as any).context?.subject as
     | { type: 'apiKey'; id: number }
     | { type: 'oauth'; id: string }
@@ -103,6 +105,7 @@ export const createContext = async ({
     signal: abortController.signal,
     tokenScope,
     apiKeyId,
+    apiKeyType,
     subject,
   };
 };
@@ -131,9 +134,12 @@ export type Context = AsyncReturnType<typeof createContext>;
 
 /**
  * Context shape for protected procedures, where `user` (and other base fields)
- * are guaranteed non-null but `apiKeyId`/`subject` legitimately remain nullable
- * (session auth has no apiKeyId). Replaces `DeepNonNullable<Context>` for
+ * are guaranteed non-null but `apiKeyId`/`apiKeyType`/`subject` legitimately remain
+ * nullable (session auth has no apiKeyId). Replaces `DeepNonNullable<Context>` for
  * controllers, which would otherwise strip the nullability of these fields.
  */
-export type ProtectedContext = Omit<DeepNonNullable<Context>, 'apiKeyId' | 'subject'> &
-  Pick<Context, 'apiKeyId' | 'subject'>;
+export type ProtectedContext = Omit<
+  DeepNonNullable<Context>,
+  'apiKeyId' | 'apiKeyType' | 'subject'
+> &
+  Pick<Context, 'apiKeyId' | 'apiKeyType' | 'subject'>;
