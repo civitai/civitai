@@ -10660,6 +10660,50 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           });
         });
 
+        // The level follows the repo's client-fault convention (`classifyErrorFault`):
+        // a rate limit or other client-fault code is not an error-level event.
+        it.each<[string, 'warning' | 'error', () => unknown]>([
+          [
+            'an upstream 429',
+            'warning',
+            () => orchestratorError('TOO_MANY_REQUESTS', 'Slow down!', 429),
+          ],
+          [
+            'an upstream 401',
+            'warning',
+            () => orchestratorError('UNAUTHORIZED', 'Authorization has been denied.', 401),
+          ],
+          [
+            'an upstream 500',
+            'error',
+            () =>
+              orchestratorError(
+                'SERVICE_UNAVAILABLE',
+                'Generation services are temporarily unavailable. Please try again.',
+                500
+              ),
+          ],
+          ['a network failure', 'error', NETWORK],
+          [
+            'an unrecognised throw',
+            'error',
+            () => new Error('Cannot read properties of undefined'),
+          ],
+        ])('logs %s, unavailable, at %s level', async (_name, level, make) => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          quoteThrows(make);
+          await caller().estimateWorkflow({ blockToken: 'tok', body: trainingBody() });
+          const logged = mockLogToAxiom.mock.calls
+            .map((c) => c[0])
+            .filter((entry) => entry?.name === 'block-pass-through-quote-failed');
+          expect(logged).toHaveLength(1);
+          expect({ type: logged[0].type, outcome: logged[0].outcome }).toEqual({
+            type: level,
+            outcome: 'unavailable',
+          });
+        });
+
         // [INVARIANT GUARD] a failed quote changes nothing for a non-training step.
         it('a NON-training step whose quote throws still submits at maxBuzz, uncoded', async () => {
           mockVerifyBlockToken.mockResolvedValue(ptClaims());

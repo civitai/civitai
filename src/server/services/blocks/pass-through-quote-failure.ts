@@ -1,15 +1,17 @@
 import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { isLikelySafeMessage } from '~/server/services/orchestrator/provider-errors';
+import { getOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
 
 /**
  * Why a pass-through step has no price quote.
  *
- * - `rejected`    — the orchestrator refused the request (a 4xx); retrying the same
- *                   body will not help. `reason` is set only when its message is safe
- *                   to show.
+ * - `rejected`    — the orchestrator answered the request with a 4xx that refuses the
+ *                   request itself; retrying the same body will not help. `reason` is
+ *                   set only when its message is safe to show.
  * - `unavailable` — no usable answer: a network failure, a timeout, a 5xx, a rate
- *                   limit, or a token that could not be minted. Retryable.
+ *                   limit, a token that could not be minted or was refused, a funds
+ *                   refusal, or a failure before the request was sent. Nothing from
+ *                   the failure is forwarded.
  * - `unpriced`    — the orchestrator answered without a finite total.
  */
 export type PassThroughQuoteFailure =
@@ -68,14 +70,29 @@ export function safeQuoteReason(message: string, callerText: string): string | u
 }
 
 /**
- * Classifies what a `whatif` submit threw. `submitWorkflow` has already mapped the
- * orchestrator response onto a `TRPCError` (`throwOrchestratorFailure`), so the
- * status class of that error is the classification.
+ * Orchestrator statuses that are a 4xx but do not refuse the request itself:
+ * - 401 — our own service token was refused (a server-side problem);
+ * - 403 — insufficient funds (fixed by topping up, and its message may describe the
+ *         viewer's balance, which an app must not be handed);
+ * - 408 / 429 — a timeout / rate limit, retryable as is.
+ */
+const NOT_A_REQUEST_REFUSAL = new Set([401, 403, 408, 429]);
+
+/**
+ * Classifies what a `whatif` submit threw.
+ *
+ * Keyed on the orchestrator response status `submitWorkflow` records on the error
+ * (`getOrchestratorSubmitFailure`), not on the `TRPCError` code: the code cannot tell
+ * a 400 from a 403 (both BAD_REQUEST), nor a validation reply from a throw raised
+ * before any request was sent (a failed blob-URL refresh is also BAD_REQUEST). An
+ * error without a recorded response never reached the orchestrator's validation,
+ * so it is `unavailable`.
  */
 export function classifyQuoteFailure(err: unknown, callerText: string): PassThroughQuoteFailure {
-  if (!(err instanceof TRPCError)) return { kind: 'unavailable' };
-  const status = getHTTPStatusCodeFromError(err);
-  if (status < 400 || status >= 500 || status === 408 || status === 429) {
+  const response = getOrchestratorSubmitFailure(err);
+  if (!(err instanceof TRPCError) || !response) return { kind: 'unavailable' };
+  const { status } = response;
+  if (status < 400 || status >= 500 || NOT_A_REQUEST_REFUSAL.has(status)) {
     return { kind: 'unavailable' };
   }
   const reason = safeQuoteReason(err.message, callerText);

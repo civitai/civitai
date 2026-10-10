@@ -5,11 +5,19 @@ import {
   safeQuoteReason,
   unquotedTrainingRefusal,
 } from '~/server/services/blocks/pass-through-quote-failure';
+import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
 
 const GENERIC = 'Training needs a price quote and none could be obtained; try again.';
 const OWN_KEY = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
 const FOREIGN_KEY = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
 const CALLER_TEXT = JSON.stringify({ trainingData: { items: [{ air: OWN_KEY }] } });
+
+/** What `submitWorkflow` throws for an orchestrator reply with this status. */
+function orchestratorError(code: TRPCError['code'], message: string, status: number) {
+  const err = new TRPCError({ code, message });
+  annotateOrchestratorSubmitFailure(err, { attempt: 1, status });
+  return err;
+}
 
 /** What the block receives for an error the quote threw. */
 const refusalFor = (err: unknown) =>
@@ -17,10 +25,11 @@ const refusalFor = (err: unknown) =>
 
 describe('what a block receives for a failed training quote', () => {
   it('a validation rejection carries the orchestrator‘s reason', () => {
-    const err = new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'Training requires at least 5 images, but 2 were provided.',
-    });
+    const err = orchestratorError(
+      'BAD_REQUEST',
+      'Training requires at least 5 images, but 2 were provided.',
+      400
+    );
     expect(refusalFor(err)).toEqual({
       error:
         'Training could not be priced: Training requires at least 5 images, but 2 were provided.',
@@ -29,10 +38,8 @@ describe('what a block receives for a failed training quote', () => {
   });
 
   it('a not-found rejection may name a key the caller sent', () => {
-    const err = new TRPCError({
-      code: 'NOT_FOUND',
-      message: `The blob ${OWN_KEY} was not found.`,
-    });
+    // An orchestrator 404 reaches the caller as BAD_REQUEST.
+    const err = orchestratorError('BAD_REQUEST', `The blob ${OWN_KEY} was not found.`, 404);
     expect(refusalFor(err)).toEqual({
       error: `Training could not be priced: The blob ${OWN_KEY} was not found.`,
       errorCode: 'training-quote-rejected',
@@ -40,10 +47,11 @@ describe('what a block receives for a failed training quote', () => {
   });
 
   it('several validation messages are joined on one line', () => {
-    const err = new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'Epochs must be between 1 and 20.,\nResolution must be a multiple of 64.',
-    });
+    const err = orchestratorError(
+      'BAD_REQUEST',
+      'Epochs must be between 1 and 20.,\nResolution must be a multiple of 64.',
+      400
+    );
     expect(refusalFor(err)).toEqual({
       error:
         'Training could not be priced: Epochs must be between 1 and 20.; Resolution must be a multiple of 64.',
@@ -61,7 +69,28 @@ describe('what a block receives for a failed training quote', () => {
       }),
     ],
     ['a timeout', new TRPCError({ code: 'TIMEOUT', message: 'The operation timed out.' })],
-    ['a rate limit', new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'Slow down!' })],
+    ['a rate limit', orchestratorError('TOO_MANY_REQUESTS', 'Slow down!', 429)],
+    ['an upstream timeout', orchestratorError('BAD_REQUEST', 'Request timed out.', 408)],
+    [
+      'our service token refused',
+      orchestratorError('UNAUTHORIZED', 'Authorization has been denied.', 401),
+    ],
+    [
+      'insufficient funds',
+      orchestratorError('BAD_REQUEST', 'Insufficient funds: balance is 120, 500 required.', 403),
+    ],
+    [
+      'a failed blob refresh, before any request was sent',
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          'Failed to refresh image URL for blob: BLOB1.jpeg. Please try uploading the image again.',
+      }),
+    ],
+    [
+      'a BAD_REQUEST with no orchestrator response',
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Epochs must be between 1 and 20.' }),
+    ],
     ['a server fault', new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Epochs is bad.' })],
     ['an unrecognised throw', new Error('Epochs must be between 1 and 20.')],
     ['a non-error throw', 'Epochs must be between 1 and 20.'],
@@ -86,7 +115,7 @@ describe('what a block receives for a failed training quote', () => {
     ['too many messages', ['a.', 'b.', 'c.', 'd.', 'e.', 'f.'].join(',\n')],
     ['an empty message', ''],
   ])('a rejection carrying %s keeps the generic message', (_name, message) => {
-    const err = new TRPCError({ code: 'BAD_REQUEST', message });
+    const err = orchestratorError('BAD_REQUEST', message, 400);
     expect(refusalFor(err)).toEqual({ error: GENERIC, errorCode: 'training-quote-rejected' });
   });
 
