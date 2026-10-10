@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -35,6 +35,7 @@ const {
   getEventStandings,
   getTeamScoreHistory,
   getUserCosmeticScores,
+  hasStandingsSnapshot,
   refreshStandings,
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
@@ -121,6 +122,7 @@ function fakeSysRedis() {
     store.values.set(k, structuredClone(v));
     return 'OK';
   });
+  sys.exists.mockImplementation(async (k: string) => Number(store.values.has(k)));
   sys.hGet.mockImplementation(async (k: string, f: string) => store.hashes.get(k)?.[f] ?? null);
   sys.hmGet.mockImplementation(async (k: string, fields: string[]) =>
     fields.map((f) => store.hashes.get(k)?.[f] ?? null)
@@ -150,20 +152,43 @@ function fakeSysRedis() {
 }
 
 // Every read below runs with this on: the only proof that a read never touches Postgres. Raw, unsafe,
-// transactional and the delegates a score read could plausibly reach for all throw.
+// transactional and the delegates a score read could plausibly reach for all throw, and since the
+// reads fail soft (a thrown error can be swallowed into the same zeros), each test also ends by
+// asserting none of them was called at all.
+let forbidden: { mockClear: () => void; mock: { calls: unknown[] } }[] = [];
 function forbidPostgres() {
-  const forbidden = (async () => {
+  const refuse = (async () => {
     throw new Error('Postgres on the request path');
   }) as never;
+  forbidden = [];
   for (const client of [dbMock.dbWrite, dbMock.dbRead]) {
-    for (const method of ['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe'])
-      client[method].mockImplementation(forbidden);
-    client.$transaction.mockImplementation(forbidden);
-    for (const model of ['eventCosmeticScoreDaily', 'userCosmetic', 'user', 'cosmetic'])
-      for (const method of ['findMany', 'findFirst', 'findUnique', 'groupBy', 'aggregate', 'count'])
-        client[model][method].mockImplementation(forbidden);
+    const methods = [
+      ...['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe', '$transaction'].map(
+        (m) => client[m]
+      ),
+      ...['eventCosmeticScoreDaily', 'userCosmetic', 'user', 'cosmetic'].flatMap((model) =>
+        ['findMany', 'findFirst', 'findUnique', 'groupBy', 'aggregate', 'count'].map(
+          (m) => client[model][m]
+        )
+      ),
+    ];
+    for (const method of methods) {
+      method.mockImplementation(refuse);
+      method.mockClear();
+      forbidden.push(method);
+    }
   }
 }
+// The job again, between reads.
+function allowPostgres() {
+  forbidden = [];
+  dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(db.pg).queryRaw as never);
+}
+afterEach(() => {
+  const called = forbidden.filter((method) => method.mock.calls.length).length;
+  forbidden = [];
+  expect(called, 'Postgres was called after forbidPostgres()').toBe(0);
+});
 
 // The hourly job's write, then Postgres goes away.
 async function settle(...events: (typeof event & { scoreFrom?: Date })[]) {
@@ -343,8 +368,7 @@ describe('standings', () => {
   it('replaces the hat totals on each run: a hat whose days were removed reads as unsettled', async () => {
     await settle();
     await db.pg.exec(`DELETE FROM "EventCosmeticScoreDaily" WHERE "claimKey" = 'txn-1'`);
-    const raw = pgliteRaw(db.pg);
-    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    allowPostgres();
     await settle();
     expect(
       await getCosmeticScores(event, [{ userId: 1, cosmeticId: 21, claimKey: 'txn-1' }])
@@ -355,8 +379,7 @@ describe('standings', () => {
   it('clears the hat totals when a run finds no rows at all', async () => {
     await settle();
     await db.pg.exec(`TRUNCATE "EventCosmeticScoreDaily"`);
-    const raw = pgliteRaw(db.pg);
-    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    allowPostgres();
     await settle();
     expect(
       await getCosmeticScores(event, [{ userId: 2, cosmeticId: 22, claimKey: 'claimed' }])
@@ -375,6 +398,15 @@ describe('standings', () => {
       await getCosmeticScores(event, [{ userId: 2, cosmeticId: 22, claimKey: 'claimed' }])
     ).toEqual({});
     expect(await getUserCosmeticScores(event, 2)).toEqual([]);
+    // A miss, not a failure.
+    expect(failOpen.log).not.toHaveBeenCalled();
+  });
+
+  it('knows whether a snapshot is stored, for this window only', async () => {
+    expect(await hasStandingsSnapshot(event)).toBe(false);
+    await settle();
+    expect(await hasStandingsSnapshot(event)).toBe(true);
+    expect(await hasStandingsSnapshot({ ...event, scoreFrom: new Date('2026-10-09') })).toBe(false);
   });
 
   it('does not call a settled read degraded', async () => {
@@ -382,6 +414,7 @@ describe('standings', () => {
     const onDegraded = vi.fn();
     expect((await getEventStandings(event, { onDegraded })).teams[0].team).toBe('Blue');
     expect(onDegraded).not.toHaveBeenCalled();
+    expect(failOpen.log).not.toHaveBeenCalled();
   });
 
   it('never folds hats a crashed earlier run left half-written into the new totals', async () => {
@@ -390,12 +423,14 @@ describe('standings', () => {
     store.hashes.set(`${hatsKey}:next`, {
       '9:99:stale': JSON.stringify({ userId: 9, cosmeticId: 99, claimKey: 'stale', points: 5 }),
     });
-    const raw = pgliteRaw(db.pg);
-    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
+    const ownersKey = hatsKey.replace(/:hats$/, ':owners');
+    store.hashes.set(`${ownersKey}:next`, { '9': JSON.stringify(['9:99:stale']) });
+    allowPostgres();
     await settle();
     expect(
       await getCosmeticScores(event, [{ userId: 9, cosmeticId: 99, claimKey: 'stale' }])
     ).toEqual({});
+    expect(await getUserCosmeticScores(event, 9)).toEqual([]);
     // Positive control: the run itself landed.
     expect(Object.keys(store.hashes.get(hatsKey)!)).toContain('2:22:claimed');
   });
@@ -403,10 +438,16 @@ describe('standings', () => {
   it('keeps serving the previous totals whole when a run fails partway through writing', async () => {
     await settle();
     await insertDays([day('2026-11-04', 2, 22, 'claimed', 'Blue', 100)]);
-    const raw = pgliteRaw(db.pg);
-    dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
-    redisMock.sysRedis.hSet.mockRejectedValueOnce(new Error('sysRedis down'));
+    allowPostgres();
+    // The hat totals write, then the owner index fails: the new totals are written but must not be
+    // what a reader sees.
+    const sys = redisMock.sysRedis;
+    sys.hSet.mockClear();
+    sys.hSet
+      .mockImplementationOnce(sys.hSet.getMockImplementation()!)
+      .mockRejectedValueOnce(new Error('sysRedis down'));
     await expect(refreshStandings(event, dbMock.dbWrite as never)).rejects.toThrow('sysRedis down');
+    expect(sys.hSet).toHaveBeenCalledTimes(2);
     forbidPostgres();
     const key = { userId: 2, cosmeticId: 22, claimKey: 'claimed' };
     expect((await getCosmeticScores(event, [key]))['2:22:claimed']?.points).toBe(25);

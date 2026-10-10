@@ -86,7 +86,9 @@ describe('eventDecorationEntityCaches', () => {
       const worn = await eventDecorationEntityCaches.Image.fetch([5]);
       expect(worn[5]).toMatchObject({ id: 31, userId: 9, equippedToId: 5 });
       // v2: entries cached before the wearer was added are never read as having one.
-      expect(writes().map(([key]) => key)).toEqual(['packed:caches:cosmetics2:event:v2:Image:5']);
+      expect(writes()).toEqual([
+        ['packed:caches:cosmetics2:event:v2:Image:5', expect.anything(), { EX: 86400 }],
+      ]);
     } finally {
       cosmeticCache.fetch = fetch;
     }
@@ -97,5 +99,19 @@ describe('eventDecorationEntityCaches', () => {
         `AND uc."equippedToType" = '?'::"CosmeticEntity" AND jsonb_typeof(c.data->'event') = 'string';`
     );
     expect(ids(call)).toEqual([5]);
+    // The entity is inlined, not bound: pin which one.
+    expect((call[2] as { sql: string }).sql).toBe('Image');
+  });
+
+  // Read on every image feed page while an event runs and almost nothing wears one: misses are
+  // cached for an hour, positives for a day.
+  it('caches a miss for an hour and a hat for a day, each for its own entity type', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    expect(await eventDecorationEntityCaches.Model.fetch([7])).toEqual({});
+    const [call] = dbMock.dbWrite.$queryRaw.mock.calls;
+    expect((call[2] as { sql: string }).sql).toBe('Model');
+    expect(writes()).toEqual([
+      ['packed:caches:cosmetics2:event:v2:Model:7', expect.anything(), { EX: 3600, NX: true }],
+    ]);
   });
 });

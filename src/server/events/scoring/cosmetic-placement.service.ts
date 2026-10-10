@@ -187,6 +187,10 @@ export async function refreshStandings(event: StandingsEvent, db: typeof dbWrite
   return standings;
 }
 
+export async function hasStandingsSnapshot(event: StandingsEvent) {
+  return (await sysRedis.exists(snapshotKeys(event).standings)) > 0;
+}
+
 const emptyStandings = (event: StandingsEvent): EventStandings => ({
   teams: event.teams.map((team, i) => ({ team, score: 0, rank: i + 1 })),
   history: event.teams.map((team) => ({ team, scores: [] })),

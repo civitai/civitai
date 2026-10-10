@@ -18,6 +18,7 @@ const { mockCreateNotification, mockRefresh, mockScoring, mockReferee, mockSync 
     mockScoring: {
       getEventStandings: vi.fn(),
       getTeamScoreHistory: vi.fn(),
+      hasStandingsSnapshot: vi.fn(async (_e: unknown) => false),
       refreshStandings: vi.fn(),
     },
     mockReferee: { runEventPointsReferee: vi.fn() },
@@ -640,6 +641,28 @@ describe('scoring behind the flag', () => {
     killSwitch.on = true;
     await eventEngine.updateLeaderboard(DURING);
     expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(1);
+  });
+
+  // Nothing more can settle while off once the window has closed: one snapshot there is enough.
+  it('snapshots once past the window while switched off, then stops', async () => {
+    killSwitch.on = false;
+    const past = new Date(
+      BIRTHDAY_2026_ENDS_AT.getTime() + birthday2026.scoring!.finalizeAfterMs + 1
+    );
+    await eventEngine.updateLeaderboard(past);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    mockScoring.hasStandingsSnapshot.mockResolvedValueOnce(true);
+    await eventEngine.updateLeaderboard(past);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(1);
+    expect(mockScoring.hasStandingsSnapshot.mock.calls.at(-1)?.[0]).toMatchObject({
+      name: BIRTHDAY_2026_EVENT,
+      scoreFrom: BIRTHDAY_2026_STARTS_AT,
+    });
+    // During the season the snapshot is refreshed every run, stored or not.
+    mockScoring.hasStandingsSnapshot.mockResolvedValue(true);
+    await eventEngine.updateLeaderboard(DURING);
+    expect(mockScoring.refreshStandings).toHaveBeenCalledTimes(2);
+    mockScoring.hasStandingsSnapshot.mockResolvedValue(false);
   });
 
   it('snapshots the preview from its own start while switched off, and nothing outside the window', async () => {

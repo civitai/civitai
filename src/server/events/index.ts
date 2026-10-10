@@ -18,6 +18,7 @@ import { syncEventHats } from '~/server/events/points/sync';
 import {
   getEventStandings,
   getTeamScoreHistory as getScoredTeamScoreHistory,
+  hasStandingsSnapshot,
   refreshStandings,
 } from '~/server/events/scoring/cosmetic-placement.service';
 import { discord } from '~/server/integrations/discord';
@@ -202,10 +203,19 @@ export const eventEngine = {
         // applies the flag), settled into its own season.
         const phase = await getEventScoringPhase(eventDef, now);
         if (!phase) continue;
+        const standingsEvent = { ...scored, scoreFrom: phase.from };
         // Kill switch off: no settling and no winner, only the snapshot below, so the pages show the
-        // last settled numbers from the durable table rather than nothing.
+        // last settled numbers from the durable table rather than nothing. Past the window nothing
+        // more can settle while off, so one snapshot there is enough.
+        const enabled = await isEventPointsEnabled();
+        if (
+          !enabled &&
+          eventPointsWindow(scored).to < now &&
+          (await hasStandingsSnapshot(standingsEvent))
+        )
+          continue;
         let final = false;
-        if (await isEventPointsEnabled()) {
+        if (enabled) {
           await syncEventHats(now);
           const season = eventPointSeason(eventDef.startDate, now);
           // A failed settle must not also freeze the standings snapshot or stop the other events.
@@ -227,7 +237,7 @@ export const eventEngine = {
             }).catch(() => undefined);
           }
         }
-        const standings = await refreshStandings({ ...scored, scoreFrom: phase.from }, dbWrite);
+        const standings = await refreshStandings(standingsEvent, dbWrite);
         // The first run that settles the whole finalize window names the winner, on the standings it
         // just computed from the primary. A failed run names none, and the next hour's run tries again.
         if (final) {

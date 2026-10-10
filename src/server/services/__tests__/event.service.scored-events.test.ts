@@ -710,22 +710,32 @@ describe('getWornEventHat', () => {
   const profilePictures = async () =>
     vi.mocked((await import('~/server/redis/caches')).profilePictureCache.fetch);
 
-  // Every case runs with Postgres throwing: the only proof the popover never reads it.
+  // Every case runs with Postgres throwing, and ends by asserting none of it was called (the live and
+  // degraded fallbacks catch, so a throw alone could be swallowed): the only proof the popover never
+  // reads it. Reset after, so the refusal does not leak into later blocks.
+  let forbidden: ReturnType<typeof vi.fn>[] = [];
   beforeEach(() => {
-    const forbidden = (async () => {
+    const refuse = (async () => {
       throw new Error('Postgres on the request path');
     }) as never;
-    for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
-      for (const method of ['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe'])
-        client[method].mockImplementation(forbidden);
-      client.$transaction.mockImplementation(forbidden);
-      for (const model of ['userCosmetic', 'cosmetic', 'image', 'model', 'article', 'post'])
-        for (const method of ['findMany', 'findFirst', 'findUnique'])
-          client[model][method].mockImplementation(forbidden);
-    }
+    forbidden = [dbMock.dbRead, dbMock.dbWrite].flatMap((client) => [
+      ...['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe', '$transaction'].map(
+        (m) => client[m]
+      ),
+      ...['userCosmetic', 'cosmetic', 'image', 'model', 'article', 'post'].flatMap((model) =>
+        ['findMany', 'findFirst', 'findUnique'].map((m) => client[model][m])
+      ),
+    ]);
+    for (const method of forbidden) method.mockReset().mockImplementation(refuse);
     caches.worn.fetch.mockResolvedValue({});
     caches.visible.fetch.mockResolvedValue({ 5: { id: 5 } });
     redisMock.sysRedis.hGet.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    const called = forbidden.filter((method) => method.mock.calls.length).length;
+    for (const method of forbidden) method.mockReset();
+    expect(called, 'Postgres was called by the popover').toBe(0);
   });
 
   it('refuses an event the viewer may not read, and reads nothing', async () => {
