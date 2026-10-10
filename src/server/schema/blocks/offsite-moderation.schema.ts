@@ -179,7 +179,7 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // `reason` — the owner-facing sentence, e.g. "Rating changed G → R: store imagery was
   //            rated R." The owner history shows only this, so it carries both values.
   // `detail` — the cause, a `ListingRatingChangeCause`.
-  // `before` — { contentRating }.   `after` — { contentRating, imageIds }.
+  // `before` — { contentRating }.   `after` — { contentRating }.
   'rating-change',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];

@@ -1311,7 +1311,9 @@ async function queryModerationEvents(opts: {
       // See OWNER_HIDDEN_MODERATION_ACTIONS: an action about a THIRD PARTY's data
       // is withheld from the owner's history outright, because the owner select
       // keeps `reason` and the reason is about someone else.
-      ...(opts.ownerScoped ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } } : {}),
+      ...(opts.ownerScoped
+        ? { action: { notIn: [...OWNER_HIDDEN_MODERATION_ACTIONS] } }
+        : {}),
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: limit + 1,

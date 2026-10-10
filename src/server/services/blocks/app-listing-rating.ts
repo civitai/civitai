@@ -5,7 +5,6 @@ import type { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offs
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 import {
   deriveContentRatingFromAssets,
-  getHighestBrowsingLevelBit,
   isOffsiteContentRating,
   nsfwLevelFromContentRating,
   offsiteContentRatingLabel,
@@ -19,14 +18,10 @@ export const RATING_CHANGE_ACTION =
  * Why a listing's stored rating moved. Stored in the event's `detail`.
  *   - `store-media`  — a go-live or moderator asset edit floored the rating at its media.
  *   - `image-review` — a moderator re-rated one of the listing's images.
- *   - `image-consensus` — a Knights consensus re-rated one of the listing's images (raise-only).
  *   - `review`       — any other go-live move: a review's derive-and-replace or override.
+ *                      The newest one is a floor a re-rated image may not lower past.
  */
-export type ListingRatingChangeCause =
-  | 'store-media'
-  | 'image-review'
-  | 'image-consensus'
-  | 'review';
+export type ListingRatingChangeCause = 'store-media' | 'image-review' | 'review';
 
 /** One attached asset. A missing Image row is `{ nsfwLevel: null, ingestion: null }`. */
 export type ListingRatingAsset = {
@@ -58,8 +53,6 @@ export function listingRatingChangeReason(args: {
   if (args.cause === 'store-media')
     return `Rating changed ${before} → ${after}: store imagery was rated ${after}.`;
   if (args.cause === 'review') return `Rating changed ${before} → ${after} at review.`;
-  if (args.cause === 'image-consensus')
-    return `Rating raised ${before} → ${after} after community reviewers re-rated an image.`;
   const lowered = nsfwLevelFromContentRating(args.after) < nsfwLevelFromContentRating(args.before);
   return `Rating ${
     lowered ? 'lowered' : 'raised'
@@ -80,8 +73,6 @@ export async function recordListingRatingChange(
     after: string | null;
     cause: ListingRatingChangeCause;
     actorUserId: number | null;
-    /** The image(s) the new rating is attributed to. */
-    imageIds: number[];
   }
 ): Promise<boolean> {
   if (args.before === args.after) return false;
@@ -95,7 +86,7 @@ export async function recordListingRatingChange(
       reason: listingRatingChangeReason(args),
       detail: args.cause,
       before: { contentRating: args.before },
-      after: { contentRating: args.after, imageIds: args.imageIds },
+      after: { contentRating: args.after },
     },
   });
   return true;
@@ -135,13 +126,6 @@ export async function loadListingRatingAssets(
   }));
 }
 
-/** The assets carrying the highest level — the ones a derived rating is attributable to. */
-export function ratingDrivingImageIds(assets: ListingRatingAsset[]): number[] {
-  const bit = (a: ListingRatingAsset) => getHighestBrowsingLevelBit(a.nsfwLevel ?? 0);
-  const max = Math.max(0, ...assets.map(bit));
-  return max === 0 ? [] : assets.filter((a) => bit(a) === max).map((a) => a.imageId);
-}
-
 /**
  * Record a rating change AFTER the write that made it has committed, and never throw.
  *
@@ -169,7 +153,6 @@ export async function recordListingRatingChangeAfterCommit(args: {
     await recordListingRatingChange(dbWrite, {
       ...args,
       cause: mediaDriven ? 'store-media' : 'review',
-      imageIds: mediaDriven ? ratingDrivingImageIds(assets) : [],
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -198,6 +181,10 @@ const isSettled = (asset: ListingRatingAsset) =>
  *   - the stored rating being exactly what the re-rated image's PREVIOUS level produced.
  *     Anything higher was put there by something this cannot see (a review override, an app
  *     that has since lowered its own declaration) and is not this image's to undo.
+ *   - never going below the rating the listing's newest review decided (`reviewedRating`).
+ *     The guard above checks consistency, not provenance: once a later re-rate has raised
+ *     the media to a moderator's override, the image's previous level "explains" it, and
+ *     only the recorded decision stops a correction from erasing the override.
  */
 export function resolveReDerivedListingRating(args: {
   stored: string | null;
@@ -210,6 +197,8 @@ export function resolveReDerivedListingRating(args: {
   assets: ListingRatingAsset[];
   reratedImageId: number;
   previousNsfwLevel: number | null;
+  /** The `after` of the listing's newest `review` rating-change event, if any. */
+  reviewedRating: string | null;
 }): string | null {
   const { stored, assets } = args;
   const storedLevel = nsfwLevelFromContentRating(stored);
@@ -233,5 +222,10 @@ export function resolveReDerivedListingRating(args: {
     )
   );
   if (Math.max(nsfwLevelFromContentRating(derivedBefore), floorLevel) !== storedLevel) return null;
+  if (isOffsiteContentRating(args.reviewedRating)) {
+    const reviewedLevel = nsfwLevelFromContentRating(args.reviewedRating);
+    if (reviewedLevel > targetLevel)
+      return reviewedLevel < storedLevel ? args.reviewedRating : null;
+  }
   return target;
 }

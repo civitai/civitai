@@ -7,7 +7,6 @@ import {
   RATING_CHANGE_ACTION,
   listingRatingChangeReason,
   loadListingRatingAssets,
-  ratingDrivingImageIds,
   recordListingRatingChange,
   recordListingRatingChangeAfterCommit,
   resolveReDerivedListingRating,
@@ -23,10 +22,45 @@ const scanned = (imageId: number, nsfwLevel: number): ListingRatingAsset => ({
 
 describe('resolveReDerivedListingRating', () => {
   const assets = [scanned(1, NsfwLevel.PG), scanned(2, NsfwLevel.PG13), scanned(3, NsfwLevel.PG)];
-  const base = { assets, reratedImageId: 3, previousNsfwLevel: NsfwLevel.R };
+  const base = {
+    assets,
+    reratedImageId: 3,
+    previousNsfwLevel: NsfwLevel.R,
+    reviewedRating: null as string | null,
+  };
 
   it('lowers to max(declared, derived) when the re-rated image explains the stored rating', () => {
     expect(resolveReDerivedListingRating({ ...base, stored: 'r', declared: 'g' })).toBe('pg13');
+  });
+
+  it('never lowers past the newest review decision; lowers to it when it sits between', () => {
+    expect(
+      resolveReDerivedListingRating({ ...base, stored: 'r', declared: 'g', reviewedRating: 'r' })
+    ).toBeNull();
+    expect(
+      resolveReDerivedListingRating({ ...base, stored: 'r', declared: 'g', reviewedRating: 'x' })
+    ).toBeNull();
+    expect(
+      resolveReDerivedListingRating({
+        ...base,
+        stored: 'x',
+        declared: 'g',
+        previousNsfwLevel: NsfwLevel.X,
+        reviewedRating: 'r',
+      })
+    ).toBe('r');
+    // Below the target it changes nothing, and an out-of-ladder value is ignored.
+    expect(
+      resolveReDerivedListingRating({ ...base, stored: 'r', declared: 'g', reviewedRating: 'g' })
+    ).toBe('pg13');
+    expect(
+      resolveReDerivedListingRating({
+        ...base,
+        stored: 'r',
+        declared: 'g',
+        reviewedRating: 'mature',
+      })
+    ).toBe('pg13');
   });
 
   it('lowers to the declared rating when the media is tamer than it', () => {
@@ -114,30 +148,9 @@ describe('listingRatingChangeReason', () => {
     ['review', 'r', 'pg13', 'Rating changed R → PG-13 at review.'],
     ['image-review', 'r', 'pg13', 'Rating lowered R → PG-13 after a moderator reviewed an image.'],
     ['image-review', 'pg', 'x', 'Rating raised PG → X after a moderator reviewed an image.'],
-    [
-      'image-consensus',
-      'pg13',
-      'r',
-      'Rating raised PG-13 → R after community reviewers re-rated an image.',
-    ],
     ['store-media', null, 'x', 'Rating changed unrated → X: store imagery was rated X.'],
   ] as const)('%s %s → %s', (cause, before, after, sentence) => {
     expect(listingRatingChangeReason({ cause, before, after })).toBe(sentence);
-  });
-});
-
-describe('ratingDrivingImageIds', () => {
-  it('names every asset at the highest level, and none when nothing is rated', () => {
-    expect(
-      ratingDrivingImageIds([
-        scanned(1, NsfwLevel.PG),
-        scanned(2, NsfwLevel.R),
-        scanned(3, NsfwLevel.PG13),
-        scanned(4, NsfwLevel.R),
-      ])
-    ).toEqual([2, 4]);
-    expect(ratingDrivingImageIds([{ imageId: 1, nsfwLevel: null, ingestion: null }])).toEqual([]);
-    expect(ratingDrivingImageIds([])).toEqual([]);
   });
 });
 
@@ -181,7 +194,6 @@ describe('the rating-change event', () => {
     const written = await recordListingRatingChange(dbMock.dbWrite, {
       ...change,
       cause: 'image-review',
-      imageIds: [3],
     });
     expect(written).toBe(true);
     expect(create).toHaveBeenCalledTimes(1);
@@ -191,13 +203,12 @@ describe('the rating-change event', () => {
       ...change,
       after: 'g',
       cause: 'image-review',
-      imageIds: [3],
     });
     expect(skipped).toBe(false);
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('after commit: a raise onto the media level names the media and the images behind it', async () => {
+  it('after commit: a raise onto the media level is attributed to the media', async () => {
     await recordListingRatingChangeAfterCommit(change);
 
     expect(create).toHaveBeenCalledTimes(1);
@@ -211,7 +222,7 @@ describe('the rating-change event', () => {
         reason: 'Rating changed G → R: store imagery was rated R.',
         detail: 'store-media',
         before: { contentRating: 'g' },
-        after: { contentRating: 'r', imageIds: [3] },
+        after: { contentRating: 'r' },
       },
     });
   });
@@ -225,7 +236,7 @@ describe('the rating-change event', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0][0].data).toMatchObject({
       detail: 'review',
-      after: { contentRating: after, imageIds: [] },
+      after: { contentRating: after },
     });
   });
 
@@ -254,14 +265,12 @@ describe('the rating-change event', () => {
     ]);
   });
 
-  it('an image filling two slots is one asset, and is named once', async () => {
+  it('loadListingRatingAssets lists an image filling two slots once', async () => {
     dbMock.dbWrite.appListing.findUnique.mockResolvedValue({ iconId: 3, coverId: 3 } as never);
 
-    await recordListingRatingChangeAfterCommit(change);
-
-    expect(create.mock.calls[0][0].data).toMatchObject({
-      after: { contentRating: 'r', imageIds: [3] },
-    });
+    expect(await loadListingRatingAssets(dbMock.dbWrite, 'apl_1')).toEqual([
+      { imageId: 3, nsfwLevel: NsfwLevel.R, ingestion: 'Scanned' },
+    ]);
   });
 
   it('after commit: a rejected insert is swallowed', async () => {

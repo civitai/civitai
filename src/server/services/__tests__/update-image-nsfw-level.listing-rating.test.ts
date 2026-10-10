@@ -6,9 +6,8 @@ import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rede
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 
-// Which writes of an image's level reach the store-listing rating re-derive, and with what
-// licence: a moderator's own decision may lower a listing, a Knights consensus may only
-// raise one, and a user's vote does not reach it at all.
+// Which writes of an image's level reach the store-listing rating re-derive: a moderator's
+// own decision does; a user's vote and a Knights consensus do not.
 
 const reDerive = vi.fn<typeof ReDerive.reDeriveListingRatingsForModeratedImage>(async () => []);
 
@@ -76,10 +75,16 @@ const USER = 4242;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  dbMock.dbRead.image.findUnique.mockResolvedValue({
+  dbMock.dbWrite.image.findUnique.mockResolvedValue({
     metadata: {},
     postId: null,
     nsfwLevel: NsfwLevel.R,
+  } as never);
+  // A replica that has not caught up still holds an older level: reading it would be wrong.
+  dbMock.dbRead.image.findUnique.mockResolvedValue({
+    metadata: {},
+    postId: null,
+    nsfwLevel: NsfwLevel.X,
   } as never);
   dbMock.dbWrite.image.update.mockResolvedValue({} as never);
 });
@@ -99,7 +104,6 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
       imageId: IMAGE_ID,
       previousNsfwLevel: NsfwLevel.R,
       actorUserId: MOD,
-      allowLower: true,
     });
     // After the image write, so the hook reads the new level.
     expect(dbMock.dbWrite.image.update.mock.invocationCallOrder[0]).toBeLessThan(
@@ -107,7 +111,7 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
     );
   });
 
-  it('a Knights consensus locks through the moderator branch and may only raise', async () => {
+  it('a Knights consensus locks through the moderator branch but does not reach the hook', async () => {
     await updateImageNsfwLevel({
       id: IMAGE_ID,
       nsfwLevel: NsfwLevel.PG13,
@@ -116,14 +120,8 @@ describe('updateImageNsfwLevel → listing rating re-derive', () => {
       activity: 'setNsfwLevelKono',
     } as never);
 
-    expect(reDerive).toHaveBeenCalledTimes(1);
-    expect(reDerive).toHaveBeenCalledWith({
-      imageId: IMAGE_ID,
-      previousNsfwLevel: NsfwLevel.R,
-      // Not the player whose vote completed the consensus.
-      actorUserId: null,
-      allowLower: false,
-    });
+    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(reDerive).not.toHaveBeenCalled();
   });
 
   it('a user’s rating vote does not reach the hook', async () => {

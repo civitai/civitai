@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import {
   loadListingRatingAssets,
+  RATING_CHANGE_ACTION,
   recordListingRatingChange,
   resolveReDerivedListingRating,
 } from '~/server/services/blocks/app-listing-rating';
@@ -20,11 +21,6 @@ type ReDeriveArgs = {
   /** The image's level BEFORE the write. Without it nothing is lowered. */
   previousNsfwLevel: number | null;
   actorUserId: number | null;
-  /**
-   * Whether this write may LOWER a listing. A moderator's own decision may; a Knights
-   * consensus is a vote and may only raise.
-   */
-  allowLower: boolean;
 };
 
 type ReDeriveOutcome = ListingRatingReDerive & { slug: string; historyWritten: boolean };
@@ -34,10 +30,23 @@ const historyEvent = (args: ReDeriveArgs, outcome: ReDeriveOutcome) => ({
   slug: outcome.slug,
   before: outcome.before,
   after: outcome.after,
-  cause: args.allowLower ? ('image-review' as const) : ('image-consensus' as const),
+  cause: 'image-review' as const,
   actorUserId: args.actorUserId,
-  imageIds: [args.imageId],
 });
+
+/** The rating the listing's newest review decided, read under the row lock. */
+async function readReviewedRating(
+  tx: Prisma.TransactionClient,
+  appListingId: string
+): Promise<string | null> {
+  const event = await tx.appListingModerationEvent.findFirst({
+    where: { appListingId, action: RATING_CHANGE_ACTION, detail: 'review' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { after: true },
+  });
+  const after = event?.after as { contentRating?: unknown } | null | undefined;
+  return typeof after?.contentRating === 'string' ? after.contentRating : null;
+}
 
 /**
  * Re-derive one listing's rating inside `tx`. Returns the change, or `null` when the listing
@@ -82,11 +91,11 @@ export async function reDeriveListingRatingInTx(
 
   const after = resolveReDerivedListingRating({
     stored: listing.contentRating,
-    declared:
-      args.allowLower && listing.kind === 'onsite' ? listing.appBlock?.contentRating ?? null : null,
+    declared: listing.kind === 'onsite' ? listing.appBlock?.contentRating ?? null : null,
     assets,
     reratedImageId: args.imageId,
     previousNsfwLevel: args.previousNsfwLevel,
+    reviewedRating: await readReviewedRating(tx, args.appListingId),
   });
   if (after == null) return null;
 
@@ -109,9 +118,8 @@ export async function reDeriveListingRatingInTx(
 }
 
 /**
- * An image's level was set by a moderator (or a Knights consensus): bring the rating of
- * every live listing that uses the image (as icon, cover or screenshot) back in line with
- * it. See `resolveReDerivedListingRating` for when a rating may move, and in which direction.
+ * A moderator set an image's level: bring the rating of every live listing that uses the
+ * image (as icon, cover or screenshot) back in line with it. See `resolveReDerivedListingRating` for when a rating may move, and in which direction.
  *
  * Never throws. Each listing gets its own transaction; a failure leaves that one listing
  * exactly as it was and is logged. The caller's image write has already committed and must
@@ -123,7 +131,7 @@ export async function reDeriveListingRatingsForModeratedImage(
   const changed: ListingRatingReDerive[] = [];
   try {
     // Primary, not the replica: a listing approved a moment ago must not be missed when
-    // the write RAISED the image.
+    // the moderator RAISED the image.
     const candidates = await dbWrite.appListing.findMany({
       where: {
         status: 'approved',

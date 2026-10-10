@@ -121,6 +121,23 @@ function client(via: 'pool' | 'tx', undo: Array<() => void>) {
       Object.assign(l, args.data);
       return l;
     },
+    eventFindFirst: async (args: {
+      where: { appListingId: string; action: string; detail: string };
+      orderBy: unknown;
+      select: Record<string, unknown>;
+    }) => {
+      ops.push(`${via}:reviewed`);
+      // Newest first: `events` is in insertion order.
+      const hit = [...events]
+        .reverse()
+        .find(
+          (e) =>
+            e.appListingId === args.where.appListingId &&
+            e.action === args.where.action &&
+            e.detail === args.where.detail
+        );
+      return hit ? pick(hit, args.select) : null;
+    },
     eventCreate: async (args: { data: Event }) => {
       ops.push(`${via}:event`);
       if (failEventInsert)
@@ -140,7 +157,7 @@ function prismaShape(c: ReturnType<typeof client>) {
     appListing: { findUnique: c.listingFindUnique, update: c.listingUpdate },
     appListingScreenshot: { findMany: c.shotsFindMany },
     image: { findMany: c.imageFindMany },
-    appListingModerationEvent: { create: c.eventCreate },
+    appListingModerationEvent: { create: c.eventCreate, findFirst: c.eventFindFirst },
   };
 }
 
@@ -225,19 +242,30 @@ function seedMisScanned(over: Partial<Listing> = {}) {
 }
 
 /** The moderator's write: set the image, then run the hook with its previous level. */
-async function moderatorRerates(imageId: number, nsfwLevel: number, allowLower = true) {
+async function moderatorRerates(imageId: number, nsfwLevel: number) {
   const image = images.find((i) => i.id === imageId)!;
   const previousNsfwLevel = image.nsfwLevel;
   image.nsfwLevel = nsfwLevel;
   return reDeriveListingRatingsForModeratedImage({
     imageId,
     previousNsfwLevel,
-    actorUserId: allowLower ? MOD : null,
-    allowLower,
+    actorUserId: MOD,
   });
 }
 
 const ratingOf = (id: string) => listings.find((l) => l.id === id)!.contentRating;
+
+/** A `rating-change` a moderator's review wrote for `apl_a`, landing on `after`. */
+const reviewEvent = (after: string): Event => ({
+  appListingId: 'apl_a',
+  slug: 'app-a',
+  action: 'rating-change',
+  actorUserId: MOD,
+  reason: `Rating changed at review.`,
+  detail: 'review',
+  before: { contentRating: 'r' },
+  after: { contentRating: after },
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -267,7 +295,7 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
         reason: 'Rating lowered R → PG-13 after a moderator reviewed an image.',
         detail: 'image-review',
         before: { contentRating: 'r' },
-        after: { contentRating: 'pg13', imageIds: [SHOT] },
+        after: { contentRating: 'pg13' },
       },
     ]);
     expect(bustCatalog).toHaveBeenCalledTimes(1);
@@ -282,7 +310,7 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
 
     // x was the X screenshot's doing, so it comes down — to the declared r, not to g.
     expect(ratingOf('apl_a')).toBe('r');
-    expect(events.map((e) => e.after)).toEqual([{ contentRating: 'r', imageIds: [SHOT] }]);
+    expect(events.map((e) => e.after)).toEqual([{ contentRating: 'r' }]);
   });
 
   it('declared r, stored r, every asset PG → untouched, no event', async () => {
@@ -338,6 +366,35 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
     expect(events).toEqual([]);
   });
 
+  it('does not undo a moderator’s override at review, even once an image re-rate “explains” it', async () => {
+    // At a republish re-review a moderator stamped x over media that derived r (app declares g).
+    seedMisScanned({ contentRating: 'x' });
+    events.push(reviewEvent('x'));
+    // The screenshot is re-rated R → X: the media now derives x, which equals stored — no-op…
+    await moderatorRerates(SHOT, NsfwLevel.X);
+    expect(ratingOf('apl_a')).toBe('x');
+    // …so its previous level now "explains" stored x when it is corrected back down.
+    await moderatorRerates(SHOT, NsfwLevel.PG13);
+
+    expect(ratingOf('apl_a')).toBe('x');
+    expect(events.map((e) => e.detail)).toEqual(['review']);
+  });
+
+  it('may still lower to the newest review decision, just not past it', async () => {
+    // Reviewed pg13 over media that derived pg; a moderator later raised the screenshot to R.
+    seedMisScanned({ contentRating: 'r' });
+    images.find((i) => i.id === COVER)!.nsfwLevel = NsfwLevel.PG;
+    events.push(reviewEvent('x'), reviewEvent('pg13'), {
+      ...reviewEvent('r'),
+      detail: 'image-review',
+    });
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    // The derived target is g; the newest REVIEW decision (pg13, not the older x) bounds it.
+    expect(ratingOf('apl_a')).toBe('pg13');
+  });
+
   it('does not lower without the image’s previous level', async () => {
     images.find((i) => i.id === SHOT)!.nsfwLevel = NsfwLevel.PG;
 
@@ -345,7 +402,6 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
       imageId: SHOT,
       previousNsfwLevel: null,
       actorUserId: MOD,
-      allowLower: true,
     });
 
     expect(ratingOf('apl_a')).toBe('r');
@@ -371,59 +427,6 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
   });
 });
 
-describe('a Knights consensus (allowLower: false)', () => {
-  it('does not lower a listing', async () => {
-    const changed = await moderatorRerates(SHOT, NsfwLevel.PG, false);
-
-    expect(changed).toEqual([]);
-    expect(ratingOf('apl_a')).toBe('r');
-    expect(events).toEqual([]);
-  });
-
-  it('still raises one, and the history does not call it a moderator’s review', async () => {
-    await moderatorRerates(ICON, NsfwLevel.X, false);
-
-    expect(ratingOf('apl_a')).toBe('x');
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      actorUserId: null,
-      detail: 'image-consensus',
-      reason: 'Rating raised R → X after community reviewers re-rated an image.',
-    });
-  });
-
-  it.each([
-    [false, MOD, 'image-consensus'],
-    [true, null, 'image-review'],
-  ] as const)(
-    'the cause follows the licence to lower (%s), not who the actor is',
-    async (allowLower, actorUserId, detail) => {
-      images.find((i) => i.id === ICON)!.nsfwLevel = NsfwLevel.X;
-
-      await reDeriveListingRatingsForModeratedImage({
-        imageId: ICON,
-        previousNsfwLevel: NsfwLevel.PG,
-        actorUserId,
-        allowLower,
-      });
-
-      expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({ detail, actorUserId });
-    }
-  );
-
-  it('raises to the media, not to an app rating the listing has drifted below', async () => {
-    // A moderator's write in this state lands on the declared x; a consensus has no floor.
-    seedMisScanned({ declared: 'x', contentRating: 'pg' });
-    images.find((i) => i.id === SHOT)!.nsfwLevel = NsfwLevel.PG;
-
-    await moderatorRerates(COVER, NsfwLevel.R, false);
-
-    expect(ratingOf('apl_a')).toBe('r');
-    expect(events.map((e) => e.before)).toEqual([{ contentRating: 'pg' }]);
-  });
-});
-
 describe('raising after a moderator re-rates an image upward', () => {
   it('PG → X raises the listing to x and records it', async () => {
     seedMisScanned({ contentRating: 'r' });
@@ -439,7 +442,7 @@ describe('raising after a moderator re-rates an image upward', () => {
       reason: 'Rating raised R → X after a moderator reviewed an image.',
       detail: 'image-review',
       before: { contentRating: 'r' },
-      after: { contentRating: 'x', imageIds: [ICON] },
+      after: { contentRating: 'x' },
     });
     expect(bustCatalog).toHaveBeenCalledTimes(1);
   });
@@ -519,7 +522,7 @@ describe('which listings are touched', () => {
 
     expect(ratingOf('apl_a')).toBe('x');
     expect(ops.filter((o) => o === 'tx:update')).toHaveLength(1);
-    expect(events.map((e) => e.after)).toEqual([{ contentRating: 'x', imageIds: [SHOT] }]);
+    expect(events.map((e) => e.after)).toEqual([{ contentRating: 'x' }]);
   });
 
   it.each([
@@ -557,7 +560,6 @@ describe('which listings are touched', () => {
       imageId: ICON,
       previousNsfwLevel: NsfwLevel.PG,
       actorUserId: MOD,
-      allowLower: true,
     });
 
     expect(result).toBeNull();
@@ -574,7 +576,6 @@ describe('which listings are touched', () => {
       imageId: SHOT,
       previousNsfwLevel: NsfwLevel.R,
       actorUserId: MOD,
-      allowLower: true,
     });
 
     expect(result).toBeNull();
@@ -591,6 +592,7 @@ describe('which listings are touched', () => {
       'tx:listing',
       'tx:shots',
       'tx:images',
+      'tx:reviewed',
       'tx:update',
       'tx:event',
     ]);
