@@ -4,12 +4,8 @@ import type * as AppFeedbackService from '~/server/services/blocks/app-feedback.
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * Token-scope gate on `appFeedback`: which procedures a scoped API token may reach.
- *
- * Only the "token carrying AppBlocksSubmit is admitted" arm fails without the router's
- * `.meta({ requiredScope })`. The refusal, Full-key and session arms pass either way; they pin
- * that the annotation neither opened the gate to another scope nor reached the procedures left
- * un-annotated.
+ * Token-scope gate on `appFeedback`. The ledger and the "admits a token carrying AppBlocksSubmit"
+ * arm fail without the router's `.meta`; the other arms pass either way.
  */
 
 const svc = vi.hoisted(() => ({
@@ -47,11 +43,13 @@ const SCOPE_GATE_ERROR = {
   message: 'Your API key does not have the required scope for this action',
 };
 
-// A moderator who finished onboarding, so on every procedure tier the scope gate is the only
-// thing left to refuse the call.
-const user = { id: 1001, isModerator: true, onboarding: OnboardingSteps.Buzz, muted: false };
+const onboarded = { onboarding: OnboardingSteps.Buzz, muted: false };
+// Not a moderator: the inbox procedures must answer an ordinary developer.
+const owner = { id: 1001, isModerator: false, ...onboarded };
+const moderator = { id: 6006, isModerator: true, ...onboarded };
+type User = typeof owner;
 
-const sessionCtx = () =>
+const sessionCtx = (user: User) =>
   ({
     user,
     acceptableOrigin: true,
@@ -62,46 +60,93 @@ const sessionCtx = () =>
     res: { setHeader: () => undefined },
   } as never);
 
-const tokenCtx = (tokenScope: number) =>
-  ({ ...(sessionCtx() as object), apiKeyId: 999, tokenScope } as never);
+const tokenCtx = (user: User, tokenScope: number) =>
+  ({ ...(sessionCtx(user) as object), apiKeyId: 999, tokenScope } as never);
 
-type Proc = { name: string; input: unknown; mock: ReturnType<typeof vi.fn> };
+type Proc = { name: string; user: User; input: unknown; mock: ReturnType<typeof vi.fn> };
+// `reaches`: the service arguments, with the caller bound from the session and never the input.
+type AnnotatedProc = Proc & { reaches: unknown[] };
 
-const ANNOTATED: Proc[] = [
-  { name: 'listForListing', input: { appListingId: 'lst_1' }, mock: svc.listAppFeedbackForListing },
+const ANNOTATED: AnnotatedProc[] = [
+  {
+    name: 'listForListing',
+    user: owner,
+    input: { appListingId: 'lst_1', userId: 1 },
+    mock: svc.listAppFeedbackForListing,
+    reaches: [{ userId: 1001, input: { appListingId: 'lst_1', limit: 50 } }],
+  },
   {
     name: 'hasAnyForListing',
-    input: { appListingId: 'lst_1' },
+    user: owner,
+    input: { appListingId: 'lst_1', userId: 1 },
     mock: svc.hasAnyAppFeedbackForListing,
+    reaches: [{ userId: 1001, input: { appListingId: 'lst_1' } }],
   },
-  { name: 'countNewForMyListings', input: undefined, mock: svc.countNewAppFeedbackForMyListings },
+  {
+    name: 'countNewForMyListings',
+    user: owner,
+    input: undefined,
+    mock: svc.countNewAppFeedbackForMyListings,
+    reaches: [1001],
+  },
   {
     name: 'setOwnerStatus',
+    user: owner,
     input: {
       id: 7,
       appListingId: 'lst_1',
       ownerStatus: 'acknowledged',
       expectedOwnerStatus: null,
+      userId: 1,
     },
     mock: svc.setAppFeedbackOwnerStatus,
+    reaches: [
+      {
+        userId: 1001,
+        input: {
+          id: 7,
+          appListingId: 'lst_1',
+          ownerStatus: 'acknowledged',
+          expectedOwnerStatus: null,
+        },
+      },
+    ],
   },
   {
     name: 'flagAbusive',
-    input: { id: 7, appListingId: 'lst_1' },
+    user: owner,
+    input: { id: 7, appListingId: 'lst_1', userId: 1 },
     mock: svc.flagAppFeedbackAbusive,
+    reaches: [{ userId: 1001, input: { id: 7, appListingId: 'lst_1' } }],
   },
 ];
 
 const UNANNOTATED: Proc[] = [
-  { name: 'getEligibility', input: { target: { slug: 'a' } }, mock: svc.getAppFeedbackEligibility },
+  {
+    name: 'getEligibility',
+    user: moderator,
+    input: { target: { slug: 'a' } },
+    mock: svc.getAppFeedbackEligibility,
+  },
   {
     name: 'create',
+    user: moderator,
     input: { target: { slug: 'a' }, message: 'hi', context: { surface: 'page' } },
     mock: svc.createAppFeedback,
   },
-  { name: 'modList', input: {}, mock: svc.modListAppFeedback },
-  { name: 'modCountFlagged', input: undefined, mock: svc.modCountFlaggedAppFeedback },
-  { name: 'modSetHidden', input: { id: 9, hidden: true }, mock: svc.modSetAppFeedbackHidden },
+  { name: 'modList', user: moderator, input: {}, mock: svc.modListAppFeedback },
+  {
+    name: 'modCountFlagged',
+    user: moderator,
+    input: undefined,
+    mock: svc.modCountFlaggedAppFeedback,
+  },
+  {
+    name: 'modSetHidden',
+    user: moderator,
+    input: { id: 9, hidden: true },
+    mock: svc.modSetAppFeedbackHidden,
+  },
 ];
 
 const call = (ctx: never, { name, input }: Proc) =>
@@ -154,31 +199,36 @@ describe('appFeedback token-scope gate', () => {
 
   describe.each(ANNOTATED)('$name (annotated)', (proc) => {
     it('admits a token carrying AppBlocksSubmit', async () => {
-      await expect(call(tokenCtx(WITH_SUBMIT), proc)).resolves.toEqual({ reached: true });
+      await expect(call(tokenCtx(proc.user, WITH_SUBMIT), proc)).resolves.toEqual({
+        reached: true,
+      });
       expect(proc.mock).toHaveBeenCalledTimes(1);
+      expect(proc.mock).toHaveBeenCalledWith(...proc.reaches);
     });
 
     it.each(WITHOUT_SUBMIT)('refuses a scoped token without it (%s)', async (_label, mask) => {
-      await expect(call(tokenCtx(mask), proc)).rejects.toMatchObject(SCOPE_GATE_ERROR);
+      await expect(call(tokenCtx(proc.user, mask), proc)).rejects.toMatchObject(SCOPE_GATE_ERROR);
       expectNoServiceCalls();
     });
   });
 
   describe.each(UNANNOTATED)('$name (not annotated)', (proc) => {
     it('refuses a token carrying AppBlocksSubmit', async () => {
-      await expect(call(tokenCtx(WITH_SUBMIT), proc)).rejects.toMatchObject(SCOPE_GATE_ERROR);
+      await expect(call(tokenCtx(proc.user, WITH_SUBMIT), proc)).rejects.toMatchObject(
+        SCOPE_GATE_ERROR
+      );
       expectNoServiceCalls();
     });
   });
 
   describe.each([...ANNOTATED, ...UNANNOTATED])('$name', (proc) => {
     it('still answers a Full API key', async () => {
-      await expect(call(tokenCtx(FULL), proc)).resolves.toEqual({ reached: true });
+      await expect(call(tokenCtx(proc.user, FULL), proc)).resolves.toEqual({ reached: true });
       expect(proc.mock).toHaveBeenCalledTimes(1);
     });
 
     it('still answers a cookie session', async () => {
-      await expect(call(sessionCtx(), proc)).resolves.toEqual({ reached: true });
+      await expect(call(sessionCtx(proc.user), proc)).resolves.toEqual({ reached: true });
       expect(proc.mock).toHaveBeenCalledTimes(1);
     });
   });

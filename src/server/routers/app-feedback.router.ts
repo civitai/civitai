@@ -32,15 +32,10 @@ import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
- * Lets a scoped API token reach the developer's inbox: without a `requiredScope` a procedure
- * demands `TokenScope.Full`, which the CLI's login token is not. `AppBlocksSubmit` is the bit the
- * CLI's other app-management calls already require (see `blocks.getMyAppAnalytics`), so one login
- * covers them all; it is opt-in and outside `Full`, so a token limited to ordinary scopes is
- * still refused.
- *
- * It only admits the token to the service, which still requires an owner or editor seat on the
- * listing. `getEligibility` and `create` stay without it so a scoped token cannot file feedback
- * as the user, and the `mod*` procedures so a moderator's scoped token carries no moderator reach.
+ * `AppBlocksSubmit`, the bit the CLI's other app-management calls require (see
+ * `blocks.getMyAppAnalytics`), not a bit inside `Full`: it is opt-in, so a token holding only
+ * ordinary scopes stays refused. `getEligibility`, `create` and `mod*` are left un-annotated on
+ * purpose (filing feedback as the user; moderator reach), so do not annotate them to match.
  */
 const ownerInboxTokenScope = { requiredScope: TokenScope.AppBlocksSubmit } as const;
 
