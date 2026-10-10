@@ -112,7 +112,7 @@ export const eventEngine = {
       // Ignore events that aren't active yet
       if (eventDef.startDate > now) continue;
 
-      const scores = await this.getTeamScores(eventDef.name);
+      const scores = await this.getTeamScores(eventDef.name, 'open', { rebuildFrom: dbWrite });
 
       // If the event is over, clean it up once
       if (eventDef.endDate < now) {
@@ -193,8 +193,7 @@ export const eventEngine = {
         if (!phase) continue;
         await syncEventHats(now);
         const season = eventPointSeason(eventDef.startDate, now);
-        // A failed settle must not also freeze the standings snapshot (it expires after 2h, and a
-        // miss is rebuilt on the request path) or stop the other events.
+        // A failed settle must not also freeze the standings snapshot or stop the other events.
         try {
           const result = await runEventPointsReferee(scored, season, now);
           logToAxiom({
@@ -422,10 +421,14 @@ export const eventEngine = {
     return teamAccounts;
   },
   // Ungated: the jobs read this after the start, and routes check access before calling it.
-  async getTeamScores(event: string, access: EventAccess = 'open') {
+  async getTeamScores(
+    event: string,
+    access: EventAccess = 'open',
+    read?: Parameters<typeof getEventStandings>[1]
+  ) {
     const eventDef = getEventDef(event);
     const scored = scoredEventFor(eventDef, access);
-    if (scored) return (await getEventStandings(scored)).teams;
+    if (scored) return (await getEventStandings(scored, read)).teams;
 
     // Get team scores from buzz accounts
     const teamScores: TeamScore[] = [];

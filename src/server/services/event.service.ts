@@ -4,10 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getEntityCoverImage } from '~/server/services/image.service';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
-import {
-  getEventDecorationDefinition,
-  isEventDecorationData,
-} from '~/shared/constants/event-decoration.constants';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import {
   ArticleStatus,
   CosmeticEntity,
@@ -18,11 +15,13 @@ import { eventEngine } from '~/server/events';
 import type { EventViewer } from '~/server/events/event-access';
 import {
   cosmeticCache,
+  eventDecorationEntityCaches,
   profilePictureCache,
+  publicContentCaches,
   refreshOwnedStickerCache,
   userBasicCache,
 } from '~/server/redis/caches';
-import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SUB_KEYS, sysRedis } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import type {
   EventInput,
@@ -39,9 +38,15 @@ import {
   getEventStandings as getScoredEventStandings,
   getUserCosmeticScores,
 } from '~/server/events/scoring/cosmetic-placement.service';
-import { hatField, hatTopicId } from '~/server/events/points/keys';
+import {
+  decodeHat,
+  entityKey,
+  eventPointKeys,
+  hatField,
+  hatTopicId,
+} from '~/server/events/points/keys';
 import { getHatPoints, getTeamPoints } from '~/server/events/points/read';
-import type { EventHat } from '~/server/events/points/types';
+import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
@@ -328,7 +333,7 @@ export async function getEventStandings({
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
     const [settled, live] = await Promise.all([
-      getScoredEventStandings(scored),
+      getScoredEventStandings(scored, { onDegraded }),
       liveTeamPoints(scored, onDegraded),
     ]);
     const standings = withLiveTeamPoints(settled, live);
@@ -664,17 +669,46 @@ export async function getEventCosmeticScores({
   }
 }
 
-type WornHatRow = {
-  userId: number;
-  cosmeticId: number;
-  claimKey: string;
-  name: string;
-  data: unknown;
+// Which copy of the design is on the content: the live hat map's while the event scores, else the
+// owner's only settled copy. Null when one owner has two copies of the design and the map does not
+// say which: the popover then shows the hat and its owner without points.
+async function wornHatInstance(
+  scored: SeasonEvent,
+  entity: { entityType: CosmeticEntity; entityId: number },
+  worn: { ownerId: number; cosmeticId: number },
+  onDegraded?: () => void
+): Promise<Omit<EventHat, 'team'> | null> {
+  try {
+    const field = entityKey(entity.entityType as EventPointEntityType, entity.entityId);
+    const value = await sysRedis.hGet(eventPointKeys(scored.name).hats, field);
+    const mapped = value ? decodeHat(value) : undefined;
+    if (mapped?.ownerId === worn.ownerId && mapped.cosmeticId === worn.cosmeticId)
+      return { ...worn, claimKey: mapped.claimKey };
+  } catch (error) {
+    logSysRedisFailOpen('read-degraded', 'wornHatInstance', error, { event: scored.name });
+    onDegraded?.();
+  }
+  const copies = (await getUserCosmeticScores(scored, worn.ownerId, onDegraded)).filter(
+    (score) => score.cosmeticId === worn.cosmeticId
+  );
+  return copies.length === 1 ? { ...worn, claimKey: copies[0].claimKey } : null;
+}
+
+const UNSCORED_HAT = {
+  topicId: null,
+  points: 0,
+  impressions: 0,
+  reactions: 0,
+  comments: 0,
+  stickers: 0,
+  remixes: 0,
 };
 
 // The hat of this event worn on one piece of content, who wears it and what it has earned there, for
 // the popover a click on a card's hat opens. Null when no hat of the event is on it, or when the
 // content is not public: the answer is the same for every viewer and is edge-cached as such.
+// Hats stay on content after the event, so the hat comes from the content's decoration, not the
+// hat map the event stops keeping.
 export async function getWornEventHat({
   event,
   entityType,
@@ -684,51 +718,33 @@ export async function getWornEventHat({
 }: WornEventHatInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const [row] = await dbRead.$queryRaw<WornHatRow[]>`
-      SELECT uc."userId", uc."cosmeticId", uc."claimKey", c.name, c.data
-      FROM "UserCosmetic" uc
-      JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-      WHERE uc."equippedToType" = ${entityType}::"CosmeticEntity"
-        AND uc."equippedToId" = ${entityId}
-        AND c.type = 'ContentDecoration'
-        AND c.data->>'event' = ${event}
-        AND CASE uc."equippedToType"
-          WHEN 'Image' THEN EXISTS (
-            SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId"
-            WHERE i.id = uc."equippedToId" AND p."publishedAt" <= now()
-              AND p.availability <> 'Private' AND NOT p."tosViolation"
-              AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation"
-          )
-          WHEN 'Model' THEN EXISTS (
-            SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published'
-              AND m.availability <> 'Private' AND NOT m."tosViolation"
-          )
-          WHEN 'Article' THEN EXISTS (
-            SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published'
-              AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation"
-          )
-          ELSE false
-        END
-      ORDER BY uc."equippedAt" DESC NULLS LAST
-      LIMIT 1
-    `;
-    if (!row || !isEventDecorationData(row.data)) return null;
-    const team = row.data.team ?? null;
-    const key = { userId: row.userId, cosmeticId: row.cosmeticId, claimKey: row.claimKey };
-    const hat = { ownerId: row.userId, cosmeticId: row.cosmeticId, claimKey: row.claimKey };
-    const [users, profilePictures, scores, live] = await Promise.all([
-      userBasicCache.fetch([row.userId]),
-      profilePictureCache.fetch([row.userId]),
-      getCosmeticScores(scored, [key]),
-      liveHatPoints(scored, [hat], onDegraded),
+    const [worn, visible] = await Promise.all([
+      eventDecorationEntityCaches[entityType].fetch([entityId]),
+      publicContentCaches[entityType]?.fetch([entityId]),
     ]);
-    const owner = users[row.userId];
-    const score = scores[cosmeticScoreKey(key)];
+    const decoration = worn[entityId];
+    if (!decoration || !visible?.[entityId] || decoration.data.event !== event) return null;
+    const ownerId = decoration.userId;
+    const hat = await wornHatInstance(
+      scored,
+      { entityType, entityId },
+      { ownerId, cosmeticId: decoration.id },
+      onDegraded
+    );
+    const key = hat && { userId: ownerId, cosmeticId: hat.cosmeticId, claimKey: hat.claimKey };
+    const [users, profilePictures, scores, live] = await Promise.all([
+      userBasicCache.fetch([ownerId]),
+      profilePictureCache.fetch([ownerId]),
+      key ? getCosmeticScores(scored, [key], onDegraded) : undefined,
+      hat ? liveHatPoints(scored, [hat], onDegraded) : null,
+    ]);
+    const owner = users[ownerId];
+    const team = decoration.data.team ?? null;
     return {
-      cosmeticId: row.cosmeticId,
-      name: team ? hatDesignName(row.name, team) : row.name,
+      cosmeticId: decoration.id,
+      name: team ? hatDesignName(decoration.name, team) : decoration.name,
       team,
-      url: row.data.url,
+      url: decoration.data.url,
       owner:
         owner && !owner.deletedAt
           ? {
@@ -738,7 +754,7 @@ export async function getWornEventHat({
               profilePicture: profilePictures[owner.id] ?? null,
             }
           : null,
-      ...hatScore(hat, score, live),
+      ...(hat && key ? hatScore(hat, scores?.[cosmeticScoreKey(key)], live) : UNSCORED_HAT),
     };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);

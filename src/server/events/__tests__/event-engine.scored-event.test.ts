@@ -314,6 +314,11 @@ describe('end-of-event cleanup', () => {
     expect(update?.[1]).toBe(23); // Pink won
     expect((update?.[0] as TemplateStringsArray).join('?')).toContain("'true'::jsonb");
     expect(setKeys()).toEqual([`eventCleanup:${BIRTHDAY_2026_EVENT}`]);
+    // The winner is never read from an empty snapshot: a missing one is rebuilt from the primary.
+    expect(mockScoring.getEventStandings).toHaveBeenCalledWith(
+      expect.objectContaining({ name: BIRTHDAY_2026_EVENT }),
+      { rebuildFrom: dbMock.dbWrite }
+    );
   });
 
   it('decides the winner exactly when scoring stops, not a moment before', async () => {
