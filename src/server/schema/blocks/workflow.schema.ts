@@ -806,7 +806,25 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
 export type BlockWorkflowSnapshot = {
   workflowId: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
-  cost?: { total: number };
+  cost?: {
+    /** Whole Buzz. Includes `authorFee` whenever that field is present. */
+    total: number;
+    /**
+     * The part of `total` that is the app author's per-generation fee, in whole
+     * Buzz — the exact amount added into `total` for this reply. Display only.
+     *
+     * A NUMBER wherever `total` was built from a fee quote: the `textToImage`
+     * and registered-`step` estimate replies, and the refusal replies those
+     * kinds' submit returns when it quotes a price without running. `0` means a
+     * fee was looked up and none applies.
+     *
+     * ABSENT wherever `total` carries no fee quote — every snapshot of a
+     * submitted workflow (its total is the realized generation cost; the fee is
+     * a separate charge) and the kinds that price no fee. Absent means "not
+     * itemised", which an app must not read as zero.
+     */
+    authorFee?: number;
+  };
   imageUrls?: string[];
   error?: string;
   // The buzz account that primarily funded this generation (the accountType of

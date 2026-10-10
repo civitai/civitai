@@ -6326,8 +6326,9 @@ export const blocksRouter = router({
       // refused outright with `insufficient buzz budget`, which reads to the
       // viewer as a broken app rather than as a price. Correcting the TOTAL is
       // what makes the shown number true for EVERY existing app with no
-      // app-side change; an itemised field would be inert until each
-      // third-party author wrote a renderer for it.
+      // app-side change; an itemised field ALONE would be inert until each
+      // third-party author wrote a renderer for it. `snapshotFromWorkflow` also
+      // reports the addend as `cost.authorFee`.
       //
       // 🔴 THE PAYEE LOOKUP IS ACCEPTED, NOT SKIPPED, ON THIS UNBOUNDED PATH.
       // `quoteBlockAuthorFee` resolves the payee (one `dbRead.oauthClient
@@ -6859,6 +6860,9 @@ export const blocksRouter = router({
       // reading the orchestrator's own number, not one this line inflated.
       const quotedGenerationBuzz = whatIfResult.cost?.total ?? 0;
       const cost = quotedGenerationBuzz + reservedAuthorFeeBuzz;
+      // The price every refusal reply below reports. Not for the success reply:
+      // that one's total is the realized generation cost and carries no fee.
+      const refusalCost = { total: cost, authorFee: reservedAuthorFeeBuzz };
       // `pricesAuthorFee: true` — `cost` carries the author fee (line above).
       // The flag classifies the gate, it does not price it: the helper returns the
       // SAME number for both of its values, so this comparison is unchanged by it.
@@ -6875,7 +6879,7 @@ export const blocksRouter = router({
             // top-up CTA. (Same class as failureSnapshot in IframeHost.tsx.)
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: cost },
+            cost: refusalCost,
             // Quotes the ceiling that was actually compared, so the sentence
             // stays true if that ceiling ever stops being the raw claim.
             error: `insufficient buzz budget: estimate ${cost} exceeds budget ${perCallBudget}`,
@@ -6974,7 +6978,7 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: cost },
+            cost: refusalCost,
             // 🔴 ONE ARM PER CEILING, BECAUSE THE SENTENCE NAMES THE WINDOW AND THE
             // SCOPE. A private run reserves against a per-(viewer, app) counter on a
             // rolling ~25h key, so the `else` below — "already spent today across your
@@ -7017,7 +7021,7 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: cost },
+            cost: refusalCost,
             error: consentBudgetRejection(
               reservation.consent,
               cost,
@@ -7068,7 +7072,7 @@ export const blocksRouter = router({
             snapshot: {
               workflowId: 'failed',
               status: 'failed' as const,
-              cost: { total: cost },
+              cost: refusalCost,
               // Generic, no-number rejection — the exact aggregate ceiling is not
               // leaked to a (potentially hostile) app.
               error:
@@ -7139,7 +7143,7 @@ export const blocksRouter = router({
               snapshot: {
                 workflowId: 'failed',
                 status: 'failed' as const,
-                cost: { total: cost },
+                cost: refusalCost,
                 error:
                   `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
                   `this dev session, this generation costs ${Math.ceil(cost)}, ` +
@@ -10480,7 +10484,9 @@ async function estimateStepWorkflow(opts: {
     // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
     suppressQuoteLogs: true,
   });
-  const shownBuzz = shownGenerationBuzz + (authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0);
+  // One local feeds both the sum and `cost.authorFee`, so they cannot disagree.
+  const shownAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
+  const shownBuzz = shownGenerationBuzz + shownAuthorFeeBuzz;
 
   return {
     snapshot: {
@@ -10488,7 +10494,7 @@ async function estimateStepWorkflow(opts: {
       // snapshots. The block treats estimate as a cost quote and never polls it.
       workflowId: 'wf_estimate',
       status: 'pending' as const,
-      cost: { total: shownBuzz },
+      cost: { total: shownBuzz, authorFee: shownAuthorFeeBuzz },
     },
   };
 }
@@ -10785,6 +10791,9 @@ async function submitStepWorkflow(opts: {
   // and leave the counters genuinely under-corrected.
   const reserveGenerationBuzz = Math.max(declaredBuzz, quotedBuzz);
   const reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz;
+  // The price every refusal reply below reports. Not for the success reply:
+  // that one's total is the realized generation cost and carries no fee.
+  const refusalCost = { total: reserveBuzz, authorFee: reservedAuthorFeeBuzz };
 
   // (1) Pre-submit gate against the token's per-call budget — now enforced
   // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
@@ -10798,7 +10807,7 @@ async function submitStepWorkflow(opts: {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
-        cost: { total: reserveBuzz },
+        cost: refusalCost,
         error: `insufficient buzz budget: step price ${reserveBuzz} exceeds budget ${perCallBudget}`,
       },
     };
@@ -10853,7 +10862,7 @@ async function submitStepWorkflow(opts: {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
-        cost: { total: reserveBuzz },
+        cost: refusalCost,
         error:
           claims.reviewRunForReal === true
             ? `review run-for-real Buzz cap reached: ${total - reserveBuzz} already ` +
@@ -10876,7 +10885,7 @@ async function submitStepWorkflow(opts: {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
-        cost: { total: reserveBuzz },
+        cost: refusalCost,
         error: consentBudgetRejection(
           reservation.consent,
           reserveBuzz,
@@ -10906,7 +10915,7 @@ async function submitStepWorkflow(opts: {
         snapshot: {
           workflowId: 'failed',
           status: 'failed' as const,
-          cost: { total: reserveBuzz },
+          cost: refusalCost,
           error:
             appSpend.reason === 'velocity'
               ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
@@ -10945,7 +10954,7 @@ async function submitStepWorkflow(opts: {
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: reserveBuzz },
+            cost: refusalCost,
             error:
               `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
               `this dev session, this step costs ${reserveBuzz}, ` +

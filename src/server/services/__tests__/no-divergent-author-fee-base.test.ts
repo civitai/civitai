@@ -1207,7 +1207,7 @@ describe('author fee — the viewer-charge seam', () => {
     // PRICE", NOT ONE SPELLING OF IT — AND THE NARROW VERSION OF THIS GUARD WAS
     // WALKABLE. It enumerated `additionalCostBuzz:` alone, which is how the
     // TXT2IMG estimate inflates; the STEP estimate adds its fee with a plain
-    // `shownGenerationBuzz + …`, so the guard covered 1 of the 2 arms this change
+    // `shownGenerationBuzz + shownAuthorFeeBuzz`, so the guard covered 1 of the 2 arms this change
     // introduced, and a submit path inflating its own `snapshot.cost` directly
     // was invisible to it. Both spellings are enumerated here, and the title now
     // says what the body checks.
@@ -1219,13 +1219,13 @@ describe('author fee — the viewer-charge seam', () => {
     // is how the narrower expression below was arrived at.
     const inflators = [
       ...[...source.matchAll(/additionalCostBuzz:/g)],
-      ...[...source.matchAll(/shownGenerationBuzz \+ \(authorFeeQuote/g)],
+      ...[...source.matchAll(/shownGenerationBuzz \+ shownAuthorFeeBuzz/g)],
     ].map((m) => enclosingSubmitPath(source, m.index));
     expect(inflators.length, 'no inflator found — the matcher is wrong').toBeGreaterThan(0);
     // Both spellings must be present, or one half of the matcher is dead and the
     // guard silently narrows back to what it used to be.
     expect(source).toContain('additionalCostBuzz:');
-    expect(source).toContain('shownGenerationBuzz + (authorFeeQuote');
+    expect(source).toContain('shownGenerationBuzz + shownAuthorFeeBuzz');
     for (const owner of inflators) {
       expect(QUOTE_SITE_LEDGER[owner]?.role, `${owner} adds a fee to a reported total`).toBe(
         'disclosing'
