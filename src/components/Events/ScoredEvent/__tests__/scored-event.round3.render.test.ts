@@ -154,21 +154,12 @@ describe('Your hats cards', () => {
     ]);
   });
 
-  // The points total is live but the counts come from the hourly settle, so the card says so rather
-  // than showing 0 reactions beside points a reaction just earned.
-  it('labels the counts as hourly, under the four ways', () => {
+  // The counts are live like the points (event-points-live.tsx), so nothing says they trail them.
+  it('carries no hourly note under the four ways', () => {
     const card = cards([hat({ placedOn: placed })]).querySelector('[data-testid="my-hat"]')!;
     const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
-    expect(stats.lastElementChild?.getAttribute('data-testid')).toBe('hat-stats-counts-note');
-    expect(stats.lastElementChild?.textContent).toBe('Counts update hourly');
-  });
-
-  // Once the event has ended the counts are final: nothing updates hourly any more.
-  it('drops the hourly note once the event has ended', () => {
-    const card = cards([hat({ placedOn: placed })], true).querySelector('[data-testid="my-hat"]')!;
-    const stats = card.querySelector<HTMLElement>('[data-testid="hat-stats"]')!;
     expect(stats.querySelector('[data-way="views"]')).not.toBeNull();
-    expect(stats.querySelector('[data-testid="hat-stats-counts-note"]')).toBeNull();
+    expect(stats.textContent).not.toMatch(/hourly/i);
   });
 
   // Justin, 2026-10-09: on a phone the numbers were cut off. A narrow card stacks the points above

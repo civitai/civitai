@@ -5,7 +5,7 @@ import type { RefereeRedis } from '~/server/events/points/referee';
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
 const { refereeTotals, resetLiveBase } = await import('~/server/events/points/referee');
-const { readTotals } = await import('~/server/events/points/read');
+const { getHatTotals, readTotals } = await import('~/server/events/points/read');
 const { eventSeasonKeys, LIVE_BUCKET_MS, liveBucket } = await import('~/server/events/points/keys');
 
 // String, hash and set semantics, with MULTI applied only at EXEC and RENAME failing on a missing
@@ -76,10 +76,16 @@ function fakeRedis() {
 const EVENT = { name: 'e', startDate: new Date('2026-11-01T00:00:00.000Z') };
 const keys = eventSeasonKeys(EVENT.name, 'live');
 
-const totals = (hat: Record<string, number>, team: Record<string, number> = {}, owner = {}) => ({
+const totals = (
+  hat: Record<string, number>,
+  team: Record<string, number> = {},
+  owner: Record<string, number> = {},
+  count: Record<string, number> = {}
+) => ({
   hat: new Map(Object.entries(hat)),
   team: new Map(Object.entries(team)),
-  owner: new Map(Object.entries(owner as Record<string, number>)),
+  owner: new Map(Object.entries(owner)),
+  count: new Map(Object.entries(count)),
 });
 
 describe('resetLiveBase', () => {
@@ -123,9 +129,10 @@ describe('resetLiveBase', () => {
       EVENT,
       'live',
       cutAt(NEW_CUT),
-      totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 })
+      totals({ a: 15, b: 4, c: 1 }, { Yellow: 20 }, {}, { 'view:a': 3 })
     );
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ a: '15', b: '4', c: '1' });
+    expect(fake.hashes.get(keys.base('count'))).toEqual({ 'view:a': '3' });
     expect(fake.hashes.get(keys.base('team'))).toEqual({ Yellow: '20' });
     // No owner totals this run: the stale base is deleted, not left behind.
     expect(fake.hashes.has(keys.base('owner'))).toBe(false);
@@ -135,6 +142,8 @@ describe('resetLiveBase', () => {
         `rename ${keys.base('hat')}:next ${keys.base('hat')}`,
         `rename ${keys.base('team')}:next ${keys.base('team')}`,
         `del ${keys.base('owner')}`,
+        // The counts move with the points: a reader never pairs new counts with the old cut.
+        `rename ${keys.base('count')}:next ${keys.base('count')}`,
         `set ${keys.cut} ${NEW_CUT}`,
       ],
     ]);
@@ -185,11 +194,68 @@ describe('resetLiveBase', () => {
   it('accepts what refereeTotals produces', async () => {
     const fake = fakeRedis();
     const t = refereeTotals([
-      { userId: 1, cosmeticId: 7, claimKey: 'claimed', team: 'Yellow', points: 6 },
+      {
+        userId: 1,
+        cosmeticId: 7,
+        claimKey: 'claimed',
+        team: 'Yellow',
+        points: 6,
+        views: 1,
+        reactions: 1,
+        comments: 0,
+        stickers: 0,
+        remixes: 0,
+        modelLikes: 0,
+      },
     ]);
     await resetLiveBase(fake.redis as unknown as RefereeRedis, EVENT, 'live', cutAt(NEW_CUT), t);
     expect(fake.hashes.get(keys.base('hat'))).toEqual({ '1:7:claimed': '6' });
     expect(fake.hashes.get(keys.base('owner'))).toEqual({ '1': '6' });
+    expect(fake.hashes.get(keys.base('count'))).toEqual({
+      'view:1:7:claimed': '1',
+      'reaction:1:7:claimed': '1',
+    });
+  });
+});
+
+describe('getHatTotals', () => {
+  const NOW = new Date('2026-11-05T12:07:00.000Z');
+  const NOW_BUCKET = liveBucket(NOW);
+  const HAT = { ownerId: 1, cosmeticId: 7, claimKey: 'cosmetic-purchase-v2-abc:def' };
+  const field = '1:7:cosmetic-purchase-v2-abc:def';
+
+  it('reads points and per-type counts per hat, named as the rows name them', async () => {
+    const fake = fakeRedis();
+    fake.strings.set(keys.cut, String(NOW_BUCKET - 1));
+    fake.hashes.set(keys.base('hat'), { [field]: '30' });
+    fake.hashes.set(keys.base('count'), { [`view:${field}`]: '20', [`remix:${field}`]: '1' });
+    fake.hashes.set(keys.live(NOW_BUCKET, 'hat'), { [field]: '6' });
+    fake.hashes.set(keys.live(NOW_BUCKET, 'count'), {
+      [`view:${field}`]: '1',
+      [`reaction:${field}`]: '1',
+      [`comment:${field}`]: '2',
+      [`sticker:${field}`]: '3',
+    });
+    const result = await getHatTotals(
+      EVENT,
+      [HAT, HAT],
+      NOW,
+      fake.redis as unknown as PointsReadRedis
+    );
+    expect(result).toEqual({
+      points: { [field]: 36 },
+      counts: {
+        [field]: { impressions: 21, reactions: 1, comments: 2, stickers: 3, remixes: 1 },
+      },
+    });
+  });
+
+  // One read of the cut each side for both scopes: the counts and the points always agree on it.
+  it('reads the cut once on each side for points and counts together', async () => {
+    const fake = fakeRedis();
+    const redis = { ...fake.redis, get: vi.fn(fake.redis.get) };
+    await getHatTotals(EVENT, [HAT], NOW, redis as unknown as PointsReadRedis);
+    expect(redis.get).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -243,6 +309,22 @@ describe('readTotals', () => {
     };
     await readTotals(EVENT, 'hat', ['a'], NOW, redis as unknown as PointsReadRedis);
     expect(redis.get).toHaveBeenCalledTimes(4);
+  });
+
+  it('reads the count scope like any other', async () => {
+    const fake = fakeRedis();
+    fake.strings.set(keys.cut, String(NOW_BUCKET - 1));
+    fake.hashes.set(keys.base('count'), { 'view:a': '4' });
+    fake.hashes.set(keys.live(NOW_BUCKET, 'count'), { 'view:a': '2' });
+    fake.hashes.set(keys.live(NOW_BUCKET, 'hat'), { 'view:a': '1000' });
+    const result = await readTotals(
+      EVENT,
+      'count',
+      ['view:a'],
+      NOW,
+      fake.redis as unknown as PointsReadRedis
+    );
+    expect(result).toEqual({ 'view:a': 6 });
   });
 
   it('reads nothing for no fields', async () => {

@@ -69,7 +69,8 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
     cut: `${root}:cut` as const,
   } as const;
 }
-export type TotalScope = 'hat' | 'team' | 'owner';
+// 'count': per hat and type (countField), the actions that were granted points, as the referee counts.
+export type TotalScope = 'hat' | 'team' | 'owner' | 'count';
 
 export const hatField = ({ ownerId, cosmeticId, claimKey }: Omit<EventHat, 'team'>) =>
   `${ownerId}:${cosmeticId}:${claimKey}`;
@@ -79,6 +80,10 @@ export function parseHatField(field: string): Omit<EventHat, 'team'> | undefined
   if (!claim.length || !Number(ownerId) || !Number(cosmeticId)) return undefined;
   return { ownerId: Number(ownerId), cosmeticId: Number(cosmeticId), claimKey: claim.join(':') };
 }
+
+// The type goes first: the hat field ends in a claim key that may hold colons.
+export const countField = (type: EventPointType, hat: Omit<EventHat, 'team'>) =>
+  `${type}:${hatField(hat)}`;
 
 export const entityKey = (entityType: EventPointEntityType, entityId: number) =>
   `${entityType}:${entityId}`;

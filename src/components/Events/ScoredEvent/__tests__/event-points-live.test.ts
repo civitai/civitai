@@ -55,7 +55,12 @@ describe('what the pusher sends, the client reads', () => {
     const pusher = createEventPointsPusher({
       selectWatched: async (_e, hats, teams) => ({ hats, teams }),
       claimTeamsPush: async () => true,
-      getHatPoints: async () => ({ [hatField(hat)]: 64 }),
+      getHatTotals: async () => ({
+        points: { [hatField(hat)]: 64 },
+        counts: {
+          [hatField(hat)]: { impressions: 9, reactions: 4, comments: 3, stickers: 2, remixes: 1 },
+        },
+      }),
       getTeamPoints: async () => ({ Blue: 900 }),
       topicSend: async (args) => void sent.push(args),
       isEnabled: () => true,
@@ -70,7 +75,11 @@ describe('what the pusher sends, the client reads', () => {
     await pusher.flush();
     const hatData = sent.find((s) => s.target === SignalMessages.EventPointsHat)!.data;
     const teamsData = sent.find((s) => s.target === SignalMessages.EventPointsTeams)!.data;
-    expect(readHatPush(hatData, 'birthday2026')).toEqual({ topicId: hatTopicId(hat), points: 64 });
+    expect(readHatPush(hatData, 'birthday2026')).toEqual({
+      topicId: hatTopicId(hat),
+      points: 64,
+      counts: { impressions: 9, reactions: 4, comments: 3, stickers: 2, remixes: 1 },
+    });
     expect(readTeamsPush(teamsData, 'birthday2026')).toEqual({ Blue: 900 });
   });
 });
@@ -88,6 +97,17 @@ describe('readHatPush / readTeamsPush', () => {
       expect(readHatPush({ ...hatPush, points }, 'birthday2026')).toBeNull();
     expect(readHatPush({ ...hatPush, topicId: 5 }, 'birthday2026')).toBeNull();
     expect(readHatPush(undefined, 'birthday2026')).toBeNull();
+  });
+
+  // A push from a server without counts still moves the points.
+  it('reads a push without counts as no counts, and keeps only numeric known counts', () => {
+    expect(readHatPush(hatPush, 'birthday2026')).toEqual({ topicId: 'a', points: 5, counts: {} });
+    expect(
+      readHatPush(
+        { ...hatPush, counts: { impressions: 3, reactions: '4', comments: NaN, points: 99, x: 1 } },
+        'birthday2026'
+      )
+    ).toEqual({ topicId: 'a', points: 5, counts: { impressions: 3 } });
   });
 
   it('keeps only numeric team totals', () => {
@@ -123,6 +143,31 @@ describe('applyHatPoints', () => {
     expect(applyHatPoints(rows, 'zzz', 99)).toBe(rows);
     expect(applyHatPoints(rows, 'a', 10)).toBe(rows);
     expect(applyHatPoints(undefined, 'a', 10)).toBeUndefined();
+  });
+
+  describe('with counts', () => {
+    const counted = [
+      { topicId: 'a', points: 10, impressions: 1, reactions: 2, remixes: 0 },
+      { topicId: 'b', points: 20, impressions: 5, reactions: 6, remixes: 7 },
+    ];
+
+    it('sets the pushed counts on the matching hat, leaving a count the push lacks', () => {
+      expect(applyHatPoints(counted, 'a', 12, { impressions: 3, reactions: 2 })).toEqual([
+        { topicId: 'a', points: 12, impressions: 3, reactions: 2, remixes: 0 },
+        counted[1],
+      ]);
+    });
+
+    // A view earns a hat 1 point and a count; a capped reaction earns a count and no points.
+    it('applies a count that moved while the points did not', () => {
+      const next = applyHatPoints(counted, 'b', 20, { reactions: 7 });
+      expect(next).not.toBe(counted);
+      expect(next?.[1]).toEqual({ ...counted[1], reactions: 7 });
+    });
+
+    it('keeps the same array when the points and counts are unchanged', () => {
+      expect(applyHatPoints(counted, 'b', 20, { impressions: 5, reactions: 6 })).toBe(counted);
+    });
   });
 });
 

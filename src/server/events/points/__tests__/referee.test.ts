@@ -264,6 +264,33 @@ describe('refereeTotals', () => {
     expect(Object.fromEntries(totals.team)).toEqual({ Yellow: 17, Blue: 4 });
     expect(Object.fromEntries(totals.owner)).toEqual({ '1': 17, '2': 4 });
   });
+
+  // finalDayTotals' rows have no day: the final days' sums go in beside the recomputed rows.
+  it('sums each type of count per hat across the final days and the recomputed rows', () => {
+    const { day: _day, ...final } = {
+      ...row(1, 7, 'Yellow', 40),
+      views: 10,
+      reactions: 2,
+      comments: 3,
+      stickers: 4,
+      remixes: 5,
+      modelLikes: 6,
+    };
+    const totals = refereeTotals([
+      final,
+      { ...row(1, 7, 'Yellow', 9), views: 1, reactions: 1 },
+      { ...row(2, 7, 'Blue', 5), comments: 1 },
+    ]);
+    expect(Object.fromEntries(totals.count)).toEqual({
+      'view:1:7:claimed': 11,
+      'reaction:1:7:claimed': 3,
+      'comment:1:7:claimed': 3,
+      'sticker:1:7:claimed': 4,
+      'remix:1:7:claimed': 5,
+      'modelLike:1:7:claimed': 6,
+      'comment:2:7:claimed': 1,
+    });
+  });
 });
 
 describe('changedHats', () => {

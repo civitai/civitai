@@ -64,6 +64,8 @@ const totals = () => {
       ? ['30']
       : key === keys.base('team')
       ? ['100', '50']
+      : key === keys.base('count')
+      ? ['12', '3', null, null, '1']
       : fields.map(() => null)
   );
 };
@@ -192,7 +194,12 @@ describe('the pusher with its default deps', () => {
         {
           topic: `event-points:birthday2026:hat:${topicId}`,
           target: 'event-points:hat',
-          data: { event: 'birthday2026', topicId, points: 30 },
+          data: {
+            event: 'birthday2026',
+            topicId,
+            points: 30,
+            counts: { impressions: 12, reactions: 3, comments: 0, stickers: 0, remixes: 1 },
+          },
         },
       ],
     ]);
@@ -244,7 +251,12 @@ describe('the pusher in the preview', () => {
         {
           topic: `event-points:birthday2026:hat:${keyedHat}`,
           target: 'event-points:hat',
-          data: { event: 'birthday2026', topicId: keyedHat, points: 7 },
+          data: {
+            event: 'birthday2026',
+            topicId: keyedHat,
+            points: 7,
+            counts: { impressions: 0, reactions: 0, comments: 0, stickers: 0, remixes: 0 },
+          },
         },
       ],
     ]);

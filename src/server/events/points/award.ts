@@ -7,6 +7,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
+  countField,
   decodeHat,
   entityKey,
   eventPointKeys,
@@ -311,11 +312,12 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         const bucket = liveBucket(time);
         const field = hatField(hat);
         const live = [
-          [keys.live(bucket, 'hat'), field],
-          [keys.live(bucket, 'team'), hat.team],
-          [keys.live(bucket, 'owner'), String(hat.ownerId)],
+          [keys.live(bucket, 'hat'), field, grant],
+          [keys.live(bucket, 'team'), hat.team, grant],
+          [keys.live(bucket, 'owner'), String(hat.ownerId), grant],
+          [keys.live(bucket, 'count'), countField(action.type, hat), 1],
         ] as const;
-        await Promise.all(live.map(([key, f]) => deps.redis.hIncrBy(key, f, grant)));
+        await Promise.all(live.map(([key, f, by]) => deps.redis.hIncrBy(key, f, by)));
         // A push is only display: its failure must not cost the buckets their TTL.
         try {
           deps.onGrant(def, hat, time);

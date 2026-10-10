@@ -136,7 +136,7 @@ export function MyEventHats({
                   {hat.name}
                 </Text>
                 <div className="mt-auto">
-                  <HatStats stats={hat} color={teamColor} compact settling={!ended} />
+                  <HatStats stats={hat} color={teamColor} compact />
                 </div>
                 {minutesLeft > 0 && (
                   <Text size="xs" c="dimmed">
