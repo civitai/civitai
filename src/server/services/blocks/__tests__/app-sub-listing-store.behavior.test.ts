@@ -712,6 +712,24 @@ describe('an off-site parent with a link template', () => {
     expect(childIds(await page()).sort()).toEqual([CHILD_A, CHILD_B]);
   });
 
+  it('a child of a parent without a template takes no slot on the page', async () => {
+    await seedOffsiteChild();
+    const all = ids(await page());
+    expect(all).not.toContain(GAME);
+    const res = await listAvailableListings(
+      { kind: 'all', sort: 'name', limit: all.length - 1 },
+      BASE_OPTS
+    );
+    expect(ids(res.items)).toEqual(all.slice(0, -1));
+    // Positive control: with a template the same page does give the child a slot.
+    await setTemplate(OFFSITE, TEMPLATE);
+    const withTemplate = await listAvailableListings(
+      { kind: 'all', sort: 'name', limit: all.length - 1 },
+      BASE_OPTS
+    );
+    expect(ids(withTemplate.items)).toContain(GAME);
+  });
+
   it('hides the child when the parent switch is off, even with a template', async () => {
     await seedOffsiteChild();
     await setTemplate(OFFSITE, TEMPLATE);
