@@ -5492,9 +5492,10 @@ export const blocksRouter = router({
    *      shared-storage path: it is the platform's existing answer to "may this
    *      human write something other users see", and a public post is strictly
    *      more consequential than a 64 KB shared-storage row.
-   *   7. ✚ TWO dedicated post rate buckets — per INSTALL (3/hour/instance) and
-   *      per APP (300/hour/appId, the aggregate an install-keyed bucket cannot
-   *      express) — plus the image count charged to the existing publish bucket so
+   *   7. ✚ TWO dedicated post rate buckets — per VIEWER OF AN INSTALL
+   *      (3/hour/(instance, viewer)) and per APP (300/hour/appId, the aggregate
+   *      a viewer-and-install-keyed bucket cannot express) — plus the image count
+   *      charged to the existing publish bucket so
    *      this path cannot be used to bypass the per-image origin-cost ceiling.
    *      All three FAIL OPEN on a Redis error; they are cost ceilings, not
    *      authorization.
@@ -5544,9 +5545,13 @@ export const blocksRouter = router({
       // selection is known, so a block cannot route around the publish ceiling by
       // posting.
       //
-      // 🔴 BOTH, AND NEITHER SUBSUMES THE OTHER. The per-INSTANCE bucket bounds
-      // one install. An app has many installs, so on its own it bounds the app at
-      // N × the per-install ceiling and no ceiling anywhere sees the total — the
+      // 🔴 BOTH, AND NEITHER SUBSUMES THE OTHER. The first bucket bounds ONE
+      // VIEWER of one install: it is keyed on (instance, viewer), because a page
+      // app's instance id is shared by every viewer of that app and an
+      // instance-only key would make them share one allowance. `userId` here is
+      // the verified token subject from the preamble, never client input. An app
+      // has many viewers and installs, so on its own that bucket bounds the app at
+      // N × its ceiling and no ceiling anywhere sees the total — the
       // APP bucket is that total. A popular legitimate app never reaches it (see
       // `BLOCK_POST_APP_RATE_LIMIT_MAX` for how the number was picked, and for the
       // plain statement that it is not derived from data).
@@ -5555,7 +5560,7 @@ export const blocksRouter = router({
       // limiter follows. Do not read either as a hard cap or a security control:
       // what actually bounds abuse on this path is the self-dealing guard, the
       // per-source ownership proofs and the per-post consent confirm.
-      const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
+      const postRate = await checkBlockPostRateLimit(claims.blockInstanceId, userId);
       if (!postRate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',

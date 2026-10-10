@@ -142,7 +142,7 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
-    why: 'Public-feed write with reward exposure. Per-instance AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
+    why: 'Public-feed write with reward exposure. Per-(instance, viewer) AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
   },
   estimateWorkflow: {
     buckets: ['catalog'],
