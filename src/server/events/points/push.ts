@@ -66,7 +66,8 @@ export async function claimTeamsPush(event: PushEvent) {
       NX: true,
       PX: PUSH_WINDOW_MS,
     });
-    return leased === 'OK';
+    // Null when another server holds it.
+    return !!leased;
   } catch (error) {
     logPush('error', event.name, {
       message: 'team push lease failed',
