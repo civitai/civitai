@@ -385,10 +385,16 @@ read that file. As of this writing the families are:
   page host only — see "Training runs".
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
-- **Resource pickers** (host chrome so the iframe only learns the one resource the
+- **Resource pickers** (host chrome so the iframe only learns the resources the
   user picked): `OPEN_CHECKPOINT_PICKER` (model slot) and the wider
   `OPEN_RESOURCE_PICKER` (page host only). `SET_USER_CHECKPOINT` persists to
   `block_user_settings` (model-bound installs only).
+  `OPEN_RESOURCE_PICKER` answers `{ requestId, selected? }` with one resource. With
+  `multiple: { max }` (LoRA-family types only; `max` above 5 is clamped to 5, the
+  `additionalResources` cap) it answers `{ requestId, selectedResources }` instead:
+  the picked resources in pick order, `[]` on dismiss. `multiple` with a
+  Checkpoint, or a `max` that is not a whole number of at least 1, is answered
+  with `{ requestId, error }` and the picker does not open.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does

@@ -18,6 +18,7 @@ import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
   BLOCK_READY_TIMEOUT_MS,
+  capPickedResources,
   TOKEN_WAIT_TIMEOUT_MS,
   decideAutoRetry,
   advanceReviewConsentLatch,
@@ -31,6 +32,7 @@ import {
   resolveImageUploadRequest,
   resolveNavigateRequest,
   resolvePublishGenerationOutputsRequest,
+  resolveResourcePickerMultiple,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
   shouldEmitMidSessionLossBeacon,
@@ -62,6 +64,7 @@ import {
 } from './runTrainingGate';
 import { TrainingConsentBody } from './TrainingConsentBody';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
@@ -3745,9 +3748,11 @@ export function PageBlockHost({
   // spend-time page-LoRA gate already accepts, so the picker offers nothing
   // submit would refuse). The block asks the HOST to open its OWN native
   // ResourceSelectModal as host chrome; the viewer searches in host chrome (NOT
-  // the iframe); the host posts back ONLY the single chosen resource. The
-  // untrusted iframe NEVER receives a list, the search API, or the catalog — it
-  // only ever learns about the one resource the user physically picked.
+  // the iframe); the host posts back ONLY what the viewer chose — one resource,
+  // or for a multi-select request (`multiple: { max }`, LoRA family only, see
+  // resolveResourcePickerMultiple) the up-to-`max` resources they staged. The
+  // untrusted iframe NEVER receives search results, the search API, or the
+  // catalog — it only ever learns about resources the user physically picked.
   //
   // This feeds the merged page-LoRA `additionalResources` plumbing: the block
   // puts a Checkpoint pick into body.modelVersionId and each LoRA pick into
@@ -3758,7 +3763,7 @@ export function PageBlockHost({
   //
   // The picker reuses the host's native ResourceSelectModal UNMODIFIED. The
   // block never sees the catalog or the search API — it only ever receives the
-  // ONE resource the user physically picked (host chrome can't be enumerated by
+  // resource(s) the user physically picked (host chrome can't be enumerated by
   // the iframe). The real authorization boundary is the SERVER gate
   // (assertViewerCanGeneratePageResources) at estimate/submit, NOT the picker UI.
   //  - `canGenerate: true` (UX floor) + the spend-time re-gate (authoritative).
@@ -3816,6 +3821,54 @@ export function PageBlockHost({
       // out of the picker here.
       const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
+
+      // MULTI-SELECT (`multiple: { max }`, LoRA family only). Resolved off the
+      // same raw payload by its own pure function, so a request without the key
+      // falls straight through to the single-pick branch below, unchanged.
+      const multi = resolveResourcePickerMultiple(raw, resourceType);
+      if (multi.kind === 'refused') {
+        // Answer rather than drop: only an SDK that knows multi-select sends
+        // the key, and it throws on `error`. Never downgraded to a single pick.
+        send('RESOURCE_PICKER_RESULT', { requestId, error: multi.reason });
+        return;
+      }
+      if (multi.kind === 'multiple') {
+        // Same native modal, same options bag — only `limit` and
+        // `onSelectMultiple` are added, which switch on its existing batch UI.
+        // The iframe still only learns resources the viewer physically picked:
+        // the list is exactly what the viewer staged (in the order they staged
+        // it), each entry through the SAME safe projection a single pick uses.
+        // Dismissing answers an EMPTY list, so the block can tell "picked
+        // nothing" from a reply that never came.
+        let answeredList = false;
+        const replyWith = (picked: GenerationResource[]) => {
+          if (answeredList) return; // one reply per request
+          answeredList = true;
+          send('RESOURCE_PICKER_RESULT', {
+            requestId,
+            selectedResources: capPickedResources(picked, multi.max).map((resource) =>
+              projectSafeGenerationResource(resource)
+            ),
+          });
+        };
+        openResourceSelectModal({
+          title: multi.max === 1 ? 'Choose a resource' : `Choose up to ${multi.max} resources`,
+          options: {
+            canGenerate: true,
+            resources: [{ type: resourceType, baseModels }],
+          },
+          limit: multi.max,
+          // The modal keeps its one-click path while nothing is staged, and
+          // that path calls `onSelect` — still a list reply, of one.
+          onSelect: (resource) => replyWith([resource]),
+          onSelectMultiple: (resources) => replyWith(resources),
+          onClose: () => {
+            if (answeredList) return;
+            send('RESOURCE_PICKER_RESULT', { requestId, selectedResources: [] });
+          },
+        });
+        return;
+      }
 
       let answered = false;
       openResourceSelectModal({
