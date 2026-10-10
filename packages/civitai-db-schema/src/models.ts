@@ -3144,6 +3144,10 @@ export interface EventCosmeticScoreDaily {
   impressions: number;
   anonImpressions: number;
   reactions: number;
+  comments: number;
+  stickers: number;
+  remixes: number;
+  modelLikes: number;
   points: number;
   updatedAt: Date;
 }

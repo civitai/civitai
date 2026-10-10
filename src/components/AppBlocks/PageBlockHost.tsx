@@ -94,11 +94,14 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
+  processSaveBytes,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
+  type SaveBytesWindowEntry,
 } from './saveImageDownload';
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -3606,10 +3609,14 @@ export function PageBlockHost({
   // synchronously in the message handler (single-threaded ⇒ check→increment before
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
+  // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
+  // they never await, so the in-flight count above would be released before the
+  // next message and bound nothing. Same ref-not-state reasoning.
+  const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
-  // has no allow-downloads). TWO variants, each with its own security gate:
+  // has no allow-downloads). THREE variants, each with its own security gate:
   //   • url  — the block's OWN output. MUST pass the civitai image/blob origin
   //            allowlist (isAllowedSaveImageUrl) — never a host-side fetch of an
   //            attacker origin (an opaque-origin block's url/data is untrusted).
@@ -3617,6 +3624,12 @@ export function PageBlockHost({
   //            gated read (blocks.getImagesByIds) that GET_IMAGES_BY_IDS uses, so
   //            a withheld/above-ceiling image (status !== 'visible', or omitted)
   //            can NEVER be saved.
+  //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
+  //            is classified from the content (processSaveBytes) and only
+  //            image/JSON/text can be saved, under the classified extension.
+  //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
@@ -3627,6 +3640,24 @@ export function PageBlockHost({
       const { requestId } = req;
       if (req.kind === 'invalid') {
         send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
+        return;
+      }
+      if (req.kind === 'bytes') {
+        try {
+          // Per-file cap, then window pre-check (both on byteLength alone), then classify, then
+          // record: a refused save is never decoded/parsed on this main thread, and an over-cap
+          // file is too-large rather than `busy` (processSaveBytes).
+          const { result, recent } = processSaveBytes(req, saveBytesWindowRef.current, Date.now());
+          saveBytesWindowRef.current = recent;
+          if (!result.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, result.type, result.filename);
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
         return;
       }
       // F2 concurrency cap (host-side backpressure): bound concurrent host-side

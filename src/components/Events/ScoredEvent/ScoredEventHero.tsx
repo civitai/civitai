@@ -1,16 +1,22 @@
-import { Badge, Button, Group, Stack, Text, Title } from '@mantine/core';
-import { IconCalendarEvent, IconConfetti, IconEye, IconTrophy } from '@tabler/icons-react';
+import { Badge, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
+import { IconCalendarEvent, IconEye, IconPlayerPlayFilled, IconTrophy } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { useEffect, useState } from 'react';
+import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
+import { JoinEventButton } from '~/components/Events/ScoredEvent/JoinEventButton';
 import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useTeamColor } from '~/components/Events/events.utils';
 import type { RouterOutput } from '~/types/router';
+import { HERO_VIDEO_OPTIONS } from '~/components/Events/ScoredEvent/scored-event.utils';
 import { formatDate } from '~/utils/date-helpers';
+import { formatDuration } from '~/utils/number-helpers';
 
 type EventData = RouterOutput['event']['getData'];
 
@@ -59,12 +65,18 @@ export function ScoredEventHero({
   const winnerColor = winner ? teamColor(winner) : undefined;
   const myHat = team ? teamHats?.find((h) => h.team === team)?.url : undefined;
   const eyebrowColor = (team && teamColor(team)) ?? colors[2] ?? 'var(--mantine-color-dimmed)';
+  const video = page?.heroVideo;
+  const openVideo = () =>
+    video &&
+    dialogStore.trigger({
+      component: EventVideoModal,
+      props: { video, onJoin: !team && !ended ? onJoin : undefined },
+    });
 
   return (
     <SpotlightSurface className="overflow-hidden rounded-xl border border-solid border-gray-3 bg-white dark:border-dark-4 dark:bg-dark-6">
       {page?.heroImage ? (
         <div
-          aria-hidden
           className="relative aspect-[4/3] w-full @md:absolute @md:inset-0 @md:aspect-auto"
           data-testid="hero-art"
         >
@@ -75,7 +87,11 @@ export function ScoredEventHero({
             fetchPriority="high"
             alt=""
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent from-50% to-white @md:bg-gradient-to-r @md:from-white @md:from-35% @md:via-white/80 @md:via-50% @md:to-transparent @md:to-70% dark:to-dark-6 dark:@md:from-dark-6 dark:@md:via-dark-6/80" />
+          <div
+            aria-hidden
+            className="absolute inset-0 bg-gradient-to-b from-transparent from-50% to-white @md:bg-gradient-to-r @md:from-white @md:from-35% @md:via-white/80 @md:via-50% @md:to-transparent @md:to-70% dark:to-dark-6 dark:@md:from-dark-6 dark:@md:via-dark-6/80"
+          />
+          {video && <HeroVideoButton video={video} onClick={openVideo} />}
         </div>
       ) : (
         <div aria-hidden className="pointer-events-none absolute inset-0 hidden @md:block">
@@ -239,17 +255,7 @@ export function ScoredEventHero({
         ) : (
           !ended && (
             <Group gap="sm">
-              <LoginRedirect reason="perform-action">
-                <Button
-                  size="lg"
-                  radius="xl"
-                  onClick={onJoin}
-                  loading={joining}
-                  leftSection={<IconConfetti size={20} />}
-                >
-                  Join and get your free hat
-                </Button>
-              </LoginRedirect>
+              <JoinEventButton onClick={onJoin} loading={joining} />
               <Text size="sm" c="dimmed">
                 You get a random team. Teams are final.
               </Text>
@@ -259,6 +265,57 @@ export function ScoredEventHero({
       </Stack>
     </SpotlightSurface>
   );
+}
+
+// Over the art's subject: the whole art on a phone, the part right of the copy on wider screens.
+function HeroVideoButton({
+  video,
+  onClick,
+}: {
+  video: { id: string; title: string };
+  onClick: () => void;
+}) {
+  const { url } = useEdgeUrl(video.id, HERO_VIDEO_OPTIONS);
+  const seconds = useVideoDuration(url);
+
+  return (
+    <UnstyledButton
+      onClick={onClick}
+      aria-label={`Watch the ${video.title} video`}
+      className="group absolute inset-0 flex items-center justify-center @md:left-[56%]"
+      data-testid="hero-video"
+    >
+      <span className="flex flex-col items-center gap-2">
+        <span className="flex size-16 items-center justify-center rounded-full bg-white/90 text-dark-7 shadow-lg transition-transform group-hover:scale-110 group-focus-visible:scale-110 @sm:size-20">
+          <IconPlayerPlayFilled size={32} />
+        </span>
+        <span className="rounded-full bg-dark-9/70 px-3 py-1 text-sm font-semibold text-white backdrop-blur-sm">
+          {seconds ? `Watch · ${formatDuration(Math.round(seconds))}` : 'Watch'}
+        </span>
+      </span>
+    </UnstyledButton>
+  );
+}
+
+// Reads only the film's metadata, from a detached element, so the hero shows its length without
+// loading or playing it.
+function useVideoDuration(url: string) {
+  const [seconds, setSeconds] = useState<number>();
+  useEffect(() => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    const read = () => {
+      if (Number.isFinite(video.duration) && video.duration > 0) setSeconds(video.duration);
+    };
+    video.addEventListener('loadedmetadata', read);
+    video.src = url;
+    return () => {
+      video.removeEventListener('loadedmetadata', read);
+      video.removeAttribute('src');
+      video.load();
+    };
+  }, [url]);
+  return seconds;
 }
 
 // Label over value, as "You're on" sits over the team name, so both rows share baselines.
