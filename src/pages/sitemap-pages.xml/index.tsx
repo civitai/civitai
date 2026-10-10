@@ -35,6 +35,7 @@ const greenPaths: string[] = [
   '/gift-cards',
   '/buzz/marketplace',
   '/generate',
+  '/avatar-generator',
   '/train',
   '/games/chopped',
   '/games/knights-of-new-order',

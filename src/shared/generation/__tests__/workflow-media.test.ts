@@ -15,6 +15,8 @@ const PRESENT = new Set([
   'img2img/images',
   'img2img/model',
   'img2img/prompt',
+  'img2img:avatar/images',
+  'img2img:avatar/model',
   'img2img:edit/images',
   'img2img:edit/model',
   'img2img:edit/prompt',
@@ -62,6 +64,7 @@ const PRESENT = new Set([
 const MEDIA_SETS: Record<string, string[]> = {
   image: [
     'img2img',
+    'img2img:avatar',
     'img2img:edit',
     'img2img:face-fix',
     'img2img:hires-fix',

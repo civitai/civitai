@@ -113,10 +113,19 @@ export function QueueItem({
   request,
   id,
   markerTags,
+  beforeOutputs,
+  renderOutputFooter,
+  hideDetails,
 }: {
   request: WorkflowData;
   id: string;
   markerTags?: string[];
+  /** Workflow-specific context shown above the outputs (e.g. the reference an avatar was made from). */
+  beforeOutputs?: React.ReactNode;
+  /** Workflow-specific actions shown under each output. */
+  renderOutputFooter?: (image: BlobData) => React.ReactNode;
+  /** Leaves out the prompt and the Additional Details panel, for workflows that write them for the user. */
+  hideDetails?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -392,7 +401,7 @@ export function QueueItem({
       {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+            {prompt && !hideDetails && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
             {resources.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -405,6 +414,8 @@ export function QueueItem({
                 ))}
               </div>
             )}
+
+            {beforeOutputs}
 
             {waitingOnDownloads && <DownloadBoostPanel request={request} downloads={downloads} />}
 
@@ -432,6 +443,7 @@ export function QueueItem({
                         queuePosition={queuePosition}
                         waitingOnDownloads={waitingOnDownloads}
                         markerTags={markerTags}
+                        renderOutputFooter={renderOutputFooter}
                       />
                     </div>
                   );
@@ -446,13 +458,14 @@ export function QueueItem({
                 queuePosition={queuePosition}
                 waitingOnDownloads={waitingOnDownloads}
                 markerTags={markerTags}
+                renderOutputFooter={renderOutputFooter}
               />
             )}
           </div>
         </>
       )}
 
-      {inView && (
+      {inView && !hideDetails && (
         <Card.Section withBorder className="-mx-2">
           <GenerationDetails
             label="Additional Details"
@@ -590,6 +603,7 @@ function StepOutputs({
   queuePosition,
   waitingOnDownloads,
   markerTags,
+  renderOutputFooter,
 }: {
   step: StepData | null;
   request: WorkflowData;
@@ -600,6 +614,7 @@ function StepOutputs({
   /** The download panel stands in for the pending tile. */
   waitingOnDownloads?: boolean;
   markerTags?: string[];
+  renderOutputFooter?: (image: BlobData) => React.ReactNode;
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
   const allDisplayImages = step ? step.displayOutput : request.displayOutput;
@@ -629,6 +644,11 @@ function StepOutputs({
         {displayImages.map((image) =>
           image.blockedReason === 'siteRestricted' ? (
             <SiteRestrictedBlock key={image.id} image={image} />
+          ) : renderOutputFooter && image.available ? (
+            <div key={image.id} className="flex flex-col gap-1.5">
+              <GeneratedOutput image={image} />
+              {renderOutputFooter(image)}
+            </div>
           ) : (
             <GeneratedOutput key={image.id} image={image} />
           )

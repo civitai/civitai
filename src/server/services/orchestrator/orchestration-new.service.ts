@@ -40,6 +40,8 @@ import {
 import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
 import type { GenerationData, LooseGenerationData } from './form-graph/types';
+import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
+import { workflowOutputRestrictions } from './form-graph/output-restrictions';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
@@ -136,6 +138,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 
 // Ecosystem handlers - unified router
 import { createFormGraphStepInput } from './form-graph';
+import { createAvatarSteps, expandAvatarData } from './form-graph/avatar.handler';
 import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
@@ -1100,6 +1103,10 @@ async function createStepInputs(
       rawResult = createVideoPreprocessStep(data as never) as StepInput;
       break;
 
+    case 'img2img:avatar':
+      rawResult = createAvatarSteps(data as LooseGenerationData, handlerCtx);
+      break;
+
     default: {
       // Ecosystem workflows - ecosystem must be defined
       if (!('ecosystem' in data) || !data.ecosystem) {
@@ -1311,6 +1318,8 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
 }> {
+  data = expandAvatarData(data);
+
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
   // Span localizes the gen-path park: resource validation/enrichment sub-step.
@@ -1542,6 +1551,7 @@ export async function createWorkflowStepsFromGraph({
 
     const extraTags: string[] = [];
     if (snippetsExpanded) extraTags.push(WORKFLOW_TAGS.WILDCARDS);
+    if (data.workflow === AVATAR_WORKFLOW) extraTags.push('avatar');
 
     return {
       steps: wrappedSteps,
@@ -2044,9 +2054,11 @@ export async function generateFromGraph({
       experimental,
       metadata: metadataWithSubstitutions,
       callbacks: getOrchestratorCallbacks(userId),
-      // Private generation restrictions
-      nsfwLevel: isPrivateGeneration ? 'pg13' : undefined,
-      allowMatureContent: isPrivateGeneration ? false : allowMatureContent,
+      ...workflowOutputRestrictions({
+        workflow: data.workflow,
+        isPrivateGeneration,
+        allowMatureContent,
+      }),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
