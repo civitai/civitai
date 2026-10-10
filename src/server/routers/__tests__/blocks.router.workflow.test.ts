@@ -594,6 +594,10 @@ import {
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
+import {
+  annotateOrchestratorMissingBlob,
+  annotateOrchestratorSubmitFailure,
+} from '~/server/services/orchestrator/submit-failure';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.redis;
@@ -10354,6 +10358,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         workflowId: 'failed',
         status: 'failed',
         error: 'Training needs a price quote and none could be obtained; try again.',
+        errorCode: 'training-quote-unpriced',
       };
       const blockCapIncrs = () =>
         mockSysRedis.incrBy.mock.calls.filter((c) =>
@@ -10492,8 +10497,291 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           blockToken: 'tok',
           body: ptBody({ $type: 'training' }),
         });
-        expect(result.snapshot).toEqual(REFUSAL);
+        expect(result.snapshot).toEqual({ ...REFUSAL, errorCode: 'training-quote-unavailable' });
         expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      describe('a quote that FAILS tells the block why', () => {
+        const GENERIC = 'Training needs a price quote and none could be obtained; try again.';
+        /** A 32-character key the block itself submitted, and one it did not. */
+        const OWN_KEY = 'AMXT0PQ4Z8K2N6W1R5V9C3J7H0B4D8F2';
+        const FOREIGN_KEY = 'ZQ7L2M9X4C1V8B5N0K3J6H2G9F4D1S7A';
+
+        /** What `submitWorkflow` throws for a status-bearing orchestrator reply. */
+        function orchestratorError(code: TRPCError['code'], message: string, status: number) {
+          const err = new TRPCError({ code, message });
+          annotateOrchestratorSubmitFailure(err, { attempt: 1, status });
+          return err;
+        }
+
+        const VALIDATION = () =>
+          orchestratorError(
+            'BAD_REQUEST',
+            'Training requires at least 5 images, but 2 were provided.',
+            400
+          );
+        // A 4xx `submitWorkflow` has no case for reaches the caller as BAD_REQUEST.
+        const NOT_FOUND = () =>
+          orchestratorError('BAD_REQUEST', `The blob ${OWN_KEY} was not found.`, 404);
+        const NETWORK = () =>
+          new TRPCError({
+            code: 'SERVICE_UNAVAILABLE',
+            message: 'Generation services are temporarily unavailable. Please try again.',
+            cause: new TypeError('fetch failed'),
+          });
+        const UNSAFE = () =>
+          orchestratorError(
+            'BAD_REQUEST',
+            'GET http://upstream.example.internal:8080/v2/blobs/x failed at Fetcher.get (/srv/app/fetch.js:10:5)',
+            400
+          );
+        const FOREIGN_ID = () =>
+          orchestratorError('BAD_REQUEST', `The blob ${FOREIGN_KEY} was not found.`, 404);
+
+        const CASES: Array<[string, () => unknown, { error: string; errorCode: string }]> = [
+          [
+            'a validation rejection',
+            VALIDATION,
+            {
+              error:
+                'Training could not be priced: Training requires at least 5 images, but 2 were provided.',
+              errorCode: 'training-quote-rejected',
+            },
+          ],
+          [
+            'a not-found rejection naming the block‘s own key',
+            NOT_FOUND,
+            {
+              error: `Training could not be priced: The blob ${OWN_KEY} was not found.`,
+              errorCode: 'training-quote-rejected',
+            },
+          ],
+          [
+            'a network failure',
+            NETWORK,
+            { error: GENERIC, errorCode: 'training-quote-unavailable' },
+          ],
+          [
+            'a rejection whose message carries a URL and a stack frame',
+            UNSAFE,
+            { error: GENERIC, errorCode: 'training-quote-rejected' },
+          ],
+          [
+            'a rejection naming an id the block did not send',
+            FOREIGN_ID,
+            { error: GENERIC, errorCode: 'training-quote-rejected' },
+          ],
+          [
+            'an unrecognised throw',
+            () => new Error('Cannot read properties of undefined'),
+            { error: GENERIC, errorCode: 'training-quote-unavailable' },
+          ],
+        ];
+
+        function quoteThrows(make: () => unknown) {
+          mockSubmitWorkflow.mockImplementation(async (opts: { query?: { whatif?: boolean } }) => {
+            if (opts?.query?.whatif === true) throw make();
+            return { id: 'wf_pt_1', status: 'processing', steps: [], cost: { total: 4 } };
+          });
+        }
+        const trainingBody = () =>
+          ptBody({
+            $type: 'training',
+            input: { trainingData: { type: 'blobs', items: [{ air: OWN_KEY, caption: 'a cat' }] } },
+          });
+
+        it.each(CASES)('estimate — %s', async (_name, make, expected) => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          quoteThrows(make);
+          const result = await caller().estimateWorkflow({
+            blockToken: 'tok',
+            body: trainingBody(),
+          });
+          expect(result.snapshot).toEqual({ workflowId: 'failed', status: 'failed', ...expected });
+        });
+
+        it.each(CASES)(
+          'submit — %s: refused, nothing reserved or submitted',
+          async (_name, make, expected) => {
+            mockVerifyBlockToken.mockResolvedValue(ptClaims());
+            happyUser();
+            quoteThrows(make);
+            const result = await caller().submitWorkflow({
+              blockToken: 'tok',
+              body: trainingBody(),
+              idempotencyKey: 'idem-train-quote-failed',
+            });
+            expect(result.snapshot).toEqual({
+              workflowId: 'failed',
+              status: 'failed',
+              ...expected,
+            });
+            expect(ptWhatIfs()).toHaveLength(1);
+            expect(ptRealSubmits()).toHaveLength(0);
+            expect(mockReserveAppSpend).not.toHaveBeenCalled();
+            expect(blockCapIncrs()).toHaveLength(0);
+            expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+            expect(mockReleaseGen).toHaveBeenCalledTimes(1);
+            expect(mockFinalizeGen).not.toHaveBeenCalled();
+          }
+        );
+
+        it.each([
+          ['a URL and a stack frame', UNSAFE, ['upstream.example', '8080', 'Fetcher', '/srv/app']],
+          ['a foreign id', FOREIGN_ID, [FOREIGN_KEY]],
+          ['a network failure', NETWORK, ['fetch failed', 'Generation services']],
+        ])('nothing of %s reaches the block', async (_name, make, forbidden) => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          quoteThrows(make);
+          const result = await caller().estimateWorkflow({
+            blockToken: 'tok',
+            body: trainingBody(),
+          });
+          const wire = JSON.stringify(result);
+          for (const text of forbidden) expect(wire).not.toContain(text);
+        });
+
+        it('logs the swallowed error with the orchestrator status', async () => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          quoteThrows(NOT_FOUND);
+          await caller().estimateWorkflow({ blockToken: 'tok', body: trainingBody() });
+          expect(mockLogToAxiom).toHaveBeenCalledWith({
+            name: 'block-pass-through-quote-failed',
+            type: 'warning',
+            outcome: 'rejected',
+            phase: 'estimate',
+            stepType: 'training',
+            appBlockId: 'apb_test',
+            code: 'BAD_REQUEST',
+            attempt: 1,
+            status: 404,
+            error: `The blob ${OWN_KEY} was not found.`,
+            cause: null,
+          });
+        });
+
+        // The level follows THIS classification, not the generic tRPC client-fault
+        // table: only an outcome caused by the request or the viewer is a warning. Our
+        // own token refused (401), an upstream timeout (408) and a blob refresh that
+        // failed in transit are ours, so they are errors.
+        const BLOB_REFRESH_MESSAGE =
+          'Failed to refresh image URL for blob: BLOB1. Please try uploading the image again.';
+        it.each<[string, 'warning' | 'error', 'rejected' | 'unavailable', () => unknown]>([
+          ['an upstream 404 rejection', 'warning', 'rejected', NOT_FOUND],
+          [
+            'a blob the orchestrator says is gone',
+            'warning',
+            'rejected',
+            () => {
+              const err = new TRPCError({ code: 'BAD_REQUEST', message: BLOB_REFRESH_MESSAGE });
+              annotateOrchestratorMissingBlob(err);
+              return err;
+            },
+          ],
+          [
+            'an upstream 429',
+            'warning',
+            'unavailable',
+            () => orchestratorError('TOO_MANY_REQUESTS', 'Slow down!', 429),
+          ],
+          [
+            'an upstream 403 (insufficient funds)',
+            'warning',
+            'unavailable',
+            () => orchestratorError('BAD_REQUEST', 'Insufficient funds.', 403),
+          ],
+          [
+            'an upstream 401 (our own token refused)',
+            'error',
+            'unavailable',
+            () => orchestratorError('UNAUTHORIZED', 'Authorization has been denied.', 401),
+          ],
+          [
+            'an upstream 408',
+            'error',
+            'unavailable',
+            () => orchestratorError('BAD_REQUEST', 'Request timed out.', 408),
+          ],
+          [
+            'a blob refresh that failed in transit',
+            'error',
+            'unavailable',
+            () => new TRPCError({ code: 'BAD_REQUEST', message: BLOB_REFRESH_MESSAGE }),
+          ],
+          [
+            'an upstream 500',
+            'error',
+            'unavailable',
+            () =>
+              orchestratorError(
+                'SERVICE_UNAVAILABLE',
+                'Generation services are temporarily unavailable. Please try again.',
+                500
+              ),
+          ],
+          ['a network failure', 'error', 'unavailable', NETWORK],
+          [
+            'a timeout',
+            'error',
+            'unavailable',
+            () => new TRPCError({ code: 'TIMEOUT', message: 'The operation timed out.' }),
+          ],
+          [
+            'an unrecognised throw',
+            'error',
+            'unavailable',
+            () => new Error('Cannot read properties of undefined'),
+          ],
+        ])('logs %s at %s level, as %s', async (_name, level, outcome, make) => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          quoteThrows(make);
+          await caller().estimateWorkflow({ blockToken: 'tok', body: trainingBody() });
+          const logged = mockLogToAxiom.mock.calls
+            .map((c) => c[0])
+            .filter((entry) => entry?.name === 'block-pass-through-quote-failed');
+          expect(logged).toHaveLength(1);
+          expect({ type: logged[0].type, outcome: logged[0].outcome }).toEqual({
+            type: level,
+            outcome,
+          });
+        });
+
+        it('a blob the orchestrator says is gone is a rejection with a host-written reason', async () => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          quoteThrows(() => {
+            const err = new TRPCError({ code: 'BAD_REQUEST', message: BLOB_REFRESH_MESSAGE });
+            annotateOrchestratorMissingBlob(err);
+            return err;
+          });
+          const result = await caller().estimateWorkflow({
+            blockToken: 'tok',
+            body: trainingBody(),
+          });
+          expect(result.snapshot).toEqual({
+            workflowId: 'failed',
+            status: 'failed',
+            error:
+              'Training could not be priced: An image in the training data is no longer available. Upload it again.',
+            errorCode: 'training-quote-rejected',
+          });
+        });
+
+        // [INVARIANT GUARD] a failed quote changes nothing for a non-training step.
+        it('a NON-training step whose quote throws still submits at maxBuzz, uncoded', async () => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          quoteThrows(VALIDATION);
+          const result = await caller().submitWorkflow({ blockToken: 'tok', body: ptBody() });
+          expect(result.snapshot.workflowId).toBe('wf_pt_1');
+          expect(result.snapshot).not.toHaveProperty('errorCode');
+          expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', MAX_BUZZ);
+          expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:00:20');
+        });
       });
 
       it('estimate of a QUOTED training step still answers max(maxBuzz, quote)', async () => {

@@ -274,6 +274,34 @@ describe('achievements tab', () => {
     expect(el.textContent).toContain('Only you see this: score 824,228');
   });
 
+  // A shared tier link lands here with `?milestone=`; that tier's card is the one to look at.
+  it('scrolls to and rings the tier a shared link named, and only that one', () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['tier-blaze']);
+      expect(spotlit[0].textContent).toContain('Blaze');
+      expect(spotlit[0].className).toContain('ring-2');
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it('picks out nothing for a tier the creator does not hold', () => {
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'legend' })
+    );
+    expect(el.querySelectorAll('[data-spotlight]')).toHaveLength(0);
+  });
+
   // The width itself is a stylesheet fact the test environment cannot measure; what is pinned here
   // is that tiers and achievements share the one card grid.
   it('puts tier cards and achievement cards on the same card grid', () => {

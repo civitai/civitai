@@ -3,6 +3,7 @@ import {
   equipCosmeticSchema,
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
+  getSearchEventDecorationsSchema,
   getViewerEventDecorationsSchema,
   purchaseStickerUsesSchema,
   setStickerPlacementRatingSchema,
@@ -16,7 +17,9 @@ import {
   getStickerAttribution,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
+  getSearchEventDecorations,
   getViewerEventDecorations,
+  isEveryonesDecorationAnswer,
   unequipCosmetic,
   updateEventHatFit,
 } from '~/server/services/cosmetic.service';
@@ -27,9 +30,12 @@ import {
   purchaseStickerUses,
 } from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
-import { noEdgeCache, rateLimit } from '~/server/middleware.trpc';
+import type { GetSearchEventDecorationsInput } from '~/server/schema/cosmetic.schema';
+import { getVisibleDecorationEvents } from '~/server/events/event-decoration-access';
+import { edgeCacheIt, noEdgeCache, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
+  middleware,
   moderatorProcedure,
   protectedProcedure,
   publicProcedure,
@@ -37,6 +43,29 @@ import {
   verifiedProcedure,
 } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+// Search hits come from the index, which carries no hats, so the grid asks for them. From launch
+// the answer is everyone's and is cached at the edge; a viewer who sees otherwise (a tester in the
+// preview), or a moment when the signed-out see nothing (preview, kill switch), is never cached.
+// The viewer's events are read once, here, and the answer is built from that same set.
+// It mutates the root cache rather than replacing it: an anonymous request starts cacheable, and
+// `responseMeta` reads the root. No stale-while-revalidate, so a kill switch clears within the TTL.
+const searchDecorationGate = middleware(async ({ ctx, input, next }) => {
+  const { entityType } = input as GetSearchEventDecorationsInput;
+  const decorationEvents = await getVisibleDecorationEvents(entityType, ctx.user);
+  if (!ctx.cache) return next({ ctx: { decorationEvents } });
+  if (await isEveryonesDecorationAnswer(entityType, decorationEvents, ctx.user)) {
+    const result = await next({ ctx: { decorationEvents } });
+    ctx.cache.staleWhileRevalidate = 0;
+    return result;
+  }
+  return next({
+    ctx: {
+      decorationEvents,
+      cache: Object.assign(ctx.cache, { skip: true, canCache: false, edgeTTL: 0, browserTTL: 0 }),
+    },
+  });
+});
 
 export const cosmeticRouter = router({
   getById: protectedProcedure
@@ -111,6 +140,21 @@ export const cosmeticRouter = router({
     .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) =>
       getViewerEventDecorations({ ids: input.ids, entity: input.entityType, viewer: ctx.user })
+    ),
+  // The search grids' hats, one call per page of hits. See searchDecorationGate.
+  getEventDecorationsForSearch: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getSearchEventDecorationsSchema)
+    .use(searchDecorationGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    // Counts only what reaches the origin; edge hits never do. One call per 50 hits scrolled.
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
+    .query(({ input, ctx }) =>
+      getSearchEventDecorations({
+        ids: input.ids,
+        entity: input.entityType,
+        events: ctx.decorationEvents,
+      })
     ),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })

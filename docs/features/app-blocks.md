@@ -399,18 +399,67 @@ read that file. As of this writing the families are:
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
   not bridge it (an embedded panel navigating the host away is out of remit).
-- **Analytics**: `TRACK_EVENT` — fire-and-forget, **not** host-bridged by either
-  real host today (no analytics sink wired), so it is silently dropped (never
-  hangs the block). Flip the host entries to `required` in the inventory if/when
-  a sink lands. The events an app intends to send are declared in the manifest's
-  optional `analytics.events` and validated at submit by `parseManifestAnalytics`
-  (`src/shared/constants/block-analytics.constants.ts`); nothing records them yet.
+- **Analytics**: `TRACK_EVENT` — fire-and-forget, and **not** host-bridged by
+  either real host yet, so an event a block sends today is still dropped at the
+  host (never hangs the block). The server side exists: see "Custom events"
+  below. Flip the host entries to `required` in the inventory when the hosts
+  start forwarding.
 
 `SUSPEND` / `RESUME`, `TOKEN_REFRESH` (see "Token refresh") and `THEME_CHANGE`
 (see "Theme changes") flow the other direction (host→block), which is why they
 are absent from that inventory — it covers block→host only. The SDK degrades
 gracefully when a host does not handle a fire-and-forget surface, and a block
 that ignores a host→block push is equally fine.
+
+### Custom events
+
+The events an app may send are declared in the manifest's optional
+`analytics.events` and validated at submit by `parseManifestAnalytics`
+(`src/shared/constants/block-analytics.constants.ts`). A property is an `enum`
+of declared string values, a `number` or a `boolean`; there is no free-text type.
+
+`POST /api/track/block-event` (`src/pages/api/track/block-event.ts`,
+`src/server/services/blocks/block-event-ingest.service.ts`) records them in the
+`appBlockEvents` ClickHouse table
+(`src/server/clickhouse/migrations/2026-10-10-app-block-events.sql`, applied by
+hand before the route deploys). **Nothing calls it yet**: neither host forwards
+`TRACK_EVENT`, so the table stays empty until they do.
+
+- **Declared events only.** A row is checked against the app's APPROVED manifest.
+  An event the manifest does not declare is stored as one `__undeclared__` row
+  with no properties, so the owner can see that events are being dropped without
+  the name the caller chose ever being stored. An undeclared property, or a value
+  of the wrong type or outside an enum's declared values, is stripped and the
+  rest of the row is kept. An app that is not approved has its rows dropped.
+- **Identity is the server's.** The body carries the app id, the block instance
+  id, the event name and its properties, and nothing else is read from it. The
+  viewer comes from the session, the time from the server clock, and `isOwner`
+  from comparing the viewer with the app's owner. A block instance id that is
+  not shaped like a platform id (for a page, not that app's own page id) is
+  stored empty.
+- **Unique viewers are signed-in viewers only.** Each row carries a `viewerKey`:
+  a hash of the user id for a signed-in viewer, and `0` ("unknown viewer") for
+  a signed-out one. Nothing derived from a client address is stored for
+  signed-out viewers; their activity is reported as event counts, never as
+  unique viewers.
+- **Private runs are excluded.** A private run is of an app that is not
+  approved, and those rows are dropped. The impression writers' server-derived
+  predicate is also consulted, for an app that has just left the approved set.
+- **A public beacon.** Like the impression beacon it is same-origin but
+  unauthenticated, so anyone can post events for an approved app. The
+  declared-only filter bounds what can be stored, and a per-process budget per
+  client address and app bounds how much each process accepts. The address is
+  used in memory for that budget only and is never stored.
+- **Only a deployment that says it is production writes.** A write needs
+  `CIVITAI_DEPLOYMENT_ENVIRONMENT=production` (exact value) and no
+  non-production signal (`IS_PREVIEW`, a cache-key namespace). Every other
+  deployment, including one where the variable is unset, runs the same
+  validation and skips the insert.
+- **Counts**: `civitai_app_block_custom_events_total{outcome}` (no per-app
+  label; the per-app breakdown is the table).
+
+Owners cannot read these rows yet; an aggregate view in the owner analytics
+panel is planned.
 
 ### Buzz and per-account spend
 
@@ -747,8 +796,9 @@ documented above, so they're dropped from this list.
   (`Tracker.blockRender()` → the block-render insert, `sendBlockRender.ts`,
   `/api/track/block-render`) and workflow attribution flows through
   `/api/internal/blocks/workflow-completed`, but the analytics tables are still
-  being stood up (the hosts note "until the … ClickHouse table exists") and a
-  block-interactions stream is not yet emitted.
+  being stood up (the hosts note "until the … ClickHouse table exists"). Custom
+  events have their ingest endpoint and table (see "Custom events"), but no host
+  forwards `TRACK_EVENT` to it yet and no owner-facing view reads it.
 - **Health-check job + auto-suspend on consecutive failures.** The
   `health_status` column exists (default `'unknown'`) but nothing populates it
   and there's no auto-suspend job (and no suspend transition — see the

@@ -62,12 +62,13 @@ export const TokenScope = {
   VaultRead: 1 << 23, // 8388608
   VaultWrite: 1 << 24, // 16777216
 
-  // App Blocks — submit an App Block bundle/version for moderator review.
+  // App Blocks — manage the Apps you author from a token: submit and withdraw versions, pull
+  // source, mint local dev tokens, edit store listings, read analytics, and read and triage the
+  // feedback inbox. The name is historical; submitting was the first thing it gated.
   // Opt-in, off-by-default (NOT part of `Full`): granted only to OAuth clients
   // that explicitly list it in `allowedScopes` and request it (e.g. the
-  // first-party `civitai-cli` client). The submit endpoint
-  // (api/v1/blocks/submit-version) accepts an OAuth-issued token ONLY if it
-  // carries this bit AND the user is a moderator. See AppBlocksSubmit gate.
+  // first-party `civitai-cli` client). Keep its `tokenScopeLabels` entry in step with what it
+  // gates: that label is the consent text.
   AppBlocksSubmit: 1 << 25, // 33554432
 
   // App Blocks — open an on-site dev tunnel for an App Block you author.
@@ -144,7 +145,8 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.NotificationsWrite]: 'Manage notification preferences',
   [TokenScope.VaultRead]: 'View vault',
   [TokenScope.VaultWrite]: 'Manage vault',
-  [TokenScope.AppBlocksSubmit]: 'Submit Apps for review',
+  [TokenScope.AppBlocksSubmit]:
+    'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback',
   [TokenScope.AppBlocksDevTunnel]: 'Open on-site dev tunnels',
   [TokenScope.LinkConnect]: 'Connect the Civitai Link app to your account',
   [TokenScope.AppStoreCatalogWrite]: "Publish items to the app's App Store listing",

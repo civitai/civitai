@@ -406,8 +406,27 @@ export async function getEventDecorationsForEntity({
   viewer?: EventViewer;
 }): Promise<Record<number, EventDecorationCosmetic>> {
   if (ids.length === 0) return {};
-  const events = await getVisibleDecorationEvents(entity, viewer);
-  if (!events.size) return {};
+  return decorationsForEvents({
+    ids,
+    entity,
+    writeBack,
+    events: await getVisibleDecorationEvents(entity, viewer),
+  });
+}
+
+/** The event decoration each entity wears, for the given events only. */
+async function decorationsForEvents({
+  ids,
+  entity,
+  writeBack,
+  events,
+}: {
+  ids: number[];
+  entity: CosmeticEntity;
+  writeBack?: boolean;
+  events: Set<string>;
+}): Promise<Record<number, EventDecorationCosmetic>> {
+  if (!ids.length || !events.size) return {};
   const decorations = await eventDecorationEntityCaches[entity].fetch(ids, { writeBack });
   const visible: Record<number, EventDecorationCosmetic> = {};
   for (const [id, decoration] of Object.entries(decorations))
@@ -441,13 +460,58 @@ export async function getViewerEventDecorations({
   entity: 'Image' | 'Model' | 'Article';
   viewer: EventViewer;
 }) {
-  const decorations = await getEventDecorationsForEntity({ ids, entity, viewer });
+  return onlyPublicContent(entity, await getEventDecorationsForEntity({ ids, entity, viewer }));
+}
+
+async function onlyPublicContent(
+  entity: 'Image' | 'Model' | 'Article',
+  decorations: Record<number, EventDecorationCosmetic>
+) {
   const worn = Object.keys(decorations).map(Number);
   if (!worn.length) return decorations;
   const visible = (await publicContentCaches[entity]?.fetch(worn)) ?? {};
   return Object.fromEntries(
     Object.entries(decorations).filter(([id]) => visible[Number(id)])
   ) as typeof decorations;
+}
+
+/**
+ * The search grids' hats on public ids, for exactly the events the caller already read: the same
+ * set decides whether the answer may be cached, so a flag read that flickers between the two can
+ * never put a tester's preview hats in an answer cached for everyone.
+ */
+export async function getSearchEventDecorations({
+  ids,
+  entity,
+  events,
+}: {
+  ids: number[];
+  entity: 'Image' | 'Model' | 'Article';
+  events: Set<string>;
+}) {
+  return onlyPublicContent(entity, await decorationsForEvents({ ids, entity, events }));
+}
+
+/**
+ * Whether the events this viewer was read to see are everyone's, so one answer can serve them all.
+ * For a signed-out viewer `events` already is everyone's set.
+ *
+ * 🔴 Non-empty as well as equal. Before launch the signed-out set is empty, and a cached empty
+ * answer would be served to a tester asking the same URL, hiding their preview. After a kill switch
+ * the signed-out set empties again, so hats stop being cached the moment the flag goes off.
+ */
+export async function isEveryonesDecorationAnswer(
+  entity: CosmeticEntity,
+  events: Set<string>,
+  viewer: EventViewer
+) {
+  if (!viewer) return events.size > 0;
+  const everyone = await getVisibleDecorationEvents(entity, undefined);
+  return (
+    everyone.size > 0 &&
+    events.size === everyone.size &&
+    [...events].every((event) => everyone.has(event))
+  );
 }
 
 const equippedHatSelect = {

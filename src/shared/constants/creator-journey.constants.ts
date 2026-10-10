@@ -46,6 +46,26 @@ export const milestoneShareId = (userId: number, slug: ScoreTierSlug) => `${user
 export const milestoneShareHref = (username: string, slug: ScoreTierSlug) =>
   `/user/${encodeURIComponent(username)}?milestone=${slug}`;
 
+/**
+ * Where a visitor who opened a shared tier link goes: the Achievements tab with that tier picked
+ * out. Null leaves them on the profile. The share link itself stays on the profile, whose server
+ * render carries the tier's og:image, and crawlers never follow this client-side hop.
+ */
+export function milestoneLandingHref({
+  username,
+  milestone,
+  shareable,
+  journeyOn,
+}: {
+  username: string;
+  milestone: ScoreTierSlug | null;
+  shareable: boolean | undefined;
+  journeyOn: boolean;
+}) {
+  if (!milestone || !shareable || !journeyOn) return null;
+  return `/user/${encodeURIComponent(username)}/achievements?milestone=${milestone}`;
+}
+
 /** A profile's og:image endpoint for `?milestone=`. Undefined keeps the profile's own preview. */
 export function milestoneOgEndpoint(
   userId: number,

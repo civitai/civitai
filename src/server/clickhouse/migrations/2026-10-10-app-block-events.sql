@@ -28,30 +28,18 @@
 -- There is no free-text column: every string stored is a platform id or a value an approved
 -- manifest declared.
 --
--- `viewerKey` is the unique-viewer key, computed in Node by the ingest as the first 8 bytes of a
--- sha256 digest read big-endian:
---   createHash('sha256').update(input).digest().readBigUInt64BE(0)
--- where input is 'u:' + userId for a signed-in viewer, and 'a:' + daySalt + ':' + ip for a
--- signed-out one. It can exceed 2^53, so send it as a decimal STRING in JSONEachRow. SQL computes
--- the same value with reinterpretAsUInt64(reverse(substring(SHA256(input), 1, 8))).
--- Normalise the ip before hashing so one address yields one key: an IPv4-mapped IPv6 address
--- becomes its IPv4 form, and IPv6 is written in lower-case canonical form.
+-- `viewerKey` is the unique-viewer key, and ONLY signed-in viewers have one. For a signed-in
+-- viewer it is the first 8 bytes of a sha256 digest read big-endian, computed in Node:
+--   createHash('sha256').update('u:' + userId).digest().readBigUInt64BE(0)
+-- It can exceed 2^53, so send it as a decimal STRING in JSONEachRow. SQL computes the same value
+-- with reinterpretAsUInt64(reverse(substring(SHA256('u:' || toString(userId)), 1, 8))).
+-- For a signed-out viewer it is 0, meaning "unknown viewer": nothing derived from a client
+-- address is stored for signed-out viewers.
 --
--- 🔴 SALT CONTRACT — "THE RAW IP IS NOT STORED" HOLDS ONLY UNDER IT.
---   - `daySalt` is RANDOM, and ONE value shared by every ingest instance for the UTC day. A
---     per-process salt is not acceptable: N instances would give one signed-out viewer N keys a
---     day, and every restart would mint another.
---   - It lives in a shared store, created atomically (set-if-absent) with an expiry at the UTC day
---     boundary. The store must not keep it past that day in any form (no backup, snapshot or
---     write-log retention of the salt beyond its day).
---   - It is NEVER derived from a long-lived secret (no HMAC(secret, date)): IPv4 is only 2^32
---     addresses, so anyone holding a derivable salt can reverse every signed-out row for the full
---     400-day retention.
---
--- Because a signed-out key rotates daily, distinct keys grow with the length of the range (one
--- returning visitor counts once per day). The read path should use uniqCombined (approximate)
--- rather than uniqExact for week-bucketed ranges (over 60 days), where uniqExact's memory grows
--- with the distinct count.
+-- READ PATH: unique viewers are signed-in viewers only, counted as
+--   uniqExactIf(viewerKey, viewerKey != 0)
+-- Signed-out activity is reported as event counts (countIf(isAnon = 1)), never as unique viewers:
+-- every signed-out row shares the key 0.
 --
 -- 🔴 AN ABSENT MAP KEY READS AS THE TYPE DEFAULT, not NULL: numProps['k'] = 0, boolProps['k'] = 0,
 -- enumProps['k'] = ''. A property is optional per event, so every aggregate must gate on presence:
@@ -72,7 +60,7 @@ CREATE TABLE IF NOT EXISTS default.appBlockEvents
   eventName LowCardinality(String),
   -- viewer; 0 = signed out
   userId Int32,
-  -- see the header for the derivation and the salt contract
+  -- see the header: a hash for signed-in viewers, 0 for signed-out
   viewerKey UInt64,
   isAnon UInt8,
   isOwner UInt8,
