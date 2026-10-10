@@ -181,10 +181,11 @@ export async function syncRosterMembersWith(
   // Members whose gate changed under this sync: re-derived from fresh reads below.
   const changed: number[] = [];
   // A sync that stalled so long that the tombstones it might have read could be pruned since
-  // treats every write as refused, and derives again from fresh reads.
+  // treats its listings as refused, and derives again from fresh reads. Unlistings still go: hiding
+  // is the safe side, and refusing one could keep a banned member listed.
   const stalled = () => deps.now().getTime() - now.getTime() > STALL_MS;
   const gateWrite = async (userId: number, value: string) => {
-    if (stalled()) return false;
+    if (!isTombstone(value) && stalled()) return false;
     const opened = await deps.redis.eval(LIST_IF_UNCHANGED, {
       keys: [keys.members],
       arguments: [String(userId), previous.get(userId) ?? '', value],

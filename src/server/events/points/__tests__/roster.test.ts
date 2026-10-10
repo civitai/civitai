@@ -666,6 +666,7 @@ describe('team roster', () => {
       },
     };
     await syncRosterMembersWith(EVENT, [1], churn);
+    expect(n).toBe(3);
     expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
     expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
     expect((await s.read('points')).rows.map((r) => r.userId)).toEqual([1]);
@@ -676,6 +677,7 @@ describe('team roster', () => {
   it('keeps re-deriving an ended event, so a missed ban is still caught', async () => {
     const s = setup([member(1)], LIVE_NOW);
     await syncRosterMembersWith(EVENT, [1], s.deps);
+    expect(s.allKeysHolding('1').length).toBeGreaterThan(0);
     s.db.set(1, member(1, { eligible: false }));
     const gate = async () => Object.fromEntries(s.hashes.get(keys.members) ?? []);
     s.deps.now = () => new Date('2027-06-01T00:00:00.000Z');
@@ -700,6 +702,8 @@ describe('team roster', () => {
         return s.deps.ownerPoints(event, ids, now);
       },
     });
+    expect(order).toContain('gate:2');
+    expect(order).toContain('points');
     expect(order.indexOf('gate:2')).toBeLessThan(order.indexOf('points'));
   });
 
@@ -724,6 +728,38 @@ describe('team roster', () => {
     };
     await syncRosterMembersWith(EVENT, [1], stale);
     expect(calls).toBe(2);
+    expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
+    expect(s.allKeysHolding('1')).toEqual([]);
+  });
+
+  it('lets a slow sync under the stall bound write, and never refuses an unlisting for a stall', async () => {
+    let now = LIVE_NOW.getTime();
+    const s = setup([member(1), member(2)], LIVE_NOW);
+    s.deps.now = () => new Date(now);
+    let calls = 0;
+    const slow: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        calls++;
+        now += 9 * 60_000;
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], slow);
+    expect(calls).toBe(1);
+    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    // A ban read by a sync that then stalls far past the bound still hides the member.
+    s.db.set(2, member(2, { eligible: false }));
+    await syncRosterMembersWith(EVENT, [2], s.deps);
+    s.db.set(1, member(1, { eligible: false }));
+    const stalled: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        now += 30 * 60_000;
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], stalled);
     expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
     expect(s.allKeysHolding('1')).toEqual([]);
   });
