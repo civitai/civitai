@@ -3,7 +3,7 @@ import * as z from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import type { CollectionItemStatus, MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { SimpleUser } from '~/server/selectors/user.selector';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
@@ -56,7 +56,6 @@ export interface ImageProps {
   poi?: boolean;
   /** Only set on a collection-filtered feed; the collection page reads it for the remove rule. */
   collectionItemAddedById?: number | null;
-  collectionItemStatus?: CollectionItemStatus | null;
 }
 
 type ImageViewerState = {
