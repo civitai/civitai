@@ -9,17 +9,12 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useRef } from 'react';
-import {
-  APPS_REQUEST_ACCESS_HREF,
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_NPM,
-  CLI_RUN_COMMAND,
-} from '~/components/Apps/cliCommands';
+import { APPS_REQUEST_ACCESS_HREF } from '~/components/Apps/cliCommands';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
-import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
+import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
 import {
   resolveAppsBuildSettled,
@@ -284,27 +279,19 @@ export function AppsBuildBody() {
         <Stack gap="xs">
           <Title order={2}>Ship your first app</Title>
           <Text size="sm" c="dimmed">
-            Build on Civitai&apos;s web + AI infrastructure — a catalog of hundreds of thousands of
-            models, generation paid in Buzz, hosting and identity handled. Three commands and you
-            are running locally.
+            Build on Civitai&apos;s web + AI infrastructure: a catalog of hundreds of thousands of
+            models, generation paid in Buzz, hosting and identity handled. The fastest way in is to
+            hand the prompt below to your coding agent.
           </Text>
         </Stack>
-        <Stack gap="sm">
-          <CopyableCommand command={CLI_INSTALL_NPM} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
-        </Stack>
-        {/*
-          The alternative route, framed as one: the three commands above are the manual path,
-          this is the same destination handed to an agent. `inline` tone so it sits BESIDE
-          the quickstart rather than competing with the "Ship your first app" heading.
-        */}
-        <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" />
+        <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
+        <ManualSetupCollapse onCopyCommand={onCopyCommand} />
         <Group>
           <Button
             component={Link}
             href={CREATE_FLOW_HREF}
             onClick={onCreateEntry}
+            variant="default"
             rightSection={<IconArrowRight size={16} />}
             data-testid="apps-build-create-first"
           >
@@ -328,8 +315,8 @@ export function AppsBuildBody() {
       >
         <Stack gap="sm" align="flex-start">
           <Text size="sm">
-            Anyone can build and run an app locally with the CLI — the quickstart above works today.
-            Publishing one to the Civitai store is still limited to a curated group while the
+            Anyone can build and run an app locally today, with a coding agent or by hand with the
+            CLI. Publishing one to the Civitai store is still limited to a curated group while the
             platform is in beta.
           </Text>
           <Button
@@ -351,10 +338,14 @@ export function AppsBuildBody() {
 
 /**
  * The pitch, DEMOTED for the workbench. An author who already has apps does not need the
- * "what you get" marketing above their app table every visit, but the quickstart commands
- * are the thing they come back for — so the resources live on, collapsed, below the list.
- * Collapsed by default and cheap: `GetStartedBody` is not mounted here at all, only the
- * three commands, so the workbench does not pay for the hero image.
+ * "what you get" marketing above their app table every visit, but the agent prompt and the
+ * CLI commands are the things they come back for — so the resources live on, collapsed, below
+ * the list. Collapsed by default and cheap: `GetStartedBody` is not mounted here at all, so
+ * the workbench does not pay for the hero image.
+ *
+ * The strip keeps its own toggle rather than reusing `ManualSetupCollapse`: it holds the agent
+ * card as well as the manual steps, and nesting one collapse inside another would hide the
+ * commands behind two clicks.
  *
  * 🔴 THE AGENT CARD IS MOUNTED HERE WITH `animated={false}`, AND "CHEAP" IS WHY. Mantine's
  * `Collapse` keeps its children MOUNTED at zero height, so an animated card in here would
@@ -396,10 +387,8 @@ function BuildResourcesStrip({
       </Button>
       <Collapse in={opened} data-testid="apps-build-resources">
         <Stack gap="sm">
-          <CopyableCommand command={CLI_INSTALL_NPM} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
-          <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
           <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
+          <ManualSetupSteps onCopyCommand={onCopyCommand} />
         </Stack>
       </Collapse>
     </Stack>

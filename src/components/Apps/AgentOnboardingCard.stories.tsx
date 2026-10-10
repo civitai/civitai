@@ -7,12 +7,8 @@ import {
   IconTerminal2,
 } from '@tabler/icons-react';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
-import {
-  CLI_CREATE_SAMPLE_COMMAND,
-  CLI_INSTALL_NPM,
-  CLI_RUN_COMMAND,
-} from '~/components/Apps/cliCommands';
-import { CopyableCommand } from '~/components/Apps/CopyableCommand';
+import { GetStartedBody } from '~/components/Apps/GetStartedBody';
+import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 
 /**
  * Ladle previews for `AgentOnboardingCard` in each of `/apps/build`'s three placements.
@@ -41,50 +37,40 @@ import { CopyableCommand } from '~/components/Apps/CopyableCommand';
  * against this panel's text box, so that specific defect no longer depends on somebody
  * looking at a screenshot. The frames are still the only check on whether it looks GOOD.
  *
- * The three surrounding contexts are reproduced here (hero text for A, the three CLI commands
- * for B, the collapse for C) rather than mounting the real bodies, which would need the tRPC
- * and session providers the Ladle global provider does not supply.
+ * State A mounts the real `GetStartedBody`, which is props-only. The contexts for B and C are
+ * reproduced here rather than mounting `AppsBuildBody`, which would need the tRPC and session
+ * providers the Ladle global provider does not supply.
  */
 
 const Frame = ({ children }: { children: React.ReactNode }) => (
   <div style={{ width: 720 }}>{children}</div>
 );
 
-/** A · pitch — the prominent card, as it sits under `GetStartedBody`'s hero. */
-export const PitchProminent = () => (
+/** A · pitch — the real body: hero, the prominent card, banner, pitch, closed manual setup. */
+export const Pitch = () => (
   <Frame>
-    <Stack gap="xl">
-      <Stack gap="xs">
-        <Title order={1}>Build on Civitai</Title>
-        <Text size="lg" c="dimmed">
-          Build on Civitai&apos;s web + AI infrastructure. Tap a catalog of hundreds of thousands of
-          models and generate with Buzz. You focus on creating; we handle the rest.
-        </Text>
-      </Stack>
-      <AgentOnboardingCard tone="prominent" />
-      <Title order={2}>What you get</Title>
-    </Stack>
+    <GetStartedBody />
   </Frame>
 );
 
-/** B · first-app — the inline card beside the three CLI commands. */
-export const FirstAppInline = () => (
+/** B · first-app — the prominent card leads, the manual setup is closed below it. */
+export const FirstApp = () => (
   <Frame>
     <Stack gap="lg">
       <Stack gap="xs">
         <Title order={2}>Ship your first app</Title>
         <Text size="sm" c="dimmed">
-          Three commands and you are running locally.
+          Build on Civitai&apos;s web + AI infrastructure: a catalog of hundreds of thousands of
+          models, generation paid in Buzz, hosting and identity handled. The fastest way in is to
+          hand the prompt below to your coding agent.
         </Text>
       </Stack>
-      <Stack gap="sm">
-        <CopyableCommand command={CLI_INSTALL_NPM} />
-        <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} />
-        <CopyableCommand command={CLI_RUN_COMMAND} />
-      </Stack>
-      <AgentOnboardingCard tone="inline" />
+      <AgentOnboardingCard tone="prominent" />
+      <ManualSetupCollapse />
       <Group>
-        <Button rightSection={<IconArrowRight size={16} />}>Create your first app</Button>
+        <Button variant="default" rightSection={<IconArrowRight size={16} />}>
+          Create your first app
+        </Button>
       </Group>
     </Stack>
   </Frame>
@@ -110,10 +96,8 @@ export const WorkbenchStripOpen = () => {
         </Button>
         <Collapse in={opened}>
           <Stack gap="sm">
-            <CopyableCommand command={CLI_INSTALL_NPM} />
-            <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} />
-            <CopyableCommand command={CLI_RUN_COMMAND} />
             <AgentOnboardingCard tone="inline" animated={false} />
+            <ManualSetupSteps />
           </Stack>
         </Collapse>
       </Stack>
@@ -142,7 +126,8 @@ export const PitchWithAccessAlert = () => (
       <Alert color="blue" variant="light" title="Publishing is invite-only right now">
         <Stack gap="sm" align="flex-start">
           <Text size="sm">
-            Anyone can build and run an app locally with the CLI — the quickstart above works today.
+            Anyone can build and run an app locally today, with a coding agent or by hand with the
+            CLI.
           </Text>
           <Button variant="light" leftSection={<IconBrandDiscord size={16} />}>
             Ask about access
