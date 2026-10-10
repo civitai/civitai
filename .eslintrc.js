@@ -194,6 +194,39 @@ module.exports = {
       },
     ],
 
+    // The SIBLING of the rule above, one level down: that one guards the MODULE's
+    // export surface (does the factory spread `importOriginal`), this one guards
+    // the `trpc` CLIENT's procedure surface inside the object the factory
+    // returns. A mock can be perfect by the first and broken by the second —
+    // #4147 was exactly that, which is why #4178 says the existing rule "has no
+    // view" of it. Deliberately a separate rule rather than an extension: the
+    // `modules` option above is generic across five modules while this check
+    // knows about `trpc` and `makeTrpcProxy` specifically, the two remedies are
+    // different ("spread the original" vs "call makeTrpcProxy"), and one disable
+    // comment must not switch off both guards. Reasoning in full at the rule.
+    //
+    // 'error', matching its siblings and for the same reason spelled out below:
+    // at 'warn' it would gate nothing, because the only BLOCKING ESLint step in
+    // .github/workflows/lint.yml ("ESLint (added files)") runs without
+    // --max-warnings — and a brand-new component test is exactly the authoring
+    // path this rule exists to close.
+    //
+    // Blast radius on the existing tree: 201 files report (census of all 220
+    // `vi.mock('~/utils/trpc', <inline factory>)` calls in `src/`; the other 19
+    // are 8 `new Proxy`, 7 `makeTrpcProxy`, and 4 that override no `trpc` key).
+    // 🔴 That cannot become a permanently-red gate, and the reason is the lint
+    // LANE's shape rather than this rule's severity: the blocking step lints
+    // `--diff-filter=A` paths only, and the modified-file step is
+    // `continue-on-error: true`. Nothing lints the full repo in CI — not in
+    // GitHub Actions (the eslint job is the only ESLint lane and is
+    // `pull_request`-only, diff-vs-base) and not in the in-cluster Tekton
+    // pr-check pipeline, which runs no ESLint at all. So a legacy file annotates
+    // when touched and blocks nothing; a newly ADDED file is blocked. The 201 are
+    // deliberately NOT migrated — migration is a one-line change per file,
+    // taken opportunistically when someone touches one. `pnpm lint` locally does
+    // cover all of `src/` and will show them.
+    'local-rules/no-hand-enumerated-trpc-mock': 'error',
+
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 
@@ -299,6 +332,29 @@ module.exports = {
         'src/components/Apps/AppsRailNav.tsx',
         'src/components/Apps/useAppsNavSections.ts',
         'src/components/Apps/appsRailState.tsx',
+        // The App Blocks missing-permissions backstop. Its narrow/wide swap is a
+        // CONTAINER QUERY on purpose and must stay one.
+        //
+        // ⚠️ IT EARNS THE GLOB FOR THE FLASH, NOT FOR HYDRATION, AND THE DISTINCTION IS
+        // WHY THIS COMMENT IS LONGER THAN THE ENTRY. This surface is NOT server-rendered:
+        // `BlockSlot` loads the chain through `dynamic(..., { ssr: false })`, and the
+        // notice's own gate withholds it until the iframe posts `BLOCK_READY`. So the
+        // hydration-divergence argument the block comment above makes for the `/apps`
+        // chrome genuinely does not reach it, and anyone who checks will find that out.
+        // What DOES reach it is a pair of reasons, and they are NOT the same reason for
+        // all four hooks — an earlier draft said "the four hooks this rule names are
+        // exactly the ones that would [flash]", and that was false:
+        //   · CONTAINER hooks flash. `useContainerQuery` returns false while
+        //     `inlineSize === 0`, `useContainerSmallerThan` wraps it, and bare
+        //     `useIsMobile()` routes to it — so each renders the wrong shape for a frame
+        //     and then restructures the bar under a viewer already reading it.
+        //   · `useMediaQuery` imported from `@mantine/hooks` flashes too (its default is
+        //     `getInitialValueInEffect: true`), but THIS REPO'S WRAPPER DOES NOT — it
+        //     passes `false` and reads `matchMedia` synchronously on first render, and
+        //     with no SSR pass here that read IS the first paint. It is banned for the
+        //     other reason, stated at length on the component: a VIEWPORT query answers
+        //     the wrong question for a ~320px sidebar on a desktop.
+        'src/components/AppBlocks/BlockConsentNotice.tsx',
       ],
       rules: {
         'local-rules/no-ssr-divergent-media-query': 'error',

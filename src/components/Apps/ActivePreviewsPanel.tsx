@@ -5,6 +5,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AppsTableColgroup, APPS_ACTIVE_PREVIEWS_COLUMNS } from '~/components/Apps/appsWideLayout';
+import { compactRelativeAgeOf } from '~/components/Apps/reviewRelativeTime';
 
 /**
  * MOD REVIEW SANDBOX — global "Active previews (N / cap)" panel. Extracted from
@@ -25,22 +26,6 @@ import { AppsTableColgroup, APPS_ACTIVE_PREVIEWS_COLUMNS } from '~/components/Ap
  * `useFeatureFlags`, `~/utils/notifications`, and `~/utils/trpc` are the same
  * imports the browser-tested `OnsiteReviewModal` uses.
  */
-
-// Compact relative age ("just now" / "5m" / "2h" / "3d") for the active-preview
-// panel — the exact timestamp isn't useful there, freshness is.
-export function formatAge(d: string | Date | null | undefined): string {
-  if (!d) return '—';
-  const date = typeof d === 'string' ? new Date(d) : d;
-  const ms = Date.now() - date.getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '—';
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return 'just now';
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
 
 export function ActivePreviewsPanel() {
   const features = useFeatureFlags();
@@ -151,9 +136,18 @@ export function ActivePreviewsPanel() {
               </Table.Td>
               <Table.Td>
                 {/* Same reason as the state badge above: a relative-age label
-                    ("3 minutes ago") is one phrase and wrapping it is never right. */}
+                    ("3 minutes ago") is one phrase and wrapping it is never right.
+
+                    The local `formatAge` ladder this used to call is DELETED — the
+                    shared `compactRelativeAgeOf` is the only one now. Three labels
+                    moved: sub-minute reads `now` (was `just now`), 7+ days reads
+                    `1w`/`2mo`/`1y` (was an unbounded `12d`/`400d`), and a FUTURE
+                    timestamp reads `now` rather than `—`, because DB-written times
+                    rendered against a browser clock are a few seconds ahead all the
+                    time and `—` made ordinary skew look like missing data. Absence
+                    still reads `—`. */}
                 <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
-                  {formatAge(p.updatedAt)}
+                  {compactRelativeAgeOf(p.updatedAt)}
                 </Text>
               </Table.Td>
               <Table.Td>

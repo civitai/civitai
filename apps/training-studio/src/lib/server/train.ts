@@ -1,10 +1,11 @@
 // Server half of the training writes: env trace mode + per-user signal callbacks, delegating to the
 // client-safe builders in $lib/train-core (shared with the web-component backend).
 import { env } from '$env/dynamic/private';
+import { logToAxiom, safeError } from './axiom';
 import { orchestratorClient } from './orchestrator';
 import { workflowSignalCallbacks } from './signals';
 import * as core from '$lib/train-core';
-import type { ContinueOpts, TrainingRunInput } from '$lib/train-core';
+import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
 
@@ -19,11 +20,22 @@ export function submitTrainingBatch(
   token: string,
   runs: TrainingRunInput[] | undefined,
   userId: number
-): Promise<string[]> {
+): Promise<SubmittedBatch> {
   return core.submitTrainingBatch(orchestratorClient(token), runs, {
     callbacks: workflowSignalCallbacks(userId),
     traceMode: TRACE_MODE,
-    onRunError: (err) => console.warn('[training-studio] submitTraining failed', err),
+    onRunError: (err, runIndex) =>
+      void logToAxiom({
+        name: 'training-studio-submit',
+        type: 'error',
+        message: 'submitTraining failed',
+        userId,
+        runIndex,
+        runCount: runs?.length,
+        status: err instanceof core.TrainingSubmitError ? err.status : undefined,
+        reason: core.submitFailureReason(err),
+        ...(err instanceof core.TrainingSubmitError ? {} : { error: safeError(err) }),
+      }),
   });
 }
 
@@ -54,4 +66,8 @@ export function continueTrainingWhatIf(
 /** Rename a training. Per-user — the token only resolves the caller's own workflows. */
 export function renameTraining(token: string, workflowId: string, name: string): Promise<void> {
   return core.renameTraining(orchestratorClient(token), workflowId, name);
+}
+
+export function deleteTraining(token: string, workflowId: string): Promise<void> {
+  return core.deleteTraining(orchestratorClient(token), workflowId);
 }

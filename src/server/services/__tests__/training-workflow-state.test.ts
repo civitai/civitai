@@ -71,6 +71,36 @@ describe('deriveTrainingWorkflowState', () => {
     expect(derived.transactionData).toEqual([{ amount: 500, type: 'debit', accountType: 'blue' }]);
   });
 
+  it('keeps a failed or unavailable sample as an empty slot on a training step', () => {
+    const derived = deriveTrainingWorkflowState(
+      {
+        id: 'wf-2',
+        steps: [
+          {
+            $type: 'training',
+            metadata: { modelFileId: MODEL_FILE_ID },
+            output: {
+              epochs: [
+                {
+                  epochNumber: 1,
+                  model: { url: 'https://blob/e1.safetensors', available: true },
+                  samples: [
+                    { url: null },
+                    { url: 'https://blob/s2.jpeg', available: true },
+                    { url: 'https://blob/s3.jpeg', available: false },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      } as unknown as Workflow,
+      'succeeded' as never
+    );
+
+    expect(derived.epochs[0].sampleImages).toEqual(['', 'https://blob/s2.jpeg', '']);
+  });
+
   it('lets moderation override the workflow status', () => {
     expect(
       deriveTrainingWorkflowState(

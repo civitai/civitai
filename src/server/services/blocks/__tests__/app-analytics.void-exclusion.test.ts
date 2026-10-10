@@ -170,7 +170,30 @@ const VOIDED_SELF_F: Row = {
   buzzAmount: 23,
   attributedAt: new Date('2026-06-06T09:00:00Z'),
 };
-/** THE PRIVATE RUN. `manual_review` is the reason a private-run generation is voided with. */
+/**
+ * A `manual_review`-voided row.
+ *
+ * ⚠️ LABELLED "THE PRIVATE RUN" UNTIL THE WRITE-SIDE CHANGE, AND THAT IS NO LONGER WHAT IT
+ * COVERS. A private run now writes NO row, so this fixture can no longer be produced by one.
+ *
+ * 🔴 NOTHING ELSE PRODUCES IT EITHER — SAY SO RATHER THAN SUPPLYING A REASON. A previous
+ * correction claimed two live sources: historical private runs, and `backpay.service.ts`
+ * writing `status: 'held', voidedReason: 'manual_review'`. BOTH ARE FALSE. The flag has
+ * been base-off with no rollout for its whole life, so no private run ever wrote a row;
+ * and backpay writes `blockSubscriptionAttribution` — a DIFFERENT TABLE — with
+ * `status: 'held'`, which this file's `status = 'voided'` filter would not exclude anyway.
+ * That claim refuted itself: a `held` write cannot produce a `VOIDED` fixture.
+ *
+ * ✅ THE REASON THIS FIXTURE STILL EARNS ITS PLACE, which is NOT the one that was written:
+ * it proves the denylist excludes a voided row WHATEVER its `voidedReason` — i.e. that the
+ * predicate keys on `status` and not on the reason. Every other voided fixture here is
+ * `self_spend`, so without this one an implementation that narrowed to
+ * `voidedReason: 'self_spend'` would stay green. That is a live regression it catches, and
+ * it does not depend on any producer existing.
+ *
+ * 🔴 What it must NOT be read as is coverage of the write-side exclusion; nothing here
+ * exercises that. `buzz-attribution.private-run-void.test.ts` owns it.
+ */
 const VOIDED_REVIEW_G: Row = {
   appBlockId: OWNED_ID,
   status: VOIDED,
@@ -475,9 +498,19 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     expect(after).toEqual(before);
   });
 
-  it('[REG] a private run (voided/manual_review) is not counted and its Buzz is not summed', async () => {
-    // 🔴 CALLED OUT SEPARATELY BECAUSE IT IS THE ROW THE FEATURE EXISTS FOR. Its day collides
-    // with a surviving row's, so a bucket-level leak is visible rather than appended.
+  it('[REG] a manual_review-voided row is not counted and its Buzz is not summed', async () => {
+    // 🔴 CALLED OUT SEPARATELY BECAUSE ITS DAY COLLIDES with a surviving row's, so a
+    // bucket-level leak is visible rather than appended.
+    //
+    // ⚠️ NAMED "a private run (voided/manual_review)" until the write-side change. A
+    // private run writes no row now, and NOTHING ELSE writes this value to this table
+    // either — see the fixture's own docblock above, which retracts the two producers an
+    // earlier correction claimed (historical private runs; `backpay.service.ts`, which
+    // writes a different table with `status: 'held'`). 🔴 THIS COMMENT ASSERTED BOTH OF
+    // THEM 330 LINES BELOW THE DOCBLOCK THAT RETRACTED THEM, so the file contradicted
+    // itself; a sweep that stops at the site you were editing is how that happens.
+    // The assertion is unchanged and still correct: it pins that the denylist keys on
+    // `status`, whatever the `voidedReason`.
     rows = [...SURVIVING, VOIDED_REVIEW_G];
     const a = await analytics();
     expect(a.runs.count).toBe(7);

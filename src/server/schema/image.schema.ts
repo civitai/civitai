@@ -21,6 +21,7 @@ import {
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { usernameSchema } from '~/shared/zod/username.schema';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -240,18 +241,43 @@ export const imageSchema = z.object({
   postId: z.number().nullish(),
   modelVersionId: z.number().nullish(),
   type: z.enum(MediaType).default(MediaType.image),
-  metadata: z.record(z.string(), z.any()).optional(),
+  metadata: z
+    .record(z.string(), z.any())
+    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
+    .optional(),
   externalDetailsUrl: z.url().optional(),
   toolIds: z.number().array().optional(),
   techniqueIds: z.number().array().optional(),
   index: z.number().optional(),
 });
 
-export const comfylessImageSchema = imageSchema.extend({
+/**
+ * The image fields a client may send. `id`, `postId` and `index` are server-owned `Image`
+ * columns: server code decides an image's row id, the post it belongs to and its position
+ * there, and assigns them explicitly at the write. Route inputs use this (or
+ * `imageReferenceInputSchema`); `imageSchema` is for server-internal callers.
+ */
+export const imageInputSchema = imageSchema.omit({ id: true, postId: true, index: true });
+export type ImageInput = z.infer<typeof imageInputSchema>;
+
+/**
+ * `imageInputSchema` plus an optional `id` naming an EXISTING row, for routes that let a
+ * client keep or link an image it already has (a cover it is re-saving, a bounty image it is
+ * keeping). The route decides whether the caller may use that row; the id is never written
+ * as a new row's primary key.
+ */
+export const imageReferenceInputSchema = imageInputSchema.extend({
+  id: z.number().int().positive().optional(),
+});
+export type ImageReferenceInput = z.infer<typeof imageReferenceInputSchema>;
+
+/** A client-proposed position within a post. */
+export const imagePositionSchema = z.number().int().min(0);
+
+export const comfylessImageSchema = imageReferenceInputSchema.extend({
   meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
 });
 
-export type ImageUploadProps = z.infer<typeof imageSchema>;
 export type ImageMetaProps = z.infer<typeof imageMetaSchema> & Record<string, unknown>;
 
 export const imageUpdateSchema = z.object({
@@ -432,6 +458,9 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hidden: z.boolean().optional(),
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
+    // The viewer's level before a model gallery's cap narrows `browsingLevel`. A
+    // sponsored post is served at this and the cap frozen when its host accepted.
+    preCapBrowsingLevel: z.number().int().min(0).optional(),
     modelVersionId: z.number().optional(),
     // Filter the gallery to posts linked to a single Model3D
     // (Post.model3dId). Resolved server-side into a postIds prefilter so the
@@ -628,7 +657,7 @@ export type SetVideoThumbnailInput = z.infer<typeof setVideoThumbnailSchema>;
 export const setVideoThumbnailSchema = z.object({
   imageId: z.number(),
   frame: z.number().nullable(),
-  customThumbnail: imageSchema.nullish(),
+  customThumbnail: imageInputSchema.nullish(),
   postId: z.number().optional(),
 });
 
@@ -653,4 +682,8 @@ export const toggleImageFlagSchema = z.object({
 });
 
 export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
-export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema);
+export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema).extend({
+  publishedOnly: z.boolean().optional(),
+  /** With publishedOnly: also the caller's unpublished media from the crucible entry modal. */
+  includeEntryDrafts: z.boolean().optional(),
+});

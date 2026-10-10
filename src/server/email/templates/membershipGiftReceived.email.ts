@@ -36,12 +36,12 @@ export const membershipGiftReceivedEmail = createEmail({
         </p>
         ${note}
         <p>
-          It's already active on your account — nothing to do but enjoy it. When the gifted months
-          run out your membership simply ends; you won't be charged unless you choose to keep it.
+          It's waiting for you on your membership page. Accept it whenever you like — you'll see
+          exactly what it does for your account before you do.
         </p>
       `,
-      btnLabel: 'View My Membership',
-      btnUrl: `${getBaseUrl()}/user/membership`,
+      btnLabel: 'See My Gift',
+      btnUrl: `${getBaseUrl()}/user/membership#membership-gifts`,
     });
   },
   text({ username, tier, months, from, message }: MembershipGiftReceivedData) {
@@ -49,7 +49,7 @@ export const membershipGiftReceivedEmail = createEmail({
     return `Hi ${username}, ${describeGifter(from)} gifted you ${describeGift({
       tier,
       months,
-    })} on Civitai!${note} It's already active on your account. View it at ${getBaseUrl()}/user/membership`;
+    })} on Civitai!${note} It's waiting for you. Accept it at ${getBaseUrl()}/user/membership#membership-gifts`;
   },
   testData: async () => ({
     to: 'test@tester.com',

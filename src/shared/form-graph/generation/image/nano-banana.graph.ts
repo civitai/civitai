@@ -1,25 +1,32 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SEED, aspectRatioDef, boolDef, type AspectRatioOption } from '../defs';
+import {
+  optionFallback,
+  img2imgImages,
+  SEED,
+  aspectRatioDef,
+  boolDef,
+  type AspectRatioOption,
+} from '../defs';
 import { versionModeOf, familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Nano Banana (standard / pro / v2 / v2 lite), ported from
- * `nano-banana-graph.ts`. Modes by version id: standard is seed-only, pro adds
+ * Nano Banana (standard / pro / v2 / v2 lite). Modes by version id: standard is
+ * seed-only, pro adds
  * negative prompt + resolution tiers, v2 swaps the negative prompt for a
- * web-search toggle, v2 lite is aspect ratio + seed at 1K.
+ * web-search toggle, v2 lite is aspect ratio + seed at 1K. v2.1 keeps the
+ * resolution tiers, takes no seed or web search, and adds the extreme ratios.
  */
 
-// ---- copied from nano-banana-graph.ts / version-ids.ts ----------------------
-
-export type NanoBananaMode = 'standard' | 'pro' | 'v2' | 'v2lite';
+export type NanoBananaMode = 'standard' | 'pro' | 'v2' | 'v2lite' | 'v21';
 
 export const nanoBananaVersionIds = {
   standard: 2154472,
   pro: 2436219,
   v2: 2725610,
   v2lite: 3086021,
+  v21: 3390330,
 } as const;
 
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
@@ -30,6 +37,7 @@ const nanoBananaModeVersionOptions = [
   { label: 'Pro', value: nanoBananaVersionIds.pro },
   { label: 'V2', value: nanoBananaVersionIds.v2 },
   { label: 'V2 Lite', value: nanoBananaVersionIds.v2lite },
+  { label: 'V2.1', value: nanoBananaVersionIds.v21 },
 ];
 
 const nanoBananaBaseAspectRatios: AspectRatioOption[] = [
@@ -45,22 +53,33 @@ const nanoBananaBaseAspectRatios: AspectRatioOption[] = [
   { label: '9:16', value: '9:16', width: 1080, height: 1920 },
 ];
 
+/** v2.1 adds the extreme ratios at either end, on the same 1080 short side. */
+const nanoBanana21AspectRatios: AspectRatioOption[] = [
+  { label: '8:1', value: '8:1', width: 8640, height: 1080 },
+  { label: '4:1', value: '4:1', width: 4320, height: 1080 },
+  ...nanoBananaBaseAspectRatios,
+  { label: '9:21', value: '9:21', width: 1080, height: 2520 },
+  { label: '1:4', value: '1:4', width: 1080, height: 4320 },
+  { label: '1:8', value: '1:8', width: 1080, height: 8640 },
+];
+
 const nanoBananaPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
 const resolutionOptions = ['1K', '2K', '4K'] as const;
 
 const resolutionMultiplier: Record<string, number> = { '1K': 1, '2K': 2, '4K': 4 };
 
-function getNanoBananaAspectRatios(resolution: string): AspectRatioOption[] {
+function getNanoBananaAspectRatios(
+  resolution: string,
+  base: AspectRatioOption[] = nanoBananaBaseAspectRatios
+): AspectRatioOption[] {
   const multiplier = resolutionMultiplier[resolution] ?? 1;
-  return nanoBananaBaseAspectRatios.map((ar) => ({
+  return base.map((ar) => ({
     ...ar,
     width: ar.width * multiplier,
     height: ar.height * multiplier,
   }));
 }
-
-// ---- end of nano-banana-graph.ts copies -------------------------------------
 
 type NanoBananaModeExt = FamilyExt & { model?: unknown };
 
@@ -68,6 +87,7 @@ const RESOLUTION = {
   input: z.enum(resolutionOptions).optional(),
   output: z.enum(resolutionOptions),
   default: '1K' as (typeof resolutionOptions)[number],
+  correct: optionFallback(resolutionOptions, '1K' as (typeof resolutionOptions)[number]),
   meta: { options: resolutionOptions.map((r) => ({ label: r, value: r })) },
 };
 
@@ -75,6 +95,14 @@ const RESOLUTION = {
 const AR = defFamily((resolution: string) =>
   aspectRatioDef({
     options: getNanoBananaAspectRatios(resolution),
+    default: '1:1',
+    priorityOptions: nanoBananaPriorityRatios,
+  })
+);
+
+const AR21 = defFamily((resolution: string) =>
+  aspectRatioDef({
+    options: getNanoBananaAspectRatios(resolution, nanoBanana21AspectRatios),
     default: '1:1',
     priorityOptions: nanoBananaPriorityRatios,
   })
@@ -104,12 +132,17 @@ const v2lite = defineGraph<NanoBananaModeExt>()
   )
   .field('seed', SEED);
 
-/** Tagged: v1's `nanoBananaMode` computed becomes the branch key. */
+const v21 = defineGraph<NanoBananaModeExt>()
+  .field('resolution', RESOLUTION)
+  .field('aspectRatio', ({ resolution }) => AR21(resolution));
+
+/** Tagged: the picked key is stamped into state as `nanoBananaMode`. */
 const modes = branch('nanoBananaMode', (ext: NanoBananaModeExt) => nanoBananaModeOf(ext.model), {
   standard,
   pro,
   v2,
   v2lite,
+  v21,
 });
 
 export const nanoBanana = defineGraph<FamilyExt>({ scope: familyScope })

@@ -14,9 +14,14 @@ import {
   ModelEngagementType,
   TagEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { usernameSchema } from '~/shared/zod/username.schema';
+import {
+  usernameSchema,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+} from '~/shared/zod/username.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   commaDelimitedEnumArray,
   commaDelimitedNumberArray,
@@ -55,8 +60,8 @@ export const userPageQuerySchema = z
   });
 
 export const usernameInputSchema = usernameSchema
-  .min(3, 'Your username must be at least 3 characters long')
-  .max(25, 'Your username must be at most 25 characters long')
+  .min(USERNAME_MIN_LENGTH, `Your username must be at least ${USERNAME_MIN_LENGTH} characters long`)
+  .max(USERNAME_MAX_LENGTH, `Your username must be at most ${USERNAME_MAX_LENGTH} characters long`)
   .transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({
@@ -89,7 +94,10 @@ export const profilePictureSchema = z.object({
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
-  metadata: z.looseObject({}).optional(),
+  metadata: z
+    .looseObject({})
+    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
+    .optional(),
   type: z.enum(MediaType).default(MediaType.image),
 });
 
@@ -341,6 +349,7 @@ export const userSettingsSchema = z.object({
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -417,6 +426,7 @@ export const setUserSettingsInput = z.object({
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
   hideStickerBook: z.boolean().optional(),
   hidePurchasedStickers: z.boolean().optional(),

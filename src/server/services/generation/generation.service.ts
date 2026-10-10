@@ -13,7 +13,7 @@ import { uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
-import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
+import { wanBaseModelGroupIdMap } from '~/shared/generation/version-ids';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -23,6 +23,8 @@ import type {
   GenerationStatusMode,
   GetGenerationDataSchema,
   ResolveImageMetaInput,
+  SetEvictableInput,
+  SetAdditionalResourceFeeWaivedInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -58,7 +60,7 @@ import {
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
-} from '~/shared/data-graph/generation/gates';
+} from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
   generatorMessageSchema,
@@ -69,9 +71,12 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  isAdditionalResourceFeeWaived,
+  isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
 import { pickPreviewImage } from '~/shared/utils/resource-preview';
+import { isCreatorTipEligible } from '~/shared/utils/creator-tip';
 import { isDefined } from '~/utils/type-guards';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
@@ -81,6 +86,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
 import {
   getBaseModelEngine,
   getBaseModelMediaType,
@@ -743,12 +749,7 @@ export async function resolveTestingAccess(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<boolean> {
-  if (user.isModerator) return true;
-  if (!user.id) return false;
-  return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, String(user.id), {
-    userId: String(user.id),
-    isModerator: 'false',
-  });
+  return isFliptOnForTesters(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, user);
 }
 
 type EntrySchema<T> = { safeParse(value: unknown): { success: boolean; data?: T } };
@@ -979,47 +980,110 @@ export async function getGenerationConfig(
   };
 }
 
+async function updateModelVersionFlags(id: number, flags: Prisma.Sql) {
+  // One atomic statement, never a read-modify-write: `flags` holds several bits,
+  // and a round trip would clobber a concurrent write to the others.
+  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>(Prisma.sql`
+    UPDATE "ModelVersion"
+    SET flags = ${flags}
+    WHERE id = ${id}
+    RETURNING "modelId", flags
+  `);
+  if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
+
+  // The flags are baked into cached version/model rows (resourceDataCache,
+  // dataForModelsCache, search index), so bust them the same way a coverage
+  // toggle does — otherwise the change wouldn't surface until TTL expiry.
+  await bustMvCache(id, updated.modelId);
+
+  return updated.flags;
+}
+
 export async function toggleGenerationDisabled({
   id,
   isModerator,
 }: GetByIdInput & { isModerator?: boolean }) {
   if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`flags # ${ModelVersionFlag.GenerationDisabled}`
+  );
+  return { id, generationDisabled: isGenerationDisabled(flags) };
+}
 
-  // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
-  // `flags` is shared with NotDerivative, so a read-modify-write would clobber a
-  // concurrent write to those other bits.
-  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
-    UPDATE "ModelVersion"
-    SET flags = flags # ${ModelVersionFlag.GenerationDisabled}
-    WHERE id = ${id}
-    RETURNING "modelId", flags
-  `;
-  if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
+// Sets rather than toggles: a flip sent from a stale menu would un-pin a base model.
+export async function setEvictable({
+  id,
+  evictable,
+  isModerator,
+}: SetEvictableInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    evictable
+      ? Prisma.sql`flags & ~(${ModelVersionFlag.NotEvictable}::int)`
+      : Prisma.sql`flags | ${ModelVersionFlag.NotEvictable}`
+  );
+  return { id, evictable: isEvictable(flags) };
+}
 
-  // The flag is baked into cached version/model rows (resourceDataCache,
-  // dataForModelsCache, search index), so bust them the same way a coverage
-  // toggle does — otherwise the change wouldn't surface until TTL expiry.
-  await bustMvCache(id, updated.modelId);
-
-  return { id, generationDisabled: isGenerationDisabled(updated.flags) };
+export async function setAdditionalResourceFeeWaived({
+  id,
+  waived,
+  isModerator,
+}: SetAdditionalResourceFeeWaivedInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    waived
+      ? Prisma.sql`flags | ${ModelVersionFlag.NoAdditionalResourceFee}`
+      : Prisma.sql`flags & ~(${ModelVersionFlag.NoAdditionalResourceFee}::int)`
+  );
+  return { id, waived: isAdditionalResourceFeeWaived(flags) };
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
+
+// The one rule both the orchestrator's charge (mini endpoint) and the generator's cost badge read.
+// Callers decide what a missing file size means; they disagree today.
+export function isAdditionalResourceFeeExempt({
+  modelType,
+  featured,
+  versionFlags,
+  fileSizeKB,
+}: {
+  modelType: ModelType;
+  featured: boolean;
+  versionFlags: number;
+  fileSizeKB?: number;
+}) {
+  return (
+    featured ||
+    isAdditionalResourceFeeWaived(versionFlags) ||
+    FREE_RESOURCE_TYPES.includes(modelType) ||
+    (!!fileSizeKB && fileSizeKB <= 10 * 1024)
+  );
+}
+
 export async function getShouldChargeForResources(
   args: {
     modelType: ModelType;
     modelId: number;
     fileSizeKB?: number;
+    versionFlags: number;
   }[]
 ) {
   const featuredModels = await getFeaturedModels();
   return args.reduce<Record<string, boolean>>(
-    (acc, { modelType, modelId, fileSizeKB }) => ({
+    (acc, { modelType, modelId, fileSizeKB, versionFlags }) => ({
       ...acc,
       [modelId]: fileSizeKB
-        ? !FREE_RESOURCE_TYPES.includes(modelType) &&
-          !featuredModels.map((fm) => fm.modelId).includes(modelId) &&
-          fileSizeKB > 10 * 1024
+        ? !isAdditionalResourceFeeExempt({
+            modelType,
+            featured: featuredModels.some((fm) => fm.modelId === modelId),
+            versionFlags,
+            fileSizeKB,
+          })
         : false,
     }),
     {}
@@ -1306,9 +1370,10 @@ export async function getResourceData(
     // handed us — and on the cache's fail-open path one origin lookup is single-flighted and its
     // record shared by every caller that joined that window. `canGenerate` is a PER-USER decision,
     // so mutating in place applies this user's gate outcome to a concurrent user's payload.
-    let model = item.model;
+    const { userFlags: ownerFlags, ...ownerlessModel } = item.model;
+    let model = ownerlessModel;
     if (!canGenerate) {
-      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = item.model;
+      const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = ownerlessModel;
       model = rest;
     }
 
@@ -1326,6 +1391,7 @@ export async function getResourceData(
       epochNumber,
       isOwnedByUser,
       isPrivate,
+      tipsEnabled: isCreatorTipEligible({ ownerId: item.model.userId, ownerFlags }),
     };
   }
 
@@ -1392,15 +1458,12 @@ export async function getResourceData(
   ) {
     const generationFile = getGenerationFile(modelFiles);
     const fileSizeKB = generationFile?.sizeKB;
-    const featured = !!featuredModels.find((x) => x.modelId === resource.model.id);
-    let additionalResourceCost = true;
-    if (
-      featured ||
-      FREE_RESOURCE_TYPES.includes(resource.model.type) ||
-      (fileSizeKB && fileSizeKB <= 10 * 1024)
-    ) {
-      additionalResourceCost = false;
-    }
+    const additionalResourceCost = !isAdditionalResourceFeeExempt({
+      modelType: resource.model.type,
+      featured: featuredModels.some((x) => x.modelId === resource.model.id),
+      versionFlags: resource.flags,
+      fileSizeKB,
+    });
 
     const epochDetails = getEpochDetails(resource, modelFiles);
 

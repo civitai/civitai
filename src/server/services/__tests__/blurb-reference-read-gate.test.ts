@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as FliptClient from '~/server/flipt/client';
@@ -32,6 +34,11 @@ const {
   isFlipt: vi.fn(),
 }));
 
+// Pinned per test: 'off' by default keeps the profanity tests about the path they were written for.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(),
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt,
@@ -115,6 +122,7 @@ const moderatorUpsert = (input: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(getTextScanMode).mockResolvedValue('off');
   isFlipt.mockResolvedValue(true);
   throwOnBlockedLinkDomain.mockResolvedValue(undefined);
   submitModelTextModeration.mockResolvedValue(undefined);

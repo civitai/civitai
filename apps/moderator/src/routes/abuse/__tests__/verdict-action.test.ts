@@ -350,13 +350,26 @@ describe('the board executes nothing', () => {
       '$lib/abuse-verdicts',
       // Number formatting, and nothing else: `format.ts` imports nothing at all.
       '$lib/format',
+      // The shared classifier for WHY a moderator-database read failed — a pure function over an
+      // error, no imports.
+      '$lib/moderator-db-status',
       '$lib/server/abuse-detection.service',
       '$lib/server/query',
       './$types',
       './abuse-detection-tables',
       './abuse-verdicts',
+      // The shared `Decision` shape and `collapseRulings`, which `abuse-decisions.ts` now builds on
+      // — a pure module with no imports at all.
+      './decisions',
       './moderator-db',
       '@civitai/moderation',
+      // A TYPE, and only a type: `BadgeVariant` is `VariantProps<typeof badgeVariants>['variant']`,
+      // so `finding-presentation.ts` names the Badge variants the board may ask for instead of
+      // hand-copying that union. `import type` is erased before anything runs, and the package it
+      // comes from is presentation primitives — no client, no session, no service, nothing that
+      // could reach an account. Added deliberately, which is what a ledger that fails on GROWTH is
+      // for; a VALUE import from this package would be a different question and is not this.
+      '@civitai/ui/components/ui/badge/index.js',
       '@sveltejs/kit',
       // The query builder itself, for the raw `pg_attribute` capability probe in
       // `recordAbuseRun` and for the two transaction types it is written against. A SQL compiler

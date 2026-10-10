@@ -15,6 +15,7 @@ import {
   CLI_INSTALL_NPM,
   CLI_RUN_COMMAND,
 } from '~/components/Apps/cliCommands';
+import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
 import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
@@ -26,11 +27,29 @@ import {
   type AppsBuildState,
 } from '~/components/Apps/appsBuildState';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import type { TrackActionInput } from '~/server/schema/track.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * The funnel steps, DERIVED from the schema that validates them rather than retyped.
+ *
+ * 🔴 THIS USED TO BE A HAND-WRITTEN UNION, TWO LINES FROM A SIBLING FIELD THAT WAS ALREADY
+ * DERIVED (`AppsBuildState`). One field of the pair followed its source and the other did
+ * not, which is how they drift. This change paid for it directly: adding `agent_prompt_copy`
+ * meant editing the same set in three places. `track.schema.ts` is the authority — a value
+ * it rejects is dropped with a 200, so a local union that is WIDER than the schema fails
+ * silently in production and nowhere in CI.
+ *
+ * `agent_prompt_copy` is deliberately its own step and not folded into `cli_copy`: the page
+ * offers two routes into building an app, and which one developers take is the comparison
+ * the split exists to keep answerable. `state` does not separate them — both fire in all
+ * three states.
+ */
+type AppsBuildAction = Extract<TrackActionInput, { type: 'AppsBuild_Action' }>['details']['action'];
 
 /** Where both "start an app" affordances go. `/apps/submit` keeps its route. */
 const CREATE_FLOW_HREF = '/apps/submit';
@@ -128,7 +147,7 @@ export function AppsBuildBody() {
   });
 
   const track = useCallback(
-    (action: 'view' | 'request_access' | 'cli_copy' | 'create_entry', forState: AppsBuildState) => {
+    (action: AppsBuildAction, forState: AppsBuildState) => {
       trackAction({ type: 'AppsBuild_Action', details: { action, state: forState } }).catch(
         () => undefined
       );
@@ -189,6 +208,12 @@ export function AppsBuildBody() {
   }, [settled, state, track]);
 
   const onCopyCommand = useCallback(() => track('cli_copy', state), [track, state]);
+  // 🔴 FIRED FROM HERE, NOT FROM THE CARD. `AgentOnboardingCard` is props-only by
+  // construction (it is mounted inside `GetStartedBody`, whose suite renders it with no
+  // providers), so the tracker cannot live in it — the same reason `onCopyCommand` is a
+  // callback. And it cannot fire under the skeleton: every mount of the card is inside a
+  // branch below the `!settled` early return.
+  const onCopyAgentPrompt = useCallback(() => track('agent_prompt_copy', state), [track, state]);
   const onCreateEntry = useCallback(() => track('create_entry', state), [track, state]);
 
   // 🔴 THE UNSETTLED WINDOW RENDERS NEITHER B NOR C, AND THAT IS THE BUG FIX. `state` is
@@ -248,7 +273,7 @@ export function AppsBuildBody() {
           </Button>
         </Group>
         <MyAppsBody />
-        <BuildResourcesStrip onCopyCommand={onCopyCommand} />
+        <BuildResourcesStrip onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
       </Stack>
     );
   }
@@ -269,6 +294,12 @@ export function AppsBuildBody() {
           <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
           <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
         </Stack>
+        {/*
+          The alternative route, framed as one: the three commands above are the manual path,
+          this is the same destination handed to an agent. `inline` tone so it sits BESIDE
+          the quickstart rather than competing with the "Ship your first app" heading.
+        */}
+        <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" />
         <Group>
           <Button
             component={Link}
@@ -288,7 +319,7 @@ export function AppsBuildBody() {
   // session and no query, so it is what a logged-out admitted viewer sees.
   return (
     <Stack gap="xl" data-testid="apps-build-pitch">
-      <GetStartedBody onCopyCommand={onCopyCommand} />
+      <GetStartedBody onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
       <Alert
         color="blue"
         variant="light"
@@ -324,8 +355,21 @@ export function AppsBuildBody() {
  * are the thing they come back for — so the resources live on, collapsed, below the list.
  * Collapsed by default and cheap: `GetStartedBody` is not mounted here at all, only the
  * three commands, so the workbench does not pay for the hero image.
+ *
+ * 🔴 THE AGENT CARD IS MOUNTED HERE WITH `animated={false}`, AND "CHEAP" IS WHY. Mantine's
+ * `Collapse` keeps its children MOUNTED at zero height, so an animated card in here would
+ * run a 4s infinite shimmer and a caret blink behind a panel nobody has opened — and would
+ * have finished its entrance long before the panel revealed it, so the animation could never
+ * be seen even once. Static also means no `LazyMotion`, so the workbench does not pull the
+ * animation chunk at all. See `AgentOnboardingCard`'s `animated` prop.
  */
-function BuildResourcesStrip({ onCopyCommand }: { onCopyCommand: () => void }) {
+function BuildResourcesStrip({
+  onCopyCommand,
+  onCopyAgentPrompt,
+}: {
+  onCopyCommand: () => void;
+  onCopyAgentPrompt: () => void;
+}) {
   const [opened, { toggle }] = useDisclosure(false);
   return (
     <Stack gap="xs">
@@ -355,6 +399,7 @@ function BuildResourcesStrip({ onCopyCommand }: { onCopyCommand: () => void }) {
           <CopyableCommand command={CLI_INSTALL_NPM} onCopy={onCopyCommand} />
           <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
           <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
+          <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="inline" animated={false} />
         </Stack>
       </Collapse>
     </Stack>

@@ -179,6 +179,17 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // PAGE_FORBIDDEN_SCOPES, like tipping): the price is review-gated and
   // hard-capped per purchase, and a per-user daily ceiling bounds the day.
   'goods:purchase:self': SKIP_OAUTH_CHECK,
+  // apps:store:items:write — publish the VIEWER'S OWN app items into the App Store as
+  // sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/*`).
+  //
+  //   - SENSITIVE ⇒ the manifest must justify it: it writes something every store visitor
+  //     sees, under the viewer's name.
+  //   - CONSENT-EXEMPT, like `apps:storage:shared:write`: the real gates are server-side and
+  //     per call, and a consent-gated scope would be dropped from tokens before any of them
+  //     could run.
+  //   - A non-anon subject is required (enforced in `enforceContextBinding`).
+  //   - Minted by NO dev or review allowlist, so it only reaches an approved app's token.
+  'apps:store:items:write': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
@@ -643,7 +654,8 @@ export function isKnownBlockScope(scope: string): scope is BlockScopeString {
  *   - read the viewer's Buzz balance   (`buzz:read:self`)
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
  *   - write data OTHER users see       (`apps:storage:shared:write`,
- *                                       `posts:write:self`)
+ *                                       `posts:write:self`,
+ *                                       `apps:store:items:write`)
  *
  * This set does two things. (1) PRESENTATION — it drives the distinct,
  * warning-styled emphasis wherever scopes are surfaced. (2) ENFORCEMENT — it
@@ -675,6 +687,8 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   // (`goods:read:self`) is not sensitive — it returns only what the calling app
   // already sold to this viewer.
   'goods:purchase:self',
+  // Writes store cards every visitor sees, under the viewer's name.
+  'apps:store:items:write',
 ]);
 
 export function isSensitiveBlockScope(scope: string): boolean {

@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -56,7 +56,11 @@ function sourceFiles(): [string, string][] {
       // ordinary spelling `src/server/utils/image-scan-url.test.ts` would have joined the
       // guard-consumer set and reddened the set-equality row for no defect at all.
       if (/\.(test|spec|browser\.test)\.tsx?$/.test(entry)) continue;
-      out.push([relative(SRC, full), readFileSync(full, 'utf8')]);
+      // Posix separators: every comparison below is written with `/`, so on Windows
+      // `relative()`'s backslashes matched none of them and 12 of this file's 13 rows failed —
+      // red for everyone locally, which masks a real failure instead of showing one. Same bug
+      // the ad-SDK callback guard had.
+      out.push([relative(SRC, full).split(sep).join('/'), readFileSync(full, 'utf8')]);
     }
   };
   walk(SRC);
@@ -84,6 +88,7 @@ const GATED_FUNNELS: [string, string][] = [
     'createImageIngestionRequest + getPerceptualHash',
   ],
   ['server/services/product-badge.service.ts', 'resizeBadgeImage → orchestrator convertImage'],
+  ['server/services/video-dimensions.ts', 'probeVideoDimensions → orchestrator videoMetadata'],
   ['server/services/creator-shop.service.ts', 'validateArtwork → fetch() from the WEB pod'],
   ['server/controllers/user.controller.ts', 'verifyAvatar'],
   ['pages/api/media/ingest/[mediaId].ts', 'the ingest route maps the refusal to a status'],

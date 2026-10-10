@@ -188,7 +188,7 @@ export function resolveWinnerPicks<E extends { userId: number; imageId: number |
  * and put the record and the ledger back into the disagreement this module exists to prevent. Which
  * duplicate survives is payout semantics, not telemetry, and changing it is out of scope here.
  *
- * Lives in this module rather than beside `buildWinnerPayoutTransactions` for a mundane but real
+ * Lives in this module rather than beside `buildWinnerPrizes` for a mundane but real
  * reason: `challenge-funding` is mocked with an explicit export list by 15 test files, so a new
  * export there breaks all of them, while this pure module is imported for real everywhere.
  */

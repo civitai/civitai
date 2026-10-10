@@ -1,3 +1,4 @@
+import { getPrimaryShade, useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import type { EventInput } from '~/server/schema/event.schema';
 import dayjs from '~/shared/utils/dayjs';
@@ -9,9 +10,11 @@ export const useQueryEvent = ({ event }: EventInput) => {
     { event },
     { enabled: !!event }
   );
+  // The reads below serve a donation event's page only; a scored event's page makes its own.
+  const donationEvent = !!eventData && !eventData.scored;
   const { data: teamScores = [], isLoading: loadingScores } = trpc.event.getTeamScores.useQuery(
     { event },
-    { enabled: !!event, trpc: { context: { skipBatch: true } } }
+    { enabled: donationEvent, trpc: { context: { skipBatch: true } } }
   );
   const ended = eventData && eventData.endDate < new Date();
   const window = ended ? 'day' : 'hour';
@@ -21,20 +24,20 @@ export const useQueryEvent = ({ event }: EventInput) => {
   const { data: teamScoresHistory = [], isLoading: loadingHistory } =
     trpc.event.getTeamScoreHistory.useQuery(
       { event, window, start },
-      { enabled: !!eventData, trpc: { context: { skipBatch: true } } }
+      { enabled: donationEvent, trpc: { context: { skipBatch: true } } }
     );
   const { data: eventCosmetic, isInitialLoading: loadingCosmetic } =
     trpc.event.getCosmetic.useQuery({ event }, { enabled: !!currentUser && !!event });
   const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery(
     { event },
-    { enabled: !!event, trpc: { context: { skipBatch: true } } }
+    { enabled: donationEvent, trpc: { context: { skipBatch: true } } }
   );
   const { data: userRank, isLoading: loadingUserRank } = trpc.event.getUserRank.useQuery(
     { event },
     {
       enabled:
         !!currentUser &&
-        !!event &&
+        donationEvent &&
         eventCosmetic?.available &&
         eventCosmetic?.obtained &&
         eventCosmetic?.equipped,
@@ -42,7 +45,7 @@ export const useQueryEvent = ({ event }: EventInput) => {
   );
   const { data: partners, isLoading: loadingPartners } = trpc.event.getPartners.useQuery(
     { event },
-    { enabled: !!event, trpc: { context: { skipBatch: true } } }
+    { enabled: donationEvent, trpc: { context: { skipBatch: true } } }
   );
 
   return {
@@ -110,3 +113,11 @@ export const useQueryEventContributors = ({ event }: { event: string }) => {
 
   return { contributors, loading: isLoading };
 };
+
+// A team's colour is the Mantine palette named after it; undefined for a team with no palette.
+export function useTeamColor() {
+  const theme = useMantineTheme();
+  const colorScheme = useComputedColorScheme('dark');
+  return (team: string): string | undefined =>
+    theme.colors[team.toLowerCase()]?.[getPrimaryShade(theme, colorScheme)];
+}

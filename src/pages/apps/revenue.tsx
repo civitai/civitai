@@ -39,12 +39,32 @@ export default function AppBlocksDashboardPage() {
   return (
     <>
       <Meta title="Apps Dashboard — Civitai" deIndex />
+      {/*
+        🔴 The `subtitle` below is PINNED WHOLE, normalised, by
+        `src/components/AppBlocks/__tests__/payout-copy-truthfulness.test.ts` — a reword goes
+        red on purpose. The digital-goods sentence was added together with that guard's
+        `SUBTITLE` constant, and the same test now also asserts the goods payout rail really
+        exists; without that half, this page would promise an immediate credit on the strength
+        of prose alone, which is the exact class of claim the guard was written to stop.
+
+        ⚠️ TWO AUTHORING TRAPS, both measured while writing this, both of which fail as a
+        "copy mismatch" that points at the sentence rather than at the real cause:
+          1. Keep the comment OUTSIDE the prop's value. The guard flattens that whole
+             expression to reader-visible text, so a `//` comment inside it is concatenated
+             into the pinned string.
+          2. Do not spell the prop's name followed by an open brace anywhere in this comment.
+             The guard locates the prop by the first occurrence of that exact text, so a
+             mention of it here is found instead of the real one and the comment's own braces
+             get read as the subtitle.
+      */}
       <AppsPageLayout
         title="Apps Dashboard"
         subtitle={
           <>
             Revenue share and analytics for your apps. Confirmed earnings accrue here; automated
-            payouts are not yet enabled. See{' '}
+            payouts are not yet enabled. Digital goods sales are separate: that rail pays out in
+            Buzz at the time of each settled sale rather than accruing here, and the figures shown
+            are your recorded share. See{' '}
             <Anchor component={Link} href="/apps/activity">
               Apps
             </Anchor>{' '}

@@ -1,6 +1,6 @@
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '~/shared/utils/prisma/enums';
 import { creatorCardStatsPreferences, profilePictureSchema } from './user.schema';
@@ -29,6 +29,7 @@ export const ProfileSectionTypeDef = {
   RecentReviews: 'recentReviews',
   Shop: 'shop',
   OnSale: 'onSale',
+  CreatorJourney: 'creatorJourney',
 } as const;
 
 export type ProfileSectionType = (typeof ProfileSectionTypeDef)[keyof typeof ProfileSectionTypeDef];
@@ -72,12 +73,12 @@ export const userProfileUpdateSchema = z.object({
   location: z.string().max(100).nullish(),
   // profileImage: z.string().nullish(),
   // profilePicture: profilePictureSchema.nullish(),
-  coverImage: imageSchema.nullish(),
+  coverImage: imageReferenceInputSchema.nullish(),
   // SFW (civitai.com) overrides. `null` clears the override and re-inherits the
   // field above; an empty string is a deliberate blank on the green domain.
   sfwMessage: z.string().nullish(),
   sfwBio: z.string().nullish(),
-  sfwCoverImage: imageSchema.nullish(),
+  sfwCoverImage: imageReferenceInputSchema.nullish(),
   socialLinks: z
     .array(
       z.object({

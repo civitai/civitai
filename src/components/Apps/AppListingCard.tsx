@@ -173,7 +173,7 @@ function categoryIcon(category: string): Icon {
  * The image branch and the placeholder branch render inside the SAME box, so the
  * `onError` fallback swaps art without ANY reflow.
  */
-function ListingCover({
+export function ListingCover({
   coverUrl,
   category,
   name,

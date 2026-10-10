@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MISSING_MEDIA_PUBLISH_MESSAGE } from '@civitai/shared';
+import type * as ThumbnailCache from '../thumbnail-cache';
 
 /**
  * The write-side guard in the spoke's `resolveIngestionError` — the call site that caused the
@@ -19,9 +20,12 @@ const headObject = vi.fn();
 const recordModActivity = vi.fn();
 const syncSearchIndex = vi.fn();
 const bustCachedObject = vi.fn();
+const invalidateThumbnails = vi.fn();
 
 /** `undefined` reproduces "no such image", so the earlier not-found check owns that case. */
-let imageRow: { postId: number | null; metadata: unknown; url: string } | undefined;
+let imageRow:
+  | { postId: number | null; parentId?: number | null; metadata: unknown; url: string }
+  | undefined;
 
 function chain(record: (calls: Call[]) => void, resolve: (calls: Call[]) => unknown) {
   const calls: Call[] = [];
@@ -84,6 +88,10 @@ vi.mock('../storage', () => ({
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex }));
 vi.mock('../cache', () => ({ bustCachedObject }));
+vi.mock('../thumbnail-cache', async (importOriginal) => ({
+  ...(await importOriginal<typeof ThumbnailCache>()),
+  invalidateThumbnails,
+}));
 
 const { resolveIngestionError } = await import('../ingestion.service');
 
@@ -104,6 +112,7 @@ beforeEach(() => {
   // way; it is not what these cases are about.
   imageRow = {
     postId: null,
+    parentId: 4100,
     metadata: { foo: 'bar' },
     url: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
   };
@@ -152,6 +161,7 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
     });
     expect(syncSearchIndex).toHaveBeenCalledTimes(1);
     expect(bustCachedObject).toHaveBeenCalledTimes(2);
+    expect(invalidateThumbnails).toHaveBeenCalledWith(4242, [4100]);
   });
 
   it('publishes and logs when the probe THREW — inability to consult is not evidence of loss', async () => {

@@ -12,12 +12,13 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
+import { isViewer } from '~/utils/is-viewer';
 
 export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isModerator = currentUser?.isModerator ?? false;
-  const isOwner = currentUser?.id === bounty.user?.id || isModerator;
+  const isOwner = isViewer(currentUser, bounty.user?.id) || isModerator;
   const expired = bounty.expiresAt < new Date();
 
   const { deleteBounty, refundBounty, refunding } = useMutateBounty({ bountyId: bounty.id });

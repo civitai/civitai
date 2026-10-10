@@ -1,4 +1,4 @@
-import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { type ModelVersionTerms, acceptsBlueBuzz, generationPrice } from '@civitai/buzz';
 import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
@@ -314,6 +314,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   // same reason the tier cap is never folded into it. That rule protects an editor, not a button: an
   // owner reading their own model page should see the price a buyer is quoted, like everyone else.
   const displayTerms = saleForViewer?.buyerTerms ?? paidAccessTerms;
+  // Which Buzz the price chips advertise — a sale that takes Blue must not read as Yellow-only.
+  const paidAccessAcceptsBlue = acceptsBlueBuzz(paidAccessTerms);
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
@@ -577,6 +579,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               ? displayTerms.download.price
               : undefined
           }
+          acceptsBlueBuzz={paidAccessAcceptsBlue}
           isLoadingAccess={isLoadingAccess}
           archived={archived}
           onPurchase={() => onPurchase('download')}
@@ -588,7 +591,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
+      <ContainerGrid2.Col
+        span={{ base: 12, sm: 5, md: 4 }}
+        order={{ sm: 2 }}
+        className={classes.sidebarSection}
+        ref={adContainerRef}
+      >
         <Stack>
           {/* Owner-only banner: lists publisher_all_my_models subscriptions
               that would render here so the model owner can opt out of any
@@ -751,6 +759,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             ? generationPrice(displayTerms) || undefined
                             : undefined
                         }
+                        acceptsBlueBuzz={paidAccessAcceptsBlue}
                         onPurchase={() => onPurchase('generation')}
                         fullWidth
                       />
@@ -1168,6 +1177,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       ? paidAccessTerms.download.price
                       : undefined
                   }
+                  acceptsBlueBuzz={paidAccessAcceptsBlue}
                   isLoadingAccess={isLoadingAccess}
                   archived={archived}
                   onPurchase={() => onPurchase('download')}

@@ -92,10 +92,23 @@
      • `border: 1px`      -> nav 259 wide (and 258 with both sides)
      • `padding: 8px`     -> nav 244 wide, left 24
 
-   Measured, with the naive `border: 1px` + `padding: 8px` form actually applied: 15 of the
-   22 tests in that file went red, `navLeft` reading 25 against 16 and `navWidth` 242
+   Measured, with the naive `border: 1px` + `padding: 8px` form actually applied: **21 of
+   the 22** tests in that file go red, `navLeft` reading 25 against 16 and `navWidth` 242
    against 260 (38 against 56 collapsed). That is the guard doing its job, not a stale
-   expectation to update.
+   expectation to update. ⚠️ This line read "15 of the 22" until that file's ledger was
+   converted from pinned literals to route-to-route RELATIONS plus a Container pin; the
+   relational form is MORE sensitive to this mutation, because a surface that eats the
+   aside's content box moves the Container-relative nav edge on every route rather than
+   only disagreeing with a recorded number. Re-measure rather than trusting either figure.
+
+   ⚠️ "MORE SENSITIVE TO THIS MUTATION" IS THE HONEST SCOPE, NOT "STRICTLY MORE SENSITIVE"
+   — a review raised the obvious worry about the conversion, that dropping the absolute
+   `navLeft` literal would let a UNIFORM left shift of the rail satisfy route-to-route
+   equality. It does not, and that was measured rather than argued: planting
+   `marginLeft: 8` on the `<aside>` reds **12 of the 22**, including the cross-state arm's
+   `navLeft` vs `containerLeft` (24 against 16). The absolute edge survives by composition
+   — the Container's own box is pinned to a per-viewport literal and the nav's left edge is
+   pinned to the Container's — rather than by a recorded rail number.
 
    🔴 BUT THE LEDGER DOES NOT FORCE THE `margin`/`padding` PAIR, AND AN EARLIER VERSION OF
    THIS COMMENT CLAIMED IT DID. All four ledger assertions are RECT GEOMETRY. `background`,

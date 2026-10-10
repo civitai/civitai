@@ -14,6 +14,14 @@ import {
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
+// Browser-safe leaf module, imported for the `block_good_purchase.status` domain
+// so the goods READ path spells it exactly as the write path does. Deliberately
+// not an import of `block-goods.service` — that would make the two services
+// mutually aware and pull the Buzz-transaction graph into the reporting layer.
+import { BLOCK_GOOD_PURCHASE_STATUS } from '~/shared/constants/block-goods.constants';
+// The missing-table predicate, imported rather than re-spelled. See
+// `isMissingGoodsTableError` below for why a local copy of it was a live outage.
+import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { observeBlockAuthorFee } from './author-fee';
 import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
@@ -378,25 +386,34 @@ export type RecordSpendAttributionInput = {
   generationPriceIsCap?: boolean | null;
   /**
    * PRIVATE RUN of a delisted / suspended app — from the verified token's
-   * `privateRun` claim. When true the row is written `voided` instead of
-   * `tracked`.
+   * `privateRun` claim. 🔴 When true, **NO ROW IS WRITTEN AT ALL**: the function
+   * returns `{ written: false, row: null }` before the row is built.
    *
-   * 🔴 THE ROW IS STILL WRITTEN, AND THAT IS DELIBERATE. The alternative —
-   * a non-resolving synthetic `appId`, which is how the mod review sandbox
-   * excludes both money rails — would also break per-app storage namespacing,
-   * the `page_<appBlockId>` ban-revocation instance id, and every runtime
-   * metric label. So the real ids are kept and the rail is closed explicitly
-   * here. A voided row preserves the audit trail at zero money cost:
-   * `spendSharePct` and `appOwnerShareCents` are already hardcoded 0 below, so
-   * void-vs-tracked moves no Buzz either way — what it protects is the RUN
-   * COUNT and BUZZ SUM a suspended app's owner can see.
+   * ⚠️ THIS DOCBLOCK DESCRIBED THE OPPOSITE UNTIL THE WRITE-SIDE CHANGE, AND IT IS
+   * THE ONE A CALLER READS WHEN DECIDING WHETHER TO PASS `privateRun` — so the four
+   * claims it made are recorded here rather than silently dropped. It said: "the row
+   * is written `voided` instead of `tracked`"; "🔴 THE ROW IS STILL WRITTEN, AND THAT
+   * IS DELIBERATE"; "a voided row preserves the audit trail at zero money cost"; and
+   * "✅ THE VOID NOW DELIVERS THE PROTECTION". All four are now false. They were
+   * missed by the commit that corrected four sibling claims in other files — the
+   * stale text was three lines above the code that falsified it, which is exactly
+   * where a sweep keyed on the changed hunk does not look.
    *
-   * ✅ THE VOID NOW DELIVERS THE PROTECTION. Both owner-visible reads of this
-   * table -- `app-analytics.service.ts`'s `aggregate` and its raw per-bucket
-   * series -- exclude `status = 'voided'`, so a voided row is neither counted as
-   * a run nor summed into the owner's dashboard. Until that landed, the two
-   * PRE-EXISTING voids (`self_spend`, `internal_owner`) were being counted, which
-   * was the evidence that this marker had no reader; it has one now.
+   * WHAT SURVIVES FROM IT, because it is still true and still load-bearing: the mod
+   * review sandbox's alternative — a non-resolving synthetic `appId` — is deliberately
+   * NOT copied here, because it would also break per-app storage namespacing, the
+   * `page_<appBlockId>` ban-revocation instance id, and every runtime metric label.
+   * The real ids are resolved and the rail is closed by an explicit branch instead.
+   *
+   * NO MONEY MOVES EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded
+   * 0 below, so this was never a payout decision. What it protects is the RUN COUNT
+   * and BUZZ SUM a suspended app's owner can see.
+   *
+   * ⚠️ ONE OBSERVABILITY CONSEQUENCE, NOT PREVIOUSLY NAMED: the early return precedes
+   * `blockSpendAttributionWriteCounter.inc({ status })`, so a private-run generation
+   * now increments NOTHING on that counter, where it previously landed in
+   * `status="voided"`. Per-generation coverage survives via `block_scope_invocations`
+   * rows carrying `source: 'private-run'`.
    *
    * 🔴 THE FILTER WAS HELD FOR TWO STATED REASONS AND BOTH WERE SETTLED BY
    * MEASUREMENT, NOT BY DECISION — recorded because the reasons read as permanent
@@ -443,8 +460,22 @@ export type RecordSpendAttributionInput = {
 };
 
 export type RecordSpendAttributionResult = {
-  /** False when the (workflow, app) UNIQUE blocked a duplicate write. */
+  /**
+   * False when the (workflow, app) UNIQUE blocked a duplicate write, AND when the call
+   * was a PRIVATE RUN, for which no row is written at all.
+   */
   written: boolean;
+  /**
+   * 🔴 `null` ONLY for a private run, where the write is skipped entirely (see the
+   * write-side exclusion in `recordSpendAttribution`). Every other path — including the
+   * duplicate branch — still returns the row it found or created.
+   *
+   * Nullable rather than synthesised: inventing a zeroed row to keep the type simple
+   * would make "no attribution exists" indistinguishable from "an attribution of zero",
+   * which is exactly the conflation the write-side exclusion is meant to remove. All four
+   * production callers `await` this and discard the result, so the nullability costs them
+   * nothing today and forces a decision on any future reader.
+   */
   row: {
     id: string;
     status: string;
@@ -453,7 +484,7 @@ export type RecordSpendAttributionResult = {
     grossValueCents: number;
     rateCardVersion: string;
     voidedReason: string | null;
-  };
+  } | null;
 };
 
 /**
@@ -660,38 +691,77 @@ export async function recordSpendAttribution(
   const spendSharePct = 0;
   const appOwnerShareCents = 0;
 
-  // Void rows that are zero because of WHO spent/owns, or because the run was not
-  // a USE of the app at all. Otherwise the row is 'tracked'. ⚠️ NOT
-  // "share-pending awaiting a payout-time backpay" — that was the removed spend
-  // bounty. No backpay reads this table; 'tracked' is where a spend row stays. The
-  // void/track distinction is kept because it is the self-spend / internal-owner /
-  // private-run marker the analytics reader and any future rail would both need,
+  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
+  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was the
+  // removed spend bounty. No backpay reads this table; 'tracked' is where a spend row
+  // stays. The void/track distinction is kept because it is the self-spend /
+  // internal-owner marker the analytics reader and any future rail would both need,
   // and voiding costs nothing.
   //
-  // 🔴 PRIVATE RUN IS TESTED FIRST, AND THE ORDER IS A DISCRIMINABILITY CHOICE, NOT
-  // A MONEY ONE. Every arm here produces the same money outcome (the row is voided;
-  // the share columns are already 0), so ordering cannot change what anyone is paid.
-  // What it changes is the LABEL on an owner's own private run, where both this arm
-  // and `isSelfSpend` are true: testing private-run first records WHY the row exists
-  // (a diagnostic run) rather than merely who spent. The audience — owner, editor or
-  // moderator — is deliberately NOT on this row; it rides the mint's audit line
-  // instead, so a money/audit table gains no new column and no new enum value.
+  // ⚠️ TWO PARAGRAPHS THAT STOOD HERE WERE DELETED RATHER THAN REWORDED, AND WHAT THEY
+  // CLAIMED IS WORTH KNOWING BECAUSE IT READS AS STILL-TRUE ELSEWHERE IN THE TREE.
+  // They explained (a) that the private-run arm was TESTED FIRST, as a
+  // "discriminability choice" deciding the LABEL on an owner's own private run where
+  // both that arm and `isSelfSpend` are true, and (b) that `'manual_review'` was REUSED
+  // rather than adding a `'private_run'` value, so the change shipped with no migration.
   //
-  // 🔴 `'manual_review'` IS REUSED RATHER THAN ADDING A `'private_run'` VALUE
-  // (operator decision, 2026-09-27). It is already legal under
-  // `block_spend_attribution_voided_reason_check`, so this ships with NO migration
-  // and no per-environment hand-apply. The cost is that a private run is not
-  // distinguishable from an operator-voided row *in this column* — accepted,
-  // because nothing pays out of this table and the mint audit line carries the
-  // discriminating fields anyway.
-  const voidedReason =
-    privateRun === true
-      ? 'manual_review'
-      : isSelfSpend
-      ? 'self_spend'
-      : isInternal
-      ? 'internal_owner'
-      : null;
+  // Both described the VOIDED-ROW design. A private run now writes NO ROW (see the
+  // exclusion below), so there is no arm to order and no column to carry a value: (a)
+  // describes an ordering that no longer exists and (b) a write that no longer happens.
+  // Neither is reworded here, because a reworded version would be a fresh rationale for
+  // a decision that has been superseded rather than revised.
+  //
+  // ⚠️ RETRACTED CLAIM, KEPT SO IT IS NOT RE-DERIVED. This said: "`'manual_review'` IS
+  // STILL WRITTEN TO THIS COLUMN BY ANOTHER PRODUCER — `backpay.service.ts` writes
+  // `status: 'held', voidedReason: 'manual_review'`", offered as a second reason the
+  // read-side filters stay necessary. 🔴 IT IS FALSE ON BOTH HALVES. `backpay.service.ts`
+  // writes to `blockSubscriptionAttribution` — a DIFFERENT TABLE — and with
+  // `status: 'held'`, not `voided`; the owner-visible filter keys on `status`, so such a
+  // row would not be excluded by it in any case. The sentence refuted itself: a
+  // `status: 'held'` write cannot produce a voided row.
+  //
+  // 🔴 THE HONEST POSITION, which is simpler than the one I reached for: the filters stay
+  // because of `self_spend` and `internal_owner`, which are written HERE, below, and are
+  // the whole live voided population — the ledger's own measurement is 582 of 639 rows,
+  // "every voided row is `self_spend`". A historical private-run population is NOT a
+  // reason either: the flag has been base-off with no rollout for its whole life, so no
+  // private run ever wrote a row. There is one real reason, not three, and reaching for
+  // extra ones is what produced a false claim while correcting other false claims.
+  // ── PRIVATE RUN — NOT WRITTEN AT ALL ────────────────────────────────────────────
+  // 🔴 WRITE-SIDE EXCLUSION, NOT A VOIDED ROW. This used to write the row with
+  // `voidedReason: 'manual_review'` and rely on EVERY reader filtering voided rows back
+  // out. That is the design that generated this rail's worst defects: the nullability
+  // trap (`NOT (voided_reason IN (…))` retains 0 of 639 rows, because `voided_reason` is
+  // nullable and NULL *is* the ordinary tracked population), the latent
+  // `internalAppOwnerUserIds` trap in `rate-card.ts`, and a cross-repo coupling to
+  // talos-infra's `civitai-app-blocks-digest/digest.py`. Read-side exclusion has to be
+  // got right in every reader, in two repos, forever; write-side is got right once.
+  //
+  // 🔴 EQUIVALENT FOR EVERY FILTERED READER, STRICTLY BETTER FOR AN UNFILTERED ONE. A
+  // voided row and an absent row are indistinguishable to any reader that excludes
+  // voided — which is all of the owner-visible ones. For a reader that forgets the
+  // filter, an absent row is the SAFE failure and a voided row is the leak. That
+  // asymmetry is the whole argument.
+  //
+  // ⚠️ WHAT IS GIVEN UP, NAMED RATHER THAN GLOSSED: the voided row was a durable,
+  // queryable record that a private run happened. That record now exists ONLY in the
+  // `app-blocks.private-run.mint` audit line (dual-sinked to Axiom and stdout), which was
+  // already the discriminating record — the operator decision to reuse `'manual_review'`
+  // said so in its own words, because the column could not distinguish a private run from
+  // an operator-voided row anyway. So the queryable-by-SQL property is lost; the audit
+  // property is not.
+  //
+  // NOTHING IS PAID EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded 0
+  // above, and the AUTHOR FEE — the rail that does move Buzz — is excluded separately and
+  // earlier, by `resolveBlockAuthorFeePayee` refusing with reason `private-run`.
+  //
+  // IDEMPOTENCY IS UNAFFECTED: the dedupe is the `(workflowId, appBlockId)` UNIQUE
+  // constraint, i.e. the row IS the dedupe record. Writing zero rows cannot double-count.
+  if (privateRun === true) {
+    return { written: false, row: null };
+  }
+
+  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 
@@ -1601,6 +1671,304 @@ export async function getRevenueForOwner({
   };
 }
 
+// ---------------------------------------------------------------
+// DIGITAL GOODS sales — the read-side bridge onto the owner's revenue page
+// ---------------------------------------------------------------
+
+/**
+ * One bucket of an owner's digital-goods sales.
+ *
+ * 🔴 BUZZ IS THE PRIMARY UNIT HERE AND USD IS DERIVED, which is the opposite of
+ * every bucket above. It is not a style choice — cents CANNOT REPRESENT a small
+ * sale. 1,000 Buzz = $1, so one cent is 10 Buzz, and the minimum priced good
+ * (`BLOCK_GOOD_MIN_PRICE_BUZZ`) is 2 Buzz. A 10-Buzz good pays its owner 7 Buzz,
+ * and `buzzSpendToUsdCents(7)` is **0** — so a cents-only line renders `$0.00`
+ * beside a sale that happened, which is the same invisible-revenue bug this
+ * bridge exists to fix, one layer down. The renderer therefore shows Buzz and
+ * treats the cents figure as an approximation (see `RevenuePanel`).
+ */
+export type GoodsSalesBucket = {
+  count: number;
+  /** What buyers paid, in whole Buzz. */
+  grossBuzz: number;
+  /** The owner's recorded share of that, in whole Buzz. */
+  shareBuzz: number;
+};
+
+/**
+ * Why the goods bucket carries its OWN unavailable reason instead of reusing the
+ * payload-level `RevenueUnavailableReason`.
+ *
+ * `block_good_purchase` is applied by hand per environment (the migration says so
+ * in its own header), so an environment can legitimately be running this code
+ * against a database that has no such table. Before this value existed, that made
+ * the whole of `getMyRevenue` throw and took BOTH revenue pages down — including
+ * the card-purchase figures, which were fine.
+ *
+ * 🔴 AND THE OBVIOUS FIX IS THE BUG: catching the error and returning
+ * `emptyGoodsSales()` would report "no sales" for a rail that was never read,
+ * which is exactly the fabricated zero the payload-level discriminator above
+ * exists to prevent. So the failure is REPORTED, not zeroed, and the renderer has
+ * a branch for it.
+ *
+ * Deliberately NOT a new value on `RevenueUnavailableReason`: that union
+ * describes the whole payload being a placeholder, and this is one bucket of a
+ * payload whose other buckets are real measurements.
+ */
+export type GoodsUnavailableReason = 'unreadable';
+
+export type GoodsSalesSummary = {
+  /**
+   * `status = 'paid'` ONLY. `pending` and `refunded` are both excluded, and both
+   * exclusions are load-bearing rather than tidy-up:
+   *   - `refunded` — the debit was reversed, so counting it reports money the
+   *     buyer got back as the owner's earnings.
+   *   - `pending` — the charge outcome is unknown; it is a reconciliation record,
+   *     not a sale. Counting it inflates earnings off a charge that may never
+   *     have landed.
+   */
+  sales: GoodsSalesBucket & {
+    /**
+     * `shareBuzz` converted ONCE, at the aggregate. Converting per row and then
+     * summing floors N times instead of once and can lose up to 9 Buzz per sale
+     * — on a rail whose typical sale is worth well under a dollar, that is most
+     * of the number. Floored, so it never over-states.
+     */
+    shareUsdCents: number;
+    /** `grossBuzz` converted once, at the aggregate. Same reasoning. */
+    grossUsdCents: number;
+    /**
+     * How much of `grossBuzz` the buyers paid from their BLUE (granted) balance.
+     *
+     * 🔴 THIS IS WHY "Your share" CANNOT BE PRESENTED AS CASH. `blue_paid_buzz`
+     * exists precisely so a viewer paying blue cannot turn non-withdrawable Buzz
+     * into withdrawable earnings — `blueLegOfPayout` pays the owner's share
+     * proportionally in blue, and blue is Generation Buzz, which cannot be banked.
+     * The owner's share is therefore partly non-bankable exactly when this is
+     * non-zero, and the USD figures above are then an upper bound on what could
+     * ever be cashed, not a value.
+     *
+     * It is the GROSS blue total rather than the share's blue leg, and that is a
+     * deliberate limitation: `blueLegOfPayout` floors per row, so
+     * `sum(floor(...)) != floor(sum(...))` and the exact per-share blue split is
+     * not expressible as a column sum. This answers the only question the
+     * renderer asks of it — "does a colour caveat apply at all" — and must not be
+     * displayed as if it were the owner's blue earnings.
+     */
+    blueGrossBuzz: number;
+  };
+  /**
+   * Reversed rows, shown so the EXCLUSION is visible rather than silent — the
+   * same job the `voided` bucket does for the card-purchase rail.
+   *
+   * 🔴 THIS IS NOT "REFUNDS". `status='refunded'` covers two shapes and the
+   * column cannot tell them apart: a sale that was owned and then refunded, and a
+   * charge that was REVERSED BEFORE ANY ENTITLEMENT WAS GRANTED (`voidReversedClaim`
+   * stamps it onto a `pending` row whose debit failed or could not be confirmed —
+   * no sale ever happened). The migration names the discriminator: whether a
+   * `block_good_entitlement` points at the row. This aggregate does not join it,
+   * so the copy must say "reversed or refunded" and must NOT call these sales.
+   *
+   * No share figure, and the reason is narrower than it looks: a refund normally
+   * claws the owner's payout back, but `refundBlockGoodPurchase` records failed
+   * clawback legs in `failures` and marks the row `refunded` anyway — so in that
+   * case the owner did keep some of it. Quoting a share here would be a claim this
+   * aggregate cannot support in either direction.
+   */
+  refunded: { count: number; grossBuzz: number };
+  /**
+   * Present ONLY when the bucket could not be read. Absent on every real
+   * measurement, including a genuine all-zero one — same contract as the
+   * payload-level `unavailable`.
+   */
+  unavailable?: GoodsUnavailableReason;
+};
+
+/**
+ * The zeroed goods shape. Used by `emptyRevenue()` for the dark-flag
+ * short-circuit, and by nothing else — it carries no `unavailable` of its own
+ * because there the discriminator lives once, on the payload.
+ */
+export function emptyGoodsSales(): GoodsSalesSummary {
+  return {
+    sales: {
+      count: 0,
+      grossBuzz: 0,
+      shareBuzz: 0,
+      shareUsdCents: 0,
+      grossUsdCents: 0,
+      blueGrossBuzz: 0,
+    },
+    refunded: { count: 0, grossBuzz: 0 },
+  };
+}
+
+/**
+ * The bucket for "this rail could not be read". Zeros PLUS the discriminator, so
+ * a consumer that forgets to branch shows zeros rather than crashing, and one
+ * that does branch can say so honestly.
+ */
+export function unreadableGoodsSales(): GoodsSalesSummary {
+  return { ...emptyGoodsSales(), unavailable: 'unreadable' };
+}
+
+/**
+ * Is this error "the `block_good_purchase` table is not in this database"?
+ *
+ * 🔴 NARROW ON PURPOSE, AND THE WIDE VERSION WAS A REAL BUG. The caller catches
+ * this to degrade the goods rail instead of failing the whole revenue page — but
+ * the first version of that catch took EVERY rejection, which means a column
+ * rename, a bad argument or a `TypeError` inside the aggregate would all have
+ * been reported to the owner as "sales could not be loaded", politely, in
+ * production, forever. That is the invisible-revenue bug this whole change exists
+ * to fix, re-entering through the error path: a defect that hides itself behind a
+ * message the owner has no reason to question.
+ *
+ * So only the ONE condition the degradation is justified for is caught. The
+ * justification is specific — the migration's header says the table is applied by
+ * hand per environment — and it does not generalise to anything else that can go
+ * wrong in there.
+ *
+ * Matched by CODE OR MESSAGE, not `instanceof`: the branch has to stay reachable
+ * under a mocked Prisma client, which does not construct the real error class.
+ *   - `P2021` — Prisma's "table does not exist in the current database".
+ *   - `42P01` — Postgres `undefined_table`, which is what surfaces if the read
+ *     ever goes through a raw query instead.
+ *   - the same SQLSTATE in the MESSAGE, because Prisma wraps the driver error and
+ *     leaves the code unclassified on some paths.
+ *
+ * 🔴 DELEGATES, AND THE OPEN-CODED COPY THAT USED TO LIVE HERE WAS THE NARROWER
+ * SPELLING OF THE TWO. It required `'code' in error` before anything else, so an
+ * error carrying the SQLSTATE only in its message was rejected on the first line.
+ * On such a path this returned false, the caller's `.catch` rethrew, `Promise.all`
+ * rejected and `getMyRevenue` 500'd — taking BOTH owner revenue pages down,
+ * including the card-purchase figures that were perfectly readable. Precisely the
+ * outage the bounded catch exists to prevent, reached through the bound itself.
+ *
+ * {@link isMissingTableError} is the MEASURED version: its docblock records that
+ * "a check on P2021 alone let a raw-path failure through in local testing", and its
+ * message branch is deliberately narrower than "does not exist" — it requires the
+ * missing object to be named as a RELATION or TABLE and refuses anything mentioning
+ * a column, because a column error is a HALF-APPLIED manual migration and must
+ * surface rather than degrade to a silent zero. That nuance is the reason to reuse
+ * it rather than re-derive it; do not re-widen it here.
+ */
+export function isMissingGoodsTableError(error: unknown): boolean {
+  return isMissingTableError(error);
+}
+
+/**
+ * An owner's digital-goods sales, for the publisher revenue pages.
+ *
+ * 🔴 READ-SIDE ONLY, DELIBERATELY. The goods rail records into
+ * `block_good_purchase` and writes no `BlockBuzzAttribution` row; this function
+ * is the bridge, and it bridges by QUERYING rather than by back-filling
+ * attribution rows. That choice is the point: writing an attribution row per
+ * sale would require deciding whether a sale "is an attribution", risks
+ * double-counting against this table, and is a write-path change on a money
+ * rail that cannot be undone once rows exist. A second read commits to nothing
+ * and can be removed by deleting this function.
+ *
+ * 🔴 OWNERSHIP IS THE WHERE CLAUSE, exactly as in `getRevenueForOwner`:
+ * `appOwnerUserId: ownerUserId` scopes every bucket, so a caller asking about an
+ * app they do not own gets a truthful zero rather than someone else's revenue.
+ * `app_owner_user_id` is snapshotted at purchase time, so an ex-owner keeps
+ * seeing what they earned before transferring the app away — the same property
+ * the write path chose it for.
+ *
+ * ⚠️ WHAT THIS DOES NOT MEASURE: whether the owner's Buzz actually LANDED.
+ * `shareBuzz` sums `app_owner_share_buzz`, the recorded obligation, which is
+ * what the conservation CHECK guarantees and what a refund reverses. A payout
+ * whose ledger leg failed leaves the row `paid` with `payouts` short of that
+ * figure (`owesOwnerPayout`), and this aggregate cannot see the shortfall — a
+ * JSONB sum is not expressible in a Prisma aggregate, and there is no re-runner
+ * for those rows anyway. So `shareBuzz` is "earned", on the same reading as the
+ * `confirmed` bucket above, which is also an accrual rather than a delivery. Do
+ * not relabel it as "received" without measuring `payouts`.
+ *
+ * The date range filters `created_at` — the sale's own timestamp. There is no
+ * `attributed_at` on this table because there is no attribution row.
+ */
+export async function getGoodsSalesForOwner({
+  ownerUserId,
+  appBlockId,
+  from,
+  to,
+}: {
+  ownerUserId: number;
+  appBlockId?: string;
+  from?: Date;
+  to?: Date;
+}): Promise<GoodsSalesSummary> {
+  const rows = await dbRead.blockGoodPurchase.groupBy({
+    by: ['status'],
+    where: {
+      appOwnerUserId: ownerUserId,
+      ...(appBlockId ? { appBlockId } : {}),
+      ...(from || to
+        ? {
+            createdAt: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {}),
+            },
+          }
+        : {}),
+    },
+    _sum: { priceBuzz: true, appOwnerShareBuzz: true, bluePaidBuzz: true },
+    _count: true,
+  });
+
+  // ONE round trip for every status bucket — one pass bucketed by the database,
+  // rather than `getRevenueForOwner`'s five single-status aggregates over the same
+  // rows.
+  //
+  // ⚠️ ON THE INDEX, stated precisely because the migration's own comment is
+  // easy to over-read: `bgp_owner_idx` (`app_owner_user_id`, `created_at` DESC)
+  // IS used — `GROUP BY status` does not defeat it, since the owner id is an
+  // index condition and the grouping happens above — but it makes this read
+  // INDEX-DRIVEN, not CHEAP. The index supplies only TIDs, so `status` and both
+  // summed columns need a heap visit per row, and on an append-only ledger the
+  // owner's rows are scattered. Measured on a 2M-row fixture: ~1 buffer per sale
+  // the owner has ever made, so an owner with ~50k lifetime sales touches most of
+  // the table. A covering index fixes it (~100x fewer buffers) and is NOT applied
+  // — at single-digit rows it would be disk spent on nothing. The trigger to
+  // revisit is a single owner crossing ~1,000 lifetime sales.
+  //
+  // NO `as` CAST, deliberately, unlike `getRevenueForOwner` above. An assertion on
+  // a money aggregate hides exactly the mistake that matters: `_count` is a
+  // COUNT-OBJECT when you select fields and a plain `number` only when you pass
+  // `true`, so a cast that guessed wrong would read an object as a sale count and
+  // render it as such. The generated client already types this precisely — the
+  // groupBy payload maps `_count` to `number` when the argument is a boolean — so
+  // letting inference do the work is what makes the `number` below checked rather
+  // than asserted.
+  const byStatus = new Map(rows.map((r) => [r.status, r] as const));
+
+  const paid = byStatus.get(BLOCK_GOOD_PURCHASE_STATUS.paid);
+  const refunded = byStatus.get(BLOCK_GOOD_PURCHASE_STATUS.refunded);
+  // `BLOCK_GOOD_PURCHASE_STATUS.pending` is read by nothing here, on purpose —
+  // see the `sales` docblock. It is left in `byStatus` rather than filtered out
+  // of the query so that a future bucket is a lookup, not a second round trip.
+
+  const grossBuzz = paid?._sum.priceBuzz ?? 0;
+  const shareBuzz = paid?._sum.appOwnerShareBuzz ?? 0;
+
+  return {
+    sales: {
+      count: paid?._count ?? 0,
+      grossBuzz,
+      shareBuzz,
+      shareUsdCents: buzzSpendToUsdCents(shareBuzz),
+      grossUsdCents: buzzSpendToUsdCents(grossBuzz),
+      blueGrossBuzz: paid?._sum.bluePaidBuzz ?? 0,
+    },
+    refunded: {
+      count: refunded?._count ?? 0,
+      grossBuzz: refunded?._sum.priceBuzz ?? 0,
+    },
+  };
+}
+
 /**
  * Why there is exactly ONE reason value and not two.
  *
@@ -1632,6 +2000,13 @@ export type EmptyRevenuePayload = {
   topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
   recentAttributions: [];
   /**
+   * Zeroed like every other bucket, and for the same reason: on THIS type the
+   * zeros are a placeholder, and `unavailable` is what says so. A missing key
+   * here would be worse than a zero — the panel would have no goods figure to
+   * suppress and could render the dark-flag case as "no sales".
+   */
+  goods: GoodsSalesSummary;
+  /**
    * REQUIRED here, because on this type the zeroed buckets are always a placeholder.
    * The contract as seen by a CALLER is "present only when the zeros are a placeholder,
    * absent on a genuine measurement" — a measured result comes back from
@@ -1662,6 +2037,7 @@ export function emptyRevenue(): EmptyRevenuePayload {
     },
     topApps: [],
     recentAttributions: [],
+    goods: emptyGoodsSales(),
     unavailable: 'notEntitled',
   };
 }

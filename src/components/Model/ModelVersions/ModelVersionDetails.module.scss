@@ -13,6 +13,14 @@
   }
 }
 
+// The sidebar precedes the main column in source order, so while the HTML is still
+// streaming it is laid out alone; the auto margin holds it at its final, right-hand slot.
+.sidebarSection {
+  @container mantine-grid (min-width: theme('screens.sm')) {
+    margin-inline-start: auto;
+  }
+}
+
 .mainSection {
   @container (min-width: theme('screens.xs')) {
     padding: 0 var(--mantine-spacing-sm);

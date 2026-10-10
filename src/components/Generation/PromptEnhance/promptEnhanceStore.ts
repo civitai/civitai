@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
+import type { SnippetReferenceValue } from '~/shared/generation/schemas/snippet-schema';
 
 export type PromptEnhanceData = {
   prompt: string;

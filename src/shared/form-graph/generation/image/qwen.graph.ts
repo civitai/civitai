@@ -2,7 +2,14 @@ import { z } from 'zod';
 import { qwen21AspectRatios, qwen21ResolutionOptions } from '~/shared/constants/qwen21.constants';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SEED, aspectRatioDef, resourcesDef, sliderDef } from '../defs';
+import {
+  optionFallback,
+  img2imgImages,
+  SEED,
+  aspectRatioDef,
+  resourcesDef,
+  sliderDef,
+} from '../defs';
 import { familyScope, familyResources, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
@@ -13,8 +20,6 @@ import { familyScope, familyResources, makeTextBlock, type FamilyExt } from '../
  * build (negative prompt only); Qwen21 is the unified 7B Comfy build;
  * Qwen3 is DashScope (prompt expansion toggle).
  */
-
-// ---- copied from qwen-graph.ts, which dies with the data-graph engine -------
 
 export const qwenVersionIds = {
   txt2img_v2509: 2110043,
@@ -57,8 +62,6 @@ const qwen3AspectRatios = [
   { label: '9:16', value: '9:16', width: 928, height: 1664 },
 ];
 
-// ---- end of qwen-graph.ts copies --------------------------------------------
-
 const isEditWorkflow = (workflow: string) => workflow.startsWith('img2img:edit');
 
 const qwen1 = defineGraph<FamilyExt>()
@@ -72,7 +75,7 @@ const qwen1 = defineGraph<FamilyExt>()
       defaultModelId: isEdit ? qwenVersionIds.img2img_v2511 : qwenVersionIds.txt2img_v2512,
     });
   })
-  // v1 uses raw resourcesNode with a hardcoded 'Qwen' ecosystem: no filter
+  // Hardcoded 'Qwen' ecosystem, and no cross-ecosystem filter.
   .field('resources', ({ _ext }) =>
     resourcesDef({ ecosystem: 'Qwen', limit: _ext.limits.maxResources, filterIncompatible: false })
   )
@@ -95,6 +98,10 @@ const qwen21 = defineGraph<FamilyExt>()
     input: z.enum(qwen21ResolutionOptions).optional(),
     output: z.enum(qwen21ResolutionOptions),
     default: '1K' as (typeof qwen21ResolutionOptions)[number],
+    correct: optionFallback(
+      qwen21ResolutionOptions,
+      '1K' as (typeof qwen21ResolutionOptions)[number]
+    ),
     meta: { options: qwen21ResolutionOptions.map((value) => ({ label: value, value })) },
   })
   .field('aspectRatio', ({ resolution, _ext }) =>

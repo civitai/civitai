@@ -15,7 +15,7 @@
 export const MIGRATED_ROUTES: Record<string, string> = {
   reports: 'reports',
   articles: 'articles',
-  'article-rating-review': 'articles/ratings',
+  'article-rating-review': 'ratings',
   'cosmetics/grant': 'cosmetics/grant',
   'comics-review': 'comics-review',
   blocklists: 'blocklists',

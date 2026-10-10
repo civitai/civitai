@@ -75,6 +75,8 @@ export function buildEpochArchiveEntries({
   }
   for (const epoch of epochs) {
     epoch.sampleImages.forEach((url, index) => {
+      // A failed sample's '' slot was never produced, so it isn't an unresolved file.
+      if (!url) return;
       candidates.push({
         url,
         fileName: (blobId) =>

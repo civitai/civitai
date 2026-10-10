@@ -427,16 +427,13 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     description: 'Awaiting moderator review — not deployed',
   });
 
-  // Ping mods that an unreviewed push is waiting in the queue.
-  notifyModsOfWebhookFailure({
-    slug,
-    sha,
-    stage: 'unreviewed-push',
-    details:
-      'Direct push to the canonical build repo recorded as a PENDING review request. ' +
-      'It will NOT build or deploy until a moderator approves it via /apps/review.',
-  });
-
+  // Deliberately NO Discord ping here: this is the SUCCESS path of the
+  // "Author via git" flow, and the parked request already has two review
+  // surfaces — the /apps/review queue and the Forgejo commit status above.
+  // The old `unreviewed-push` ping (~1/day from fleet automation, red
+  // "Apps build-chain rejected" embed for a normal event) was removed as
+  // duplicate noise; `notifyModsOfWebhookFailure` is reserved for the
+  // genuine failure stages.
   res.status(202).json({ ok: true, slug, sha, status: 'pending-review', deployed: false });
 });
 
@@ -452,14 +449,16 @@ async function setCommitStatusSafe(args: Parameters<typeof setCommitStatus>[0]):
 }
 
 /**
- * Fire-and-forget Discord ping when the build chain fails at this
+ * Fire-and-forget Discord ping when the build chain FAILS at this
  * webhook (validator reject, slug/iframe mismatch, trigger failure).
  *
- * After the H-4 fix in publish-request.service.ts.approveRequest runs
- * the same validator BEFORE writing app_blocks, this should never fire
- * on the canonical /apps/submit → /apps/review flow — the approve call
- * itself surfaces validation errors inline to the mod. This ping is the
- * defense-in-depth signal that catches:
+ * Covers the genuine failure paths only — the normal /apps/review approve
+ * flow surfaces validation errors inline to the mod, and a successful
+ * unreviewed push parks a pending review request without pinging (removed
+ * 2026-09-30: it fired a red "Apps build-chain rejected" embed on every
+ * direct push, ~1/day from fleet automation, duplicating the /apps/review
+ * queue and the Forgejo commit status). This ping is the defense-in-depth
+ * signal that catches:
  *   - direct pushes to civitai-apps/<slug> on Forgejo bypassing the
  *     mod review UI
  *   - drift between the approve-side and webhook-side validator (e.g.

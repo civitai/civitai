@@ -90,7 +90,7 @@ export function resolvePurchaseGates<T extends GateResource>(
  * job, as a step warning it is advisory. So the count decides the copy and the channel decides whether
  * the user is blocked; neither alone is enough. There is no code to key on — the pinned client's
  * `WorkflowStepWarningCode` declares only `modelDeprecated` — so this match is the only trigger there is.
- * It lives here, with a test, so upstream rewording is one edit rather than a hunt through both footers.
+ * It lives here, with a test, so upstream rewording is one edit rather than a hunt through the footer.
  */
 const TRIAL_MESSAGE = /(\d+)?\s*\btrial generations?\b[\s\S]{0,40}?\bremaining\b/i;
 

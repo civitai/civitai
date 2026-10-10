@@ -80,7 +80,7 @@ Publish **before** removing the gate. While the rule is in place, the published 
 
 After that, only if relevant:
 
-- A `GenerationBaseModel` row makes community resources for downloadable weights generatable (coverage branch 3). Its key is the base model's **display name**. On a `modelLocked` ecosystem it reaches LoRAs and embeddings only — community **checkpoints** there stay in `coveredNext` but `isGenerationEligible` holds them to the live column, because the graph rewrites a foreign checkpoint id back to the workflow default ([paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems").
+- A `GenerationBaseModel` row makes community resources for downloadable weights generatable (coverage branch 3). Its key is the base model's **name** (`BaseModelRecord.name`, matched against `ModelVersion.baseModel`) — not the ecosystem's `displayName`. On a `modelLocked` ecosystem it reaches LoRAs and embeddings only — community **checkpoints** there stay in `coveredNext` but `isGenerationEligible` holds them to the live column, because the graph rewrites a foreign checkpoint id back to the workflow default ([paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems").
 - An `AuctionBase` row adds a paid featured-resources auction. Whether to add one is a product decision. Its key is the ecosystem **key**.
 - Training support: the `add-training-support` skill.
 - An ecosystem landing page: the `ecosystem-seo-page` skill.
@@ -91,6 +91,6 @@ The SQL for all three coverage branches, `GenerationBaseModel` and `AuctionBase`
 
 ## Mistakes that fail silently
 
-- **Wiring only one lane.** The generator has two lanes, data-graph (`src/shared/data-graph/generation/`) and form-graph (`src/shared/form-graph/generation/`). Each has its own graph, handler and registration. The parity tests and `handlers.differential.test.ts` list ecosystems by hand, so a missing entry isn't flagged anywhere.
+- **Registering the graph but not the handler, or the reverse.** The graph lives in `src/shared/form-graph/generation/` (registered in the modality's `hub.graph.ts`) and the handler in `src/server/services/orchestrator/form-graph/` (registered in `index.ts`'s `createStep`). Nothing reconciles the two registrations, so a graph with no handler case throws only on submit.
 - **Skipping the cache bust.** After the coverage insert, the generator reports the version as uncovered for up to an hour.
 - **Misspelling the gate target.** A rule with a wrong ecosystem key has no effect, and nothing distinguishes it from having no rule at all.

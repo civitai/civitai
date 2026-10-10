@@ -48,13 +48,12 @@ vi.mock('~/env/client', () => ({
 }));
 
 import { rateLimit } from '~/server/middleware.trpc';
-import { postRateLimits } from '~/server/schema/post.schema';
+import { isDailyPostLimitMessage, postRateLimits } from '~/server/schema/post.schema';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const mockHGet = redisMock.redis.packed.hGet;
 
 const HOUR = 60 * 60 * 1000;
-const DAILY_MESSAGE = /daily limit for new posts/;
 const NEW_ACCOUNT_MESSAGE = /New accounts have a lower hourly posting limit/;
 
 const ESTABLISHED_CREATED_AT = new Date('2024-01-01T00:00:00Z');
@@ -93,10 +92,17 @@ async function attemptWith(sessionUser: SessionUser, count: number, ageMs: numbe
 }
 
 /** Holding `limit` attempts from 2h ago passes; one more is refused with `message`. */
-async function expectCap(sessionUser: SessionUser, limit: number, ageMs: number, message: RegExp) {
+async function expectCap(
+  sessionUser: SessionUser,
+  limit: number,
+  ageMs: number,
+  message: RegExp | string
+) {
   const next = await attemptWith(sessionUser, limit, ageMs);
   expect(next, `${limit} prior attempts should still be admitted`).toHaveBeenCalledTimes(1);
-  await expect(attemptWith(sessionUser, limit + 1, ageMs)).rejects.toThrow(message);
+  const refused = expect(attemptWith(sessionUser, limit + 1, ageMs)).rejects;
+  if (typeof message === 'string') await refused.toMatchObject({ message });
+  else await refused.toThrow(message);
 }
 
 beforeEach(() => {
@@ -105,32 +111,73 @@ beforeEach(() => {
 });
 
 describe('postRateLimits daily cap', () => {
+  // Each refusal names the caller's own limit and only the rises still ahead of them. The base
+  // non-member line is the approved copy; the rest are its variants.
   const reputationTiers = [
-    { label: 'base', score: 0, nonMember: 20, member: 40 },
-    { label: 'established (1000+)', score: 1000, nonMember: 60, member: 120 },
-    { label: 'high reputation (5000+)', score: 5000, nonMember: 150, member: 300 },
+    {
+      label: 'base',
+      score: 0,
+      nonMember: 20,
+      member: 40,
+      nonMemberMessage:
+        "You've reached today's limit of 20 posts. Limits rise at Creator Scores of 1,000 and 5,000, and members get double.",
+      memberMessage:
+        "You've reached today's limit of 40 posts. Limits rise at Creator Scores of 1,000 and 5,000.",
+    },
+    {
+      label: 'established (1000+)',
+      score: 1000,
+      nonMember: 60,
+      member: 120,
+      nonMemberMessage:
+        "You've reached today's limit of 60 posts. Limits rise at a Creator Score of 5,000, and members get double.",
+      memberMessage:
+        "You've reached today's limit of 120 posts. Limits rise at a Creator Score of 5,000.",
+    },
+    {
+      label: 'high reputation (5000+)',
+      score: 5000,
+      nonMember: 150,
+      member: 300,
+      nonMemberMessage: "You've reached today's limit of 150 posts. Members get double.",
+      memberMessage: "You've reached today's limit of 300 posts.",
+    },
   ];
 
-  describe.each(reputationTiers)('$label tier', ({ score, nonMember, member }) => {
-    it(`caps a free account at ${nonMember}`, async () => {
-      await expectCap(user({ score, tier: 'free' }), nonMember, 2 * HOUR, DAILY_MESSAGE);
-    });
+  describe.each(reputationTiers)(
+    '$label tier',
+    ({ score, nonMember, member, nonMemberMessage, memberMessage }) => {
+      it(`caps a free account at ${nonMember}`, async () => {
+        await expectCap(user({ score, tier: 'free' }), nonMember, 2 * HOUR, nonMemberMessage);
+      });
 
-    it(`caps an account with no tier at ${nonMember}`, async () => {
-      await expectCap(user({ score, tier: undefined }), nonMember, 2 * HOUR, DAILY_MESSAGE);
-    });
+      it(`caps an account with no tier at ${nonMember}`, async () => {
+        await expectCap(user({ score, tier: undefined }), nonMember, 2 * HOUR, nonMemberMessage);
+      });
 
-    it(`caps a member at ${member}`, async () => {
-      await expectCap(user({ score, tier: 'bronze' }), member, 2 * HOUR, DAILY_MESSAGE);
-    });
-  });
+      it(`caps a member at ${member}`, async () => {
+        await expectCap(user({ score, tier: 'bronze' }), member, 2 * HOUR, memberMessage);
+      });
+
+      it('recognises both of its refusals as the daily post limit', () => {
+        expect(isDailyPostLimitMessage(nonMemberMessage)).toBe(true);
+        expect(isDailyPostLimitMessage(memberMessage)).toBe(true);
+      });
+    }
+  );
 
   it.each(['founder', 'bronze', 'silver', 'gold'])(
     'treats a %s account as a member',
     async (tier) => {
-      await expectCap(user({ tier }), 40, 2 * HOUR, DAILY_MESSAGE);
+      await expectCap(user({ tier }), 40, 2 * HOUR, reputationTiers[0].memberMessage);
     }
   );
+
+  it('does not take the new-account clamp for the daily limit', () => {
+    const clamp = postRateLimits.find((rule) => rule.period !== 24 * 60 * 60);
+    expect(clamp?.errorMessage).toMatch(NEW_ACCOUNT_MESSAGE);
+    expect(isDailyPostLimitMessage(clamp?.errorMessage ?? '')).toBe(false);
+  });
 });
 
 describe('postRateLimits new-account clamp', () => {

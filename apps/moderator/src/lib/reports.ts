@@ -20,6 +20,9 @@ export const ReportEntity = {
   Model3D: 'model3d',
   Model3DReview: 'model3dReview',
   Announcement: 'announcement',
+  Crucible: 'crucible',
+  Challenge: 'challenge',
+  GameFrameGame: 'gameFrameGame',
 } as const;
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
@@ -91,6 +94,9 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   model3d: '3D Model',
   model3dReview: '3D Review',
   announcement: 'Announcement',
+  crucible: 'Crucible',
+  challenge: 'Challenge',
+  gameFrameGame: 'Game',
 };
 
 // URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
@@ -112,6 +118,9 @@ export const reportEntitySlugs: Record<ReportEntity, string> = {
   model3d: '3d-model',
   model3dReview: '3d-review',
   announcement: 'announcement',
+  crucible: 'crucible',
+  challenge: 'challenge',
+  gameFrameGame: 'game',
 };
 
 const entityBySlug = new Map(
@@ -195,14 +204,19 @@ export const getReportItemUrl = (
       ? chatAuditChatUrl(entityId)
       : null
     : // Same reasoning as chat, and the same reason it read as broken: a report against an ACCOUNT
-      // carries a userId, profiles are addressed by username, so `entityUrl` can derive nothing and
-      // the row fell through to dead grey text — reported as "reportedUser renders greyed out". The
-      // destination exists, it just lives in this app: User Lookup takes an id.
-      type === 'reportedUser'
-      ? entityId
-        ? userLookupUrl(entityId)
-        : null
-      : contextUrl
+    // carries a userId, profiles are addressed by username, so `entityUrl` can derive nothing and
+    // the row fell through to dead grey text — reported as "reportedUser renders greyed out". The
+    // destination exists, it just lives in this app: User Lookup takes an id.
+    type === 'reportedUser'
+    ? entityId
+      ? userLookupUrl(entityId)
+      : null
+    : // A Civitai Games game lives on another origin; its mirror row stores the absolute URL.
+    type === 'gameFrameGame'
+    ? contextUrl?.startsWith('https://')
+      ? contextUrl
+      : null
+    : contextUrl
     ? `${base}${contextUrl}`
     : entityUrl(base, type, entityId);
 

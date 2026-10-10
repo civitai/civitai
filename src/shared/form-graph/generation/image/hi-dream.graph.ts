@@ -1,16 +1,14 @@
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef, type VersionGroup } from '../checkpoint';
-import { SDXL_SQUARE_AR, SEED, selectDef, sliderDef } from '../defs';
+import { SDXL_FULL_AR, SEED, selectDef, sliderDef } from '../defs';
 import { familyResources, familyScope, makeTextBlock, modelIdOf, type FamilyExt } from '../shared';
 
 /**
- * HiDream (fast / dev / full, at FP8 and FP16 precisions), ported from
- * `hi-dream-graph.ts`. A hierarchical version picker (precision → variant);
+ * HiDream (fast / dev / full, at FP8 and FP16 precisions). A hierarchical version
+ * picker (precision → variant);
  * fast/dev expose only aspect ratio + seed, full adds LoRAs, negative prompt,
  * the UniPC sampler, cfg and steps.
  */
-
-// ---- copied from hi-dream-graph.ts, which dies with the data-graph engine ---
 
 export type HiDreamVariant = 'fast' | 'dev' | 'full';
 
@@ -51,8 +49,6 @@ const versionIdToVariant = new Map<number, HiDreamVariant>(
   )
 );
 
-// ---- end of hi-dream-graph.ts copies ----------------------------------------
-
 type HiDreamModeExt = FamilyExt & { model?: unknown };
 
 const variantOf = (ext: HiDreamModeExt): HiDreamVariant => {
@@ -61,18 +57,18 @@ const variantOf = (ext: HiDreamModeExt): HiDreamVariant => {
 };
 
 const fastDev = defineGraph<HiDreamModeExt>()
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field('seed', SEED);
 
 const full = defineGraph<HiDreamModeExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field('sampler', selectDef({ options: ['UniPC'], default: 'UniPC' }))
   .field('cfgScale', sliderDef({ min: 1, max: 20, default: 5, step: 0.5 }))
   .field('steps', sliderDef({ min: 20, max: 100, default: 50 }))
   .field('seed', SEED);
 
-/** Tagged: v1's `hiDreamVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `hiDreamVariant`. */
 const variants = branch('hiDreamVariant', variantOf, { fast: fastDev, dev: fastDev, full });
 
 export const hiDream = defineGraph<FamilyExt>({ scope: familyScope })
@@ -86,8 +82,6 @@ export const hiDream = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .use(variants)
-  // negativePrompt lives only in v1's full subgraph, where its snippet
-  // registration never fires
   .use(
     makeTextBlock({
       negativePrompt: (ext) => variantOf(ext as HiDreamModeExt) === 'full',

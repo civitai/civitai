@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { buildV1MigrationIntent, migrateV1GenerationStorage } from '../migrate-v1-storage';
 
 const EXT: GenerationCtx = {
@@ -40,10 +40,9 @@ describe('buildV1MigrationIntent', () => {
       workflow: 'txt2img',
       prompt: 'a fox in the snow',
       negativePrompt: 'blurry',
-      quantity: 3,
+      'quantity@image': 3,
       outputFormat: 'png',
       priority: 'high',
-      'quantity@txt2img:draft': 8,
       'ecosystem@image': 'SDXL',
       'ecosystem@video': 'WanVideo25T2V',
       'model@SDXL': { id: 128713, model: { type: 'Checkpoint' } },

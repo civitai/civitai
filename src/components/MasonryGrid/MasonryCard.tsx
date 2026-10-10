@@ -4,12 +4,16 @@ import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.sele
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type MasonryCardProps = CardProps &
   Partial<React.HTMLAttributes<HTMLDivElement>> & {
     height?: number;
     uniform?: boolean;
     frameDecoration?: ContentDecorationCosmetic | null;
+    eventDecoration?: EventDecorationData | null;
+    /** The card's width in px, for a card narrower than a feed card: the hat shrinks to match. */
+    cardWidth?: number;
     onClick?: () => void;
   };
 
@@ -22,6 +26,8 @@ export const MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
       style,
       uniform,
       frameDecoration,
+      eventDecoration,
+      cardWidth,
       className,
       onClick,
       withBorder,
@@ -31,7 +37,11 @@ export const MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
     ref
   ) => {
     return (
-      <TwCosmeticWrapper cosmetic={frameDecoration?.data}>
+      <TwCosmeticWrapper
+        cosmetic={frameDecoration?.data}
+        eventDecoration={eventDecoration}
+        cardWidth={cardWidth}
+      >
         {/* <CosmeticLights frameDecoration={frameDecoration} /> */}
         <TwCard
           ref={ref as any}

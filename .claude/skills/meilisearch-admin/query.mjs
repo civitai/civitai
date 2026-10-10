@@ -10,7 +10,7 @@
  *   node .claude/skills/meilisearch-admin/query.mjs tasks [--status enqueued|processing|succeeded|failed]
  *   node .claude/skills/meilisearch-admin/query.mjs task <taskId>
  *   node .claude/skills/meilisearch-admin/query.mjs indexes
- *   node .claude/skills/meilisearch-admin/query.mjs index <indexName> [settings|filterable|sortable|searchable]
+ *   node .claude/skills/meilisearch-admin/query.mjs index <indexName> [settings|filterable|sortable|searchable|displayed]
  *   node .claude/skills/meilisearch-admin/query.mjs --feed <command>  (use feed/metrics search instead of main)
  *
  * Options:
@@ -104,6 +104,7 @@ Commands:
   index <name> filterable    Get filterable attributes
   index <name> sortable      Get sortable attributes
   index <name> searchable    Get searchable attributes
+  index <name> displayed     Get displayed attributes (which fields a search hit returns)
   document <index> <id>      Fetch a specific document by id
   search <index> [filter]    Run a search with optional filter (q is empty)
 
@@ -339,9 +340,31 @@ async function main() {
               console.log(`  - ${attr}`);
             }
           }
+        } else if (subCommand === 'displayed') {
+          // `["*"]` is Meili's display-everything default — every stored attribute is
+          // returned, sort-only and filter-only fields included. That is easy to miss because
+          // it looks like a configured value, so call it out rather than printing `*` as
+          // though it were an ordinary attribute.
+          const data = await request(`/indexes/${commandArg}/settings/displayed-attributes`);
+          if (jsonOutput) {
+            console.log(JSON.stringify(data, null, 2));
+          } else {
+            console.log(`Displayed attributes for ${commandArg}:\n`);
+            for (const attr of data) {
+              console.log(`  - ${attr}`);
+            }
+            if (data.includes('*')) {
+              console.log(
+                `\n  ⚠ "*" means EVERY stored attribute is returned, including sort-only and` +
+                  `\n    filter-only fields. It is Meili's DEFAULT, so it can mean "never narrowed"` +
+                  `\n    rather than "narrowed to everything" — the two look identical here.` +
+                  `\n    See src/server/search-index/displayed-attributes.ts.`
+              );
+            }
+          }
         } else {
           console.error(`Unknown subcommand: ${subCommand}`);
-          console.error('Valid subcommands: settings, filterable, sortable, searchable');
+          console.error('Valid subcommands: settings, filterable, sortable, searchable, displayed');
           process.exit(1);
         }
         break;

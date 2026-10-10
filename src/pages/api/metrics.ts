@@ -6,6 +6,9 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
+// Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
+// cached for a minute).
+import '~/server/prom/resource-intent-cooc.metrics';
 // Side-effect import: registers the session-resolution metrics, including the UNLABELLED
 // session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if
 // the module is loaded — otherwise an absent series looks like a dead code path rather than an unloaded one,
@@ -47,11 +50,28 @@ import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-uploa
 // this counter was added to end, so leaving it unseeded would reproduce the defect one
 // level down.
 import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
+// Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
+// the four were absent in production purely because nothing had ever incremented them, and one
+// of those exists to be alerted on. Called from the handler rather than here because it must
+// await a read of the latency histogram's existing children before zeroing any of them.
+// Same reason (#3665 again, one level down): seeds one zero-valued series per surface of
+// generation_validation_refused_total. That counter replaces the only signal a hub refusal
+// had — the removed data-graph shadow comparison — and its alarm is "any sustained
+// non-zero". Every caller that can increment it is non-browser (the on-site footer returns
+// before the network call), so absent is the expected reading for long stretches and is
+// otherwise indistinguishable from an unloaded module.
+import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
+import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
+// Seeds civitai_app_block_builds_total's reachable series at 0, so "no failed builds" reads
+// as zeros rather than as an absent series on every pod that has not received a callback.
+import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
+seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
+ensureRegisterAppBlockBuildMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
@@ -184,6 +204,8 @@ async function collectRegistryMetrics(
 }
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
+  await seedAppBlockStorageMetrics();
+
   const metrics = await collectRegistryMetrics(client.register, 'default');
 
   // Metrics emitted from the instrumentation webpack graph (e.g. the event-loop

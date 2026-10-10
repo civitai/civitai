@@ -1,21 +1,26 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
+import { getPrizeClaimUrl } from '~/utils/prize-helpers';
 
 export const challengeNotifications = createNotificationProcessor({
   'challenge-winner': {
     displayName: 'Challenge Winner',
     category: NotificationCategory.System,
     toggleable: false,
-    prepareMessage: ({ details }) => ({
-      // A user challenge whose pool was never funded pays 0 — don't congratulate them on winning it.
-      message: `You placed ${asOrdinal(details.position)} in the "${
-        details.challengeName
-      }" challenge!${
-        details.prize > 0 ? ` You've won ${numberWithCommas(details.prize)} Buzz.` : ''
-      }`,
-      url: `/challenges/${details.challengeId}`,
-    }),
+    prepareMessage: ({ details }) => {
+      // No prize id on a notification sent before prizes were claimable: those were paid outright.
+      const claimUrl = getPrizeClaimUrl(details);
+      return {
+        // A user challenge whose pool was never funded pays 0 — don't congratulate them on winning it.
+        message: `You placed ${asOrdinal(details.position)} in the "${
+          details.challengeName
+        }" challenge!${
+          details.prize > 0 ? ` You've won ${numberWithCommas(details.prize)} Buzz.` : ''
+        }${claimUrl ? ' Claim your prize!' : ''}`,
+        url: claimUrl ?? `/challenges/${details.challengeId}`,
+      };
+    },
   },
   'challenge-participation': {
     displayName: 'Challenge Participation',

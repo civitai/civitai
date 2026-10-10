@@ -18,7 +18,9 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import * as core from './core.mjs';
+import { loadCore } from './load-core.mjs';
+
+const core = await loadCore();
 
 /** Every case ran and passed. A skipped case means part of the file never ran. */
 export function fullyPassed(testModule) {
@@ -30,14 +32,6 @@ export function fullyPassed(testModule) {
 }
 
 const log = (msg) => console.error(msg);
-
-const relOrNull = (id, root) => {
-  try {
-    return core.toRel(id, root);
-  } catch {
-    return null;
-  }
-};
 
 export default class TestCacheReporter {
   onInit(vitest) {
@@ -75,9 +69,13 @@ export default class TestCacheReporter {
         // Never throws, so the tripwire below really is first: `toRel` can raise on a malformed
         // id, and a throw here would abort `record()` before a false skip could be reported. A
         // null file is refused by recordOne anyway ("test file outside the repo").
-        file: relOrNull(m.moduleId, root),
+        file: core.relOrNull(m.moduleId, root),
         project: m.project.name,
-        ms: (d.prepareDuration ?? 0) + (d.setupDuration ?? 0) + (d.collectDuration ?? 0) + (d.duration ?? 0),
+        ms:
+          (d.prepareDuration ?? 0) +
+          (d.setupDuration ?? 0) +
+          (d.collectDuration ?? 0) +
+          (d.duration ?? 0),
         passed,
         wasHit,
         falseSkip: wasHit && !passed,
@@ -125,10 +123,10 @@ export default class TestCacheReporter {
     const runBlock = unattributed
       ? 'unattributed unhandled error in the run'
       : reason === 'interrupted'
-        ? 'run interrupted'
-        : this.vitest.config.testNamePattern
-          ? 'name-filtered run'
-          : null;
+      ? 'run interrupted'
+      : this.vitest.config.testNamePattern
+      ? 'name-filtered run'
+      : null;
 
     const fingerprint = core.makeFingerprinter(root);
     const salt = core.globalSalt(root, this.vitest.version, fingerprint);
@@ -150,7 +148,15 @@ export default class TestCacheReporter {
       try {
         const block =
           runBlock ?? (errorFiles.has(row.file) ? 'unhandled error attributed to this file' : null);
-        this.recordOne(row, { root, dir, fingerprint, salt, runBlock: block, since: state.startedAt, opaqueSource });
+        this.recordOne(row, {
+          root,
+          dir,
+          fingerprint,
+          salt,
+          runBlock: block,
+          since: state.startedAt,
+          opaqueSource,
+        });
       } catch (err) {
         row.why = `record failed: ${err?.code ?? err?.message ?? err}`;
       }
@@ -204,7 +210,15 @@ export default class TestCacheReporter {
       .find((g) => g?.getModuleById(m.moduleId));
     if (!graph) return void (row.why = 'test file not in module graph');
 
-    const ids = new Set(core.closureOf(graph, m.moduleId));
+    // Memoised across files: each lists ~1000 ids, mostly the same ones, and converting them afresh
+    // per file benchmarked at ~4.5ms a file, ~11s of a full run's end.
+    this.relMemo ??= new Map();
+    const relOf = (id) => {
+      if (!this.relMemo.has(id)) this.relMemo.set(id, core.relOrNull(id, root));
+      return this.relMemo.get(id);
+    };
+    const expand = core.expandOnlyLoaded(m.meta()?.testCacheLoaded, testRel, relOf);
+    const ids = new Set(core.closureOf(graph, m.moduleId, expand));
     for (const setup of m.project.config.setupFiles ?? []) {
       // The fs tracker is instrumentation, not an input: its closure (this cache's own code, which
       // imports child_process) is covered by the salt. Walking it marked EVERY test as reaching a
@@ -244,12 +258,18 @@ export default class TestCacheReporter {
     // Unmemoised it measured ~19s of synchronous work at the end of a full run.
     this.movedMemo ??= new Map();
     const moved = kept.find((rel) => {
-      if (!this.movedMemo.has(rel)) this.movedMemo.set(rel, core.changedSince(root, rel, since - 2000));
+      if (!this.movedMemo.has(rel))
+        this.movedMemo.set(rel, core.changedSince(root, rel, since - 2000));
       return this.movedMemo.get(rel);
     });
     if (moved) return void (row.why = `changed during the run: ${moved}`);
 
-    core.writeRecord(dir, project, testRel, { key, entries: kept, at: new Date().toISOString(), ms: row.ms });
+    core.writeRecord(dir, project, testRel, {
+      key,
+      entries: kept,
+      at: new Date().toISOString(),
+      ms: row.ms,
+    });
     row.recorded = true;
   }
 }

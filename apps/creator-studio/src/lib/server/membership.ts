@@ -18,16 +18,18 @@ export type Membership = {
 // from the sidebar simulator; ignored for non-moderators. Any other value = the user's real membership.
 export const TEST_MEMBERSHIP_COOKIE = 'cs-test-membership';
 
-function realMembership(user: SessionUser | undefined): Membership {
+/** The user's membership with no simulator override, for a gate the main app enforces from the session alone. */
+export function realMembership(user: SessionUser | undefined): Membership {
   const tier = user?.tier ?? null;
   const isMember = tier !== null && tier !== 'free' && !user?.memberInBadState;
   const isCreatorProgramMember = ((user?.onboarding ?? 0) & CREATOR_PROGRAM_ONBOARDING_FLAG) !== 0;
   return { tier, isMember, isCreatorProgramMember };
 }
 
-// Resolve membership, applying the moderator-only Creator-Program override when the cookie is set. Every place
-// that gates on membership (layout, form actions) must go through this with the cookie so the simulated state
-// is consistent. The override keeps the user's real tier and just forces CP membership on top.
+// Resolve membership, applying the moderator-only Creator-Program override when the cookie is set. Every gate
+// this app decides for itself (layout, form actions) goes through this with the cookie so the simulated state
+// is consistent; a gate the main app re-checks uses `realMembership`. The override keeps the user's real tier
+// and just forces CP membership on top.
 export function resolveMembership(user: SessionUser | undefined, testCookie?: string): Membership {
   const real = realMembership(user);
   if (user?.isModerator && testCookie === 'creator-program') {
@@ -75,6 +77,9 @@ export type CreatorCaps = {
   /** Prices applied this calendar month, and how many the tier allows. */
   pricingUsed: number;
   pricingLimit: number | null;
+  /** The licensing-fee limit: `pricingLimit` plus any fee boost. A paid-access gate uses `pricingLimit`. */
+  feePricingLimit: number | null;
+  feeBoost: number;
   /** Where the creator's score stands against the monetization floor, for the editors to render. */
   pricingFloor: PricingEligibility;
   maxEarlyAccessDays: number;

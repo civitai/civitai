@@ -229,7 +229,7 @@ not loadable under the rule above. Decided (Justin, 2026-09-08): loading support
 | --- | --- | --- |
 | `Other` — the catch-all | 785 | Architecture unknown |
 | Legacy SD 2.x (2.1 768, 2.1, 2.0, 2.0 768, Unclip) | 537 | Deliberately retired |
-| API-only (Veo 3, Sora 2, Kling, Seedance, Seedream, Imagen4, OpenAI, Vidu Q1, Grok, Ideogram 4.0, Reve, MAI, Wan 2.5/2.7/3.0, MiniMax Music 3) | ~35 | Nothing to load, ever |
+| API-only (Veo 3, Sora 2, Kling, Seedance, Seedream, Imagen4, OpenAI, Vidu Q1, Grok, Ideogram 4.5, Reve, MAI, Wan 2.5/2.7/3.0, MiniMax Music 3) | ~35 | Nothing to load, ever |
 | Open architectures the generator does not support yet (PixArt E 95, Lumina 39, Flux.1 Kontext 26, Kolors 19, ACE Audio 10, HiDream-O1 8, AuraFlow 7, Hunyuan 1 7, Mochi 5, MageFlow 5, Qwen 2 4, …) | ~240 | The generator cannot run the architecture |
 
 Every one would fail at generation time even if loaded perfectly, so the gate is right. ⚠️ But all
@@ -392,10 +392,16 @@ that worked before. Eight had already been loaded — free at today's pricing, s
 than anyone's Buzz.
 
 That is worth stating precisely, because several of the 738 look official and are not:
-`wan2.1_t2v_1.3B_fp16` (1500646), `Hunyuan Video 720_cfgdistill_bf16` (1313562) and
-`Lightricks LTXV 2b 0.9.1` (1182093) are all CivitaiOfficial or vendor uploads. Each is a **sibling**
-of the version its ecosystem actually runs — Hunyuan's `EcosystemCheckpoints` row is the fp8 build
-(1314512), not the bf16 one — and each already read `covered = false`. 1500646 appears in
+`wan2.1_t2v_1.3B_fp16` (1500646) and `Lightricks LTXV 2b 0.9.1` (1182093) are CivitaiOfficial or
+vendor uploads. Each is a **sibling** of the version its ecosystem actually runs, and each already
+read `covered = false`.
+
+🔴 **Hunyuan was the exception, and the measurement got it wrong.** The handler named no model, so
+the orchestrator ran its own default, `720_cfgdistill_bf16` (1313562), while the site's default and
+`EcosystemCheckpoints` row were the fp8 build (1314512), which never ran a job. bf16 was covered only
+as a top weekly earner in `CoveredCheckpoint`. When it dropped out, around 2026-09-24, every Hunyuan
+submit failed with "not enabled for generation". Fixed 2026-10-08: bf16 has its own
+`EcosystemCheckpoints` row, is the ecosystem default, and the handler sends its AIR. 1500646 appears in
 `wanBaseModelGroupIdMap`, which `getMetaResources` uses to attribute the implied Wan checkpoint on an
 image; that is a display path and was already operating against an uncovered version.
 

@@ -1,3 +1,6 @@
+import { Flags } from '~/shared/utils/flags';
+import { getSponsoredModel } from '~/server/services/promotion.service';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
 import {
   coverageAudience,
@@ -24,7 +27,10 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import { stampWorkflowPublished } from '~/server/services/orchestrator/training/publish-from-workflow';
+import {
+  assertTrainingSourcePublishable,
+  stampWorkflowPublished,
+} from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import {
   applyTrainingWorkflowOverlay,
@@ -131,7 +137,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getLatestModelAppeal } from '~/server/services/report.service';
+import { getLatestAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -159,10 +165,12 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
 } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
@@ -173,6 +181,7 @@ import {
   Availability,
   BountyType,
   CollectionItemStatus,
+  EntityType,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
@@ -182,6 +191,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -522,7 +532,13 @@ export const getModelHandler = async ({
 
     // Gated here to skip the query for the vast majority of page views (visitors);
     // resolveMinorAppeal below is the actual enforced boundary, independent of this.
-    const minorAppeal = isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null;
+    const minorAppeal = isOwner
+      ? await getLatestAppeal({
+          entityType: EntityType.Model,
+          entityId: model.id,
+          userId: model.user.id,
+        })
+      : null;
 
     return {
       ...model,
@@ -544,6 +560,17 @@ export const getModelHandler = async ({
       // (and by whom) is not a visitor's business.
       minorFlagged: resolveMinorFlagged({
         isOwner,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      poiFlagged: resolvePoiFlagged({
+        isOwner,
+        poi: model.poi,
+        meta: model.meta as ModelMeta | null,
+      }),
+      flagScanReasons: resolveFlagScanReasons({
+        isOwner,
+        poi: model.poi,
         minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
@@ -604,6 +631,8 @@ export const getModelsInfiniteHandler = async ({
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
+        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+        eventDecorationViewer: ctx.user,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -632,6 +661,8 @@ export const getModelsInfiniteHandler = async ({
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
+        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+        eventDecorationViewer: ctx.user,
       });
       if (fallback.isPrivate) isPrivate = true;
       if (isPrivate) ctx.cache.canCache = false;
@@ -817,7 +848,7 @@ export const publishModelHandler = async ({
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { status: true, meta: true, nsfw: true },
+      select: { status: true, meta: true, nsfw: true, userId: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status === ModelStatus.Published)
@@ -830,6 +861,13 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
+    await assertTrainingSourcePublishable({
+      modelId: input.id,
+      meta: modelMeta,
+      ownerId: model.userId,
+      callerId: ctx.user.id,
+    });
+
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
@@ -1211,7 +1249,10 @@ export const getDownloadCommandHandler = async ({
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file, versionFiles: files });
-    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName, {
+      caller: 'link',
+      actor: resolveActorFor(ctx.user),
+    });
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -1246,8 +1287,12 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
-            .url,
+          url: (
+            await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName, {
+              caller: 'link',
+              actor: resolveActorFor(ctx.user),
+            })
+          ).url,
         },
       });
     }
@@ -1550,6 +1595,7 @@ export const setModelMinorHandler = async ({
       userId: ctx.user.id,
       tracker: ctx.track,
       isModerator: ctx.user.isModerator,
+      recordTextScanRuling: true,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1778,6 +1824,27 @@ export const getAssociatedResourcesCardDataHandler = async ({
         : { id: toArticleId, resourceType: 'article' as const }
     );
 
+    // A paid, host-accepted model promotion takes the second slot. The viewer's
+    // own level and hidden lists still apply to it below, like any other card.
+    const sponsored =
+      type === 'Suggested'
+        ? await getSponsoredModel({ modelId: fromId, features: ctx.features }).catch(
+            () => undefined
+          )
+        : undefined;
+    if (sponsored) {
+      // Its organic copy is dropped, as in the gallery, so the card the buyer paid
+      // for is the one in the sponsored slot.
+      const organic = resourcesIds.findIndex(
+        ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
+      );
+      if (organic >= 0) resourcesIds.splice(organic, 1);
+      resourcesIds.splice(sponsoredSlotIndex(0, resourcesIds.length), 0, {
+        id: sponsored.modelId,
+        resourceType: 'model' as const,
+      });
+    }
+
     if (!resourcesIds.length) return [];
 
     const modelResources = resourcesIds
@@ -1943,8 +2010,16 @@ export const getAssociatedResourcesCardDataHandler = async ({
             const model = completeModels.find((model) => model.id === id);
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
+            const isSponsored = id === sponsored?.modelId;
+            // A buyer who re-rates their model above what the page may show ends
+            // their own run.
+            if (
+              isSponsored &&
+              (!model.nsfwLevel || !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel))
+            )
+              return null;
 
-            return { resourceType: 'model' as const, ...model };
+            return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }
       })
       .filter(isDefined);
@@ -2349,6 +2424,19 @@ export const privateModelFromTrainingHandler = async ({
       await throwIfBlockedTags({ tagsOnModels, isModerator: ctx.user.isModerator });
     }
 
+    // Publishes the model (privately), so the training-source check applies like any publish.
+    const stored = await dbRead.model.findUnique({
+      where: { id: input.id },
+      select: { userId: true, meta: true },
+    });
+    if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
+      await assertTrainingSourcePublishable({
+        modelId: input.id,
+        meta: stored.meta as ModelMeta | null,
+        ownerId: stored.userId,
+        callerId: ctx.user.id,
+      });
+
     const model = await privateModelFromTraining({
       ...input,
       user: ctx.user,
@@ -2398,7 +2486,7 @@ export const publishPrivateModelHandler = async ({
     const { id: userId } = ctx.user;
     const model = await getModel({
       id: input.modelId,
-      select: { id: true, userId: true, status: true, availability: true },
+      select: { id: true, userId: true, status: true, availability: true, meta: true },
     });
 
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
@@ -2410,6 +2498,13 @@ export const publishPrivateModelHandler = async ({
     if (model.userId !== userId && !ctx.user.isModerator) {
       throw throwAuthorizationError();
     }
+
+    await assertTrainingSourcePublishable({
+      modelId: model.id,
+      meta: model.meta as ModelMeta | null,
+      ownerId: model.userId,
+      callerId: userId,
+    });
 
     const { versionIds } = await publishPrivateModel(input);
     await dataForModelsCache.refresh(input.modelId);

@@ -1,8 +1,15 @@
 import { MantineProvider, createTheme, Modal } from '@mantine/core';
 import type { GlobalProvider } from '@ladle/react';
 
-import '@mantine/core/styles.layer.css';
+// 🔴 ORDER MATCHES `src/pages/_app.tsx` — globals FIRST, then Mantine's LAYERED stylesheet.
+// `styles.layer.css` wraps every Mantine rule in `@layer mantine`, and a layer's precedence
+// is fixed by where it is first DECLARED. Importing it before `globals.css` declares the
+// layer ahead of Tailwind's own, so preflight wins and Mantine components render with their
+// structure but none of their spacing — the tab bar in particular collapsed to unpadded
+// labels with each tab's icon abutting the previous tab's text. Nothing errors; the stories
+// simply stop being a picture of the app.
 import '../src/styles/globals.css';
+import '@mantine/core/styles.layer.css';
 
 // Subset of the app theme (from src/providers/ThemeProvider.tsx)
 const theme = createTheme({

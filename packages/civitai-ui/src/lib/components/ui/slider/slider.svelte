@@ -7,6 +7,8 @@
 		value = $bindable(),
 		orientation = "horizontal",
 		class: className,
+		"aria-label": ariaLabel,
+		"aria-labelledby": ariaLabelledby,
 		...restProps
 	}: WithoutChildrenOrChild<SliderPrimitive.RootProps> = $props();
 </script>
@@ -14,6 +16,7 @@
 <!--
 Discriminated Unions + Destructing (required for bindable) do not
 get along, so we shut typescript up by casting `value` to `never`.
+bits-ui puts role="slider" on each thumb, not the root, so the accessible name goes on the thumbs.
 -->
 <SliderPrimitive.Root
 	bind:ref
@@ -45,6 +48,8 @@ get along, so we shut typescript up by casting `value` to `never`.
 			<SliderPrimitive.Thumb
 				data-slot="slider-thumb"
 				index={thumb}
+				aria-label={ariaLabel}
+				aria-labelledby={ariaLabelledby}
 				class="border-primary ring-ring/50 block size-4 shrink-0 rounded-full border bg-white shadow-sm transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
 			/>
 		{/each}

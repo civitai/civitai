@@ -141,7 +141,7 @@ describe('canGenerate is derived in one place', () => {
 /**
  * The second half of the same rule: an ecosystem that pins its checkpoint gets no staged expansion.
  *
- * `createCheckpointGraph` rewrites a checkpoint id outside the workflow's own list back to the
+ * `checkpointDef` rewrites a checkpoint id outside the workflow's own list back to the
  * default, on the SERVER parse as well as in the form, so a community checkpoint on one of those
  * ecosystems reaches no handler however it was selected — and the staged rule was offering it as a
  * paid load anyway. Held to the live rule instead, which admits a checkpoint only through

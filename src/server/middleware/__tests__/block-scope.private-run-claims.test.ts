@@ -13,13 +13,13 @@ import {
  * `isPrivateRunAudience` does not exist there.
  *
  * ── WHY THE BELT IS IN `blockPerCallBudget` AND NOT AT THE SUBMIT GATES ─────────
- * Four submit gates compare a cost against a per-call ceiling, and
- * `no-direct-block-budget-claim-read` already forces every one of them through this
- * ONE function rather than reading `claims.buzzBudget` directly. That existing
- * convention is precisely what lets an audience decision be made once here and apply
- * to all four — and it means the fifth gate, whenever it is written, inherits the belt
- * for free. Open-coding the check at each gate would regenerate the same omission four
- * times over and cover the fifth not at all.
+ * Every submit gate compares a cost against a per-call ceiling (the training run through
+ * `blockTrainingRunCeiling`, which calls this helper first), and
+ * `no-direct-block-budget-claim-read` forces each through this ONE function rather than
+ * reading `claims.buzzBudget` directly. That convention is what lets an audience decision
+ * be made once here and apply to all of them, and the next gate inherits the belt for
+ * free. Open-coding the check at each gate would regenerate the same omission at every
+ * site.
  */
 describe('blockPerCallBudget — the editor read-only belt [REG]', () => {
   it('an EDITOR private-run token gets a per-call ceiling of ZERO, whatever it was minted with', () => {

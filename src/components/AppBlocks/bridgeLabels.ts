@@ -26,10 +26,17 @@
  *                  and the DENOMINATOR: without it an error count is unreadable
  *                  (a falling error count and a falling traffic count look the
  *                  same).
- *   no_handler   — no handler was registered for the type on this host. For a
- *                  REQUEST-style message this is the expensive one: the block
- *                  hangs to its per-class SDK timeout (30s default, 120s
- *                  workflow, 600s human-in-the-loop).
+ *   no_handler   — no handler was registered for the type on this host, AND the
+ *                  parity INVENTORY does not declare the type N/A for this host:
+ *                  either it is `'required'` here (a missing bridge) or the type
+ *                  is not in the INVENTORY at all. This is the GAP signal.
+ *   not_applicable
+ *                — no handler was registered, and the INVENTORY declares the type
+ *                  N/A for this host. Split out of `no_handler` so a by-design
+ *                  drop cannot bury a missing one. It takes the same NACK path in
+ *                  `usePostMessage` as `no_handler`, so it means "refused as
+ *                  declared", not "silently ignored". Decided by
+ *                  `unhandledOutcomeFor` in `bridgeTelemetry.ts`.
  *   rate_limited — the 30 msg/sec inbound budget was exhausted.
  *   deduped      — the same `requestId` arrived twice inside the 5s dedup window.
  *   no_token     — a handler ran, found no usable block credential, and refused.
@@ -109,6 +116,10 @@
  * than a fifth label, which is why this arrived as one. ⚠️ And it is a CEILING, not
  * allocated heap: nothing pre-initialises the label space, so the sixth value costs
  * zero series until a rejection actually occurs.
+ *
+ * ⚠️ `not_applicable` is a seventh value but not a new series source: it splits
+ * what was `no_handler`, and a (type, host) pair is one or the other, never both.
+ * The worst-case product is re-derived in `app-block-runtime.metrics.ts`.
  */
 export const BRIDGE_MESSAGE_OUTCOMES = [
   'handled',
@@ -117,15 +128,17 @@ export const BRIDGE_MESSAGE_OUTCOMES = [
   'deduped',
   'no_token',
   'validator_rejected',
+  'not_applicable',
 ] as const;
 export type BridgeMessageOutcome = (typeof BRIDGE_MESSAGE_OUTCOMES)[number];
 
 /**
  * Which host registered the bridge. Deliberately the `hostHandlerParity` FILE
  * names rather than a prettier short form: the parity inventory's per-host
- * requirement columns are keyed on exactly these strings, so a `no_handler` series
- * can be read straight against `INVENTORY[type][host]` with no mapping table in
- * between. (`InlineHost` is absent because the v1 stub wires no bridge.)
+ * requirement columns are keyed on exactly these strings, and `unhandledOutcomeFor`
+ * indexes `INVENTORY[type][host]` with them at runtime to choose between
+ * `no_handler` and `not_applicable`. (`InlineHost` is absent because the v1 stub
+ * wires no bridge.)
  */
 export const BRIDGE_HOSTS = ['IframeHost', 'PageBlockHost'] as const;
 export type BridgeHost = (typeof BRIDGE_HOSTS)[number];
@@ -148,20 +161,20 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * 🔴 IT IS A SANITY CEILING, NOT A RATE CONTROL, AND THE DIFFERENCE MATTERS. An
  * earlier revision of this comment derived it as "30 msg/sec × a 10 s flush window
  * = 300 legitimate max, so nothing real can reach it". That derivation is wrong
- * for FOUR of the six outcomes and was cited as justification in two other
+ * for FIVE of the seven outcomes and was cited as justification in two other
  * files, so it is corrected here rather than quietly dropped:
  *
  *   - `handled` and `no_token` are the only two the bridge's 30 msg/sec inbound
  *     limiter bounds at all — ~300 per key per 10 s window, and higher than that
  *     whenever the window stretches (see below).
- *   - `no_handler`, `deduped` and `validator_rejected` are reported ABOVE that
- *     limiter, deliberately (a flood of unhandled junk must not burn the budget that
+ *   - `no_handler`, `not_applicable`, `deduped` and `validator_rejected` are
+ *     reported ABOVE that limiter, deliberately (a flood of unhandled junk must not burn the budget that
  *     legitimate BLOCK_ERROR reporting needs — see `usePostMessage`).
  *     `validator_rejected` is doubly unbounded: its emitter carries no cap either.
  *   - `rate_limited` is by construction only recorded for messages that exceeded
  *     the budget.
  *
- * So on those four a block in a postMessage loop — a buggy render loop calling an
+ * So on those five a block in a postMessage loop — a buggy render loop calling an
  * SDK method is the ordinary, non-malicious case — can drive one key far past any
  * cap. The window is not a hard 10 s either: after the first flush a backgrounded
  * tab's `setTimeout` is throttled to 1/s or 1/min.
@@ -170,7 +183,7 @@ export const BRIDGE_MESSAGE_BATCH_MAX = 200;
  * exactly counted: above it the client CLAMPS (never drops the batch, never 400s
  * it), so the series reads "enormous" instead of "wrong". 100,000 is ~333× the
  * limiter-bounded ceiling and well clear of a throttled tab's stretched window, so
- * on the two bounded outcomes it cannot fire at all. On the other four it can, by
+ * on the two bounded outcomes it cannot fire at all. On the other five it can, by
  * construction — a block in a `postMessage` loop is exactly the case those
  * outcomes exist to reveal, and truncating a flood to a huge number is the
  * intended outcome rather than a limitation. Do not read the value as a claim

@@ -216,6 +216,7 @@ export namespace NOWPayments {
     pay_amount: z.number().nullish(),
     pay_currency: z.string().nullish(),
     payin_extra_id: z.string().nullish(),
+    payin_hash: z.string().nullish(),
     payment_extra_ids: z.array(z.number()).nullish(),
     origin_type: z.string().nullish(),
     payment_id: z.number().nullish(),

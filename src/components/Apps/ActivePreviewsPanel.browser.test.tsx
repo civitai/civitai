@@ -152,3 +152,52 @@ describe('ActivePreviewsPanel — Tear down fires the mutation', () => {
     expect(mocks.mutate).toHaveBeenCalledWith('teardown', { publishRequestId: 'req-live' });
   });
 });
+
+describe('ActivePreviewsPanel — the age cell uses the SHARED ladder, not a local one', () => {
+  /**
+   * 🔴 ANTI-REGROWTH PIN. This panel used to carry its own `formatAge` ladder, a second
+   * implementation of `compactRelativeTime` in the same directory. It is deleted and the
+   * cell delegates to `compactRelativeAgeOf`.
+   *
+   * Asserted BEHAVIOURALLY, on labels the deleted ladder could not produce: it stopped at
+   * days, so `3w` and `9mo` were `21d` and `273d` there. A local ladder reintroduced in this
+   * file therefore reds this test — where a check for the absence of the word `formatAge`
+   * would pass the moment someone spelled the new one `formatRelativeAge`.
+   *
+   * Ages are built RELATIVE TO `Date.now()` rather than pinned to a fixed instant, because
+   * the cell reads the clock through the wrapper's default — which is the production call
+   * shape, and needs no faked timers.
+   */
+  const DAY = 24 * 60 * 60 * 1000;
+
+  test('a 3-week-old preview reads `3w`, a rung the deleted ladder stopped short of', async () => {
+    mocks.data = {
+      cap: 3,
+      active: [{ ...ROWS[0], updatedAt: new Date(Date.now() - 21 * DAY) }],
+    };
+    renderWithProviders(<ActivePreviewsPanel />);
+    await expect.element(page.getByText('Active previews')).toBeInTheDocument();
+
+    expect(page.getByText('3w', { exact: true }).elements()).toHaveLength(1);
+    // …and NOT the day-count the old ladder rendered for the same instant.
+    expect(page.getByText('21d', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('a 9-month-old preview reads `9mo`, and a missing timestamp reads an em dash', async () => {
+    mocks.data = {
+      cap: 3,
+      active: [
+        { ...ROWS[0], publishRequestId: 'req-old', updatedAt: new Date(Date.now() - 280 * DAY) },
+        // Absence is the case the ladder alone cannot express — the wrapper owns it, and the
+        // em dash is what the deleted ladder rendered too, so this half did NOT change.
+        { ...ROWS[1], publishRequestId: 'req-null', updatedAt: null },
+      ],
+    };
+    renderWithProviders(<ActivePreviewsPanel />);
+    await expect.element(page.getByText('Active previews')).toBeInTheDocument();
+
+    expect(page.getByText('9mo', { exact: true }).elements()).toHaveLength(1);
+    expect(page.getByText('280d', { exact: true }).elements()).toHaveLength(0);
+    expect(page.getByText('—', { exact: true }).elements()).toHaveLength(1);
+  });
+});

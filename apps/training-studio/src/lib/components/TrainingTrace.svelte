@@ -1,11 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import {
-    isAbort,
+    followTrace,
     interpretTraceLine,
     PHASE_LABEL,
-    tailTrace,
     traceLineText,
+    tracePath,
     type TrainingPhase,
   } from '$lib/trace';
 
@@ -38,11 +38,14 @@
 
   function ingest(line: string) {
     started = true;
-    raw.push(line);
-    seq++;
-    if (raw.length > MAX_RAW) raw.splice(0, raw.length - MAX_RAW);
-
     const s = interpretTraceLine(line);
+    // One loss reading per training step would push every other line out of the raw log.
+    if (s.kind !== 'loss') {
+      raw.push(line);
+      seq++;
+      if (raw.length > MAX_RAW) raw.splice(0, raw.length - MAX_RAW);
+    }
+
     switch (s.kind) {
       case 'attempt':
         if (s.epoch !== null) epoch = s.epoch;
@@ -64,6 +67,7 @@
       case 'epoch-done':
         step = maxSteps = stepsRemaining = secondsPerStep = null;
         break;
+      case 'loss':
       case 'noise':
         break;
     }
@@ -113,24 +117,7 @@
     return sec ? `~${m}m ${sec}s` : `~${m}m`;
   }
 
-  function sleep(ms: number, signal: AbortSignal) {
-    return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, ms);
-      signal.addEventListener(
-        'abort',
-        () => {
-          clearTimeout(timer);
-          reject(new DOMException('Aborted', 'AbortError'));
-        },
-        { once: true }
-      );
-    });
-  }
-
-  // The presigned trace URL is re-signed on every workflow poll, but its path is stable per epoch. Key the
-  // tail on the PATH so a signature refresh doesn't re-run the effect and abort the open stream (which
-  // showed up as every trace request being canceled every ~5s).
-  const traceKey = $derived(traceUrl.split('?')[0]);
+  const traceKey = $derived(tracePath(traceUrl));
 
   // (Re)tail whenever the epoch (path) changes. We deliberately DON'T reset the visible summary here: the
   // orchestrator pre-creates every epoch's trace and marks them done as weights land, so at a boundary we
@@ -141,27 +128,12 @@
   $effect(() => {
     void traceKey; // re-tail on the epoch (path) change; keep the last view until new data arrives
     const controller = new AbortController();
-    (async () => {
-      while (!controller.signal.aborted) {
-        let ready = false;
-        try {
-          // Read the freshest signed URL each attempt. The parent re-signs it every poll, but this effect
-          // is keyed on the PATH, so it never re-runs for a signature refresh — a once-captured URL would
-          // expire mid-retry and get stuck 404/403-looping, which is one way an epoch never streamed.
-          const url = untrack(() => traceUrl);
-          ({ ready } = await tailTrace(url, ingest, controller.signal));
-        } catch (err) {
-          if (isAbort(err)) return;
-          // transient error — fall through to the backoff below
-        }
-        if (ready) break;
-        try {
-          await sleep(2000, controller.signal);
-        } catch {
-          return; // aborted during backoff — sleep rejects, don't let it escape
-        }
-      }
-    })();
+    followTrace(
+      () => untrack(() => traceUrl),
+      ingest,
+      controller.signal,
+      () => true
+    ).catch(() => {});
     return () => controller.abort();
   });
 

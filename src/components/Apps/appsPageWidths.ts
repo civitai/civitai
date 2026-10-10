@@ -467,13 +467,18 @@ export const APPS_FULL_BLEED_PAGES = [
    * `scrollable: false` page and passes no `measure`, so the two run surfaces share one
    * layout contract deliberately — a divergence between them would be a bug.
    *
-   * It renders one thing the others do not: an unconditional banner, as a preceding
-   * SIBLING of the host wrapper rather than inside it. That takes its own height out of
-   * the non-scrolling `<main>` and leaves the host's `flex: 1` resolving against the
-   * remainder, so it introduces no container and no second scroll surface — which is
-   * why this route belongs here and not in `APPS_FULL_MEASURE_PAGES`.
+   * It renders one thing the others do not: a banner, as a preceding SIBLING of the host
+   * wrapper rather than inside it. That takes its own height out of the non-scrolling
+   * `<main>` and leaves the host's `flex: 1` resolving against the remainder, so it
+   * introduces no container and no second scroll surface — which is why this route
+   * belongs here and not in `APPS_FULL_MEASURE_PAGES`.
+   *
+   * ⚠️ That paragraph described the REMOVED `/apps/private-run/<slug>` route, whose
+   * banner was unconditional. The private run now renders from `/apps/run/[slug]` above
+   * (already in this list) and its banner is CONDITIONAL on the viewer's audience. The
+   * sibling-not-child placement — the part the width bucket actually depends on — is
+   * unchanged, so the reasoning still holds for the surviving route.
    */
-  '/apps/private-run/[slug]/[[...path]]',
   '/apps/review/preview/[publishRequestId]',
   '/apps/dev/[blockId]',
 ] as const;

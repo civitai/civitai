@@ -62,6 +62,7 @@ export {
   buildPostLoginRedirect,
   type ReturnTargetOptions,
 } from './redirect';
+export { safeReturnPath } from './return-path';
 export {
   createTrustedDomainRegistry,
   type TrustedDomain,

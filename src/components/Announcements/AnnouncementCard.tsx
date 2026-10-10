@@ -2,6 +2,7 @@ import type { ButtonVariant } from '@mantine/core';
 import { alpha, Button, Title, useMantineTheme } from '@mantine/core';
 import clsx from 'clsx';
 import React from 'react';
+import remarkBreaks from 'remark-breaks';
 import { ANNOUNCEMENT_IMAGE_WIDTH } from '~/components/Announcements/announcement-image';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -11,7 +12,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
-import { openExternalLinkWarning } from '~/components/ExternalLinkWarning/openExternalLinkWarning';
+import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
 import { useInternalHosts } from '~/hooks/useInternalHosts';
 import { isExternalHref } from '~/utils/external-link';
 
@@ -165,43 +166,45 @@ export function AnnouncementCard({
             {controls}
           </div>
         )}
-        <CustomMarkdown allowedElements={['a']} unwrapDisallowed warnOnExternalLinks>
+        {/* `p` and `br` so the line breaks a creator typed survive: unwrapped paragraphs and
+            soft breaks are both plain whitespace, which HTML collapses to a space. */}
+        <CustomMarkdown
+          allowedElements={['a', 'p', 'br']}
+          unwrapDisallowed
+          remarkPlugins={[remarkBreaks]}
+          className="[&_p+p]:mt-2"
+          warnOnExternalLinks
+        >
           {content}
         </CustomMarkdown>
         {!!actions.length && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {actions.map((action, index) => {
-              const external = isExternalHref(action.link, internalHosts);
-              const handleClick = () => {
-                onActionClick?.(action, index);
-                if (external) openExternalLinkWarning(action.link);
-              };
-
               const variant = (action.variant || 'outline') as ButtonVariant;
-
               const shared = {
-                onClick: handleClick,
                 variant,
                 color: action.color ?? color,
                 children: action.linkText,
               };
 
-              // No `href` when the destination is off-site: an anchor is still middle- and
-              // cmd-clickable, which is a path around the interstitial rather than through it.
-              return external ? (
+              if (!isExternalHref(action.link, internalHosts))
+                return (
+                  <Button
+                    key={index}
+                    component={Link}
+                    href={action.link}
+                    onClick={() => onActionClick?.(action, index)}
+                    {...shared}
+                  />
+                );
+
+              return (
                 <Button
                   key={index}
+                  component="a"
+                  {...externalLinkAnchorProps(action.link, () => onActionClick?.(action, index))}
                   {...shared}
-                  type="button"
-                  // A `<button>` fires `auxclick`, not `click`, so without this middle-click is
-                  // dead rather than gated. Narrowed to button 1 because `auxclick` also fires
-                  // on right-click, where the interstitial would fight the context menu.
-                  onAuxClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                    if (e.button === 1) handleClick();
-                  }}
                 />
-              ) : (
-                <Button key={index} component={Link} href={action.link} {...shared} />
               );
             })}
           </div>

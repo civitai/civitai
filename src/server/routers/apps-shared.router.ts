@@ -44,16 +44,31 @@ import { newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
+import { escalateToServerFault } from '~/server/logging/server-fault-override';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
 import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
+import type { SyncSubListingForSharedRowArgs } from '~/server/services/blocks/app-sub-listing.service';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
   SHARED_TITLE_MAX,
   SHARED_BODY_MAX,
 } from '~/server/services/apps/shared-content-safety';
+import {
+  blockingHit,
+  recordSharedDataScan,
+  resolveSharedDataModerationMode,
+  scanCounterKey,
+  scanSharedData,
+  scheduleSharedDataShadow,
+  type SharedDataModerationMode,
+  type SharedDataSurface,
+  type SharedTextHit,
+  type SharedTextScan,
+} from '~/server/services/apps/shared-data-moderation';
 import {
   checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
@@ -73,10 +88,126 @@ const APP_ROW_LIMIT = 1_000_000;
 // optional opaque app-owned `data` blob). Raised from 8KB → 64KB so apps can store
 // real structured state in `data`; still tightly bounded and enforced BEFORE the DB
 // write, and the bytes count toward the per-app `size_bytes`/quota + row caps below.
+//
+// 🔴 ENFORCED IN THE WIRE UNIT — `Buffer.byteLength(JSON.stringify(value))` — and
+// deliberately so: it bounds what one call SENDS, which is the only quantity a
+// block can predict for itself before it writes. It is NOT the unit the byte
+// QUOTA is accounted in, and the two diverge by far more than they look: measured
+// through this path, a value of 65,532 wire bytes (9,358 copies of `5e-324`, which
+// jsonb normalises to their full 326-digit expansions) stores 3,069,452 — 46.8x; the
+// same shape built from `1e308` stores 2,910,366, so this is a measurement of two
+// candidates and NOT a maximum. So this cap does not bound stored bytes at all, and a
+// wire byte count must never be reused in a quota comparison — see
+// `STORED_SIZE_PROBE_SQL` below, and the units block in `app-storage.service`'s
+// `set` for the full measurements.
 const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 // Per-USER row cap on shared_kv (design M2): one hostile-but-trusted account can't
 // exhaust the app row budget on its own.
 const SHARED_KV_PER_USER_ROW_CAP = 50;
+
+/**
+ * The projection that yields the number of bytes `shared_kv.size_bytes` will hold
+ * for the value about to be written — i.e. the unit `quota.used_bytes` is accounted
+ * in, and the ONLY unit a comparison against APP_QUOTA_BYTES may be made in.
+ *
+ * ONE fragment, selected into the quota read on BOTH write paths, so the two gates
+ * cannot drift apart. `$2` is the serialized value on both; `$1` is the app block
+ * id. Pair it with `requireStoredSize` to read the result.
+ *
+ * 🔴 WHY THIS EXISTS AND WHY IT ASKS POSTGRES. `shared_kv.size_bytes` is
+ * `GENERATED ALWAYS AS (octet_length(value::text))` over a JSONB column
+ * (`storage-provision.service`), and `shared_kv_quota_trg` reuses
+ * `kv_quota_trigger`, which sums exactly that column into `quota.used_bytes`. So
+ * both the stored per-row weight and the app counter are in STORED bytes.
+ * Postgres' jsonb output function is not `JSON.stringify`: it emits `, ` after
+ * every separator and `: ` after every object key. Measured against Postgres,
+ * `[1,2,3]` stores 9 bytes where `JSON.stringify` gives 7, and a 5,000-element
+ * integer array stores 15,000 against 10,001 — a 1.5x RATIO. The ratio is what
+ * matters, not the gap: a shared value is always a JSON object, so a title-only
+ * value diverges by exactly the one `: ` after its single key — one byte, however
+ * long the title — which is why a title-only fixture makes a wire-unit gate look
+ * correct and can see none of this.
+ *
+ * Holding the NEW side of a quota comparison in the wire unit was a REPEATABLE
+ * BYPASS of the app byte ceiling, in both shapes it appears in:
+ *   - `append` compared `usedBytes + <wire>` against the cap, so every create was
+ *     charged ~1/1.5x (and, on the shapes measured above, up to 46.8x less) than it
+ *     actually stored;
+ *   - `update` compared `usedBytes + (<wire> − <stored old>)`, a subtraction
+ *     between two different units. Submitting any value whose WIRE size is at or
+ *     below the row's CURRENT STORED size holds that delta at or below zero
+ *     forever, so the gate passes unconditionally while the trigger charges the
+ *     true stored growth — repeatable, with no ceiling ever binding. This is the
+ *     same class already fixed on the per-user path; see the units block in
+ *     `app-storage.service`'s `set`.
+ *
+ * This is a PREDICTION of what the write will store, not a read of what it stored —
+ * it is evaluated before the INSERT/UPDATE. It is exact for the reason the two agree
+ * at all: identical input text through identical casts (`$2::jsonb`, then jsonb →
+ * text) evaluated by the same server. That identity is asserted against rows
+ * Postgres actually wrote in
+ * `src/server/routers/__tests__/apps-shared.router.quota.stored-units.behavior.test.ts`,
+ * not in prose here.
+ *
+ * It is selected WITHOUT a FROM clause, as a sibling of two scalar subqueries over
+ * `quota`, rather than as a column of a `FROM quota` select. That shape returns
+ * exactly one row on every Postgres whether or not the app has a quota row, which
+ * keeps the pre-existing "missing quota row counts as 0" behaviour intact instead of
+ * turning it into a hard failure. It also costs no extra round trip.
+ */
+const STORED_SIZE_PROBE_SQL = `octet_length($2::jsonb::text) AS stored_size_bytes`;
+
+/**
+ * Read the `STORED_SIZE_PROBE_SQL` result, or fail loudly.
+ *
+ * Throws a plain Error (not a TRPCError → a 500, not a refusal): the probe sits in a
+ * FROM-less select, so there is no legitimate path to a missing or NULL result.
+ * Absorbing one into a 0 would make the gates below read "this write stores nothing"
+ * and sail through — the same fail-open the probe exists to close, reached through
+ * the guard instead of around it.
+ *
+ * 🔴 `Number.isFinite(Number(x))` alone is NOT enough: `Number(null)` is 0, which is
+ * finite, so a NULL would pass that check and then produce a zero-byte charge (and,
+ * on the update path, a non-positive delta — the exact bypass). Reject the null
+ * explicitly, before the coercion.
+ */
+function requireStoredSize(raw: number | null | undefined): number {
+  const storedByteSize = Number(raw);
+  if (raw == null || !Number.isFinite(storedByteSize)) {
+    throw new Error('app shared storage: stored-size probe returned no usable value');
+  }
+  return storedByteSize;
+}
+
+/**
+ * Read a trigger-maintained counter that is selected `::text`, treating a MISSING row as
+ * zero but a non-numeric value as a fault.
+ *
+ * 🔴 USED FOR EVERY `quota` COUNTER THESE GATES READ — `used_bytes` and `row_count`.
+ * A NaN in any of them fails open through BOTH arms of its gate: `usedBytes +
+ * storedByteSize > CAP` is false on append, on update `netDelta` is unaffected so
+ * `usedBytes + netDelta > CAP` is false too, and `rowCount + 1 > APP_ROW_LIMIT` is false
+ * as well. All are unreachable today (`bigint NOT NULL`, read through `::text`).
+ *
+ * ⚠️ `row_count` was NOT covered when this helper was introduced, and two docstrings
+ * then claimed `usedBytes` was "the one term of these comparisons" without a check —
+ * which was only true if "these comparisons" silently excluded the row gate two lines
+ * away. Covering it is behaviour-preserving (measured against the full suite), so the
+ * asymmetry had no justification beyond having been overlooked. The general point stands
+ * and now applies to all of them: leaving one term as the odd one out is exactly the
+ * asymmetry a later schema or driver change turns into a hole.
+ *
+ * `null` is NOT a fault here, unlike the probe: the scalar subquery returns NULL when the
+ * app has no `quota` row, and the pre-existing behaviour is to treat that as zero used
+ * bytes. Only a value that is present and non-numeric is rejected.
+ */
+function requireFiniteCounter(raw: string | null | undefined, label: string): number {
+  const value = Number(raw ?? '0');
+  if (!Number.isFinite(value)) {
+    throw new Error(`app shared storage: ${label} is not numeric`);
+  }
+  return value;
+}
 
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
 // MOVED to `~/server/services/blocks/block-write-trust.service` — it now has a
@@ -304,16 +435,17 @@ const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 // `title`/`body` are the MODERATED, user-visible TEXT — they run the full
 // content-safety belt (assertSharedTextSafe) synchronously on every append.
 //
-// `data` is an OPTIONAL, opaque, app-owned, UNMODERATED structured payload stored
-// alongside the moderated text. It is NOT run through the content-safety belt: it
-// is opaque app-structured state (e.g. an app's own saved-config JSON), rendered
-// ONLY inside the app's opaque-origin iframe sandbox — the SAME trust boundary as
-// the rest of shared storage (all approved apps are `unverified` tier → no
-// `allow-same-origin`, so even hostile bytes in `data` run in an origin that can't
-// touch civitai). 🔴 Apps MUST place all user-VISIBLE TEXT in `title`/`body`
-// (which is moderated); `data` must carry ONLY opaque app structure, never a text
-// surface shown to other users outside the sandbox. Size is bounded by the whole-
-// value SHARED_VALUE_BYTE_CAP (below) and its bytes count toward the app quota.
+// `data` is an OPTIONAL, app-owned structured payload stored alongside the moderated
+// text. It is NOT run through the title/body content-safety belt: it is app-structured
+// state (e.g. an app's own saved-config JSON), rendered ONLY inside the app's
+// opaque-origin iframe sandbox — the SAME trust boundary as the rest of shared storage
+// (all approved apps are `unverified` tier → no `allow-same-origin`, so even hostile
+// bytes in `data` run in an origin that can't touch civitai). Apps can and do render
+// strings from it to other users, so its string values and object keys get the LOCAL
+// leaf moderation in `shared-data-moderation.ts` — default OFF, ramped per app by two
+// flags (shadow, then enforce). 🔴 Apps should still place user-VISIBLE TEXT in
+// `title`/`body`, which carries the full belt. Size is bounded by the whole-value
+// SHARED_VALUE_BYTE_CAP (below) and its bytes count toward the app quota.
 //
 // EXPORTED because the REST adapters (`/api/v1/blocks/shared-storage/{append,
 // update}`) validate the SAME payload. Exporting the schema rather than its three
@@ -380,13 +512,37 @@ function toSharedKvItem(r: SharedKvRow): SharedKvItem {
  * Hidden rows are excluded. Anon may read. Keyset cursor on the ULID key
  * (newest-first, DESC). `cursor` is an opaque base64 of the last key seen; a
  * malformed one simply decodes to a key that matches nothing, never an error.
+ *
+ * `mine` narrows the feed to rows the VIEWER authored (civitai/civitai#5354 Q3).
+ * It is a BOOLEAN, not a user id: the author it filters on is
+ * `resolveSharedContext`'s resolved subject — the same value `viewerVoted` already
+ * keys on — so no caller-supplied identity enters this path. Rows are world-readable
+ * either way, so this adds no read reach: it replaces "page the whole board and
+ * filter client-side" with one predicate over the same set.
+ *
+ * ⚠ THE REASON FOR THE BOOLEAN IS YAGNI, NOT A CAPABILITY BOUNDARY — an earlier
+ * draft of this comment claimed a `mine=<userId>` form "would be a new enumeration
+ * primitive", and that is FALSE: `toSharedKvItem` returns `authorUserId` on every
+ * listed row, so enumerating a named user's submissions is ALREADY possible by
+ * paging the board — which is the very cost this parameter exists to remove. A
+ * userId form would make it CHEAP, not POSSIBLE. The real argument is narrower and
+ * still sufficient: nothing asks for it, and widening a boolean to an id later is
+ * easy while narrowing an id to a boolean after clients depend on it is not.
+ * Do not restore the security framing; it would read as an invariant that the
+ * response shape contradicts two functions up.
  */
 export async function listSharedRows(
   blockToken: string,
-  { prefix, limit, cursor }: { prefix?: string; limit: number; cursor?: string }
+  {
+    prefix,
+    limit,
+    cursor,
+    mine,
+  }: { prefix?: string; limit: number; cursor?: string; mine?: boolean }
 ): Promise<{ items: SharedKvItem[]; nextCursor?: string }> {
   // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
-  // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
+  // hydrate the per-viewer `viewerVoted` flag below, and (when `mine`) to be the
+  // author filtered on. It is never client input.
   const { schema, userId } = await resolveSharedContext(blockToken, 'list');
   const pool = requireAppsDb();
 
@@ -400,6 +556,53 @@ export async function listSharedRows(
   // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
   // is index-covered and adds no scan to the hot list path. The raw vote rows
   // are NEVER returned — only the boolean derived from the viewer's own row.
+  //
+  // `mine` ($5) reuses that same $4 — see this function's JSDoc for why it is a
+  // boolean rather than a user id. 🔴 AN ANONYMOUS VIEWER ASKING FOR `mine` GETS
+  // AN EMPTY PAGE, NOT AN ERROR AND NOT THE WHOLE BOARD, and it is the SQL that
+  // guarantees it rather than a guard anyone could forget: $4 is NULL for anon,
+  // so `s.author_user_id = $4::int` is UNKNOWN and matches nothing — the
+  // identical three-valued-logic reason `viewer_voted` is always false for anon,
+  // two lines up. That is the right answer (an anonymous viewer has authored
+  // nothing) but it is right by a MECHANISM rather than by an `if`, so
+  // `apps-shared.router.test.ts` pins the SQL SHAPE and not just the row count:
+  // against an empty fixture a refactor to `COALESCE($4, s.author_user_id)` —
+  // which silently returns the ENTIRE board to anon under a `mine` flag — is
+  // behaviourally indistinguishable, so only a shape assertion can see it.
+  // The predicate is SUPPORTED by `shared_kv_author_idx` (author_user_id) —
+  // supported, not covering; the index holds only that column — and the
+  // per-author row cap is SHARED_KV_PER_USER_ROW_CAP, so the sort it feeds is
+  // bounded and small. The index is created by the same migration that creates
+  // `shared_kv`, so every provisioned schema has it.
+  //
+  // 🔴 NO FAIL-CLOSED FORM OF THE `$5` GUARD IS AN IMPROVEMENT ON THIS ONE, AND
+  // TWO SUCCESSIVE ATTEMPTS TO FIND ONE WERE WRONG. Written down so a third is
+  // not derived. (An earlier heading said no fail-closed form EXISTS, which this
+  // comment's own second half then contradicts — one does; it is simply worse.)
+  //
+  // Attempt 1 shipped `NOT COALESCE($5::boolean, false)` in place of
+  // `$5::boolean IS NOT TRUE`, with a comment claiming it changed the failure
+  // direction on NULL. It is a NO-OP — measured in PostgreSQL 16, the two have
+  // identical truth tables, NULL included:
+  //     $5     IS NOT TRUE   NOT COALESCE($5,false)
+  //     true        f                 f
+  //     false       t                 t
+  //     NULL        t                 t
+  // Reverted to the simpler original form, because a change that does nothing is
+  // churn that reads as protection.
+  //
+  // Attempt 2, proposed by the next audit round, was `NOT COALESCE($5, true)` —
+  // which genuinely does flip the NULL case, and is DANGEROUS. 🔴 Do not apply it.
+  // `$5` can only be NULL if the `mine ?? false` below is removed, and in exactly
+  // that scenario a caller sending NO `mine` sends `undefined` → NULL — so
+  // defaulting NULL to "filter" would make EVERY ordinary board listing silently
+  // return only the viewer's own rows. That is a far wider blast radius than the
+  // case it fixes.
+  //
+  // So: the NULL case is UNREACHABLE, no spelling of this predicate improves on
+  // that, and the invariant lives in the `mine ?? false` below plus the zod types
+  // on both callers (`boolean | undefined`). That is the honest state. If you are
+  // about to propose a third form, you are the third.
   const rows = (
     await pool.query<SharedKvRow>(
       `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
@@ -411,9 +614,10 @@ export async function listSharedRows(
         WHERE s.hidden_at IS NULL
           AND s.key LIKE $1 ESCAPE '\\'
           AND ($2::text IS NULL OR s.key < $2)
+          AND ($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)
         ORDER BY s.key DESC
         LIMIT $3`,
-      [prefixPattern, afterKey, limit, userId]
+      [prefixPattern, afterKey, limit, userId, mine ?? false]
     )
   ).rows;
 
@@ -540,13 +744,18 @@ export async function appendSharedRow(
   // (see assertSharedValueSafeAndSerialize): a policy-violating edit and a create
   // are moderated identically. Throws a clean 4xx on any rejection — no row is
   // ever written on failure.
-  const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+  //
+  // Only `serialized` is taken: the wire `byteSize` it also returns has already
+  // done its one job (SHARED_VALUE_BYTE_CAP, enforced in that unit inside the
+  // helper) and must not reach the quota gate below. See STORED_SIZE_PROBE_SQL.
+  const { serialized, moderation } = await assertSharedValueSafeAndSerialize({
     schema,
     slug,
     appBlockId,
     uid,
     subjectUser,
     value,
+    surface: 'append',
   });
 
   const pool = requireAppsDb();
@@ -567,16 +776,29 @@ export async function appendSharedRow(
     });
   }
 
-  // Per-app byte + row quota (shared with the per-user kv path).
+  // Per-app byte + row quota (shared with the per-user kv path), read together with
+  // the stored size of the value about to be written.
   const quota = (
-    await pool.query<{ used_bytes: string; row_count: string }>(
-      `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
-      [appBlockId]
+    await pool.query<{
+      used_bytes: string | null;
+      row_count: string | null;
+      stored_size_bytes: number | null;
+    }>(
+      `SELECT (SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1) AS used_bytes,
+              (SELECT row_count::text FROM ${schema}.quota WHERE app_block_id = $1) AS row_count,
+              ${STORED_SIZE_PROBE_SQL}`,
+      [appBlockId, serialized]
     )
   ).rows[0];
-  const usedBytes = Number(quota?.used_bytes ?? '0');
-  const rowCount = Number(quota?.row_count ?? '0');
-  if (usedBytes + byteSize > APP_QUOTA_BYTES) {
+  const usedBytes = requireFiniteCounter(quota?.used_bytes, 'app used_bytes');
+  const rowCount = requireFiniteCounter(quota?.row_count, 'app row_count');
+  // 🔴 BOTH SIDES OF THIS COMPARISON MUST BE IN THE STORED UNIT. `usedBytes` is the
+  // trigger-maintained sum of `shared_kv.size_bytes`; the wire `byteSize` the
+  // serialize helper also returns belongs only to SHARED_VALUE_BYTE_CAP, which it
+  // has already enforced in that unit. Read STORED_SIZE_PROBE_SQL's header before
+  // changing either term.
+  const storedByteSize = requireStoredSize(quota?.stored_size_bytes);
+  if (usedBytes + storedByteSize > APP_QUOTA_BYTES) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
   }
   if (rowCount + 1 > APP_ROW_LIMIT) {
@@ -608,6 +830,15 @@ export async function appendSharedRow(
     client.release();
   }
 
+  // SHADOW `data` moderation: only now that the row exists, and never awaited.
+  if (moderation.mode === 'shadow') {
+    const { readStoredData } = moderation;
+    scheduleSharedDataShadow(
+      () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
+      { appBlockId, rowKey: key, surface: 'append' }
+    );
+  }
+
   return { key };
 }
 
@@ -621,8 +852,8 @@ export async function appendSharedRow(
  *   - FORBIDDEN unless author_user_id = the token subject (a non-author cannot edit;
  *     mods use apps.mod.purgeSharedRow, not this)
  * The new title/body run the SAME blocking content-safety belt as append (a
- * policy-violating edit is rejected, no write); the opaque `data` blob stays
- * UNMODERATED (same trust boundary as append). The whole value is serialize-guarded
+ * policy-violating edit is rejected, no write); the `data` blob gets the same flag-
+ * governed leaf moderation as append. The whole value is serialize-guarded
  * + capped, and the per-app quota is re-checked on the byte DELTA (new − old) BEFORE
  * the write. The write is IN PLACE: value + updated_at (+ the generated size_bytes,
  * which the shared_kv UPDATE quota trigger folds into used_bytes) change; the key,
@@ -676,27 +907,124 @@ export async function updateSharedRow(
   // Belt on the NEW title/body + serialize-guard + whole-value byte cap (mirrors
   // append EXACTLY — same helper). A policy-violating edit throws here, before any
   // write, so the stored row is never touched.
-  const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+  //
+  // Only `serialized` is taken — see the matching note in `append`: the wire
+  // `byteSize` has already enforced SHARED_VALUE_BYTE_CAP inside the helper and
+  // must not reach the delta arithmetic below.
+  const { serialized, moderation } = await assertSharedValueSafeAndSerialize({
     schema,
     slug,
     appBlockId,
     uid,
     subjectUser,
     value,
+    surface: 'update',
+    rowKey: key,
   });
 
   // Per-app byte quota re-checked on the DELTA (new − old). A shrinking edit always
   // fits; a growing edit must sit within the remaining budget. Row count is
   // UNCHANGED by an in-place update, so there's no row-limit / per-user-row check.
+  //
+  // "A shrinking edit always fits" is enforced by the `isNonIncreasing` exemption
+  // below, not merely by the arithmetic — see the comment on it.
   const quota = (
-    await pool.query<{ used_bytes: string }>(
-      `SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1`,
-      [appBlockId]
+    await pool.query<{ used_bytes: string | null; stored_size_bytes: number | null }>(
+      `SELECT (SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1) AS used_bytes,
+              ${STORED_SIZE_PROBE_SQL}`,
+      [appBlockId, serialized]
     )
   ).rows[0];
-  const usedBytes = Number(quota?.used_bytes ?? '0');
+  const usedBytes = requireFiniteCounter(quota?.used_bytes, 'app used_bytes');
+  // 🔴 A SUBTRACTION IS ONLY A DELTA IF BOTH TERMS SHARE A UNIT. `oldBytes` comes
+  // straight out of the generated `shared_kv.size_bytes` column, so it is already
+  // in stored bytes; the new side must be too, or the difference is not a measure
+  // of growth at all. Held in the wire unit this was a repeatable bypass — any
+  // value whose wire size is at or below the row's stored size made the delta
+  // non-positive, so the gate passed unconditionally while the trigger charged the
+  // true stored growth. Read STORED_SIZE_PROBE_SQL's header before touching this.
+  const storedByteSize = requireStoredSize(quota?.stored_size_bytes);
+  // Already in STORED bytes — it comes straight out of the generated column. The
+  // finiteness check mirrors the per-user path (`app-storage.service`'s `set`) and
+  // exists because a NaN here would fail open through BOTH arms of the gate below:
+  // `NaN <= 0` is false (no exemption) and `NaN > CAP` is false (no refusal), so the
+  // write would land uncharged. Unreachable with the current DDL — `size_bytes` is a
+  // non-null generated `integer` — but the asymmetry with the `storedByteSize` guard
+  // above is exactly the kind a later schema change turns into a hole.
   const oldBytes = Number(existing.size_bytes ?? 0);
-  if (usedBytes + (byteSize - oldBytes) > APP_QUOTA_BYTES) {
+  if (!Number.isFinite(oldBytes)) {
+    throw new Error('app shared storage: stored row size is not numeric');
+  }
+  const netDelta = storedByteSize - oldBytes;
+
+  // 🔴 AN EDIT THAT DOES NOT GROW THE STORED BYTES MUST NEVER BE REFUSED BY A BYTE
+  // CEILING, and this exemption is part of the unit fix rather than a separate
+  // policy change — without it the fix above TRAPS the authors of an over-quota app.
+  //
+  // `usedBytes` is what is stored NOW, not a projection, so once a counter sits above
+  // the cap the gate refuses any write for which `used + netDelta > CAP` — and since
+  // `netDelta` is at best a reclaim, that means **a shrink is refused unless it is big
+  // enough to land the counter back under the cap**, i.e. iff `used > CAP + |netDelta|`.
+  // A no-op re-save (`netDelta === 0`) is then refused at any overrun at all. So the
+  // action that would bring the app back under its ceiling is the one refused, exactly
+  // when the overrun exceeds what one edit can reclaim.
+  //
+  // ⚠️ Not "every shrink at or above the cap is refused" — an earlier draft of this
+  // comment said that and it is wrong in two measurable places, both covered by tests
+  // in `apps-shared.router.quota.stored-units.behavior.test.ts`: at `used === CAP`
+  // exactly a no-op passes (`CAP + 0 > CAP` is false), and at `used = CAP + 2_000` a
+  // 6,000-byte reclaim passes. Overstating it hides what the exemption is actually for.
+  //
+  // The fallback exits are narrow but not singular: the author's own `withdraw` (which
+  // hard-deletes the row and cascades its votes and counter — NOT its reports, whose
+  // `key` is deliberately not an FK so the audit trail survives a purge), a moderator's
+  // `apps.mod.purgeSharedRow` with `action: 'delete'`, and — because `quota` is SHARED
+  // with the per-user `kv` table through the same trigger — any `storage.delete` on the
+  // per-user path. All of them destroy data to reclaim bytes; none lets an author simply
+  // correct an oversized row, which is what this exemption restores.
+  //
+  // A counter can reach the over-cap state from a lowered cap, from trigger drift
+  // (`kv_quota_trigger` no-ops when the GUC is unset), or — the reason this matters on
+  // this commit specifically — from the pre-fix bypass this change closes.
+  //
+  // It was previously reachable only BY ACCIDENT, and only at a SMALL overrun. The old
+  // delta was `wireNew − storedOld`, carrying a systematic negative bias (~33% of the
+  // row on a separator-dense value), so a no-op re-save computed a comfortably negative
+  // number and passed while the overrun stayed under that bias. Correcting the unit
+  // removes the bias, and with it the escape hatch — so the exemption has to be stated
+  // deliberately instead.
+  //
+  // 🔴 THE EXEMPTION IS SAFE ONLY BECAUSE `netDelta` IS NOW IN THE STORED UNIT. Both
+  // terms are `octet_length(value::text)` over jsonb, i.e. exactly what
+  // `shared_kv.size_bytes` holds and the trigger sums, so `netDelta <= 0` really does
+  // mean "this write stores no more than the row already did". Held in the wire unit
+  // the same condition was satisfiable indefinitely by writes that GREW the stored
+  // bytes, which is the bypass itself. Do not reintroduce a wire-unit term here.
+  // (Identical reasoning, and the identical warning, on the per-user path — see the
+  // `isNonIncreasing` block in `app-storage.service`'s `set`.)
+  //
+  // What it cannot skip: SHARED_VALUE_BYTE_CAP is already enforced per value before any
+  // of this, and the row population is unchanged by an in-place update so no row gate is
+  // in play. ⚠️ It is NOT bounded by the trigger "reconciling" afterwards — an earlier
+  // draft claimed that, and `kv_quota_trigger` only ever applies a DELTA
+  // (`used_bytes = used_bytes + (NEW.size_bytes - OLD.size_bytes)`), so it propagates
+  // this write faithfully and cannot correct pre-existing drift.
+  //
+  // 🔴 AND DO NOT SUBSTITUTE "a periodic recompute will fix it". The provisioner's own
+  // comment on the trigger says one exists ("the periodic recompute in P7 reconciles"),
+  // but a full enumeration of `src/` finds no job that recomputes app-level
+  // `quota.used_bytes` from the rows: the only `sum(size_bytes)` outside tests is in
+  // `user-storage-purge.service`, which sums `kv` for ONE user and cannot see
+  // `shared_kv` at all. So app-level drift, once present, is currently permanent — which
+  // is precisely why this exemption has to exist rather than being deferred to a
+  // reconciler.
+  //
+  // `append` needs no equivalent, for a stronger reason than a sign argument: its gate
+  // is ABSOLUTE (`usedBytes + storedByteSize > CAP`), not a delta, so there is no
+  // non-increasing case for an exemption to recognise. Do not "harmonise" the two by
+  // giving append a delta.
+  const isNonIncreasing = netDelta <= 0;
+  if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
   }
 
@@ -726,6 +1054,15 @@ export async function updateSharedRow(
   }
   // Lost a race (row vanished / was hidden / reassigned between SELECT and UPDATE).
   if (updated === 0) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+
+  // SHADOW `data` moderation, after the edit landed — see `appendSharedRow`.
+  if (moderation.mode === 'shadow') {
+    const { readStoredData } = moderation;
+    scheduleSharedDataShadow(
+      () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
+      { appBlockId, rowKey: key, surface: 'update' }
+    );
+  }
 
   return { ok: true as const };
 }
@@ -845,6 +1182,7 @@ export async function withdrawSharedRow(
 
   const pool = requireAppsDb();
   const client = await pool.connect();
+  let deleted: boolean;
   try {
     await client.query('BEGIN');
     await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
@@ -853,12 +1191,36 @@ export async function withdrawSharedRow(
       [key, uid]
     );
     await client.query('COMMIT');
-    return { ok: true as const, deleted: (result.rowCount ?? 0) > 0 };
+    deleted = (result.rowCount ?? 0) > 0;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
+  }
+  if (deleted) {
+    await syncStoreItem({ appBlockId, itemKey: key, change: 'withdrawn', authorUserId: uid });
+  }
+  return { ok: true as const, deleted };
+}
+
+/**
+ * The item's store card (an app sub-listing) follows an in-app withdraw or moderator hide,
+ * from the server, so the store never depends on the app to clean up. Best-effort: the
+ * shared-storage write has already committed in the apps database.
+ */
+async function syncStoreItem(args: SyncSubListingForSharedRowArgs): Promise<void> {
+  try {
+    const { syncSubListingForSharedRow } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    await syncSubListingForSharedRow(args);
+  } catch (err) {
+    logToAxiom({
+      name: 'app-sub-listing-shared-sync-failed',
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    }).catch(() => null);
   }
 }
 
@@ -949,6 +1311,15 @@ export const appsSharedRouter = router({
           .max(SHARED_LIST_LIMIT_MAX)
           .default(SHARED_LIST_LIMIT_DEFAULT),
         cursor: z.string().max(SHARED_CURSOR_MAX).optional(),
+        // civitai/civitai#5354 Q3 — see `listSharedRows`' JSDoc.
+        // ⚠ NOT justified by the REST/bridge non-divergence rule, which an earlier
+        // draft of this comment cited. That rule holds because both paths call
+        // THIS function with the same authz and SQL, and it keeps holding whether
+        // or not the argument lists match — it is about the shared callee, not
+        // about parity of inputs. `mine` is here because the bridge hosts forward
+        // it (PageBlockHost.tsx / IframeHost.tsx, both in this change), which is
+        // what makes the parameter reachable by a block at all.
+        mine: z.boolean().optional(),
       })
     )
     .query(async ({ input }) =>
@@ -956,6 +1327,7 @@ export const appsSharedRouter = router({
         prefix: input.prefix,
         limit: input.limit,
         cursor: input.cursor,
+        mine: input.mine,
       })
     ),
 
@@ -1041,7 +1413,9 @@ const COUNTER_KEY_MAX = 64;
  * `counters.key` column FK-references `shared_kv.key`, so we first upsert a tiny
  * ANCHOR `shared_kv` row for the key (value `{}`) inside the same txn (under the
  * quota GUC), then upsert the counter. Rate-limited on the SAME per-(user, app)
- * vote bucket as the shared vote path. Returns the new count.
+ * vote bucket as the shared vote path. Returns the new count. The KEY is app-chosen text
+ * that `getTop` returns to every reader, so it gets the same flag-governed local
+ * moderation as a `data` leaf (see `shared-data-moderation.ts`).
  *
  * NOTE (best-effort/anti-abuse): the per-user shared_kv row cap that `append`
  * enforces is intentionally NOT applied here — counter keys are app-global
@@ -1054,7 +1428,10 @@ export async function incrementSharedCounter(
   blockToken: string,
   key: string
 ): Promise<{ key: string; count: number }> {
-  const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'increment');
+  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
+    blockToken,
+    'increment'
+  );
   const uid = userId as number; // non-null (write path ran the trust gate)
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
@@ -1065,36 +1442,94 @@ export async function incrementSharedCounter(
     });
   }
 
+  // The key is app-chosen text that `getTop` hands to every reader, so it is moderated as one
+  // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`).
+  //
+  // 🔴 A COUNTER KEY IS SCANNED ONLY ON THE INCREMENT THAT CREATES IT — IN BOTH MODES. A key's text
+  // never changes after creation, so every later increment of an existing key reads nothing, which
+  // keeps two blocklist reads and an event off every increment of a hot counter. Keys that already
+  // existed before either flag was on are NOT re-checked per increment: they are covered by an
+  // offline replay run before the enforce flip (the live count of such keys was 0 when measured).
+  //
+  // "Creates" is decided by the anchor INSERT below actually inserting, inside the write
+  // transaction, so it cannot race a moderator purge or a concurrent creator. Shadow scans after the
+  // commit. Enforce must scan BEFORE the key exists, but not inside the transaction: the anchor
+  // INSERT fires the quota trigger, which holds this app's quota-row lock until commit, and a
+  // blocklist read must not hold every other shared write of the app behind it. So an enforce
+  // increment that would create the key rolls back, scans with no transaction open, and — if the
+  // key is clean — runs once more without the check (by then it may already exist, which is fine:
+  // whoever created it was scanned the same way).
+  const moderationMode = await resolveSharedDataModerationMode(appBlockId);
   const pool = requireAppsDb();
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    // GUC drives the shared_kv quota trigger (byte/row accounting on the anchor).
-    await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
-    // Anchor row so the counters FK holds. INSERT-or-ignore: created once per key.
-    await client.query(
-      `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
-       VALUES ($1, $2, '{}'::jsonb)
-       ON CONFLICT (key) DO NOTHING`,
-      [key, uid]
+
+  /** One increment transaction. `null` = it would have created the key and was rolled back. */
+  const runIncrement = async (
+    rollBackCreate: boolean
+  ): Promise<{ createdKey: boolean; count: number } | null> => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // GUC drives the shared_kv quota trigger (byte/row accounting on the anchor).
+      await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+      // Anchor row so the counters FK holds. INSERT-or-ignore: created once per key.
+      const anchor = await client.query(
+        `INSERT INTO ${schema}.shared_kv (key, author_user_id, value)
+         VALUES ($1, $2, '{}'::jsonb)
+         ON CONFLICT (key) DO NOTHING`,
+        [key, uid]
+      );
+      const createdKey = (anchor.rowCount ?? 0) > 0;
+      if (rollBackCreate && createdKey) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+      const rows = (
+        await client.query<{ count: string }>(
+          `INSERT INTO ${schema}.counters AS c (key, count)
+           VALUES ($1, 1)
+           ON CONFLICT (key) DO UPDATE SET count = c.count + 1
+           RETURNING c.count::text AS count`,
+          [key]
+        )
+      ).rows;
+      await client.query('COMMIT');
+      return { createdKey, count: Number(rows[0]?.count ?? '0') };
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  };
+
+  let outcome = await runIncrement(moderationMode === 'enforce');
+  if (!outcome) {
+    // Enforce, and this increment would create the key: scan it now, with no transaction open.
+    const scan = await enforceScan(
+      () => scanCounterKey(key, { isModerator: subjectUser?.isModerator }),
+      { appBlockId, surface: 'counter' }
     );
-    const rows = (
-      await client.query<{ count: string }>(
-        `INSERT INTO ${schema}.counters AS c (key, count)
-         VALUES ($1, 1)
-         ON CONFLICT (key) DO UPDATE SET count = c.count + 1
-         RETURNING c.count::text AS count`,
-        [key]
-      )
-    ).rows;
-    await client.query('COMMIT');
-    return { key, count: Number(rows[0]?.count ?? '0') };
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
+    // Records the scan; on a hit, files the consequences against the caller (the would-be creator)
+    // and throws, so nothing was ever written.
+    await refuseSharedTextHit(scan, await sharedTextBlockingHit(scan), {
+      schema,
+      slug,
+      appBlockId,
+      uid,
+      rowKey: key,
+      surface: 'counter',
+    });
+    outcome = await runIncrement(false);
+    if (!outcome) throw new Error('unreachable: runIncrement(false) never rolls back');
   }
+  if (moderationMode === 'shadow' && outcome.createdKey) {
+    scheduleSharedDataShadow(() => scanCounterKey(key, { isModerator: subjectUser?.isModerator }), {
+      appBlockId,
+      rowKey: key,
+      surface: 'counter',
+    });
+  }
+  return { key, count: outcome.count };
 }
 
 /**
@@ -1204,6 +1639,15 @@ export const appsModRouter = router({
         }
       }
 
+      // Hidden or deleted in the app ⇒ hidden in the store, whether or not this call changed
+      // the shared row (it may have been hidden already).
+      await syncStoreItem({
+        appBlockId: block.id,
+        itemKey: input.key,
+        change: 'hidden',
+        moderatorId: ctx.user.id,
+      });
+
       // File the Report row (kept even after a hard delete — key is not FK'd here).
       await insertSharedReport(schema, {
         key: input.key,
@@ -1228,10 +1672,14 @@ export const appsModRouter = router({
  * minor/POI; the separate lower-urgency content-block for a general audit hit) — the
  * SAME observability append historically had inline — then throws BAD_REQUEST.
  *
- * `data` is the OPAQUE, app-owned, UNMODERATED payload: it is folded into the stored
- * value but NEVER runs the belt (same trust boundary as append). It holds PLAIN-JSON
- * app state round-tripped as JSON (superjson-special types are NOT preserved), and
- * because `z.unknown()` does no validation, JSON.stringify can THROW (BigInt /
+ * `data` is the app-owned payload: it is folded into the stored value but NEVER runs the
+ * title/body belt. Its strings and object keys get the LOCAL leaf moderation in
+ * `shared-data-moderation.ts` instead, governed by two per-app flags: off (the shipped
+ * default — `data` is not read at all), shadow (scanned after the write commits, recorded,
+ * never rejected — the caller schedules that from the returned `moderation`), or enforce
+ * (scanned here, before the write, and rejected via `refuseSharedTextHit`). It holds
+ * PLAIN-JSON app state round-tripped as JSON (superjson-special types are NOT preserved),
+ * and because `z.unknown()` does no validation, JSON.stringify can THROW (BigInt /
  * circular) — guarded to a clean BAD_REQUEST, never an unhandled 500. The whole
  * serialized value is bounded by SHARED_VALUE_BYTE_CAP.
  *
@@ -1245,7 +1693,15 @@ async function assertSharedValueSafeAndSerialize(params: {
   uid: number;
   subjectUser: SessionUser | null;
   value: { title: string; body?: string; data?: unknown };
-}): Promise<{ serialized: string; byteSize: number }> {
+  surface: 'append' | 'update';
+  /** The row being edited (update). A create has no key until it is written. */
+  rowKey?: string;
+}): Promise<{
+  serialized: string;
+  byteSize: number;
+  /** For the caller's post-commit shadow scan. `readStoredData` parses `serialized` back. */
+  moderation: { mode: SharedDataModerationMode; readStoredData: () => unknown };
+}> {
   const { schema, slug, appBlockId, uid, subjectUser, value } = params;
 
   let safe: { title: string; body?: string };
@@ -1258,45 +1714,10 @@ async function assertSharedValueSafeAndSerialize(params: {
     });
   } catch (e) {
     if (e instanceof SharedContentBlockedError) {
-      // C3/M5: minor/POI/audit hits file a Report row for mod review. (link/size are
-      // user error, not reportable abuse.)
-      if (e.category === 'minor' || e.category === 'poi' || e.category === 'audit') {
-        await insertSharedReport(schema, {
-          key: null,
-          reporterUserId: uid,
-          reason: `auto:${e.category}`,
-        }).catch(() => {});
-      }
-      // TWO DISTINCT signals kept separate so the legal-urgency channel is not
-      // diluted: minor/POI → the `…-legal-block` / `type:error` event; a general
-      // `audit` block → the lower-urgency `…-content-block` / `type:warning` event.
-      // METADATA ONLY (never the content text); fire-and-forget (an alert emit must
-      // never block or fail the op).
-      if (e.category === 'minor' || e.category === 'poi') {
-        logToAxiom(
-          {
-            name: 'app-blocks-shared-storage-legal-block',
-            type: 'error',
-            category: e.category,
-            userId: uid,
-            slug,
-            appBlockId,
-          },
-          'block-audit'
-        ).catch(() => {});
-      } else if (e.category === 'audit') {
-        logToAxiom(
-          {
-            name: 'app-blocks-shared-storage-content-block',
-            type: 'warning',
-            category: e.category,
-            userId: uid,
-            slug,
-            appBlockId,
-          },
-          'block-audit'
-        ).catch(() => {});
-      }
+      await fileSharedBlockConsequences(
+        { schema, slug, appBlockId, uid },
+        { policy: e.category, category: e.category, reason: `auto:${e.category}` }
+      );
       throw new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
     }
     throw e;
@@ -1317,7 +1738,188 @@ async function assertSharedValueSafeAndSerialize(params: {
   if (byteSize > SHARED_VALUE_BYTE_CAP) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' });
   }
-  return { serialized, byteSize };
+
+  // `data` moderation (see `shared-data-moderation.ts` for the modes). Runs AFTER the title/body
+  // belt and the byte cap, so a value that fails either is refused exactly as before, and the walk
+  // is bounded by SHARED_VALUE_BYTE_CAP. Both flags OFF ⇒ nothing below parses or scans anything.
+  //
+  // 🔴 The scan reads the SERIALIZED value parsed back, not `value.data`: that is the exact JSON
+  // that will be stored and later rendered, so a superjson-revived `Date`, a `toJSON` override or a
+  // dropped `undefined` is seen in its stored form rather than guessed at. Pinned by the
+  // revived-`URL` / `Date` cases in `apps-shared.router.test.ts` (a scan of `value.data` reads a
+  // revived `URL` as an object with no keys, and passes it).
+  const mode = await resolveSharedDataModerationMode(appBlockId);
+  // A thunk, so shadow mode parses off the request path too (inside the deferred scan).
+  const readStoredData = () =>
+    value.data === undefined ? undefined : (JSON.parse(serialized) as { data?: unknown }).data;
+  if (mode === 'enforce') {
+    const scan = await enforceScan(
+      () => scanSharedData(readStoredData(), { isModerator: subjectUser?.isModerator }),
+      { appBlockId, surface: params.surface }
+    );
+    await refuseSharedTextHit(scan, await sharedTextBlockingHit(scan), {
+      schema,
+      slug,
+      appBlockId,
+      uid,
+      rowKey: params.rowKey ?? '',
+      surface: params.surface,
+    });
+  }
+  return { serialized, byteSize, moderation: { mode, readStoredData } };
+}
+
+/**
+ * The consequences of a blocked shared-storage write, in ONE place for every surface that blocks
+ * one — the title/body belt above, and `data` leaves / counter keys below — so a change to who gets
+ * reported or alerted cannot land on one and miss the other.
+ *
+ * - minor / POI / audit file a Report row for mod review (link, pattern, size and overflow are user
+ *   error or list hygiene, not reportable abuse);
+ * - TWO DISTINCT alerts, kept separate so the legal-urgency channel is not diluted: minor/POI →
+ *   `…-legal-block` / `type:error`; a general audit block → `…-content-block` / `type:warning`.
+ *
+ * METADATA ONLY (never the content text); fire-and-forget (an alert emit must never block or fail
+ * the op). `field` is set only for the `data` / counter-key surfaces, so the title/body events are
+ * exactly what they were.
+ */
+async function fileSharedBlockConsequences(
+  ctx: { schema: string; slug: string; appBlockId: string; uid: number },
+  block: {
+    /** What decides the consequence. `data`'s `audit_regex` is the title/body `audit`. */
+    policy: string;
+    /** What the alert reports. */
+    category: string;
+    reason: string;
+    field?: 'data' | 'counterKey';
+  }
+): Promise<void> {
+  const { policy } = block;
+  if (policy === 'minor' || policy === 'poi' || policy === 'audit') {
+    await insertSharedReport(ctx.schema, {
+      key: null,
+      reporterUserId: ctx.uid,
+      reason: block.reason,
+    }).catch(() => undefined);
+  }
+  const alert =
+    policy === 'minor' || policy === 'poi'
+      ? { name: 'app-blocks-shared-storage-legal-block', type: 'error' }
+      : policy === 'audit'
+      ? { name: 'app-blocks-shared-storage-content-block', type: 'warning' }
+      : null;
+  if (alert) {
+    logToAxiom(
+      {
+        ...alert,
+        category: block.category,
+        ...(block.field ? { field: block.field } : {}),
+        userId: ctx.uid,
+        slug: ctx.slug,
+        appBlockId: ctx.appBlockId,
+      },
+      'block-audit'
+    ).catch(() => undefined);
+  }
+}
+
+/**
+ * Run an ENFORCE scan, turning an infrastructure failure (the blocklist or benign-phrase read)
+ * into a clean refusal rather than a raw 500 — the same contract the title/body belt keeps in
+ * `assertSharedTextSafe`. It fails CLOSED: an unread write is not let through. The refusal is
+ * escalated to server-fault severity so the outage is logged as one, not as user error, and the
+ * failure is logged by error NAME only.
+ */
+async function enforceScan(
+  run: () => Promise<SharedTextScan>,
+  ctx: { appBlockId: string; surface: SharedDataSurface }
+): Promise<SharedTextScan> {
+  try {
+    return await run();
+  } catch (error) {
+    logToAxiom(
+      {
+        name: 'app-blocks-shared-data-moderation-scan-failed',
+        type: 'error',
+        appBlockId: ctx.appBlockId,
+        surface: ctx.surface,
+        error: error instanceof Error ? error.name : typeof error,
+      },
+      'block-audit'
+    ).catch(() => undefined);
+    throw escalateToServerFault(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Content could not be reviewed right now. Please try again.',
+      })
+    );
+  }
+}
+
+/**
+ * The hit an ENFORCE scan is refused for, or `null` to let the write through.
+ *
+ * 🔴 A PATTERN-list hit counts only while `user-content-pattern-enforce` is on — the same rule the
+ * title/body belt follows inside `throwOnBlockedUserContent`, where a pattern hit is recorded but not
+ * enforced until that flag flips. Otherwise turning this surface's enforce flag on would enforce the
+ * pattern list on `data` while the same row's title is only recorded. The flag is read only when a
+ * pattern hit exists, as there.
+ */
+async function sharedTextBlockingHit(scan: SharedTextScan): Promise<SharedTextHit | null> {
+  const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
+    ? await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE)
+    : false;
+  return blockingHit(scan, { enforcePatterns });
+}
+
+/**
+ * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then,
+ * when `hit` is set, reject it with the SAME consequences a title/body hit has
+ * (`fileSharedBlockConsequences`, attributed to the caller — the writer of the text) and a
+ * BAD_REQUEST carrying only a generic message (never the matched term). An overflow (a blob too
+ * deep, too wide or too long to read in full) is rejected too: an unread leaf must not pass by being
+ * past a cap. With `hit` null it only records.
+ *
+ * The recording is not awaited and never throws, so it cannot change the outcome either way. An
+ * enforce-mode record carries no user text in any column — not the leaf, the key, the path's keys
+ * or the matched substring (see `sharedDataHitRows`).
+ */
+async function refuseSharedTextHit(
+  scan: SharedTextScan,
+  hit: SharedTextHit | null,
+  ctx: {
+    schema: string;
+    slug: string;
+    appBlockId: string;
+    uid: number;
+    rowKey: string;
+    surface: SharedDataSurface;
+  }
+): Promise<void> {
+  void recordSharedDataScan(scan, {
+    appBlockId: ctx.appBlockId,
+    rowKey: ctx.rowKey,
+    surface: ctx.surface,
+    mode: 'enforce',
+    blocked: hit != null,
+  });
+  if (!hit) return;
+
+  const field = ctx.surface === 'counter' ? 'counterKey' : 'data';
+  await fileSharedBlockConsequences(ctx, {
+    policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
+    category: hit.category,
+    reason: `auto:${field}:${hit.category}`,
+    field,
+  });
+
+  const message =
+    hit.category === 'link'
+      ? 'Content contains a blocked link'
+      : hit.category === 'overflow'
+      ? 'Data is too large or too deeply nested to review'
+      : 'Content flagged for review';
+  throw new TRPCError({ code: 'BAD_REQUEST', message });
 }
 
 async function insertSharedReport(

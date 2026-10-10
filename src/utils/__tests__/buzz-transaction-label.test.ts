@@ -3,7 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { PLACEMENT_LEDGER_TEXT } from '~/shared/utils/placement';
-import { buzzTransactionLabel } from '~/utils/buzz';
+import { buzzTransactionLabel, parseBuzzTransactionDetails } from '~/utils/buzz';
 
 /**
  * Pre-#4212 rows still in prod: 1,527 as of 2026-09-09. They are why the
@@ -167,5 +167,16 @@ describe('the dashboard renders through the helper', () => {
 
   it('never touches transaction.description itself', () => {
     expect(source).not.toMatch(/transaction\.description/);
+  });
+});
+
+describe('parseBuzzTransactionDetails', () => {
+  it('links a crucible transaction to its crucible', () => {
+    expect(
+      parseBuzzTransactionDetails(
+        { entityId: 16, entityType: 'Crucible', position: 3 },
+        TransactionType.Reward
+      )
+    ).toMatchObject({ url: '/crucibles/16', label: 'Crucible' });
   });
 });

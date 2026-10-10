@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
 import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { constants } from '~/server/common/constants';
 import {
   OnboardingComplete,
@@ -14,6 +15,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
+import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
 import { getFollowsViewer } from '~/server/services/follows-viewer.service';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
@@ -100,6 +102,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
   patchUserSettings,
@@ -131,7 +134,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
+import { refreshSession } from '~/server/auth/session-invalidation';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -152,6 +157,8 @@ import {
   queueReplacedImageDeletion,
 } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 
 export const getAllUsersHandler = async ({
   input,
@@ -475,6 +482,8 @@ export const completeOnboardingHandler = async ({
             ...(emailChanged ? { emailVerified: null } : {}),
           },
         });
+        if (input.username && input.username !== current?.username)
+          queueScamScan({ entityType: 'User', entityId: id });
 
         // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
         // every address change made this an unmetered way to mail an arbitrary third party from
@@ -663,9 +672,9 @@ export const updateUserHandler = async ({
         profilePicture: newPicture
           ? {
               create: {
-                ...newPicture,
+                ...pickClientImageColumns(newPicture),
                 metadata: {
-                  ...newPicture.metadata,
+                  ...stripBlockProvenanceMetadata(newPicture.metadata),
                   profilePicture: true,
                   userId: id,
                   username,
@@ -1207,22 +1216,22 @@ export const toggleMuteHandler = async ({
   const user = await getUserById({ id, select: { muted: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-  const date = new Date();
-
-  const updatedUser = await updateUserById({
-    id,
-    data: {
-      muted: !user.muted,
-      mutedAt: !user.muted ? date : undefined,
-    },
-    updateSource: 'toggleMute',
-  });
-  await invalidateSession(id, 'moderation');
-
-  await ctx.track.userActivity({
-    type: user.muted ? 'Unmuted' : 'Muted',
-    targetUserId: id,
-  });
+  const updatedUser = user.muted
+    ? await setUserMuted({ userId: id, muted: false, actorId: ctx.user.id })
+    : await setUserMuted({ userId: id, muted: true });
+  // The toggle has committed. A failure below must not surface, or a retried click flips it back.
+  try {
+    if (!user.muted)
+      await trackModActivity(ctx.user.id, { entityType: 'user', entityId: id, activity: 'mute' });
+    await ctx.track.userActivity({ type: user.muted ? 'Unmuted' : 'Muted', targetUserId: id });
+  } catch (error) {
+    logToAxiom({
+      name: 'toggle-mute-audit-failed',
+      type: 'error',
+      message: (error as Error).message,
+      details: { userId: id },
+    }).catch(() => undefined);
+  }
 
   return updatedUser;
 };
@@ -1527,13 +1536,13 @@ export const toggleUserFeatureFlagHandler = async ({
     // written. Only the toggled flag is sent, merged into `settings.features` by the
     // database, so a concurrent write to any other setting — or to another flag —
     // survives instead of being reverted to its read-time value.
-    const value = isDefined(features[input.feature])
-      ? input.value ?? !features[input.feature]
-      : input.value ?? !defaultToggleableFeatures[input.feature];
+    const current = features[input.feature] ?? defaultToggleableFeatures[input.feature];
+    const value = input.value ?? !current;
 
     const settings = await patchUserSettings(id, {
       mergeInto: { features: { [input.feature]: value } },
     });
+    if (value !== current) recordUserFeatureToggle(input.feature, value);
 
     return (settings.features ?? { [input.feature]: value }) as Partial<FeatureAccess>;
   } catch (error) {

@@ -26,7 +26,7 @@ The implementation followed the plan; the notable specifics and deviations:
 
 ### Client (as-built)
 
-- `GenerationCtx.selfHostedDisabledEcosystems`, populated in `GenerationFormProvider` via `useSelfHostedDisabledEcosystems()`.
+- `GenerationCtx.selfHostedDisabledEcosystems`, populated in `BaseGenerationForm`'s `ext` memo via `useSelfHostedDisabledEcosystems()`.
 - **Ecosystem node** keeps disabled keys in `compatibleEcosystems`, exposes `meta.disabledEcosystems`, and rejects them in the `output` refine. **Gotcha:** `meta` must be a **function** `(ctx, ext) => …` (not a static object) — the node factory only re-runs on its `['workflow','output']` deps, so a static meta never reflects the async-loaded `ext` (config). `_updateAllMeta` only recomputes function-form meta. A shared `getEcosystemLists(workflow, ext)` helper keeps the factory and meta in sync.
 - **`BaseModelInput`** renders disabled items present-but-disabled with a badge (**"Members only"** yellow / **"Disabled"** gray) + tooltip, blocks click/Enter. Group display items (ZImage, Flux2Klein, LTXV) resolve to their **default ecosystem key** before the disabled check (their `key` is the group id, not an ecosystem key).
 - **Alert + Generate button** — the self-hosted alert was moved out of `GenerationForm` into `FormFooter`'s `PriorityAlertSpace` as the **first** priority branch (`SelfHostedBlockedAlert`), sharing a `useSelfHostedBlock()` hook with `FormFooter`, which **hides the entire submit/reset row** when blocked. Members-only copy links to `syncAccount(//green/pricing)` (the existing membership-upsell pattern).
@@ -44,7 +44,6 @@ The input types that route to our GPUs (provided by `@dev`, from `@civitai/clien
 | Input type                | Routed to   |
 | ------------------------- | ----------- |
 | `AceStepAudioInput`       | self-hosted |
-| `TextToImageInput`        | self-hosted |
 | `Flux2KleinImageGenInput` | self-hosted |
 | `ComfyImageGenInput`      | self-hosted |
 | `SdCppImageGenInput`      | self-hosted |
@@ -52,15 +51,19 @@ The input types that route to our GPUs (provided by `@dev`, from `@civitai/clien
 | `ComfyLtx2VideoGenInput`  | self-hosted |
 | `ComfyLtx23VideoGenInput` | self-hosted |
 
-**Key insight from the codebase:** the self-hosted/external split is **not** at the orchestrator step `$type` level (`textToImage` / `comfy` / `imageGen` / `videoGen` / `aceStepAudio`). A single `imageGen` step can be self-hosted _or_ external depending on the **engine / specific input type** the handler builds. So the 8 input types above are the source of truth, and they resolve to a specific set of ecosystems via the handlers in `src/server/services/orchestrator/ecosystems/`.
+**Key insight from the codebase:** the self-hosted/external split is **not** at the orchestrator step `$type` level (`textToImage` / `comfy` / `imageGen` / `videoGen` / `aceStepAudio`). A single `imageGen` step can be self-hosted _or_ external depending on the **engine / specific input type** the handler builds. So the input type, not the step `$type`, is what decides — and the set of self-hosted input types is larger than the list above, because the SD, Flux, Chroma, HiDream and PonyV7 families each emit their own `Comfy*CreateImageGenInput` (from `@civitai/orchestration-client`) rather than a shared one.
 
 ### Derived self-hosted ecosystem set
 
-Mapping each input type to the ecosystem(s) whose handler produces it (router: `src/server/services/orchestrator/ecosystems/index.ts`):
+Mapping each input type to the ecosystem(s) whose handler produces it (router: `src/server/services/orchestrator/form-graph/index.ts`):
 
 | Input type                | Ecosystems (ECO keys)                                                                                                      | Handler                                                                                                            |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `TextToImageInput`        | `SD1`, `SD2`, `SDXL`, `Pony`, `Illustrious`, `NoobAI`, `Flux1`, `FluxKrea`, `Chroma`, `HiDream`, `PonyV7`                  | `stable-diffusion.handler.ts`, `flux.handler.ts`, `chroma.handler.ts`, `hi-dream.handler.ts`, `pony-v7.handler.ts` |
+| `ComfySd1CreateImageGenInput` / `ComfySdxlCreateImageGenInput` (comfy), `Sd1CreateImageGenInput` / `SdxlCreateImageGenInput` (sdcpp) | `SD1`, `SDXL`, `Pony`, `Illustrious`, `NoobAI`. A ControlNet request forces the comfy pair; the sdcpp inputs have no `controlNets` field | `stable-diffusion.handler.ts` |
+| `ComfyFlux1CreateImageGenInput`, `Flux1ProImageGenInput`, `Flux1ProUltraImageGenInput` | `Flux1`, `FluxKrea` | `flux.handler.ts` |
+| `ComfyChromaCreateImageGenInput` | `Chroma` | `chroma.handler.ts` |
+| `ComfyHiDreamI1CreateImageGenInput` | `HiDream` | `hi-dream.handler.ts` |
+| `ComfyPonyV7CreateImageGenInput` | `PonyV7` | `pony-v7.handler.ts` |
 | `ComfyImageGenInput`      | `Anima`, `Ernie`, `Lens`, `HiDream-O1`, `ZImageTurbo`, `ZImageBase`, `Qwen` + SD-family img2img/face-fix/hires-fix (already covered by the SD ecosystems above) | `anima/ernie/lens/hi-dream-o1/z-image/qwen.handler.ts`, `comfy-input.ts` |
 | `SdCppImageGenInput`      | _(none — ZImage and Qwen moved to comfy; see the `ComfyImageGenInput` row)_                                               | —                                                                                                                  |
 | `Flux2KleinImageGenInput` | `Flux2Klein_9B`, `Flux2Klein_9B_base`, `Flux2Klein_4B`, `Flux2Klein_4B_base`                                               | `flux2-klein.handler.ts`                                                                                           |
@@ -69,13 +72,14 @@ Mapping each input type to the ecosystem(s) whose handler produces it (router: `
 | `ComfyLtx23VideoGenInput` | `LTXV23`                                                                                                                   | `ltx.handler.ts`                                                                                                   |
 | `AceStepAudioInput`       | `Ace`                                                                                                                      | `ace-audio.handler.ts`                                                                                             |
 
-> **Note on `ComfyVideoGenInput`:** the literal type is **not produced by any handler today** — a grep finds only `Wan22ComfyVideoGenInput` (a Wan-specific subtype) in `wan.handler.ts`. **Wan currently routes entirely through FAL (external) and is out of scope.** So `ComfyVideoGenInput` maps to **no active self-hosted ecosystem** right now; it's reserved. The only self-hosted video ecosystems are `LTXV2` / `LTXV23`. If a generic comfy-video ecosystem is wired up later, mark it `selfHosted: true` then.
+> **Note on `ComfyVideoGenInput`:** the literal type is **not produced by any handler today** — a grep finds only `Wan22ComfyVideoGenInput` (a Wan-specific subtype) in `wan.handler.ts`. **Wan currently routes entirely through FAL (external) and is out of scope.** So `ComfyVideoGenInput` maps to **no active self-hosted ecosystem** right now; it's reserved. The only self-hosted video ecosystems are `LTXV2` / `LTXV23` / `LTXV25`. If a generic comfy-video ecosystem is wired up later, mark it `selfHosted: true` then.
 
 ### Traps — lookalike ecosystems that are EXTERNAL (must NOT be gated)
 
 - **`Flux2`** (plain) → external (`flux2` engine). Only **`Flux2Klein*`** is self-hosted.
 - **`Qwen2`** → external (`fal`). Only **`Qwen`** (comfy) is self-hosted.
 - **All `Wan*` ecosystems** → external (FAL) today. Out of scope.
+- **`Ideogram`** → mixed by version: 4.0 is comfy (self-hosted), 4.5 is `fal` (external). It is not in `SELF_HOSTED_ECOSYSTEM_KEYS`, so the toggle reaches neither, and adding the key would block 4.5 too — the one exception to Decision 1.
 
 > **Decision 1 — RESOLVED: clean ecosystem-key granularity.** Every self-hosted ecosystem is all-or-nothing at the ecosystem-key level. No flag-conditional cases, no version-level lists. The static `selfHosted: true` flag fully describes the set.
 
@@ -94,7 +98,7 @@ Add a declarative marker for self-hosted ecosystems in `src/shared/constants/bas
 - **(a)** A `selfHosted: true` flag on each ecosystem record, with a derived `SELF_HOSTED_ECOSYSTEMS: string[]` helper.
 - **(b)** A standalone `SELF_HOSTED_ECOSYSTEMS` constant set, maintained next to the handlers.
 
-Either way, also define `SELF_HOSTED_INPUT_TYPES` (the 8 names) used for **server-side enforcement** (see §5). The static ecosystem list is for **client UX only**; the server enforcement on the produced input type is the real security boundary (belt + suspenders, since the static list can drift).
+Either way, also define `SELF_HOSTED_INPUT_TYPES` (the types in the table above, plus each image family's own `Comfy*CreateImageGenInput`) used for **server-side enforcement** (see §5). The static ecosystem list is for **client UX only**; the server enforcement on the produced input type is the real security boundary (belt + suspenders, since the static list can drift).
 
 > **Decision 2 — RESOLVED: (a).** Per-ecosystem `selfHosted: true` flag on the ecosystem record, with a derived `SELF_HOSTED_ECOSYSTEMS` helper. No conditional markers needed.
 > @dev - we can go with (a)
@@ -103,7 +107,7 @@ Either way, also define `SELF_HOSTED_INPUT_TYPES` (the 8 names) used for **serve
 
 Mirror the existing `generationStatusSchema` (`src/server/schema/generation.schema.ts:227`). Reuse `generationStatusModeSchema` (`'enabled' | 'memberOnly' | 'disabled'`).
 
-> **Decision 3 — RESOLVED: new field on the existing `generationStatus` object.** Add `selfHostedMode` (+ `selfHostedMessage`, `selfHostedUpdatedBy`) to `generationStatusSchema`. Same Redis field (`generation:status`), write path mirrors `setGenerationStatus` (`generation.service.ts:250`).
+> **Decision 3 — RESOLVED: new field on the existing `generationStatus` object.** Add `selfHostedMode` (+ `selfHostedUpdatedBy`) to `generationStatusSchema`. (`selfHostedMessage` was planned here and not built — see As-built.) Same Redis field (`generation:status`), write path mirrors `setGenerationStatus` (`generation.service.ts:250`).
 > @dev - new field on the existing status object
 
 ### 3. Server: extend `getGenerationConfig`
@@ -137,15 +141,15 @@ Returning the **resolved per-user list** keeps tier logic server-side (consisten
 
 The disabled list flows the **same path `gatedEcosystems` already takes**, but with **disable** semantics instead of **hide**. This keeps validation inside `generationGraph` and gives the components a single source of truth via the ecosystem node's `meta`.
 
-**The flow:** `getGenerationConfig` → `GenerationFormProvider` builds `externalContext: GenerationCtx` (`GenerationFormProvider.tsx:266`) → ecosystem node reads `ext` → ecosystem node `meta` → `GenerationForm` → `BaseModelInput`.
+**The flow:** `getGenerationConfig` → `BaseGenerationForm` builds `ext: GenerationCtx` (`BaseGenerationForm.tsx:86`) → the ecosystem field reads `_ext` → field `meta` → the form body → `BaseModelInput`.
 
-1. **Graph context** (`src/shared/data-graph/generation/context.ts`): add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx` (sibling of `gatedEcosystems` at line 28). Populate it in `GenerationFormProvider`'s `externalContext` memo (alongside `gatedEcosystems`, `GenerationFormProvider.tsx:278`) from `useGenerationConfig().selfHostedDisabledEcosystems`.
+1. **Graph context** (`src/shared/generation/context.ts`): add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx` (sibling of `gatedEcosystems` at line 28). Populate it in `BaseGenerationForm`'s `ext` memo (alongside `gatedEcosystems`, `src/components/form-graph/generation/BaseGenerationForm.tsx:86`) from `useGenerationConfig().selfHostedDisabledEcosystems`.
 
-2. **Ecosystem node** (`src/shared/data-graph/generation/ecosystem-graph.ts:119`): unlike `gatedEcosystems`, **do NOT filter** these out of `compatibleEcosystems` — we want them to render. Instead:
+2. **Ecosystem field** (`src/shared/form-graph/generation/hub.graph.ts`): unlike `gatedEcosystems`, **do NOT filter** these out of `compatibleEcosystems` — we want them to render. Instead:
 
    - Add `disabledEcosystems` to the node's `meta` (the resolved list intersected with `compatibleEcosystems`), plus the reason/`selfHostedMode` (or a pre-derived badge label) so the picker can label the badge without re-reading config.
-   - Add a `.refine()` on the node's `output` schema rejecting a selected disabled ecosystem (`message: 'Ecosystem is currently unavailable'`), mirroring the gated refine at line 150. **This is where validation lives** — a disabled selection makes the graph invalid, which is what blocks submission.
-   - Do **not** add it to the `input` transform's drop logic (line 143) — we want the disabled value to stay selected so the alert + disabled state show, rather than silently snapping to a default.
+   - Add a `.refine()` on the node's `output` schema rejecting a selected disabled ecosystem (`message: 'Ecosystem is currently unavailable'`), mirroring the gated refine beside it. **This is where validation lives** — a disabled selection makes the graph invalid, which is what blocks submission.
+   - Do **not** add it to the `input` transform's drop logic — we want the disabled value to stay selected so the alert + disabled state show, rather than silently snapping to a default.
 
 3. **`BaseModelInput`** (`src/components/generation_v2/inputs/BaseModelInput.tsx`): add a `disabledEcosystems` prop fed from `meta?.disabledEcosystems` (`GenerationForm.tsx:470`). Render those items present-but-disabled, distinct from the `applyExcludeFilter` _removal_ used for gated items (line 624). The item rows are `UnstyledButton`s rendered in **two places** — the recent list (~line 344) and the grouped list (~line 400) — so factor a small per-item renderer or apply the treatment in both. For a disabled item:
 
@@ -183,9 +187,9 @@ For provider-discriminated handlers, the produced input also carries `provider` 
 
 | Area              | File                                                      | Change                                                                                                                                                   |
 | ----------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Graph context     | `src/shared/data-graph/generation/context.ts`             | add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx`                                                                                         |
-| Context wiring    | `src/components/generation_v2/GenerationFormProvider.tsx` | populate the new ctx field from `useGenerationConfig()` (alongside `gatedEcosystems`)                                                                    |
-| Ecosystem node    | `src/shared/data-graph/generation/ecosystem-graph.ts`     | expose `meta.disabledEcosystems` (keep them in `compatibleEcosystems`) + `output` `.refine()` rejecting a disabled selection — **validation lives here** |
+| Graph context     | `src/shared/generation/context.ts`                        | add `selfHostedDisabledEcosystems?: string[]` to `GenerationCtx`                                                                                         |
+| Context wiring    | `src/components/form-graph/generation/BaseGenerationForm.tsx` | populate the new ctx field from `useGenerationConfig()` (alongside `gatedEcosystems`)                                                                    |
+| Ecosystem field   | `src/shared/form-graph/generation/hub.graph.ts`           | expose `meta.disabledEcosystems` (keep them in `compatibleEcosystems`) + `output` `.refine()` rejecting a disabled selection — **validation lives here** |
 | Base model picker | `src/components/generation_v2/inputs/BaseModelInput.tsx`  | `disabledEcosystems` prop fed from node `meta`; render disabled (not removed)                                                                            |
 | Alerts            | `src/components/generation_v2/ResourceAlerts.tsx`         | self-hosted-disabled alert; copy keyed on `selfHostedMode`                                                                                               |
 

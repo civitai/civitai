@@ -47,6 +47,9 @@ export interface StudioElementHost {
     /** The host's membership-plans page, linked from that explanation. Relative = same-tab
      *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
     pricingUrl?: string;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
+     *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
+    enabledModelFlags?: string[];
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
@@ -156,6 +159,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       call((client) => train.submitTrainingBatch(client, runs, submitOpts())),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
+
+    epochArchive: (workflowId) => call((client) => orch.createEpochArchive(client, workflowId)),
+    deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
     continueQuote: (workflowId, fromEpoch, addEpochs) =>
       call((client) =>

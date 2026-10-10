@@ -2,8 +2,14 @@
 // (the session-gated wrappers under src/routes/api/*). Flow code goes through $lib/host's backend()
 // seam and never fetches '/api/…' itself; the only other client modules that do are signals.ts
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
-import type { AutoLabelResult, StudioBackend, TrainingRunPayload } from '$lib/backend';
+import type {
+  AutoLabelResult,
+  StudioBackend,
+  SubmittedBatch,
+  TrainingRunPayload,
+} from '$lib/backend';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type { EpochArchive } from '$lib/orchestrator-core';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -90,8 +96,8 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify({ runs }),
     });
     if (!res.ok) throw new Error(await messageOf(res, `Training could not start (${res.status})`));
-    const { workflowIds } = (await res.json()) as { workflowIds: string[] };
-    return workflowIds;
+    const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
+    return { workflowIds, failure };
   },
 
   rename: async (workflowId, name) => {
@@ -101,6 +107,21 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify({ workflowId, name }),
     });
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
+  },
+
+  epochArchive: async (workflowId) => {
+    const res = await fetch(`/api/epoch-archive?id=${encodeURIComponent(workflowId)}`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
+    return (await res.json()) as EpochArchive;
+  },
+
+  deleteTraining: async (workflowId) => {
+    const res = await fetch(`/api/trainings?id=${encodeURIComponent(workflowId)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
   },
 
   continueQuote: async (workflowId, fromEpoch, addEpochs) => {

@@ -8,6 +8,7 @@
     IconCheck,
     IconX,
     IconArrowLeft,
+    IconInfoCircle,
   } from '@tabler/icons-svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
@@ -21,21 +22,35 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import {
+    EXTRA_PARAM_FIELDS,
+    loraTypeById,
     mediaCount,
     paramBounds,
     seenFor,
     TARGET_STEPS,
-    TE_TRAINING_UNSUPPORTED,
+    TE_TRAINING_UNSUPPORTED_REASON,
     typesForMedia,
+    type ExtraParamField,
+    type LabelType,
     type ParamBound,
   } from '$lib/data/trainingModels';
   import {
+    defaultRunParams,
     isCustom,
+    PARAM_HELP,
+    PARAM_LABELS,
+    paramDeviations,
+    paramDisplay,
+    promptHasTrigger,
     runCard,
+    runExtraCapabilities,
     runParamsKey,
     runVersion,
     runVersionLabel,
+    teLocked,
+    withTrigger,
     type LaunchedRun,
+    type NumericInput,
     type Run,
     type RunParams,
     type SamplePrompt,
@@ -45,6 +60,8 @@
   // name / prompts / params / presetType are owned and seeded by the flow so they survive Back.
   let {
     selection,
+    trigger,
+    labelMode,
     name = $bindable(),
     prompts = $bindable(),
     params = $bindable(),
@@ -56,6 +73,10 @@
     onShowMature,
   }: {
     selection: Selection;
+    /** The dataset's trigger word (may be empty) — every sample prompt should carry it. */
+    trigger: string;
+    /** The dataset's label format — gates the tag-only advanced fields. */
+    labelMode: LabelType;
     name: string;
     prompts: SamplePrompt[];
     /** Keyed by `runParamsKey`; the flow guarantees an entry for every run in `selection`. */
@@ -97,11 +118,14 @@
   const LR_SCHEDULERS = ['cosine', 'constant', 'constant_with_warmup', 'linear'];
 
   const presetTypes = $derived(typesForMedia(selection.media));
+  const typeName = $derived(loraTypeById(selection.loraType).name);
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
   let openAdv = $state(-1);
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
+  const GUIDANCE_HELP =
+    'Sets only the "each image seen ~N×" target below — how much exposure this kind of LoRA usually needs. It does not change your type, base model or any training setting.';
 
   // REAL per-run quotes — a whatif of each run's exact config, not the linear "from"-quote scale
   // the earlier steps preview with. Orchestrator pricing has a base fee and per-epoch terms, so
@@ -178,7 +202,8 @@
     return seen(i) < Math.round(presetSeen * 0.6);
   }
 
-  // Only the "seen ~N×" guidance follows the preset now — step defaults are fixed per base model.
+  // Only the "seen ~N×" guidance follows this — step defaults are fixed per base model, and the
+  // run's type stays what Select chose (it's what the metadata records).
   function setPreset(id: string) {
     presetType = id;
   }
@@ -198,19 +223,99 @@
   const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
   const noAdvancedParams = (run: Run) => runVersion(run).engine === 'flux2-dev';
 
-  type NumField = 'unetLr' | 'textEncoderLr' | 'networkDim' | 'networkAlpha' | 'resolution' | 'batchSize';
-  // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
-  function clampField(i: number, field: NumField, bound: ParamBound) {
+  type ParamField = keyof RunParams;
+  interface FieldDef {
+    field: ParamField;
+    kind: 'number' | 'select' | 'bool';
+    options?: string[];
+  }
+  const CORE_FIELDS: FieldDef[] = [
+    { field: 'epochs', kind: 'number' },
+    { field: 'batchSize', kind: 'number' },
+    { field: 'unetLr', kind: 'number' },
+    { field: 'textEncoderLr', kind: 'number' },
+    { field: 'networkDim', kind: 'number' },
+    { field: 'networkAlpha', kind: 'number' },
+    { field: 'resolution', kind: 'number' },
+    { field: 'lrScheduler', kind: 'select', options: LR_SCHEDULERS },
+    { field: 'optimizer', kind: 'select', options: OPTIMIZERS },
+  ];
+  const EXTRA_KIND: Record<ExtraParamField, FieldDef['kind']> = {
+    shuffleTokens: 'bool',
+    keepTokens: 'number',
+    minSnrGamma: 'number',
+    noiseOffset: 'number',
+    flipAugmentation: 'bool',
+  };
+  const EXTRA_FIELDS: FieldDef[] = EXTRA_PARAM_FIELDS.map((field) => ({
+    field,
+    kind: EXTRA_KIND[field],
+  }));
+  const isExtra = (field: ParamField): field is ExtraParamField =>
+    EXTRA_PARAM_FIELDS.includes(field as ExtraParamField);
+
+  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!);
+  const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
+  const deviationsByRun = $derived(
+    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode))
+  );
+  const deviationsAt = (i: number) => deviationsByRun[i] ?? [];
+  // The Advanced panel's own count — Steps lives in the header, Checkpoints in the panel.
+  const advancedDeviationsAt = (i: number) => deviationsAt(i).filter((d) => d.field !== 'steps');
+  const deviates = (i: number, field: ParamField) =>
+    deviationsAt(i).some((d) => d.field === field);
+  const supportedExtras = (i: number) => {
+    const caps = capsAt(i);
+    return EXTRA_FIELDS.filter((f) => caps[f.field as ExtraParamField].supported);
+  };
+  const unsupportedExtras = (i: number): { reason: string; labels: string[] }[] => {
+    const caps = capsAt(i);
+    const groups = new Map<string, string[]>();
+    for (const f of EXTRA_FIELDS) {
+      const cap = caps[f.field as ExtraParamField];
+      if (cap.supported) continue;
+      const reason = cap.reason ?? 'Not available for this model.';
+      groups.set(reason, [...(groups.get(reason) ?? []), PARAM_LABELS[f.field]]);
+    }
+    return [...groups].map(([reason, labels]) => ({ reason, labels }));
+  };
+  const fieldBound = (i: number, field: ParamField): ParamBound | undefined =>
+    isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
+  const helpFor = (i: number, field: ParamField): string => {
+    const run = selection.runs[i]!;
+    if (field === 'textEncoderLr' && teLocked(run))
+      return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
+    return PARAM_HELP[field].replace('{recommended}', paramDisplay(defaultsAt(i)[field]));
+  };
+
+  function setField(i: number, field: ParamField, value: NumericInput | boolean) {
     const p = paramsAt(i);
+    if (field === 'epochs') {
+      const b = boundsFor(i).epochs;
+      const n = parseInt(String(value));
+      p.epochs = Number.isFinite(n) ? Math.min(b.max, Math.max(b.min, n)) : b.min;
+      return;
+    }
+    if (field === 'steps') {
+      setSteps(i, String(value));
+      return;
+    }
+    (p as unknown as Record<string, NumericInput | boolean>)[field] = value;
+    // Shuffling with nothing kept would move the trigger word away from the front of every
+    // caption — keep one, as the main trainer does when a trigger is set.
+    if (field === 'shuffleTokens' && value === true && trigger.trim() && Number(p.keepTokens) === 0)
+      p.keepTokens = '1';
+  }
+  function resetField(i: number, field: ParamField) {
+    setField(i, field, defaultsAt(i)[field]);
+  }
+  // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
+  function clampField(i: number, field: ParamField, bound: ParamBound) {
+    const p = paramsAt(i) as unknown as Record<string, NumericInput | boolean>;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
     const clamped = Math.min(bound.max, Math.max(bound.min, n));
-    if (String(clamped) !== p[field]) p[field] = String(clamped);
-  }
-  function setEpochs(i: number, v: string) {
-    const b = boundsFor(i).epochs;
-    const n = parseInt(v);
-    paramsAt(i).epochs = Number.isFinite(n) ? Math.min(b.max, Math.max(b.min, n)) : b.min;
+    if (clamped !== n) p[field] = clamped;
   }
   function addPrompt() {
     const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
@@ -219,6 +324,13 @@
   function removePrompt(i: number) {
     if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
   }
+  function insertTrigger(i: number) {
+    prompts[i]!.text = withTrigger(trigger, prompts[i]!.text);
+  }
+  const triggerText = $derived(trigger.trim());
+  const promptsMissingTrigger = $derived(
+    triggerText ? prompts.filter((p) => !promptHasTrigger(triggerText, p.text)).length : 0
+  );
   // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
   // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
@@ -269,6 +381,91 @@
   const multi = $derived(selection.runs.length > 1);
 </script>
 
+{#snippet help(text: string, subject: string)}
+  <Tooltip.Provider>
+    <Tooltip.Root>
+      <Tooltip.Trigger
+        class="inline-flex text-dark-2 transition-colors hover:text-dark-0"
+        aria-label="About {subject}"
+      >
+        <IconInfoCircle size={13} stroke={2} />
+      </Tooltip.Trigger>
+      <Tooltip.Content class="max-w-[300px] text-xs leading-snug" portalProps={portalProps()}>
+        {text}
+      </Tooltip.Content>
+    </Tooltip.Root>
+  </Tooltip.Provider>
+{/snippet}
+
+{#snippet recommendedHint(i: number, field: ParamField, display: string)}
+  <span class="font-mono text-[11px] text-buzz">
+    recommended {display}
+    <button
+      type="button"
+      onclick={() => resetField(i, field)}
+      class="ml-1 font-semibold text-primary underline-offset-2 hover:underline"
+    >
+      Reset
+    </button>
+  </span>
+{/snippet}
+
+{#snippet paramRow(i: number, f: FieldDef, last: boolean)}
+  {@const locked = f.field === 'textEncoderLr' && teLocked(selection.runs[i]!)}
+  {@const changed = deviates(i, f.field)}
+  {@const bound = fieldBound(i, f.field)}
+  <div
+    class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm {last
+      ? ''
+      : 'border-b border-dark-4/60'}"
+  >
+    <span class="flex min-w-0 flex-col">
+      <span class="flex items-center gap-1 text-dark-2">
+        {PARAM_LABELS[f.field]}
+        {#if locked}<span>(unavailable)</span>{/if}
+        {@render help(helpFor(i, f.field), PARAM_LABELS[f.field])}
+      </span>
+      {#if changed}
+        {@render recommendedHint(i, f.field, paramDisplay(defaultsAt(i)[f.field]))}
+      {/if}
+    </span>
+    {#if f.kind === 'bool'}
+      <div class="flex h-7 items-center justify-end pr-1">
+        <Checkbox
+          aria-label={PARAM_LABELS[f.field]}
+          bind:checked={() => Boolean(paramsAt(i)[f.field]), (v) => setField(i, f.field, v === true)}
+        />
+      </div>
+    {:else if f.kind === 'select'}
+      <Select.Root
+        type="single"
+        bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
+      >
+        <Select.Trigger class="h-7 font-mono" aria-label={PARAM_LABELS[f.field]}>
+          {String(paramsAt(i)[f.field])}
+        </Select.Trigger>
+        <Select.Content portalProps={portalProps()}>
+          {#each f.options ?? [] as o (o)}
+            <Select.Item value={o}>{o}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    {:else}
+      <Input
+        type="number"
+        min={bound?.min}
+        max={bound?.max}
+        step={bound?.step}
+        aria-label={PARAM_LABELS[f.field]}
+        bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
+        onblur={() => bound && clampField(i, f.field, bound)}
+        disabled={locked}
+        class="h-7 font-mono"
+      />
+    {/if}
+  </div>
+{/snippet}
+
 {#snippet membershipLink()}
   {@const pricing = hostConfig().pricingUrl}
   {#if pricing}
@@ -297,15 +494,18 @@
       <p class="mt-1.5 text-xs text-dark-2">Shown as the run's title; you can rename it later.</p>
     </div>
 
-    <div class="flex items-center justify-between">
+    <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
       <div class="flex items-center gap-1.5">
-        <span class="font-mono text-xs text-dark-2">preset</span>
+        <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
+          exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
+        </span>
         {#each presetTypes as t (t.id)}
           <Button
             variant={presetType === t.id ? 'default' : 'outline'}
             size="xs"
             onclick={() => setPreset(t.id)}
+            title={`Recommended exposure for a ${t.name.toLowerCase()}: ~${seenFor(t.id, selection.media)}× per image`}
           >
             {t.name}
           </Button>
@@ -337,6 +537,11 @@
                     : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
                 >
                   <IconSettings size={13} stroke={2} />Advanced settings
+                  {#if advancedDeviationsAt(i).length > 0}
+                    <span class="rounded bg-buzz/15 px-1 font-mono text-[10px] text-buzz">
+                      {advancedDeviationsAt(i).length} changed
+                    </span>
+                  {/if}
                   {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
                       size={12}
                       stroke={2}
@@ -356,6 +561,11 @@
                 aria-invalid={stepsInvalid(i)}
                 class="h-7 w-24 font-mono"
               />
+              {#if deviates(i, 'steps')}
+                <span class="mt-0.5 whitespace-nowrap">
+                  {@render recommendedHint(i, 'steps', defaultsAt(i).steps.toLocaleString())}
+                </span>
+              {/if}
             </div>
             <span class="w-20 text-right font-mono text-sm text-buzz">
               {#if quoting}…{:else}{runCostLabel(i) ?? '—'}{/if}
@@ -369,77 +579,36 @@
                 class="shrink-0"
               />{/if}each image seen ~{seen(i)}× ({low(i)
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
-              : `good for a ${presetType}`})
+              : `good for a ${presetType}, target ~${presetSeen}×`})
           </div>
 
           {#if openAdv === i && !noAdvancedParams(run)}
-            {@const b = boundsFor(i)}
-            {@const teLocked = TE_TRAINING_UNSUPPORTED.has(selection.runs[i]!.versionKey)}
+            {@const extras = supportedExtras(i)}
+            {@const hidden = unsupportedExtras(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
-              <div class="mb-2 flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-primary">
-                <IconSettings size={12} stroke={2} />Advanced training settings
+              <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span class="inline-flex items-center gap-1 font-mono text-xs uppercase tracking-wider text-primary">
+                  <IconSettings size={12} stroke={2} />Advanced training settings
+                </span>
+                <span class="font-mono text-xs text-dark-2">
+                  seeded with {card.name}'s recommended values — hover (i) for what each does
+                </span>
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">Checkpoints (epochs)</span>
-                  <Input type="number" min={b.epochs.min} max={b.epochs.max} step={b.epochs.step} value={String(paramsAt(i).epochs)} oninput={(e) => setEpochs(i, e.currentTarget.value)} class="h-7 font-mono" />
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">Batch size</span>
-                  <Input type="number" min={b.batchSize.min} max={b.batchSize.max} step={b.batchSize.step} bind:value={params[runParamsKey(run)]!.batchSize} onblur={() => clampField(i, 'batchSize', b.batchSize)} class="h-7 font-mono" />
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">UNet LR</span>
-                  <Input type="number" min={b.unetLr.min} max={b.unetLr.max} step={b.unetLr.step} bind:value={params[runParamsKey(run)]!.unetLr} onblur={() => clampField(i, 'unetLr', b.unetLr)} class="h-7 font-mono" />
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">
-                    Text encoder LR{#if teLocked}<Tooltip.Provider>
-                        <Tooltip.Root>
-                          <Tooltip.Trigger class="ml-1 text-dark-2">(unavailable)</Tooltip.Trigger>
-                          <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-                            This model cannot train its text encoder — runs fail and hang.
-                          </Tooltip.Content>
-                        </Tooltip.Root>
-                      </Tooltip.Provider>{/if}
-                  </span>
-                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[runParamsKey(run)]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} disabled={teLocked} class="h-7 font-mono" />
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">Network dim</span>
-                  <Input type="number" min={b.networkDim.min} max={b.networkDim.max} step={b.networkDim.step} bind:value={params[runParamsKey(run)]!.networkDim} onblur={() => clampField(i, 'networkDim', b.networkDim)} class="h-7 font-mono" />
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">Network alpha</span>
-                  <Input type="number" min={b.networkAlpha.min} max={b.networkAlpha.max} step={b.networkAlpha.step} bind:value={params[runParamsKey(run)]!.networkAlpha} onblur={() => clampField(i, 'networkAlpha', b.networkAlpha)} class="h-7 font-mono" />
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">Resolution</span>
-                  <Input type="number" min={b.resolution.min} max={b.resolution.max} step={b.resolution.step} bind:value={params[runParamsKey(run)]!.resolution} onblur={() => clampField(i, 'resolution', b.resolution)} class="h-7 font-mono" />
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
-                  <span class="text-dark-2">LR scheduler</span>
-                  <Select.Root type="single" bind:value={params[runParamsKey(run)]!.lrScheduler}>
-                    <Select.Trigger class="h-7 font-mono">{paramsAt(i).lrScheduler}</Select.Trigger>
-                    <Select.Content portalProps={portalProps()}>
-                      {#each LR_SCHEDULERS as s (s)}
-                        <Select.Item value={s}>{s}</Select.Item>
-                      {/each}
-                    </Select.Content>
-                  </Select.Root>
-                </div>
-                <div class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm">
-                  <span class="text-dark-2">Optimizer</span>
-                  <Select.Root type="single" bind:value={params[runParamsKey(run)]!.optimizer}>
-                    <Select.Trigger class="h-7 font-mono">{paramsAt(i).optimizer}</Select.Trigger>
-                    <Select.Content portalProps={portalProps()}>
-                      {#each OPTIMIZERS as o (o)}
-                        <Select.Item value={o}>{o}</Select.Item>
-                      {/each}
-                    </Select.Content>
-                  </Select.Root>
-                </div>
+                {#each CORE_FIELDS as f, k (f.field)}
+                  {@render paramRow(i, f, extras.length === 0 && k === CORE_FIELDS.length - 1)}
+                {/each}
+                {#each extras as f, k (f.field)}
+                  {@render paramRow(i, f, k === extras.length - 1)}
+                {/each}
               </div>
+              {#if hidden.length > 0}
+                <ul class="m-0 mt-2.5 list-none p-0 font-mono text-[11px] leading-snug text-dark-2">
+                  {#each hidden as group (group.reason)}
+                    <li>Not offered: {group.labels.join(' · ')} — {group.reason}</li>
+                  {/each}
+                </ul>
+              {/if}
             </div>
           {/if}
         </div>
@@ -453,10 +622,26 @@
       <div class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <div class="flex flex-col gap-2">
           {#each prompts as p, i (p.id)}
-            <div class="flex items-center gap-2">
-              <Input bind:value={prompts[i]!.text} class="flex-1" />
-              {#if prompts.length > 1}
-                <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}><IconX size={14} stroke={2} /></Button>
+            {@const missing = triggerText !== '' && !promptHasTrigger(triggerText, p.text)}
+            <div class="flex flex-col gap-1">
+              <div class="flex items-center gap-2">
+                <Input bind:value={prompts[i]!.text} aria-invalid={missing} class="flex-1" />
+                {#if prompts.length > 1}
+                  <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}><IconX size={14} stroke={2} /></Button>
+                {/if}
+              </div>
+              {#if missing}
+                <div class="flex flex-wrap items-center gap-x-1.5 font-mono text-[11px] text-buzz">
+                  <IconAlertTriangle size={12} stroke={2} class="shrink-0" />
+                  Missing your trigger word "{triggerText}" — this sample won't test it.
+                  <button
+                    type="button"
+                    onclick={() => insertTrigger(i)}
+                    class="font-semibold text-primary underline-offset-2 hover:underline"
+                  >
+                    Insert trigger
+                  </button>
+                </div>
               {/if}
             </div>
           {/each}
@@ -464,13 +649,80 @@
         {#if prompts.length < 6}
           <Button variant="outline" class="mt-2 w-full border-dashed" onclick={addPrompt}>+ Add sample prompt</Button>
         {/if}
-        <p class="mt-2.5 font-mono text-xs text-dark-2">Applied to every run.</p>
+        <p class="mt-2.5 font-mono text-xs text-dark-2">
+          Applied to every run.
+          {#if triggerText}
+            Each sample starts with your trigger word "{triggerText}", so the images test what the
+            LoRA is learning.
+          {/if}
+        </p>
       </div>
     </div>
   </div>
 
   <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
-    <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Final price</h3>
+    <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
+    <dl class="m-0 flex flex-col gap-1 text-sm">
+      <div class="flex justify-between gap-2.5">
+        <dt class="text-dark-2">Type</dt>
+        <dd class="m-0 font-semibold text-dark-0">{typeName} · {selection.media}</dd>
+      </div>
+      <div class="flex justify-between gap-2.5">
+        <dt class="text-dark-2">Dataset</dt>
+        <dd class="m-0 font-semibold text-dark-0">
+          {mediaCount(imageCount, selection.media)} · {labelMode === 'tag' ? 'tags' : 'captions'}
+        </dd>
+      </div>
+      <div class="flex justify-between gap-2.5">
+        <dt class="text-dark-2">Trigger word</dt>
+        <dd class="m-0 truncate font-mono text-xs font-semibold text-dark-0" title={triggerText}>
+          {triggerText || 'none'}
+        </dd>
+      </div>
+      <div class="flex justify-between gap-2.5">
+        <dt class="text-dark-2">Sample prompts</dt>
+        <dd class="m-0 font-semibold {promptsMissingTrigger > 0 ? 'text-buzz' : 'text-dark-0'}">
+          {prompts.length}{promptsMissingTrigger > 0 ? ` · ${promptsMissingTrigger} without trigger` : ''}
+        </dd>
+      </div>
+    </dl>
+    {#each selection.runs as run, i (run.id)}
+      {@const devs = deviationsAt(i).filter((d) => d.field !== 'steps' && d.field !== 'epochs')}
+      {@const p = paramsAt(i)}
+      <div class="mt-2.5 border-t border-dark-4 pt-2.5 text-sm">
+        <div class="font-semibold text-dark-0">
+          {multi ? `Run ${i + 1} · ` : ''}{runCard(run).name}
+          {runVersionLabel(run)}
+        </div>
+        {#if isCustom(run)}
+          <div class="truncate font-mono text-[11px] text-dark-2" title={run.customAir}>
+            {run.customName ?? run.customAir}
+          </div>
+        {/if}
+        <div class="font-mono text-xs text-dark-2">
+          {p.steps.toLocaleString()} steps · {p.epochs} checkpoint{p.epochs === 1 ? '' : 's'}
+        </div>
+        {#if noAdvancedParams(run)}
+          <div class="font-mono text-xs text-dark-2">no advanced settings for this model</div>
+        {:else if devs.length === 0}
+          <div class="font-mono text-xs text-emerald-400">recommended settings</div>
+        {:else}
+          <ul class="m-0 mt-1 list-none p-0 font-mono text-xs">
+            {#each devs as dev (dev.field)}
+              <li class="flex justify-between gap-2">
+                <span class="text-dark-2">{dev.label}</span>
+                <span class="text-right">
+                  <span class="text-dark-0">{dev.value}</span>
+                  <span class="text-dark-2"> (rec. {dev.recommended})</span>
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    {/each}
+
+    <h3 class="m-0 mb-3 mt-5 font-mono text-xs uppercase tracking-widest text-dark-2">Final price</h3>
     {#each selection.runs as run, i (run.id)}
       {@const costLabel = runCostLabel(i)}
       <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
@@ -549,6 +801,10 @@
     </Button>
     {#if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
+    {:else if total == null && !quoting}
+      <p class="mt-2 text-center font-mono text-xs text-dark-2">
+        We couldn't price every run right now — start is disabled until each run shows a cost.
+      </p>
     {/if}
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails

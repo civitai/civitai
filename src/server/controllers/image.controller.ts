@@ -31,12 +31,19 @@ import {
   queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageAcceptableMinor,
+  raiseOwnImageNsfwLevel,
   updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
+import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
+import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
@@ -219,14 +226,14 @@ export const setTosViolationHandler = async ({
     await dbWrite.image.updateMany({
       where: { id },
       data: {
-        needsReview: null,
         ingestion: 'Blocked',
-        // nsfw: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
         updatedAt: new Date(),
       },
     });
+    await clearReviewFlagsOnBlock([id]);
+    await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
 
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
@@ -346,6 +353,8 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
         signal,
         actor: buildSearchActor({
           userId: user?.id,
@@ -361,6 +370,8 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // image.getInfinite is never cached, so its viewer's decorations are theirs alone.
+        eventDecorationViewer: user,
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
       // than inside getAllImages because the index result type is derived from its
@@ -455,6 +466,48 @@ export const getImagesAsPostsInfiniteHandler = async ({
       }
     }
 
+    // A paid, host-accepted promotion, shown after the pinned posts on the first
+    // page only. Fetched like a pinned post so the viewer's own level and filters
+    // still apply to it.
+    const sponsored: ResultType[] = [];
+    const sponsoredPost =
+      !cursor && input.modelId && input.modelVersionId
+        ? await getSponsoredGalleryPost({
+            modelId: input.modelId,
+            modelVersionId: input.modelVersionId,
+            features,
+          }).catch(() => undefined)
+        : undefined;
+    const sponsoredLevel = sponsoredPost
+      ? sponsoredBrowsingLevel({
+          browsingLevel: input.browsingLevel,
+          preCapBrowsingLevel: input.preCapBrowsingLevel,
+          servingLevel: sponsoredPost.servingLevel,
+        })
+      : 0;
+    if (sponsoredPost && sponsoredLevel && !versionPinnedPosts.includes(sponsoredPost.postId)) {
+      const { items: sponsoredImages } = await getAllImages({
+        ...input,
+        domain: getRequestBoardDomainColor(ctx.req),
+        modelVersionId: undefined,
+        modelId: undefined,
+        reviewId: undefined,
+        browsingLevel: sponsoredLevel,
+        limit: POST_IMAGE_LIMIT,
+        followed: false,
+        postIds: [sponsoredPost.postId],
+        user,
+        headers: { src: 'getImagesAsPostsInfiniteHandler' },
+        include: [...input.include, 'tagIds', 'profilePictures'],
+        dbTarget: 'datapacket',
+      });
+      const approved = new Set(sponsoredPost.imageIds);
+      sponsored.push(
+        ...(sponsoredImages as ResultType[]).filter((image) => approved.has(image.id))
+      );
+    }
+    const sponsoredPostId = sponsored.length ? sponsoredPost?.postId : undefined;
+
     const actor = buildSearchActor({
       userId: user?.id,
       ip: ctx.ip,
@@ -480,7 +533,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // Merge images by postId
       for (const image of items) {
         // Skip images that aren't part of a post or are pinned
-        if (!image?.postId || versionPinnedPosts.includes(image.postId)) continue;
+        if (
+          !image?.postId ||
+          versionPinnedPosts.includes(image.postId) ||
+          image.postId === sponsoredPostId
+        )
+          continue;
         if (!posts[image.postId]) posts[image.postId] = [];
         posts[image.postId].push(image);
       }
@@ -560,6 +618,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         postId: image.postId as number,
         // postTitle: image.postTitle,
         pinned: !!(image.postId && pinned[image.postId]),
+        sponsored: false,
         nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
@@ -647,6 +706,27 @@ export const getImagesAsPostsInfiniteHandler = async ({
         return aCreatedAt - bCreatedAt;
       });
 
+    if (sponsoredPostId) {
+      const [first] = sponsored;
+      const createdAt = sponsored.map((image) => new Date(image.sortAt)).sort()[0];
+      let nsfwLevel = 0;
+      for (const image of sponsored) nsfwLevel = Flags.addFlag(nsfwLevel, image.nsfwLevel);
+      const pinnedCount = results.filter((result) => result.pinned).length;
+      results.splice(sponsoredSlotIndex(pinnedCount, results.length), 0, {
+        postId: sponsoredPostId,
+        pinned: false,
+        sponsored: true,
+        nsfwLevel,
+        modelVersionId: first.modelVersionId,
+        publishedAt: first.publishedAt,
+        sortAt: first.sortAt,
+        createdAt,
+        user: first.user,
+        ...buildPostImagesWire(sponsored, { lazy: features.galleryLazyPostImages }),
+        review: undefined,
+      });
+    }
+
     return {
       nextCursor: cursor,
       items: results,
@@ -694,9 +774,21 @@ export const getImageResourcesHandler = async ({
   }
 };
 
-export const getEntitiesCoverImageHandler = async ({ input }: { input: GetEntitiesCoverImage }) => {
+export const getEntitiesCoverImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetEntitiesCoverImage;
+  ctx: Context;
+}) => {
   try {
-    return await getEntityCoverImage({ ...input, include: ['tags'] });
+    return await getEntityCoverImage({
+      ...input,
+      include: ['tags'],
+      // Only signed-out responses are edge-cached (createContext), so a viewer's hats stay theirs.
+      // The route must not gain edgeCacheIt/cacheIt: entities-cover-image-viewer.test.ts pins it.
+      eventDecorationViewer: ctx.user,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -781,6 +873,10 @@ export async function handleUpdateImageNsfwLevel({
 }) {
   try {
     const { id: userId, isModerator } = ctx.user;
+    // The vote below is still recorded, so Knights and moderators still review a raise.
+    const applied =
+      !isModerator &&
+      (await raiseOwnImageNsfwLevel({ id: input.id, nsfwLevel: input.nsfwLevel, userId }));
     const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
 
     if (isModerator) {
@@ -793,7 +889,7 @@ export async function handleUpdateImageNsfwLevel({
       if (valueInQueue) valueInQueue.pool.reset({ id: input.id });
     }
 
-    return updatedNsfwLevel;
+    return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

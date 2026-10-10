@@ -539,3 +539,73 @@ export async function checkBlockPostAppRateLimit(
     BLOCK_POST_APP_RATE_LIMIT_WINDOW_SECONDS
   );
 }
+
+// LLM bucket (`POST /api/v1/blocks/resource-intent`). A FIFTH bucket rather than
+// a share of the catalog one, for the same three reasons the poll bucket argues:
+//
+//   1. WRONG COUPLING. A catalog read is one Meili query; a resource-intent call
+//      is up to THREE vendor LLM calls plus the matcher, and each one costs
+//      real money on the OpenRouter account. Sharing a bucket would make the
+//      catalog endpoints' effective ceiling a function of LLM spend decisions.
+//   2. DIFFERENT SIZING QUANTITY. The catalog ceiling is sized against a human
+//      scrolling a selector. This one is sized against prompt editing: a person
+//      refining a prompt in a block issues a handful of requests per minute at
+//      most, and the 1h response cache absorbs repeats of the same prompt.
+//   3. DIFFERENT UNIT COST. Catalog reads are ~free; every LLM call is billed.
+//      A ceiling that lets 15 req/s through would let one block spend more on
+//      vendor tokens in an hour than the whole feature's pilot budget.
+//
+// 30 requests / 60s per blockInstanceId — ~1 call per 2s sustained, ~20x an
+// honest "type, look at suggestions, refine" loop, and the 1h cache means a
+// re-request of the same prompt never reaches the vendor at all. Keyed on
+// `blockInstanceId` alone like the catalog siblings (NOT viewer-keyed like
+// `:poll:`): the resource-intent response carries only public maturity-clamped
+// data and no per-viewer state, so an app-wide ceiling shared across viewers of
+// one page app is the same trade the catalog bucket already makes. Same stated
+// limits as every bucket in this file: FIXED window and FAILS OPEN on a Redis
+// error — it is a spend ceiling, not a security control.
+/**
+ * `kind:'training'` dataset preparation: images imported per (install, viewer) per
+ * hour. Room for a few full datasets (`BLOCK_TRAINING_DATASET_MAX_ITEMS` = 50) an
+ * hour per viewer; each image is a server-side fetch plus an orchestrator import.
+ */
+export const BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX = 150;
+export const BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
+/**
+ * Records a training-dataset preparation of `imageCount` images against this
+ * (install, viewer)'s window. Keyed on the viewer too, for the reason the poll
+ * bucket is: a page app's `blockInstanceId` is shared by every viewer of it. Own
+ * `:training-dataset:` sub-namespace; fail-open like every sibling limiter.
+ */
+export async function checkBlockTrainingDatasetRateLimit(
+  blockInstanceId: string,
+  userId: number,
+  imageCount: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:training-dataset:${blockInstanceId}:${userId}`,
+    BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX,
+    BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS,
+    Math.max(1, Math.floor(imageCount))
+  );
+}
+
+export const BLOCK_LLM_RATE_LIMIT_MAX = 30;
+export const BLOCK_LLM_RATE_LIMIT_WINDOW_SECONDS = 60;
+
+/**
+ * Records ONE resource-intent request against `blockInstanceId`'s LLM window
+ * and reports whether it is within the ceiling. Distinct `:llm:` sub-namespace
+ * so it can never contend with the catalog, publish, post, post-app, poll or
+ * mint buckets. Same fail-open posture as every sibling limiter.
+ */
+export async function checkBlockLLMRateLimit(
+  blockInstanceId: string
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:llm:${blockInstanceId}`,
+    BLOCK_LLM_RATE_LIMIT_MAX,
+    BLOCK_LLM_RATE_LIMIT_WINDOW_SECONDS
+  );
+}

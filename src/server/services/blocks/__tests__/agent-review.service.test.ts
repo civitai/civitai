@@ -28,6 +28,7 @@ const {
   mockStage,
   mockReconstruct,
   mockGetPrior,
+  mockGetLatest,
   mockSign,
   mockDeriveHooks,
 } = vi.hoisted(() => ({
@@ -48,6 +49,8 @@ const {
   mockStage: vi.fn(async () => undefined),
   mockReconstruct: vi.fn(async () => Buffer.from('ZIPBYTES')),
   mockGetPrior: vi.fn(async () => null as { id: string; version: string } | null),
+  // The TARGETED-RE-RUN carry-forward reads the latest report for this request.
+  mockGetLatest: vi.fn(async () => null as Record<string, unknown> | null),
   mockSign: vi.fn(() => 'callback.token'),
   mockDeriveHooks: vi.fn(() => 'hooks.token'),
 }));
@@ -74,6 +77,7 @@ vi.mock('~/server/services/blocks/publish-request.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-review-report.service', () => ({
   getPriorAgentReport: mockGetPrior,
+  getAgentReport: mockGetLatest,
 }));
 vi.mock('~/server/services/blocks/review-session', () => ({
   signAgentCallbackToken: mockSign,
@@ -107,7 +111,12 @@ function stubFetch(postOk = true) {
       });
       if (init.method === 'POST') {
         if (!postOk) {
-          return { ok: false, status: 500, statusText: 'err', text: async () => 'boom' } as unknown as Response;
+          return {
+            ok: false,
+            status: 500,
+            statusText: 'err',
+            text: async () => 'boom',
+          } as unknown as Response;
         }
         return {
           ok: true,
@@ -125,7 +134,12 @@ function stubFetch(postOk = true) {
         } as unknown as Response;
       }
       // DELETE (pre-delete / teardown)
-      return { ok: true, status: 200, statusText: 'OK', text: async () => '' } as unknown as Response;
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        text: async () => '',
+      } as unknown as Response;
     })
   );
 }
@@ -139,6 +153,7 @@ beforeEach(() => {
   mockAppBlockFindFirst.mockResolvedValue(null);
   mockReportFindFirst.mockResolvedValue(null);
   mockGetPrior.mockResolvedValue(null);
+  mockGetLatest.mockResolvedValue(null);
   mockUpdateMany.mockResolvedValue({ count: 1 });
   mockEnv.NEXTAUTH_URL = 'https://civitai.com';
   mockEnv.AGENT_REVIEW_CALLBACK_BASE_URL = undefined;
@@ -163,6 +178,25 @@ function postedJob() {
   expect(post).toBeDefined();
   return post!.body;
 }
+/**
+ * The `data` of the single `appReviewAgentReport.create` this run performed.
+ *
+ * ⚠️ One CAST in one place. `mockCreate` is `vi.fn(async () => undefined)`, so TypeScript
+ * infers its `mock.calls` as the empty tuple `[]` and every direct
+ * `mockCreate.mock.calls[0][0].data` is two type errors (TS2532 + TS2493). The older
+ * assertions in this file each carry their own pair; new ones go through here instead so
+ * `scripts/ci/typecheck-tests-gate.mjs` does not get worse. The `length` check is what makes
+ * the cast honest: an absent call fails loudly rather than reading `undefined.data`.
+ */
+function createdRow(): Record<string, unknown> {
+  const calls = mockCreate.mock.calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+  // 🔴 EXACTLY ONE, not "at least one". A DOUBLED insert is the plausible defect of a
+  // carry-forward that reads-then-writes, and `calls[0]` would report the first of two
+  // perfectly happily.
+  expect(calls, 'exactly one report row was created').toHaveLength(1);
+  return calls[0][0].data;
+}
+
 function jobEnv() {
   const env = postedJob().spec.template.spec.containers[0].env as Array<{
     name: string;
@@ -396,7 +430,9 @@ describe('buildAgentReviewApplyScript', () => {
     expect(script).toContain('kubectl apply -f /tmp/rendered.yaml');
     // Idempotent re-dispatch: a same-name review-agent Job (immutable spec) is
     // deleted before apply recreates it.
-    expect(script).toContain('kubectl delete job "${AGENT_NAME}" -n civitai-apps --ignore-not-found');
+    expect(script).toContain(
+      'kubectl delete job "${AGENT_NAME}" -n civitai-apps --ignore-not-found'
+    );
     // The rendered manifest embeds the presigned URL + callback token — never cat
     // it (match an actual `cat` command line, not the "Do NOT cat" comment).
     expect(script).not.toContain('\ncat /tmp/rendered.yaml');
@@ -423,5 +459,167 @@ describe('agentReviewName', () => {
     expect(name).toMatch(/^[a-z0-9-]+$/);
     expect(name.length).toBeLessThanOrEqual(63);
     expect(agentReviewName(PUBREQ)).toBe(name); // deterministic
+  });
+});
+
+/**
+ * TARGETED RE-RUN — retry ONE failed analysis instead of all three.
+ *
+ * 🔴 WHY THIS EXISTS. The runner marks the whole report `failed` when any one sub-analysis
+ * fails, so a moderator's only affordance was "Run again", which re-bills all three
+ * analyses (~$0.06–0.18 a run). A targeted retry needs two things to be true on this side,
+ * and both are asserted below: the section list reaches the Job as a contract var, and the
+ * surviving sections are CARRIED FORWARD onto the new row so the retry cannot destroy the
+ * analyses the mod was keeping.
+ */
+describe('startAgentReview — targeted re-run', () => {
+  /** A prior report with two good sections and one broken one — the live failure shape. */
+  const latestPartial = {
+    id: 'arar_PREV',
+    model: 'some/model',
+    scopeVerdicts: { scopes: [{ declared: 'models:read:self' }], overBroad: [] },
+    securityAudit: { findings: [{ severity: 'low' }], manifestUnexpectedKeys: [] },
+    codeReview: { error: 'non-json-response' },
+  } as Record<string, unknown>;
+
+  it('passes the section list to the Job as AGENT_REVIEW_SECTIONS', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(latestPartial);
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview'],
+    });
+
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
+  });
+
+  it('🔴 CARRIES FORWARD the sections it is NOT re-running, so a retry cannot lose them', () => {
+    // A re-run inserts a NEW row and `getAgentReport` returns the most recently started
+    // one — so without this, retrying the code review would replace a report holding two
+    // good sections with a report holding one, which is strictly worse than not retrying.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(latestPartial);
+
+    return startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview'],
+    }).then(() => {
+      const created = createdRow();
+      expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);
+      expect(created.securityAudit).toEqual(latestPartial.securityAudit);
+      expect(created.model).toBe('some/model');
+      // 🔴 AND THE FAILED ONE IS **NOT** SEEDED. Carrying an `{ error }` forward would
+      // re-report the OLD failure as if it were this run's, and the panel would show a
+      // failure for an analysis that is currently running.
+      expect(created.codeReview).toBeUndefined();
+      // The row is still a fresh `running` row with its own id.
+      expect(created.id).toBe('arar_TEST');
+      expect(created.status).toBe('running');
+    });
+  });
+
+  it('a section that previously failed is not carried even when it is NOT the one being retried', async () => {
+    // Retry the SCOPES analysis on a report whose CODE review had failed: scopes is
+    // excluded because it is being re-run, and codeReview because it is a failure marker —
+    // so only the security audit survives.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(latestPartial);
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['scopeVerdicts'],
+    });
+
+    const created = createdRow();
+    expect(created.securityAudit).toEqual(latestPartial.securityAudit);
+    expect(created.scopeVerdicts).toBeUndefined();
+    expect(created.codeReview).toBeUndefined();
+  });
+
+  it('with no prior report there is nothing to carry, and it still dispatches', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(null);
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview'],
+    });
+
+    const created = createdRow();
+    expect(created.scopeVerdicts).toBeUndefined();
+    expect(created.securityAudit).toBeUndefined();
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
+  });
+
+  it('🔴 NEGATIVE CONTROL — a FULL run sets NO section var and carries NOTHING', async () => {
+    // Without this the assertions above are satisfied by a service that always stamps the
+    // var and always seeds, which would change every existing dispatch.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(latestPartial);
+
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7 });
+
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBeUndefined();
+    const created = createdRow();
+    expect(created.scopeVerdicts).toBeUndefined();
+    expect(created.securityAudit).toBeUndefined();
+    // …and the latest report is not even consulted on the full path.
+    expect(mockGetLatest).not.toHaveBeenCalled();
+  });
+
+  it('🔴 naming ALL THREE sections is a FULL run, not a targeted one', async () => {
+    // An exhaustive selection has nothing to carry forward, so taking the targeted path
+    // would seed nothing while still stamping a var that tells the runner to do everything
+    // — i.e. a second spelling of the default with an extra moving part.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(latestPartial);
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['scopeVerdicts', 'securityAudit', 'codeReview'],
+    });
+
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBeUndefined();
+    expect(mockGetLatest).not.toHaveBeenCalled();
+  });
+
+  it('a duplicated section is deduped rather than stamping it twice', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(latestPartial);
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview', 'codeReview'],
+    });
+
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
+  });
+
+  it('two sections join with a comma, in the ORDER GIVEN', async () => {
+    // 🔴 THE ARGUMENT IS DELIBERATELY *NOT* IN DISPLAY ORDER. `['securityAudit','codeReview']`
+    // renders identically under "preserve the caller's order" and under "sort into
+    // AGENT_REVIEW_SECTIONS order", so it cannot separate the two hypotheses. Passing them
+    // reversed relative to the ledger is what makes this assertion mean something.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue(latestPartial);
+
+    await startAgentReview({
+      publishRequestId: PUBREQ,
+      modUserId: 7,
+      sections: ['codeReview', 'securityAudit'],
+    });
+
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview,securityAudit');
+    // Only the untouched section is carried.
+    const created = createdRow();
+    expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);
+    expect(created.securityAudit).toBeUndefined();
   });
 });

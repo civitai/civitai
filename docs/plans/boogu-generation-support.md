@@ -1,6 +1,6 @@
 # Boogu — Generation Support Plan
 
-Status: **PREPPED, not executed.** Ecosystem record already merged (PR #2656: `ECO.Boogu=74`, `BM.Boogu=93`, family 23, Apache-2.0 license id 13). This doc outlines everything needed to wire Boogu into the generator so we can execute fast once the blockers clear.
+Status: **SHIPPED.** Boogu generation is live — `src/shared/form-graph/generation/image/boogu.graph.ts` and `src/server/services/orchestrator/form-graph/boogu.handler.ts`. Ecosystem record merged in PR #2656 (`ECO.Boogu=74`, `BM.Boogu=93`, family 23, Apache-2.0 license id 13). Everything below is the plan as written against the retired data-graph lane; the file paths in the headings point at where the work landed, but the code sketches (`groupedDiscriminator`, `createResourcesGraph`, `EcosystemGraphOutput`, `GenerationFormProvider`) name data-graph APIs that no longer exist. Read it as the record, not as instructions.
 
 ## What Boogu is
 
@@ -60,7 +60,7 @@ This keeps it to the single ecosystem you asked for while supporting all 3 varia
 
 ## File-by-file changes
 
-### 1. `src/shared/data-graph/generation/boogu-graph.ts` (NEW)
+### 1. `src/shared/form-graph/generation/image/boogu.graph.ts`
 
 Mirror `nano-banana-graph.ts` (3-mode, model.id discriminator) + `z-image-graph.ts` (turbo slider ranges). Structure:
 
@@ -84,11 +84,11 @@ const booguVersionIds = {
 ```
 
 - Declare slider defaults **on each subgraph** — do NOT use `.effect()` to reset across variants (clobbers stored values + fires server-side; see skill gotcha).
-- Aspect ratios: use `sdxlAspectRatioBuckets` (FLUX-based), default `1:1`, 1024-centric. Add `priorityOptions: ['16:9','4:3','1:1','3:4','9:16']` if >5 ratios.
+- Aspect ratios: use `sdxlFullAspectRatioNode()` (FLUX-based, 1024-centric: the nine SDXL buckets, default `1:1`, 3:2 / 1:1 / 2:3 first). It replaced the three-bucket `sdxlAspectRatioBuckets` this line originally named.
 - Resources/LoRA: Boogu is FLUX.1-dev-based → **could** support community LoRAs. Default to `createResourcesGraph` merge (like ZImage) but confirm orchestrator accepts them; if not, drop.
 - Export `booguVersionIds` for the handler.
 
-### 2. `src/server/services/orchestrator/ecosystems/boogu.handler.ts` (NEW)
+### 2. `src/server/services/orchestrator/form-graph/boogu.handler.ts`
 
 Mirror `nano-banana.handler.ts` / `flux2.handler.ts`:
 
@@ -118,7 +118,7 @@ return [{
 - **`ecosystemSettings`**: `{ ecosystemId: ECO.Boogu, defaults: { model: { id: <BASE_VERSION_ID> } } }`.
 - **`BM.Boogu` record**: add `hidden: true` until launch-ready (BLOCKER gate).
 
-### 4. `src/shared/data-graph/generation/config/workflows.ts`
+### 4. `src/shared/generation/config/workflows.ts`
 
 - Add `ECO.Boogu` to **`TXT2IMG_IDS`** (Base/Turbo).
 - Add `ECO.Boogu` to **`EDIT_IMG_IDS`** (Edit).
@@ -128,12 +128,12 @@ return [{
   ['img2img:edit', (ecoId) => /* ... */ ecoId === ECO.Boogu],
   ```
 
-### 5. `src/shared/data-graph/generation/ecosystem-graph.ts`
+### 5. `src/shared/form-graph/generation/image/hub.graph.ts` — add the branch arm
 
 - `import { booguGraph } from './boogu-graph';`
 - Add to `groupedDiscriminator` (image group): `{ values: ['Boogu'] as const, graph: booguGraph },`
 
-### 6. `src/server/services/orchestrator/ecosystems/index.ts`
+### 6. `src/server/services/orchestrator/form-graph/index.ts`
 
 - `import { createBooguInput } from './boogu.handler';`
 - `export type BooguCtx = EcosystemGraphOutput & { ecosystem: 'Boogu' };`

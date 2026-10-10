@@ -5,6 +5,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { publicApiContext2 } from '~/server/public-api-context';
 import { getAllUsersInput } from '~/server/schema/user.schema';
+import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
@@ -15,7 +16,7 @@ const schema = getAllUsersInput.extend({
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const apiCaller = await publicApiContext2(req, res);
-  const isSystemRequest = req.query.token === env.WEBHOOK_TOKEN;
+  const isSystemRequest = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
   const result = schema.safeParse(req.query);
   if (!result.success) return res.status(400).json(result.error);
 

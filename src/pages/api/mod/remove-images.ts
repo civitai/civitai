@@ -18,11 +18,13 @@ const schema = z.object({
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success)
+    return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
+
   try {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds, userId, reason, moderatorId, violationType, violationDetails } = schema.parse(
-      req.body
-    );
+    const { imageIds, userId, reason, moderatorId, violationType, violationDetails } = parsed.data;
 
     const tracker = new Tracker(req, res);
     const images = await handleBlockImages({ ids: imageIds, userId, moderatorId });
@@ -51,6 +53,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       cause: err.cause,
       stack: err.stack,
     });
-    res.status(500);
+    res
+      .status(500)
+      .json({ error: 'Removal may be incomplete; reload to see which images are blocked' });
   }
 });

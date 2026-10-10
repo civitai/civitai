@@ -160,7 +160,7 @@ export function canAccessAppsBuild(
  * `FeatureAccess` turns that silent degradation into a compile error here.
  *
  * The import is TYPE-ONLY, so nothing from the server module reaches a runtime
- * bundle (the established pattern — see `src/shared/data-graph/generation/context.ts`).
+ * bundle (the established pattern — see `src/shared/generation/context.ts`).
  */
 export type AppsStoreFeatureFlags =
   | Partial<Pick<FeatureAccess, 'appBlocks' | 'appListings' | 'appListingsPublicExternal'>>

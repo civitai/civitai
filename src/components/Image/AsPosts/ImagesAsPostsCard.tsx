@@ -32,6 +32,7 @@ import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { SponsoredBadge } from '~/components/Promotion/SponsoredBadge';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -55,6 +56,8 @@ import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ImagesAsPostsContextMenu } from '~/components/Image/ContextMenu/ImagesAsPostsContextMenu';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 type ImagesAsPostsCardProps = {
   data: ImagesAsPostModel;
@@ -85,6 +88,11 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
     () => data.images.find((i) => isDefined(i.cosmetic))?.cosmetic,
     [data.images]
   );
+  const hatted = useMemo(
+    () => data.images.find((i) => isDefined(i.eventDecoration)),
+    [data.images]
+  );
+  const eventDecoration = hatted?.eventDecoration?.data;
   const cosmeticData = useMemo(() => {
     if (!cosmetic?.data && !pinned) return undefined;
     return {
@@ -97,11 +105,18 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         : undefined),
     };
   }, [cosmetic?.data, pinned, theme, colorScheme]);
+  // The cover only: further images are recorded per slide as they are swiped to.
+  const impressionRef = useTrackImpression<HTMLElement>([
+    ...(data.postId ? [{ entityType: 'Post' as const, entityId: data.postId }] : []),
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
 
   return (
     <TwCosmeticWrapper
       className="w-full"
       cosmetic={cosmeticData}
+      eventDecoration={eventDecoration}
+      eventDecorationOn={hatted && { entityType: 'Image', entityId: hatted.id }}
       style={cosmeticData ? { height } : undefined}
     >
       <>
@@ -109,10 +124,16 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           <PinnedIndicator radius="xl" color="orange" size="md" iconProps={pinnedIconProps} />
         )}
         <TwCard
+          ref={impressionRef}
           style={!cosmeticData ? { height } : undefined}
           className={clsx({ ['border']: !pinned })}
         >
           <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          {data.sponsored && (
+            <div className="relative z-10 flex px-2 pt-2">
+              <SponsoredBadge kind="post" />
+            </div>
+          )}
           {data.user.id !== -1 && <ImagesAsPostsCardHeader {...props} cosmetic={cosmetic} />}
 
           <div className="relative flex-1 overflow-hidden">
@@ -180,7 +201,12 @@ function ImagesAsPostsCardHeader({
 
   return (
     <Paper
-      p="xs"
+      py="xs"
+      pr="xs"
+      // Steps the avatar clear of an event decoration sitting on the corner.
+      style={{
+        paddingLeft: 'max(var(--mantine-spacing-xs), var(--event-decoration-clear-left, 0px))',
+      }}
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',
@@ -403,6 +429,7 @@ function PostCarouselSlide({
     <ImageGuard2 image={image} connectType="post" connectId={postId}>
       {(safe) => (
         <>
+          <ImpressionSentinel impressions={[{ entityType: 'Image', entityId: image.id }]} />
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
           <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
           {safe && (

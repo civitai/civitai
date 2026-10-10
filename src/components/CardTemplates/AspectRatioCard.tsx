@@ -2,10 +2,11 @@ import clsx from 'clsx';
 import React from 'react';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
-import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import styles from './AspectRatioCard.module.scss';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 type AspectRatio = keyof typeof aspectRatioMap;
 const aspectRatioMap = {
@@ -27,6 +28,9 @@ export type AspectRatioCardProps = {
    */
   aspectRatio?: AspectRatio | number;
   cosmetic?: ContentDecorationCosmetic['data'];
+  eventDecoration?: EventDecorationData | null;
+  /** The content wearing the event decoration, so a click on it can open its stats. */
+  eventDecorationOn?: EventDecorationEntity;
   className?: string;
   header?: React.ReactNode;
   footer?: React.ReactNode;
@@ -39,6 +43,8 @@ export type AspectRatioCardProps = {
 export function AspectRatioCard({
   aspectRatio = 'portrait',
   cosmetic,
+  eventDecoration,
+  eventDecorationOn,
   className,
   header,
   footer,
@@ -49,13 +55,14 @@ export function AspectRatioCard({
   const wrapperStyle = {
     aspectRatio: typeof aspectRatio === 'number' ? aspectRatio : aspectRatioMap[aspectRatio],
   };
-  const impressionRef = useTrackImpression<HTMLDivElement>(impressions);
 
   return (
     <ElementInView
-      ref={impressionRef}
+      impressions={impressions}
       component={CosmeticCard}
       cosmetic={cosmetic}
+      eventDecoration={eventDecoration}
+      eventDecorationOn={eventDecorationOn}
       cosmeticStyle={cosmetic ? wrapperStyle : undefined}
       style={!cosmetic ? wrapperStyle : undefined}
       className={clsx(className)}

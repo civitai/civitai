@@ -22,6 +22,7 @@ import {
 import { IconAlertCircle, IconCheck, IconTrash, IconX } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
@@ -49,6 +50,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
+import { PostPublishedWithApp } from '~/components/Post/Detail/PostPublishedWithApp';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -250,25 +252,35 @@ export function PostDetailContent({ postId }: Props) {
                 )}
               </div>
               <div className="flex flex-wrap justify-between gap-2 @md:items-center @max-md:flex-col">
-                <Text size="xs" c="dimmed">
-                  {relatedResource && relatedResource.modelId && (
-                    <>
-                      Posted to{' '}
-                      <Anchor
-                        component={Link}
-                        href={getModelUrl({
-                          modelId: relatedResource.modelId,
-                          modelName: relatedResource.modelName,
-                          modelVersionId: relatedResource.modelVersionId,
-                        })}
-                        inherit
-                      >
-                        {relatedResource.modelName} - {relatedResource.modelVersionName}
-                      </Anchor>{' '}
-                    </>
-                  )}
-                  {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
-                </Text>
+                {/* The header's dimmed metadata group: where the post came from,
+                    when, and — for an app-published post — which app made it.
+                    Wrapped so the chip sits beside the date rather than becoming a
+                    third child of the justify-between row, which would push the
+                    action buttons out of the right-hand slot. */}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Text size="xs" c="dimmed">
+                    {relatedResource && relatedResource.modelId && (
+                      <>
+                        Posted to{' '}
+                        <Anchor
+                          component={Link}
+                          href={getModelUrl({
+                            modelId: relatedResource.modelId,
+                            modelName: relatedResource.modelName,
+                            modelVersionId: relatedResource.modelVersionId,
+                          })}
+                          inherit
+                        >
+                          {relatedResource.modelName} - {relatedResource.modelVersionName}
+                        </Anchor>{' '}
+                      </>
+                    )}
+                    {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
+                  </Text>
+                  {/* Renders nothing unless the server resolved an app for this
+                      post AND this viewer — see PostPublishedWithApp. */}
+                  <PostPublishedWithApp app={post.publishedWithApp} />
+                </div>
                 <div className="flex gap-2 ">
                   <Button
                     radius="xl"
@@ -319,6 +331,11 @@ export function PostDetailContent({ postId }: Props) {
                 </div>
               </div>
             </div>
+            <OwnerRatingControls
+              entityType="Post"
+              entityId={post.id}
+              isOwner={currentUser?.id === post.user.id}
+            />
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <UserAvatar

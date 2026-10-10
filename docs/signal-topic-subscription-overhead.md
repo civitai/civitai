@@ -120,9 +120,9 @@ Lives in the worker (`useSignalsWorker` / whatever implements `topicRegister`/`t
 
 ### 4. Global keep-alive sweep
 
-**Status: implemented.** The per-card `useInterval(60s)` was replaced with a single provider-level `setInterval(50_000)` that iterates `topicRefs` and re-registers every active topic. The hub TTL is 60s per registration, so 50s gives a 10s margin. Combined with refcounting, the message rate is now `(active topic count) / minute` rather than `(subscriber count) / minute` — typically an order of magnitude smaller. The interval skips when not connected; the reconnect effect picks up on the next `'connected'` transition. See "Reconnect-driven re-registration" + "50s keep-alive interval" in [signal-refcount-known-issues.md](./signal-refcount-known-issues.md).
+**Status: implemented.** The per-card `useInterval(60s)` was replaced with a single `setInterval(50_000)` in the signals worker that re-subscribes every topic any tab wants. The hub TTL is 60s per registration, so 50s gives a 10s margin. Combined with refcounting, the message rate is now `(active topic count) / minute` rather than `(subscriber count) / minute` — typically an order of magnitude smaller. The interval skips when not connected; the worker re-subscribes everything on the next `'connected'` transition. See the summary in [signal-refcount-known-issues.md](./signal-refcount-known-issues.md).
 
-200 per-card timers → 1 provider timer; subscriber-count fan-out → topic-count fan-out via refcount.
+200 per-card timers → 1 worker timer; subscriber-count fan-out → topic-count fan-out via refcount.
 
 ### 5. Page-level subscriptions (biggest architectural change)
 
@@ -138,7 +138,7 @@ Signal-layer changes landed since this doc was written:
 
 - `MetricSubscriptionProvider` has been removed entirely. Subscription is now a `useMetricSubscription` hook called by individual cards or inside `<Metrics>` wrappers.
 - `SignalProvider` refcounts topics: duplicate subscribers for the same entity share one registration; only the 0→1 / 1→0 transitions talk to the hub.
-- Per-card keep-alive timers were collapsed to a single provider-level 50s interval (defending against the hub's 60s registration TTL). Reconnect-driven re-registration also fires on every `SignalStatus` transition to `'connected'`.
+- Per-card keep-alive timers were collapsed to a single 50s interval in the signals worker (defending against the hub's 60s registration TTL). The worker also re-subscribes every wanted topic on each transition to `'connected'`.
 - Worker emits `topic:status` events; failed `subscribe` calls retry with exponential backoff.
 - `AnimatedCount` no longer uses `@number-flow/react`.
 - Feed cards are migrated to `ElementInView`; visibility-gated cards (`<Metrics useLive={inView === true}>`) drop subscription when off-screen.

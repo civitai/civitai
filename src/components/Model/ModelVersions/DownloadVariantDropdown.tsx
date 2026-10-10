@@ -37,6 +37,8 @@ interface DownloadVariantDropdownProps {
   downloadPrice?: number;
   /** What buyers pay; shown to the owner, who already has access. */
   listedPrice?: number;
+  /** The paid-access terms accept Blue Buzz — colours the price chip. */
+  acceptsBlueBuzz?: boolean;
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
@@ -57,6 +59,7 @@ export function DownloadVariantDropdown({
   canDownload,
   downloadPrice,
   listedPrice,
+  acceptsBlueBuzz,
   isLoadingAccess,
   archived,
   onPurchase,
@@ -158,6 +161,7 @@ export function DownloadVariantDropdown({
             canDownload={canDownload}
             downloadPrice={downloadPrice}
             listedPrice={listedPrice}
+            acceptsBlueBuzz={acceptsBlueBuzz}
             disabled={archived || isLoadingAccess}
             fullWidth
             variant="light"
@@ -394,6 +398,7 @@ export function DownloadVariantDropdown({
           canDownload={canDownload}
           downloadPrice={downloadPrice}
           listedPrice={listedPrice}
+          acceptsBlueBuzz={acceptsBlueBuzz}
           disabled={!activeFile || archived || isLoadingAccess}
           fullWidth
           style={{

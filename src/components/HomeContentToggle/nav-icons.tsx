@@ -17,6 +17,7 @@ import {
   IconPhoto,
   IconPlugConnected,
   IconShoppingBag,
+  IconSwords,
   IconTrophy,
   IconVideo,
 } from '@tabler/icons-react';
@@ -38,6 +39,7 @@ export const navIcons: Record<NavKey, (props: IconProps) => JSX.Element> = {
   comics: (props) => <IconBook {...props} />,
   bounties: (props) => <IconMoneybag {...props} />,
   challenges: (props) => <IconTrophy {...props} />,
+  crucibles: (props) => <IconSwords {...props} />,
   events: (props) => <IconCalendar {...props} />,
   updates: (props) => <IconContract {...props} />,
   shop: (props) => <IconShoppingBag {...props} />,

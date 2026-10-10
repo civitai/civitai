@@ -1983,7 +1983,7 @@ export class BlockRegistry {
 
   /**
    * PRIVATE RUN — resolve a NON-APPROVED page app by slug OR appBlockId, for the
-   * private-run surface (`/apps/private-run/<slug>` + the PHASE 3 page-token mint).
+   * private-run surface (the `/apps/run/<slug>` fallback + the PHASE 3 page-token mint).
    *
    * 🔴 THIS RESOLVER TAKES NO ACCESS DECISION AND MUST NEVER BE CALLED DIRECTLY BY A
    * ROUTE. It answers only "is there a non-approved page app here, and what does the

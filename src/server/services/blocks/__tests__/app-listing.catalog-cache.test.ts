@@ -110,6 +110,7 @@ import {
   APP_LISTING_RECOMMEND_MEAN_TAG,
 } from '../app-listing-cache.constants';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
+import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
 // The runtime value set, from the leaf module that owns it (no imports of its own), so
 // the viewer-class count below is DERIVED rather than restated.
 import { STORE_VISIBILITY_SCOPES } from '~/shared/utils/store-visibility-scope';
@@ -137,7 +138,12 @@ function deriveKey(sql: unknown): string {
 }
 
 /** Run the list path for one viewer shape and return the cache key it would use. */
-async function keyFor(opts: { scope?: StoreVisibilityScope; redCapable?: boolean }) {
+async function keyFor(opts: {
+  scope?: StoreVisibilityScope;
+  redCapable?: boolean;
+  floor?: ListingAudienceFloor;
+  includeSubListings?: boolean;
+}) {
   await listAvailableListings({ ...BASE_INPUT }, opts);
   return deriveKey(lastCall().sql);
 }
@@ -161,7 +167,12 @@ function keyPrefix(key: string): string {
 }
 
 /** Run the list path for one viewer shape and return the HASH-INDEPENDENT key prefix. */
-async function prefixFor(opts: { scope?: StoreVisibilityScope; redCapable?: boolean }) {
+async function prefixFor(opts: {
+  scope?: StoreVisibilityScope;
+  redCapable?: boolean;
+  floor?: ListingAudienceFloor;
+  includeSubListings?: boolean;
+}) {
   return keyPrefix(await keyFor(opts));
 }
 
@@ -236,6 +247,49 @@ describe('/apps catalog cache — the key separates viewers', () => {
     expect(new Set(keys).size, `two viewer shapes collided: ${JSON.stringify(keys)}`).toBe(
       shapes.length
     );
+  });
+
+  /**
+   * 🔴 THE W14 AUDIENCE FLOOR IS A THIRD VIEWER-VARYING AXIS, and it was unguarded here —
+   * this file's whole stated purpose is "two viewer classes can never share an entry", and
+   * a mutation sweep found that DROPPING `${floor}` from the key survived the entire
+   * suite. The consequence is cross-cohort poisoning in the disclosure direction: a
+   * moderator's id page, which under a set level can include `draft` listings, served
+   * wholesale to a general viewer.
+   *
+   * ⚠️ The sibling `app-listing-visibility.store-and` suite CANNOT see this. Its
+   * `queryCache` fake discards the key argument entirely and only forwards the statement,
+   * so the key is unobservable there. This file is the one that can.
+   */
+  it('🔴 the three audience floors can never share a cache entry', async () => {
+    const keys: string[] = [];
+    for (const floor of ['moderators', 'testers', 'public'] as const) {
+      keys.push(await keyFor({ scope: 'full', redCapable: false, floor }));
+    }
+    expect(new Set(keys).size, `two audience floors collided: ${JSON.stringify(keys)}`).toBe(3);
+  });
+
+  it('🔴 the floor is a LITERAL key segment, not hash input', async () => {
+    // Same reasoning as `scope` and `redCapable`: a 32-bit `hashifyObject` over
+    // attacker-influenced bytes is not a security boundary. Prefixes that differ cannot be
+    // made to collide by any hash, however constructed.
+    const prefixes: string[] = [];
+    for (const floor of ['moderators', 'testers', 'public'] as const) {
+      prefixes.push(await prefixFor({ scope: 'full', redCapable: false, floor }));
+    }
+    expect(new Set(prefixes).size, `floors share a hash-independent prefix: ${prefixes}`).toBe(3);
+  });
+
+  it('🔴 all twelve (scope × floor × redCapable) viewer shapes are pairwise distinct', async () => {
+    const keys: string[] = [];
+    for (const scope of ['full', 'public-external'] as const) {
+      for (const floor of ['moderators', 'testers', 'public'] as const) {
+        for (const redCapable of [true, false]) {
+          keys.push(await keyFor({ scope, redCapable, floor }));
+        }
+      }
+    }
+    expect(new Set(keys).size, `viewer shapes collided: ${JSON.stringify(keys)}`).toBe(12);
   });
 
   /**
@@ -396,6 +450,25 @@ describe('/apps catalog cache — the key separates viewers', () => {
    * There are two tags in `app-listing-cache.constants`, and swapping them would make
    * every mutation appear to bust while the catalog entry survived its full TTL.
    */
+  // The sub-listing flag changes which ROWS the statement returns, so a flag-on page served
+  // to a flag-off viewer would leak cards the flag is meant to hold back.
+  it('🔴 the sub-listing flag is a LITERAL key segment', async () => {
+    const on = await prefixFor({ scope: 'full', redCapable: false, includeSubListings: true });
+    const off = await prefixFor({ scope: 'full', redCapable: false, includeSubListings: false });
+    expect(on).not.toBe(off);
+    expect(on.split(':')).toContain('sl');
+    expect(off.split(':')).toContain('nosl');
+  });
+
+  it('only the flag-on statement reads the sub-listing tables', async () => {
+    const sqlText = (call: { sql: unknown }) => (call.sql as { sql: string }).sql;
+    await keyFor({ scope: 'full', redCapable: false, includeSubListings: false });
+    expect(sqlText(lastCall())).not.toContain('app_sub_listings');
+    await keyFor({ scope: 'full', redCapable: false, includeSubListings: true });
+    expect(sqlText(lastCall())).toContain('app_sub_listings');
+    expect(lastCall().options?.tag).toEqual([APP_LISTING_CATALOG_TAG]);
+  });
+
   it('🔴 the buster busts the CATALOG tag, not the recommend-mean tag', async () => {
     await bustAppListingCatalogCache();
     expect(bustCacheTag).toHaveBeenCalledTimes(1);

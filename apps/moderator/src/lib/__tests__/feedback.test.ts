@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   FARO_LOKI_RETENTION_HOURS,
+  FEEDBACK_ANY_AREA_LABEL,
   FEEDBACK_ATTACHMENT_CAPTIONS,
   faroSessionLink,
+  feedbackAreaLabel,
   feedbackAreaOptions,
   feedbackAttachmentCount,
   feedbackAttachmentItems,
@@ -117,10 +119,29 @@ describe('feedbackAreaOptions', () => {
    */
   it('defaults its known areas to the shared registry the producer writes', () => {
     expect(feedbackAreaOptions([])).toEqual([
+      'app-block',
       'apps-marketplace',
       'bitdex-image-feed',
       'site-bug-report',
     ]);
+  });
+});
+
+describe('feedbackAreaLabel', () => {
+  it('names app-block rows', () => {
+    expect(feedbackAreaLabel('app-block')).toBe('App feedback');
+  });
+
+  it('renders an unlabelled slug as itself, including one shaped like an Object.prototype key', () => {
+    expect(['site-bug-report', 'constructor', 'toString'].map(feedbackAreaLabel)).toEqual([
+      'site-bug-report',
+      'constructor',
+      'toString',
+    ]);
+  });
+
+  it('says which area the no-area view leaves out', () => {
+    expect(FEEDBACK_ANY_AREA_LABEL).toBe('Area — any except App feedback');
   });
 });
 

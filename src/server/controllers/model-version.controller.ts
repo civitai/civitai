@@ -103,6 +103,7 @@ import { createFile } from '../services/model-file.service';
 import { getResourceData } from './../services/generation/generation.service';
 import { env } from '~/env/server';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { assertTrainingSourcePublishable } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { updateTrainingWorkflowRecords } from '~/server/services/training.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -825,7 +826,7 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: { select: { userId: true, nsfw: true, status: true } },
+        model: { select: { userId: true, nsfw: true, status: true, meta: true } },
       },
     });
 
@@ -851,6 +852,13 @@ export const publishModelVersionHandler = async ({
     ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
+
+    await assertTrainingSourcePublishable({
+      modelId: version.modelId,
+      meta: version.model.meta as ModelMeta | null,
+      ownerId: version.model.userId,
+      callerId: ctx.user.id,
+    });
 
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
@@ -1297,7 +1305,14 @@ export async function publishPrivateModelVersionHandler({
       status: true,
       uploadType: true,
       model: {
-        select: { id: true, publishedAt: true, availability: true, userId: true, status: true },
+        select: {
+          id: true,
+          publishedAt: true,
+          availability: true,
+          userId: true,
+          status: true,
+          meta: true,
+        },
       },
       files: {
         select: {
@@ -1333,6 +1348,13 @@ export async function publishPrivateModelVersionHandler({
   ) {
     throw throwAuthorizationError('You are not authorized to publish this model version');
   }
+
+  await assertTrainingSourcePublishable({
+    modelId: version.model.id,
+    meta: version.model.meta as ModelMeta | null,
+    ownerId: version.model.userId,
+    callerId: ctx.user.id,
+  });
 
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
   const fileIds = version.files.map((f) => f.id);

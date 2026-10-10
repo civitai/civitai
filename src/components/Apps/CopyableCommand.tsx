@@ -1,7 +1,8 @@
-import type { MouseEvent } from 'react';
-import { Box, Code, CopyButton } from '@mantine/core';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { IconCheck, IconClipboard } from '@tabler/icons-react';
+import { Code } from '@mantine/core';
+import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
 
 /**
  * A copy-to-clipboard shell command block.
@@ -13,12 +14,27 @@ import { IconCheck, IconClipboard } from '@tabler/icons-react';
  * `aria-label` and their copied-state feedback — which is the drift `./cliCommands`
  * already exists to prevent for the command STRINGS. Same rule, one level out.
  *
- * `onCopy` is OPTIONAL and defaults to nothing, which is what keeps `GetStartedBody`
- * and `CliSubmitCta` the "pure presentational (props-only, no tRPC / no network)"
- * components their headers claim they are — a property their `*.browser.test.tsx`
- * suites depend on, since they mount them with no providers. The analytics call lives
- * at the ONE call site that has a tracker (`AppsBuildBody`), threaded down as a
- * callback rather than by importing a hook in here.
+ * 🔴 THE MECHANICS NOW LIVE IN `~/components/CopyAffordance/CopyAffordance` AND THIS IS A
+ * BODY ON TOP OF THEM. A fourth consumer arrived — {@link AgentOnboardingCard}'s multi-line
+ * prose prompt — and it cannot use this component, because what is special here is exactly
+ * what does not generalise: the `$ ` shell sigil and a `Copy command: …` accessible name.
+ * Rather than duplicate the wiring a fourth time or make this render two unrelated shells
+ * behind a `variant`, the shared half moved out. See `CopyAffordance`'s header for why the
+ * seam is where it is.
+ *
+ * ⚠️ `word-break: break-all` WAS THE THIRD ITEM IN THAT LIST AND HAS BEEN REMOVED FROM IT.
+ * `<Code block>` computes `white-space: pre` / `nowrap`, so nothing soft-wraps and the
+ * property is INERT here — measured in
+ * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`, where this component's own
+ * long-command fixture scrolls (`scrollWidth` 572 against `clientWidth` 390, computed
+ * `white-space: pre` / `text-wrap-mode: nowrap` / `overflow-x: auto`). It is LEFT on the body
+ * below rather than deleted: inert under the geometry measured here is not the same claim as
+ * output-neutral to remove at every call site, and nobody has measured the second. Do not
+ * cite it as a reason this body is special; do not read its presence as a reason either.
+ *
+ * This file's rendered output is UNCHANGED by that move: the same `Box` click target, the
+ * same absolutely-positioned icon at the same 8px offset, the same `aria-label`, the same
+ * `Copied`/`$ command` swap, and the same `stopPropagation()` on the icon.
  */
 export function CopyableCommand({
   command,
@@ -28,55 +44,24 @@ export function CopyableCommand({
   /**
    * Fired on an ATTEMPTED copy — the funnel's `cli_copy` step.
    *
-   * 🔴 NOT "on a successful copy", which is what this said and what the code cannot
-   * deliver. `handleCopy` calls Mantine's `copy()` and then `onCopy?.()`
-   * unconditionally; `copy()` returns `void` and `CopyButton` surfaces no success
-   * signal, so there is nothing to branch on. A denied clipboard permission or a
-   * non-secure context still emits the event. The DOC is what was corrected rather
-   * than the code: the funnel wants intent-to-copy, and gating the step on a signal
-   * Mantine does not expose would mean reimplementing the copy itself.
+   * 🔴 NOT "on a successful copy". The reason is in `CopyAffordance`'s `onCopy` doc, which
+   * owns the call: `copy()` returns `void` and `CopyButton` surfaces no success signal, so a
+   * denied clipboard permission still emits. The DOC was what got corrected rather than the
+   * code — the funnel wants intent-to-copy.
    */
   onCopy?: (command: string) => void;
 }) {
   return (
-    <CopyButton value={command}>
-      {({ copied, copy }) => {
-        const handleCopy = () => {
-          copy();
-          onCopy?.(command);
-        };
-        return (
-          <Box pos="relative" onClick={handleCopy} style={{ cursor: 'pointer' }}>
-            <Code
-              block
-              color={copied ? 'green' : undefined}
-              style={{ wordBreak: 'break-all', paddingRight: 36 }}
-            >
-              {copied ? 'Copied' : `$ ${command}`}
-            </Code>
-            <LegacyActionIcon
-              className="absolute right-2 top-1/2 -translate-y-1/2"
-              right={8}
-              variant="transparent"
-              color="gray"
-              aria-label={`Copy command: ${command}`}
-              // 🔴 STOPS PROPAGATION, WHICH THE THREE PRIVATE COPIES DID NOT. The icon
-              // sits INSIDE the Box that also handles the click, so a press on the icon
-              // ran `copy()` twice. Harmless while copying was the only effect — the
-              // second write is idempotent — but `onCopy` is not: it would post two
-              // `cli_copy` events for one press, and only for the icon, so the funnel
-              // would over-count by however many users aim at the button rather than
-              // the block. Fixed here rather than left for the analytics to work around.
-              onClick={(e: MouseEvent) => {
-                e.stopPropagation();
-                handleCopy();
-              }}
-            >
-              {copied ? <IconCheck size={16} /> : <IconClipboard size={16} />}
-            </LegacyActionIcon>
-          </Box>
-        );
-      }}
-    </CopyButton>
+    <CopyAffordance value={command} label={`Copy command: ${command}`} onCopy={onCopy}>
+      {({ copied }) => (
+        <Code
+          block
+          color={copied ? 'green' : undefined}
+          style={{ wordBreak: 'break-all', paddingRight: COPY_BODY_PADDING_RIGHT }}
+        >
+          {copied ? 'Copied' : `$ ${command}`}
+        </Code>
+      )}
+    </CopyAffordance>
   );
 }

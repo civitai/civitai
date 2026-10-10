@@ -16,8 +16,8 @@ import {
   ACE_AUDIO_MAX_BPM,
   ACE_AUDIO_MIN_BPM,
 } from '~/shared/form-graph/generation/audio/ace.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
-import type { StepInput } from '../ecosystems';
+import { defineHandler } from '../handlers/handler-factory';
+import type { StepInput } from '../handlers';
 import type { EcosystemData } from './types';
 
 const SIMPLE_CHAT_MODEL = 'gpt-4o-mini';

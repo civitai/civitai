@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capPerUser } from '~/components/HomeBlocks/homeBlockItems';
+import { capPerUser } from '~/shared/utils/cap-per-user';
 
 type Item = { id: number; user?: { id: number } | null };
 

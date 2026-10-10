@@ -52,6 +52,49 @@ export async function tailTrace(
   return { ready: true };
 }
 
+function sleep(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true }
+    );
+  });
+}
+
+/** A trace's identity across polls. Its presigned query is re-signed on every workflow poll while the
+ *  path stays fixed per epoch, so keying on the full URL restarts the stream every ~5s. */
+export const tracePath = (url: string) => url.split('?')[0];
+
+/** How one tail attempt ended: the stream closed, it 404'd (not written yet), or it errored. */
+export type TraceAttempt = 'complete' | 'missing' | 'failed';
+
+/** Tail a trace until its stream closes, retrying while `keepTrying(attempt)` says so. `getUrl` is
+ *  re-read on every attempt: the presigned URL is re-signed on each workflow poll, so a once-captured
+ *  one expires mid-retry and 403/404-loops forever. Rejects only on abort. */
+export async function followTrace(
+  getUrl: () => string,
+  onLine: (line: string) => void,
+  signal: AbortSignal,
+  keepTrying: (attempt: TraceAttempt) => boolean
+): Promise<TraceAttempt> {
+  for (;;) {
+    let attempt: TraceAttempt;
+    try {
+      attempt = (await tailTrace(getUrl(), onLine, signal)).ready ? 'complete' : 'missing';
+    } catch (err) {
+      if (isAbort(err)) throw err;
+      attempt = 'failed';
+    }
+    if (attempt === 'complete' || !keepTrying(attempt)) return attempt;
+    await sleep(2000, signal);
+  }
+}
+
 export type ParsedTraceLine = { kind: 'event'; event: TraceEvent } | { kind: 'text'; text: string };
 
 /** Parse an `events`-mode NDJSON line to a `TraceEvent`; a non-JSON (`logs`-mode) line comes back as text. */
@@ -90,7 +133,8 @@ const WORKER_PHASES = new Set<string>([
 ]);
 
 /** The one signal a trace line carries for the friendly status view. `noise` = a line we keep in the raw
- *  log but that drives no status (timer blocks, "Saved optimizer", "Removing old save", unknown JSON). */
+ *  log but that drives no status (timer blocks, "Saved optimizer", "Removing old save", unknown JSON);
+ *  `loss` = a per-step loss reading, which only the loss graph shows. */
 export type TraceSignal =
   | { kind: 'phase'; phase: TrainingPhase; epoch: number | null }
   | {
@@ -102,6 +146,7 @@ export type TraceSignal =
     }
   | { kind: 'epoch-done'; epoch: number }
   | { kind: 'attempt'; epoch: number | null }
+  | { kind: 'loss' }
   | { kind: 'noise' };
 
 const finite = (v: unknown): number | null =>
@@ -170,7 +215,62 @@ export function interpretTraceLine(line: string): TraceSignal {
       return epoch !== null ? { kind: 'epoch-done', epoch } : { kind: 'noise' };
     case 'attempt':
       return { kind: 'attempt', epoch };
+    case 'loss':
+      return { kind: 'loss' };
     default:
       return { kind: 'noise' };
   }
+}
+
+/** One training step's loss reading(s), keyed by the trainer's own loss names (`loss`, `fft_loss`, …). */
+export interface LossPoint {
+  step: number;
+  losses: Record<string, number>;
+  lr: number | null;
+}
+
+// ai-toolkit reports loss only in its tqdm postfix — `… 20/200 [00:08<01:12, 2.48it/s, lr: 1.0e-04 loss: 3.213e-01]`.
+// The worker's log capture strips `\r`, so a run of redraws arrives concatenated on ONE line: match globally.
+const TQDM_REDRAW = /(\d+)\/\d+ \[([^\]]*)\]/g;
+const POSTFIX_PAIR = /([A-Za-z_][\w/.-]*): ([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)/gi;
+
+function lossPointsFromText(text: string): LossPoint[] {
+  const points: LossPoint[] = [];
+  for (const [, step, postfix] of text.matchAll(TQDM_REDRAW)) {
+    const losses: Record<string, number> = {};
+    let lr: number | null = null;
+    for (const [, key, raw] of postfix.matchAll(POSTFIX_PAIR)) {
+      const value = Number(raw);
+      if (!Number.isFinite(value)) continue;
+      if (key === 'lr') lr = value;
+      else losses[key] = value;
+    }
+    if (Object.keys(losses).length) points.push({ step: Number(step), losses, lr });
+  }
+  return points;
+}
+
+function lossFields(value: unknown): Record<string, number> {
+  const single = finite(value);
+  if (single !== null) return { loss: single };
+  const out: Record<string, number> = {};
+  if (value && typeof value === 'object') {
+    for (const [key, v] of Object.entries(value)) {
+      const n = finite(v);
+      if (n !== null && key !== 'lr') out[key] = n;
+    }
+  }
+  return out;
+}
+
+/** The loss readings one trace line carries: a structured event with `step` + `loss` (a number or a
+ *  `{name: value}` map) and an optional `lr`, or tqdm redraws inside a `log` message / plain-text line. */
+export function traceLossPoints(line: string): LossPoint[] {
+  const parsed = parseTraceLine(line);
+  if (parsed.kind === 'text') return lossPointsFromText(parsed.text);
+  const e = parsed.event;
+  const step = finite(e.step);
+  const losses = lossFields(e.loss);
+  if (step !== null && Object.keys(losses).length) return [{ step, losses, lr: finite(e.lr) }];
+  return typeof e.message === 'string' ? lossPointsFromText(e.message) : [];
 }

@@ -18,7 +18,7 @@ const mutateAsync = vi.hoisted(() =>
 );
 
 const allowance = vi.hoisted(() => ({
-  data: { used: 0, limit: 3 } as Record<string, unknown>,
+  data: { used: 0, baseLimit: 3 } as Record<string, unknown>,
 }));
 
 /**
@@ -321,22 +321,22 @@ beforeEach(() => {
   mutateAsync.mockClear();
   flags.current = { licensingFee: true, earlyAccessModel: false };
   currentUser.value = { id: 1, tier: 'free', isModerator: false, meta: {} };
-  allowance.data = { used: 0, limit: 3 };
+  allowance.data = { used: 0, baseLimit: 3 };
   licensingRoots.respond = () => NO_ROOTS;
 });
 
 describe('ModelVersionUpsertForm — the monetization eligibility floor', () => {
   test('takes the charge switch away from a creator below it, and says why', async () => {
-    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
     renderForm();
 
-    await expect.element(page.getByText(/creator score of 10,000/)).toBeInTheDocument();
+    await expect.element(page.getByText(/Creator Score of 10,000/)).toBeInTheDocument();
     await expect.element(chargeSwitch()).toBeDisabled();
   });
 
   // The floor is not a permission level — it states who may sell here, so a moderator meets it too.
   test('is not waived for a moderator', async () => {
-    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
     currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
     renderForm();
 
@@ -346,7 +346,7 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
   // Absent while the query is in flight. Failing closed here would disable the switch under the cursor
   // of every eligible creator for as long as the request takes.
   test('leaves the switch alone until the answer arrives', async () => {
-    allowance.data = { used: 0, limit: 3 };
+    allowance.data = { used: 0, baseLimit: 3 };
     renderForm();
 
     await expect.element(chargeSwitch()).toBeEnabled();
@@ -355,11 +355,52 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
   // Editing a price the version already carries is exempt from the floor, so the controls stay usable
   // for a creator whose score has since fallen below it.
   test('does not lock a creator out of a version that already charges', async () => {
-    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
     renderChargingForm();
 
     await expect.element(chargeSwitch()).toBeEnabled();
-    expect(page.getByText(/creator score of 10,000/).elements()).toHaveLength(0);
+    expect(page.getByText(/Creator Score of 10,000/).elements()).toHaveLength(0);
+  });
+});
+
+describe('ModelVersionUpsertForm — the licensing-fee allowance boost', () => {
+  // A paid-access gate is enforced against baseLimit, so the at-limit alert follows it; the boost is
+  // fee-only, and the alert has to say the creator can still add fees.
+  test('at the tier limit, says the extra slots still cover licensing fees', async () => {
+    allowance.data = { used: 3, baseLimit: 3, feeLimit: 103, feeBoost: 100 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've used this month's paid-access allowance"))
+      .toBeInTheDocument();
+    await expect.element(page.getByText(/cover 100 more this month/)).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/licensing fees: 3 of 103, includes 100 extra for licensing fees/))
+      .toBeInTheDocument();
+  });
+
+  test('once the extra slots are spent too, keeps the plain at-limit alert', async () => {
+    allowance.data = { used: 103, baseLimit: 3, feeLimit: 103, feeBoost: 100 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've priced all this month's versions"))
+      .toBeInTheDocument();
+    expect(page.getByText(/cover \d+ more this month/).elements()).toHaveLength(0);
+  });
+
+  test('without a boost, keeps the plain at-limit alert', async () => {
+    allowance.data = { used: 3, baseLimit: 3, feeLimit: 3, feeBoost: 0 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've priced all this month's versions"))
+      .toBeInTheDocument();
+    expect(page.getByText(/cover \d+ more this month/).elements()).toHaveLength(0);
+    expect(page.getByText(/licensing fees:/).elements()).toHaveLength(0);
   });
 });
 

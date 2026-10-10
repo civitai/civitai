@@ -128,7 +128,7 @@ Inside `ImageUploadMultipleInput` default layout, wrap the `Dropzone` in a `rela
 
 ### Sticky footer
 
-`ImagePickerFooter` renders inside `ScrollableQueue` / `ScrollableFeed` (after Queue/Feed, inside ScrollArea). Uses `shadow-topper sticky bottom-0 z-10` pattern from FormFooter. Shows "{n} of {max} selected" + Cancel + Confirm.
+`ImagePickerFooter` renders inside `GenerationResults` (after Queue/Feed, inside its ScrollArea) — the one results renderer shared by the sidebar panel and `/generate`. Uses `shadow-topper sticky bottom-0 z-10` pattern from FormFooter. Shows "{n} of {max} selected" + Cancel + Confirm.
 
 ### Tab switching guard
 
@@ -147,9 +147,10 @@ During picker mode, switching to 'generate' tab is blocked (must use Cancel/Conf
 | 2 | `src/components/ImageGeneration/GeneratedImage.tsx` | Simplify toggle/isSelected calls (pass BlobData), add picker-aware checkbox/click |
 | 3 | `src/components/ImageGeneration/GeneratedImageActions.tsx` | Remove `getSelectedImages()` lookup, use BlobData directly. Hide during picker. |
 | 4 | **NEW** `src/components/ImageGeneration/ImagePickerFooter.tsx` | Sticky footer: count + Cancel + Confirm |
-| 5 | `src/components/ImageGeneration/GenerationTabs.tsx` | Add `ImagePickerFooter` to ScrollableQueue/ScrollableFeed, tab guard |
+| 5 | `src/components/ImageGeneration/GenerationResults.tsx` | Add `ImagePickerFooter` inside the ScrollArea |
+| 5b | `src/components/ImageGeneration/GenerationTabs.tsx` | Tab guard in `GenerationHeader`'s `onChange` |
 | 6 | `src/components/generation_v2/inputs/ImageUploadMultipleInput.tsx` | Add `enableGeneratedImagePicker` prop + button |
-| 7 | `src/components/generation_v2/GenerationForm.tsx` | Wire `enableGeneratedImagePicker` through `ImagesInput` |
+| 7 | `src/components/form-graph/generation/ImageGenerationForm.tsx` | Wire `enableGeneratedImagePicker` through the images field |
 
 ## Implementation order
 
@@ -157,7 +158,7 @@ During picker mode, switching to 'generate' tab is blocked (must use Cancel/Conf
 2. Update `GeneratedImage.tsx` — pass BlobData to toggle/isSelected, add picker UI
 3. Update `GeneratedImageActions.tsx` — use BlobData directly, remove lookup, hide during picker
 4. Create `ImagePickerFooter.tsx`
-5. Update `GenerationTabs.tsx` — add footer + tab guard
+5. Add the footer to `GenerationResults.tsx`; add the tab guard to `GenerationHeader` in `GenerationTabs.tsx`
 6. Update `ImageUploadMultipleInput.tsx` — add prop + button
 7. Update `GenerationForm.tsx` — wire prop
 

@@ -7,9 +7,10 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   createEntityAppealSchema,
   createReportInputSchema,
+  getLatestAppealSchema,
   getRecentAppealsSchema,
 } from '~/server/schema/report.schema';
-import { getAppealDetails } from '~/server/services/report.service';
+import { getAppealDetails, getLatestAppeal } from '~/server/services/report.service';
 import { guardedProcedureAllowUnverifiedEmail, protectedProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -27,7 +28,13 @@ export const reportRouter = router({
   getAppealDetails: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getByIdSchema)
-    .query(({ input }) => getAppealDetails({ ...input })),
+    .query(({ input, ctx }) =>
+      getAppealDetails({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  getLatestAppeal: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getLatestAppealSchema)
+    .query(({ input, ctx }) => getLatestAppeal({ ...input, userId: ctx.user.id })),
   createAppeal: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(createEntityAppealSchema)

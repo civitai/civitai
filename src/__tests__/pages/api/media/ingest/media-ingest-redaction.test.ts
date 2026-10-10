@@ -221,3 +221,22 @@ describe('GET /api/media/ingest/[mediaId]', () => {
     expect(mockIngest).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/media/ingest/[mediaId] shared token', () => {
+  const call = async (secret: string | undefined, token: string | undefined) => {
+    setEnv({ WEBHOOK_TOKEN: secret });
+    mockGetSession.mockResolvedValue(null);
+    const { req, res } = harness(null);
+    if (token !== undefined) req.query.token = token;
+    await handler(req, res);
+    return res._status();
+  };
+
+  it('refuses whitespace against a whitespace secret without a moderator session', async () => {
+    expect(await call('  ', '  ')).toBe(401);
+  });
+
+  it('POSITIVE CONTROL: the configured secret stands in for the moderator session', async () => {
+    expect(await call(TOKEN, TOKEN)).toBe(404);
+  });
+});

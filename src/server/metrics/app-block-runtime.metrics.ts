@@ -223,6 +223,13 @@ export type AppBlockEndpoint =
   // catalog searches. Same bucket, different question when it fails.
   | 'gated_images'
   | 'generation_resources'
+  // The resource-intent primitive (`POST /api/v1/blocks/resource-intent`). Its
+  // OWN label rather than folding into 'generation_resources': that route is a
+  // bounded id-keyed rehydrate, this one is up to two sequential vendor round trips (up to three calls)
+  // plus up to two Meili searches, so its latency is dominated by an external service —
+  // merging them would bury the only block route that can be slow for a
+  // vendor-billing reason inside a constant-time read's p95.
+  | 'resource_intent'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that
   // endpoint's per-token rate-limit budget deliberately — so it gets its own
@@ -247,7 +254,11 @@ export type AppBlockEndpoint =
   // Merging them would put the checkout path's p95 behind the volume of a
   // read every app makes on mount.
   | 'goods_purchase'
-  | 'entitlements';
+  | 'entitlements'
+  // App Store sub-listings (store items): the two writes and the author's own read.
+  | 'sub_listings_upsert'
+  | 'sub_listings_withdraw'
+  | 'sub_listings_mine';
 // NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
 //
 // 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists
@@ -484,9 +495,7 @@ export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
   /**
    * The dev-tunnel re-check could not be completed (clawgate #571). Refuses like
    * `not_approved`, counted separately so a cache incident is not indistinguishable from
-   * the stale-dev-token population that verdict exists to create — which matters more
-   * here than it would elsewhere, because application-container logs are not collected on
-   * this deployment, so this label is the whole signal for that leg.
+   * the stale-dev-token population that verdict exists to create.
    *
    * ⚠️ THIS LIST IS A THIRD EDIT SITE, NOT DERIVED. It is a hand-maintained union
    * alongside `AppBlockApprovalVerdict` and the two callers' mappings; a new verdict needs
@@ -858,15 +867,17 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // it (the bare-count trap the `step_price_check` counter's `quoted`/`absent` pair
   // above exists to avoid). Alert on a RATIO.
   //
-  // 🔴 `no_handler` IS NOT UNIFORMLY A BUG — read it WITH `host`. A page-only
-  // message arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`,
-  // `OPEN_IMAGE_UPLOAD`, …) is an EXPECTED refusal that the parity inventory
-  // declares N/A for `IframeHost`; the same type unhandled on `PageBlockHost` is a
-  // real missing bridge. The `host` label values are the parity inventory's own
-  // file names precisely so the series joins to `INVENTORY[type][host]` with no
-  // mapping table in between.
+  // 🔴 AN UNHANDLED MESSAGE IS SPLIT BY THE PARITY INVENTORY, NOT LEFT TO THE
+  // READER. Where `INVENTORY[type][host]` is an N/A rationale — a page-only message
+  // arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`, …), or
+  // `RESIZE_IFRAME` on the full-viewport page host — the dispatcher reports
+  // `not_applicable`. `no_handler` is left for a type declared `'required'` on that
+  // host (a real missing bridge) or one the inventory does not declare. Split
+  // because a by-design drop counted as `no_handler` is indistinguishable from a
+  // missing handler and buries it. The `host` label values are still the parity
+  // inventory's own file names, so either series joins to `INVENTORY[type][host]`.
   //
-  // Cardinality: (A+1) x (47+1) x 2 x 6 ~= 29,376 at A=50 approved apps, where
+  // Cardinality: (A+1) x (49+1) x 2 x 7 = 35,700 at A=50 approved apps, where
   // `boundAppBlockIdLabel` adds exactly one extra value, 'other' (it returns the
   // id or 'other', nothing else — do not copy the '+2' the launch histograms use,
   // which is wrong for the same reason). That is the largest App
@@ -883,7 +894,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const bridgeMessagesTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_bridge_messages_total',
-    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for the type, so a REQUEST-style message would hang to its SDK timeout (30s default / 120s workflow / 600s human-in-the-loop) — READ IT WITH `host`, because a page-only message refused by IframeHost is the DECLARED design (see hostHandlerParity INVENTORY) while the same type unhandled on PageBlockHost is a missing bridge; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
+    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for a type the hostHandlerParity INVENTORY declares 'required' on this host, or a type the INVENTORY does not declare — the missing-bridge signal (a REQUEST-style one is NACKed where the protocol defines an error reply, within a per-second NACK budget; otherwise it hangs to its SDK timeout); not_applicable = this host registers no handler and the INVENTORY declares the type N/A for this host (e.g. a page-only message on IframeHost, RESIZE_IFRAME on the full-viewport PageBlockHost) — the declared design, answered on the wire exactly as no_handler is, and counted separately so it cannot bury a real no_handler; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
     ['app_block_id', 'type', 'host', 'outcome']
   );
 
@@ -1141,19 +1152,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // is not enabled" whenever their session could not be read. Two different facts,
   // one message; only one of them is about permission.
   //
-  // 🔴 A LOG LINE WOULD NOT HAVE SATISFIED THIS. Application-container stdout is
-  // not collected into the log store for this deployment, so a `console.error` on
-  // this branch is unreadable to any later investigator — the exact reason the
-  // 2026-09-19 refusal could not be attributed to a mechanism at all. A scraped
-  // counter is the only surface that exists here today.
-  //
   // 🔴 ONE LABEL, `surface`, over a 2-value code-owned union → 2 series, TOTAL. No
   // `app_block_id` and no user id: this fires once per refused post/preview attempt
   // with nothing caching it, and prom-client retains every distinct label set in
   // the Node heap for the process lifetime across every scraped pod. Same
-  // alert-on-the-metric / attribute-from-the-log split as the two counters above —
-  // except that here the log half does not exist yet, so read this series as a RATE
-  // signal only and do not expect to identify WHICH viewer was refused from it.
+  // alert-on-the-metric / attribute-from-the-log split as the two counters above: read
+  // this series as a RATE signal only and do not expect to identify WHICH viewer was
+  // refused from it.
   //
   // 🔴 WHAT A ZERO DOES AND DOES NOT MEAN. Zero is the healthy steady state — a
   // subject that hydrates never reaches the emitter — so "nothing has gone wrong"
@@ -1164,7 +1169,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const postSubjectRefusalsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_post_subject_refusals_total',
-    "Post-from-app requests refused because the token subject did not hydrate to a SessionUser, by surface. surface: create = blocks.createPostFromApp, preview = blocks.previewPostFromApp. This is NOT a flag denial and must never be read as one — a flag denial does not increment this series at all, and the two refusals carry different messages on purpose. A non-zero rate means viewers who may well be entitled to post were turned away by an identity read that failed, so alert on the RATE, not on a single event. Carries no app or user label (cardinality); per-viewer attribution is not available on this deployment because application-container logs are not collected, so this counter is the whole signal. Zero is also the healthy steady state, so a flat zero cannot by itself distinguish 'nothing failed' from 'the emitter is inert' — the registration is pinned by a real-registry test instead",
+    "Post-from-app requests refused because the token subject did not hydrate to a SessionUser, by surface. surface: create = blocks.createPostFromApp, preview = blocks.previewPostFromApp. This is NOT a flag denial and must never be read as one — a flag denial does not increment this series at all, and the two refusals carry different messages on purpose. A non-zero rate means viewers who may well be entitled to post were turned away by an identity read that failed, so alert on the RATE, not on a single event. Carries no app or user label (cardinality), so it attributes a MECHANISM and never a viewer. Zero is also the healthy steady state, so a flat zero cannot by itself distinguish 'nothing failed' from 'the emitter is inert' — the registration is pinned by a real-registry test instead",
     ['surface']
   );
 
@@ -1733,12 +1738,10 @@ export function recordBlockRestApprovalVerdict(reason: AppBlockRestApprovalVerdi
  * decided by the time this runs, so a metrics error must not convert a chosen 401 into
  * an uncaught 500.
  *
- * 🔴 THIS IS THE ONLY OBSERVABILITY THIS BRANCH HAS. Application-container logs are not
- * collected for this deployment, so the `console.error` shape used elsewhere in the repo
- * would be invisible to a later investigator. Deleting this call does not fail a type
- * check and does not fail any test that only asserts the thrown error — it silently
- * returns the branch to being unobservable, which is the state that made the 2026-09-19
- * refusal unattributable. `app-block-post-subject-refusals.metrics.test.ts` is what
+ * 🔴 THIS IS THE ONLY OBSERVABILITY THIS BRANCH HAS — it emits nothing else. Deleting
+ * this call does not fail a type check and does not fail any test that only asserts the
+ * thrown error — it silently returns the branch to being unobservable, which is the state
+ * that made the 2026-09-19 refusal unattributable. `app-block-post-subject-refusals.metrics.test.ts` is what
  * stops that.
  *
  * COST: one in-heap counter increment, only on the refusal path. A fleet whose subjects

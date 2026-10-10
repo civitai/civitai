@@ -13,7 +13,7 @@ import { resolve } from 'path';
 export const MODES = ['dev', 'prod'];
 
 // Services this repo talks to that have no dev counterpart at all: there is no dev orchestrator and
-// no dev notifications database (confirmed by Justin, 2026-08-15), and the rest were never split.
+// no dev notifications database (confirmed 2026-08-15), and the rest were never split.
 // A session reports these alongside its modes so `mode: dev` is never read as "nothing here is
 // production" — pressing Generate on a dev-mode server still submits a real job and spends real Buzz.
 export const PROD_ONLY_GROUPS = [

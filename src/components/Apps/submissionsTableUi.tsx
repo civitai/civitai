@@ -1,4 +1,14 @@
-import { Badge, Button, Collapse, Group, Stack, Table, Text, TextInput, UnstyledButton } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Collapse,
+  Group,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from '@mantine/core';
 import {
   IconArrowsSort,
   IconChevronDown,
@@ -19,10 +29,8 @@ import {
 } from '~/components/Apps/submissionsTable';
 
 /**
- * App Store Listings (W13) — shared /apps/my-submissions table UI atoms, used by
- * BOTH the onsite (`MySubmissionsList`) and offsite (`OffsiteSubmissionsList`)
- * tables so the filter box, the sortable headers, and the version-collapse toggle
- * look + behave identically. Pure presentational — all state lives in the parent
+ * App Store Listings (W13) — submissions-table UI atoms (the filter box, the
+ * sortable headers, the version-collapse toggle). Pure presentational — all state lives in the parent
  * list; the pure filter/sort/group logic lives in `submissionsTable.ts`.
  *
  * Accessibility: the sortable header is a real <button> inside a <th> carrying
@@ -90,8 +98,8 @@ export function SubmissionSearch({
 }
 
 /** The "N versions" expand/collapse affordance on a collapsed app group row.
- *  `variant` defaults to the filled-`light` chip (offsite list); the onsite list
- *  passes `subtle` to render it as a quiet link-styled button under the title. */
+ *  `variant` defaults to the filled-`light` chip; `subtle` renders it as a quiet
+ *  link-styled button. */
 export function VersionToggle({
   expanded,
   count,
@@ -237,9 +245,7 @@ function StatusSection({
 /**
  * Render a submissions list as status SECTIONS (Live → Pending → Rejected →
  * Withdrawn). Each non-empty bucket gets its own section + table (built by
- * `renderTable` from that bucket's groups); empty buckets render nothing. Shared by
- * both the onsite (`MySubmissionsList`) and offsite (`OffsiteSubmissionsList`)
- * lists so the section layout + collapse behavior are identical.
+ * `renderTable` from that bucket's groups); empty buckets render nothing.
  */
 export function StatusSections<T, B extends string = AnyStatusBucket>({
   buckets,

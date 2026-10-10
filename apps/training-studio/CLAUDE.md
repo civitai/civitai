@@ -1,13 +1,5 @@
 # apps/training-studio
 
-> 🔴 **No commit or push without BOTH gates passed, in order:**
-> 1. **Adversarial review** — run the review agents (`/svelte-review`: correctness + idiom + abstraction)
->    over the segment and resolve the findings.
-> 2. **The maintainer's personal review + explicit OK** — a human reads the diff and says commit. This is
->    a separate, required step; passing tests, a green build, or "go on"/"continue" is **not** it.
->
-> Until both are done, leave changes in the working tree and ask. Applies to every commit, on any branch.
-
 **Follow [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md)** — the shared conventions
 for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actions, `@civitai/ui`,
 `text-dark-2`, placement, comments, the three review agents).
@@ -34,8 +26,9 @@ The clickable design of record is checked in — **open it before writing UI**:
    optional trigger word (model-dependent). ← next
 3. **Review & start** — Steps as the primary field shown as **"each image seen ~N×"** with a low
    warning; type acts as a preset; advanced collapsed; sample prompts; whatif price; Start.
-4. **Results (live)** — progress header (step/checkpoint, no loss/LR), epoch cards stream in; then
-   Publish / Generate / Save+Download / Train further / Remix.
+4. **Results (live)** — progress header (step/checkpoint, no loss/LR), a collapsible loss graph read
+   from every epoch's trace, epoch cards stream in; then Publish / Generate / Save+Download / Train
+   further / Remix.
 
 Landing is **My trainings** (`src/routes/MyTrainings.svelte`) — the reconnect surface; "New training"
 enters the flow.
@@ -50,7 +43,7 @@ enters the flow.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
 - **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
-  video models can't train it — confirm per-model with Atif before enforcing).
+  video models can't train it — check per model before enforcing).
 
 ## Model catalog
 
@@ -58,6 +51,21 @@ enters the flow.
 `trainingModelInfo` (an `apps/*` package can't import from the main app's `src/`). All ~21 ecosystems
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
+
+A card's `flagKey` (its per-model Flipt gate) is evaluated by the shell in `/new`'s load, but the
+main-app embed can't ask Flipt: every key must also be in `studioModelFlagFeatures`
+(`src/utils/training.ts`), or the card is hidden on `/training-studio` for everyone. That is pinned by
+`src/utils/__tests__/new-training-models.test.ts` in the **root** unit suite — this app's own `test`
+does not run it.
+
+## Tests
+
+Node-env vitest over the plain modules only (`vitest.config.ts`, project `app:training-studio`; run
+with `pnpm --filter @civitai/training-studio-app test`, or from the root `pnpm run test:apps:run`).
+They cover what the UI can't be typechecked into: the flow's param/prompt rules (`trainingFlow.test.ts`),
+the workflow readers and archive entries (`trainingRows.test.ts`), the submit wire shape
+(`train-core.test.ts`), and the trace/loss parsers (`trace.test.ts`, `loss.test.ts`). `@civitai/client` is mocked by hand there — its dist imports a directory, which
+Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
 
 ## Previewing the UI without OAuth
 

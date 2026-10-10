@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { allowanceSchema, announcementFormSchema } from '../announcements-schema';
-import { CONTENT_CEILING, DOMAIN_CHIPS } from '../../announcements';
+import { allowanceSchema, announcementFormSchema, toSaveBody } from '../announcements-schema';
+import { CONTENT_CEILING, DOMAIN_CHIPS, toAnnouncementLinks } from '../../announcements';
 
 // A complete, valid submission as the action receives it — Object.fromEntries(FormData), so every
 // value is a string. Each test overrides only the field it is about.
@@ -227,5 +227,119 @@ describe('domain chips', () => {
   it('offers no everywhere chip, since both chips already are everywhere', () => {
     expect(DOMAIN_CHIPS).toHaveLength(2);
     expect(DOMAIN_CHIPS.some((c) => (c.color as string) === 'all')).toBe(false);
+  });
+});
+
+describe('announcementFormSchema link buttons', () => {
+  const linksOf = (over: Record<string, unknown>) => {
+    const result = parse(over);
+    if (!result.success) throw new Error(result.error.issues[0]?.message);
+    return result.data.links;
+  };
+
+  it('collects every filled slot, in order, into links', () => {
+    expect(
+      linksOf({
+        linkUrl: '/models/1',
+        linkText: 'One',
+        linkUrl2: '/models/2',
+        linkText2: 'Two',
+        linkUrl3: 'https://example.com/3',
+        linkText3: 'Three',
+      })
+    ).toEqual([
+      { link: '/models/1', linkText: 'One' },
+      { link: '/models/2', linkText: 'Two' },
+      { link: 'https://example.com/3', linkText: 'Three' },
+    ]);
+  });
+
+  it('posts no links when every slot is empty', () => {
+    expect(linksOf({})).toEqual([]);
+  });
+
+  it('skips an empty middle slot rather than posting a blank button', () => {
+    expect(
+      linksOf({ linkUrl: '/models/1', linkText: 'One', linkUrl3: '/models/3', linkText3: 'Three' })
+    ).toEqual([
+      { link: '/models/1', linkText: 'One' },
+      { link: '/models/3', linkText: 'Three' },
+    ]);
+  });
+
+  it('applies the link rules to the second and third slots too', () => {
+    expect(messages({ linkUrl2: '//evil.example', linkText2: 'Go' })).toContain(
+      'Button link must be a full https:// URL or a path like /models/123'
+    );
+    expect(messages({ linkUrl3: '/models/3' })).toContain(
+      'A button needs both a link and button text'
+    );
+  });
+});
+
+describe('toAnnouncementLinks', () => {
+  it('reads a row saved before multi-button as its one button', () => {
+    expect(
+      toAnnouncementLinks({ actions: [{ type: 'button', link: '/models/1', linkText: 'One' }] })
+    ).toEqual([{ link: '/models/1', linkText: 'One' }]);
+  });
+
+  it('reads every button on a multi-button row, in order', () => {
+    expect(
+      toAnnouncementLinks({
+        actions: [1, 2, 3].map((n) => ({ type: 'button', link: `/m/${n}`, linkText: `${n}` })),
+      }).map((l) => l.link)
+    ).toEqual(['/m/1', '/m/2', '/m/3']);
+  });
+
+  it('never returns more buttons than the composer has fields for', () => {
+    const actions = [1, 2, 3, 4].map((n) => ({
+      type: 'button',
+      link: `/m/${n}`,
+      linkText: `${n}`,
+    }));
+
+    expect(toAnnouncementLinks({ actions }).map((l) => l.link)).toEqual(['/m/1', '/m/2', '/m/3']);
+  });
+
+  it('reads no buttons from null, empty or malformed metadata', () => {
+    expect(toAnnouncementLinks(null)).toEqual([]);
+    expect(toAnnouncementLinks({ dismissible: true })).toEqual([]);
+    expect(toAnnouncementLinks({ actions: [null, { link: 3 }] })).toEqual([]);
+  });
+});
+
+describe('toSaveBody', () => {
+  const bodyFor = (over: Record<string, unknown>) => {
+    const result = parse(over);
+    if (!result.success) throw new Error(result.error.issues[0]?.message);
+    return toSaveBody(result.data);
+  };
+
+  // `actions` is what a current main app saves; `action` is what one still on the single-button
+  // schema keeps. Dropping either loses buttons on one side of a deploy.
+  it('posts every button as actions, and the first as the legacy action', () => {
+    const body = bodyFor({
+      linkUrl: '/models/1',
+      linkText: 'One',
+      linkUrl2: '/models/2',
+      linkText2: 'Two',
+      linkUrl3: '/models/3',
+      linkText3: 'Three',
+    });
+
+    expect(body.actions).toEqual([
+      { link: '/models/1', linkText: 'One' },
+      { link: '/models/2', linkText: 'Two' },
+      { link: '/models/3', linkText: 'Three' },
+    ]);
+    expect(body.action).toEqual({ link: '/models/1', linkText: 'One' });
+  });
+
+  it('posts neither when there are no buttons, so a save clears them', () => {
+    const body = bodyFor({});
+
+    expect(body).not.toHaveProperty('actions');
+    expect(body).not.toHaveProperty('action');
   });
 });

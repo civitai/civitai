@@ -141,6 +141,13 @@ export const FEATURE_NOTICES = {
   referralHowItWorks: { id: 'referral-how-it-works' },
   /** Referral dashboard (full): the token-shop explainer. */
   referralTokenShop: { id: 'referral-token-shop-info' },
+  /** The one-time card on a creator's first published model (CJ 6). */
+  firstModelPublished: { id: 'first-model-published', audience: { feature: 'creatorJourney' } },
+  /** The same card on a creator's first published article. */
+  firstArticlePublished: {
+    id: 'first-article-published',
+    audience: { feature: 'creatorJourney' },
+  },
 } as const satisfies Record<string, FeatureNotice>;
 
 export type FeatureNoticeKey = keyof typeof FEATURE_NOTICES;

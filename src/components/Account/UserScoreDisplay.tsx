@@ -1,6 +1,7 @@
 import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
 import { IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { creatorScorePenalty, creatorScoreSources } from '~/components/Account/creator-score-copy';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Scores = {
@@ -13,32 +14,16 @@ type Scores = {
   reportsAgainst?: number;
 };
 
-const scoreCategories = [
-  {
-    key: 'models' as const,
-    label: 'Models',
-    color: 'blue',
-    tooltip: 'Based on reviews, downloads, and generations across published models',
-  },
-  {
-    key: 'images' as const,
-    label: 'Images',
-    color: 'teal',
-    tooltip: 'Based on reactions and comments images receive',
-  },
-  {
-    key: 'articles' as const,
-    label: 'Articles',
-    color: 'orange',
-    tooltip: 'Based on views, comments, and reactions on articles',
-  },
-  {
-    key: 'users' as const,
-    label: 'Users',
-    color: 'grape',
-    tooltip: 'Based on follower count',
-  },
-];
+export const scoreCategories = [
+  { key: 'models' as const, color: 'blue' },
+  { key: 'images' as const, color: 'teal' },
+  { key: 'articles' as const, color: 'orange' },
+  { key: 'users' as const, color: 'grape' },
+].map((category) => ({
+  ...category,
+  label: creatorScoreSources[category.key].label,
+  tooltip: creatorScoreSources[category.key].earnedBy,
+}));
 
 const reportCategories = [
   {
@@ -47,7 +32,7 @@ const reportCategories = [
     color: 'red',
     icon: IconFlag,
     tooltip:
-      'Points deducted for content this user posted that was removed for Terms of Service violations',
+      'Points deducted for images this user posted that were removed for Terms of Service violations',
   },
   {
     key: 'reportsActioned' as const,
@@ -195,12 +180,7 @@ export function UserScoreDisplay({
             <Group gap={8} wrap="nowrap">
               <IconFlag size={16} color="var(--mantine-color-red-6)" style={{ flexShrink: 0 }} />
               <Text size="sm">Reports against</Text>
-              <Tooltip
-                label="Content you posted that was reported and removed for Terms of Service violations reduces your score."
-                multiline
-                w={240}
-                withArrow
-              >
+              <Tooltip label={creatorScorePenalty} multiline w={240} withArrow>
                 <IconInfoCircle
                   size={14}
                   style={{ flexShrink: 0, cursor: 'help' }}

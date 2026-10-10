@@ -1,13 +1,39 @@
 /**
- * `/apps` chrome — RENDERED VERTICAL GEOMETRY.
+ * `/apps` chrome — RENDERED VERTICAL GEOMETRY. THE SINGLE HOME FOR IT.
+ *
+ * 🔴 THIS IS WHERE THE PAGE CHROME'S VERTICAL NUMBERS LIVE, AND THAT IS NOW A PROPERTY
+ * OF THE SUITE RATHER THAN A COINCIDENCE. The 32px band→body gap used to be asserted
+ * here TWICE and a third time in `AppsPageLayout.chromeAlignment.browser.test.tsx`, so
+ * one number had three homes and any vertical change to the chrome had to be re-fixed in
+ * all three — the shape where it ends up right in one place and wrong in the others. That
+ * third copy is gone (the deletion is recorded in that file's docstring, which is now
+ * horizontal-only). The rail's INTERNAL vertical geometry — the first group heading's
+ * row, which the collapse toggle shares — is a different subject and lives in
+ * `AppsRailHeaderRow.geometry.test.tsx`, in the tier that can see `sr-only`.
+ * `AppsPageLayout.railSurface.browser.test.tsx` also reads vertical numbers, about the
+ * painted panel's BLEED rather than about the chrome's heights; left there deliberately.
+ *
+ * ⚠️ TWO HONEST QUALIFICATIONS ON THAT CONSOLIDATION, BECAUSE "A CONSOLIDATION RATHER
+ * THAN A LOSS" IS STRONGER THAN WHAT WAS MEASURED. (a) The deleted copy ran inside
+ * `describe.each(VIEWPORTS)` and so measured the gap at 1440 / 2560 / 3440; every test in
+ * THIS file renders at 1440 only. The gap is `Stack gap="xl"`, a non-responsive token, so
+ * no viewport-dependent defect is reachable — but the viewport coverage genuinely
+ * narrowed and that is the trade. (b) 🔴 THE FILENAME LIES ABOUT THE TIER: this file ends
+ * `.browser.test.tsx`, so it is collected by the `component` project, NOT by the
+ * `geometry` one, despite "geometry" being in its name. `component` matches no project
+ * selector in `.github/workflows/lint.yml`, so nothing here is run by CI outside the
+ * preview pipeline's report-only status. Do not read the name as a tier.
  *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
  * Vitest browser-mode `component` project, which CI runs only as the preview
- * pipeline's `preview / component-tests` — REPORT-ONLY and non-blocking. So nothing
- * here can block a regression. The enforceable half lives as source guards in the
- * blocking `unit` project (`__tests__/appsPageLayout.test.ts`,
- * `__tests__/appsRailGeometry.test.ts`); this file exists because those pin token names
- * and only a real render can pin PIXELS — and the layout's own comments record that token
+ * pipeline's `preview / component-tests` — REPORT-ONLY and non-blocking. ⚠️ AND THE
+ * SENTENCE THAT FOLLOWED USED TO SAY "the enforceable half lives as source guards in the
+ * BLOCKING `unit` project", WHICH IS FALSE: verified 2026-10-03 against the GitHub API,
+ * `civitai/civitai` `main` carries `required_status_checks: null`, so no project in this
+ * repo can block a merge. The source guards in `__tests__/appsPageLayout.test.ts` and
+ * `__tests__/appsRailGeometry.test.ts` are still the STRUCTURAL half and still worth
+ * having; they are not enforcement. This file exists because those pin token names and
+ * only a real render can pin PIXELS — and the layout's own comments record that token
  * math already overstated a visual difference once (a Title's line box eats part of the
  * nominal gap).
  *
@@ -320,6 +346,39 @@ describe('/apps chrome vertical geometry', () => {
     // `__tests__/appsPageLayout.test.ts` is what still guards that half.
     expect(g.bandToBody).toBe(32);
     // …and the header band still starts flush at the top of the page.
+    expect(g.containerPadTop).toBe(0);
+  });
+
+  test('🔴 a MEASURED header page keeps the same 32px gap — the extra `maw` wrapper is free', async () => {
+    // 🔴 RELOCATED FROM `AppsPageLayout.chromeAlignment.browser.test.tsx`, WHICH IS WHY IT
+    // READS AS A NEAR-DUPLICATE OF THE TEST ABOVE AND IS NOT ONE. A `measure` wraps BOTH
+    // the header band's contents and the body in a `<Box maw=…>`, and that wrapper is an
+    // extra block in the vertical chain — the audit that introduced the header bound found
+    // the two could drift apart. The unmeasured arm above cannot see it, because on a
+    // full-container page the wrapper is not rendered at all (`bounded()` hands the node
+    // back untouched, deliberately).
+    //
+    // The HORIZONTAL half of the relocated test — that the header box is capped at the
+    // measure and shares the body's left edge — stays in the chrome-alignment file, which
+    // is where horizontal claims live.
+    const g = await renderAndMeasure(
+      <AppsPageLayout
+        measure={1068}
+        title="Submit an app"
+        subtitle="Choose how you want to list your app, on-platform or as an external link."
+      >
+        {body}
+      </AppsPageLayout>
+    );
+    expect(g.styleSheetLoaded).toBe(true);
+    expect(g.hasTitle).toBe(true);
+    // Guard-the-guard: the measure really was applied, or this is just the test above
+    // again under a different name.
+    const capped = (document.querySelector('h2') as HTMLElement).closest(
+      '[style*="max-width"]'
+    ) as HTMLElement | null;
+    expect(capped, 'the measure did not produce a capped header box').not.toBeNull();
+    expect(g.bandToBody).toBe(32);
     expect(g.containerPadTop).toBe(0);
   });
 });

@@ -162,12 +162,19 @@ function renderedSections(): string[] {
   return Array.from(nav.querySelectorAll('a')).map((el) => (el.textContent ?? '').trim());
 }
 
-/** The group HEADINGS currently in the rail, in DOM order. */
+/**
+ * The group HEADINGS currently in the rail, in DOM order.
+ *
+ * ⚠️ SELECTED BY `data-apps-chrome="rail-group-heading"`, NOT BY "every non-anchor child
+ * of the nav". The older form was a claim about DEPTH as well as about headings: the first
+ * group's heading now shares a row with the rail's collapse toggle, so it sits one level
+ * down inside a wrapper and the structural filter would have reported the WRAPPER (whose
+ * text happens to match, so it would have kept passing while measuring a different node).
+ */
 function renderedGroups(): string[] {
   const nav = navEl();
   if (!nav) return [];
-  return Array.from(nav.children)
-    .filter((el) => el.tagName.toLowerCase() !== 'a')
+  return Array.from(nav.querySelectorAll('[data-apps-chrome="rail-group-heading"]'))
     .map((el) => (el.textContent ?? '').trim())
     .filter(Boolean);
 }

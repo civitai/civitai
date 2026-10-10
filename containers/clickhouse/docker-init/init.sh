@@ -923,6 +923,27 @@ clickhouse client -n <<-EOSQL
             TTL createdDate + INTERVAL 30 DAY
             SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
 
+    -- Event points ledger, written by awardEventPoints and read by the hourly referee.
+    create table if not exists default.event_point_events
+    (
+        event      LowCardinality(String),
+        time       DateTime64(3, 'UTC'),
+        type       LowCardinality(String),
+        op         Enum8('add' = 1, 'remove' = 2),
+        actorId    Int32,
+        entityType LowCardinality(String),
+        entityId   Int32,
+        ownerId    Int32,
+        cosmeticId Int32,
+        claimKey   String,
+        team       LowCardinality(String),
+        sourceId   String
+    )
+        engine = MergeTree
+            PARTITION BY (event, toYYYYMM(time))
+            ORDER BY (event, toDate(time), ownerId, actorId, type, entityType, entityId)
+            TTL toDateTime(time) + INTERVAL 400 DAY;
+
     create table if not exists default.daily_impressions
     (
         entityType LowCardinality(String),

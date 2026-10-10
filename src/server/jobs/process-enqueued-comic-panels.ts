@@ -204,8 +204,8 @@ export const processEnqueuedComicPanelsJob = createJob(
               // places this job can reach the external classifier per panel: this explicit
               // pre-submit gate, and a second one inside `submitPresetImageGen` →
               // `generateFromGraph`, which labels itself `preset` via the surface mapping. A panel
-              // contributes 0, 1 or 2 observations, NOT a fixed 2 — `auditPromptServer` returns
-              // before reaching the classifier on an empty prompt, and a hard regex block throws
+              // contributes 0, 1 or 2 observations, NOT a fixed 2 — `auditPromptServer` never
+              // reaches the classifier on an empty prompt, and a hard regex block throws
               // ahead of it, which also skips the submit below and with it the second call.
               // Leaving this one undeclared would default it to `other`, moving this job's gate off
               // `preset` and onto a mixture the metric documents as unreadable as any single path.

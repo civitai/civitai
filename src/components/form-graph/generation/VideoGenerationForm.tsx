@@ -32,6 +32,7 @@ import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
+import { FieldCorrectionNote } from './FieldCorrectionNote';
 import {
   ControllerLabel,
   PromptLabel,
@@ -322,12 +323,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             onChange={onChange}
             label="Aspect Ratio"
             options={meta?.options ?? []}
-            priorityOptions={
-              meta?.priorityOptions ??
-              (meta && meta.options.length > 5
-                ? meta.options.slice(1, 6).map((o) => o.value)
-                : undefined)
-            }
+            priorityOptions={meta?.priorityOptions}
             maxVisible={5}
           />
         )}
@@ -335,17 +331,20 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={videoHub}
         name="duration"
-        render={({ value, meta, onChange }) => {
+        render={({ value, meta, onChange, note }) => {
           if (meta && 'min' in meta) {
             return (
-              <SliderInput
-                label="Duration (seconds)"
-                value={typeof value === 'number' ? value : Number(value)}
-                onChange={onChange}
-                min={meta.min}
-                max={meta.max}
-                step={meta.step ?? 1}
-              />
+              <div className="flex flex-col gap-1">
+                <SliderInput
+                  label="Duration (seconds)"
+                  value={typeof value === 'number' ? value : Number(value)}
+                  onChange={onChange}
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step ?? 1}
+                />
+                <FieldCorrectionNote note={note} />
+              </div>
             );
           }
           return (
@@ -589,8 +588,11 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={videoHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
         <Controller
@@ -635,7 +637,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           render={({ value, onChange }) => (
             <Checkbox
               label="Turbo"
-              description="Use the turbo LoRA — converges in fewer steps"
+              description="Faster generation, at some cost to quality"
               checked={value}
               onChange={(e) => onChange(e.currentTarget.checked)}
             />

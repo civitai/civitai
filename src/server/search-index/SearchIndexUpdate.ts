@@ -7,12 +7,14 @@ async function queueUpdate({
 }: {
   indexName: string;
   items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>;
-}) {
+}): Promise<boolean> {
+  let allQueued = true;
   for (const type of Object.keys(SearchIndexUpdateQueueAction)) {
     const typeItems = items.filter((i) => i.action === type).map(({ id }) => id);
     if (!typeItems.length) continue;
-    await addToQueue(`${indexName}:${type}`, typeItems);
+    if (!(await addToQueue(`${indexName}:${type}`, typeItems))) allQueued = false;
   }
+  return allQueued;
 }
 
 async function getQueue(indexName: string, action: SearchIndexUpdateQueueAction, readOnly = false) {

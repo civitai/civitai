@@ -49,6 +49,7 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/cosmetic.service', () => ({
   getCosmeticsForEntity: vi.fn().mockResolvedValue({}),
+  getEventDecorationsForEntity: vi.fn().mockResolvedValue({}),
 }));
 
 import { getEntityCoverImage } from '../image.service';

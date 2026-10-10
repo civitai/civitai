@@ -2,11 +2,13 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
-import { getHomeBlockData, resolveHomeBlockMetadata } from '~/server/services/home-block.service';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const homeBlockService = () => import('~/server/services/home-block.service');
 
 const CACHE_EXPIRY = {
   [HomeBlockType.Collection]: 60 * 3, // 3 min
@@ -68,7 +70,7 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache, metadata: HomeBloc
 const domainSegment = (domain?: DomainColor) => domain ?? 'unscoped';
 
 export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: DomainColor) {
-  const metadata = await resolveHomeBlockMetadata(homeBlock);
+  const metadata = await (await homeBlockService()).resolveHomeBlockMetadata(homeBlock);
   const identifier = getHomeBlockIdentifier(homeBlock, metadata);
 
   if (!identifier) return null;
@@ -85,7 +87,9 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: 
 
   log(`getHomeBlockCached :: getting home block with identifier ${identifier}`);
 
-  const homeBlockWithData = await getHomeBlockData({
+  const homeBlockWithData = await (
+    await homeBlockService()
+  ).getHomeBlockData({
     homeBlock,
     input: { limit: 14 * 4, domain },
   });

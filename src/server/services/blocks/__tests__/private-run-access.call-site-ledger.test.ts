@@ -69,7 +69,7 @@ describe('the private-run seam — instrument validation', () => {
     expect(FILES.length).toBeGreaterThan(500);
     expect(FILES).toContain('src/server/services/blocks/private-run-access.service.ts');
     expect(FILES).toContain('src/pages/api/v1/block-tokens/index.ts');
-    expect(FILES).toContain('src/pages/apps/private-run/[slug]/[[...path]].tsx');
+    expect(FILES).toContain('src/pages/apps/run/[slug]/[[...path]].tsx');
   });
 
   it('NEGATIVE CONTROL: a definitely-absent predicate matches nothing', () => {
@@ -105,7 +105,12 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
    */
   const PREDICATE_CALLERS = [
     'src/pages/api/v1/block-tokens/index.ts',
-    'src/pages/apps/private-run/[slug]/[[...path]].tsx',
+    // The SSR run route. 🔴 THIS IS THE **PUBLIC** RUN ROUTE, and that is not a widening:
+    // the private run is a FALLBACK behind `resolvePageBlockBySlug` returning null, so the
+    // approved-only resolver still gates every public request. The dedicated
+    // `/apps/private-run/<slug>` route this entry used to name was removed. The ordering
+    // that makes the shared route safe is asserted below, not assumed here.
+    'src/pages/apps/run/[slug]/[[...path]].tsx',
     // The analytics-impression gate. It takes no access decision and grants nothing — it
     // reads `allowed` and drops a telemetry row — so it cannot reproduce the SSR↔MINT
     // asymmetry this ledger exists to prevent, and sharing the predicate is what keeps it
@@ -148,36 +153,116 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     );
   });
 
-  it('🔴 the private route does NOT import either approved-only resolver', () => {
-    // The strongest single statement of the non-goal: the private surface cannot reach
-    // the public resolvers at all, so it cannot be "fixed" by widening one of them.
-    const route = CODE.get('src/pages/apps/private-run/[slug]/[[...path]].tsx')!;
-    expect(route).not.toContain('resolvePageBlockBySlug');
-    expect(route).not.toContain('resolvePageBlock');
-    expect(route).toContain('resolvePrivateRunAccess');
+  it('🔴 the run route reaches the private predicate ONLY AFTER the approved-only resolver', () => {
+    // ── WHAT REPLACED WHAT, AND WHY THE NEW FORM IS NOT WEAKER ──────────────────────
+    // This used to assert that a SEPARATE private route imported neither approved-only
+    // resolver — "the private surface cannot reach the public resolvers at all". That
+    // sentence is unavailable now that one file serves both paths, and deleting it
+    // without replacement would drop the safety property entirely.
+    //
+    // The property that actually matters was never "different files". It is that a
+    // PUBLIC request cannot reach a non-approved block — which holds because the private
+    // predicate is a FALLBACK BEHIND `resolvePageBlockBySlug` RETURNING NULL, never a
+    // branch that can run in its place. So that ORDER is what gets pinned, by source
+    // position: the approved-only resolve must appear before the private predicate.
+    //
+    // ⚠️ AN ORDERING ASSERTION ON SOURCE POSITION IS A PROXY, and it is named as one.
+    // It cannot see a refactor that keeps the order but changes the control flow (an
+    // early `return` hoisted above it, say). It is the cheap structural half; the
+    // BEHAVIOURAL half — drive a public request and prove it 404s on a suspended block —
+    // lives in `src/tests/pages/apps/run/run-page-private-run.test.ts` and is the one
+    // that would actually catch that. Neither is sufficient alone.
+    // 🔴 COMPARE CALL SITES, NOT BARE IDENTIFIERS. The first draft of this row used
+    // `indexOf('resolvePrivateRunAccess')`, which finds the IMPORT at the top of the file
+    // — so it measured import order and failed (1963 vs 700) against a resolver whose
+    // call order was correct all along. A bare-name search on a module that imports both
+    // names can only ever compare import statements. Anchor on the call shape instead.
+    const route = CODE.get('src/pages/apps/run/[slug]/[[...path]].tsx')!;
+    const publicResolveAt = route.indexOf('BlockRegistry.resolvePageBlockBySlug(');
+    const privateResolveAt = route.indexOf('await resolvePrivateRunAccess(');
+    // Both anchors must MATCH before their order means anything — an anchor that silently
+    // stopped matching would make the comparison `-1 < -1`, i.e. a green row measuring
+    // nothing. This is the positive control for the instrument itself.
+    expect(publicResolveAt).toBeGreaterThan(-1);
+    expect(privateResolveAt).toBeGreaterThan(-1);
+    expect(publicResolveAt).toBeLessThan(privateResolveAt);
   });
 
-  it('the public run route is UNMODIFIED in the ways that matter', () => {
-    // It must still record the play and still use the approved-only resolver — the two
-    // things the private route deliberately does NOT do. If the public route lost
-    // `recordAppListingOpen`, the omission on the private side would stop being a
-    // distinction and the analytics reasoning behind it would be void.
+  it('the run route still records a play, and the private branch is gated behind an audience', () => {
+    // The public path must still record the play — if it stopped, the private branch's
+    // omission would cease to be a distinction and the analytics reasoning behind the
+    // whole feature would be void.
     const pub = CODE.get('src/pages/apps/run/[slug]/[[...path]].tsx')!;
     expect(pub).toContain('recordAppListingOpen');
     expect(pub).toContain('resolvePageBlockBySlug');
-    const priv = CODE.get('src/pages/apps/private-run/[slug]/[[...path]].tsx')!;
-    // 🔴 The private route must NOT record a play. A private review run is not a play,
-    // and recording it would move a suspended app's owner-visible analytics — telling a
-    // bad actor exactly when review is happening.
+    expect(pub).toContain('resolvePrivateRunAccess');
+
+    // 🔴 THE "DOES NOT RECORD A PLAY" GUARD IS NOW BEHAVIOURAL, NOT TEXTUAL, AND THAT IS
+    // A STRENGTHENING RATHER THAN A LOSS. While the private run had its own file, the
+    // guard could be `expect(priv).not.toContain('recordAppListingOpen')` — a claim about
+    // a STRING. One shared file cannot express it that way: the identifier is legitimately
+    // present for the public path. A textual guard here would be unwritable, and a
+    // file-scoped one would now be plain wrong.
     //
-    // PAIRED POSITIVE CONTROL: `stripCommentsAndStrings` is biased toward over-stripping,
-    // so a `not.toContain` against a CODE entry stripped to whitespace would pass having
-    // measured nothing. This proves the same entry can still match.
-    expect(priv).toContain('resolvePrivateRunAccess');
-    expect(priv).not.toContain('recordAppListingOpen');
-    // Nor plant a dead link in the viewer's own recents (both its link shapes 404 for a
-    // suspended app).
-    expect(priv).not.toContain('recordRecentlyOpenedApp');
+    // So the property — a private run records NO play and NO recents entry — is asserted
+    // where it can actually be observed: by driving the resolver down the private branch
+    // with the recorder mocked and asserting zero calls, in
+    // `src/tests/pages/apps/run/run-page-private-run.test.ts`. That test also holds the
+    // paired POSITIVE control (the public branch records exactly one), without which a
+    // zero is indistinguishable from a harness wired to nothing.
+    //
+    // What IS still checkable here is that the discriminator exists and is the audience
+    // the predicate returned — not a re-derived guess.
+    expect(pub).toContain('audience');
+  });
+
+  it('🔴 the run route CALLS the two audience-keyed decisions rather than re-deriving them', () => {
+    // ── WHY A STRUCTURAL CHECK HERE AND BEHAVIOURAL TESTS ELSEWHERE ─────────────────
+    // `hostSurfaceFor` and `shouldRecordRecents` live inside `AppPage`'s render, which the
+    // page suite cannot reach — it drives the SSR resolver only, with no renderer. That
+    // gap is what made both decisions untestable as inline ternaries: an audit proved the
+    // recents guard could be DELETED with the suite green, and the `surface` prop had no
+    // assertion anywhere in the repo at all.
+    //
+    // Extracting them made the DECISION testable (see the behavioural rows in
+    // `run-page-private-run.test.ts`). This row closes the half that extraction opens: a
+    // pure function nothing calls is exactly how this goes quiet again, and no behavioural
+    // test of the function can see it. Both checks are necessary; neither is sufficient.
+    const pub = CODE.get('src/pages/apps/run/[slug]/[[...path]].tsx')!;
+    expect(pub).toContain('hostSurfaceFor(audience)');
+    // 🔴 THE ARGUMENT, NOT JUST THE CALL. This read `toContain('recentsEntryFor(')` for one
+    // round and that was a REGRESSION against the row it replaced: the base pinned
+    // `shouldRecordRecents(audience)`, so hardcoding the audience at the call site was RED
+    // there and went GREEN here (32/32, and typecheck clean — the type guard cannot see a
+    // wrong VALUE, only a null one). A call site reading `recentsEntryFor({ audience: null,
+    // … })` would make every private run write a recents entry whose link 404s once the
+    // flag narrows — the exact defect this extraction exists to prevent.
+    // The call text carries no comment or string literal, so it survives
+    // `stripCommentsAndStrings` intact and CAN be asserted against `CODE`.
+    expect(pub).toContain('recentsEntryFor({ audience,');
+    // ⚠️ AN ANTI-RE-INLINE ASSERTION STOOD HERE AND WAS DELETED, NOT REPAIRED. It read
+    // `expect(pub).not.toContain("? 'private-run' : 'page-run'")` and was VACUOUS TWICE
+    // OVER — a guard that could never fail, reading as the thing that stops a regression:
+    //
+    //   1. `CODE` comes from `stripCommentsAndStrings`, which removes string LITERALS as
+    //      well as comments — this file's own header says so, and says a literal "CANNOT
+    //      be asserted against `CODE`". The needle is two string literals. It never matched.
+    //   2. Switching it to `raw()` — the obvious repair — makes it RED against the
+    //      CORRECT implementation, because that exact ternary is the body of
+    //      `hostSurfaceFor` itself. The forbidden pattern IS the implementation.
+    //
+    // Its stated reason was wrong in the other direction too: a plain re-inline that drops
+    // the call is already caught by the two `toContain` rows above.
+    //
+    // ⚠️ AND THE ABSOLUTE THIS CARRIED — "There is no form of this assertion that both
+    // works and means anything" — IS WITHDRAWN, because it is false. A COUNT over raw
+    // source works: `expect(raw(pub).match(/\? 'private-run' : 'page-run'/g)).toHaveLength(1)`
+    // passes today (that ternary occurs exactly once, as `hostSurfaceFor`'s body) and would
+    // catch a re-inline that leaves the extracted function in place — which the `toContain`
+    // rows do not. It is not added here because the argument pins above cover the mutations
+    // that matter and a second spelling of the same idea is what this block is about; but
+    // "no form works" was an overstatement written to justify a deletion, which is the
+    // habit this file keeps catching.
   });
 
   it('EVERY consumer evaluates the flag for the caller and passes it in', () => {

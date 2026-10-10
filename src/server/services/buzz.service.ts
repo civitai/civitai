@@ -18,6 +18,7 @@ import type {
 } from '~/shared/constants/buzz.constants';
 import type {
   ClaimWatchedAdRewardInput,
+  CompensationSource,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   CreateMultiAccountBuzzTransactionInput,
@@ -329,21 +330,18 @@ export function toClickhouseTransactionType(type: TransactionType) {
 }
 
 /**
- * The inverse, and it MUST also accept a bare number.
+ * The inverse, and it MUST also accept a member the ingest MV has no name for.
  *
- * 🔴 The ingest MV's int→string map enumerates only `0..26` and falls back to
- * `toString(Type)`, so every member above 26 arrives as its DIGITS — today
- * `LicenseFee` (27) and `AppAuthorFee` (28). Capitalising `'28'` is a no-op and
- * `TransactionType['28']` then hits the enum's REVERSE mapping, yielding the
- * NAME as a string where a number is declared; that value renders as the raw
- * `28` in the user's transaction list and in the CSV export instead of its
- * label. `src/server/schema/buzz.schema.ts` already carries this rule for the
- * buzz-service API read path — this is the ClickHouse half of the same rule,
- * which had been open-coded at both call sites without it.
+ * 🔴 The MV writes a member missing from its int→string map as `unknown_<n>`, not
+ * by name: prod holds `AppAuthorFee` (28) only as `'unknown_28'`. Without this arm
+ * those rows fall through to the `Tip` fallback in the transaction list and the
+ * CSV export. A bare `'<n>'` is accepted too, as `buzz.schema.ts` does for the
+ * buzz-service API read path.
  */
 export function fromClickhouseTransactionType(raw: string): TransactionType {
-  if (/^\d+$/.test(raw)) {
-    const numeric = Number(raw);
+  const digits = /^(?:unknown_)?(\d+)$/.exec(raw)?.[1];
+  if (digits !== undefined) {
+    const numeric = Number(digits);
     // A reverse-mapped name proves it is a real member; anything else keeps the
     // long-standing Tip fallback rather than rendering blank.
     return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
@@ -367,27 +365,30 @@ export function fromClickhouseTransactionType(raw: string): TransactionType {
 }
 
 /**
- * 🔴 BOTH SPELLINGS, for the same `0..26` ingest gap. A name-only `type = '…'`
- * predicate is a SILENT ZERO for a member past the map: the transaction list
- * renders empty and the CSV export answers 200 with a header-only body. This is
- * the `type IN ('licenseFee','27')` shape creator-studio's reads already use,
- * derived instead of hand-written.
+ * 🔴 EVERY SPELLING the column can hold for one member. A name-only `type = '…'`
+ * predicate is a SILENT ZERO for a member the MV writes as `unknown_<n>`: the
+ * transaction list renders empty and the CSV export answers 200 with a
+ * header-only body.
  *
- * The numeric arm admitting nothing extra is a premise about what the MV writes,
+ * The non-name arms admitting nothing extra is a premise about what the MV writes,
  * NOT something any test here establishes: `Number(type)` is always a real member
  * integer (both entry points gate `type` through `z.enum(TransactionType)`), so
- * it can only ever match rows of that same type.
+ * they can only ever match rows of that same type.
  */
+function clickhouseTransactionTypeSpellings(type: TransactionType) {
+  const numeric = Number(type);
+  return [toClickhouseTransactionType(type), String(numeric), `unknown_${numeric}`];
+}
+
 export function clickhouseTransactionTypePredicate(type: TransactionType) {
-  return `type IN ('${toClickhouseTransactionType(type)}','${Number(type)}')`;
+  const spellings = clickhouseTransactionTypeSpellings(type);
+  return `type IN (${spellings.map((s) => `'${s}'`).join(',')})`;
 }
 
 /**
- * The exclusion form of the same rule. Inert today — every excluded member is
- * ≤ 26, so the numeric arm can match nothing — but this was the last type
- * predicate in this file not going through a shared builder, which is how the
- * `0..26` bug would have regenerated the next time a member above 26 was added
- * to an exclusion list.
+ * The exclusion form of the same rule. Inert today, since every excluded member
+ * is stored by name, but it keeps an exclusion list correct the day it gains a
+ * member the MV cannot name.
  */
 export function clickhouseTransactionTypeExclusionPredicate(types: TransactionType[]) {
   // `NOT IN ()` is a syntax error, not an empty exclusion. Today's only caller
@@ -395,7 +396,7 @@ export function clickhouseTransactionTypeExclusionPredicate(types: TransactionTy
   // its list down to nothing would take out the whole query rather than excluding
   // nothing.
   if (!types.length) return '1 = 1';
-  const spellings = types.flatMap((type) => [toClickhouseTransactionType(type), String(type)]);
+  const spellings = types.flatMap(clickhouseTransactionTypeSpellings);
   return `type NOT IN (${spellings.map((s) => `'${s}'`).join(',')})`;
 }
 
@@ -1612,6 +1613,14 @@ type Row = {
 // lower-cased variants elsewhere, so both are listed.
 const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
+// Compensation is everything that is neither a license fee nor a tip, so one-off sources such as
+// `compensation_recovered_20260507` stay in it. Tips are generator-chosen, so they get their own tab.
+const COMPENSATION_SOURCE_SQL: Record<CompensationSource, string> = {
+  compensation: "NOT IN ('licenseFee', 'tip')",
+  licenseFee: "= 'licenseFee'",
+  tip: "= 'tip'",
+};
+
 export const getDailyCompensationRewardByUser = async ({
   userId,
   date = new Date(),
@@ -1653,7 +1662,7 @@ export const getDailyCompensationRewardByUser = async ({
       WHERE date BETWEEN ${minDate} AND ${maxDate}
         AND modelVersionId IN (${versionIds})
         AND amount > 0
-        AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
+        AND source ${COMPENSATION_SOURCE_SQL[source]}
         -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
         -- License fees can also settle to CASH, which the caller renders in its own panel rather than under the
         -- buzz selector — so cash rows bypass the filter. The buzz rows must not: summing yellow+blue+green under

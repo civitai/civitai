@@ -31,6 +31,13 @@ describe('resolveAuthGuard', () => {
         redirect: '/login?returnUrl=%2Ftesting%2Fdemo',
       });
     });
+    it('leaves /testing/ads open to everyone in prod', () => {
+      expect(resolveAuthGuard('/testing/ads', regular, prod)).toBeNull();
+      expect(resolveAuthGuard('/testing/ads', anon, prod)).toBeNull();
+    });
+    it('does not open paths that merely share the /testing/ads prefix', () => {
+      expect(resolveAuthGuard('/testing/ads-admin', regular, prod)).toEqual({ redirect: '/' });
+    });
     it('is open to everyone outside prod', () => {
       expect(resolveAuthGuard('/testing/demo', regular, dev)).toBeNull();
       expect(resolveAuthGuard('/testing/demo', anon, dev)).toBeNull();

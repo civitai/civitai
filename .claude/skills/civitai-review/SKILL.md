@@ -82,18 +82,29 @@ unrelated slices, review them one at a time; findings from a mixed diff are hard
 uncommitted changes: the review exists to run *before* the commit.
 
 Also locate the **intent doc** now, so the intent reviewer isn't the one to discover it's missing:
+`<INTENT_DIR>/<feature>.md`, where `INTENT_DIR` comes from your own instructions or the primary
+checkout's `CLAUDE.local.md` (see `civitai-intent-review`). If none is set, pass the intent reviewer the
+PR body and linked ticket instead.
 
-```
-C:\Dev\Repos\work\model-share\_local\docs\plans\<feature>.md
-```
+## 2. Fan out — the lanes this diff needs, at once, in one message
 
-Absolute path, from any worktree. 🔴 Never resolve `_local/` relatively — it exists only in the primary
-worktree, and a relative write silently creates a second private copy that nobody else reads.
+**Size the review to the diff before spawning anything.** Five lanes over a one-line change spend a
+large share of a usage window and find nothing a careful read wouldn't.
 
-## 2. Fan out — all five at once, in one message
+- **Tiny diff — no agents.** About 30 changed lines or fewer, touching no server code, auth, money, PII
+  or NSFW/browsing-level gating: read the diff yourself, or run `/code-review low`. Say that is what you
+  did.
+- **Otherwise, launch each lane whose findings the diff can contain** (the skip rule below), and launch
+  all five for a feature-sized segment.
+- **Once per segment, not once per fix iteration.** After fixes, re-run only the lanes whose findings
+  you fixed.
 
-🔴 **Launch every lane in a single message with multiple tool uses.** They are independent and share no
-state.
+**Each lane's model is set in its definition** — `opus` for correctness, where a missed auth or money
+defect costs the most, and `sonnet` for the four that match the diff against known patterns. Don't pass a
+`model` override when spawning; it would replace that choice.
+
+🔴 **Launch every lane you run in a single message with multiple tool uses.** They are independent and
+share no state.
 
 A numbered list of steps reads as an instruction to run them one after another, so this is stated
 rather than left to inference: **do not spawn them sequentially.** A five-lane review that takes five
@@ -125,7 +136,15 @@ decision, not an omission; do not helpfully collapse them.
 
 Skip a lane only when the diff genuinely cannot contain its findings — no server code at all is a
 reason to skip perf. "No tests changed" is *a finding for the test lane*, not a reason to skip it. Say
-which you skipped and why.
+which you skipped and why. Typical shapes:
+
+| Lane | The diff can contain its findings when it… |
+| --- | --- |
+| correctness | touches server code, tRPC procedures, auth, money, PII or NSFW gating |
+| perf | touches queries (Prisma, `$queryRaw`), feed paths, caches, or adds client dependencies / page imports |
+| test | changes logic — whether or not any test changed |
+| reuse | adds new components, services, hooks or helpers, rather than editing existing ones |
+| intent | is a feature with an intent doc or a stated request to measure against |
 
 ### Lanes routinely go idle without delivering. Chasing them is YOUR job, and it is the only control.
 
@@ -214,7 +233,7 @@ function that no longer exists in the form it is imagining — new refusals mean
 this test still meaningful" cannot be answered from the assertion alone.
 
 **A declined finding is a legitimate outcome, but it must come back with a reason.** The reviewer then
-either accepts the reason or escalates to Justin. 🔴 **Silent non-fixes are the failure mode here** — a
+either accepts the reason or escalates to the user. 🔴 **Silent non-fixes are the failure mode here** — a
 finding that quietly doesn't appear in the next round has not been resolved, it has been lost. Track
 the list across rounds and account for every item.
 

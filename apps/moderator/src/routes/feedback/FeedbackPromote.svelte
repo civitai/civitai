@@ -12,6 +12,7 @@
   import { LINK_CLASS, shortAge } from '$lib/format';
   import { issuesUrl } from '$lib/entity-url';
   import { feedbackReportHref } from '$lib/feedback-open';
+  import { feedbackAreaLabel } from '$lib/feedback';
   import type { FeedbackPromoteDraft } from '$lib/feedback-drafts';
   import type {
     FeedbackRow,
@@ -128,7 +129,7 @@
           {#each siblings as sibling (sibling.id)}
             <li>
               <a href={siblingHref(sibling.id)} class={LINK_CLASS}>
-                {shortAge(sibling.createdAt)} · {sibling.area}
+                {shortAge(sibling.createdAt)} · {feedbackAreaLabel(sibling.area)}
               </a>
               <span class="text-dark-2"> — {sibling.message.split('\n')[0]}</span>
             </li>

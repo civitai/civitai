@@ -224,24 +224,24 @@ expose explicit slots, and a resource object carries **only `air` (+ `strength`)
 
 | Input type | Slots that take an AIR |
 | --- | --- |
-| `TextToImageInput` (SD family) | `model` (checkpoint), `additionalNetworks: { [air]: { strength } }`, `controlNets` |
-| `Sd1ImageGenInput` (sdcpp) | `model`, `vaeModel`, `loras: { [air]: strength }`, `embeddings: string[]` |
-| `ComfyKrea2BaseImageGenInput` | `model`, `loras: { [air]: strength }`, `diffusionModel: string \| null` |
+| `ComfySd1/SdxlCreateImageGenInput` (comfy) and `Sd1/SdxlCreateImageGenInput` (sdcpp) | `model`, `vaeModel`, `loras: { [air]: strength }`, `embeddings: string[]`. Only the comfy pair carries `controlNets`, so a ControlNet request forces comfy |
+| `ComfyKrea2Raw/TurboCreateImageGenInput` | `model`, `loras: { [air]: strength }`, `diffusionModel: string \| null` |
 | `ImageGenInputLora` / `VideoGenInputLora` | `{ air, strength }` |
 
 **Which slot a resource lands in is chosen by *our* code, not by the AIR's type segment:**
 
-- The **data-graph** buckets resources by `model.type` into typed nodes — e.g.
-  [`vaeNode`](../../src/shared/data-graph/generation/common.ts) selects only `ModelType === 'VAE'`,
+- The **generation graphs** bucket resources by `model.type` into typed nodes — e.g.
+  [`vaeDef`](../../src/shared/form-graph/generation/defs.ts) selects only `ModelType === 'VAE'`,
   the resources node selects `LORA`/`LoCon`/`DoRA`/`TextualInversion`, etc.
 - The **handler** then drops each node's AIR into the matching named slot — e.g.
-  [`stable-diffusion.handler.ts`](../../src/server/services/orchestrator/ecosystems/stable-diffusion.handler.ts)
-  puts `data.model` into `model` and everything else (resources + vae) into `additionalNetworks`.
+  [`stable-diffusion.handler.ts`](../../src/server/services/orchestrator/form-graph/stable-diffusion.handler.ts)
+  puts `data.model` into `model`, LoRAs into `loras`, the VAE into `vaeModel` and
+  textual inversions into `embeddings`.
 
 ### 3. The one place the AIR `type` segment *is* read on our side
 
 The **comfy path** ([`applyResources` in `comfy.utils.ts`](../../src/server/services/orchestrator/comfy/comfy.utils.ts),
-invoked by [`createComfyInput`](../../src/server/services/orchestrator/ecosystems/comfy-input.ts))
+invoked by [`createComfyInput`](../../src/server/services/orchestrator/handlers/comfy-input.ts))
 branches on `parsedAir.type` — but only handles **`checkpoint`**, **`vae`**, **`embedding`**, and
 `LORA_TYPES = ['lora', 'dora', 'lycoris']`. Two consequences:
 
@@ -257,19 +257,20 @@ The "Text Encoder on a Checkpoint" problem is **a two-layer routing problem, and
 is the smaller half:**
 
 1. **Data-graph / handler layer (primary).** Even a perfect AIR type segment won't help unless
-   (a) the data-graph routes the *component file* to a slot based on the **file's** role rather
+   (a) the graph routes the *component file* to a slot based on the **file's** role rather
    than the parent `model.type`, and (b) the ecosystem input **exposes a slot** for that role.
-   Most current inputs don't — `TextToImageInput` has no text-encoder/clip slot at all; a text
-   encoder would have to go into `additionalNetworks` and rely on the orchestrator resolving it.
+   Most current inputs don't — the SD family's `Comfy/Sd1|Sdxl CreateImageGenInput` exposes
+   `model`, `loras`, `vaeModel` and `embeddings` and no text-encoder/clip slot at all, so a
+   text encoder has nowhere to land.
 2. **AIR-string layer (secondary).** Needed for the comfy path (`applyResources`) and for any
    server-side resolution that reads the segment, plus public API / URN display correctness.
 
 So fixing `stringifyAIR` is **necessary but not sufficient**. The bigger work is teaching the
-data-graph + ecosystem handlers about per-file "Additional Component" roles and giving the
+generation graphs + handlers about per-file "Additional Component" roles and giving the
 ecosystem inputs named slots to route them into.
 
 > **Still open (server-side, not visible in the client):** when the orchestrator resolves an AIR
-> placed in `additionalNetworks` / `loras`, does it trust the AIR `type` segment or re-resolve the
+> placed in `loras`, does it trust the AIR `type` segment or re-resolve the
 > resource via the Civitai API and read its real type? The full package scan (v0.2.0-beta.76) found
 > **no** type enum/validation anywhere in `@civitai/client` and **no** resource field other than
 > `air` (+ `strength`) — strong evidence the orchestrator resolves the AIR opaquely server-side and
@@ -330,7 +331,7 @@ shape need invalidation.
 `stringifyAIR` has ~10 callers, including the **public** `/api/v1/model-versions/*` responses
 and the user-facing URN on model pages — those must stay coherent. Per "How the orchestrator
 actually routes" above, the external orchestrator does **not** appear to branch on the segment;
-the real routing is the **named slot our code chooses** (data-graph + handlers) plus the **comfy
+the real routing is the **named slot our code chooses** (graph defs + handlers) plus the **comfy
 loader** (`applyResources`), which *does* read the segment but only handles
 `checkpoint`/`vae`/`embedding`/lora-types. So the cross-service risk is smaller than it looks —
 the heavier lift is on our side (see Blocker 7).
@@ -341,16 +342,16 @@ Routing a component file correctly requires changes the AIR segment alone can't 
 
 - **Data-graph** must bucket the file by its **own role** (`ModelFile.type`), not the parent
   `model.type`, so a Text Encoder on a Checkpoint doesn't get treated as a checkpoint resource.
-- **Ecosystem inputs/handlers** must expose a **slot** for that role. `TextToImageInput` has no
-  text-encoder/clip slot today; some ecosystem `ImageGenInput`s do (`vaeModel`, `diffusionModel`,
-  `embeddings`) but coverage is uneven.
+- **Ecosystem inputs/handlers** must expose a **slot** for that role. No image input has a
+  text-encoder/clip slot today; the SD family's `Create*ImageGenInput`s carry
+  `vaeModel`/`embeddings` and Krea2 carries `diffusionModel`, but coverage is uneven.
 - **The comfy loader** must learn the new types or the resource is silently dropped.
 
 ---
 
 ## Recommended direction (not a clean swap)
 
-A **targeted override** of the AIR segment, paired with the data-graph/handler routing work
+A **targeted override** of the AIR segment, paired with the graph/handler routing work
 (Blocker 7). The AIR change alone won't fix generation.
 
 **AIR-string layer:**
@@ -368,7 +369,7 @@ A **targeted override** of the AIR segment, paired with the data-graph/handler r
 
 **Routing layer (the heavier lift — Blocker 7):**
 
-1. Make the data-graph bucket component files by `ModelFile.type`, not the parent `model.type`.
+1. Make the generation graphs bucket component files by `ModelFile.type`, not the parent `model.type`.
 2. Give the ecosystem inputs/handlers named slots for the component roles we want to support
    (e.g. a text-encoder slot), and teach the comfy loader (`applyResources`) the new types so
    they aren't silently dropped.

@@ -9,6 +9,7 @@ import {
 } from '~/server/services/feature-flags.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { Flags } from '~/shared/utils/flags';
 
 /**
@@ -19,10 +20,12 @@ import { Flags } from '~/shared/utils/flags';
  * getOrchestratorToken already keeps. The orchestrator URL is NOT part of the response — see the
  * note at the `res.json` below.
  *
- * The token spends Buzz orchestrator-side, so this mirrors `guardedProcedure`'s gates (trpc.ts:
- * banned → onboarded → muted → email-verified) plus the page's feature flag — keep them in step.
+ * The token spends Buzz orchestrator-side, so it calls `requireFullScopeSession` first, then
+ * mirrors `guardedProcedure`'s gates (trpc.ts: banned → onboarded → muted → email-verified)
+ * plus the page's feature flag — keep them in step.
  */
 export default AuthedEndpoint(async (req, res, user) => {
+  if (!requireFullScopeSession(req, res)) return;
   if (user.bannedAt)
     return res
       .status(403)
@@ -37,8 +40,8 @@ export default AuthedEndpoint(async (req, res, user) => {
       .json({ error: 'You cannot perform this action because your account has been restricted' });
   if (requiresEmailVerification(user))
     return res.status(403).json({ error: 'Verify your email address to do this' });
-  // Flipt decides eligibility, the user's settings toggle decides opt-in — same merge the client
-  // provider performs (overlay over host flags; the overlay withholds the key when Flipt denies).
+  // Same merge the client provider performs (overlay over host flags) — keep them in step, or the
+  // page renders for a user this endpoint refuses.
   const hostFlags = getFeatureFlagsLazy({ user, req });
   const { features: userFeatures } = await getUserSettings(user.id);
   const overlay = computeUserFeatureFlagsOverlay(

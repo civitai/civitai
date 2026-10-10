@@ -54,7 +54,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   reportPoolFundingShortfall: vi.fn(),

@@ -5,13 +5,11 @@ import { SEED, aspectRatioDef, imagesDef, sliderDef, workflowScoped } from '../d
 import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Wan IMAGE generation (currently v2.7 only), ported from
- * `wan-image-graph.ts`. Separate from the wan video family so image versions
+ * Wan IMAGE generation (currently v2.7 only). Separate from the wan video family
+ * so image versions
  * pick independently. The aspect-ratio picker hides when edit images are
  * staged (the output follows the source).
  */
-
-// ---- copied from wan-image-graph.ts, which dies with the data-graph engine --
 
 const wanImageVersionDefs = [
   {
@@ -28,7 +26,7 @@ const wanImageVersionOptions = wanImageVersionDefs.map((d) => ({
   value: d.version,
 }));
 
-const ecosystemToImageVersionDef = new Map<string, (typeof wanImageVersionDefs)[number]>(
+export const ecosystemToImageVersionDef = new Map<string, (typeof wanImageVersionDefs)[number]>(
   wanImageVersionDefs.flatMap((def) =>
     Object.values(def.ecosystems).map((eco) => [eco, def] as const)
   )
@@ -45,8 +43,6 @@ const wan27ImageAspectRatios = [
   { label: '9:16', value: '9:16', width: 576, height: 1024 },
 ];
 
-// ---- end of wan-image-graph.ts copies ---------------------------------------
-
 const v27 = defineGraph<FamilyExt & { images?: { url: string }[] }>()
   .field('aspectRatio', ({ _ext }) =>
     Array.isArray(_ext.images) && _ext.images.length > 0
@@ -59,7 +55,7 @@ const v27 = defineGraph<FamilyExt & { images?: { url: string }[] }>()
     default: false,
   });
 
-/** Tagged: v1's `wanImageVersion` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `wanImageVersion`. */
 const versions = branch(
   'wanImageVersion',
   (ext: FamilyExt) => ecosystemToImageVersionDef.get(ext.ecosystem)?.version ?? 'v2.7',
@@ -92,8 +88,6 @@ export const wanImage = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .use(versions)
-  // v1 builds the negative editor inside the version branch with a 500-char
-  // cap; whether it registers as a snippet target is pinned by the matrix
   .use(makeTextBlock({ negativePromptMaxLength: 500, negativePromptRegistersTarget: false }));
 
 export { wanImageVersionOptions, wan27ImageAspectRatios };

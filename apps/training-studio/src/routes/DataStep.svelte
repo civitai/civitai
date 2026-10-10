@@ -48,6 +48,7 @@
     isTriggerTag,
     labelOptions,
     labelString,
+    nextImgId,
     parseLabel,
     runCard,
     splitTags,
@@ -233,7 +234,6 @@
   // Mirrors Review's `blueExcluded`: unknown membership is warned too.
   const matureChargesYellow = hostConfig().isPaidMember !== true;
 
-  let seq = 0;
   let dragging = $state(false);
   let fileInput: HTMLInputElement;
   // In-flight uploads, so removing a tile (or leaving) aborts its request.
@@ -253,7 +253,7 @@
       .filter((x): x is { file: File; fileMediaType: Media } => !!x.fileMediaType);
     if (matched.length === 0) return;
     const added: Img[] = matched.map(({ file, fileMediaType }) => ({
-      id: ++seq,
+      id: nextImgId(),
       file,
       name: file.name,
       previewUrl: URL.createObjectURL(file),
@@ -346,7 +346,7 @@
         skipped.push(owner);
         continue;
       }
-      const id = ++seq;
+      const id = nextImgId();
       have.set(key, id);
       fresh.push({ ...item, id });
     }
@@ -466,7 +466,7 @@
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
-        id: ++seq,
+        id: nextImgId(),
         file: e.file,
         name: e.file.name,
         previewUrl: URL.createObjectURL(e.file),
@@ -1264,7 +1264,7 @@
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} />
+<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} />
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

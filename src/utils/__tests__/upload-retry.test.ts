@@ -151,6 +151,52 @@ describe('describePartFailure', () => {
     });
   });
 
+  it('maps a stalled part to stalled, ahead of the networkError it also carries', () => {
+    // 🔴 THE ORDER IS THE TEST. A stall sets `networkError` as well — that is what gets it past
+    // `shouldRelayOnPartFailure` — so a `networkError` check placed first swallows it and the
+    // two populations share one row. Checked after `aborted`, which a cancel must still win.
+    expect(
+      describePartFailure({
+        status: null,
+        networkError: true,
+        aborted: false,
+        stalled: true,
+        partNumber: 4,
+      })
+    ).toEqual({ kind: 'stalled', partNumber: 4 });
+  });
+
+  it('omits the part number on a stall the caller could not attribute', () => {
+    expect(describePartFailure({ status: null, networkError: true, stalled: true })).toEqual({
+      kind: 'stalled',
+    });
+  });
+
+  it.each([
+    ['stalled', 'the transfer went quiet mid-body', false],
+    ['response-stalled', 'the host took every byte and never answered', true],
+  ])('maps a stall to %s when %s', (kind, _why, responsePhase) => {
+    // 🔴 ONE PRODUCER EACH, ASSERTED AS A PAIR. The two go quiet in different places and call for
+    // different fixes, and the only thing separating them is this flag — so a single-arm case
+    // would pass against a mapping hardwired to either kind.
+    expect(
+      describePartFailure({
+        status: null,
+        networkError: true,
+        aborted: false,
+        stalled: true,
+        responsePhase,
+        partNumber: 7,
+      })
+    ).toEqual({ kind, partNumber: 7 });
+  });
+
+  it('maps an unattributed response-phase stall to response-stalled without a part number', () => {
+    expect(
+      describePartFailure({ status: null, networkError: true, stalled: true, responsePhase: true })
+    ).toEqual({ kind: 'response-stalled' });
+  });
+
   it('maps an HTTP status to part-status with its part number', () => {
     expect(describePartFailure({ status: 400, partNumber: 2 })).toEqual({
       kind: 'part-status',
@@ -198,6 +244,48 @@ describe('shouldRelayOnPartFailure', () => {
 
   it('relays a network-layer failure on the image backend', () => {
     expect(shouldRelayOnPartFailure({ status: null, networkError: true }, base)).toBe(true);
+  });
+
+  it('relays the stall watchdog’s own error object, verbatim', () => {
+    // 🔴 THE EXACT OBJECT `useS3Upload` rejects with when the watchdog aborts a part — copied,
+    // not paraphrased. `aborted: false` is the load-bearing field: the watchdog calls
+    // `xhr.abort()`, so the abort handler could trivially record the user-cancel shape, and
+    // this predicate refuses on `err.aborted`. That one flag is the difference between a
+    // watchdog that rescues the upload and one that fires into a gate it cannot pass.
+    expect(
+      shouldRelayOnPartFailure(
+        { status: null, networkError: true, aborted: false, stalled: true, partNumber: 1 },
+        base
+      )
+    ).toBe(true);
+  });
+
+  it('relays a response-phase stall too, for all that it is a distinct kind', () => {
+    // 🔴 THE KIND IS A DIAGNOSTIC, NOT A GATE. Splitting the abort stream must not narrow who
+    // gets rescued: a host that swallowed the bytes and never answered is as unreachable as one
+    // that went quiet mid-body, and both are exactly what the relay exists for.
+    expect(
+      shouldRelayOnPartFailure(
+        {
+          status: null,
+          networkError: true,
+          aborted: false,
+          stalled: true,
+          responsePhase: true,
+          partNumber: 1,
+        },
+        base
+      )
+    ).toBe(true);
+  });
+
+  it('does not relay a stall the person cancelled during', () => {
+    expect(
+      shouldRelayOnPartFailure(
+        { status: null, networkError: true, aborted: false, stalled: true },
+        { ...base, userAborted: true }
+      )
+    ).toBe(false);
   });
 
   it.each([

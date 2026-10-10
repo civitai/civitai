@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { DomainColor } from '~/shared/utils/prisma/enums';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 
 export const domainColorEnum = z.enum(DomainColor);
 
@@ -121,6 +121,46 @@ export const CREATOR_ANNOUNCEMENT_CONTENT_MAX = 500;
  */
 export const CREATOR_ANNOUNCEMENT_CONTENT_CEILING = 1500;
 
+export const creatorAnnouncementActionSchema = z.object({
+  // An absolute URL, or a site-relative path so one announcement resolves on whichever
+  // domain the viewer is on (/models/123 works on both .com and .red).
+  //
+  // 🔴 The relative branch is deliberately `/` followed by something that is not `/`.
+  // A scheme-relative `//evil.com` is a fully external link that merely looks relative,
+  // and `javascript:` / `data:` URIs are excluded by requiring http(s) on the absolute
+  // branch rather than by blacklisting schemes.
+  link: z
+    .string()
+    .trim()
+    .refine(
+      (value) =>
+        /^\/(?!\/)/.test(value) ||
+        (() => {
+          try {
+            return ['http:', 'https:'].includes(new URL(value).protocol);
+          } catch {
+            return false;
+          }
+        })(),
+      { message: 'Enter a full https:// link or a path beginning with /' }
+    ),
+  linkText: z.string().trim().min(1).max(40),
+});
+
+/** Link buttons on one creator announcement. More than one is a member feature (`assertActionCount`). */
+export const CREATOR_ANNOUNCEMENT_MAX_ACTIONS = 3;
+
+/**
+ * Who may put more than one link button on an announcement. A lapsed or failed-payment membership
+ * does not count — the same rule Creator Studio's `realMembership` applies to show the control.
+ */
+export function mayAddAnnouncementActions(user: {
+  tier?: string | null;
+  memberInBadState?: boolean;
+}) {
+  return !!user.tier && user.tier !== 'free' && !user.memberInBadState;
+}
+
 export const upsertCreatorAnnouncementSchema = z.object({
   id: z.number().optional(),
   title: z.string().trim().min(1).max(120),
@@ -136,33 +176,12 @@ export const upsertCreatorAnnouncementSchema = z.object({
   // announcement by deleting it or by setting an endsAt.
   /** Shows on the author's profile only: no feed, no notification, no allowance spent. */
   profileOnly: z.boolean().default(false),
-  coverImage: imageSchema.optional(),
-  action: z
-    .object({
-      // An absolute URL, or a site-relative path so one announcement resolves on whichever
-      // domain the viewer is on (/models/123 works on both .com and .red).
-      //
-      // 🔴 The relative branch is deliberately `/` followed by something that is not `/`.
-      // A scheme-relative `//evil.com` is a fully external link that merely looks relative,
-      // and `javascript:` / `data:` URIs are excluded by requiring http(s) on the absolute
-      // branch rather than by blacklisting schemes.
-      link: z
-        .string()
-        .trim()
-        .refine(
-          (value) =>
-            /^\/(?!\/)/.test(value) ||
-            (() => {
-              try {
-                return ['http:', 'https:'].includes(new URL(value).protocol);
-              } catch {
-                return false;
-              }
-            })(),
-          { message: 'Enter a full https:// link or a path beginning with /' }
-        ),
-      linkText: z.string().trim().min(1).max(40),
-    })
+  coverImage: imageReferenceInputSchema.optional(),
+  /** The pre-multi-button shape, still accepted from older clients. Ignored when `actions` is sent. */
+  action: creatorAnnouncementActionSchema.optional(),
+  actions: z
+    .array(creatorAnnouncementActionSchema)
+    .max(CREATOR_ANNOUNCEMENT_MAX_ACTIONS)
     .optional(),
 });
 export type UpsertCreatorAnnouncementSchema = z.infer<typeof upsertCreatorAnnouncementSchema>;

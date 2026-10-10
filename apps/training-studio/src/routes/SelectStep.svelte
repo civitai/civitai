@@ -50,16 +50,15 @@
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
-    /** Per-model catalog gates this user may see (`ModelCard.flagKey`), resolved server-side in `/new`'s
-     *  load. Cards whose gate isn't in this set are hidden from every offer surface below. */
+    /** Per-model catalog gates this user may see (`ModelCard.flagKey`). Cards whose gate isn't in
+     *  this set are hidden from every offer surface below. */
     enabledModelFlags?: string[];
     /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
      *  remount doesn't lose the chosen model(s). */
     initial?: Selection | null;
   } = $props();
 
-  // The resolved gate set from the page load. Used by every card-offering surface (seed, recommendation,
-  // featured/other lists). Derived so the seed and lists reflect the prop rather than a captured snapshot.
+  // Derived so the seed and lists reflect the prop rather than a captured snapshot.
   const enabledFlags = $derived(new Set(enabledModelFlags));
 
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
@@ -79,6 +78,10 @@
   );
   let focus = $state(0);
   let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
+  // Until the user touches the base model it tracks the type's recommendation; after that a type
+  // change keeps their pick. Silently swapping a hand-picked SDXL for the recommended model on a
+  // Character→Style click is how a tester started (and paid for) a run on a model they never chose.
+  let userPickedModel = $state(untrack(() => initial?.userPickedModel ?? false));
 
   const types = $derived(typesForMedia(media));
   const type = $derived(types.find((t) => t.id === loraType) ?? types[0]!);
@@ -124,6 +127,9 @@
   const labelModeNoun = $derived(labelNoun(runCard(primary)));
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
   const total = $derived(selectionFromTotal(prices, runs));
+  const keptOverRecommendation = $derived(
+    !multi && userPickedModel && !!recommendedCard && recommendedCard.type !== primary.cardType
+  );
 
   function pickMedia(m: Media) {
     if (m === media) return;
@@ -134,13 +140,14 @@
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
     runs = [newRun(recommendedCardFor(t.id, m, enabledFlags))];
+    userPickedModel = false;
     focus = 0;
     sweepOpen = false;
   }
 
   function pickType(id: string) {
     loraType = id;
-    if (runs.length === 1) {
+    if (runs.length === 1 && !userPickedModel) {
       runs = [newRun(recommendedCardFor(id, media, enabledFlags))];
       focus = 0;
     }
@@ -149,6 +156,14 @@
   function pickBase(card: ModelCard) {
     if (multi && !labelOptions(card).includes(labelMode)) return; // label-type lock
     runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
+    userPickedModel = true;
+  }
+
+  function useRecommended() {
+    if (!recommendedCard) return;
+    runs = [newRun(recommendedCard)];
+    focus = 0;
+    userPickedModel = false;
   }
 
   function openSweep() {
@@ -158,12 +173,14 @@
 
   function pickVersion(runIndex: number, versionKey: string) {
     runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
+    userPickedModel = true;
   }
   function setCustomAir(runIndex: number, value: string) {
     // A hand-edited AIR is no longer the picked model — drop its name.
     runs = runs.map((r, i) =>
       i === runIndex ? { ...r, customAir: value, customName: undefined } : r
     );
+    userPickedModel = true;
     pickErrorRunId = null;
   }
   // A Custom run needs a valid pasted AIR before it can continue.
@@ -308,8 +325,9 @@
       </p>
     </div>
 
-    <!-- Media + Type gate everything below (switching either resets the model), so they stay full
-         labeled rows rather than a dropdown or a quiet segmented strip that would under-sell them. -->
+    <!-- Media + Type gate everything below (media always resets the model; type does until the user
+         picks one), so they stay full labeled rows rather than a dropdown or a quiet segmented strip
+         that would under-sell them. -->
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div id="media-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
@@ -389,7 +407,19 @@
           <IconStarFilled size={12} class="mr-0.5 inline text-buzz" />
           We recommend <span class="font-semibold text-white">{recommendedCard.name}</span> for a
           {type.name.toLowerCase()}
-          {media} LoRA — or pick any below.
+          {media} LoRA —
+          {#if keptOverRecommendation}
+            keeping your pick, <span class="font-semibold text-white">{selectedCard.name}</span>.
+            <button
+              type="button"
+              onclick={useRecommended}
+              class="font-semibold text-primary underline-offset-2 hover:underline"
+            >
+              Use {recommendedCard.name} instead
+            </button>
+          {:else}
+            or pick any below.
+          {/if}
         </p>
       {/if}
 
@@ -664,11 +694,15 @@
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Type</span><span class="font-semibold text-dark-0">{type.name}</span>
     </div>
-    {#if multi}
+    {#each runs as r, ri (r.id)}
       <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
-        <span class="text-dark-2">Models</span><span class="font-semibold text-dark-0">{runs.length}</span>
+        <span class="shrink-0 text-dark-2">{multi ? `Run ${ri + 1}` : 'Base model'}</span>
+        <span class="truncate text-right font-semibold text-dark-0" title={isCustom(r) ? r.customAir : undefined}>
+          {runCard(r).name}
+          {runVersionLabel(r)}
+        </span>
       </div>
-    {/if}
+    {/each}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
       <span class="text-dark-2">Labeling</span>
       <span class="font-semibold text-dark-0">{labelMode === 'tag' ? 'Tags' : 'Captions'}</span>
@@ -689,7 +723,7 @@
     <Button
       class="mt-4 h-11 w-full"
       disabled={customIncomplete}
-      onclick={() => onContinue({ media, loraType, runs })}
+      onclick={() => onContinue({ media, loraType, runs, userPickedModel })}
     >
       Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
     </Button>

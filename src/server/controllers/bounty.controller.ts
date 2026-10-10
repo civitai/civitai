@@ -28,7 +28,12 @@ import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { Currency, EntityType } from '~/shared/utils/prisma/enums';
+import { getLatestAppeal } from '~/server/services/report.service';
+import {
+  isBountyFlagAppealable,
+  resolveFlagScanReasons,
+} from '~/server/services/text-scan/flag-snapshot';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
@@ -36,6 +41,7 @@ import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -51,6 +57,7 @@ export const getInfiniteBountiesHandler = async ({
   try {
     const items = await getAllBounties({
       input: { ...input, limit, userId },
+      viewer: user,
       select: {
         id: true,
         name: true,
@@ -132,6 +139,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       ...input,
       select: {
         ...getBountyDetailsSelect,
+        meta: true,
         benefactors: {
           select: {
             user: {
@@ -145,6 +153,10 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       },
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
+    if (
+      !canViewBounty({ availability: bounty.availability, userId: bounty.user?.id ?? null }, user)
+    )
+      throw throwNotFoundError(`No bounty with id ${input.id}`);
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({
@@ -153,6 +165,18 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       });
       if (blocked) throw throwNotFoundError();
     }
+
+    const isOwner = !!user && user.id === bounty.user?.id;
+    const poiFlagged = isOwner && isBountyFlagAppealable(bounty);
+    const poiAppeal =
+      poiFlagged && user
+        ? await getLatestAppeal({
+            entityType: EntityType.Bounty,
+            entityId: bounty.id,
+            userId: user.id,
+          })
+        : null;
+    const { meta: _meta, ...publicBounty } = bounty;
 
     const images = await getBountyImages({
       id: bounty.id,
@@ -163,7 +187,12 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
-      ...bounty,
+      ...publicBounty,
+      poiFlagged,
+      poiAppeal,
+      flagScanReasons: poiFlagged
+        ? resolveFlagScanReasons({ isOwner, poi: bounty.poi, minor: false, meta: bounty.meta })
+        : [],
       details: bounty.details
         ? filterSensitiveProfanityData(
             bounty.details as BountyDetailsSchema,
@@ -192,6 +221,7 @@ export const getBountyEntriesHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ bountyId: input.id }, ctx.user);
     const limit = input.limit ?? 20;
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (u) => u.id
@@ -309,6 +339,7 @@ export const getBountyBenefactorsHandler = async ({
   ctx: Context;
 }) => {
   try {
+    await assertBountyVisible({ bountyId: input.id }, ctx.user);
     const benefactors = await getAllBenefactorsByBountyId({
       input: { bountyId: input.id },
       select: { unitAmount: true, user: { select: userWithCosmeticsSelect } },
@@ -339,7 +370,8 @@ export const upsertBountyHandler = async ({
     if (input.id) ctx.track.bounty({ type: 'Update', bountyId: input.id }).catch(handleLogError);
     else ctx.track.bounty({ type: 'Create', bountyId: bounty.id }).catch(handleLogError);
 
-    return bounty;
+    const { meta: _meta, ...publicBounty } = bounty;
+    return publicBounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -364,7 +396,8 @@ export const deleteBountyHandler = async ({
     // Let it run in the background
     ctx.track.bounty({ type: 'Delete', bountyId: deleted.id }).catch(handleLogError);
 
-    return deleted;
+    const { meta: _meta, ...publicBounty } = deleted;
+    return publicBounty;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -379,6 +412,7 @@ export const addBenefactorUnitAmountHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
+    await assertBountyVisible({ bountyId: input.bountyId }, ctx.user);
     const { id: userId } = ctx.user;
     const bountyBenefactor = await addBenefactorUnitAmount({
       ...input,

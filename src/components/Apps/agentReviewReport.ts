@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import {
+  AGENT_REVIEW_SECTION_LABELS,
+  AGENT_REVIEW_SECTIONS,
+  isAgentSectionFailureMarker,
+  type AgentReviewSection,
+} from '~/shared/constants/agent-review-section.constants';
 
 /**
  * App Blocks — AGENTIC MOD CODE-REVIEW (P2) report view-model + parsing.
@@ -191,7 +197,9 @@ export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'moderate', 'low', 
  * never above a real `low`/`info` finding.
  */
 export function severityRank(severity?: string): number {
-  const i = SEVERITY_ORDER.indexOf((severity ?? '').toLowerCase() as (typeof SEVERITY_ORDER)[number]);
+  const i = SEVERITY_ORDER.indexOf(
+    (severity ?? '').toLowerCase() as (typeof SEVERITY_ORDER)[number]
+  );
   return i === -1 ? SEVERITY_ORDER.length : i;
 }
 
@@ -221,7 +229,15 @@ export type SeverityBreakdown = {
 
 /** Count findings per severity bucket for the counts-first roll-up. */
 export function severityBreakdown(findings: AgentFinding[]): SeverityBreakdown {
-  const b: SeverityBreakdown = { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0, other: 0 };
+  const b: SeverityBreakdown = {
+    total: 0,
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    info: 0,
+    other: 0,
+  };
   for (const f of findings) {
     b.total += 1;
     switch ((f.severity ?? '').toLowerCase()) {
@@ -298,29 +314,161 @@ export function parseReportHash(hash: string): { tab?: ReportTabValue; anchorId?
 }
 
 /**
- * Detect a FAILED analysis section. The runner persists each of
- * `codeReview` / `securityAudit` / `scopeVerdicts` verbatim; if a sub-analysis
- * failed it stores an `{ error: … }` object (or a bare string) in that slot
- * instead of the structured shape. The tolerant `parseAgentReport` would quietly
- * flatten that to an EMPTY section (indistinguishable from "nothing found"), so
- * this structural check runs on the RAW slot first to surface an explicit
- * "analysis failed" state. Returns the trimmed error message, or `null` when the
- * slot is absent/empty/well-formed.
+ * Detect a FAILED analysis section — the trimmed error message, or `null` when the slot is
+ * absent / well-formed.
+ *
+ * 🔴 A THIN RE-EXPORT OF `agentSectionFailureMessage`, kept under its original name because
+ * it is the view-model's published surface and several callers import it from here. The
+ * IMPLEMENTATION moved to `~/shared/constants/agent-review-section.constants` so the
+ * provisioning service — which must recognise exactly the same failure encodings before it
+ * carries a section forward — reads the same predicate instead of a second copy that drifts
+ * the first time the runner adds an encoding.
  */
-export function sectionAnalysisError(raw: unknown): string | null {
-  if (raw == null) return null;
-  // A bare string in a structured slot is a runner failure/log dump, not data.
-  if (typeof raw === 'string') {
-    const s = raw.trim();
-    return s ? s.slice(0, 500) : null;
+export { agentSectionFailureMessage as sectionAnalysisError } from '~/shared/constants/agent-review-section.constants';
+
+// --- Per-section status (pure, unit-testable) ------------------------------
+
+/**
+ * 🔴 THE LEDGER, THE FAILURE PREDICATE AND THE ERROR TABLE NOW LIVE IN
+ * `~/shared/constants/agent-review-section.constants` — one source for the client renderer,
+ * the tRPC input schema and the provisioning service, none of which may import each other.
+ * Re-exported here so every existing consumer of this module keeps its import, and so the
+ * view-model stays the one place a RENDERER has to look.
+ */
+export {
+  AGENT_REVIEW_SECTIONS as AGENT_REPORT_SECTIONS,
+  AGENT_REVIEW_SECTION_LABELS as AGENT_REPORT_SECTION_LABELS,
+  AGENT_SECTION_ERROR_MESSAGES,
+  agentSectionErrorMessage as sectionErrorMessage,
+  isAgentReviewSection as isAgentReportSection,
+  type AgentReviewSection as AgentReportSection,
+} from '~/shared/constants/agent-review-section.constants';
+
+/**
+ * What ONE sub-analysis did.
+ *   · `complete` — it produced a structured result (even an empty one: "no findings" IS a
+ *     finding about the bundle).
+ *   · `failed`   — the slot holds an `{ error: … }` object or a bare string log dump.
+ *   · `missing`  — the slot is absent/null. The analysis NEVER RAN: a run torn down
+ *     mid-flight, a provisioning failure, or a targeted re-run whose siblings were not
+ *     carried forward. 🔴 THIS IS NOT "found nothing" AND MUST NOT RENDER AS IT — see
+ *     `ReportTabs`' `SectionDidNotRun`.
+ */
+export type AgentSectionStatus = 'complete' | 'failed' | 'missing';
+
+/** Raw report slots, as stored. */
+export type AgentReportSlots = {
+  codeReview?: unknown;
+  securityAudit?: unknown;
+  scopeVerdicts?: unknown;
+};
+
+/**
+ * Per-section status for a report row.
+ *
+ * 🔴 THIS IS THE FIX FOR THE "ALL-OR-NOTHING FAILED REPORT". The runner marks the WHOLE
+ * report `failed` when ANY ONE sub-analysis fails, and the UI took that at its word: a mod
+ * saw a red "the agentic review failed" banner over a security audit and a scope trace that
+ * were perfectly good, with no way to read them and only a whole-report re-run — which
+ * re-bills all three analyses — as an affordance. Measured on live rows: 4 of 11 runs were
+ * `failed`, and the most recent of them had `code_review = {"error":"non-json-response"}`
+ * beside two sections with real content.
+ *
+ * 🔴 IT READS THE RAW SLOTS, NOT THE PARSED VIEW. `parseAgentReport` is deliberately
+ * tolerant: it flattens an `{ error: … }` object to an EMPTY section, which is
+ * indistinguishable from "this analysis ran and found nothing". The structural check has to
+ * run first, which is what `agentSectionFailureMessage` exists for.
+ */
+export function agentReportSectionStatuses(
+  report: AgentReportSlots
+): Record<AgentReviewSection, AgentSectionStatus> {
+  const out = {} as Record<AgentReviewSection, AgentSectionStatus>;
+  for (const section of AGENT_REVIEW_SECTIONS) {
+    const raw = report[section];
+    if (isAgentSectionFailureMarker(raw)) out[section] = 'failed';
+    else if (raw == null) out[section] = 'missing';
+    else out[section] = 'complete';
   }
-  if (typeof raw === 'object') {
-    const o = raw as Record<string, unknown>;
-    if ('error' in o && o.error != null) {
-      const e = o.error;
-      const msg = typeof e === 'string' ? e : JSON.stringify(e);
-      return msg.slice(0, 500);
-    }
+  return out;
+}
+
+/** The sections that FAILED, in display order. */
+export function failedAgentReportSections(report: AgentReportSlots): AgentReviewSection[] {
+  const statuses = agentReportSectionStatuses(report);
+  return AGENT_REVIEW_SECTIONS.filter((s) => statuses[s] === 'failed');
+}
+
+/**
+ * The sections that NEVER RAN, in display order.
+ *
+ * 🔴 SEPARATE FROM `failedAgentReportSections`, AND BOTH ARE NEEDED. A degraded header that
+ * counted only failures printed the literal `0 analyses failed ()` for the commonest shape
+ * this change itself creates: a targeted re-run seeds the untouched sections forward and
+ * leaves the retried one null, so a provisioning failure on that new row yields a `failed`
+ * report with one complete section and two MISSING ones — no failures at all.
+ */
+export function missingAgentReportSections(report: AgentReportSlots): AgentReviewSection[] {
+  const statuses = agentReportSectionStatuses(report);
+  return AGENT_REVIEW_SECTIONS.filter((s) => statuses[s] === 'missing');
+}
+
+/**
+ * Does this report carry anything a moderator can actually read?
+ *
+ * 🔴 THE GATE ON SHOWING A `failed` REPORT'S BODY AT ALL. `true` ⇒ render the sections (the
+ * complete ones show their content, the broken ones their own failure state, the absent ones
+ * a "did not run" state) instead of one banner over everything. `false` ⇒ nothing survived,
+ * so the whole-report failure IS the whole story and the banner is the honest surface.
+ */
+export function hasUsableAgentReportSection(report: AgentReportSlots): boolean {
+  const statuses = agentReportSectionStatuses(report);
+  return AGENT_REVIEW_SECTIONS.some((s) => statuses[s] === 'complete');
+}
+
+/**
+ * The one-line account above a PARTIALLY usable report.
+ *
+ * 🔴 IT MUST NEVER PRINT `0 analyses failed ()`, and the naive version did. `partiallyUsable`
+ * only requires ONE complete section, so it is satisfied by a `failed` row whose other slots
+ * are MISSING rather than failed — the shape a targeted re-run creates, since the retried
+ * section is left null for the runner to fill. Counting only failures then produced a header
+ * claiming nothing went wrong above a report with two analyses absent.
+ *
+ * Three distinct things to say, because they call for different moderator actions:
+ *   · failed  — it ran and broke; the reason is in its tab, and a re-run usually helps.
+ *   · missing — it never ran; there is no verdict, clean or otherwise.
+ *   · neither — the row is recorded `failed` but every analysis is present. Say THAT rather
+ *     than inventing a count; it means the failure was outside the analyses themselves.
+ *
+ * 🔴 IT LIVES IN THE PURE VIEW-MODEL, NOT IN THE PANEL. It is a string derivation, and the
+ * node-env `unit` project is where its wording is pinned — importing it from the React
+ * component would drag Mantine and the tRPC client into that tier for one function.
+ */
+export function degradedReportSummary(
+  failedSections: readonly AgentReviewSection[],
+  missingSections: readonly AgentReviewSection[]
+): string {
+  const name = (s: AgentReviewSection) => AGENT_REVIEW_SECTION_LABELS[s];
+  const parts: string[] = [];
+  if (failedSections.length > 0) {
+    parts.push(
+      `${
+        failedSections.length === 1 ? 'One analysis' : `${failedSections.length} analyses`
+      } failed (${failedSections.map(name).join(', ')})`
+    );
   }
-  return null;
+  if (missingSections.length > 0) {
+    parts.push(
+      `${
+        missingSections.length === 1 ? 'one analysis' : `${missingSections.length} analyses`
+      } never ran (${missingSections.map(name).join(', ')})`
+    );
+  }
+  if (parts.length === 0) {
+    return (
+      'This run is recorded as failed, but every analysis produced a result. The report ' +
+      'below is complete — the failure was outside the analyses themselves.'
+    );
+  }
+  return `${parts.join(', and ')}. What did complete is shown below.`;
 }

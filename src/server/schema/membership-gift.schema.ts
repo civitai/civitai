@@ -19,3 +19,8 @@ export type GetRecipientGiftabilityInput = z.infer<typeof getRecipientGiftabilit
 export const getRecipientGiftabilitySchema = z.object({
   recipientUserId: z.number(),
 });
+
+export type MembershipGiftIdInput = z.infer<typeof membershipGiftIdSchema>;
+export const membershipGiftIdSchema = z.object({
+  giftId: z.string(),
+});

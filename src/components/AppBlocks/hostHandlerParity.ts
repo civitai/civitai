@@ -61,6 +61,13 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  *
  * Keep one-line rationales human-readable — they ARE the documentation a future
  * maintainer reads when the parity test fails.
+ *
+ * The per-host column is also read at RUNTIME: when a host has no handler for a
+ * type, `unhandledOutcomeFor` (`bridgeTelemetry.ts`) reports
+ * `outcome="not_applicable"` where the column holds a rationale string and
+ * `outcome="no_handler"` where it holds `'required'` (or the type is absent). So
+ * flipping an entry between the two moves its unhandled traffic between those
+ * series on `civitai_app_block_bridge_messages_total`.
  */
 export type HostReq = 'required' | string; // string = N/A reason
 
@@ -568,8 +575,9 @@ export const INVENTORY = {
   },
   // Host download bridge (Batch-D item 1) — the host fetches an image in its
   // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
-  // no `allow-downloads`). Two variants: an origin-allowlisted OWN-output `url`,
-  // or a cross-user `imageId` routed through the gated per-viewer read. PAGE-ONLY
+  // no `allow-downloads`). Three variants: an origin-allowlisted OWN-output `url`,
+  // a cross-user `imageId` routed through the gated per-viewer read, or block-made
+  // `bytes` classified by content (image / JSON / text only). PAGE-ONLY
   // affordance today (the paid-output apps — gen-matrix / custom-generators /
   // model-benchmarking — are all page apps), so N/A for the model host, mirroring
   // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.
@@ -675,6 +683,28 @@ export const INVENTORY = {
     // app ever gains a subqueue, this entry becomes `required` in the same change.
     IframeHost:
       'every eligible image comes from the app subqueue, which is a page-only affordance; a model-slot block has no source images to post',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Start a confirmed `kind:'training'` run — see `runTrainingGate.ts`. REQUEST-style;
+  // ahead of the published SDK dist union (the SDK pair lands in the SDK repo).
+  RUN_TRAINING: {
+    request: true,
+    reply: 'TRAINING_RESULT',
+    IframeHost:
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Prepare the dataset a `kind:'training'` body names — see
+  // `prepareTrainingDatasetGate.ts`. The host calls `blocks.prepareTrainingDataset`
+  // with the page token, which the block's own origin cannot reach. REQUEST-style;
+  // ahead of the published SDK dist union (the SDK pair lands in the SDK repo).
+  PREPARE_TRAINING_DATASET: {
+    request: true,
+    reply: 'TRAINING_DATASET_RESULT',
+    IframeHost:
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_DATASET_RESULT error',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },

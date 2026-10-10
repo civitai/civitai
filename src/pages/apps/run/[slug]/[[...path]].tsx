@@ -4,20 +4,26 @@ import { useEffect, useMemo } from 'react';
 import { blockPreconnectHint } from '~/components/AppBlocks/blockPreconnect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import type { RecentApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
-import { IconFlask } from '@tabler/icons-react';
+import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentGate';
+import { IconEyeOff, IconFlask } from '@tabler/icons-react';
 import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
 import { readListingIconBySlugForRender } from '~/server/services/blocks/app-listing-icon.service';
 import { recordAppListingOpen } from '~/server/services/blocks/app-listing-open.service';
+import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag';
+import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { Page } from '~/components/AppLayout/Page';
+import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 /**
  * W10 — full-page App Block route: `/apps/run/<slug>` (+ optional sub-path).
@@ -35,6 +41,25 @@ import { Page } from '~/components/AppLayout/Page';
  * page resolves the approved AppBlock by slug; the token is minted from a
  * synthetic `page_<appBlockId>` id. The page is pure viewer-scoped (entity=none)
  * and carries NO money scopes.
+ *
+ * ── PRIVATE RUN (delisted/suspended apps) ────────────────────────────────────────
+ * This route ALSO serves a DELISTED / SUSPENDED app's already-deployed bundle to its
+ * OWNER, an ACCEPTED listing collaborator, or a MODERATOR — so a takedown can be
+ * diagnosed or appealed without relisting the app publicly. It ships behind
+ * `app-blocks-private-run-enabled`, which is base-off.
+ *
+ * 🔴 IT IS A FALLBACK BEHIND THE PUBLIC RESOLVER'S NULL, NOT A BRANCH INSIDE IT.
+ * `resolvePageBlockBySlug` is unchanged and still `status:'approved'`-only, so no public
+ * request can reach a non-approved block through this file. See the resolver for why that
+ * ordering is the whole safety argument, and why it matches the token mint's existing
+ * shape rather than inventing a second one.
+ *
+ * ⚠️ THIS USED TO BE A SEPARATE ROUTE (`/apps/private-run/<slug>`), removed when the
+ * feature was rescoped. Its docblock argued a separate route was needed because a branch
+ * would have to SKIP the approved-only resolver — true of a branch, NOT true of a
+ * fallback behind its null, which is what this is. Nothing was ever served from that
+ * path: the flag has been base-off with no rollout for its whole life, so there are no
+ * live links to break.
  */
 
 interface PageProps {
@@ -78,6 +103,24 @@ interface PageProps {
    * `readListingIconBySlugForRender`, which fails open rather than 500ing the launch path.
    */
   iconUrl: string | null;
+  /**
+   * PRIVATE RUN — non-null ONLY when this render came from the private-run fallback in
+   * the resolver, i.e. the app is delisted/suspended and the viewer is its owner, an
+   * accepted listing collaborator, or a moderator.
+   *
+   * 🔴 THIS IS THE DISCRIMINATOR FOR EVERY "DO NOT MOVE THE OWNER'S NUMBERS" BRANCH, and
+   * it is a PROP rather than a re-derived check on purpose: the audience is decided once,
+   * server-side, by `resolvePrivateRunAccess`, and a second client-side derivation is
+   * exactly how the two could disagree. `null` is the public path — the overwhelmingly
+   * common case — so every consumer's default is the public behaviour.
+   */
+  audience: PrivateRunAudience | null;
+  /**
+   * The backing AppBlock's status, carried ONLY on the private-run path (`null`
+   * otherwise). Drives the chrome notice's wording — a `pending` app is serving its LAST
+   * APPROVED bundle, not the re-submitted one, and the viewer has to be told which.
+   */
+  privateRunStatus: string | null;
 }
 
 export const getServerSideProps = createServerSideProps<PageProps>({
@@ -129,7 +172,96 @@ export const getServerSideProps = createServerSideProps<PageProps>({
       readListingBetaBySlugForRender(slug, dbRead),
       readListingIconBySlugForRender(slug, dbRead),
     ]);
-    if (!page || !page.iframeSrc) return { notFound: true };
+
+    // ── PRIVATE RUN — THE DELISTED/SUSPENDED FALLBACK ──────────────────────────
+    // 🔴 A FALLBACK BEHIND A NULL, NEVER A BRANCH INSIDE THE PUBLIC GATE. The resolve
+    // above is UNCHANGED and still `status:'approved'`-only, so a public request cannot
+    // reach a non-approved block by any path through this file — that property is
+    // preserved BY CONSTRUCTION, not by a condition someone has to keep correct. We only
+    // get here when the approved-only resolver has already returned nothing.
+    //
+    // This is the SAME SHAPE the token mint already uses (`resolvePageBlock` → null →
+    // `tryPrivateRunMint`, `src/pages/api/v1/block-tokens/index.ts`). That symmetry is the
+    // point: the SSR↔mint asymmetry is the defect this feature was built to avoid, and two
+    // surfaces resolving through the same ordered shape is what prevents it. Both end in
+    // `resolvePrivateRunAccess`, the single access predicate. ⚠️ Its call-site ledger pins
+    // THREE callers, not two — this route, the mint, and the analytics impression gate. An
+    // earlier draft of this comment said two, copying a claim that was already known-wrong and
+    // retracted in `private-run-impression.service.ts`; the third caller takes no access
+    // decision, which is why it cannot reproduce the SSR↔mint asymmetry described above.
+    //
+    // 🔴 `resolvePrivateRunAccess` REFUSES AN APPROVED APP (reason `'approved'`), so this
+    // branch can never double-serve something the public path owns.
+    if (!page) {
+      const viewer = session?.user;
+      // Anonymous → 404 without touching the flag or the database. A private run is by
+      // definition a signed-in, role-bearing action.
+      if (!viewer) return { notFound: true };
+
+      // 🔴 NO `if (!privateRunEnabled) return notFound` HERE, DELIBERATELY. An earlier draft
+      // had one, and it was a SECOND COPY of a rule the predicate already owns: its gate (1)
+      // returns `flag-off` for exactly this input and this route maps every refusal onto the
+      // same bare 404, so the two could only ever agree — until one of them was edited. A
+      // predicate open-coded at two sites is the shape that regenerates the same bug at both.
+      // The saving it bought was one function call on a path that is already 404-ing.
+      const privateRunEnabled = await isAppBlocksPrivateRunEnabled({ user: viewer });
+
+      const access = await resolvePrivateRunAccess({
+        by: { slug },
+        viewer,
+        db: 'read',
+        privateRunEnabled,
+      });
+      // 🔴 EVERY refusal maps onto the SAME bare 404 the public path produces. The
+      // `reason` is for tests and the mint's audit line and must never reach HTTP — if it
+      // did, this predicate would become an existence oracle ('approved' vs 'no-app' tells
+      // a prober whether a slug exists; 'no-role' vs 'no-app' tells them a delisted app is
+      // there but not theirs).
+      if (!access.allowed) return { notFound: true };
+
+      const block = access.block;
+      if (!block.iframeSrc) return { notFound: true };
+
+      // GATE — MATURITY. Applied identically to the public path below, deliberately: a
+      // mature app stays red-host-only even for its own owner.
+      const privateHost = ctx.req.headers.host ?? '';
+      if (!ratingAllowedOnHost(block.contentRating, privateHost)) {
+        return { notFound: true };
+      }
+
+      // 🔴 NO `recordAppListingOpen` HERE, AND ITS ABSENCE IS THE FEATURE. Recording the
+      // play would move `views.count` / `views.uniqueViewers` on the OWNER'S OWN analytics
+      // panel — which both lies about real usage and tells a suspended publisher exactly
+      // when moderation is looking at them. This omission is the SSR half of the same
+      // property the impression gate enforces on the beacon; it is asserted by
+      // `run-page-private-run.test.ts`, not left to be noticed in review.
+      return {
+        props: {
+          appBlockId: block.appBlockId,
+          blockId: block.blockId,
+          appId: block.appId,
+          appName: block.name,
+          pageTitle: block.pageTitle,
+          iframeSrc: block.iframeSrc,
+          bootSkeleton: block.bootSkeleton,
+          sandbox: block.sandbox,
+          trustTier: block.trustTier,
+          slug: block.blockId,
+          scopes: block.scopes,
+          // A delisted app has no live store listing to read a beta note or icon from, and
+          // the concurrent reads above were keyed on a slug the store no longer surfaces.
+          // Both fail open to their own "absent" value on the public path too, so this is
+          // the same contract, not a private-run special case.
+          isBeta: false,
+          betaMessage: null,
+          iconUrl: null,
+          audience: access.audience,
+          privateRunStatus: block.status,
+        },
+      };
+    }
+
+    if (!page.iframeSrc) return { notFound: true };
 
     // NSFW-APP-RED-ONLY: a mature (r/x) page app is usable ONLY on a red-capable
     // host (civitai.red). On civitai.com (or any non-red host) it is
@@ -158,7 +290,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // resolver — the `undefined` is only in the type. Passing an explicit `null` tells the
     // Tracker "known anonymous" so it skips a second JWE decrypt, which is precisely the
     // anonymous case its constructor note calls out.
-    void recordAppListingOpen({ appBlockId: page.appBlockId, session: session ?? null, ctx });
+    void recordAppListingOpen({
+      appBlockId: page.appBlockId,
+      subListingId: isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null,
+      session: session ?? null,
+      ctx,
+    });
 
     return {
       props: {
@@ -178,10 +315,153 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         // columns applies, so a stale note cannot reach a page through this one.
         betaMessage: beta.isBeta ? beta.betaMessage : null,
         iconUrl,
+        // 🔴 THE PUBLIC PATH IS ALWAYS `null` ON BOTH. This is reached only when the
+        // approved-only resolver returned a block, so there is no audience to carry and no
+        // non-approved status to disclose. Written explicitly rather than left off, so the
+        // discriminator is a total function of the props and a reader never has to ask
+        // whether an absent key means "public" or "forgot to set it".
+        audience: null,
+        privateRunStatus: null,
       },
     };
   },
 });
+
+/**
+ * ── THE TWO AUDIENCE-KEYED DECISIONS, AS PURE FUNCTIONS ──────────────────────────
+ *
+ * 🔴 THESE WERE INLINE TERNARIES UNTIL AN AUDIT PROVED BOTH WERE UNTESTABLE IN PRACTICE,
+ * AND THE EXTRACTION IS THE FIX — not a style preference. Both decisions live inside
+ * `AppPage`, a component this suite never renders (it is a node unit test that drives the
+ * SSR resolver only), so:
+ *
+ *   · `expect(mockRecordRecent).not.toHaveBeenCalled()` passed whether or not the guard
+ *     existed — the effect that would call it never ran. Deleting `if (isPrivateRun)
+ *     return` left the suite fully GREEN. A vacuous guard, with a comment in two other
+ *     files pointing AT it as the coverage.
+ *   · the `surface` prop had NO assertion anywhere in the repo; replacing the ternary with
+ *     a constant `'page-run'` left 51 tests green across three files, while a comment
+ *     called it "the single most important line of the route merge".
+ *
+ * Pulling both out makes the DECISION testable in node without a renderer, and the
+ * component's job becomes calling them. The call sites are pinned structurally in
+ * `private-run-access.call-site-ledger.test.ts`, so extracting-then-orphaning fails too —
+ * a pure function nothing calls is the obvious next way for this to go quiet.
+ */
+
+/**
+ * Which block-host surface this render is. 🔴 `private-run` carries an UNCONDITIONAL
+ * refusal of the BLOCK_INIT fragment fast path (`blockInitFragmentEnabledWith`, refusal
+ * (1)): a delisted app must boot on its ordinary path, because the fast path perturbs
+ * `location.hash` routing and that may be the very behaviour under diagnosis. Collapsing
+ * both onto `page-run` hands a suspended app a fast path its own gate refuses — and four
+ * blocks are on `BLOCK_INIT_FRAGMENT_ALLOWLIST` today. ⚠️ That said "reachable, not
+ * theoretical" and the word was too strong: with the flag base-off NO private run is
+ * reachable at all today, so the hazard is real only once the flag widens. The
+ * allowlist count is accurate (4).
+ */
+export function hostSurfaceFor(audience: PrivateRunAudience | null): BlockHostSurface {
+  return audience != null ? 'private-run' : 'page-run';
+}
+
+/**
+ * The localStorage "recently opened" entry for this render — or `null` when there must
+ * not be one.
+ *
+ * 🔴 A PRIVATE RUN GETS `null`. Both link shapes the recents rail builds —
+ * `/apps/run/<slug>` and `/apps/store-preview/<slug>` — 404 for a delisted app once the
+ * flag narrows again, so an entry written here is a rail row that breaks later. That is
+ * the defect `ownerId` (#4048) was added to stop, arriving by a different route.
+ *
+ * 🔴 IT RETURNS THE ENTRY RATHER THAN A BOOLEAN, AND THAT SHAPE IS THE GUARD. This was
+ * `shouldRecordRecents(audience): boolean` with `if (!shouldRecordRecents(...)) return;`
+ * at the call site — and an audit inverted that `!` and watched **151 tests across 8
+ * files stay green**. The inversion reintroduces the exact defect the extraction was
+ * meant to close (a private run writes an entry) *and* adds a new one (no public run
+ * ever does), and nothing anywhere could see it: the structural pin asserts the call
+ * TEXT, not its polarity, and the component is never rendered by a node test.
+ *
+ * Returning a nullable ENTRY removes the polarity from the call site: there is no `!` to
+ * invert, and the inverted form does not type-check. The wrong thing is unrepresentable
+ * rather than guarded — which is what to reach for when the guard itself cannot be
+ * observed.
+ *
+ * 🔴 THE GUARD IS THE TYPE CHECKER, NOT A TEST, AND THAT DISTINCTION IS THE POINT — it is
+ * why this survives a shape no unit test in this repo can reach. MEASURED, not asserted:
+ * inverting the call site to `if (!entry) recordRecentlyOpenedApp(entry, recentsOwnerId)`
+ * narrows `entry` to `null` and produces
+ *   `error TS2345: Argument of type 'null' is not assignable to parameter of type 'RecentApp'`
+ * at that line, under the repo's own `scripts/typecheck.mjs`.
+ *
+ * 🔴 WHAT ENFORCES IT, CORRECTED — AND NOTHING HERE IS A MERGE GATE. This said "The
+ * blocking CI job `App unit tests + typecheck` runs it, so this is enforced pre-merge",
+ * and ALL THREE parts of that were false, measured at this PR's own head:
+ *   · that job runs `scripts/ci/typecheck-apps.mjs`, which covers `apps/*` ONLY — its own
+ *     header says the root typecheck's `include` has no `apps/*` entry, so the two are
+ *     complements and this file is outside it;
+ *   · the Actions job that DOES typecheck `src/` — `Typecheck (main pushes / fork PRs /
+ *     non-main base)` — was **skipped**, because its `if:` excludes an internal PR
+ *     targeting `main`, which is the ordinary case here;
+ *   · `required_status_checks` on `main` is EMPTY, so nothing blocks a merge at all.
+ * The only thing that actually typechecked this file is the commit STATUS
+ * `tekton / typecheck` — advisory, not a gate.
+ *
+ * ⚠️ THREE HONEST LIMITS, and the third was missing. (a) The unit suite does NOT catch the
+ * inversion — it stays green — so if the Tekton status moves, nothing tells you. (b) An
+ * `as any` at the call site defeats it, as it defeats any type-level guard. (c) 🔴 THE TYPE
+ * GUARD ONLY SEES A `null`, NEVER A WRONG VALUE: a call site passing `audience: null`
+ * literally type-checks fine and reintroduces the whole defect. That case is pinned
+ * separately and structurally, by the argument assertion in
+ * `blocks/__tests__/private-run-access.call-site-ledger.test.ts` — the two guards cover
+ * different mutations and neither is sufficient alone.
+ *
+ * ⚠️ AND A MEASUREMENT TRAP WORTH KEEPING: a bare `npx tsc --noEmit` reported NO error
+ * here. The repo's own script is what found it — it sets the memory ceiling the bare
+ * invocation lacks. Do not re-derive this claim with a hand-rolled `tsc`.
+ */
+export function recentsEntryFor(args: {
+  audience: PrivateRunAudience | null;
+  appBlockId: string;
+  blockId: string;
+  appName: string;
+  iconUrl: string | null;
+}): RecentApp | null {
+  if (args.audience != null) return null;
+  return {
+    id: args.appBlockId,
+    blockId: args.blockId,
+    slug: args.blockId,
+    kind: 'onsite',
+    hasPage: true,
+    name: args.appName,
+    // Spread-when-truthy, matching the shape the store's own writers use, so an absent
+    // icon leaves the key off the persisted object rather than writing `undefined`.
+    ...(args.iconUrl ? { iconUrl: args.iconUrl } : {}),
+  };
+}
+
+/**
+ * The private-run chrome's copy. Exported so the page test asserts the STRING a viewer
+ * reads, rather than re-deriving it — a test that rebuilds the sentence from the same
+ * inputs passes whatever the sentence says.
+ */
+export function privateRunNotice(args: { audience: PrivateRunAudience; status: string }): string {
+  const why =
+    args.audience === 'moderator'
+      ? 'You are viewing this app as a moderator.'
+      : args.audience === 'editor'
+      ? 'You are viewing this app as a collaborator. Generation is disabled for collaborators.'
+      : 'You are viewing your own app.';
+  // 🔴 THE SECOND SENTENCE IS THE LOAD-BEARING ONE FOR A RE-SUBMITTED APP. `pending`
+  // means the owner has re-submitted; what is DEPLOYED — and therefore what is running
+  // here — is still the last APPROVED build. A reviewer who assumes otherwise reviews
+  // the wrong bytes and either clears or rejects a submission they never saw.
+  const which =
+    args.status === 'pending'
+      ? 'This app has been re-submitted for review, and this page is serving the last approved build — not the submitted one.'
+      : 'It is not publicly listed or publicly runnable, and this page is serving its last approved build.';
+  return `${why} ${which}`;
+}
 
 function AppPage(props: PageProps) {
   const {
@@ -198,6 +478,8 @@ function AppPage(props: PageProps) {
     isBeta,
     betaMessage,
     iconUrl,
+    audience,
+    privateRunStatus,
   } = props;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -235,41 +517,31 @@ function AppPage(props: PageProps) {
   // PROFILE, so without an owner the next account to use this browser inherits
   // these entries — which is how a rail of apps that 404 for the viewer got
   // rendered. `ownerId` is `null` for a signed-out run, which is its own bucket.
+  //
+  // 🔴 A PRIVATE RUN WRITES NO RECENTS ENTRY. The store's "Recently opened" rail and the
+  // chrome's "Recently run" menu both link to `/apps/run/<slug>` and to the app's STORE
+  // page — and a delisted app has neither a live listing nor a public run. Recording one
+  // would hand the viewer a rail entry that 404s the moment the flag narrows again, which
+  // is the exact defect `ownerId` (#4048) was added to stop. The guard is inside the
+  // effect rather than on the call site so the hook order is unconditional.
   const recentsOwnerId = currentUser?.id ?? null;
   useEffect(() => {
-    recordRecentlyOpenedApp(
-      {
-        id: appBlockId,
-        blockId,
-        slug: blockId,
-        kind: 'onsite',
-        hasPage: true,
-        name: appName,
-        // Spread-when-truthy, matching the shape the store's own writers use
-        // (`...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {})`) so an absent icon leaves
-        // the key off the persisted object. `RecentApp.iconUrl` is an OPTIONAL string.
-        //
-        // ⚠️ CONSISTENCY, NOT SAFETY — do not restate this as a hazard it is not. Writing
-        // `iconUrl: undefined` here would be harmless: `coerce` in the store keeps the field
-        // only when `typeof === 'string'`, and `JSON.stringify` drops an undefined value
-        // anyway. An earlier version of this comment claimed the explicit-undefined form
-        // would defeat an upgrade in `resolveRecentApp`; it would not, and `resolveRecentApp`
-        // does no such upgrade — the icon preference lives in `upgradeRecentFromCard`, which
-        // is reached only through `reconcileRecentApps` on the store page.
-        //
-        // 🔴 THE REAL SECOND-ORDER, WHICH IS THE OPPOSITE OF WHAT THAT CLAIMED:
-        // `recordRecentlyOpenedApp` REPLACES the entry wholesale and has no icon ratchet, so
-        // a run while the icon read is degraded (`null` → key omitted) DROPS an icon a store
-        // visit had previously recorded, until the next successful run or reconcile. Net this
-        // is still a large improvement — before this change EVERY run cleared a store-written
-        // icon, because the run page never sent one — so it is a residual, not a regression,
-        // and it is recorded here rather than fixed because adding a ratchet would change
-        // `recordRecentlyOpenedApp`'s semantics for all five of its callers.
-        ...(iconUrl ? { iconUrl } : {}),
-      },
-      recentsOwnerId
-    );
-  }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId]);
+    // 🔴 NO POLARITY HERE TO GET WRONG. `recentsEntryFor` returns the entry, or `null` for
+    // a private run — so this reads "write it if there is one", and the inverted form
+    // (`if (!entry) record(entry, …)`) does not type-check. An audit inverted the boolean
+    // guard this replaced and watched 151 tests across 8 files stay green; that shape is
+    // gone rather than guarded.
+    //
+    // ⚠️ The icon residual that used to be documented at the (now-moved) spread is
+    // unchanged and still real: `recordRecentlyOpenedApp` REPLACES the entry wholesale
+    // with no icon ratchet, so a run while the icon read is degraded drops an icon a store
+    // visit had recorded, until the next successful run or reconcile. It is a residual,
+    // not a regression — before the icon was sent at all, EVERY run cleared it — and it is
+    // not fixed here because a ratchet would change that function's semantics for all five
+    // of its callers.
+    const entry = recentsEntryFor({ audience, appBlockId, blockId, appName, iconUrl });
+    if (entry) recordRecentlyOpenedApp(entry, recentsOwnerId);
+  }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId, audience]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).
@@ -374,6 +646,26 @@ function AppPage(props: PageProps) {
           unreviewed author copy, so it is rendered as a text node and never as markdown.
           A dropdown-only notice (`useChromeListingDetail`) would have been cheaper, but it
           only mounts once a user opens a menu — this has to be visible on arrival. */}
+      {/* PRIVATE RUN NOTICE — the chrome that tells the viewer this app is NOT publicly
+          runnable and why they can see it. Rendered FIRST, above the beta notice: a
+          delisted app's status is the more urgent fact, and in practice the two are
+          mutually exclusive anyway (a delisted app has no live listing to carry a beta
+          note, so `isBeta` is always false on this path).
+          🔴 NOT AUTHOR COPY — every string comes from `privateRunNotice` below, which is
+          ours. The beta alert beside it renders unreviewed publisher text and says so;
+          this one must never grow that property. */}
+      {audience != null && (
+        <Alert
+          variant="light"
+          color="yellow"
+          icon={<IconEyeOff size={16} />}
+          radius={0}
+          py="xs"
+          data-testid="apps-run-private-run-notice"
+        >
+          {privateRunNotice({ audience, status: privateRunStatus ?? '' })}
+        </Alert>
+      )}
       {isBeta && (
         <Alert
           variant="light"
@@ -425,8 +717,17 @@ function AppPage(props: PageProps) {
           appName={appName}
           iframeSrc={iframeSrc}
           bootSkeleton={bootSkeleton}
-          // The public full-page run surface.
-          surface="page-run"
+          // The full-page run surface — public, or `private-run` on the delisted fallback.
+          //
+          // 🔴 THE SURFACE STAYS SPLIT EVEN THOUGH THE ROUTE IS NOW SHARED, and this is the
+          // single most important line of the route merge. `private-run` carries an
+          // UNCONDITIONAL refusal of the BLOCK_INIT fragment fast path
+          // (`blockInitFragmentEnabledWith`, refusal (1)) — a delisted app must boot on its
+          // ordinary path, because the fast path perturbs `location.hash` routing and the
+          // behaviour under diagnosis may be exactly that. Collapsing both onto `page-run`
+          // would silently hand a suspended app the fast path its own gate refuses.
+          // Pinned by `run-page-private-run.test.ts`.
+          surface={hostSurfaceFor(audience)}
           // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is
           // correct ONLY in combination with `scrollable: false` on the `Page`
           // options below. `fit="fill"` makes the host claim no height of its
@@ -545,8 +846,8 @@ function AppPage(props: PageProps) {
  * over someone else's UI. The scrollbar fix does not depend on this, so
  * restoring the tabs is a safe one-word reversal.
  *
- * Note `RewardsBonusBanner` still renders regardless (`AppLayout` shows it in
- * the `{!subNav && …}` branch), so it is NOT removed by this.
+ * Note the nav announcement slot (Buzz Bonus, event strips) still renders regardless
+ * (`AppLayout` shows it in the `{!subNav && …}` branch), so it is NOT removed by this.
  */
 export default Page(AppPage, {
   scrollable: false,

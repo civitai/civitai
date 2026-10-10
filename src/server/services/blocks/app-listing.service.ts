@@ -8,8 +8,22 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
+import {
+  listingVisibleInStore,
+  VISIBILITY_ELIGIBLE_LISTING_STATUSES,
+  visibilitiesVisibleToForStatus,
+} from '~/shared/utils/app-listing-visibility';
+// The MANUAL-APPLY `visibility` column is read ONLY through this guard, which uses raw SQL:
+// the field is `// @no-type` and therefore absent from the generated client entirely. See its
+// module header for the production 500 that forced that.
+import {
+  noteDegradedVisibilityRead,
+  readListingVisibility,
+} from '~/server/services/blocks/app-listing-visibility.service';
 import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
+  StoreGridItem,
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
   ListAppListingsInput,
@@ -24,9 +38,15 @@ import type {
   ListingSort,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import { hydrateSubListingCards } from '~/server/services/blocks/app-sub-listing-store.service';
+import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
+import { logToAxiom } from '~/server/logging/client';
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
-import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
+import {
+  isMissingColumnError,
+  readListingSourceRepoUrl,
+} from '~/server/services/blocks/app-listing-source-repo.service';
 // The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
 // never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
 // its module header.
@@ -44,6 +64,8 @@ import {
   APP_LISTING_CATALOG_TAG,
   APP_LISTING_RECOMMEND_MEAN_TAG,
 } from '~/server/services/blocks/app-listing-cache.constants';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -317,6 +339,22 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
 }
 
 /**
+ * The columns `cardOpenCount` reads. Widened from `HydratedListing` (which still satisfies
+ * it structurally — a pure relaxation, no behaviour change) so the moderator review queue
+ * can reuse the REAL projection instead of re-deriving it, the same reason
+ * {@link DetailKindDataSource} is relaxed.
+ *
+ * ⚠️ `kind` IS OPTIONAL FOR THE CALLER'S CONVENIENCE AND THAT COSTS THE COMPILER'S HELP:
+ * a select that omits the column no longer fails to typecheck, it silently reads as
+ * not-on-site. The off-site mod queue therefore has to name `kind: true` deliberately, and
+ * a test pins that it does.
+ */
+export type CardOpenCountSource = {
+  kind?: string | null;
+  metric?: { openCount: number } | null;
+};
+
+/**
  * The card's play count: a NUMBER for an on-site listing, `null` for an off-site one.
  *
  * 🔴 THE DISCRIMINATION IS THE WHOLE POINT, and `row.metric?.openCount ?? 0` alone —
@@ -374,9 +412,49 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
  * job, not a property of this code — an on-site listing whose row the job has not yet
  * covered reads a truthful-by-the-DTO's-rule `0` until it does.
  */
-function cardOpenCount(row: HydratedListing): number | null {
+export function cardOpenCount(row: CardOpenCountSource): number | null {
   if (row.kind !== 'onsite') return null;
   return row.metric?.openCount ?? 0;
+}
+
+/** What a `/apps/review` queue row shows about the app's store listing. */
+export type ListingQueueFacts = {
+  /** {@link cardOpenCount}'s answer — a number for an on-site listing, `null` otherwise. */
+  playCount: number | null;
+  iconUrl: string | null;
+  coverUrl: string | null;
+};
+
+export type ListingQueueFactsSource = CardOpenCountSource & {
+  icon?: { url: string | null } | null;
+  cover?: { url: string | null } | null;
+};
+
+/** No listing to read — the two moderator queues project this for a row with none. */
+export const NO_LISTING_QUEUE_FACTS: ListingQueueFacts = {
+  playCount: null,
+  iconUrl: null,
+  coverUrl: null,
+};
+
+/**
+ * One projection of a listing → the three facts both moderator review queues show.
+ *
+ * 🔴 IT GOES THROUGH `cardOpenCount` RATHER THAN READING `metric.openCount`, because the
+ * obvious `metric?.openCount ?? null` is wrong in BOTH directions: it renders the literal
+ * `0` an off-site listing's `NOT NULL DEFAULT 0` column carries, and it over-nulls an
+ * on-site listing with no metric row yet, which is a genuine `0`. The store card and the
+ * review row must not answer "how many plays" differently for one listing.
+ *
+ * 🔴 NO SCREENSHOT COVER FALLBACK. A moderator has to see that the listing has no cover —
+ * the same reason the author's own `listMine` read passes `null` here.
+ */
+export function listingQueueFacts(listing: ListingQueueFactsSource): ListingQueueFacts {
+  return {
+    playCount: cardOpenCount(listing),
+    iconUrl: iconUrl(listing.icon),
+    coverUrl: coverUrl(listing.cover, null),
+  };
 }
 
 /**
@@ -801,12 +879,11 @@ export function listingSortKeyExpr(
       };
     case 'name':
     default:
-      // `name` is unbounded `text`; the RAW sort key is encoded into the base64
-      // cursor, so a long name would overflow `cursor: z.string().max(128)` and
-      // halt pagination (BAD_REQUEST). Bound the key to 64 chars — IDENTICAL in
-      // SELECT + the keyset WHERE (same `expr`), so paging stays exact; `al.id`
-      // remains the total-order tiebreak, so a 64-char-truncation collision
-      // still paginates correctly.
+      // `name` is unbounded `text`; the RAW sort key is encoded into the base64 cursor, so a
+      // long name could overflow the cursor bound (`LISTING_CURSOR_MAX`, sized for 64
+      // four-byte characters) and halt pagination (BAD_REQUEST). Bound the key to 64 chars —
+      // IDENTICAL in SELECT + the keyset WHERE (same `expr`), so paging stays exact; `al.id`
+      // remains the total-order tiebreak, so a 64-char-truncation collision still paginates.
       return { expr: Prisma.sql`left(LOWER(al.name), 64)`, descending: false };
   }
 }
@@ -819,6 +896,54 @@ export function listingSortKeyExpr(
 export function listingMatureFilter(redCapable: boolean): Prisma.Sql {
   if (redCapable) return Prisma.sql`TRUE`;
   return Prisma.sql`COALESCE(LOWER(al.content_rating), '') NOT IN ('r', 'x')`;
+}
+
+/** {@link listingMatureFilter} for the sub-listing alias `s`. */
+export function subListingMatureFilter(redCapable: boolean): Prisma.Sql {
+  if (redCapable) return Prisma.sql`TRUE`;
+  return Prisma.sql`COALESCE(LOWER(s.content_rating), '') NOT IN ('r', 'x')`;
+}
+
+/**
+ * Every condition that makes a LISTING eligible for the store grid, over the aliases `al`
+ * (the listing) and `ab` (its backing block). The parent arm and the sub-listing arm of the
+ * catalog statement both apply this to the parent row, so a child can never be visible while
+ * its parent is not. Do not copy any of it into either arm.
+ */
+export function storeEligibilityWhere(args: {
+  levelFilter: Prisma.Sql;
+  kind: ListingKind | null;
+  category: string | null;
+  redCapable: boolean;
+  scope: StoreVisibilityScope;
+}): Prisma.Sql {
+  return Prisma.sql`${args.levelFilter}
+      -- A shadow revision is status='draft' and the level gate can admit a draft, so this is
+      -- what keeps a shadow's un-reviewed content out of the store.
+      AND al.revision_of_id IS NULL
+      -- An onsite listing appears only once its block has deployed successfully at least once.
+      AND (al.kind <> 'onsite' OR ab.current_version_deployed_at IS NOT NULL)
+      AND (${args.kind}::text IS NULL OR al.kind = ${args.kind}::text)
+      AND (${args.category}::text IS NULL OR al.category = ${args.category}::text)
+      AND ${listingMatureFilter(args.redCapable)}
+      AND ${listingPublicVisibilityFilter(args.scope)}`;
+}
+
+/**
+ * The sort key for a sub-listing. The rating and popularity sorts reuse the PARENT's key, so
+ * a child ties with its parent and the `tb` column orders the parent first.
+ */
+export function subListingSortKeyExpr(sort: ListingSort, globalMean: number): Prisma.Sql {
+  switch (sort) {
+    case 'top-rated':
+    case 'popular':
+      return listingSortKeyExpr(sort, globalMean).expr;
+    case 'newest':
+      return Prisma.sql`to_char(COALESCE(s.approved_at, s.created_at) AT TIME ZONE 'UTC', 'YYYYMMDDHH24MISSUS')`;
+    case 'name':
+    default:
+      return Prisma.sql`left(LOWER(s.title), 64)`;
+  }
 }
 
 /**
@@ -842,6 +967,77 @@ export function listingPublicVisibilityFilter(scope: StoreVisibilityScope): Pris
   if (scope === 'full') return Prisma.sql`TRUE`;
   if (scope === 'public-external') return Prisma.sql`al.kind = 'offsite'`;
   return Prisma.sql`FALSE`;
+}
+
+/**
+ * The per-listing LEVEL gate — the status predicate this read has always had, WIDENED by
+ * the viewer's audience floor.
+ *
+ * It replaces the bare `al.status = 'approved'` rather than being ANDed beside it, because
+ * the whole point is that the level decides. Three properties, each load-bearing:
+ *
+ * 🔴 AN UNSET LEVEL (NULL) FALLS BACK TO THE PRE-FEATURE PREDICATE. The first disjunct IS
+ * the old `al.status = 'approved'`, scoped to rows nobody has set a level on. That is what
+ * makes this inert on every existing row and on every row a future approval mints — eight
+ * scattered writes set `status='approved'` across four services with no chokepoint, and
+ * none of them has to learn about this column.
+ *
+ * 🔴 A LEVEL THAT IS SET IS AUTHORITATIVE, INCLUDING ON AN `approved` LISTING. The second
+ * disjunct admits only rows whose level the viewer's floor sees, so an owner can RESTRICT a
+ * live listing as well as widen a draft. A stored value this build does not recognise is in
+ * NO floor's level list, so it is excluded — fail closed.
+ *
+ * 🔴 THE WHOLE THING IS BOUNDED BY A STATUS ALLOWLIST, NOT BY THE LEVEL ALONE. `removed`
+ * and `rejected` are negative moderation outcomes, and a level that reached them would be a
+ * partial un-takedown of the owner's own app — so they are excluded here as well as at the
+ * mutation, because a row can carry a level set BEFORE it was taken down.
+ *
+ * ⚠️ IT ALWAYS NAMES `al.visibility`, AND THE MANUAL-APPLY CASE IS HANDLED AT THE CALLER.
+ * This is raw SQL inside a cached statement, so a missing column is a PARSE error no
+ * per-column guard can swallow — `listAvailableListings` catches it and re-runs the
+ * pre-feature predicate. An earlier revision pre-flight PROBED for the column here, which
+ * cost a round trip on every grid read INCLUDING cache hits; neither in-tree sibling does
+ * that, and both degrade via a catch instead.
+ *
+ * Exported so the drift-guard unit test can assert the exact SQL each floor emits.
+ */
+export function listingLevelVisibilityFilter(floor: ListingAudienceFloor): Prisma.Sql {
+  // 🔴 PER-STATUS LEVEL LISTS, BECAUSE THE REVIEW CEILING IS PER STATUS. One shared
+  // `al.visibility IN (...)` across every eligible status was a moderator-review bypass: it
+  // admitted a `draft` carrying `visibility='public'` to the anonymous store, with a name,
+  // URL and content rating no moderator had seen. See `maxVisibilityForStatus`.
+  //
+  // An unreviewed status against a non-moderator cohort admits NOTHING, so its list is
+  // EMPTY — and an empty `IN ()` is a syntax error, hence the explicit FALSE.
+  const approvedLevels = visibilitiesVisibleToForStatus(floor, 'approved');
+  const unreviewed = VISIBILITY_ELIGIBLE_LISTING_STATUSES.filter((st) => st !== 'approved');
+  const unreviewedLevels = visibilitiesVisibleToForStatus(floor, 'draft');
+  // 🔴 AN ARM THE CEILING ADMITS NOTHING THROUGH IS OMITTED, NOT EMITTED AS `FALSE`. Two
+  // reasons, and the second is why it matters beyond tidiness: an empty `IN ()` is a syntax
+  // error, and a bare `FALSE` in this statement trips a sibling drift-guard
+  // (`app-listing.public-scope.test.ts`) that scans the emitted SQL for exactly that word to
+  // prove the KIND gate has not failed closed. Leaving one here would have made an unrelated
+  // guard red for a reason that has nothing to do with what it protects.
+  const arms: Prisma.Sql[] = [];
+  if (approvedLevels.length) {
+    arms.push(
+      Prisma.sql`(al.status = 'approved' AND al.visibility IN (${Prisma.join(approvedLevels)}))`
+    );
+  }
+  if (unreviewedLevels.length) {
+    arms.push(
+      Prisma.sql`(al.status IN (${Prisma.join(unreviewed)}) AND al.visibility IN (${Prisma.join(
+        unreviewedLevels
+      )}))`
+    );
+  }
+  // No arm at all ⇒ a set level admits this cohort nowhere, so only the unset-and-approved
+  // baseline remains.
+  if (!arms.length) return Prisma.sql`(al.visibility IS NULL AND al.status = 'approved')`;
+  return Prisma.sql`(
+        (al.visibility IS NULL AND al.status = 'approved')
+        OR (al.visibility IS NOT NULL AND (${Prisma.join(arms, ' OR ')}))
+      )`;
 }
 
 // ---------------------------------------------------------------------------
@@ -892,7 +1088,7 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * It matters because an ATTACKER SUPPLIES HASHED BYTES. `decodeListingCursor`
  * slices `cursorSortKey` and `cursorId` out of a lenient base64url decode as
  * arbitrary free strings (only `cursorMean` is range-validated), the router
- * validates `cursor` only as `z.string().max(128)`, and both land in this
+ * validates `cursor` only as a bounded string (`LISTING_CURSOR_MAX`), and both land in this
  * statement as bound params. That is enough tuning room to steer the 32-bit hash
  * onto any target value.
  *
@@ -930,13 +1126,13 @@ export async function getGlobalRecommendMean(): Promise<number> {
  *
  * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
  * grid defect above. The alternative to accepting it is putting the remaining axes in
- * the literal key too, and the blocker is `cursor`: it is a free-form 128-byte string,
- * so lifting it out of the hash makes the redis keyspace AND the `cache_name` metric
- * label request-controlled and unbounded — exactly the property the note at the bottom
- * of this comment relies on. (`kind`, `category` and `sort` are closed enums and
- * `limit` is 1..50, so those four could be lifted; they would multiply the label
- * cardinality by their product, and they do not help while `cursor` stays hashed,
- * because `cursor` is the tuning room the collision is built out of.) Widening
+ * the literal key too, and the blocker is `cursor`: it is a free-form string of up to
+ * `LISTING_CURSOR_MAX` characters, so lifting it out of the hash makes the redis keyspace
+ * AND the `cache_name` metric label request-controlled and unbounded — exactly the
+ * property the note at the bottom of this comment relies on. (`kind`, `category` and
+ * `sort` are closed enums and `limit` is 1..50, so those four could be lifted; they would
+ * multiply the label cardinality by their product, and they do not help while `cursor`
+ * stays hashed, because `cursor` is the tuning room the collision is built out of.) Widening
  * `hashify` is the other alternative and it is global — see below.
  *
  * If that trade stops holding, the fix is to key on a per-axis allowlist plus a
@@ -961,15 +1157,45 @@ export async function getGlobalRecommendMean(): Promise<number> {
  *   instead of reclaiming it. The tag set holds the exact keys to delete.
  *
  * ⚠️ `key` is also the `cache_name` label on the hit/miss counters. Its cardinality
- * is bounded at 6 (3 scopes × 2 capabilities) — every component is a closed enum,
- * never a request-controlled string.
+ * is bounded at 36 (3 scopes × 3 audience floors × 2 capabilities × 2 sub-listing states) —
+ * every component is a closed enum, never a request-controlled string.
+ *
+ * The sub-listing segment is literal for the same reason: it changes which ROWS the statement
+ * returns, so a flag-on page must never be served to a flag-off viewer.
+ *
+ * 🔴 THE AUDIENCE FLOOR IS A LITERAL KEY SEGMENT FOR THE SAME REASON `scope` IS, and it
+ * had to be: it changes which ROWS the cached statement returns. Folding it into
+ * `hashifyObject` would put a security-boundary axis behind a 32-bit non-injective hash,
+ * and leaving it out entirely would serve one cohort's id page to another — a moderator's
+ * page, including `draft` listings, to a general viewer. It is a closed 3-value enum, so
+ * it triples a keyspace that was bounded at 6 rather than opening it.
  */
-function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
+function catalogPageCache(
+  scope: StoreVisibilityScope,
+  floor: ListingAudienceFloor,
+  redCapable: boolean,
+  withSubListings: boolean
+) {
   return queryCache(
     dbRead,
-    `listAvailableAppListings:${scope}:${redCapable ? 'red' : 'sfw'}`,
+    `listAvailableAppListings:${scope}:${floor}:${redCapable ? 'red' : 'sfw'}:${
+      withSubListings ? 'sl' : 'nosl'
+    }`,
     'v1'
   );
+}
+
+let subListingTableMissingLogged = false;
+
+/** Logged once per process: the manual-apply sub-listing tables are absent. */
+function noteSubListingTableMissing(err: unknown): void {
+  if (subListingTableMissingLogged) return;
+  subListingTableMissingLogged = true;
+  logToAxiom({
+    name: 'app-sub-listing-table-missing',
+    type: 'warning',
+    message: err instanceof Error ? err.message : String(err),
+  }).catch(() => null);
 }
 
 /**
@@ -1019,22 +1245,54 @@ export async function bustAppListingCatalogCache(): Promise<void> {
 // Read procs (over BOTH kinds, approved-only, public allowlist).
 // ---------------------------------------------------------------------------
 
+type ListAvailableListingsOpts = {
+  redCapable?: boolean;
+  scope?: StoreVisibilityScope;
+  /**
+   * The viewer's audience floor. 🔴 DEFAULTS TO `public`, THE LEAST-PRIVILEGED VALUE —
+   * the floor is the NARROWEST level that admits the viewer, so the widest level is the
+   * weakest grant. An omitted floor therefore admits only what an anonymous viewer could
+   * already see, which is the same fail-closed posture `narrowStoreScope` applies to
+   * `scope` and for the same reason: a default is an authorization decision.
+   */
+  floor?: ListingAudienceFloor;
+  /**
+   * Mix approved sub-listings into the page (the `app-store-sub-listings` flag). Off by
+   * default, and the public REST catalog never sets it, so its output is unchanged.
+   */
+  includeSubListings?: boolean;
+  /** The viewer's browsing level, for the per-render check of sub-listing images. */
+  viewerBrowsingLevel?: number | null;
+};
+
 /**
  * List approved listings of BOTH kinds for the unified store. Keyset-paginated
  * over a computed `sort_key`; the row-value tuple `(sort_key, id)` is a total
  * keyset so a paged scan stays stable even across tied sort values.
  *
  * Two-step: a raw keyset query resolves the ORDERED, filtered page of ids
- * (joining the metric rollup for the sort), then a single Prisma hydration
- * fetches the public projection fields and we re-apply the raw order. This keeps
- * the projection type-safe + testable while the sort/keyset stays exact.
+ * (joining the metric rollup for the sort), then a live hydration fetches the public
+ * projection fields and we re-apply the raw order.
+ *
+ * With `includeSubListings`, the keyset runs over the UNION of listings and their approved
+ * sub-listings, ordered `(sort_key, tb, id)` where `tb` is 0 for a listing and 1 for a child,
+ * so a parent sorts before its children on an equal key.
  */
 export async function listAvailableListings(
   input: ListAppListingsInput,
-  opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
-): Promise<{ items: ListingCard[]; nextCursor?: string }> {
+  opts?: ListAvailableListingsOpts & { includeSubListings?: false }
+): Promise<{ items: ListingCard[]; nextCursor?: string }>;
+export async function listAvailableListings(
+  input: ListAppListingsInput,
+  opts: ListAvailableListingsOpts
+): Promise<{ items: StoreGridItem[]; nextCursor?: string }>;
+export async function listAvailableListings(
+  input: ListAppListingsInput,
+  opts: ListAvailableListingsOpts = {}
+): Promise<{ items: StoreGridItem[]; nextCursor?: string }> {
   const { kind, category, sort, cursor, limit } = input;
   const redCapable = opts.redCapable ?? false;
+  const floor: ListingAudienceFloor = opts.floor ?? 'public';
   // 🔴 FAIL CLOSED on an absent / unrecognized scope (civitai#3983). This used to be
   // `opts.scope ?? 'full'`, on the reasoning that every caller passes an explicit
   // scope. Every caller does — and production still reached here with `undefined`,
@@ -1044,76 +1302,156 @@ export async function listAvailableListings(
   // an empty page. `narrowStoreScope` is the single shared rule; see
   // `~/shared/utils/store-visibility-scope`.
   const scope = narrowStoreScope(opts.scope);
+  const includeSubListings = opts.includeSubListings === true;
 
   const { cursorSortKey, cursorId, cursorMean } = decodeListingCursor(cursor);
 
   // Only `top-rated` needs the global mean. PIN it into the cursor across a
   // paging session (page 1 reads the 1h cache + encodes it; pages 2..N reuse
   // the pinned value, NOT a fresh read) so the sort key can't shift mid-scan.
+  // ⚠️ THERE IS NO PRE-FLIGHT PROBE HERE. The degradation for the manual-apply
+  // `visibility` column is the `isMissingColumnError` catch on the cached read below and
+  // nothing else; deleting that catch takes the public grid down while the migration is
+  // outstanding.
   const globalMean = sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
 
   const { expr: sortKeyExpr, descending } = listingSortKeyExpr(sort, globalMean);
   const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
   const keysetCmp = descending ? Prisma.sql`<` : Prisma.sql`>`;
-  const kindParam = kind === 'all' ? null : kind;
-  const categoryParam = category ?? null;
+  const eligibility = (levelFilter: Prisma.Sql) =>
+    storeEligibilityWhere({
+      levelFilter,
+      kind: kind === 'all' ? null : kind,
+      category: category ?? null,
+      redCapable,
+      scope,
+    });
+
+  // 1 = the cursor sits on a child row: children sort after their parent on the same key.
+  const cursorTb = isAppSubListingId(cursorId) ? 1 : 0;
+  // On the parents-only statement a child cursor means every parent on that sort key was
+  // already served (parents sort before their children), so it resumes strictly after the
+  // key. Comparing the parent id against an `asl_` id instead would serve such a parent
+  // twice, e.g. when the flag turns off or the tables are missing between two pages.
+  const parentKeyset =
+    cursorTb === 1
+      ? Prisma.sql`${sortKeyExpr} ${keysetCmp} ${cursorSortKey}::text`
+      : Prisma.sql`(${sortKeyExpr}, al.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)`;
 
   // 🔴 CACHED. Only the keyset ID PAGE is cached — the hydration below stays a live
   // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
   // a card's mutable projection fields are never served from two different ages.
-  // `nextCursor` is derived from these (now cached) rows, same as there.
   //
-  // The cache is built PER VIEWER CLASS: `scope` and `redCapable` are literal segments
-  // of the redis key, deliberately outside the 32-bit `hashifyObject` of the statement.
-  // See {@link catalogPageCache} for why that is load-bearing rather than stylistic.
+  // The cache is built PER VIEWER CLASS: `scope`, `floor`, `redCapable` and the sub-listing
+  // state are literal segments of the redis key, deliberately outside the 32-bit
+  // `hashifyObject` of the statement. See {@link catalogPageCache}.
   //
-  // TTL = `CacheTTL.sm` (180s). The catalog is MOD-GATED and low-churn: rows enter and
-  // leave only through moderator approve/delist/reject/purge or an owner
-  // unpublish/republish, and every one of those paths calls
-  // `bustAppListingCatalogCache()`.
+  // TTL = `CacheTTL.sm` (180s). Rows enter and leave only through moderator or owner
+  // actions, and every one of those paths calls `bustAppListingCatalogCache()`.
   //
   // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
-  // no mutation to hang a bust on — chiefly a row that ages into visibility. It is NOT
-  // a redis-outage backstop: `queryCache` has no try/catch and no fail-open (unlike
-  // `fetchThroughCache`), so a redis outage does not degrade to a live DB read here, it
-  // throws — a 500 on `/apps` and on `GET /api/v1/apps`. That is the dependency this
-  // change accepts; the TTL does nothing about it. What 180s does buy is collapsing the
-  // burst of identical cold reads a `/apps` page load produces, at a staleness a missed
-  // bust cannot stretch past.
-  const cacheable = catalogPageCache(scope, redCapable);
-  const idRows = await cacheable<{ id: string; sort_key: string }[]>(
-    Prisma.sql`
+  // no mutation to hang a bust on. It is NOT a redis-outage backstop: `queryCache` has no
+  // fail-open, so a redis outage is a 500 on `/apps` and on `GET /api/v1/apps`.
+  const parentsOnlyPage = (levelFilter: Prisma.Sql) =>
+    catalogPageCache(
+      scope,
+      floor,
+      redCapable,
+      false
+    )<{ id: string; sort_key: string }[]>(
+      Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
-    -- DEPLOY-GATE: join the backing AppBlock (onsite only) so we can require it
-    -- has actually deployed its slug origin before listing it.
     LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
-    WHERE al.status = 'approved'
-      -- Never surface a SHADOW revision draft. Shadows are status='draft' so the
-      -- approved-only filter already hides them; this is defense-in-depth.
-      AND al.revision_of_id IS NULL
-      -- DEPLOY-GATE (generic, all app-blocks): an ONSITE (block-backed) listing
-      -- only appears once its backing AppBlock has SUCCESSFULLY deployed at least
-      -- once (current_version_deployed_at set on a successful apply, left NULL
-      -- while first-building). A re-deploying app keeps its non-null timestamp,
-      -- so it stays listed. OFFSITE listings have no AppBlock/deploy concept and
-      -- are UNAFFECTED (kind discriminates, never appBlockId nullness).
-      AND (al.kind <> 'onsite' OR ab.current_version_deployed_at IS NOT NULL)
-      AND (${kindParam}::text IS NULL OR al.kind = ${kindParam}::text)
-      AND (${categoryParam}::text IS NULL OR al.category = ${categoryParam}::text)
-      AND ${listingMatureFilter(redCapable)}
-      -- STORE-SCOPE kind gate: full scope emits TRUE (unchanged); public-external
-      -- emits offsite-only (onsite excluded) -- the whole public/onsite boundary.
-      AND ${listingPublicVisibilityFilter(scope)}
+    WHERE ${eligibility(levelFilter)}
       AND (
         ${cursorSortKey}::text IS NULL
-        OR (${sortKeyExpr}, al.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)
+        OR ${parentKeyset}
       )
     ORDER BY sort_key ${dir}, al.id ${dir}
     LIMIT ${limit + 1}
   `,
-    { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+      { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+    );
+
+  // The keyset over (sort_key, tb, id), for one arm whose tb is fixed. Applied inside each arm
+  // with its own ORDER BY / LIMIT so neither arm sorts more than a page.
+  const armKeyset = (keyExpr: Prisma.Sql, idCol: Prisma.Sql, tb: number) => Prisma.sql`(
+        ${cursorSortKey}::text IS NULL
+        OR ${keyExpr} ${keysetCmp} ${cursorSortKey}::text
+        OR (${keyExpr} = ${cursorSortKey}::text AND (
+          ${tb}::int > ${cursorTb}::int
+          OR (${tb}::int = ${cursorTb}::int AND ${idCol} ${keysetCmp} ${cursorId}::text)
+        ))
+      )`;
+  const childKeyExpr = subListingSortKeyExpr(sort, globalMean);
+  const withSubListingsPage = (levelFilter: Prisma.Sql) =>
+    catalogPageCache(
+      scope,
+      floor,
+      redCapable,
+      true
+    )<{ id: string; sort_key: string }[]>(
+      Prisma.sql`
+    SELECT u.id, u.sort_key FROM (
+      (SELECT al.id, ${sortKeyExpr} AS sort_key, 0 AS tb
+      FROM app_listings al
+      LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
+      LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
+      WHERE ${eligibility(levelFilter)}
+        AND ${armKeyset(sortKeyExpr, Prisma.sql`al.id`, 0)}
+      ORDER BY sort_key ${dir}, al.id ${dir}
+      LIMIT ${limit + 1})
+      UNION ALL
+      (SELECT s.id, ${childKeyExpr} AS sort_key, 1 AS tb
+      FROM app_sub_listings s
+      JOIN app_listings al ON al.id = s.parent_listing_id
+      JOIN app_sub_listing_parents sp ON sp.parent_listing_id = s.parent_listing_id
+      -- A banned or deleted author's items leave the store with them.
+      JOIN "User" au ON au.id = s.author_user_id AND au."bannedAt" IS NULL AND au."deletedAt" IS NULL
+      LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
+      LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
+      WHERE ${eligibility(levelFilter)}
+        AND sp.enabled
+        AND s.status = 'approved'
+        -- The parent's run route serves only an approved block, so a suspended or
+        -- re-submitted block would make every child link a 404.
+        AND ab.status = 'approved'
+        AND ${subListingMatureFilter(redCapable)}
+        AND ${armKeyset(childKeyExpr, Prisma.sql`s.id`, 1)}
+      ORDER BY sort_key ${dir}, s.id ${dir}
+      LIMIT ${limit + 1})
+    ) u
+    ORDER BY u.sort_key ${dir}, u.tb ASC, u.id ${dir}
+    LIMIT ${limit + 1}
+  `,
+      { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+    );
+
+  // 🔴 THE VISIBILITY CATCH IS NARROW AND THE FALLBACK IS THE PRE-FEATURE PREDICATE. Not
+  // `private`, which would empty the public grid on an unapplied migration, and not `public`,
+  // which would admit drafts. Everything that is not a missing column PROPAGATES, because
+  // degrading on those turns a real outage into a quietly short store page.
+  const pageWithVisibilityFallback = (withSubListings: boolean) => {
+    const page = withSubListings ? withSubListingsPage : parentsOnlyPage;
+    return page(listingLevelVisibilityFilter(floor)).catch((err: unknown) => {
+      if (!isMissingColumnError(err)) throw err;
+      noteDegradedVisibilityRead(err);
+      return page(Prisma.sql`al.status = 'approved'`);
+    });
+  };
+
+  // The sub-listing tables are manual-apply too: while they are absent the store serves
+  // parents only rather than failing.
+  const idRows = await pageWithVisibilityFallback(includeSubListings).catch(
+    async (err: unknown) => {
+      if (!includeSubListings) throw err;
+      const { isMissingTableError } = await import('~/server/services/blocks/app-access.service');
+      if (!isMissingTableError(err)) throw err;
+      noteSubListingTableMissing(err);
+      return pageWithVisibilityFallback(false);
+    }
   );
 
   const trimmed = idRows.slice(0, limit);
@@ -1126,31 +1464,40 @@ export async function listAvailableListings(
 
   if (trimmed.length === 0) return { items: [], nextCursor: undefined };
 
-  // Hydrate the public projection for the page, then re-apply the keyset order
-  // (findMany does not preserve the `IN (...)` order).
   const pageIds = trimmed.map((r: { id: string; sort_key: string }) => r.id);
-  // 🔴 IN PARALLEL WITH THE HYDRATE, not after it. Both are keyed on `pageIds`, which is
-  // already in hand, so the beta read depends on nothing the hydrate produces — running them
-  // serially would add a whole round trip to the public `/apps` grid for a cosmetic badge.
-  // ONE batched read for the page, so it stays O(1) queries regardless of page size, and it
-  // is the `…ForRender` variant: a failure renders every card as not-beta rather than 500ing
-  // the grid, which is exactly what this module's header says must not happen.
-  const [hydrated, betaById] = await Promise.all([
-    dbRead.appListing.findMany({
-      where: { id: { in: pageIds } },
-      select: listingHydrateSelect,
+  const listingIds = pageIds.filter((id) => !isAppSubListingId(id));
+  const subListingIds = pageIds.filter((id) => isAppSubListingId(id));
+  // 🔴 IN PARALLEL, not serially: all three reads are keyed on ids already in hand. The beta
+  // read is render-tolerant (a failure renders every card as not-beta).
+  const [hydrated, betaById, subListingById] = await Promise.all([
+    listingIds.length
+      ? dbRead.appListing.findMany({
+          where: { id: { in: listingIds } },
+          select: listingHydrateSelect,
+        })
+      : Promise.resolve([] as HydratedListing[]),
+    listingIds.length
+      ? readListingBetaManyForRender(listingIds, dbRead)
+      : Promise.resolve(new Map<string, ListingBetaRead>()),
+    hydrateSubListingCards(dbRead, subListingIds, {
+      browsingLevel: opts.viewerBrowsingLevel,
+      redCapable,
     }),
-    readListingBetaManyForRender(pageIds, dbRead),
   ]);
   const byId = new Map(hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r]));
-  const items = pageIds
-    .map((id: string) => byId.get(id))
-    .filter((r): r is HydratedListing => r != null)
+  const items: StoreGridItem[] = [];
+  for (const id of pageIds) {
+    const child = subListingById.get(id);
+    if (child) {
+      items.push(child);
+      continue;
+    }
+    const row = byId.get(id);
     // 🔴 `?? BETA_NOT_SET`, not `?? BETA_UNAVAILABLE`: a row present in `hydrated` but
     // absent from the beta map means the columns WERE readable and that listing simply had
-    // no row when the second query ran. Both project as not-beta, but only the former is an
-    // honest description of what happened.
-    .map((r) => projectListingCard(r, betaById.get(r.id) ?? BETA_NOT_SET));
+    // no row when the second query ran.
+    if (row) items.push(projectListingCard(row, betaById.get(row.id) ?? BETA_NOT_SET));
+  }
 
   return { items, nextCursor };
 }
@@ -1163,9 +1510,16 @@ export async function listAvailableListings(
  */
 export async function getListingDetail(
   input: GetAppListingDetailInput,
-  opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
+  opts: {
+    redCapable?: boolean;
+    scope?: StoreVisibilityScope;
+    /** The viewer's audience floor. Defaults to `public` — see `listAvailableListings`
+     *  for why the widest level is the least-privileged default. */
+    floor?: ListingAudienceFloor;
+  } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
+  const floor: ListingAudienceFloor = opts.floor ?? 'public';
   // 🔴 FAIL CLOSED on an absent / unrecognized scope — see listAvailableListings
   // (civitai#3983). Previously `opts.scope ?? 'full'`, which let an absent scope
   // reach a listing's full detail through the public REST endpoint.
@@ -1181,9 +1535,12 @@ export async function getListingDetail(
   // undefined })` would return an ARBITRARY approved row (enumeration footgun);
   // both → ambiguous. Fail closed to null in either case.
   if (!input.id === !input.slug) return null;
-  // `revisionOfId: null` is defense-in-depth: a shadow is status='draft' (already
-  // excluded by the approved-only check below), but never let a crafted id reach a
-  // shadow's data through this public read.
+  // `revisionOfId: null` is NOT redundant. ⚠️ An earlier version of this comment called it
+  // "defense-in-depth … already excluded by the approved-only check below" — there IS no
+  // approved-only check below any more: the level gate replaced it, and that gate can admit
+  // a non-approved row. A shadow revision is a draft, so this term is now the only thing
+  // keeping a shadow's staged, un-reviewed content out of a public detail read. Do not
+  // remove it as redundant; the grid's twin comment was corrected in this same change.
   const where: Prisma.AppListingWhereInput = input.id
     ? { id: input.id, revisionOfId: null }
     : { slug: input.slug, revisionOfId: null };
@@ -1194,10 +1551,27 @@ export async function getListingDetail(
     // `listingHydrateSelect` for why it must not live in the grid-shared select.
     select: { ...listingHydrateSelect, status: true, connectRequestedScopes: true },
   });
-  // Status check in the app layer (like the AppBlock path) so a future caller
-  // can't reuse this for a non-public path: a non-approved row returns null
-  // exactly like a missing one — never its data.
-  if (!row || row.status !== 'approved') return null;
+  if (!row) return null;
+  // LEVEL GATE, in the app layer (like the AppBlock path) so a future caller can't reuse
+  // this for a non-public path: a row this viewer's cohort may not see returns null
+  // exactly like a missing one — never its data, and never a distinguishable refusal.
+  //
+  // 🔴 THE LEVEL IS READ SEPARATELY, AND IT CANNOT BE READ ANY OTHER WAY. `visibility` is
+  // `// @no-type` in `schema.full.prisma`, so it is stripped from the generated client and
+  // does not exist on the `appListing` delegate — naming it in any `select` is a compile
+  // error. Deliberate: as an ordinary field it was emitted by every default
+  // SELECT/RETURNING, which 500d off-site submit on the PR preview during the manual-apply
+  // window. The guarded reader uses raw SQL.
+  //
+  // 🔴 AND AN UNAVAILABLE COLUMN NEEDS NO SPECIAL CASE HERE. `readListingVisibility` catches
+  // the missing column and answers `visibility: null`, which `listingVisibleInStore` already
+  // resolves to the pre-feature rule for the status — approved visible, non-approved not. An
+  // earlier revision branched on `available` to reach the same answer; that branch is gone
+  // because the two states genuinely coincide, and one route is easier to keep true than two.
+  const level = await readListingVisibility(row.id, dbRead);
+  if (!listingVisibleInStore({ status: row.status, visibility: level.visibility, floor })) {
+    return null;
+  }
   // STORE-SCOPE kind gate (the public/onsite security boundary): under
   // `public-external` an ONSITE listing is indistinguishable from a missing one —
   // return null so no crafted id/slug can reach an onsite listing's detail. EVERY
@@ -1264,15 +1638,18 @@ async function loadDisplayedCollaboratorChips(
   const userIds = await listDisplayedCollaboratorUserIds(appListingId);
   if (userIds.length === 0) return [];
   // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
-  // narrowings: nothing but these three columns ever leaves the DB, and `creatorChip`
+  // narrowings: nothing but these four columns ever leaves the DB, and `creatorChip`
   // re-shapes them. Widening either alone cannot leak.
   // 🔴 BANNED AND DELETED ACCOUNTS ARE FILTERED OUT, EXPLICITLY.
   //
   // This is the read that puts a collaborator's name and avatar on a PUBLIC app page,
   // linked to their profile. Without these two clauses a banned user keeps that placement
-  // indefinitely, and a deleted one fell out only INCIDENTALLY — a hard delete nulls
-  // `username` and the chip component skips username-less rows, which is luck, not a
-  // filter. Neither is something to leave to the render layer.
+  // indefinitely, and a deleted one fell out only INCIDENTALLY — `deleteUser` is a SOFT
+  // delete that nulls `username` in the same transaction as `deletedAt`, and the chip
+  // component skips username-less rows, which is luck, not a filter. (This comment said
+  // "a hard delete" until 2026-10-04; there is no hard-delete path in `user.service.ts`,
+  // and the distinction matters because the luck is the PII scrub, not row removal.)
+  // Neither is something to leave to the render layer.
   //
   // 🔴 DELIBERATELY STRICTER THAN `creatorChip`, which has the same shape and is NOT
   // changed here. The two are different subjects: the creator IS the app's owner, whose
@@ -1281,7 +1658,10 @@ async function loadDisplayedCollaboratorChips(
   // may be perfectly healthy and owned by someone else entirely.
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
-    select: { id: true, username: true, image: true },
+    // `deletedAt` is projected even though the `where` already excludes deleted rows: it makes
+    // this chip satisfy the user-chip guard outright rather than needing a ledger exemption,
+    // and it costs nothing — the column is read from the same heap tuple, no extra rows.
+    select: { id: true, username: true, deletedAt: true, image: true },
   });
   // Preserve the seat order (`createdAt asc`) rather than the DB's row order.
   const byId = new Map(users.map((u: { id: number }) => [u.id, u]));
@@ -1333,7 +1713,9 @@ export type ModerationListingRow = {
     id: string;
     submittedAt: Date;
     changelog: string | null;
-    submittedBy: ModerationUserChip | null;
+    /** The shared review chip — see the select. NOT `ModerationUserChip`, which is the
+     *  listings table's own plain-text owner cell and carries no `deletedAt`. */
+    submittedBy: ReviewSubmitterChip;
   } | null;
   /**
    * 🔴 ON-SITE ONLY, AND NOT THE SAME THING AS `pendingRequest`.
@@ -1389,7 +1771,23 @@ export const moderationListingSelect = {
       id: true,
       submittedAt: true,
       changelog: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
+      // 🔴 THE SHARED REVIEW CHIP, because this row reaches a REVIEW surface: it is handed to
+      // the reused off-site review modal, which is the same modal the review queue opens.
+      //
+      // ⚠️ FORWARD-LOOKING, AND AN EARLIER VERSION OF THIS COMMENT OVERSTATED IT. That version
+      // said the modal "renders the submitter through `UserAvatar` — and that BRANCHES on
+      // `deletedAt`". It does not, today: `OffsiteReviewQueue` renders the submitter as plain
+      // `{username ?? '#id'}` text and does not import `UserAvatar` at all, so a closed
+      // account currently shows its verbatim username there and there is no profile link to
+      // suppress. The field is carried so the chip MATCHES every other review read and the
+      // branch is available the moment that cell adopts the shared component — which is the
+      // stated direction, and the on-site half of the same list already made the move. Read
+      // at face value the old wording answered "does this surface handle a deleted account?"
+      // with a confident yes, which is how a gap stays closed to inspection.
+      //
+      // The `user` chip above is deliberately NOT widened: it is the listings table's own
+      // owner cell, plain text, and a separate decision about a separate screen.
+      submittedBy: { select: reviewUserChipSelect },
     },
   },
 } satisfies Prisma.AppListingSelect;
@@ -1438,7 +1836,12 @@ export function projectModerationListing(
           id: pending.id,
           submittedAt: pending.submittedAt,
           changelog: pending.changelog ?? null,
-          submittedBy: creatorChip(pending.submittedBy),
+          // 🔴 PASSED THROUGH WHOLE, not through `creatorChip`. That helper projects
+          // `{ id, username, image }` EXPLICITLY, so it would drop the `deletedAt` the
+          // select above exists to carry — a field the review modal branches on. An
+          // explicit re-projection is exactly how this class of defect travels one layer
+          // at a time, and it produces no type error on the way.
+          submittedBy: pending.submittedBy,
         }
       : null,
   };

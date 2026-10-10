@@ -1,11 +1,13 @@
 import { dbWrite } from '~/server/db/client';
 import { addApiKey } from '~/server/services/api-key.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 
 const ORCHESTRATOR_KEY_NAME = 'orchestrator-key';
 
 export default AuthedEndpoint(
   async function handler(req, res, user) {
+    if (!requireFullScopeSession(req, res)) return;
     try {
       const host = req.headers.host?.toLowerCase().split(':')[0];
       if (!host) return res.status(400).json({ error: 'Missing host header' });

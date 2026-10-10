@@ -51,13 +51,21 @@ import {
 import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import {
   useCreatorProgramRequirements,
   usePrevMonthStats,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CreatorProgramCapsInfo } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
-import { MIN_CAP, PEAK_EARNING_WINDOW } from '~/shared/constants/creator-program.constants';
+import {
+  BANKABLE_CUTOVER,
+  MIN_CAP,
+  MIN_CREATOR_SCORE,
+  PEAK_EARNING_WINDOW,
+} from '~/shared/constants/creator-program.constants';
+import { formatDate } from '~/utils/date-helpers';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -607,20 +615,16 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 <>
                   <CreatorProgramRequirement
                     isMet={hasEnoughCreatorScore}
-                    title={`Have a Creator Score higher than ${abbreviateNumber(
-                      requirements?.score.min ?? 10000
+                    title={`Have a Creator Score of at least ${numberWithCommas(
+                      requirements?.score.min ?? MIN_CREATOR_SCORE
                     )}`}
                     content={
                       <p className="my-0">
-                        Your current{' '}
-                        <Anchor component={NextLink} href="/user/account#creator-score">
-                          Creator Score
-                        </Anchor>{' '}
-                        is{' '}
-                        <Anchor component={NextLink} href="/user/account#creator-score">
-                          {abbreviateNumber(requirements?.score.current ?? 0)}
-                        </Anchor>
-                        .
+                        <CreatorScoreGateMessage
+                          score={requirements?.score.current}
+                          total={creatorScoreFromSession(currentUser)}
+                          required={requirements?.score.min ?? MIN_CREATOR_SCORE}
+                        />
                       </p>
                     }
                   />
@@ -744,7 +748,11 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   },
   {
     q: 'How is my Banking Cap calculated?',
-    a: `Your Cap is your Peak Earning Month multiplied by your membership tier's percentage, up to that tier's ceiling where it has one. Your Peak Earning Month is the single best month of generation compensation and Buzz other people spent on your work that you have had in the last ${PEAK_EARNING_WINDOW} completed months; Tips and rewards can still be Banked, but they do not set your peak. Tiers with a fixed Cap stay at that number, and every member has a minimum Cap of ${abbreviateNumber(
+    a: `Your Cap is your Peak Earning Month multiplied by your membership tier's percentage, up to that tier's ceiling where it has one. Your Peak Earning Month is the single best month of licensing fees and Buzz other people spent on your work that you have had in the last ${PEAK_EARNING_WINDOW} completed months. From ${formatDate(
+      BANKABLE_CUTOVER,
+      'MMMM D, YYYY',
+      true
+    )}, generation compensation no longer counts toward your peak, including for earlier months. Tips and rewards do not set your peak. Tiers with a fixed Cap stay at that number, and every member has a minimum Cap of ${abbreviateNumber(
       MIN_CAP
     )} Buzz, however small their peak.`,
   },
@@ -762,7 +770,11 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   },
   {
     q: 'What types of Buzz can be Banked?',
-    a: 'Any earned Yellow or Green Buzz can be Banked, up to your cap. This includes Buzz from sources such as Early Access, Tips, and Generator Compensation.',
+    a: `Earned Yellow or Green Buzz can be Banked, up to your cap. From ${formatDate(
+      BANKABLE_CUTOVER,
+      'MMMM D, YYYY',
+      true
+    )}, you can Bank the Buzz you held on that date plus what you earn from your work afterwards: licensing fees, Early Access and paid access, tips from other users, generator tips, donations, shop sales, bounties, App author fees, and sticker, remix and promotion fees. Generation compensation is still paid to you but no longer counts toward what you can Bank.`,
   },
   {
     q: 'Do I need an active membership to Bank Buzz?',

@@ -27,7 +27,7 @@ const OFFSITE_ROW = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 42, username: 'author-dev', image: null },
+  submittedBy: { id: 42, username: 'author-dev', deletedAt: null, image: null },
 };
 
 const DEFAULT_ASSETS = {
@@ -429,7 +429,7 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
       // was pinning the cap copy onto a request shape that may not be under a cap.
       revisionOfId: 'listing-parent',
     },
-    submittedBy: { id: 42, username: 'author-dev', image: null },
+    submittedBy: { id: 42, username: 'author-dev', deletedAt: null, image: null },
   };
 
   test('renders the listing-media header, the asset checklist, and NO URL / connect panel', async () => {
@@ -489,7 +489,7 @@ describe('OffsiteReviewModal — on-site republish re-review (kind: onsite, NON-
       // The whole discriminator: this request targets the LIVE listing, not a shadow.
       revisionOfId: null,
     },
-    submittedBy: { id: 42, username: 'author-dev', image: null },
+    submittedBy: { id: 42, username: 'author-dev', deletedAt: null, image: null },
   };
 
   test('🔴 the note describes a REPUBLISH review and says the rating is RAISED, not capped', async () => {

@@ -114,7 +114,7 @@ The `=== true` matches in [generation.service.ts:591,779](../src/server/services
 - [user.controller.ts:1297](../src/server/controllers/user.controller.ts#L1297) — `!ctx.features[key]` already truthy-style
 - [trpc.ts:217](../src/server/trpc.ts#L217) `isFlagProtected` uses `!features[flag]` — already truthy-style
 - [constants.ts:1708,1718](../src/server/common/constants.ts#L1708) already uses `features?.X ?? false` — partial-aware (good pattern; recommend for new code)
-- [data-graph context.ts:21](../src/shared/data-graph/generation/context.ts#L21) already typed as `Partial<FeatureAccess>` — data-graph nodes already partial-aware
+- [context.ts:21](../src/shared/generation/context.ts#L21) already typed as `Partial<FeatureAccess>` — generation graph fields already partial-aware
 
 **Step 1.5 — Convert destructure sites to alias pattern.** ✅ All 36 destructure sites converted:
 

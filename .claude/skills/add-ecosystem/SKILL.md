@@ -14,9 +14,9 @@ Use when a new model provider or variant is being added to Civitai — e.g., new
 This skill has two modes, and you should only be here if one of them applies:
 
 - **New ecosystem**: a new line, or a checkpoint that existing resources in its ecosystem won't run on (for example `LTXV` → `LTXV2`).
-- **Base model only**: a hosted-weights checkpoint that existing resources in its ecosystem *do* run on (for example `SDXL 0.9` → `SDXL 1.0`). Skip the `ECO`, family and ecosystem steps. Add only the `BM` constant and the `baseModelRecords` entry, pointing at the existing ecosystem.
+- **Base model only**: a hosted-weights checkpoint that existing resources in its ecosystem *do* run on (for example `SDXL 0.9` → `SDXL 1.0`). Skip the `ECO`, family and ecosystem steps. Add only the `BM` constant and the `baseModelRecords` entry, pointing at the existing ecosystem. Also used for the API-only exception below.
 
-**A new release of an API-only model that already has an ecosystem needs neither.** It becomes a new model version under the existing base model, with no constants change. Stop and say so. `onboard-generator-model` Phase 0 has the full decision.
+**A new release of an API-only model that already has an ecosystem usually needs neither.** It becomes a new model version under the existing base model, with no constants change. Stop and say so — unless the existing base model is hosted weights whose licence, restrictions or LoRAs must not apply to the API release; then use **Base model only** with `hidden: true` (`Ideogram 4.5` beside `Ideogram 4.0`). `onboard-generator-model` Phase 0 has the full decision.
 
 ## The test: does this need its own ecosystem?
 
@@ -183,4 +183,4 @@ Note: making a new ecosystem **generatable** (`GenerationBaseModel`) and **featu
 
 - **Ernie** (Baidu, image): new family, new license; ECO.Ernie = 67, BM.Ernie = 83, familyId 17, licenseId 13 (Apache 2.0 — matched existing).
 - **Seedance** (ByteDance, video): family 12 (ByteDance — existed), licenseId 23 (Seedream — shared with Seedream since ByteDance uses the same agreement).
-- **Flux 3 Video** (BFL, video): ECO.Flux3Video = 79, BM.Flux3Video = 98, family 1, new licenseId 39. A worked example of the split test — BFL announced FLUX-3 as one multimodal model, which reads like a single ecosystem, but it ships as separate weight releases (Video, Image, the open-weight Dev backbone). Shared architecture, different checkpoints ⇒ separate ecosystems, named for the modality so the siblings land without a rename. Same reasoning as the Flux.2 Klein variants, which share `parentEcosystemId: ECO.Flux2` purely for AIR identity while their LoRAs do not cross.
+- **Flux 3 Video / Flux.3** (BFL): ECO.Flux3Video = 79, BM.Flux3Video = 98; ECO.Flux3 = 92, BM.Flux3 = 112 (display "Flux.3"); both family 1, licenseId 39 (BFL ToS, new with Video, shared by Image). A worked example of the split test — BFL announced FLUX-3 as one multimodal model, which reads like a single ecosystem, but it ships as separate weight releases (Video, Image, the open-weight Dev backbone). Shared architecture, different checkpoints ⇒ separate ecosystems. Video took a modality-suffixed key; the Image release took the bare `Flux3` to match Flux.1/Flux.2 naming, so a third sibling needs its own suffix (e.g. `Flux3Dev`). Same reasoning as the Flux.2 Klein variants, which share `parentEcosystemId: ECO.Flux2` purely for AIR identity while their LoRAs do not cross.

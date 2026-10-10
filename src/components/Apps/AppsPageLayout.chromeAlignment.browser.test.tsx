@@ -1,17 +1,47 @@
 /**
  * `/apps` chrome — RENDERED HORIZONTAL ALIGNMENT ACROSS ROUTES.
  *
- * 🔴 THE CHROME IS A LEFT RAIL NOW, AND THE 12-ROUTE LEDGER IS THE REASON THIS FILE
- * BARELY CHANGED. The invariant — the nav's left edge and width are IDENTICAL on every
- * `/apps/*` route — is exactly the same claim; only the numbers moved (the nav is 260px
- * wide in its own column rather than the full container width, and the body starts 276px
- * further right). Two things were ADDED rather than altered:
- *   • every alignment assertion runs ONCE PER RAIL STATE, open and collapsed, because the
- *     collapse is a new dimension the layout has and a per-route default would break the
- *     ledger by design (see `appsRailState.tsx` for why the state lives in `_app`);
- *   • the BODY's left edge is now `navLeft + railChrome` rather than `navLeft`, so the
- *     left-alignment claim moved from "the body starts where the nav starts" to "the body
- *     starts where the rail ends" — a different number, the same defect it rules out.
+ * 🔴 THE INVARIANT IS AN EQUALITY BETWEEN ROUTES, NOT A SET OF PIXEL VALUES, AND THIS
+ * FILE NOW SAYS SO IN CODE. It used to build its expectation as a table of literals —
+ * `[containerLeft, railWidth]` per route — which asserted the right thing by arithmetic
+ * coincidence and went stale on any chrome change that moved the rail's box, including
+ * changes with nothing to do with route alignment. The claim is: EVERY route's nav rect
+ * matches EVERY OTHER route's, and the body's left edge is that nav's left edge plus the
+ * rail's declared chrome. Both are now computed FROM THE FIRST ROUTE'S OWN MEASUREMENT,
+ * which makes them viewport-independent, rail-state-independent, and unable to go stale
+ * when the rail's internal geometry moves.
+ *
+ * 🔴 WHAT STOPS THAT BEING VACUOUS — THREE THINGS, ALL DELIBERATELY KEPT:
+ *   • `styleSheetLoaded`, asserted first in every test. Without
+ *     `@mantine/core/styles.css` the Container computes `max-width: none` /
+ *     `padding-left: 0`, every route measures `left: 0` at an identical width, and "they
+ *     all agree" PASSES while measuring nothing. It is the most valuable assertion here.
+ *   • THE CONTAINER's own geometry, still pinned as LITERALS per viewport (1440 / 2560 /
+ *     3440 → left + content width). Those pin the Container rather than the rail, so a
+ *     relational claim about the rail is anchored to a box whose absolute position is
+ *     known — in particular at the CENTRED branch (3440), which is the one a
+ *     re-introduced per-page container width shows up in most loudly.
+ *   • the derive-then-pin `ROUTES` set, so the loops cannot quietly shrink to one element
+ *     (or to none) and agree with themselves.
+ *
+ * 🔴 THE RAIL STATE IS A DIMENSION, NOT A SECOND SUITE: every alignment assertion runs
+ * ONCE PER RAIL STATE, open and collapsed, because a per-route collapse default would
+ * break the ledger by design (see `appsRailState.tsx` for why the state lives in `_app`).
+ *
+ * ⚠️ THE VERTICAL CLAIM THAT USED TO LIVE HERE IS GONE, AND THE DELETION IS A
+ * CONSOLIDATION RATHER THAN A LOSS. The last test in this file asserted the 32px
+ * band→body gap, which `AppsPageLayout.geometry.browser.test.tsx` ALREADY asserted twice —
+ * so one vertical number had three homes and a vertical change had to be re-fixed in all
+ * of them. That file is the single home for the page chrome's vertical geometry now;
+ * `AppsRailHeaderRow.geometry.test.tsx` owns the rail's INTERNAL vertical geometry (the
+ * heading row the collapse toggle shares), which is a different subject. This file is
+ * horizontal only.
+ *
+ * ⚠️ WHAT THE MOVE COST, SAID PLAINLY: the copy deleted from here ran once per viewport
+ * (1440 / 2560 / 3440) and the surviving one renders at 1440 only. The gap is a
+ * non-responsive `Stack gap="xl"`, so no reachable defect is lost — but the coverage
+ * narrowed, and "a consolidation rather than a loss" would be overclaiming without this
+ * sentence.
  *
  * 🔴 THE DEFECT THIS PINS. `AppsPageLayout` used to take a per-page container width
  * and render `AppsSubNav` INSIDE that Container, so the ONE element required to be
@@ -47,12 +77,25 @@
  * re-derive the culprit from any comment: run the project and read the file list.
  *
  * A permanently-red non-blocking gate trains everyone to click through it, so anything
- * only this file catches is effectively unguarded. The ENFORCEABLE half therefore lives
- * in the blocking `unit` project: `__tests__/appsPageLayoutRender.test.ts` (the measure
- * box, on the rendered tree), `__tests__/appsPageLayout.test.ts` (no container-width
- * prop) and `__tests__/appsPageWidths.test.ts` (the AST adoption walk + the measures and
- * route taxonomy). This file exists because those pin STRUCTURE, and only a real browser
- * can pin PIXELS.
+ * only this file catches is effectively unguarded. ⚠️ THIS PARAGRAPH USED TO CONTINUE
+ * "the ENFORCEABLE half therefore lives in the blocking `unit` project", AND THAT CLAIM
+ * WAS FALSE. Verified 2026-10-03 against the GitHub API: `civitai/civitai` `main` carries
+ * `required_status_checks: null` — there is NO required check on this branch, so NO
+ * project in this repo can block a merge, `unit` included. `.github/workflows/lint.yml`'s
+ * `geometry:` job says the same thing in its own comment. "Report-only" therefore
+ * describes every tier here, and a local run is the only real gate.
+ *
+ * The `unit`-project siblings are still where the STRUCTURAL half lives and are still
+ * worth having — `__tests__/appsPageLayoutRender.test.ts` (the measure box, on the
+ * rendered tree), `__tests__/appsPageLayout.test.ts` (no container-width prop) and
+ * `__tests__/appsPageWidths.test.ts` (the AST adoption walk + the measures and route
+ * taxonomy). They are just not enforcement. This file exists because they pin STRUCTURE
+ * and only a real browser can pin PIXELS.
+ *
+ * (Of the browser tiers, only `geometry` is RUN by that workflow at all — report-only on
+ * a PR, a real red on a push to `main`. `component`, which collects this file, matches no
+ * project selector there. A new rendered-pixel claim is therefore worth more in
+ * `geometry`; see `AppsRailHeaderRow.geometry.test.tsx`.)
  *
  * 🔴 WHY THIS FILE LOADS `@mantine/core/styles.css` AND MOST SIBLINGS MUST NOT.
  * The shared component scaffold deliberately omits Mantine's stylesheet, so the
@@ -128,7 +171,9 @@ const ROUTES: { route: string; measure?: AppsMeasure }[] = [
 ].sort((a, b) => (a.route < b.route ? -1 : a.route > b.route ? 1 : 0));
 
 /**
- * The container's own geometry at each viewport, as LITERALS.
+ * The container's own geometry at each viewport, as LITERALS. 🔴 THESE ARE THE ONLY
+ * ABSOLUTE NUMBERS LEFT IN THIS FILE, AND THEY PIN THE CONTAINER RATHER THAN THE RAIL —
+ * see the header. They are what makes the rail's relational claim non-vacuous.
  *
  * Container `max-width: 2560`, `padding-inline: 16`, `margin-inline: auto`. So:
  *   1440 → narrower than the cap, full-bleed: left 16, content 1440 − 32 = 1408.
@@ -183,7 +228,10 @@ function measure() {
   }
   const navRect = nav.getBoundingClientRect();
   const bodyRect = body.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
   const containerStyle = getComputedStyle(container);
+  const padLeft = parseFloat(containerStyle.paddingLeft);
+  const padRight = parseFloat(containerStyle.paddingRight);
   return {
     // Guard-the-guard: without `@mantine/core/styles.css` the Container loses its
     // max-width and padding, every route measures `left: 0` with the SAME width, and the
@@ -195,7 +243,14 @@ function measure() {
     // load — so reading it would report 0 with the stylesheet present and turn the
     // control into a permanent red. The Container's own `padding-inline` comes from the
     // SAME stylesheet and is what every number below actually depends on.
-    styleSheetLoaded: parseFloat(containerStyle.paddingLeft) > 0,
+    styleSheetLoaded: padLeft > 0,
+    /**
+     * The Container's own CONTENT box — the pair pinned as literals in `VIEWPORTS`.
+     * Measured here rather than assumed so the relational claims below can be anchored
+     * to a box whose absolute position is independently asserted.
+     */
+    containerLeft: px(containerRect.left + padLeft),
+    containerContentWidth: px(containerRect.width - padLeft - padRight),
     navLeft: px(navRect.left),
     navWidth: px(navRect.width),
     bodyLeft: px(bodyRect.left),
@@ -270,10 +325,12 @@ describe.each(VIEWPORTS)(
       test('nav left AND width are the same on all 12 routes', async () => {
         await page.viewport(width, height);
         const seen: Record<string, [number, number]> = {};
+        const container: Record<string, [number, number]> = {};
         for (const { route, measure: m } of ROUTES) {
           const g = await renderAndMeasure(m, collapsed);
           expect(g.styleSheetLoaded, `${route}: Mantine stylesheet did not load`).toBe(true);
           seen[route] = [g.navLeft, g.navWidth];
+          container[route] = [g.containerLeft, g.containerContentWidth];
           await cleanup();
         }
 
@@ -281,18 +338,31 @@ describe.each(VIEWPORTS)(
         // every assertion below trivially true.
         expect(Object.keys(seen)).toHaveLength(ROUTES.length);
 
-        // One assertion over the WHOLE table, so a failure names every offending
-        // route and its actual pair rather than stopping at the first.
-        //
-        // 🔴 THE PAIR IS A LITERAL, NOT A RE-DERIVATION. `containerLeft` is the
-        // Container's own left edge (which the rail does not move) and `railWidth` is
-        // the state's declared width — so "every route agrees" cannot be satisfied by
-        // every route measuring 0, which is exactly what an unloaded stylesheet
-        // produces.
-        const expected = Object.fromEntries(
-          ROUTES.map(({ route }) => [route, [containerLeft, railWidth]])
+        // 🔴 THE NON-VACUITY ANCHOR, AND THE ONLY LITERAL IN THIS TEST. The CONTAINER's
+        // own content box is the same on every route by construction (that is what
+        // removing the per-page `size` prop bought), and its absolute position is known
+        // from the viewport. Pinning it means "every route agrees about the nav" cannot
+        // be satisfied by every route measuring 0 — which is exactly what an unloaded
+        // stylesheet produces — without this assertion failing first.
+        expect(container).toEqual(
+          Object.fromEntries(ROUTES.map(({ route }) => [route, [containerLeft, contentWidth]]))
         );
-        expect(seen).toEqual(expected);
+
+        // 🔴 THE INVARIANT ITSELF: A RELATION, NOT A TABLE OF NUMBERS. Every route's nav
+        // rect equals the FIRST route's — asserted as one comparison over the whole table
+        // so a failure names every offending route and its actual pair rather than
+        // stopping at the first. Nothing here records what that pair should be, which is
+        // the point: the claim survives any change to the rail's own geometry and fails
+        // only when two routes disagree.
+        const [first] = ROUTES;
+        const reference = seen[first.route];
+        expect(seen).toEqual(Object.fromEntries(ROUTES.map(({ route }) => [route, reference])));
+
+        // …and the rail's width is the state's DECLARED width, read from the module
+        // rather than recorded here. This is the one absolute fact about the rail worth
+        // asserting, and it is a module constant, not a literal: it is what distinguishes
+        // "every route agrees" from "every route agrees on the wrong number".
+        expect(reference[1]).toBe(railWidth);
       });
 
       test('the BODY still takes its measure, left-aligned AFTER the rail', async () => {
@@ -305,12 +375,26 @@ describe.each(VIEWPORTS)(
         // The body COLUMN is the container's content minus the rail and its gap. A
         // measure then caps the body INSIDE that column, which is why the resolution
         // below is against the column and not against the container.
-        const columnWidth = contentWidth - railChrome;
-        const bodyLeft = containerLeft + railChrome;
+        //
+        // 🔴 BOTH DERIVED FROM THE RENDER, NOT RECORDED. `bodyLeft` is each route's OWN
+        // measured `navLeft` plus the rail's declared chrome, so the claim is "the body
+        // starts where the rail ends" rather than "the body starts at 292". The column
+        // width comes from the measured container content box, which the test above pins
+        // against its viewport literal.
         const seen: Record<string, [number, number]> = {};
+        const expected: Record<string, [number, number]> = {};
         for (const { route, measure: m } of ROUTES) {
           const g = await renderAndMeasure(m, collapsed);
           expect(g.styleSheetLoaded, `${route}: Mantine stylesheet did not load`).toBe(true);
+          const columnWidth = g.containerContentWidth - railChrome;
+          expected[route] = [
+            // LEFT-ALIGNED: the body's left edge is one rail-chrome right of THIS
+            // route's nav. A centred measure box would put it at
+            // `navLeft + railChrome + (columnWidth - m) / 2` and fail here, which is the
+            // whole reason the box carries no auto margins.
+            px(g.navLeft + railChrome),
+            Math.round(resolveMeasure(m, columnWidth)),
+          ];
           // 🔴 THE WIDTH IS ROUNDED TO A WHOLE PIXEL, THE LEFT EDGE IS NOT. A BAND
           // measure is a `clamp()` whose middle term is a PERCENTAGE of the body column,
           // so the used value is subpixel and the engine's rounding does not agree with
@@ -324,18 +408,14 @@ describe.each(VIEWPORTS)(
           await cleanup();
         }
         expect(Object.keys(seen)).toHaveLength(ROUTES.length);
-
-        const expected = Object.fromEntries(
-          ROUTES.map(({ route, measure: m }) => [
-            route,
-            // LEFT-ALIGNED: the body's left edge is the same on every route, measured
-            // or not — it is where the rail ends. A centred measure box would put it at
-            // `bodyLeft + (columnWidth - m) / 2` and fail here, which is the whole
-            // reason the box carries no auto margins.
-            [bodyLeft, Math.round(resolveMeasure(m, columnWidth))],
-          ])
-        );
         expect(seen).toEqual(expected);
+
+        // …and the left edge really is the SAME on every route, measured or not. That is
+        // the route-to-route invariant; the per-route comparison above is the
+        // body-starts-where-the-rail-ends one, and neither implies the other (a layout
+        // whose rail moved per route would satisfy the first and fail this).
+        const bodyLefts = new Set(Object.values(seen).map(([left]) => left));
+        expect(bodyLefts.size, `the body starts at ${[...bodyLefts]} across routes`).toBe(1);
 
         // And the measured routes are genuinely DISTINCT widths, so the fixture varies
         // the dimension under test instead of feeding one value 12 times. TWO classes
@@ -355,27 +435,32 @@ describe.each(VIEWPORTS)(
         await page.viewport(width, height);
         const g = await renderAndMeasure(undefined, collapsed);
         expect(g.styleSheetLoaded).toBe(true);
-        expect(g.navLeft).toBe(containerLeft);
+        // The Container's own box is where the viewport literals are spent…
+        expect(g.containerLeft).toBe(containerLeft);
+        expect(g.containerContentWidth).toBe(contentWidth);
+        // …and everything about the rail is a relation to it or a module constant.
+        expect(g.navLeft).toBe(g.containerLeft);
         expect(g.navWidth).toBe(railWidth);
         expect(g.bodyLeft - g.navLeft).toBe(railChrome);
-        expect(g.bodyWidth).toBe(contentWidth - railChrome);
+        expect(g.bodyWidth).toBe(g.containerContentWidth - railChrome);
       });
     });
 
-    test('🔴 a measured page HEADER is bounded too, and the band keeps its 32px gap to the body', async () => {
+    test('🔴 a measured page HEADER is bounded too, and shares the body’s left edge', async () => {
       // The audit finding this pins: with only the body bounded, a measured page's header
       // PROSE ran to the full container (/apps/submit's real subtitle measured 1224.13px
-      // against a 1068 measure). Both are bounded now — and the vertical grouping must
-      // survive the extra wrapper.
+      // against a 1068 measure). Both are bounded now.
       //
-      // ⚠️ THE 16px HALF OF THE GROUPING IS NOT ASSERTED HERE ANY MORE, AND THE DELETION
-      // IS DELIBERATE RATHER THAN AN OVERSIGHT. It was `title.top − firstTab.bottom`, i.e.
-      // the gap between the TAB STRIP and the title — two things that are no longer in the
-      // same column, so the measurement has no subject. On a desktop viewport the band's
-      // only other child (the drawer trigger) is `display: none`, so the band contains the
-      // header alone and there is no in-band gap left to measure. The 32px band→body gap
-      // survives unchanged and is asserted below; the `gap="md"` SOURCE pin in
-      // `__tests__/appsPageLayout.test.ts` is what still guards the other number.
+      // ⚠️ THE 16px HALF OF THE BAND GROUPING WAS DELETED FROM HERE EARLIER AND THE 32px
+      // HALF IS NOW GONE TOO — BOTH DELIBERATELY, AND THE SECOND IS A CONSOLIDATION. The
+      // 16px gap was `title.top − firstTab.bottom`, between two things that are no longer
+      // in the same column, so the measurement has no subject. The 32px band→body gap is a
+      // VERTICAL claim, and `AppsPageLayout.geometry.browser.test.tsx` already asserted it
+      // in TWO of its tests (`bandToBody`) — so one number had three homes and any vertical
+      // change had to be re-fixed in all three. It lives there now, in the file whose
+      // subject it is; the `gap="md"` / `gap="xl"` SOURCE pins in
+      // `__tests__/appsPageLayout.test.ts` still guard the pair in the blocking-adjacent
+      // `unit` tier. What stays here is the HORIZONTAL half, which is this file's subject.
       await page.viewport(width, height);
       renderWithProviders(
         <AppsRailProvider value="open">
@@ -412,15 +497,6 @@ describe.each(VIEWPORTS)(
       expect(Math.round(titleRect.left - nav.getBoundingClientRect().left)).toBe(
         appsRailChromeWidth(false)
       );
-
-      // THE SURVIVING HALF OF THE GROUPING: 32px band→body, the number the layout's own
-      // comments call load-bearing.
-      const band = document.querySelector('[data-apps-chrome="band"]') as HTMLElement;
-      expect(
-        Math.round(
-          (bodyEl.getBoundingClientRect().top - band.getBoundingClientRect().bottom) * 100
-        ) / 100
-      ).toBe(32);
     });
   }
 );

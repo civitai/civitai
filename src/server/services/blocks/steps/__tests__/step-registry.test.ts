@@ -32,6 +32,7 @@ import {
   type StepModerationPosture,
 } from '~/server/services/blocks/steps';
 import type { OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
+import { isPlatformInternalStepType } from '~/server/services/blocks/steps/orchestrator-denylist';
 
 /**
  * Coverage for the App Blocks step-type registry (RFC #3515 migration step 1).
@@ -885,13 +886,17 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
     // is only safe because of this guard — otherwise a registered entry could
     // silently take over textToImage extraction.
     for (const nativeType of NATIVELY_EXTRACTED_STEP_TYPES) {
+      // `textToImage` is natively extracted AND denylisted (retired), and the denylist runs
+      // first — still refused, for the other reason.
       expect(() =>
         assertStepInvariants(
           'fixture-step',
           makeFixtureStep({ orchestratorType: nativeType } as Partial<AnyBlockStep>)
         )
       ).toThrow(
-        /is natively extracted by workflow\.service — a registered step must not shadow it/
+        isPlatformInternalStepType(nativeType)
+          ? /is platform-internal and cannot be submitted by an app block/
+          : /is natively extracted by workflow\.service — a registered step must not shadow it/
       );
     }
   });

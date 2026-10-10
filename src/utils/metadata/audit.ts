@@ -61,7 +61,10 @@ export type PromptTriggerCategory =
   | 'nsfw_blocklist'
   | 'profanity'
   | 'harmful_combo'
-  | 'external';
+  | 'external'
+  // Input longer than MAX_AUDIT_PROMPT_LENGTH: refused unscanned. Hard — never add it to
+  // SOFT_BLOCK_CATEGORIES, or a click-through would skip the regex layer for long prompts.
+  | 'over_length';
 
 export interface PromptTrigger {
   category: PromptTriggerCategory;
@@ -129,36 +132,67 @@ export interface EnrichedAuditResult {
 // below): the bounds keep individual regexes linear, this keeps the whole
 // pipeline's input bounded.
 export const MAX_AUDIT_PROMPT_LENGTH = 20000;
-const capAuditLength = <T extends string | undefined>(s: T): T =>
-  typeof s === 'string' && s.length > MAX_AUDIT_PROMPT_LENGTH
-    ? (s.slice(0, MAX_AUDIT_PROMPT_LENGTH) as T)
-    : s;
+// User-facing: reaches the generation error toast as "Your prompt was flagged: <this>".
+// Names the limit so someone who pasted a long prompt knows what to fix.
+const OVER_LENGTH_MESSAGE = `Prompt exceeds the maximum allowed length (${MAX_AUDIT_PROMPT_LENGTH.toLocaleString(
+  'en-US'
+)} characters)`;
+
+/**
+ * True when the block is the over-length size refusal and nothing else. That refusal is about the
+ * input's SIZE, not its content — it returns before any detector runs — so the recording path
+ * treats it as a size refusal rather than as evidence of a prohibited prompt.
+ */
+export function isOverLengthRefusal(triggers: PromptTrigger[]) {
+  return triggers.length > 0 && triggers.every((t) => t.category === 'over_length');
+}
+
+/**
+ * True when there is nothing to audit: the prompt AND the negative prompt are both blank.
+ *
+ * This is the one predicate for the empty-input fast path — `auditPromptEnriched`,
+ * `classifyPromptServer` and `auditPromptServer` all skip on it. Keying the fast path on the prompt
+ * alone left a non-empty negative prompt unaudited whenever the prompt was empty.
+ */
+export function isBlankAuditInput(prompt?: string | null, negativePrompt?: string | null) {
+  return !prompt?.trim() && !negativePrompt?.trim();
+}
 
 /**
  * Enriched version of auditPrompt that returns structured trigger data alongside blockedFor.
  * Used server-side for UserBan records, moderator UI, and the false-positive allowlist system.
+ *
+ * An empty prompt does not skip the audit when the negative prompt is non-empty: the negative
+ * prompt then gets every check it gets beside a non-empty prompt, including the length cap.
  */
 export const auditPromptEnriched = (
   prompt: string,
   negativePrompt?: string,
   checkProfanity?: boolean
 ): EnrichedAuditResult => {
-  if (!prompt.trim().length) return { blockedFor: [], triggers: [], success: true };
+  if (isBlankAuditInput(prompt, negativePrompt))
+    return { blockedFor: [], triggers: [], success: true };
   // Block over-length input outright (#2727 M2). Truncating then scanning would let
   // a banned word buried past MAX_AUDIT_PROMPT_LENGTH evade the regex layer; a
   // prompt this long is anomalous so we refuse it rather than scan a truncated copy.
+  //
+  // 🔴 The refusal carries a trigger. A trigger-less refusal once fell through to the
+  // external classifier alone, because the server audit raised a regex block only when
+  // `triggers.length > 0` — so over-length input skipped the regex layer entirely.
+  // `classifyPromptServer` now refuses any `success: false` (hard when trigger-less), but the
+  // trigger is still what names the refusal for the recording path (`isOverLengthRefusal`).
+  // `over_length` is a hard category (not in SOFT_BLOCK_CATEGORIES), so it can never be
+  // clicked through.
   if (
     prompt.length > MAX_AUDIT_PROMPT_LENGTH ||
     (negativePrompt != null && negativePrompt.length > MAX_AUDIT_PROMPT_LENGTH)
   ) {
     return {
-      blockedFor: ['Prompt exceeds the maximum allowed length'],
-      triggers: [],
+      blockedFor: [OVER_LENGTH_MESSAGE],
+      triggers: [{ category: 'over_length', message: OVER_LENGTH_MESSAGE }],
       success: false,
     };
   }
-  prompt = capAuditLength(prompt);
-  negativePrompt = capAuditLength(negativePrompt);
 
   // Per-sub-check timing instrumentation. Always-on but threshold-gated: below
   // AUDIT_SLOW_LOG_MS it costs only a handful of `performance.now()` deltas and

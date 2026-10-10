@@ -30,7 +30,7 @@ import { utcMs } from '$lib/format';
 
 /** Step types that are a training run. `model/model*` and `model/comfyNodepackSnapshot` share the
  *  `model/` namespace but are upload-scanning steps, not trainings. */
-const TRAINING_STEP_TYPES = `(
+export const TRAINING_STEP_TYPES = `(
   (startsWith(type, 'model/') AND NOT startsWith(type, 'model/model') AND type != 'model/comfyNodepackSnapshot')
   OR type IN ('training', 'imageResourceTraining')
 )`;

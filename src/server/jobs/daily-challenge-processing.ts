@@ -103,12 +103,13 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { upsertComment } from '~/server/services/commentsv2.service';
+import { createPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { createNotification } from '~/server/services/notification.service';
 import { toggleReaction } from '~/server/services/reaction.service';
 import {
   refundUserChallengeFunds,
-  buildWinnerPayoutTransactions,
+  buildWinnerPrizes,
   getChallengeBuzzType,
   reportPoolFundingShortfall,
 } from '~/server/games/daily-challenge/challenge-funding';
@@ -1087,6 +1088,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
+        eventPoints: false,
       });
       log('Comment sent', entry.imageId);
 
@@ -1097,6 +1099,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           entityId: entry.imageId,
           reaction: review.reaction,
           userId: judgingConfig.userId,
+          eventPoints: false,
         });
         log('Reaction sent', entry.imageId);
       } catch (error) {
@@ -1851,14 +1854,13 @@ export async function pickWinnersForChallenge(
     // money, but the builder increments the duplicate-pick counter on its drop branch, and
     // `withRetries` re-invokes up to 4 times — which would record 4x the placements actually
     // dropped on exactly the flaky-payout run where the number matters most.
-    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+    const winnerPrizes = buildWinnerPrizes({
       challengeId: currentChallenge.challengeId,
       title: currentChallenge.title,
-      buzzType: winnerBuzzType,
       winners: winningEntries,
     });
-    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
-    log('Prizes sent');
+    const awardedPrizes = await withRetries(() => createPrizes(winnerPrizes));
+    log('Prizes awarded');
 
     // 6. Distribute entry participation prizes
     const participationKeyId = currentChallenge.challengeId ?? currentChallenge.collectionId;
@@ -1934,11 +1936,9 @@ export async function pickWinnersForChallenge(
     //
     // Amount mirrors endChallengeAndPickWinners: the sum of the prizes SUBMITTED for the winners
     // paid on this completion (equal to each ChallengeWinner.buzzAwarded), not the configured prize
-    // table — a partial-winner completion pays less and must report less. Note this is prize Buzz
-    // ATTEMPTED, not confirmed-settled: `createBuzzTransactionMany` silently drops any non-success,
-    // non-conflict result (e.g. insufficientFunds) from both of its result arrays, so a leg that did
-    // not move money is invisible here and is still counted. `winnerBuzzType` is the currency
-    // buildWinnerPayoutTransactions actually paid in, and `challengeRecord` is already in scope —
+    // table — a partial-winner completion pays less and must report less. This is prize Buzz
+    // AWARDED, not paid: each winner claims theirs later. `winnerBuzzType` is the currency the
+    // pool was funded in, not the one a winner picks, and `challengeRecord` is already in scope —
     // neither needs a new query.
     recordChallengeCompleted({ source: challengeRecord?.source });
     recordChallengePrizePaidBuzz({
@@ -1962,6 +1962,7 @@ export async function pickWinnersForChallenge(
           challengeName: currentChallenge.title,
           position: entry.position,
           prize: entry.prize,
+          prizeId: awardedPrizes.find((prize) => prize.userId === entry.userId)?.id,
         },
       });
     }

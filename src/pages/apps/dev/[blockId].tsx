@@ -28,8 +28,10 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
  *   - `iframeSrc` is SERVER-DERIVED from the assigned tunnel host ONLY, validated
  *     against `^dev-[a-f0-9]{16}\.<APPS_DOMAIN>$` — never reflected from client
  *     input (T6). It can never be a `<slug>.civit.ai` deployed bundle host.
- *   - a ROUTE-SCOPED CSP (`frame-src https://<dev-host>`) is set on THIS response
- *     only — it never widens the global CSP (T7).
+ *   - a ROUTE-SCOPED CSP is set on THIS response only — it constrains what this
+ *     document may frame AND who may frame this document, and applies to no other
+ *     route (T7). The directives are at the `setHeader` call — not restated
+ *     here, or this summary goes stale on the first edit that adds one.
  */
 
 interface DevTunnelProps {
@@ -110,13 +112,46 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
       const token = signDevTunnelAccessToken({ userId: user.id, host });
       iframeSrc = `https://${host}/?dev=${encodeURIComponent(token)}`;
 
-      // ROUTE-SCOPED CSP (T7). Constrain THIS response's frame-src to exactly the
-      // assigned dev host — a tightening scoped to this route only; it does NOT
-      // touch the global CSP (set in next.config headers()). CSP host-sources do
-      // not support a `dev-*` LABEL wildcard (only full `*.civit.ai` subdomain
-      // wildcards, which would be far broader), so the EXACT host is used — the
-      // tightest valid form.
-      ctx.res.setHeader('Content-Security-Policy', `frame-src https://${host}`);
+      // ROUTE-SCOPED CSP (T7). `setHeader` REPLACES, and this is the only
+      // `Content-Security-Policy`-setting site in `src/` — next.config's
+      // `headers()` sets a CSP on `/gift-cards` alone, which this route never
+      // matches, so there is nothing to merge with today. 🔴 The coupling runs the
+      // other way, though: if a GLOBAL CSP is ever added to `headers()`, THIS
+      // RESPONSE drops every directive of it — only on this branch, since the
+      // no-tunnel and invalid-host paths never reach `setHeader` and so keep it.
+      // Fold those directives in here if that lands. (`headers()` already has a
+      // `/:path*` source for a dev-only header, so that is one line away.)
+      //
+      //   frame-src https://<host>  — what THIS document may frame: exactly the
+      //     assigned dev host. CSP host-sources do not support a `dev-*` LABEL
+      //     wildcard (only full `*.civit.ai` subdomain wildcards, which would be
+      //     far broader), so the EXACT host is used — the tightest valid form.
+      //
+      //   frame-ancestors 'none'  — who may frame THIS document: nobody.
+      //     next.config's `headers()` already sends `X-Frame-Options: DENY` here
+      //     (`source: '/((?!gift-cards).*)'` matches this route), but CSP says
+      //     that on a response carrying BOTH, frame-ancestors SHOULD be enforced
+      //     and X-Frame-Options SHOULD be ignored — a SHOULD, so a weaker value's
+      //     effect would be browser-dependent. Hence this value must be no weaker
+      //     than that DENY, which `'none'` is under either reading.
+      //     🔴 `'self'` is NOT interchangeable here — it is the equivalent of
+      //     SAMEORIGIN, so swapping it in would widen this route rather than
+      //     restate it.
+      //
+      // 🔴 This header reaches a DOCUMENT only on a hard navigation. On a
+      // client-side Next transition into this route, `getServerSideProps` runs for
+      // the `/_next/data/<buildId>/…json` fetch, so the directives land on a JSON
+      // response and the live document keeps whatever framing headers it was
+      // loaded with — not these. So this route is NOT self-sufficient on framing
+      // and the blanket `X-Frame-Options` rule in next.config is still doing work:
+      // do not retire or except that rule on the strength of the directives below.
+      // (No in-app link into this route exists today, but that does not make the
+      // case unreachable — a Back traversal is an inbound client-side navigation
+      // and needs no link.)
+      ctx.res.setHeader(
+        'Content-Security-Policy',
+        `frame-src https://${host}; frame-ancestors 'none'`
+      );
     }
 
     return {

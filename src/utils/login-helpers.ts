@@ -30,6 +30,7 @@ export const loginRedirectReasons = {
   'purchase-buzz': 'You need to be logged in to purchase Buzz',
   'image-gen':
     'Before you can generate, you need to create an account. Choose your preferred sign-in method below.',
+  'image-upload': 'You need to be logged in to upload images',
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
   'civitai-vault': 'You need to be logged in to access your Civitai Vault',
   'favorite-model': 'You need to be logged in to favorite a model',
@@ -41,6 +42,8 @@ export const loginRedirectReasons = {
   'create-challenge': 'You need to be logged in to create a challenge',
   'submit-challenge': 'You need to be logged in to submit entries to a challenge',
   'view-content': 'You need to log in to view this content',
+  'create-crucible': 'You need to be logged in to create a crucible',
+  'judge-crucible': 'You need to be logged in to judge crucible entries',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;

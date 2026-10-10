@@ -7,7 +7,9 @@
   import { goto } from '$app/navigation';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import type { ActionData, PageData } from './$types';
@@ -18,6 +20,9 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // Scopes the `for`/`id` pairs below to this instance.
+  const uid = $props.id();
 
   let ids = $state(untrack(() => data.ids));
   let names = $state(untrack(() => data.names));
@@ -355,16 +360,23 @@
               Add notes
             </Button>
           </div>
-          <label class="mt-2 flex items-center gap-2 text-xs text-dark-2">
-            <input type="checkbox" bind:checked={noteUnbannedOnly} />
-            Skip accounts that are already banned or deleted
-          </label>
+          <div class="mt-2 flex items-center gap-2" data-touch-target>
+            <Checkbox id="note-unbanned-only-{uid}" bind:checked={noteUnbannedOnly} />
+            <Label for="note-unbanned-only-{uid}" class="text-xs leading-snug font-normal text-dark-2">
+              Skip accounts that are already banned or deleted
+            </Label>
+          </div>
         </form>
       {/if}
 
       {#if data.canAct && bannable.length}
         {#if !confirming}
-          <Button class="mt-4" variant="destructive" onclick={() => (confirming = true)}>
+          <Button
+            class="mt-4"
+            variant="destructive"
+            onclick={() => (confirming = true)}
+            data-touch-target
+          >
             Ban {num(bannable.length)} accounts
           </Button>
         {:else}
@@ -378,14 +390,33 @@
               <!-- The endpoint blocks media only for `SexualMinor` unless this is set, so without it a
                    Nudify or Harassment ban leaves every image up. MODELS are not covered by this box:
                    `banAll` sends no `removeModels`, and the endpoint treats absent as ON. -->
-              <label class="mb-2 flex items-center gap-2 text-xs text-dark-2">
-                <input type="checkbox" name="removeMedia" value="true" bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))} />
-                Also remove their images
-              </label>
-              <label class="mb-2 flex items-center gap-2 text-xs text-dark-2">
-                <input type="checkbox" name="removeComments" value="true" bind:checked={() => removeComments, (v) => ((commentsTouched = true), (removeComments = v))} />
-                Also remove their comments
-              </label>
+              <!-- `name`/`value` stay on the control: the primitive renders the hidden input that
+                   carries them, so an unticked box posts nothing and a ticked one posts "true" —
+                   exactly what the raw input did, and what `banAll` reads. Same shape as
+                   `$lib/components/BanConfirmForm.svelte`, which posts these two fields already. -->
+              <div class="mb-2 flex items-center gap-2" data-touch-target>
+                <Checkbox
+                  id="bulk-ban-remove-media-{uid}"
+                  name="removeMedia"
+                  value="true"
+                  bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))}
+                />
+                <Label for="bulk-ban-remove-media-{uid}" class="text-xs leading-snug font-normal text-dark-2">
+                  Also remove their images
+                </Label>
+              </div>
+              <div class="mb-2 flex items-center gap-2" data-touch-target>
+                <Checkbox
+                  id="bulk-ban-remove-comments-{uid}"
+                  name="removeComments"
+                  value="true"
+                  bind:checked={() => removeComments,
+                  (v) => ((commentsTouched = true), (removeComments = v))}
+                />
+                <Label for="bulk-ban-remove-comments-{uid}" class="text-xs leading-snug font-normal text-dark-2">
+                  Also remove their comments
+                </Label>
+              </div>
               <div class="flex flex-wrap items-end gap-2">
                 <label class="flex flex-col gap-1 text-xs text-dark-2">
                   Reason
@@ -416,10 +447,17 @@
                   variant="destructive"
                   size="sm"
                   disabled={onSubmit.submitting || !reasonCode}
+                  data-touch-target
                 >
                   {onSubmit.submitting ? 'Banning…' : `Ban ${num(bannable.length)}`}
                 </Button>
-                <Button type="button" size="sm" variant="outline" onclick={() => (confirming = false)}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onclick={() => (confirming = false)}
+                  data-touch-target
+                >
                   Cancel
                 </Button>
               </div>

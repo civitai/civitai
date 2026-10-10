@@ -16,6 +16,7 @@ export const bountyWebhooks = createWebhookProcessor({
             gt: lastSent,
             lte: now,
           },
+          availability: { not: 'Private' },
         },
         select: getBountyDetailsSelect,
       });

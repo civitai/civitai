@@ -7,7 +7,16 @@ import { getBuzz } from './buzz';
 import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
 import { usersByIds } from './users.service';
-import { RATING_ACTIVITIES } from '$lib/mod-activity';
+import {
+  RATING_ACTIVITIES,
+  activityGroup,
+  isFamilyGroup,
+  type ModActivityCount,
+  type ModActivityCursor,
+} from '$lib/mod-activity';
+import { takePage } from './keyset-page';
+import { escapeLike } from './like';
+import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 
@@ -753,65 +762,159 @@ const ACTIVITY_CONTENT = [
   ['article', 'Article'],
 ] as const;
 
-/** `bucket` filters in SQL, never over the result: the queries below are each limited and then
+const DIRECT_ACTIVITY_TYPES = ['user', 'impersonate'] as const;
+
+/** Every filter applies in SQL, never over the result: the sources below are each limited and then
  *  merged, so narrowing afterwards shrinks a window the discarded rows already truncated. */
+export type ModActivityScope = {
+  userId: number;
+  bucket?: 'enforcement' | 'rating';
+  /** An `activityGroup` key: `buzz:send` matches every send, `minor:true` only itself. */
+  activity?: string;
+  entityType?: string;
+  before?: ModActivityCursor;
+};
+
+/** One query per place an account's activity can live, all over `ModActivity` so they share filters.
+ *
+ *  Owned content is matched with `= ANY(ARRAY(subquery))`, not a join. The largest creator owns ~860k
+ *  images, and a join lets the planner walk the global `createdAt` index backwards until it finds
+ *  enough of them — 6s for a rare activity and worse for each older page. The array pins the plan to
+ *  the account's own ids on the (entityType, entityId, createdAt) index: ~1s there, ~20ms for most. */
+function activitySources({ userId, bucket, activity, entityType, before }: ModActivityScope) {
+  const wants = (type: string) => !entityType || entityType === type;
+  const direct = DIRECT_ACTIVITY_TYPES.filter(wants);
+  const sources = direct.length
+    ? [
+        dbRead
+          .selectFrom('ModActivity as ma')
+          .where('ma.entityType', 'in', direct)
+          .where('ma.entityId', '=', userId),
+      ]
+    : [];
+  for (const [type, table] of ACTIVITY_CONTENT) {
+    if (!wants(type)) continue;
+    const owned = dbRead
+      .selectFrom(table as 'Image')
+      .select('id')
+      .where('userId', '=', userId);
+    sources.push(
+      dbRead
+        .selectFrom('ModActivity as ma')
+        .where('ma.entityType', '=', type)
+        .where(sql<boolean>`ma."entityId" = ANY(ARRAY(${owned}))`)
+    );
+  }
+
+  // Only a key `activityGroup` itself produces for a family matches as a prefix, so the page and the
+  // summary's counts select the same rows — a bare `buzz` must not sweep in every send and deduct.
+  const family = !!activity && isFamilyGroup(activity);
+  return sources.map((qb) =>
+    qb
+      .$if(bucket === 'enforcement', (q) => q.where('ma.activity', 'not in', RATING_ACTIVITIES))
+      .$if(bucket === 'rating', (q) => q.where('ma.activity', 'in', RATING_ACTIVITIES))
+      .$if(!!activity, (q) =>
+        q.where((eb) =>
+          family
+            ? eb.or([
+                eb('ma.activity', '=', activity!),
+                eb('ma.activity', 'like', `${escapeLike(activity!)}:%`),
+              ])
+            : eb('ma.activity', '=', activity!)
+        )
+      )
+      // A row-value comparison against the same (createdAt, id) ordering the pages are read in; two
+      // OR'd predicates are the classic way to drop or repeat the boundary row.
+      .$if(!!before, (q) =>
+        q.where(sql<boolean>`(ma."createdAt", ma.id) < (${before!.at}::timestamp, ${before!.id})`)
+      )
+  );
+}
+
+const newestFirst = (a: { createdAt: Date; id: number }, b: { createdAt: Date; id: number }) =>
+  b.createdAt.getTime() - a.createdAt.getTime() || b.id - a.id;
+
 export async function getModActivity(
   userId: number,
   limit = 40,
   bucket?: 'enforcement' | 'rating'
 ): Promise<ModActivityRow[]> {
-  const select = [
-    // `id` is selected purely so the UI has a stable key — ModActivity is append-only now, so two rows
-    // can share (createdAt, activity, entityId) and a composite key would collide.
-    'ma.id',
-    'ma.activity',
-    'ma.entityType',
-    'ma.entityId',
-    'ma.createdAt',
-    'ma.userId',
-  ] as const;
+  return (await readModActivity({ userId, bucket }, limit)).map(({ cursorAt: _, ...row }) => row);
+}
 
-  const direct = dbRead
-    .selectFrom('ModActivity as ma')
-    .select(select)
-    .where('ma.entityType', 'in', ['user', 'impersonate'])
-    .where('ma.entityId', '=', userId)
-    .$if(bucket === 'enforcement', (qb) => qb.where('ma.activity', 'not in', RATING_ACTIVITIES))
-    .$if(bucket === 'rating', (qb) => qb.where('ma.activity', 'in', RATING_ACTIVITIES))
-    .orderBy('ma.createdAt', 'desc')
-    .limit(limit)
-    .execute();
-
-  const viaContent = ACTIVITY_CONTENT.map(([entityType, table]) =>
-    dbRead
-      .selectFrom('ModActivity as ma')
-      .innerJoin(`${table} as c` as 'Image as c', 'c.id', 'ma.entityId')
-      .select(select)
-      .where('ma.entityType', '=', entityType)
-      .where('c.userId', '=', userId)
-      .$if(bucket === 'enforcement', (qb) => qb.where('ma.activity', 'not in', RATING_ACTIVITIES))
-      .$if(bucket === 'rating', (qb) => qb.where('ma.activity', 'in', RATING_ACTIVITIES))
-      .orderBy('ma.createdAt', 'desc')
-      .limit(limit)
-      .execute()
+export async function getModActivityPage(
+  scope: ModActivityScope,
+  pageSize = 50
+): Promise<{ rows: ModActivityRow[]; next: ModActivityCursor | null }> {
+  const { items, nextCursor } = takePage(
+    await readModActivity(scope, pageSize + 1),
+    pageSize,
+    (r): ModActivityCursor => ({ at: r.cursorAt, id: r.id })
   );
+  return { rows: items.map(({ cursorAt: _, ...row }) => row), next: nextCursor ?? null };
+}
 
-  const rows = (await Promise.all([direct, ...viaContent]))
+/** What the account's history holds, for the filter options — read from the whole history, not from
+ *  a page, or an action older than the page could never be selected. */
+export async function getModActivitySummary(
+  userId: number,
+  bucket?: 'enforcement' | 'rating'
+): Promise<ModActivityCount[]> {
+  const rows = (
+    await Promise.all(
+      activitySources({ userId, bucket }).map((qb) =>
+        qb
+          .select(['ma.activity', 'ma.entityType'])
+          .select((eb) => eb.fn.countAll<string>().as('count'))
+          .groupBy(['ma.activity', 'ma.entityType'])
+          .execute()
+      )
+    )
+  ).flat();
+
+  const counts = new Map<string, ModActivityCount>();
+  for (const r of rows) {
+    const activity = activityGroup(r.activity);
+    const entityType = r.entityType ?? '';
+    const key = `${activity}\u0000${entityType}`;
+    const entry = counts.get(key) ?? { activity, entityType, count: 0 };
+    entry.count += Number(r.count);
+    counts.set(key, entry);
+  }
+  return [...counts.values()];
+}
+
+async function readModActivity(
+  scope: ModActivityScope,
+  limit: number
+): Promise<(ModActivityRow & { cursorAt: string })[]> {
+  const rows = (
+    await Promise.all(
+      activitySources(scope).map((qb) =>
+        qb
+          .select([
+            // `id` is the UI's key and the cursor's tie-break — ModActivity is append-only now, so two
+            // rows can share (createdAt, activity, entityId).
+            'ma.id',
+            'ma.activity',
+            'ma.entityType',
+            'ma.entityId',
+            'ma.createdAt',
+            'ma.userId',
+          ])
+          .select(sql<string>`to_char(ma."createdAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS')`.as('cursorAt'))
+          .orderBy('ma.createdAt', 'desc')
+          .orderBy('ma.id', 'desc')
+          .limit(limit)
+          .execute()
+      )
+    )
+  )
     .flat()
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .sort(newestFirst)
     .slice(0, limit);
 
-  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
-
-  return rows.map((r) => ({
-    id: r.id,
-    activity: r.activity,
-    entityType: r.entityType ?? '',
-    entityId: r.entityId,
-    createdAt: r.createdAt,
-    moderatorId: r.userId,
-    moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
-  }));
+  return (await withModerators(rows)).map((r) => ({ ...r, entityType: r.entityType ?? '' }));
 }
 
 // RETOOL-ERA MODERATION HISTORY (`ReToolActions`, 131k rows).

@@ -1,6 +1,7 @@
 ---
 name: civitai-test-review
 description: Reviews the tests in a feature segment of the main Civitai Next.js app (src/) for whether they would actually fail if the code broke — vacuous assertions, over-broad mocks, fakes that hang instead of failing, suites that collect zero tests, and races in browser tests. Use before calling a segment done, alongside civitai-reuse-review, civitai-correctness-review, civitai-perf-review and civitai-intent-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -9,7 +10,7 @@ tools: Read, Grep, Glob, Bash
 **Scope is the tests in `src/` and the packages it imports.** The SvelteKit apps under `apps/` belong
 to the `svelte-*-review` trio.
 
-Read the **Testing** section of the root `CLAUDE.md` in full before you start. It is doctrine written
+Read the **Tests** section of the root `CLAUDE.md`, plus `.claude/rules/testing.md`, `.claude/rules/convention-guards.md` and `docs/dev/convention-guards.md`, in full before you start. It is doctrine written
 off real incidents in this repo, most of it recorded nowhere else, and it is the substance of this
 review.
 
@@ -178,48 +179,13 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-53 live in `src/server/services/__tests__/no-*.test.ts`:
-`no-agent-ground-truth-write`, `no-bound-make-interval` (a `make_interval` argument in `$queryRaw`/`Prisma.sql` must be inlined with `Prisma.raw` — bound, it arrives as int8 and throws 42883 at runtime, which a mocked-db test cannot see), `no-coerce-boolean-in-api`, `no-direct-block-budget-claim-read` (no submit gate may read the `claims.buzzBudget` per-call ceiling directly — every one goes through `blockPerCallBudget`, so a future ceiling decision is made in one place that knows whether the compared value carries the author fee), `no-direct-shared-module-mock`,
-`no-divergent-active-sales-cap` (SERVER side only: the `model.getActiveSales` parser enforces the id cap, and the chunk size a card surface splits to does not exceed it — it CANNOT see the call site, which is pinned behaviourally by `src/components/Cards/__tests__/useModelSaleBadges.test.ts`, a file in the full unit suite but NOT in `test:lint-rules`, so a `test:lint-rules` run alone does not cover that half; the procedure was rejecting every call from a scrolled feed as an input-validation 400, so no 5xx was recorded and the sale badge simply vanished from the grid), `no-divergent-author-fee-base` (every `recordSpendAttribution` call site must pass the App Blocks author fee the orchestrator's `submitted.cost.base`, never the snapshot and never the gross `buzzAmount`), `no-divergent-can-generate-derivation`, `no-divergent-coverage-read` (which of `GenerationCoverage`’s two rules answers is chosen in one place per side — `pickCovered` for the columns, `versionCanGenerate` for the indexed pair — so a copy left behind cannot keep answering under the old rule after the flag flips), `no-divergent-generation-file` (the file the orchestrator loads — and so a Checkpoint's AIR — is chosen by `getGenerationFile` alone; a cache bust that chose differently invalidated `...:checkpoint:...` while generation ran under `...:diffusionmodel:...`, so a re-enabled version kept being refused), `no-divergent-generation-submit-payload` (the two generation footers must submit the same payload keys — the form-graph lane silently dropped `sourceProvenance`, so its remixes lost the only VERIFIED half of their provenance while the unverified `remixOfId` went through), `no-divergent-hash-attribution-rule` (the hash tie-break is stated twice — in `get_image_resources.sql` for the image page and `prefersHashMatch` for the generator — so both must rank an OFFICIAL version above an earlier community re-host of the same bytes, and `excludeFromAutoDetection` must filter CANDIDATES: in the final SELECT it emptied the slot instead of passing it to the next candidate, removing 331 attributions and reassigning none), `no-divergent-generator-readiness` (“can this generate right now” is `generatorLoaded` OR an `ExternalGeneration` version, which has no weights to become resident — reading the column alone tells an API model’s user to wait for a download that never comes, and drops it from the loaded-only filter), `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-prompt-derivation` (the prompt-reuse remix threshold has one constant and one option-less verdict function, called by both the client claim check and the server's free-submission gate — it was a default parameter any caller could pass past), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
-ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
-`no-job-kind-on-remix-mint`, `no-lint-rules-script-drift`,
-`no-menu-target-tooltip-nesting` (a `Tooltip` INSIDE `Menu.Target` steals the ref the menu needs and
-the trigger silently stops opening),
-`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
-`no-sharp-outside-native-project`, `no-ssr-divergent-media-query`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
-`no-unbounded-paging-fake`, `no-unbumped-draft-status-write`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
-owner checked — see `assertWorkflowOwner`),
-`no-unguarded-block-rest-token` (every block REST page route must be wrapped by
-`withBlockScope`, which is the only place the REST surface takes the approved-status
-decision — an open-coded `verifyBlockToken` in a route is the same shape the bridge had),
-`no-unguarded-block-bridge-token` (every tRPC bridge proc must resolve its claims through
-`authorizeBlockBridgeToken`, never a bare `verifyBlockToken`), `no-unlimited-block-bridge-proc`
-(every tRPC bridge proc carries a RECORDED rate-limit decision — a bucket, or a stated reason for
-having none; the ledger's declared bucket is checked against what the proc actually charges, so it
-is a claim about the code rather than a list of names), `no-unfiltered-reaction-metric-sum` (a metric job that SUMs a reaction table must exclude the metric-suppressed
-accounts — the Postgres sums never decay, so an unfiltered total is permanent rather than
-stale), `no-unguarded-user-text`, `no-unhydrated-home-block-reactions` (a home block hands its images to `ImagesProvider` with `reactions: []`, because its payload is one shared anonymous cache entry — an un-highlighted reaction is one the viewer clicks OFF), `no-unledgered-settle-caller` (the customComfy post-paid settle path has exactly two production callers — `pollWorkflow` and `cancelWorkflow` — which is the assumption clawgate #572 accepted the 25h stranded-reservation window on; a third caller, or a lost one, changes that decision and must be loud), `no-unmarked-private-run-invocation` (every `recordScopeInvocation` writer — nine sites over four files — must carry the verified private-run claim, and all five owner-visible engagement reads must exclude the marker: the row carries the app's real id, so an unmarked one puts a moderator's review of a delisted app into that app owner's own analytics, which is the one signal the feature exists to withhold), `no-unloadable-image-fixture`,
-`no-unmoderated-blob-retraction` (the ledger of flows allowed to ask the image-cache service to
-destroy an image's SHARED stored object — a cross-account, irreversible act; moderation only),
-`no-unmuteable-comment-processor`, `no-unoffered-trial-exhaustion` (a spent generation trial must reach the
-purchase offer in BOTH generation footers, and suppress the proactive warning while it shows — the
-error was inert red text naming the model and offering nothing), `no-unscoped-email-verification-exemption`,
-`no-unthreaded-private-run-claim` (every money call site in `blocks.router.ts` must be fed the verified `claims.privateRun` — the two private-run money arms are branches in SERVICES, so an omitted argument leaves the arm inert at that path while every service unit test stays green; on the `chargeBlockAuthorFee` population an omission debits the reviewer and credits the suspended publisher),
-`no-untruthy-query-gate` (a query gated on a feature flag must coerce it — a sparse
-flag reads `undefined`, and React Query treats that as enabled), `no-unverified-provenance-write`,
-`no-unroled-image-resource-match` (resource detection must not match an image to a model on
-hash value alone — a bundled upstream component file otherwise credits a stranger's checkpoint),
-`no-unpriced-default-model`, `no-unwrapped-knob-rotation`, `no-wholesale-module-mock`.
+Every guard and what it enforces is listed in `docs/dev/convention-guards.md`; read it. Check a diff
+against the guards it could trip.
 
 ⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and
-fail only in a full-suite run. Five were missing when this was last audited, on 2026-08-24, and were
-wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
+fail only in a full-suite run. If the diff adds a guard, check it was wired into the script and into
+`docs/dev/convention-guards.md` (`no-lint-rules-script-drift` checks both), and don't treat a green
 `test:lint-rules` as "all guards passed".
-
-`test:lint-rules` names 58 files today.
-
-Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
-above literally — edit the numbers, not the shapes.
 
 If a guard fails, the code gets fixed. An added exemption needs a stated reason in the diff.
 

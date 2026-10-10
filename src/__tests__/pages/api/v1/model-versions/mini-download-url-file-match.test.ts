@@ -70,6 +70,7 @@ import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { modelVersionToAir } from '~/server/utils/resource-air';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 const VERSION_ID = 555;
 const OWNER_ID = 4242;
@@ -232,6 +233,7 @@ type Body = {
   hashes: Record<string, string>;
   downloadUrls: string[];
   isPromoted?: boolean;
+  evictable?: boolean;
 };
 
 async function run(
@@ -783,5 +785,105 @@ describe('GET /api/v1/model-versions/mini/[id] — the generation file', () => {
 
     expect(miniType).toBe('diffusionmodel');
     expect(lastAirArgs()?.type).toBe(miniType);
+  });
+});
+
+describe('evictable', () => {
+  it.each([
+    [0, true],
+    [ModelVersionFlag.NotEvictable, false],
+    [ModelVersionFlag.NotEvictable | ModelVersionFlag.GenerationDisabled, false],
+    [ModelVersionFlag.GenerationDisabled | ModelVersionFlag.NotDerivative, true],
+  ])('versionFlags %i -> evictable %s', async (versionFlags, evictable) => {
+    const { status, body } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(body.evictable).toBe(evictable);
+  });
+
+  it('is the same whichever file the caller asks about', async () => {
+    const versionFlags = ModelVersionFlag.NotEvictable;
+    const byDefault = await run([SAFETENSOR, GGUF], {}, { versionFlags });
+    const byFileId = await run(
+      [SAFETENSOR, GGUF],
+      { modelFileId: String(GGUF.id) },
+      { versionFlags }
+    );
+    expect(byFileId.body.fileName).toBe(GGUF.name);
+    expect(byDefault.body.evictable).toBe(false);
+    expect(byFileId.body.evictable).toBe(false);
+  });
+
+  // Promotion pins a version WITHOUT writing NotEvictable, so the pin lifts when the auction job
+  // drops the version from CoveredCheckpoint. Setting the flag instead would outlive the promotion.
+  it('a promoted version is not evictable, and becomes evictable again once not promoted', async () => {
+    const promoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: true });
+    const demoted = await run([SAFETENSOR], {}, { versionFlags: 0, isPromoted: false });
+    expect(promoted.body.evictable).toBe(false);
+    expect(demoted.body.evictable).toBe(true);
+  });
+});
+
+describe('additionalResourceCharge', () => {
+  // The orchestrator charges the additional-resource fee off this field, so the version's
+  // flags have to reach the charge decision, not just the response.
+  it('hands the version flags to the charge decision', async () => {
+    const versionFlags =
+      ModelVersionFlag.NoAdditionalResourceFee | ModelVersionFlag.GenerationDisabled;
+    const { status } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledWith([
+      {
+        modelType: versionRow.type,
+        modelId: versionRow.modelId,
+        fileSizeKB: SAFETENSOR.sizeKB,
+        versionFlags,
+      },
+    ]);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])('reports the charge decision for the version (%s)', async (charge) => {
+    mockGetShouldChargeForResources.mockResolvedValue({ [versionRow.modelId]: charge });
+    const { body } = await run([SAFETENSOR]);
+    expect((body as Body & { additionalResourceCharge?: boolean }).additionalResourceCharge).toBe(
+      charge
+    );
+  });
+});
+
+describe('payoutEnabled and tipsEnabled', () => {
+  const payouts = async (overrides: Partial<typeof versionRow>) => {
+    const { body } = await run([SAFETENSOR], {}, overrides);
+    const { payoutEnabled, tipsEnabled } = body as Body & {
+      payoutEnabled: boolean;
+      tipsEnabled: boolean;
+    };
+    return { payoutEnabled, tipsEnabled };
+  };
+
+  it('an ordinary version gets both', async () => {
+    expect(await payouts({})).toEqual({ payoutEnabled: true, tipsEnabled: true });
+  });
+
+  it('a licensing fee turns off compensation but NOT tips', async () => {
+    expect(await payouts({ licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: true,
+    });
+  });
+
+  it('an owner with DisablePayout gets neither', async () => {
+    expect(await payouts({ userFlags: 1 })).toEqual({ payoutEnabled: false, tipsEnabled: false });
+  });
+
+  it('DisablePayout wins over a licensing fee', async () => {
+    expect(await payouts({ userFlags: 1, licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
+  it('a system-owned (-1) version gets no tips', async () => {
+    expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
   });
 });

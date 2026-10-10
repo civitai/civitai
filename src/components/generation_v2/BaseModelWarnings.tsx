@@ -1,11 +1,16 @@
 import { useMemo } from 'react';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { BaseModelWarningPoints } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
-import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
+import {
+  ecosystemWarnings,
+  getBaseModelWarning,
+} from '~/shared/constants/base-model-warnings.constants';
 import { ecosystemByKey, getBaseModelsByEcosystemId } from '~/shared/constants/basemodel.constants';
 
 export function EcosystemBaseModelWarnings({ ecosystem }: { ecosystem?: string }) {
   const warnings = useMemo(() => {
+    const ecosystemWarning = ecosystem ? ecosystemWarnings[ecosystem] : undefined;
+    if (ecosystemWarning) return [{ baseModel: ecosystem as string, warning: ecosystemWarning }];
     const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
     if (ecosystemId == null) return [];
     return getBaseModelsByEcosystemId(ecosystemId).flatMap((baseModel) => {

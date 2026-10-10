@@ -40,7 +40,7 @@ function onsite(over: Partial<OnsiteReviewRequest> & { id: string }): OnsiteRevi
     fileSummary: {},
     manifestDiffSummary: {},
     reviewRepoUrl: 'https://forgejo.example/repo',
-    submittedBy: { id: 7, username: 'onsite-dev', image: null },
+    submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
     ...over,
   } as OnsiteReviewRequest;
 }
@@ -59,7 +59,7 @@ function offsite(over: Partial<OffsiteReviewRequest> & { id: string }): OffsiteR
       category: 'utility',
       contentRating: 'g',
     },
-    submittedBy: { id: 9, username: 'offsite-dev', image: null },
+    submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -78,17 +78,22 @@ describe('onsiteRequestToUnifiedRow', () => {
     expect(row.badgeColor).toBe('blue');
     expect(row.title).toBe('My Block');
     expect(row.slug).toBe('my-block');
-    expect(row.submitter).toEqual({ id: 7, username: 'onsite-dev', image: null });
+    expect(row.submitter).toEqual({ id: 7, username: 'onsite-dev', deletedAt: null, image: null });
   });
 
   it('falls back to the slug when the manifest has no usable name', () => {
-    expect(onsiteRequestToUnifiedRow(onsite({ id: 'r1', slug: 's', manifest: {} }), vi.fn()).title).toBe('s');
     expect(
-      onsiteRequestToUnifiedRow(onsite({ id: 'r2', slug: 's2', manifest: { name: '' } }), vi.fn()).title
+      onsiteRequestToUnifiedRow(onsite({ id: 'r1', slug: 's', manifest: {} }), vi.fn()).title
+    ).toBe('s');
+    expect(
+      onsiteRequestToUnifiedRow(onsite({ id: 'r2', slug: 's2', manifest: { name: '' } }), vi.fn())
+        .title
     ).toBe('s2');
     expect(
-      onsiteRequestToUnifiedRow(onsite({ id: 'r3', slug: 's3', manifest: null as unknown as object }), vi.fn())
-        .title
+      onsiteRequestToUnifiedRow(
+        onsite({ id: 'r3', slug: 's3', manifest: null as unknown as object }),
+        vi.fn()
+      ).title
     ).toBe('s3');
   });
 
@@ -108,6 +113,26 @@ describe('onsiteRequestToUnifiedRow', () => {
       vi.fn()
     );
     expect(approved.submittedAt.toISOString()).toBe('2026-03-05T00:00:00.000Z');
+  });
+
+  it('projects the approved row’s build signals onto deploy, and null when absent', () => {
+    const withSignals = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'f',
+        deployState: 'failed',
+        buildSignals: { failedStep: 'clone', failureClass: 'platform' },
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(withSignals.deploy?.buildSignals).toEqual({
+      failedStep: 'clone',
+      failureClass: 'platform',
+    });
+    const without = onsiteRequestToUnifiedRow(
+      onsite({ id: 'g', deployState: 'failed' } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(without.deploy?.buildSignals).toBeNull();
   });
 
   it('wires onReview to the on-site opener with the ORIGINAL request', () => {
@@ -135,13 +160,13 @@ describe('offsiteRequestToUnifiedRow', () => {
     expect(row.badgeColor).toBe('grape');
     expect(row.title).toBe('External App');
     expect(row.slug).toBe('ext-app');
-    expect(row.submitter).toEqual({ id: 9, username: 'offsite-dev', image: null });
+    expect(row.submitter).toEqual({ id: 9, username: 'offsite-dev', deletedAt: null, image: null });
   });
 
   it('falls back to the slug when the listing (or its name) is absent', () => {
-    expect(offsiteRequestToUnifiedRow(offsite({ id: 'o1', slug: 'sx', appListing: null }), vi.fn()).title).toBe(
-      'sx'
-    );
+    expect(
+      offsiteRequestToUnifiedRow(offsite({ id: 'o1', slug: 'sx', appListing: null }), vi.fn()).title
+    ).toBe('sx');
     expect(
       offsiteRequestToUnifiedRow(
         offsite({
@@ -202,7 +227,12 @@ describe('offsiteRequestToUnifiedRow', () => {
       connectScopeJustifications: { READ: 'why' },
       connectClient: { name: 'Client' },
     });
-    expect(passed.submittedBy).toEqual({ id: 9, username: 'offsite-dev', image: null });
+    expect(passed.submittedBy).toEqual({
+      id: 9,
+      username: 'offsite-dev',
+      deletedAt: null,
+      image: null,
+    });
   });
 
   it('defaults absent connect fields to null (external-link listing)', () => {
@@ -278,7 +308,10 @@ describe('key namespacing', () => {
   it('a code request, an external listing, and an on-site listing-media row sharing a raw id get 3 DISTINCT keys', () => {
     const code = onsiteRequestToUnifiedRow(onsite({ id: 'dup' }), vi.fn());
     const external = offsiteRequestToUnifiedRow(offsite({ id: 'dup' }), vi.fn());
-    const listingMedia = offsiteRequestToUnifiedRow(offsite({ id: 'dup', kind: 'onsite' }), vi.fn());
+    const listingMedia = offsiteRequestToUnifiedRow(
+      offsite({ id: 'dup', kind: 'onsite' }),
+      vi.fn()
+    );
     const keys = [code.key, external.key, listingMedia.key];
     expect(keys).toEqual(['onsite:dup', 'offsite:dup', 'onsite-listing:dup']);
     expect(new Set(keys).size).toBe(3);
@@ -295,12 +328,21 @@ function row(key: string, iso: string): UnifiedReviewRow {
     key,
     // `onsite:` = code review; everything else routes to the listing modal.
     kind: isOnsiteCode ? 'onsite' : 'offsite',
-    badge: isOnsiteCode ? 'App' : key.startsWith('onsite-listing:') ? 'Listing media' : 'Standalone',
+    badge: isOnsiteCode
+      ? 'App'
+      : key.startsWith('onsite-listing:')
+      ? 'Listing media'
+      : 'Standalone',
     badgeColor: isOnsiteCode ? 'blue' : key.startsWith('onsite-listing:') ? 'teal' : 'grape',
     title: key,
     submitter: null,
     submittedAt: new Date(iso),
     onReview: () => undefined,
+    version: null,
+    isFirstVersion: false,
+    playCount: null,
+    iconUrl: null,
+    coverUrl: null,
   };
 }
 
@@ -346,8 +388,12 @@ describe('mergeReviewRows', () => {
   });
 
   it('never drops a row: N on-site + M off-site (distinct keys) → N+M rows', () => {
-    const on = Array.from({ length: 4 }, (_, i) => row(`onsite:${i}`, `2026-01-0${i + 1}T00:00:00Z`));
-    const off = Array.from({ length: 3 }, (_, i) => row(`offsite:${i}`, `2026-02-0${i + 1}T00:00:00Z`));
+    const on = Array.from({ length: 4 }, (_, i) =>
+      row(`onsite:${i}`, `2026-01-0${i + 1}T00:00:00Z`)
+    );
+    const off = Array.from({ length: 3 }, (_, i) =>
+      row(`offsite:${i}`, `2026-02-0${i + 1}T00:00:00Z`)
+    );
     expect(mergeReviewRows(on, off, 'asc')).toHaveLength(7);
   });
 
@@ -404,11 +450,21 @@ describe('mergeReviewRows — combined code + listing-media', () => {
   /** A code row + a listing-media row for the same app (paired by slug). */
   function pairFor(app: string, opts?: { codeAt?: string; mediaAt?: string }) {
     const code = onsiteRequestToUnifiedRow(
-      onsite({ id: `code-${app}`, slug: app, appBlockId: `blk-${app}`, submittedAt: opts?.codeAt ?? '2026-01-01T00:00:00Z' }),
+      onsite({
+        id: `code-${app}`,
+        slug: app,
+        appBlockId: `blk-${app}`,
+        submittedAt: opts?.codeAt ?? '2026-01-01T00:00:00Z',
+      }),
       vi.fn()
     );
     const media = offsiteRequestToUnifiedRow(
-      offsite({ id: `media-${app}`, slug: app, kind: 'onsite', submittedAt: opts?.mediaAt ?? '2026-01-02T00:00:00Z' }),
+      offsite({
+        id: `media-${app}`,
+        slug: app,
+        kind: 'onsite',
+        submittedAt: opts?.mediaAt ?? '2026-01-02T00:00:00Z',
+      }),
       vi.fn()
     );
     return { code, media };
@@ -448,7 +504,10 @@ describe('mergeReviewRows — combined code + listing-media', () => {
   });
 
   it('an app with ONLY a listing-media row stays a single row (unchanged)', () => {
-    const media = offsiteRequestToUnifiedRow(offsite({ id: 'm1', slug: 'only-media', kind: 'onsite' }), vi.fn());
+    const media = offsiteRequestToUnifiedRow(
+      offsite({ id: 'm1', slug: 'only-media', kind: 'onsite' }),
+      vi.fn()
+    );
     const merged = mergeReviewRows([], [media], 'asc', vi.fn());
     expect(merged).toHaveLength(1);
     expect(merged[0].kind).toBe('offsite');
@@ -456,7 +515,10 @@ describe('mergeReviewRows — combined code + listing-media', () => {
   });
 
   it('an EXTERNAL off-site listing never combines (no code request)', () => {
-    const code = onsiteRequestToUnifiedRow(onsite({ id: 'c1', slug: 'app-x', appBlockId: 'blk-x' }), vi.fn());
+    const code = onsiteRequestToUnifiedRow(
+      onsite({ id: 'c1', slug: 'app-x', appBlockId: 'blk-x' }),
+      vi.fn()
+    );
     const external = offsiteRequestToUnifiedRow(offsite({ id: 'e1', slug: 'app-x' }), vi.fn()); // kind absent → external
     const merged = mergeReviewRows([code], [external], 'asc', vi.fn());
     // No listing-MEDIA row → the external listing + the code row stay separate.
@@ -494,5 +556,223 @@ describe('mergeReviewRows — combined code + listing-media', () => {
     const merged = mergeReviewRows([code], [media, external], 'asc', vi.fn());
     // combined@01-02, external@01-03.
     expect(merged.map((r) => r.kind)).toEqual(['combined', 'offsite']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The VERSION / first-version / plays / media projection.
+// ---------------------------------------------------------------------------
+
+describe('onsiteRequestToUnifiedRow — version, first-version, plays, media', () => {
+  it('carries the semver, the request id and the manifest-diff first-version verdict', () => {
+    const row = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'r-ver',
+        version: '2.7.1',
+        manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
+      }),
+      vi.fn()
+    );
+    expect(row.version).toBe('2.7.1');
+    expect(row.isFirstVersion).toBe(true);
+    // The marker the prior-versions modal uses to pick out the entry on screen.
+    expect(row.publishRequestId).toBe('r-ver');
+  });
+
+  it('an UPDATE diff is not a first version', () => {
+    const row = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'r-upd',
+        version: '3.4.5',
+        manifestDiffSummary: { kind: 'update', added: [], removed: [], changed: [] },
+      }),
+      vi.fn()
+    );
+    expect(row.isFirstVersion).toBe(false);
+    expect(row.version).toBe('3.4.5');
+  });
+
+  it('a MISSING or null manifest diff is not a first version either (fail-safe direction)', () => {
+    // A legacy row with no diff blob must not claim the loud badge — claiming it would
+    // tell a moderator nothing has ever shipped for an app that has.
+    for (const mds of [{}, null, undefined, { kind: 'something-else' }]) {
+      const row = onsiteRequestToUnifiedRow(
+        onsite({ id: `r-${String(mds)}`, manifestDiffSummary: mds as unknown as object }),
+        vi.fn()
+      );
+      expect(row.isFirstVersion).toBe(false);
+    }
+  });
+
+  it('projects the joined store-listing facts, keeping null distinct from zero', () => {
+    const withFacts = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'r-facts',
+        playCount: 4821,
+        iconUrl: 'https://cdn.example/icon-a.png',
+        coverUrl: 'https://cdn.example/cover-a.png',
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(withFacts.playCount).toBe(4821);
+    expect(withFacts.iconUrl).toBe('https://cdn.example/icon-a.png');
+    expect(withFacts.coverUrl).toBe('https://cdn.example/cover-a.png');
+
+    const zero = onsiteRequestToUnifiedRow(
+      onsite({ id: 'r-zero', playCount: 0 } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    expect(zero.playCount).toBe(0);
+
+    // An app with no listing row at all — absent in the payload → unknown, not 0.
+    const none = onsiteRequestToUnifiedRow(onsite({ id: 'r-none' }), vi.fn());
+    expect(none.playCount).toBeNull();
+    expect(none.iconUrl).toBeNull();
+    expect(none.coverUrl).toBeNull();
+  });
+});
+
+describe('offsiteRequestToUnifiedRow — a listing revision has no code version', () => {
+  it('leaves version null and never claims the first-version badge', () => {
+    for (const kind of ['offsite', 'onsite'] as const) {
+      const row = offsiteRequestToUnifiedRow(offsite({ id: `lr-${kind}`, kind }), vi.fn());
+      expect(row.version).toBeNull();
+      expect(row.isFirstVersion).toBe(false);
+      // No code request → nothing for the version modal to mark.
+      expect(row.publishRequestId).toBeUndefined();
+    }
+  });
+
+  it('still carries plays + media, which the listing row DOES have', () => {
+    const row = offsiteRequestToUnifiedRow(
+      offsite({
+        id: 'lr-facts',
+        playCount: 77,
+        iconUrl: 'https://cdn.example/icon-b.png',
+        coverUrl: 'https://cdn.example/cover-b.png',
+      }),
+      vi.fn()
+    );
+    expect(row.playCount).toBe(77);
+    expect(row.iconUrl).toBe('https://cdn.example/icon-b.png');
+    expect(row.coverUrl).toBe('https://cdn.example/cover-b.png');
+  });
+
+  it('an older payload with no listing facts reads as unknown', () => {
+    const row = offsiteRequestToUnifiedRow(offsite({ id: 'lr-bare' }), vi.fn());
+    expect(row.playCount).toBeNull();
+    expect(row.iconUrl).toBeNull();
+    expect(row.coverUrl).toBeNull();
+  });
+});
+
+describe("mergeReviewRows — a combined row takes the CODE half's version", () => {
+  it('version + first-version + request id come from the code row; media falls back', () => {
+    const code = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'code-cv',
+        slug: 'app-cv',
+        appBlockId: 'blk-cv',
+        version: '9.1.2',
+        manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
+        // Deliberately BLANK on the code half so the fallback is observable rather than
+        // coincidental: the listing row is the side that carries these here.
+      }),
+      vi.fn()
+    );
+    const media = offsiteRequestToUnifiedRow(
+      offsite({
+        id: 'media-cv',
+        slug: 'app-cv',
+        kind: 'onsite',
+        playCount: 312,
+        iconUrl: 'https://cdn.example/icon-c.png',
+        coverUrl: 'https://cdn.example/cover-c.png',
+      }),
+      vi.fn()
+    );
+    const merged = mergeReviewRows([code], [media], 'asc', vi.fn());
+    expect(merged).toHaveLength(1);
+    const combined = merged[0];
+    expect(combined.kind).toBe('combined');
+    expect(combined.version).toBe('9.1.2');
+    expect(combined.isFirstVersion).toBe(true);
+    expect(combined.publishRequestId).toBe('code-cv');
+    expect(combined.playCount).toBe(312);
+    expect(combined.iconUrl).toBe('https://cdn.example/icon-c.png');
+    expect(combined.coverUrl).toBe('https://cdn.example/cover-c.png');
+  });
+
+  it('the CODE half wins when both sides carry media', () => {
+    const code = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'code-cw',
+        slug: 'app-cw',
+        appBlockId: 'blk-cw',
+        playCount: 5,
+        iconUrl: 'https://cdn.example/icon-code.png',
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    const media = offsiteRequestToUnifiedRow(
+      offsite({
+        id: 'media-cw',
+        slug: 'app-cw',
+        kind: 'onsite',
+        playCount: 999,
+        iconUrl: 'https://cdn.example/icon-media.png',
+      }),
+      vi.fn()
+    );
+    const combined = mergeReviewRows([code], [media], 'asc', vi.fn())[0];
+    expect(combined.playCount).toBe(5);
+    expect(combined.iconUrl).toBe('https://cdn.example/icon-code.png');
+  });
+});
+
+describe('mergeReviewRows — the new fields changed NOTHING about merge/dedup/sort', () => {
+  /**
+   * 🔴 THE REGRESSION GUARD FOR THE WHOLE CHANGE. The adapters grew six fields; the thing
+   * that must not have moved is the key namespacing, the dedup and the ordering, because
+   * that is what decides which app a moderator acts on.
+   */
+  it('keys, dedup and both sort directions are unchanged with the fields populated', () => {
+    const a = onsiteRequestToUnifiedRow(
+      onsite({
+        id: 'ord-a',
+        slug: 'ord-a',
+        submittedAt: '2026-02-01T00:00:00Z',
+        version: '1.1.1',
+        playCount: 11,
+      } as Partial<OnsiteReviewRequest> & { id: string }),
+      vi.fn()
+    );
+    const b = offsiteRequestToUnifiedRow(
+      offsite({ id: 'ord-b', slug: 'ord-b', submittedAt: '2026-02-02T00:00:00Z', playCount: 22 }),
+      vi.fn()
+    );
+    const c = offsiteRequestToUnifiedRow(
+      offsite({
+        id: 'ord-c',
+        slug: 'ord-c',
+        kind: 'onsite',
+        submittedAt: '2026-02-03T00:00:00Z',
+        playCount: 33,
+      }),
+      vi.fn()
+    );
+
+    const asc = mergeReviewRows([a, a], [b, c, b], 'asc');
+    expect(asc.map((r) => r.key)).toEqual([
+      'onsite:ord-a',
+      'offsite:ord-b',
+      'onsite-listing:ord-c',
+    ]);
+    const desc = mergeReviewRows([a], [b, c], 'desc');
+    expect(desc.map((r) => r.key)).toEqual([
+      'onsite-listing:ord-c',
+      'offsite:ord-b',
+      'onsite:ord-a',
+    ]);
   });
 });

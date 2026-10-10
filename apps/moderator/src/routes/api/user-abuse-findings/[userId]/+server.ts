@@ -2,6 +2,13 @@ import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireUserIdParam } from '$lib/server/api-guard';
 import { getAbuseFindingsForUser } from '$lib/server/abuse-detection.service';
+import { moderatorDbStatus, storeUnavailableMessage } from '$lib/moderator-db-status';
+
+const ABUSE_STORE = {
+  tables: 'The abuse-detection tables',
+  database: 'the abuse-detection database',
+  schemaFile: 'schema.sql',
+};
 
 // Everything the automated detectors have said about ONE account, for the Moderation Activity
 // section of User Lookup.
@@ -47,16 +54,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     // indistinguishable from a real outage. Without this, an environment missing schema.sql answers
     // 500 on EVERY visit to this section for EVERY account, and logs it as an unhandled error.
     console.error('[abuse-detection] per-user findings load failed', e);
-    const code = (e as { code?: unknown }).code;
-    if (code === '42P01')
-      throw error(503, 'The abuse-detection tables do not exist yet — apply schema.sql.');
-    if (code === '42501')
-      throw error(
-        503,
-        'The abuse-detection tables exist but this role cannot read them — re-run schema.sql as the application role.'
-      );
-    if (e instanceof Error && e.message.includes('DATABASE_URL'))
-      throw error(503, 'MODERATOR_DATABASE_URL is not configured for this environment.');
-    throw error(503, 'Could not reach the abuse-detection database.');
+    throw error(503, storeUnavailableMessage(moderatorDbStatus(e), ABUSE_STORE));
   }
 };

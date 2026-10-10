@@ -34,6 +34,10 @@ const ALLOWLIST: Record<string, { procedures: string[]; why: string }> = {
     procedures: ['getArea', 'create'],
     why: 'Both, together: the router already requires that whoever sees the prompt can submit.',
   },
+  'app-feedback.router.ts': {
+    procedures: ['create'],
+    why: 'Private app feedback, same posture as feedback.create: its eligibility query is not email-gated, so the submit must not be either.',
+  },
   'user.router.ts': {
     procedures: ['updateBrowsingMode'],
     why: 'A browsing preference, not a content action.',
@@ -70,13 +74,16 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  * `MUST_STAY_GUARDED` and the alias ban both key on names at CALL SITES, and a downgrade does not
  * have to touch one. `comicProtectedProcedure = protectedProcedure.use(...)` carries **56** bindings;
  * editing that single line moves all 56 at once and no name changes anywhere, so every name-based
- * check stays green. This is the list that cannot grow with the codebase — 15 definitions against
- * 1,142 bindings — which is what makes maintaining it by hand reasonable where a call-site list is not.
+ * check stays green. This is the list that cannot grow with the codebase — 18 definitions against
+ * 1,240 `name: <…>Procedure` bindings, both re-measured at this commit — which is what makes
+ * maintaining it by hand reasonable where a call-site list is not. (Those two figures read 15 and
+ * 1,142 before this commit and no longer reproduced; the 56 above still does, exactly.)
  *
  * A red here is not automatically a bug. It means a procedure's effective gate moved, and someone has
  * to say whether that was intended. Update the value in the same commit that moves it, or don't move it.
  */
 const DERIVED_BASES: Record<string, string> = {
+  appStorageProcedure: 'publicProcedure',
   auctionProcedure: 'protectedProcedure',
   blurbProcedure: 'protectedProcedure',
   blurbWriteProcedure: 'guardedProcedure',
@@ -90,8 +97,10 @@ const DERIVED_BASES: Record<string, string> = {
   creatorShopProcedure: 'protectedProcedure',
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
+  guardedPromotionProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorProcedure: 'protectedProcedure',
+  promotionProcedure: 'protectedProcedure',
 };
 
 const stripComments = (s: string) =>

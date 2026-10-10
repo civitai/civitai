@@ -1,11 +1,21 @@
-import { Tabs } from '@mantine/core';
+import { Badge, Tabs } from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
-import { IconCheck, IconClipboardList, IconClock, IconFlag, IconX } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconClipboardList,
+  IconClock,
+  IconFlag,
+  IconLayoutGrid,
+  IconMessage2,
+  IconX,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ActivePreviewsPanel } from '~/components/Apps/ActivePreviewsPanel';
+import { AppFeedbackModQueue } from '~/components/Apps/AppFeedbackModQueue';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
+import { SubListingReviewQueue } from '~/components/Apps/SubListingReviewQueue';
 // The off-site review MODAL is now PAGE-OWNED (lifted here) so a single instance is
 // shared by the unified Pending list AND the `AppListingsModerationTable` — no
 // divergence. `OffsiteReportsQueue` still powers the Reports tab.
@@ -26,7 +36,11 @@ import {
   CombinedReviewModal,
   type CombinedReviewSelection,
 } from '~/components/Apps/CombinedReviewModal';
-import { UnifiedReviewList } from '~/components/Apps/UnifiedReviewList';
+import {
+  PriorVersionsModal,
+  type PriorVersionsSelection,
+} from '~/components/Apps/PriorVersionsModal';
+import { UnifiedReviewList, type VersionHistoryTarget } from '~/components/Apps/UnifiedReviewList';
 import type {
   CombinedReviewPayload,
   OffsiteReviewRequest,
@@ -46,7 +60,7 @@ import { trpc } from '~/utils/trpc';
  * /apps/review — Moderator review queue + history for Apps (on-site App Blocks AND
  * off-site external listings), UNIFIED into one list per tab.
  *
- * Five tabs:
+ * Seven tabs:
  *  - Pending  — ONE oldest-first FIFO list interleaving on-site publish requests
  *               (`blocks.listPendingRequests`) + off-site requests
  *               (`appListings.listPendingRequests`). Each row carries a kind badge
@@ -55,6 +69,8 @@ import { trpc } from '~/utils/trpc';
  *  - Rejected — unified newest-first history (on-site + off-site rejected requests).
  *  - Reports  — off-site listing report queue + mod takedown actions (unchanged).
  *  - Manage listings — the full all-status lifecycle table (reset/relist/claim/purge).
+ *  - Sub-listings — store items inside apps, and staged edits to them.
+ *  - App feedback — users' private feedback to app developers, with hide/unhide.
  *
  * Both review modals are PAGE-OWNED (lifted here): the on-site `OnsiteReviewModal`
  * and the off-site `OffsiteReviewModal`. The unified list + the management table
@@ -86,12 +102,19 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-type TabValue = 'pending' | 'approved' | 'rejected' | 'reports' | 'manage';
+const TAB_VALUES = [
+  'pending',
+  'approved',
+  'rejected',
+  'reports',
+  'manage',
+  'sub-listings',
+  'app-feedback',
+] as const;
+type TabValue = (typeof TAB_VALUES)[number];
 
 function isTabValue(v: unknown): v is TabValue {
-  return (
-    v === 'pending' || v === 'approved' || v === 'rejected' || v === 'reports' || v === 'manage'
-  );
+  return (TAB_VALUES as readonly unknown[]).includes(v);
 }
 
 /** Rows fetched per source per page (bounded by each proc's schema at ≤100). Mod
@@ -204,6 +227,34 @@ function mergeById<T extends { id: string }>(accumulated: T[], page: T[]): T[] {
   return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
 }
 
+/** Pending store items — new ones plus edits to approved ones — shown on the tab label. */
+export function SubListingPendingBadge() {
+  const { data } = trpc.appListings.countSubListingQueue.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data?.count) return null;
+  return (
+    <Badge size="xs" color="yellow" variant="filled" data-testid="sub-listing-pending-count">
+      {data.count}
+    </Badge>
+  );
+}
+
+/** Reports a developer flagged that no moderator has hidden yet, shown on the tab label. */
+export function AppFeedbackFlaggedBadge() {
+  const { data } = trpc.appFeedback.modCountFlagged.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data) return null;
+  return (
+    <Badge size="xs" color="red" variant="filled" data-testid="app-feedback-flagged-count">
+      {data}
+    </Badge>
+  );
+}
+
 export default function ReviewQueuePage() {
   const features = useFeatureFlags();
   const router = useRouter();
@@ -245,6 +296,12 @@ export default function ReviewQueuePage() {
   // BOTH a pending code request AND a pending listing-media revision (page-owned, one
   // instance). Each stacked section keeps its own independent approve/reject.
   const [combinedReview, setCombinedReview] = useState<CombinedReviewSelection>(null);
+  /**
+   * PRIOR-VERSIONS modal — page-owned for the same reason as the three above, and here the
+   * reason is sharper: the Pending queue refetches every 15s and its rows are
+   * whole-row-clickable, so row-local state would be torn down under a moderator mid-read.
+   */
+  const [priorVersions, setPriorVersions] = useState<PriorVersionsSelection>(null);
 
   // DUAL-PATH on-site row selection: under the `appReviewPage` flag a row NAVIGATES
   // to the deep-linkable detail page `/apps/review/<id>`; with the flag off it opens
@@ -275,6 +332,10 @@ export default function ReviewQueuePage() {
     },
     []
   );
+
+  const openVersionHistory = useCallback((target: VersionHistoryTarget) => {
+    setPriorVersions(target);
+  }, []);
 
   if (!features?.appBlocks) return <NotFound />;
 
@@ -318,6 +379,20 @@ export default function ReviewQueuePage() {
             <Tabs.Tab value="manage" leftSection={<IconClipboardList size={14} />}>
               Manage listings
             </Tabs.Tab>
+            <Tabs.Tab
+              value="sub-listings"
+              leftSection={<IconLayoutGrid size={14} />}
+              rightSection={<SubListingPendingBadge />}
+            >
+              Sub-listings
+            </Tabs.Tab>
+            <Tabs.Tab
+              value="app-feedback"
+              leftSection={<IconMessage2 size={14} />}
+              rightSection={<AppFeedbackFlaggedBadge />}
+            >
+              App feedback
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
@@ -326,6 +401,7 @@ export default function ReviewQueuePage() {
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
               openCombinedReview={openCombinedReview}
+              openVersionHistory={openVersionHistory}
             />
           </Tabs.Panel>
 
@@ -334,6 +410,7 @@ export default function ReviewQueuePage() {
               kind="approved"
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
+              openVersionHistory={openVersionHistory}
             />
           </Tabs.Panel>
 
@@ -342,6 +419,7 @@ export default function ReviewQueuePage() {
               kind="rejected"
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
+              openVersionHistory={openVersionHistory}
             />
           </Tabs.Panel>
 
@@ -350,11 +428,19 @@ export default function ReviewQueuePage() {
             <OffsiteReportsQueue />
           </Tabs.Panel>
 
+          <Tabs.Panel value="sub-listings" pt="md">
+            <SubListingReviewQueue />
+          </Tabs.Panel>
+
           <Tabs.Panel value="manage" pt="md">
             {/* Full all-status listings MANAGEMENT table (reset/relist/claim/purge).
                 Its pending rows' Review action opens the same page-owned off-site
                 modal; its lifecycle-action modals stay local to it. */}
             <AppListingsModerationTable openOffsiteReview={openOffsiteReview} />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="app-feedback" pt="md">
+            <AppFeedbackModQueue />
           </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>
@@ -371,6 +457,7 @@ export default function ReviewQueuePage() {
         readOnly={offsiteReview?.readOnly}
       />
       <CombinedReviewModal selection={combinedReview} onClose={() => setCombinedReview(null)} />
+      <PriorVersionsModal selection={priorVersions} onClose={() => setPriorVersions(null)} />
     </>
   );
 }
@@ -397,6 +484,7 @@ export function UnifiedPendingTab({
   openOnsiteReview,
   openOffsiteReview,
   openCombinedReview,
+  openVersionHistory,
 }: {
   openOnsiteReview: (
     req: AnyRequest,
@@ -412,6 +500,9 @@ export function UnifiedPendingTab({
     payload: CombinedReviewPayload,
     onActioned?: () => void | Promise<void>
   ) => void;
+  /** Opens the page-owned prior-versions modal. Optional so the poll harness can mount
+   *  this tab without it. */
+  openVersionHistory?: (target: VersionHistoryTarget) => void;
 }) {
   const features = useFeatureFlags();
   const enabled = !!features?.appBlocks;
@@ -619,6 +710,7 @@ export function UnifiedPendingTab({
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
       openCombinedReview={boundCombined}
+      openVersionHistory={openVersionHistory}
       isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
       errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
       emptyLabel="Queue is empty. Nothing waiting for review."
@@ -644,8 +736,10 @@ function UnifiedHistoryTab({
   kind,
   openOnsiteReview,
   openOffsiteReview,
+  openVersionHistory,
 }: {
   kind: 'approved' | 'rejected';
+  openVersionHistory?: (target: VersionHistoryTarget) => void;
   openOnsiteReview: (
     req: AnyRequest,
     mode: OnsiteReviewMode,
@@ -766,6 +860,7 @@ function UnifiedHistoryTab({
       direction="desc"
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
+      openVersionHistory={openVersionHistory}
       isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
       errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
       emptyLabel={isApproved ? 'No approved requests yet.' : 'No rejected requests yet.'}

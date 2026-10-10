@@ -92,6 +92,10 @@ const CALL_SITE_LEDGER: Record<string, string[]> = {
   'components/Modals/BuyBuzzModal.tsx': ['earnBlueBuzzRewards'],
   'components/RemixGallery/RemixGalleryExplainer.tsx': ['remixGalleryExplainer'],
   'components/Referrals/ReferralDashboard.tsx': ['referralKickback', 'referralLiteOnboarding'],
+  'components/CreatorJourney/FirstPublishCard.tsx': [
+    'firstArticlePublished',
+    'firstModelPublished',
+  ],
   'components/Referrals/ReferralDashboardFull.tsx': [
     'referralHowItWorks',
     'referralKickback',
@@ -176,7 +180,7 @@ describe('feature-notice audience ledger', () => {
 
   // 🔴 Hand-typed, like CALL_SITE_LEDGER above. Deriving this from the registry
   // would make it agree with a notice that silently loses its audience.
-  const TARGETED_KEYS = ['remixGalleryExplainer'];
+  const TARGETED_KEYS = ['firstArticlePublished', 'firstModelPublished', 'remixGalleryExplainer'];
 
   /** Files that must read the hook's audience answer, derived from the ledger. */
   const filesReferencing = (key: string) =>

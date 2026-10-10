@@ -272,6 +272,18 @@ export const creatorCompAmountPaidCounter = registerCounterWithLabels({
   labelNames: ['account_type'] as const,
 });
 
+export const generationTipCreatorsPaidCounter = registerCounterWithLabels({
+  name: 'generation_tip_creators_paid_total',
+  help: 'Total number of creators who received generation tips',
+  labelNames: ['account_type'] as const,
+});
+
+export const generationTipAmountPaidCounter = registerCounterWithLabels({
+  name: 'generation_tip_amount_paid_total',
+  help: 'Total buzz amount paid to creators as generation tips',
+  labelNames: ['account_type'] as const,
+});
+
 // License fee payout metrics
 export const licenseFeeCreatorsPaidCounter = registerCounterWithLabels({
   name: 'license_fee_creators_paid_total',
@@ -458,6 +470,13 @@ export const cacheFailOpenDegradedCounter = registerCounterWithLabels({
 export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   name: 'cache_failopen_origin_fetch_total',
   help: 'createCachedArray fail-open: ids sent to origin (lookupFn) by cache name — deduped DB load',
+  labelNames: ['cache_name'] as const,
+});
+// Separate counter, not a cache_type on cache_miss_total: these ids are also counted there, so a
+// cache_type would be summed into hit-ratio totals twice.
+export const cacheMissWouldJoinCounter = registerCounterWithLabels({
+  name: 'cache_miss_would_join_total',
+  help: 'createCachedArray miss-fill lookups that per-process coalescing (the PR #5488 join rule) would have joined instead of running, by cache name. Measurement only; cross-process duplicates are not counted',
   labelNames: ['cache_name'] as const,
 });
 
@@ -658,8 +677,15 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
 });
 
 // App Blocks KV datastore (op ∈ get|set|delete|list|getQuota; outcome ∈ ok|unauthorized|…).
+//
+// 🔴 These four names are PREFIX-RELATIVE — do NOT re-add `app_blocks_`. The helpers prepend
+// PROM_PREFIX, so a declared `app_blocks_*` stutters into `civitai_app_app_blocks_*`, which is
+// what shipped. Exposed: `civitai_app_block_storage_{ops_total,quota_exceeded_total,
+// user_quota_untracked_total,latency_seconds}`, in the `civitai_app_block_*` family the rest of
+// App Blocks already uses. Pinned by `__tests__/app-block-storage-metric-names.test.ts`.
+// Seeded to 0 by `src/server/prom/app-block-storage.metrics.ts`.
 export const appStorageOpsCounter = registerCounterWithLabels({
-  name: 'app_blocks_storage_ops_total',
+  name: 'block_storage_ops_total',
   help: 'App Blocks KV datastore tRPC operations',
   labelNames: ['op', 'outcome'] as const,
 });
@@ -682,7 +708,7 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // the `scope: '…'` tail inside it. `ceiling` is both collision-free and the more
 // accurate word for what the label distinguishes.
 export const appStorageQuotaExceededCounter = registerCounterWithLabels({
-  name: 'app_blocks_storage_quota_exceeded_total',
+  name: 'block_storage_quota_exceeded_total',
   help: 'App Blocks KV writes rejected by a storage ceiling (ceiling=app: the per-app budget; ceiling=user: the per-user sub-budget)',
   labelNames: ['app_block_id', 'ceiling'] as const,
 });
@@ -699,19 +725,24 @@ export const appStorageQuotaExceededCounter = registerCounterWithLabels({
 // inert state is silent by construction unless something counts it.
 //
 // 🔴 It is deliberately its OWN series and not an `outcome` on
-// app_blocks_storage_ops_total. A state visible only as some other series
+// civitai_app_block_storage_ops_total. A state visible only as some other series
 // changing shape is not alertable — the same argument countStorageFault makes
 // about faults being visible solely as the `ok` series falling to zero. This is
-// the series to alert on ("some app has been running unmetered for N days") and
-// the series that goes to zero when the backfill has actually reached everything.
+// the series to read for "some app has been running unmetered for N days".
+//
+// 🔴 It is a COUNTER, so it never "goes back to zero" once the backfill lands —
+// this comment claimed that and it was false. prom-client counters are monotonic
+// for the process lifetime and accumulated children keep their values; what
+// stops moving is `increase()`/`rate()` over a window with no new writes. Read
+// the window, not the series total.
 export const appStorageUserQuotaUntrackedCounter = registerCounterWithLabels({
-  name: 'app_blocks_storage_user_quota_untracked_total',
+  name: 'block_storage_user_quota_untracked_total',
   help: 'App Blocks KV writes served without a per-user quota relation (sub-budget not enforced; app needs the storage backfill)',
   labelNames: ['app_block_id'] as const,
 });
 
 export const appStorageLatencyHistogram = registerHistogram({
-  name: 'app_blocks_storage_latency_seconds',
+  name: 'block_storage_latency_seconds',
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],

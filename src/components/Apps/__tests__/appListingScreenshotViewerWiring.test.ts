@@ -348,6 +348,9 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
    */
   it('🔴 /apps/mine feeds the viewer the SAME row list its index is computed from', () => {
     const MINE = path.resolve(__dirname, '../MyAppsBody.tsx');
+    // MediaButton + both thumbnails now live in `ListingMediaThumb`; the SEAM half below
+    // still reads `MyAppsBody`, where the viewer is mounted.
+    const THUMB = path.resolve(__dirname, '../ListingMediaThumb.tsx');
     const src = norm(stripComments(fs.readFileSync(MINE, 'utf8')));
 
     // Positive controls: the matchers can see their targets, and the stripper is what
@@ -380,17 +383,33 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
     // the screenshot tile follows two tests up, applied to this consumer. An image with
     // a click handler is not tab-reachable, not Enter/Space-activatable, and exposes no
     // accessible name.
+    // ⚠️ A SUBSTRING CHECK OVER ONE FUNCTION BODY — it proves each token is PRESENT, not
+    // that they are wired to each other. The relationship (a click opens the image and does
+    // NOT open the review) is behavioural and lives in
+    // `UnifiedReviewList.browser.test.tsx`'s "clicking the ICON" arm; the message says only
+    // what the substrings support.
     const BTN =
-      "MyAppsBody's row media is no longer a real button (UnstyledButton with an " +
-      'aria-label). An <img onClick> renders as a mouse-only affordance that LOOKS ' +
-      'wired up. See MediaButton.';
-    const btn = norm(fnBody(stripComments(fs.readFileSync(MINE, 'utf8')), 'MediaButton'));
+      "ListingMediaThumb's MediaButton is no longer a real button (UnstyledButton with an " +
+      'aria-label) whose onClick is the opener. An <img onClick> is a mouse-only ' +
+      'affordance that LOOKS wired up.';
+    const btn = norm(fnBody(stripComments(fs.readFileSync(THUMB, 'utf8')), 'MediaButton'));
     expect(btn, BTN).not.toBe('');
     expect(btn, BTN).toContain('<UnstyledButton');
     expect(btn, BTN).toContain('onClick={onOpen}');
     expect(btn, BTN).toContain('aria-label={label}');
-    // The handler belongs to the button, and the image is only its child.
-    expect(src, BTN).not.toContain('<img onClick');
+    // The handler belongs to the button and the image is only its child. Asserted on the
+    // THUMB file, which is where the `<img>` now lives; kept on `MyAppsBody` too, where it
+    // is now vacuous but costs nothing and would catch a re-inlined copy.
+    // Named per file: both reads share the hazard, so one message could not say which
+    // file regressed.
+    const img = (file: string) =>
+      `${file}: an <img onClick> has come back — a mouse-only affordance with no ` +
+      'accessible name, where the click belongs on the wrapping button.';
+    expect(src, img('MyAppsBody')).not.toContain('<img onClick');
+    expect(
+      norm(stripComments(fs.readFileSync(THUMB, 'utf8'))),
+      img('ListingMediaThumb')
+    ).not.toContain('<img onClick');
 
     /**
      * 🔴 THE PLACEHOLDER MUST STAY INERT, and this is the half that is easy to lose in
@@ -399,10 +418,10 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
      * (!row.coverUrl)` must come BEFORE anything that mounts a MediaButton, so the
      * no-image path cannot reach it.
      */
-    const stripped = stripComments(fs.readFileSync(MINE, 'utf8'));
+    const stripped = stripComments(fs.readFileSync(THUMB, 'utf8'));
     for (const [fn, guard] of [
-      ['ListingIcon', 'if (!row.iconUrl)'],
-      ['ListingCover', 'if (!row.coverUrl)'],
+      ['ListingIconThumb', 'if (!url)'],
+      ['ListingCoverThumb', 'if (!url)'],
     ] as const) {
       const body = norm(fnBody(stripped, fn));
       const WHY_PH =

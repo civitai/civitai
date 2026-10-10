@@ -296,6 +296,19 @@ export const isSelfAuthoredPackMember = (
 ) => !!buyerId && member.createdById === buyerId && member.createdById !== packCreatorId;
 
 /**
+ * How many of the members a pack was built with it can no longer deliver; only
+ * zero is purchasable. The purchase refuses on it and the detail view disables
+ * the button on it, so the two cannot disagree about a short pack.
+ *
+ * Measured against `meta.packMemberCount`, never the join rows: deleting a member
+ * Cosmetic cascades its row away, so a live count shrinks with the pack and
+ * agrees with itself. A pack with no recorded count cannot be shown whole, so it
+ * counts as short rather than falling back to the rows.
+ */
+export const packMembersMissing = (packMemberCount: number | undefined, deliverableCount: number) =>
+  packMemberCount == null ? 1 : Math.abs(packMemberCount - deliverableCount);
+
+/**
  * What a specific viewer owes for a pack.
  *
  * Shared deliberately: the detail view quotes this and the purchase charges it.

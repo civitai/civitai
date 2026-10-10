@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   actionOpensOwnerMessage,
+  actionOpensVisibility,
   actionRequiresReason,
   ALL_LISTING_MOD_ACTIONS,
   effectiveModerationStatus,
@@ -38,7 +39,7 @@ describe('listingModActions — off-site rows', () => {
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['review', 'message-owner']);
+    ).toEqual(['review', 'message-owner', 'set-visibility']);
   });
 
   it('approved → Reset to pending + Hide', () => {
@@ -50,7 +51,7 @@ describe('listingModActions — off-site rows', () => {
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
+    ).toEqual(['message-owner', 'reset-to-pending', 'hide', 'set-visibility']);
   });
 
   it('removed → Relist + Claim + Purge', () => {
@@ -74,7 +75,7 @@ describe('listingModActions — off-site rows', () => {
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['message-owner']);
+    ).toEqual(['message-owner', 'set-visibility']);
     expect(
       listingModActions({
         status: 'draft',
@@ -83,7 +84,7 @@ describe('listingModActions — off-site rows', () => {
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['review', 'message-owner']);
+    ).toEqual(['review', 'message-owner', 'set-visibility']);
   });
 
   it('rejected → read-only apart from Message owner', () => {
@@ -109,7 +110,7 @@ describe('listingModActions — on-site rows hide the off-site-only actions', ()
         hasPendingBlockRequest: false,
         appBlockId: 'ablk_live',
       })
-    ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
+    ).toEqual(['message-owner', 'reset-to-pending', 'hide', 'set-visibility']);
   });
 
   it('removed on-site → Relist ONLY (no claim / purge)', () => {
@@ -133,7 +134,7 @@ describe('listingModActions — on-site rows hide the off-site-only actions', ()
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['message-owner']);
+    ).toEqual(['message-owner', 'set-visibility']);
   });
 });
 
@@ -160,7 +161,7 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['message-owner', 'purge']);
+    ).toEqual(['message-owner', 'set-visibility', 'purge']);
   });
 
   /**
@@ -185,7 +186,7 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         hasPendingBlockRequest: true,
         appBlockId: null,
       })
-    ).toEqual(['message-owner']);
+    ).toEqual(['message-owner', 'set-visibility']);
   });
 
   it('`hasPendingRequest` alone does NOT withhold purge — it is the wrong table', () => {
@@ -200,7 +201,7 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['message-owner', 'purge']);
+    ).toEqual(['message-owner', 'set-visibility', 'purge']);
   });
 
   it('NOT once it has a backing AppBlock — it reached approve', () => {
@@ -212,7 +213,7 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         hasPendingBlockRequest: false,
         appBlockId: 'ablk_live',
       })
-    ).toEqual(['message-owner']);
+    ).toEqual(['message-owner', 'set-visibility']);
   });
 
   it('NOT for an off-site draft — that arm is unchanged and gated on `removed`', () => {
@@ -224,7 +225,7 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['message-owner']);
+    ).toEqual(['message-owner', 'set-visibility']);
   });
 
   it('Purge stays the confirm-gated destructive action', () => {
@@ -350,9 +351,15 @@ describe('action metadata', () => {
    * one claims must genuinely carry a `reason`, or `ListingModActionModal` calls its
    * proc with an input the schema rejects.
    */
-  it('every mutating action except message-owner requires a reason; review requires none', () => {
+  it('every mutating action except message-owner and set-visibility requires a reason; review requires none', () => {
     expect(actionRequiresReason('review')).toBe(false);
     expect(actionRequiresReason('message-owner')).toBe(false);
+    // 🔴 `set-visibility` DOES take a reason — it just does not take it in the SHARED
+    // reason-gated modal, because it needs a LEVEL as well. So it is false HERE and true
+    // for `actionOpensVisibility`; reading this `false` as "no reason required" would be
+    // the overclaim the four-route table exists to prevent (the server's schema makes the
+    // reason mandatory).
+    expect(actionRequiresReason('set-visibility')).toBe(false);
     for (const a of ['reset-to-pending', 'hide', 'relist', 'claim', 'purge'] as const) {
       expect(actionRequiresReason(a)).toBe(true);
     }
@@ -365,23 +372,44 @@ describe('action metadata', () => {
    */
   it('the vocabulary derived from the route table is the whole union', () => {
     expect([...ALL_ACTIONS].sort()).toEqual(
-      ['claim', 'hide', 'message-owner', 'purge', 'relist', 'reset-to-pending', 'review'].sort()
+      [
+        'claim',
+        'hide',
+        'message-owner',
+        'purge',
+        'relist',
+        'reset-to-pending',
+        'review',
+        'set-visibility',
+      ].sort()
     );
   });
 
   /**
-   * The two modal routers are MUTUALLY EXCLUSIVE and together they must not leave a
-   * mutating action unrouted. `review` is the deliberate third case (it opens the
-   * publish-request review modal, which is neither of these).
+   * The modal routers are MUTUALLY EXCLUSIVE and together they must not leave a mutating
+   * action unrouted. `review` is the deliberate extra case (it opens the publish-request
+   * review modal, which is none of these).
+   *
+   * 🔴 THERE ARE THREE PREDICATES NOW, NOT TWO, AND THE SWEEP HAD TO GROW WITH THEM. This
+   * is the jointly-total check the route table's own docstring leans on: when
+   * `set-visibility` was added, this case went red precisely because the level route was
+   * claimed by no predicate — which is the failure it exists to produce. Adding
+   * `actionOpensVisibility` to BOTH arms is the fix; dropping the action from `ALL_ACTIONS`
+   * or special-casing it like `review` would have made the sweep inert for the new route.
    */
-  it('exactly one action opens the owner-message composer, and it opens no other modal', () => {
-    const opensMessage = ALL_ACTIONS.filter(actionOpensOwnerMessage);
-    expect(opensMessage).toEqual(['message-owner']);
+  it('exactly one action opens each modal, and every action is routed exactly once', () => {
+    expect(ALL_ACTIONS.filter(actionOpensOwnerMessage)).toEqual(['message-owner']);
+    expect(ALL_ACTIONS.filter(actionOpensVisibility)).toEqual(['set-visibility']);
     for (const a of ALL_ACTIONS) {
-      // No action may be claimed by BOTH routers.
-      expect(actionOpensOwnerMessage(a) && actionRequiresReason(a)).toBe(false);
-      // And every action must be claimed by one of the three routes.
-      expect(actionOpensOwnerMessage(a) || actionRequiresReason(a) || a === 'review').toBe(true);
+      // No action may be claimed by MORE THAN ONE router — counted, so a third overlap
+      // cannot hide behind a pairwise check.
+      const claimed = [
+        actionOpensOwnerMessage(a),
+        actionRequiresReason(a),
+        actionOpensVisibility(a),
+        a === 'review',
+      ].filter(Boolean).length;
+      expect(claimed).toBe(1);
     }
   });
 
@@ -393,6 +421,7 @@ describe('action metadata', () => {
     expect(listingModActionLabel('relist')).toBe('Relist');
     expect(listingModActionLabel('claim')).toBe('Claim');
     expect(listingModActionLabel('purge')).toBe('Purge');
+    expect(listingModActionLabel('set-visibility')).toBe('Visibility');
     // Totality: every member of the vocabulary has a non-empty, distinct label.
     const labels = ALL_ACTIONS.map(listingModActionLabel);
     expect(labels.every((l) => l.length > 0)).toBe(true);
@@ -458,12 +487,17 @@ describe('listingModActionsForRow — DTO mapping and the fail-safe default', ()
   });
 
   it('offers Purge for an orphan draft with the flag explicitly FALSE', () => {
-    expect(listingModActionsForRow(draftRow())).toEqual(['message-owner', 'purge']);
+    expect(listingModActionsForRow(draftRow())).toEqual([
+      'message-owner',
+      'set-visibility',
+      'purge',
+    ]);
   });
 
   it('withholds it when the flag is TRUE', () => {
     expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: true }))).toEqual([
       'message-owner',
+      'set-visibility',
     ]);
   });
 
@@ -476,12 +510,14 @@ describe('listingModActionsForRow — DTO mapping and the fail-safe default', ()
   it('withholds it when the flag is ABSENT — absent means assume under review', () => {
     expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: undefined }))).toEqual([
       'message-owner',
+      'set-visibility',
     ]);
   });
 
   it('withholds it when the flag is NULL (a DTO that serialised the absence)', () => {
     expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: null }))).toEqual([
       'message-owner',
+      'set-visibility',
     ]);
   });
 
@@ -495,6 +531,6 @@ describe('listingModActionsForRow — DTO mapping and the fail-safe default', ()
         pendingRequest: { id: 'alpr_1' },
         hasPendingBlockRequest: false,
       })
-    ).toEqual(['review', 'message-owner']);
+    ).toEqual(['review', 'message-owner', 'set-visibility']);
   });
 });

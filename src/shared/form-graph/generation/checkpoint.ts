@@ -6,8 +6,8 @@ import {
   ecosystemByKey,
   getEcosystemDefaults,
 } from '~/shared/constants/basemodel.constants';
-import { unselectableVersionIds } from '~/shared/data-graph/generation/gates';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import { unselectableVersionIds } from '~/shared/generation/gates';
+import type { GenerationCtx } from '~/shared/generation/context';
 import {
   getResourceSelectOptions,
   resourceSchema,
@@ -15,8 +15,6 @@ import {
   type ResourceData,
 } from './defs';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-
-// ---- copied from common.ts, which dies with the data-graph engine ----------
 
 export type VersionOption = {
   label: string;
@@ -75,32 +73,31 @@ export function filterVersionGroup(
 }
 
 /**
- * The model node from common.ts `createCheckpointGraph`, as a form-graph
- * definition. Only the parts that affect the VALUE are transcribed:
+ * The shared checkpoint field. Three things affect the VALUE, and all three are
+ * `correct` policies rather than silent rewrites, so each leaves a note the
+ * server's substitution metric can read:
  *
- * - the input transform's locked substitution (with the substitution-metrics
- *   record, which production reads),
- * - the default (the ecosystem's model version),
- * - data-graph's `transform` — reset to the ecosystem default when the model
- *   belongs to a different ecosystem — which becomes a `correct` policy here,
- *   so the swap is recorded as a note instead of happening silently.
+ * - the locked substitution — an id outside a model-locked family's visible list
+ *   becomes that workflow's default,
+ * - the cross-ecosystem reset — a model from another ecosystem becomes this one's
+ *   default,
+ * - the default itself (the ecosystem's model version).
  *
- * The node's ecosystem/workflow-switching EFFECTS are not here: they are rules,
- * and they live on the family graph that mounts this definition.
+ * The ecosystem/workflow-SWITCHING behaviour is not here: those are rules, and
+ * they live on the family graph that mounts this definition.
  */
 
-/** common.ts, module-local there: base model name -> ecosystem key. */
 export function ecosystemKeyForBaseModel(baseModelName: string): string | undefined {
   const baseModel = baseModelByName.get(baseModelName);
   if (!baseModel) return undefined;
   return ecosystemById.get(baseModel.ecosystemId)?.key;
 }
 
-// Static schema pair — the def object itself is rebuilt per pass (cheap),
-// while everything ext-dependent (locked substitution, the metrics record)
-// lives in `correct`, whose per-pass closure may safely capture the
-// request-scoped ext. Never move that into a cached schema: a cached
-// transform would keep recording into the FIRST request's collector.
+// Static schema pair — the def object itself is rebuilt per pass (cheap), while
+// everything ext-dependent (the locked substitution, the gate-rule exclusions) lives
+// in `correct`/`meta`, whose per-pass closure may safely capture the request-scoped
+// ext. Never move that into a cached schema: a cached closure would answer every
+// later request from the FIRST request's gate rules.
 const CHECKPOINT_INPUT = z
   .union([
     z.number().transform((id) => ({ id })),
@@ -124,9 +121,8 @@ export function checkpointDef(opts: {
   defaultModelId?: number;
   modelLocked?: boolean;
   /**
-   * v1's unlocked families make the ECOSYSTEM follow a cross-ecosystem model
-   * (the checkpoint effect wins; the reset-to-default transform is dead code
-   * there). Set this and derive the effective ecosystem from the model in the
+   * Unlocked families make the ECOSYSTEM follow a cross-ecosystem model rather
+   * than resetting the model to the ecosystem default. Set this and derive the effective ecosystem from the model in the
    * family (an `emit: 'ecosystem'` computed) instead of correcting the model.
    */
   modelWins?: boolean;
@@ -153,7 +149,6 @@ export function checkpointDef(opts: {
     meta: (value) => ({
       options: {
         canGenerate: true,
-        // the checkpoint picker never surfaces partial support — v1 zeroes it
         resources: getResourceSelectOptions(ecosystemKey, ['Checkpoint'] as ModelType[]).map(
           (r) => ({ ...r, partialSupport: [] })
         ),
@@ -164,19 +159,12 @@ export function checkpointDef(opts: {
       defaultModelId: modelVersionId,
     }),
     correct: (value) => {
-      // Locked substitution (was the input transform's job): an unknown
-      // version on a model-locked family swaps to the locked default, with
-      // the observe-only substitution record — see common.ts for why; a
-      // caller billed for model A and given model B can find out. Runs once
-      // per server parse (one resolve pass); client ext has no collector.
+      // An unknown version on a model-locked family swaps to the locked default.
+      // The `locked_default` note is the server's only record of that:
+      // `substitutionsFromNotes` turns it into the substitution metric, so a caller
+      // billed for model A and given model B can find out.
       if (modelLocked && modelVersionId && value && value.id !== modelVersionId) {
         if (!validVersionIds?.has(value.id)) {
-          ext.modelSubstitutions?.record({
-            requested: value.id,
-            applied: modelVersionId,
-            ecosystem: ecosystemKey,
-            workflow,
-          });
           return {
             value: { id: modelVersionId, model: { type: 'Checkpoint' } } as ResourceData,
             reason: 'locked_default',
@@ -184,10 +172,9 @@ export function checkpointDef(opts: {
           };
         }
       }
-      // data-graph's `transform`, step 1: a model from another ecosystem
-      // resets to this ecosystem's default. (Step 2, the workflow-version
-      // transform, only applies to graphs configured with `workflowVersions`
-      // — not the video ones.)
+      // A model from another ecosystem resets to this ecosystem's default. The
+      // workflow-version reset is separate and applies only to graphs configured
+      // with `workflowVersions` — not the video ones.
       if (opts.modelWins) return undefined;
       if (!value?.baseModel || !modelVersionId) return undefined;
       const modelEcosystemKey = ecosystemKeyForBaseModel(value.baseModel);

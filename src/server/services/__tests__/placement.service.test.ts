@@ -7,6 +7,7 @@ import {
   PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
+  isDeclineFeeHostAdjustable,
   placementSurfaces,
 } from '~/shared/utils/placement';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -14,8 +15,6 @@ const findUnique = dbMock.dbRead.keyValue.findUnique;
 const queryRaw = dbMock.dbRead.$queryRaw;
 
 const getCapTier = vi.fn();
-
-
 
 vi.mock('~/server/services/subscriptions.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SubscriptionsService>()),
@@ -57,12 +56,20 @@ describe('getPlacementConfig', () => {
       });
       const config = await getPlacementConfig();
 
-      for (const surface of placementSurfaces) {
+      for (const surface of placementSurfaces.filter((s) => !isDeclineFeeHostAdjustable(s))) {
         const emitted = config.declineFeeRate(surface);
         expect(emitted).toBeGreaterThanOrEqual(MIN_DECLINE_FEE_RATE);
         expect(emitted).toBeLessThanOrEqual(MAX_DECLINE_FEE_RATE);
       }
     }
+  });
+
+  // One answer per surface. The operator floor would turn a 0% host into 5% here.
+  it('refuses to answer for a surface whose host sets the decline fee', async () => {
+    storedConfig({ declineFeeRates: { galleryPromotion: 0.3, modelPromotion: 0.3 } });
+    const config = await getPlacementConfig();
+    expect(() => config.declineFeeRate('galleryPromotion')).toThrow('set by its host');
+    expect(() => config.declineFeeRate('modelPromotion')).toThrow('set by its host');
   });
 
   it('rejects a cap table with no band at zero, which would price every new creator at 0', async () => {

@@ -1,24 +1,10 @@
-import {
-  Alert,
-  Box,
-  Button,
-  Code,
-  CopyButton,
-  Group,
-  Loader,
-  Stack,
-  Text,
-} from '@mantine/core';
-import {
-  IconAlertTriangle,
-  IconBrandGit,
-  IconCheck,
-  IconClipboard,
-  IconEye,
-  IconEyeOff,
-} from '@tabler/icons-react';
+import { Alert, Button, Code, Group, Loader, Stack, Text } from '@mantine/core';
+import { IconAlertTriangle, IconBrandGit, IconEye, IconEyeOff } from '@tabler/icons-react';
 import { useState } from 'react';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
 import { maskCloneUrlCredential } from '~/components/Apps/git-access';
 import { trpc } from '~/utils/trpc';
 
@@ -57,30 +43,57 @@ type RepoNotYet = {
 };
 type GetMyAppRepoResult = RepoAvailable | RepoNotYet;
 
-function CopyableCode({ value, display }: { value: string; display?: string }) {
+/**
+ * A copyable code block whose DISPLAYED text may be masked while the clipboard gets the real
+ * value — the clone URL and the setup steps both embed a push token.
+ *
+ * 🔴 THIS WAS THE FIFTH BYTE-IDENTICAL PRIVATE COPY OF THE COPY BUTTON, and it had already
+ * drifted. `CopyableCommand`'s header records that three copies existed before it was
+ * extracted; this one was not among them and nobody counted it, so `CopyAffordance` was
+ * written believing it was preventing a fourth. Its `aria-label` was the bare string `"Copy"`
+ * on BOTH instances below — two controls on one panel with the same accessible name, which is
+ * precisely the drift `CopyableCommand`'s header names as the reason the component exists.
+ * Now it is the shared mechanics plus a body, and each control says what it copies.
+ *
+ * Nothing else about it changes: `value` and the displayed body were already separate here,
+ * which is why `CopyAffordance`'s `value` + render-prop shape fits with no new prop. It
+ * inherits the `stopPropagation()` on the icon (this copy had no icon handler at all, so it
+ * fired once by bubbling; it still fires once).
+ *
+ * 🔴 ONE DELIBERATE BEHAVIOUR CHANGE: `bodyClickCopies={false}`. Clicking the BLOCK no longer
+ * copies — only the control does. Both bodies are multi-line text a reader plausibly selects
+ * a fragment of, and with a body-wide click target the `click` ending that drag-select
+ * replaced the selection with the whole value and re-rendered the body to "Copied".
+ *
+ * ⚠️ NOT AN EXFILTRATION FIX, AND WORTH NOT OVERSTATING: the value goes to the user's OWN
+ * clipboard, and the token is masked on screen either way. The harm is unexpected clipboard
+ * contents and a destroyed selection — on a block whose string happens to be a credential,
+ * which is why it is this body rather than a command one-liner. Guarding it instead was tried
+ * and abandoned; see `CopyAffordance`'s `bodyClickCopies` note. The control is a real
+ * `<button>`, reachable by Tab, and now says which of the two things it copies.
+ */
+function CopyableCode({
+  value,
+  display,
+  label,
+}: {
+  value: string;
+  display?: string;
+  /** What this control copies. Required, so two of them on one panel cannot collide again. */
+  label: string;
+}) {
   return (
-    <CopyButton value={value}>
-      {({ copied, copy }) => (
-        <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-          <Code
-            block
-            color={copied ? 'green' : undefined}
-            style={{ wordBreak: 'break-all', paddingRight: 36 }}
-          >
-            {copied ? 'Copied' : display ?? value}
-          </Code>
-          <LegacyActionIcon
-            className="absolute right-2 top-1/2 -translate-y-1/2"
-            right={8}
-            variant="transparent"
-            color="gray"
-            aria-label="Copy"
-          >
-            {copied ? <IconCheck size={16} /> : <IconClipboard size={16} />}
-          </LegacyActionIcon>
-        </Box>
+    <CopyAffordance value={value} label={label} bodyClickCopies={false}>
+      {({ copied }) => (
+        <Code
+          block
+          color={copied ? 'green' : undefined}
+          style={{ wordBreak: 'break-all', paddingRight: COPY_BODY_PADDING_RIGHT }}
+        >
+          {copied ? 'Copied' : display ?? value}
+        </Code>
       )}
-    </CopyButton>
+    </CopyAffordance>
   );
 }
 
@@ -145,14 +158,13 @@ function GitAccessPanel({ appBlockId }: { appBlockId: string }) {
         <CopyableCode
           value={data.cloneUrl}
           display={showToken ? data.cloneUrl : maskedCloneUrl}
+          label="Copy clone URL"
         />
         <Group justify="space-between">
           <Button
             size="compact-xs"
             variant="subtle"
-            leftSection={
-              showToken ? <IconEyeOff size={14} /> : <IconEye size={14} />
-            }
+            leftSection={showToken ? <IconEyeOff size={14} /> : <IconEye size={14} />}
             onClick={() => setShowToken((v) => !v)}
           >
             {showToken ? 'Hide token' : 'Reveal token'}
@@ -172,12 +184,13 @@ function GitAccessPanel({ appBlockId }: { appBlockId: string }) {
       <CopyableCode
         value={data.instructions}
         display={showToken ? data.instructions : maskCloneUrlCredential(data.instructions)}
+        label="Copy setup steps"
       />
 
       <Alert color="blue" variant="light" py="xs">
         <Text size="xs">
-          Your first version is uploaded as a ZIP; new versions can be pushed with
-          git. Pushes go to moderator review — they never deploy automatically.
+          Your first version is uploaded as a ZIP; new versions can be pushed with git. Pushes go to
+          moderator review — they never deploy automatically.
         </Text>
       </Alert>
     </Stack>

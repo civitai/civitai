@@ -301,11 +301,12 @@ describe('author fee — the spend-attribution seam', () => {
     expect(sites.filter((s) => !s.includes('workflowId'))).toEqual([]);
   });
 
-  it('there are exactly FOUR spend-attribution call sites', () => {
-    // textToImage, customComfy, the registry-step bridge, and the pass-through
-    // step. A new submit path is a deliberate decision about whether it charges
-    // an author fee, so it should land here rather than silently inherit a skip.
-    expect(sites).toHaveLength(4);
+  it('there are exactly FIVE spend-attribution call sites', () => {
+    // textToImage, customComfy, the registry-step bridge, the pass-through step,
+    // and the `kind:'training'` run. A new submit path is a deliberate decision
+    // about whether it charges an author fee, so it should land here rather than
+    // silently inherit a skip.
+    expect(sites).toHaveLength(5);
   });
 
   it('every call site passes a base generation cost', () => {
@@ -354,13 +355,13 @@ describe('author fee — the spend-attribution seam', () => {
     // tri-state is SLICE 2'S POLICY CALL — this guard deliberately pins the
     // current shape rather than pre-empting it.
     const assignments = source.match(/realizedBaseCost =\s*\n?\s*typeof submitted\.cost\?\.base/g);
-    expect(assignments).toHaveLength(4);
+    expect(assignments).toHaveLength(5);
     expect(source).not.toMatch(/realizedBaseCost\s*=\s*[^;]*cost\?\.total/);
 
     const capAssignments = source.match(
       /realizedPriceIsCap =\s*\n?\s*submitted\.cost\?\.variable === true/g
     );
-    expect(capAssignments).toHaveLength(4);
+    expect(capAssignments).toHaveLength(5);
     // `snapshot` has no `variable` either — reading one would be `undefined`,
     // i.e. "never a cap", which is the fail-OPEN direction.
     expect(source).not.toMatch(/realizedPriceIsCap\s*=\s*[^;]*snapshot\./);
@@ -465,6 +466,17 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
         '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
         '`cost.base` at reservation time. Widening that helper is what would wire a fee here.',
     },
+    submitTrainingWorkflow: {
+      charges: 0,
+      whatifAttribution:
+        'Same as the pass-through arm: no fee is charged, so only `recordSpendAttribution`’s ' +
+        '(workflowId, appBlockId) idempotency is at stake. DEFENSIVE, NOT ACTIVE — the ' +
+        'orchestrator stamps an id on every workflow it returns.',
+      reason:
+        'ZERO-FEE BY DECISION. The viewer confirms ONE exact price for a training run before it ' +
+        'is charged, so a fee on top would charge more than they confirmed. The `training` ' +
+        'override in `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG` prices any future caller at zero too.',
+    },
   };
 
 describe('author fee — the viewer-charge seam', () => {
@@ -497,7 +509,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(charges.filter((c) => !c.includes('workflowId'))).toEqual([]);
   });
 
-  it('the submit-path locator names all four paths (positive control)', () => {
+  it('the submit-path locator names all five paths (positive control)', () => {
     // The ledger below is keyed on these names, so a locator that resolved every
     // offset to `<module scope>` would make the ledger vacuous rather than red.
     expect(submitPaths).toEqual([
@@ -505,6 +517,7 @@ describe('author fee — the viewer-charge seam', () => {
       'submitCustomComfyWorkflow',
       'submitStepWorkflow',
       'submitPassThroughStepWorkflow',
+      'submitTrainingWorkflow',
     ]);
   });
 
@@ -627,11 +640,11 @@ describe('author fee — the viewer-charge seam', () => {
     }
   });
 
-  it('🔴 the two NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
+  it('🔴 the NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
     // 🔴 WHY A SECOND, PATH-SPECIFIC TEST WHEN THE LOOP ABOVE ALREADY COVERS ALL
-    // FOUR MARKERS. On the two priced paths the exclusion is a FEE argument: one
+    // FIVE MARKERS. On the two priced paths the exclusion is a FEE argument: one
     // shared sentinel id means one shared idempotency key and one UNIQUE accrual
-    // row across every viewer. On these two paths no fee is charged, so that
+    // row across every viewer. On these paths no fee is charged, so that
     // argument does not apply and the clause's only effect would be that
     // `recordSpendAttribution` — a payout-relevant table — stops being written for
     // a submit whose orchestrator response carried no workflow id. That effect is
@@ -654,6 +667,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(Object.keys(NO_FEE_PATHS)).toEqual([
       'submitCustomComfyWorkflow',
       'submitPassThroughStepWorkflow',
+      'submitTrainingWorkflow',
     ]);
 
     for (const [pathName, entry] of Object.entries(NO_FEE_PATHS)) {

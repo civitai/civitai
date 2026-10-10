@@ -8,6 +8,7 @@ import {
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
+import { APP_LISTING_VISIBILITIES } from '~/shared/utils/app-listing-visibility';
 import {
   OFFSITE_MOD_REASON_MAX,
   OFFSITE_MOD_REASON_MIN,
@@ -262,6 +263,30 @@ export const updateListingSchema = z.object({
   patch: updateListingPatchSchema,
 });
 export type UpdateListingInput = z.infer<typeof updateListingSchema>;
+
+/**
+ * Set a listing's per-listing VISIBILITY LEVEL. ONE schema for BOTH the owner proc and the
+ * moderator proc, so the two cannot drift about what a level is.
+ *
+ * 🔴 `visibility` IS NOT A KEY OF `updateListingPatchSchema`, AND THAT IS THE DECISION, NOT
+ * AN OVERSIGHT. Routing it through the patch would force it into or out of
+ * `MATERIAL_LISTING_PATCH_FIELDS`, and BOTH answers are wrong. Material would stage a
+ * `public -> private` flip on a shadow revision and leave the listing publicly visible
+ * until a moderator approved the hiding — backwards — and would refuse the change outright
+ * on an owner-unpublished listing. Non-material would put an audience control in the same
+ * in-place bucket as `tagline`, with no moderator path and no audit row. Its own mutation
+ * gets both.
+ *
+ * 🔴 `z.enum` OVER THE RUNTIME TUPLE, never a hand-written list of the four strings. A
+ * second spelling of the value space is how a validator ends up accepting a level the
+ * resolver does not know, which `narrowListingVisibility` would then fail closed to
+ * `private` — i.e. the owner picks `testers`, the write succeeds, and their app goes dark.
+ */
+export const setListingVisibilitySchema = z.object({
+  listingId: z.string().min(1).max(64),
+  visibility: z.enum(APP_LISTING_VISIBILITIES),
+});
+export type SetListingVisibilityInput = z.infer<typeof setListingVisibilitySchema>;
 
 /**
  * AUTHOR: begin (or re-open) a shadow-draft revision of an APPROVED listing so

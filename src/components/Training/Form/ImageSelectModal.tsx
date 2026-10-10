@@ -40,7 +40,10 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
-import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  matchesMarkerTags,
+  useGetTextToImageRequests,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -151,6 +154,7 @@ export default function ImageSelectModal({
     isFetchingNextPage: isFetchingNextPageGenerations,
     hasNextPage: hasNextPageGenerations,
     fetchNextPage: fetchNextPageGenerations,
+    markerTags,
     // isError: isErrorGenerations,
   } = useGetTextToImageRequests(
     { tags: videoAllowed ? [] : [WORKFLOW_TAGS.IMAGE] },
@@ -189,10 +193,11 @@ export default function ImageSelectModal({
         // Training datasets only accept 2D media; PolyGen (3D) outputs
         // have no sensible representation here.
         wf.succeededOutput.filter(
-          (x): x is TrainingGenerationBlob => x.available && x.type !== 'model3d'
+          (x): x is TrainingGenerationBlob =>
+            x.available && x.type !== 'model3d' && matchesMarkerTags(x, markerTags)
         )
       ),
-    [generationData]
+    [generationData, markerTags]
   );
 
   const uploadedMedia = useMemo(

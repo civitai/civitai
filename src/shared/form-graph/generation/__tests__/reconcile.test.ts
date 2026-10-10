@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '../hub.graph';
+import { fluxVersionIds } from '../image/flux.graph';
 import {
   deriveSelectorsFromModel,
   deriveWorkflowFromModel,
   effectiveEcosystemOf,
+  FLUX_DRAFT_ID,
+  FLUX_MODE_IDS,
   reconcileSelectors,
 } from '../reconcile';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { viduVersionIds } from '~/shared/generation/version-ids';
 
 /**
  * The selector-reconciliation policy: one pure function, two adapters. The
@@ -55,10 +59,7 @@ describe('deriveSelectorsFromModel', () => {
     expect(fromImage?.workflow).toBeDefined();
   });
 
-  it('a locked slot beats a cross-family model (flux draft, wan, ltx)', () => {
-    expect(
-      deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'Flux1', workflow: 'txt2img:draft' })
-    ).toBeUndefined();
+  it('a locked slot beats a cross-family model (wan, ltx)', () => {
     expect(
       deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'LTXV2', workflow: 'txt2vid' })
     ).toBeUndefined();
@@ -100,6 +101,47 @@ describe('deriveWorkflowFromModel', () => {
     // unregistered families never move
     expect(
       deriveWorkflowFromModel({ id: 2983023 }, { ecosystem: 'Krea2', workflow: 'txt2img' })
+    ).toBeUndefined();
+  });
+
+  it('vidu Q4 moves text-to-video and first/last frame to img2vid, and keeps ref2vid', () => {
+    const q4 = { id: viduVersionIds.q4 };
+    expect(deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'txt2vid' })).toEqual({
+      workflow: 'img2vid',
+    });
+    expect(
+      deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'img2vid:first-last' })
+    ).toEqual({ workflow: 'img2vid' });
+    expect(deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'img2vid' })).toBeUndefined();
+    expect(
+      deriveWorkflowFromModel(q4, { ecosystem: 'Vidu', workflow: 'img2vid:ref2vid' })
+    ).toBeUndefined();
+    // Q1 still does text-to-video
+    expect(
+      deriveWorkflowFromModel({ id: viduVersionIds.q1 }, { ecosystem: 'Vidu', workflow: 'txt2vid' })
+    ).toBeUndefined();
+  });
+});
+
+describe('flux draft', () => {
+  it("reconcile's inlined flux ids match the graph's", () => {
+    expect(FLUX_DRAFT_ID).toBe(fluxVersionIds.draft);
+    expect([...FLUX_MODE_IDS].sort()).toEqual(Object.values(fluxVersionIds).sort());
+  });
+
+  it('the draft build moves a txt2img parse into the draft workflow', () => {
+    expect(
+      deriveWorkflowFromModel({ id: FLUX_DRAFT_ID }, { ecosystem: 'Flux1', workflow: 'txt2img' })
+    ).toEqual({ workflow: 'txt2img:draft' });
+    // leaving draft is click-only: at parse the graph forces the draft build instead
+    expect(
+      reconcileSelectors({ ecosystem: 'Flux1', workflow: 'txt2img:draft', model: 691639 }).note
+    ).toBeUndefined();
+  });
+
+  it('draft locks the flux picker against a cross-family model', () => {
+    expect(
+      deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'Flux1', workflow: 'txt2img:draft' })
     ).toBeUndefined();
   });
 });
@@ -154,6 +196,20 @@ describe('store rule', () => {
       CTX
     );
     expect(parsed.success && (parsed.data as Record<string, unknown>).ecosystem).toBe('SD1');
+  });
+
+  it('picking the flux Draft build moves txt2img to the draft workflow, and back', () => {
+    const store = generationHub.createStore({
+      ext: CTX,
+      defaults: { workflow: 'txt2img', ecosystem: 'Flux1' },
+    });
+    const state = () => store.getSnapshot().state as Record<string, unknown>;
+
+    store.set({ model: { id: 699279, baseModel: 'Flux.1 D' } });
+    expect(state().workflow).toBe('txt2img:draft');
+
+    store.set({ model: { id: 691639, baseModel: 'Flux.1 D' } });
+    expect(state().workflow).toBe('txt2img');
   });
 
   it('does not fire for a same-ecosystem pick', () => {

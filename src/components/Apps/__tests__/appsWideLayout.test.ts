@@ -153,8 +153,9 @@ describe('every shipped ledger is valid', () => {
     // GREEN for every table, and green at BOTH tiers for two of them. The relationship is
     // now checked against the parsed tables, further down; this stays as what it always
     // was — a value pin, honestly labelled, so a silent re-tune is still visible.
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy).toHaveLength(5); // Kind App Submitter date action
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy).toHaveLength(6); // …plus Deploy
+    // Kind App Version Submitter Plays date action
+    expect(APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy).toHaveLength(7);
+    expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy).toHaveLength(8); // …plus Deploy
     expect(APPS_MINE_COLUMNS).toHaveLength(4); // App Cover Status Updated
     expect(APPS_MOD_LISTINGS_COLUMNS).toHaveLength(5); // App Owner Category Reviews actions
     expect(APPS_REVENUE_COLUMNS.withApp).toHaveLength(7); // Date App Scope Buzz Gross Share Status
@@ -294,15 +295,10 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       component: 'OffsiteReviewQueue',
       why: 'dead — superseded by the unified queue; nothing renders it (the LIVE table in this file is OffsiteReportsQueue, which does carry a ledger)',
     },
-    'src/components/Apps/MySubmissionsList.tsx#0': {
-      kind: 'unrendered',
-      component: 'MySubmissionsList',
-      why: 'dead — /apps/my-submissions merged into /apps/mine and 301s there',
-    },
     'src/components/Apps/OffsiteSubmissionsList.tsx#0': {
       kind: 'unrendered',
       component: 'OffsiteSubmissionsList',
-      why: 'dead — same merge as MySubmissionsList',
+      why: 'dead — /apps/my-submissions merged into /apps/mine and 301s there',
     },
     'src/components/Apps/OffsiteReviewQueue.tsx#1': {
       kind: 'no-surplus',
@@ -482,7 +478,6 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       'src/components/Apps/AppActivityPanel.tsx#0',
       'src/components/Apps/AppListingsModerationTable.tsx#0',
       'src/components/Apps/MyAppsBody.tsx#0',
-      'src/components/Apps/MySubmissionsList.tsx#0',
       // 🔴 TWO ENTRIES FOR ONE FILE, and this is the row that proves the walk is
       // per-TABLE rather than per-file: `#0` is the dead `OffsiteReviewQueue` and `#1` is
       // the live `OffsiteReportsQueue`. A per-file guard cannot express "one of these
@@ -492,6 +487,7 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       'src/components/Apps/OffsiteReviewQueue.tsx#1',
       'src/components/Apps/OffsiteSubmissionsList.tsx#0',
       'src/components/Apps/ReportTabs.tsx#0',
+      'src/components/Apps/SubListingReviewQueue.tsx#0',
       'src/components/Apps/UnifiedReviewList.tsx#0',
     ]);
   });

@@ -1,7 +1,14 @@
 import { branch, defineGraph } from 'form-graph';
 import { zImageControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_SQUARE_AR, SEED, controlNetsDef, defaultSamplerPresets, selectDef } from '../defs';
+import {
+  SDXL_FULL_AR,
+  SDXL_FULL_AR_4MP,
+  SEED,
+  controlNetsDef,
+  defaultSamplerPresets,
+  selectDef,
+} from '../defs';
 import {
   familyResources,
   familyScope,
@@ -11,11 +18,10 @@ import {
 } from '../shared';
 
 /**
- * ZImage family (ZImageTurbo / ZImageBase), ported from `z-image-graph.ts`.
+ * ZImage family (ZImageTurbo / ZImageBase).
  * Turbo has fixed sampler/scheduler and no negative prompt; Base exposes both.
  */
 
-// Copied from z-image-graph.ts, which dies with the data-graph engine.
 const zImageVersionIds = { turbo: 2442439, base: 2635223 } as const;
 const zImageModeVersionOptions = [
   { label: 'Turbo', value: zImageVersionIds.turbo },
@@ -35,12 +41,14 @@ const modeOf = (ecosystem: string) => {
   }
 };
 
-const AR = SDXL_SQUARE_AR;
+// Base is documented to 2048² total area; Turbo has no official figure above 1 MP.
+const AR_TURBO = SDXL_FULL_AR;
+const AR_BASE = SDXL_FULL_AR_4MP;
 const CONTROL_NETS = controlNetsDef({ preprocessors: zImageControlNetPreprocessors, limit: 1 });
 
 const turbo = defineGraph<FamilyExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', AR)
+  .field('aspectRatio', AR_TURBO)
   .field('cfgScale', perModelSlider({ min: 1, max: 2, step: 0.1, default: 1 }))
   .field('steps', perModelSlider({ min: 1, max: 15, default: 9 }))
   .field('controlNets', ({ _ext }) => (_ext.workflow === 'txt2img' ? CONTROL_NETS : null))
@@ -48,7 +56,7 @@ const turbo = defineGraph<FamilyExt>()
 
 const base = defineGraph<FamilyExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', AR)
+  .field('aspectRatio', AR_BASE)
   .field(
     'sampler',
     selectDef({ options: zImageSamplers, default: 'euler', presets: defaultSamplerPresets })
@@ -59,7 +67,7 @@ const base = defineGraph<FamilyExt>()
   .field('controlNets', ({ _ext }) => (_ext.workflow === 'txt2img' ? CONTROL_NETS : null))
   .field('seed', SEED);
 
-/** Tagged: v1's `zImageMode` computed becomes the branch key, same state shape. */
+/** Tagged: the picked key is stamped into state as `zImageMode`. */
 const modes = branch('zImageMode', (ext: FamilyExt) => modeOf(ext.ecosystem), { turbo, base });
 
 export const zimage = defineGraph<FamilyExt>({ scope: familyScope })
@@ -72,9 +80,6 @@ export const zimage = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .use(modes)
-  // Base's negative prompt is a full EDITOR, but it lives inside v1's mode
-  // subgraph where its snippet registration never fires — the oracle's
-  // targets carry `prompt` alone.
   .use(
     makeTextBlock({
       negativePrompt: (ext) => modeOf(ext.ecosystem) === 'base',

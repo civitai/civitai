@@ -287,3 +287,42 @@ describe('attribution never breaks a request', () => {
     expect(response.status).toBe(204);
   });
 });
+
+describe('the access-denied bounce', () => {
+  it('carries the WHOLE requested path, query included, and the dashboard reads it back intact', async () => {
+    const { safeReturnPath } = await import('$lib/return-path');
+    guardCheck.mockResolvedValue({ status: 'ok', user: { id: 7, roles: ['moderator:cm-high'] } });
+    const requested = '/decisions/support/g_77?version=v0.9-x';
+    const event = eventFor({ path: requested });
+    event.route.id = '/decisions/support/[groupKey]';
+    const { response, resolve } = await run(event);
+
+    expect(resolve).not.toHaveBeenCalled();
+    expect(response.status).toBe(303);
+    const location = response.headers.get('location') ?? '';
+    expect(location).toBe(`/?denied=${encodeURIComponent(requested)}`);
+    const back = new URL(location, 'https://moderator.example').searchParams.get('denied');
+    expect(safeReturnPath(back)).toBe(requested);
+  });
+});
+
+describe('moved views', () => {
+  it.each([
+    ['/audit/generator-restrictions?type=scam&status=any', '/users/scam-restrictions?status=any'],
+    ['/models/minor-hash-matches?tab=appeals&q=7', '/models/flag-appeals?q=7'],
+  ])(
+    'redirects %s before the grant check, even for a role holding neither old page',
+    async (from, to) => {
+      guardCheck.mockResolvedValue({ status: 'ok', user: { id: 7, roles: ['moderator:nobody'] } });
+      const path = from.split('?')[0];
+      const event = eventFor({ path });
+      event.url.search = from.split('?')[1];
+      event.route.id = path;
+      const { response, resolve } = await run(event);
+
+      expect(resolve).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe(to);
+    }
+  );
+});

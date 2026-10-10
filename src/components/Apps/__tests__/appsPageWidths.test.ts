@@ -95,6 +95,10 @@ const CHROME_PORTAL_SIBLINGS: Record<string, { file: string; exportName: string 
     file: 'src/components/Apps/CombinedReviewModal.tsx',
     exportName: 'CombinedReviewModal',
   },
+  PriorVersionsModal: {
+    file: 'src/components/Apps/PriorVersionsModal.tsx',
+    exportName: 'PriorVersionsModal',
+  },
 };
 
 /** Tags that mean "a portaled overlay root" — checked together with their IMPORT source. */

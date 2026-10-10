@@ -1,4 +1,4 @@
-import { gateRuleSchema } from '~/shared/data-graph/generation/gates';
+import { gateRuleSchema } from '~/shared/generation/gates';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
@@ -7,6 +7,8 @@ import {
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
+  setEvictableSchema,
+  setAdditionalResourceFeeWaivedSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -27,6 +29,8 @@ import {
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
+  setEvictable,
+  setAdditionalResourceFeeWaived,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -141,6 +145,14 @@ export const generationRouter = router({
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
       toggleGenerationDisabled({ ...input, isModerator: ctx.user.isModerator })
+    ),
+  setEvictable: moderatorProcedure
+    .input(setEvictableSchema)
+    .mutation(({ input, ctx }) => setEvictable({ ...input, isModerator: ctx.user.isModerator })),
+  setAdditionalResourceFeeWaived: moderatorProcedure
+    .input(setAdditionalResourceFeeWaivedSchema)
+    .mutation(({ input, ctx }) =>
+      setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
     ),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })

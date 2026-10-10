@@ -11,6 +11,7 @@ import { Flags } from '~/shared/utils/flags';
 import { emitFeedNoImagesDrop } from '~/utils/faro/feedDrop';
 import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit-base';
 import { isDefined, paired } from '~/utils/type-guards';
+import { isViewer } from '~/utils/is-viewer';
 
 export function useApplyHiddenPreferences<
   T extends keyof BaseDataTypeMap,
@@ -196,9 +197,7 @@ export function filterPreferences<
   }
 
   const isModerator = !!currentUser?.isModerator;
-  // Unlike the `isOwner` locals, never true for a signed-out viewer and an unowned row.
-  const ownedByViewer = (userId: number | null | undefined) =>
-    !!currentUser?.id && userId === currentUser.id;
+  const ownedByViewer = (userId: number | null | undefined) => isViewer(currentUser, userId);
   const { key, value } = paired<BaseDataTypeMap>(type, data);
   const {
     hiddenModels,
@@ -217,7 +216,7 @@ export function filterPreferences<
       const models = value
         .filter((model) => {
           const userId = model.user.id;
-          const isOwner = userId === currentUser?.id;
+          const isOwner = ownedByViewer(userId);
           if (!canViewNsfw && (hasNsfwWords(model.name) || model.nsfw === true)) return false;
           if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
           if (showHidden && !hiddenModels.get(model.id)) return false;
@@ -252,11 +251,11 @@ export function filterPreferences<
           return true;
         })
         .map(({ images, ...x }) => {
-          const isModelOwner = x.user.id === currentUser?.id;
+          const isModelOwner = ownedByViewer(x.user.id);
           const filteredImages =
             images?.filter((i) => {
               const userId = i.userId;
-              const isOwner = userId && userId === currentUser?.id;
+              const isOwner = ownedByViewer(userId);
               if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
               if (x.nsfw) {
                 if (i.nsfwLevel > maxSelectedLevel) return false;
@@ -321,7 +320,7 @@ export function filterPreferences<
     case 'images':
       const images = value.filter((image) => {
         const userId = image.userId ?? image.user?.id;
-        const isOwner = userId && userId === currentUser?.id;
+        const isOwner = ownedByViewer(userId);
         if ((isOwner || isModerator) && image.nsfwLevel === 0) return true;
         if (
           allowLowerLevels
@@ -371,7 +370,7 @@ export function filterPreferences<
     case 'articles':
       const articles = value.filter((article) => {
         const userId = article.user.id;
-        const isOwner = userId === currentUser?.id;
+        const isOwner = ownedByViewer(userId);
         if (!canViewNsfw && hasNsfwWords(article.title)) return false;
         if ((isOwner || isModerator) && article.nsfwLevel === 0) return true;
         if (!Flags.intersects(article.nsfwLevel, browsingLevel)) {
@@ -448,7 +447,7 @@ export function filterPreferences<
       return { hidden, items: articles };
     case 'users':
       const users = value.filter((user) => {
-        if (user.id === currentUser?.id) return true;
+        if (ownedByViewer(user.id)) return true;
         if (hiddenUsers.get(user.id)) {
           hidden.users++;
           return false;
@@ -464,7 +463,7 @@ export function filterPreferences<
       const collections = value
         .filter((collection) => {
           const userId = collection.userId ?? collection.user?.id;
-          const isOwner = userId && userId === currentUser?.id;
+          const isOwner = ownedByViewer(userId);
           if ((isOwner || isModerator) && collection.nsfwLevel === 0) return true;
           if (!Flags.intersects(collection.nsfwLevel, browsingLevel)) {
             hidden.browsingLevel++;
@@ -510,7 +509,7 @@ export function filterPreferences<
           const filteredImages =
             mergedImages.filter((i) => {
               const userId = i.userId;
-              const isOwner = userId === currentUser?.id;
+              const isOwner = ownedByViewer(userId);
               if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
               if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
@@ -549,7 +548,7 @@ export function filterPreferences<
       const bounties = value
         .filter((bounty) => {
           const userId = bounty.user.id;
-          const isOwner = userId === currentUser?.id;
+          const isOwner = ownedByViewer(userId);
           if (!canViewNsfw && hasNsfwWords(bounty.name)) return false;
           if ((isOwner || isModerator) && bounty.nsfwLevel === 0) return true;
           if (!Flags.intersects(bounty.nsfwLevel, browsingLevel)) {
@@ -581,7 +580,7 @@ export function filterPreferences<
         .map(({ images, ...x }) => {
           const filteredImages = images?.filter((i) => {
             const userId = i.userId;
-            const isOwner = userId === currentUser?.id;
+            const isOwner = ownedByViewer(userId);
             if ((isOwner || isModerator) && i.nsfwLevel === 0) return true;
             if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(i.id)) return false;
@@ -616,11 +615,64 @@ export function filterPreferences<
         .filter(isDefined);
 
       return { items: bounties, hidden };
+    case 'crucibles':
+      const crucibles = value
+        .filter((crucible) => {
+          const userId = crucible.user.id;
+          const isOwner = ownedByViewer(userId);
+          if (!canViewNsfw && hasNsfwWords(crucible.name)) return false;
+          if ((isOwner || isModerator) && crucible.nsfwLevel === 0) return true;
+          if (!Flags.intersects(crucible.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
+          }
+          if (hiddenUsers.get(crucible.user.id)) {
+            hidden.users++;
+            return false;
+          }
+          for (const tag of crucible.tags ?? []) {
+            if (hiddenTags.get(tag)) {
+              hidden.tags++;
+              return false;
+            }
+            if (systemHiddenTags.get(tag) && !isOwner) {
+              hidden.tags++;
+              return false;
+            }
+          }
+
+          const image = crucible.image;
+          if (image) {
+            if (!Flags.intersects(image.nsfwLevel, browsingLevel)) {
+              hidden.browsingLevel++;
+              return false;
+            }
+            if (hiddenImages.get(image.id)) {
+              hidden.images++;
+              return false;
+            }
+            for (const tag of image.tagIds ?? []) {
+              if (hiddenTags.get(tag)) {
+                hidden.tags++;
+                return false;
+              }
+              if (systemHiddenTags.get(tag) && !isOwner) {
+                hidden.tags++;
+                return false;
+              }
+            }
+          }
+
+          return true;
+        })
+        .filter(isDefined);
+
+      return { items: crucibles, hidden };
     case 'posts':
       const posts = value
         .filter((post) => {
           const userId = post.userId ?? post.user?.id;
-          const isOwner = userId && userId === currentUser?.id;
+          const isOwner = ownedByViewer(userId);
           if (!canViewNsfw && hasNsfwWords(post.title)) return false;
           if ((isOwner || isModerator) && post.nsfwLevel === 0) return true;
           if (!Flags.intersects(post.nsfwLevel, browsingLevel)) {
@@ -638,7 +690,7 @@ export function filterPreferences<
           if (!images) return post;
           const filteredImages = images.filter((image) => {
             const userId = image.userId ?? image.user?.id;
-            const isOwner = userId === currentUser?.id;
+            const isOwner = ownedByViewer(userId);
             if ((isOwner || isModerator) && image.nsfwLevel === 0) return true;
             if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(image.id)) return false;
@@ -720,7 +772,7 @@ export function filterPreferences<
       const challenges = value.filter((challenge) => {
         // createdById is the real creator now (the judge is a separate field), so this correctly
         // exempts the owner from their own challenge's browsing-level hide.
-        const isOwner = challenge.createdById === currentUser?.id;
+        const isOwner = ownedByViewer(challenge.createdById);
         if (isOwner || isModerator) return true;
 
         // The challenge's own rating — the highest level its `allowedNsfwLevel` permits — must
@@ -750,7 +802,7 @@ export function filterPreferences<
       // sub-filter to apply here, just the per-row checks.
       const model3ds = value.filter((m) => {
         const userId = m.user.id;
-        const isOwner = userId === currentUser?.id;
+        const isOwner = ownedByViewer(userId);
         if (!canViewNsfw && (hasNsfwWords(m.name ?? '') || m.nsfw === true)) return false;
         if (hiddenModel3Ds.get(m.id)) {
           hidden.models++;
@@ -937,6 +989,22 @@ type BaseModel3D = {
   poi?: boolean;
 };
 
+type BaseCrucible = {
+  id: number;
+  user: { id: number };
+  tags?: number[];
+  nsfwLevel: number;
+  nsfw?: boolean;
+  name?: string | null;
+  image?: {
+    id: number;
+    tagIds?: number[];
+    nsfwLevel: number;
+    nsfw?: boolean;
+    userId?: number;
+  } | null;
+};
+
 export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
@@ -944,6 +1012,7 @@ export type BaseDataTypeMap = {
   users: BaseUser[];
   collections: BaseCollection[];
   bounties: BaseBounty[];
+  crucibles: BaseCrucible[];
   posts: BasePost[];
   tags: BaseTag[];
   tools: BaseTool[];

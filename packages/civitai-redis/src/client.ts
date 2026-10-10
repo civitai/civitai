@@ -1167,16 +1167,26 @@ function getBaseClient(type: 'cache' | 'system') {
 
   // Sentinel observability — count topology changes + sub-client errors (PR #2331). Counters
   // come from the app's prom bridge (noop until it loads); deployment = pod HOSTNAME.
+  // The counter is resolved from the bridge at EVENT time, like every other Redis metric: the
+  // sys client is a process-wide singleton shared by every bundler runtime, so the bag present
+  // when it is BUILT may belong to a runtime whose registry /api/metrics does not scrape, or be
+  // republished later. A build-time capture would then count into an unscraped registry.
   if (isSysSentinel) {
-    const metrics = getRedisMetrics();
-    const noopCounter = { labels: () => ({ inc: () => undefined }) };
+    type LabeledCounter = RedisMetricsBridge['sysredisSentinelTopologyChangesCounter'];
+    const noopCounter: LabeledCounter = { labels: () => ({ inc: () => undefined }) };
+    const lateBound = (
+      pick: (m: RedisMetricsBridge | undefined) => LabeledCounter | undefined
+    ): LabeledCounter => ({
+      labels: (labels: Record<string, string>) =>
+        (pick(getRedisMetrics()) ?? noopCounter).labels(labels),
+    });
     attachSysSentinelListeners(
       baseClient as unknown as { on: (e: string, l: (e: any) => void) => unknown },
       {
         deployment: process.env.HOSTNAME ?? 'unknown',
         log,
-        topologyCounter: metrics?.sysredisSentinelTopologyChangesCounter ?? noopCounter,
-        errorCounter: metrics?.sysredisSentinelClientErrorsCounter ?? noopCounter,
+        topologyCounter: lateBound((m) => m?.sysredisSentinelTopologyChangesCounter),
+        errorCounter: lateBound((m) => m?.sysredisSentinelClientErrorsCounter),
       }
     );
   }
@@ -1452,11 +1462,12 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // (fetchThroughCache's compressed callers, e.g. tensor-metadata full; and
   // createCachedArray/createCachedObject caches built with `compress: true`, e.g.
   // imageMetaCache). It awaits the async brotli codec and discriminates on the sentinel
-  // byte so a legacy uncompressed value (written before compression was enabled) still
-  // decodes: first byte === sentinel → strip + brotli-decompress + unpack; else → unpack
-  // as legacy raw. Provably safe HERE (and only here) because every value on these paths
-  // is an OBJECT (the `{ data, cachedAt }` wrapper, or a cached-array record/marker) whose
-  // msgpack first byte is always a MAP marker (0x80–0x8f / 0xde / 0xdf), never 0x01.
+  // byte so an uncompressed value (legacy, or a not-found marker as cached-array's fetch
+  // writes it) still decodes: first byte === sentinel → strip + brotli-decompress +
+  // unpack; else → unpack as raw. Provably safe HERE (and only here) because every value
+  // on these paths is an OBJECT (the `{ data, cachedAt }` wrapper, or a cached-array
+  // record/marker) whose msgpack first byte is always a MAP marker (0x80–0x8f / 0xde /
+  // 0xdf), never 0x01.
   // Preserves safeUnpack's evict-on-failure / fail-open semantics: a decompress/unpack
   // throw is treated as a cache miss (null) and evicts the bad entry.
   const safeUnpackCompressed = async <T>(
@@ -1694,8 +1705,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   //
   // SINGLE-SINGLETON INVARIANT — registering only the FIRST getClient('system') set is sufficient
   // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
-  // (src/server/redis/client.ts `make()`, memoized — prod evaluates the module const once, dev
-  // caches on global.__civitaiRedisClients, build builds nothing), and `createSysRedis` has zero
+  // (src/server/redis/client.ts `make()`, memoized on globalThis.__civitaiRedisClients in every
+  // environment — this module is evaluated once per bundler module graph, so a module-scope memo
+  // would not be enough; build builds nothing), and `createSysRedis` has zero
   // callers (civitai-auth uses createCacheRedis → cache-only). So there is never a second, unwatched
   // sys client. If a future caller builds an ADDITIONAL sys client, this guard would leave it
   // unwatched — revisit the guard (key it per client set) at that point.
@@ -1798,6 +1810,14 @@ export const REDIS_SYS_KEYS = {
   FEEDBACK: {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
+  },
+  PRICING: {
+    // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
+    FEE_ALLOWANCE_BOOST: 'system:pricing:fee-allowance-boost',
+  },
+  COLLECTION_AI_REVIEW: {
+    // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
+    ATTEMPTS: 'system:collection-ai-review:attempts',
   },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
@@ -2009,6 +2029,10 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
+    /** App Blocks `kind:'training'` dataset handle; see block-training-dataset.service. */
+    TRAINING_DATASET: 'system:blocks:training-dataset',
+    /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
+    TRAINING_QUOTE: 'system:blocks:training-quote',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',
@@ -2108,6 +2132,9 @@ export const REDIS_SYS_KEYS = {
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
     // searches to the candidate feed service and record the comparison. Off when missing.
     FEED_SHADOW: 'system:feed-shadow',
+    // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
+    // voted on this judging session, and how long idle ends that session. Missing = defaults.
+    CRUCIBLE_JUDGING: 'system:crucible-judging',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2117,6 +2144,10 @@ export const REDIS_SYS_KEYS = {
     // generating ~15× more re-index work than the consumer can drain.
     MODEL_METRIC_AFFECTED: 'index-updates:model-metric-affected',
     MODEL_METRIC_LAST_FLUSH: 'index-updates:model-metric-last-flush',
+  },
+  NOTICES: {
+    // Hash of userId → sent-at ISO time; a field is claimed before its email goes out.
+    BANKING_CHANGE_SENT: 'notices:banking-change-sent',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
@@ -2182,6 +2213,7 @@ export const REDIS_SYS_KEYS = {
   },
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
+    BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -2305,6 +2337,26 @@ export const REDIS_SYS_KEYS = {
       URLS: 'packed:system:entity-moderation:urls',
     },
   },
+  TEXT_SCAN: {
+    /*
+      Use: runtime config for the text-scan pipeline, editable without a deploy
+        (text-scan harness `putConfig`).
+      Structure: json string, get/set ({ "model"?: string, "maxInputChars"?: number, "thinking"?: boolean })
+     */
+    CONFIG: 'system:text-scan:config',
+    /*
+      Use: per-entity-type rollout of text scan (text-scan harness `putModes`). A missing field is off.
+      Structure: hset, field = entity type (e.g. "Model"), value = json { "shadow": 0-100, "active": 0-100 }
+        (percent of entity ids in each mode; active wins)
+     */
+    MODES: 'system:text-scan:modes',
+    /*
+      Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
+        Clavata job skips them only while the `text-scan` Flipt kill switch is on.
+      Structure: set of Clavata keys
+     */
+    CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
+  },
   CONTENT: {
     /*
       Use: Store markdown content for region restrictions and other warnings
@@ -2324,6 +2376,15 @@ export const REDIS_SYS_KEYS = {
   },
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
+  },
+  CRUCIBLE: {
+    ELO: 'crucible:elo',
+    VOTED_PAIRS: 'crucible:voted',
+    SERVED_PAIR: 'crucible:served-pair',
+    JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
+    JUDGES: 'crucible:judges',
+    USER_VOTES: 'crucible:user-votes',
+    JUDGING_SESSION: 'crucible:judging-session',
   },
 } as const;
 
@@ -2438,7 +2499,14 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
+    TEXT_SCAN_PROMPTS: 'packed:caches:text-scan-prompts',
     RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
+    // Full resource-intent responses (degraded ones under a short TTL). The v1
+    // segment pins the response shape; see resource-intent.service.ts for the
+    // rest of the key (…:<sha256> of prompt|baseModel|browsingLevel|cap|specVersion).
+    // `cap` is in there because it bounds the shortlist and so bounds the cached
+    // suggestions — omitting it let one prompt's entry be reused across limits.
+    JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
@@ -2515,6 +2583,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // call (~1174ms in EXPLAIN ANALYZE); the total is a slowly-moving aggregate so
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
+    CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so
@@ -2609,6 +2678,10 @@ const REDIS_KEYS_UNPREFIXED = {
       CACHE: 'packed:holiday2024',
     },
   },
+  BIRTHDAY: {
+    // Must equal BIRTHDAY_2026_EVENT; birthday2026.event.ts fails to compile otherwise.
+    '2026': { BASE: 'birthday2026' },
+  },
   BEEHIIV: {
     NEWSLETTER: 'newsletter',
   },
@@ -2634,6 +2707,7 @@ const REDIS_KEYS_UNPREFIXED = {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',
     BANKED: 'packed:caches:creator-program:banked',
+    BANKABLE: 'packed:caches:creator-program:bankable',
     PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
     POOL_VALUE: 'packed:caches:creator-program:pool-value',
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
@@ -2648,7 +2722,13 @@ const REDIS_KEYS_UNPREFIXED = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
-    RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
+  },
+  RATING_REVIEW: {
+    /*
+      Use: per-user count of rating disputes filed in the current 24h window, across every entity type.
+      Structure: integer (INCR), TTL 24h set on the first increment
+     */
+    RATE_LIMIT: 'rating-review:rate',
   },
   REPORT: {
     /*
@@ -2658,6 +2738,16 @@ const REDIS_KEYS_UNPREFIXED = {
       Read by: the moderator app's dashboard, which filters its most-reported list through it.
      */
     RESOLVED_RECENT: 'report:resolved-recent',
+  },
+  TEXT_SCAN: {
+    /*
+      Use: throttles the "missing prompt rows" error to one log per key per interval.
+      Structure: string '1' set NX with a TTL, key = `text-scan:missing-prompt-logged:${promptKey}`.
+     */
+    MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
+  },
+  CRUCIBLE: {
+    USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
   },
 } as const;
 
@@ -2686,6 +2776,8 @@ export const REDIS_SUB_KEYS = {
     ADD_ROLE: 'add-role', // sys
     MANUAL_ASSIGNMENTS: 'manual-assignments', //sys
     DISCORD_ROLES: 'discord-roles', // sys
+    POINTS: 'points', // sys
+    WINNER: 'winner', // sys
   },
   QUEUES: {
     MERGING: 'merging', // sys

@@ -11,6 +11,8 @@ import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PlacementSpaceSection } from '~/components/Account/PlacementSpaceSection';
 import { RemixGallerySettings } from '~/components/RemixGallery/RemixGallerySettings';
+import { PromotionSettings } from '~/components/Promotion/PromotionSettings';
+import { ShowcaseOptOutSetting } from '~/components/CreatorJourney/ShowcaseOptOutSetting';
 import { SettingRow, SettingsSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -43,7 +45,13 @@ export function CreatorControlsCard({
 
   if (!user) return null;
   // With neither half, the card would be a bare heading.
-  if (!flags.creatorControls && !flags.stickerPlacement && !flags.remixGallery)
+  if (
+    !flags.creatorControls &&
+    !flags.stickerPlacement &&
+    !flags.remixGallery &&
+    !flags.creatorPromotions &&
+    !flags.creatorJourney
+  )
     return <>{stickerFooter}</>;
 
   const isActiveMember = !!requirements?.validMembership;
@@ -113,6 +121,7 @@ export function CreatorControlsCard({
   if (flat)
     return (
       <div id="creator-controls" className="flex flex-col gap-8">
+        <ShowcaseOptOutSetting flat />
         {flags.creatorControls && (
           <SettingsSection
             title={
@@ -149,6 +158,7 @@ export function CreatorControlsCard({
         )}
         <PlacementSpaceSection flat footer={stickerFooter} />
         <RemixGallerySettings flat />
+        <PromotionSettings flat />
       </div>
     );
 
@@ -157,9 +167,13 @@ export function CreatorControlsCard({
       <Stack>
         <Title order={2}>Creator Controls</Title>
 
+        <ShowcaseOptOutSetting />
+
         <PlacementSpaceSection />
 
         <RemixGallerySettings />
+
+        <PromotionSettings />
 
         {/* The Creator Program half. Gated apart from the sticker section
             above, which anyone may use on their own images. */}

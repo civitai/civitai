@@ -335,7 +335,27 @@ export function cascadeEvidence(): {
   probeBoxSizing: string;
   /** `@tailwind utilities` — inert in the `component` tier, which loads none of it. */
   tailwindFlexUtilityResolves: boolean;
-  /** A `theme`-layer rule from globals.css. */
+  /**
+   * The ROOT FONT SIZE — the SCOPE of every px measurement taken in this tier, and the only
+   * field here that is NOT cascade evidence.
+   *
+   * ⚠️ IT WAS DOCUMENTED AS "a `theme`-layer rule from globals.css" AND NO SUCH RULE EXISTS:
+   * `src/styles/globals.css` declares no `html { font-size }` (its only `16px` is an
+   * `input:focus` override inside an iOS `hover: none`/`pointer: coarse` media query), and
+   * nothing overrides `--mantine-scale`. So this reports the BROWSER DEFAULT, which makes it
+   * worthless as evidence the cascade loaded — the same mistake that got the body's
+   * `margin-top` cut from this list.
+   *
+   * It is kept — and is now asserted by at least one caller — for the opposite reason to the
+   * fields above: almost everything in the Mantine cascade is in `rem`, so a px number
+   * measured in this tier is a claim AT A PARTICULAR ROOT FONT SIZE. A geometry whose terms
+   * are a mix of rem and px changes sign across this axis while every width-based assertion
+   * stays green. Worked example, measured: the root-font-size block in
+   * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx` pins a clearance that was
+   * 0.00px at a 16px root font size and **−9px at 20px** — invisible to that file's two
+   * viewports, which agreed with each other at both. Assert it, so a measurement carries its
+   * own scope; override it (`document.documentElement.style.fontSize`) to vary the axis.
+   */
   htmlFontSize: string;
 } {
   const probe = document.createElement('div');

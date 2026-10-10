@@ -4,25 +4,28 @@ import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
   getStepByOrchestratorType,
+  isTrainingStepType,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
-  splitPassThroughStepOutput,
+  splitPassThroughStep,
 } from './steps';
+import type { TrainedEpoch } from './steps';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { getEcosystem } from '~/shared/constants/basemodel.constants';
-import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
-import { resolveVersionWorkflowScope } from '~/shared/data-graph/generation/workflow-capability';
+import { isWorkflowAvailable } from '~/shared/generation/config/workflows';
+import { resolveVersionWorkflowScope } from '~/shared/generation/workflow-capability';
 import {
   readModelSubstitutionsFromMetadata,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
-} from '~/shared/data-graph/generation/model-substitution';
-import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
+} from '~/shared/generation/model-substitution';
+import { getImagesLimit } from '~/shared/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
 import type {
+  BlockPublishedModel,
   BlockSourceImage,
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
@@ -45,7 +48,7 @@ const ORCH_STATUS_MAP: Record<WorkflowStatus, BlockWorkflowSnapshot['status']> =
 /**
  * 🔴 The key + reader for silent checkpoint substitutions persisted on the
  * ORCHESTRATOR WORKFLOW's `metadata` (issue #3520) now live in
- * `~/shared/data-graph/generation/model-substitution` — the tRPC generation path
+ * `~/shared/generation/model-substitution` — the tRPC generation path
  * needs the identical parse (#3665), and a second copy of a validating predicate
  * is how the same bug gets fixed at one site and not the other. Re-exported here
  * because this module is where the block path's callers already look for it.
@@ -124,6 +127,7 @@ export function snapshotFromWorkflow(
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
+  const trainedEpochs: TrainedEpoch[] = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
     // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
@@ -195,12 +199,16 @@ export function snapshotFromWorkflow(
       // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
       // image this arm produces on the one channel the publish path and the
       // per-viewer gated read already own; see `stepOutputs` in
-      // `schema/blocks/workflow.schema`.
+      // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
+      // `splitPassThroughStep` drops it.
       if (step.name !== BLOCK_STEP_NAME) continue;
-      const { media, rest } = splitPassThroughStepOutput(
-        (step as unknown as { output?: unknown }).output
-      );
+      const {
+        media,
+        rest,
+        trainedEpochs: epochs,
+      } = splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output);
       for (const m of media) imageUrls.push(m.url);
+      trainedEpochs.push(...epochs);
       // A step with no output yet — the submit reply — would otherwise get an
       // entry saying nothing.
       if (rest !== undefined) stepOutputs.push({ $type: step.$type, output: rest });
@@ -247,6 +255,7 @@ export function snapshotFromWorkflow(
   const modelSubstitutions = extra?.modelSubstitutions?.length
     ? extra.modelSubstitutions
     : readModelSubstitutionsFromMetadata(workflow.metadata);
+  const publishedModel = readBlockPublishedModel(workflow);
   return {
     // The orchestrator stamps a server-minted id on EVERY workflow it returns,
     // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
@@ -275,6 +284,37 @@ export function snapshotFromWorkflow(
     // Omitted entirely when nothing was substituted — the common case — so a
     // normal snapshot is unchanged on the wire.
     ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
+    ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
+    ...(publishedModel ? { publishedModel } : {}),
+  };
+}
+
+/** True when the workflow carries a training step THIS bridge submitted. */
+function hasBlockTrainingStep(workflow: Workflow): boolean {
+  return (workflow.steps ?? []).some(
+    (step) => step.name === BLOCK_STEP_NAME && isTrainingStepType(step.$type)
+  );
+}
+
+const isPositiveInteger = (value: unknown): value is number =>
+  Number.isInteger(value) && (value as number) > 0;
+
+/**
+ * The model a block-run training workflow became, from the ids the training
+ * publish wizard merges into the workflow's metadata (`stampWorkflowDraftModel`,
+ * `stampWorkflowPublished`). Gated on a block-submitted training step so a stray
+ * `modelId` on any other workflow's metadata is never reported as its model.
+ */
+function readBlockPublishedModel(workflow: Workflow): BlockPublishedModel | undefined {
+  if (!hasBlockTrainingStep(workflow)) return undefined;
+  const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
+  if (!isPositiveInteger(meta.modelId) || !isPositiveInteger(meta.modelVersionId)) {
+    return undefined;
+  }
+  return {
+    modelId: meta.modelId,
+    modelVersionId: meta.modelVersionId,
+    published: meta.published === true,
   };
 }
 
@@ -311,6 +351,11 @@ export function appBlockTag(appId: string): string {
  *   cost:   the workflow's realized/estimated buzz total, or null when absent.
  *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
  *           unassigned/preparing/scheduled all collapse to `pending`.
+ *   trainedEpochs: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.trainedEpochs`. Absent unless an approved
+ *           pass-through training run has a ready checkpoint.
+ *   publishedModel: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.publishedModel`. Absent on every other item.
  */
 export type AppWorkflowImage = {
   url: string;
@@ -324,6 +369,8 @@ export type AppWorkflow = {
   images: AppWorkflowImage[];
   cost: number | null;
   createdAt: string;
+  trainedEpochs?: TrainedEpoch[];
+  publishedModel?: BlockPublishedModel;
 };
 
 /**
@@ -333,6 +380,7 @@ export type AppWorkflow = {
 export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const images: AppWorkflowImage[] = [];
+  const trainedEpochs: TrainedEpoch[] = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step surfaces its outputs as `output.blobs`
     // (CustomComfyOutput) — no width/height, `nsfwLevel` is the same string
@@ -398,13 +446,19 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       //
       // The non-media half is deliberately DROPPED, not forwarded: `AppWorkflow`
       // is the cross-surface queue contract and exists to hand a block nothing
-      // but images, cost and status.
+      // but images, cost and status. The one addition is `trainedEpochs`, taken
+      // from the same split the snapshot uses, so a block listing its runs can
+      // offer an approved one to the publish wizard.
       //
       // Same `BLOCK_STEP_NAME` gate as `snapshotFromWorkflow` — see the note
       // there for why "unrecognised `$type`" is the wrong set.
       if (step.name !== BLOCK_STEP_NAME) continue;
-      for (const m of splitPassThroughStepOutput((step as unknown as { output?: unknown }).output)
-        .media) {
+      const split = splitPassThroughStep(
+        step.$type,
+        (step as unknown as { output?: unknown }).output
+      );
+      trainedEpochs.push(...split.trainedEpochs);
+      for (const m of split.media) {
         images.push({
           url: m.url,
           width: m.width,
@@ -447,6 +501,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     }
   }
   const total = workflow.cost?.total;
+  const publishedModel = readBlockPublishedModel(workflow);
   return {
     // A real LIST/GET item always carries an id; empty-string only if the
     // orchestrator ever omits it (never for a persisted workflow).
@@ -455,6 +510,8 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     images,
     cost: typeof total === 'number' ? total : null,
     createdAt: workflow.createdAt,
+    ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
+    ...(publishedModel ? { publishedModel } : {}),
   };
 }
 
@@ -710,8 +767,8 @@ export function normalizeBlockSourceImages(
  *
  * Variant selection is DETERMINISTIC via `isWorkflowAvailable` (the same
  * availability check the generation graph uses) — it never leans on
- * `DataGraph.safeParse` auto-correcting a mis-routed ecosystem (the #3127 bug
- * class: safeParse runs `_evaluate` before `_validate`, silently rewriting an
+ * `generationHub.parse` auto-correcting a mis-routed ecosystem (the #3127 bug
+ * class: `correct` policies rewrite the value during the resolve pass, silently
  * unsupported ecosystem to a supported one and returning a mis-routed graph as
  * success). `ecosystemId` is the checkpoint's resolved ecosystem id; when it is
  * omitted (unrecognized base model) a source-image body is rejected fail-closed.
@@ -758,7 +815,7 @@ export function resolveBlockImageWorkflowType(
  * ecosystem scopes its checkpoint versions BY WORKFLOW.
  *
  * THE BUG THIS CLOSES. Several image ecosystems ship DIFFERENT checkpoint
- * versions per workflow (`createCheckpointGraph({ workflowVersions })` in
+ * versions per workflow (`checkpointDef({ workflowVersions })` in
  * qwen-graph / boogu-graph / mage-flow-graph). Qwen model 2268063, for example,
  * hosts BOTH `2558804` ("Image Edit 2511", offered only on `img2img:edit`) and
  * `2552908` (offered only on `txt2img`).
@@ -769,26 +826,17 @@ export function resolveBlockImageWorkflowType(
  * DIFFERENT checkpoint: `model.id` 2558804 → 2552908. The caller was billed,
  * got images, and never learned about the swap.
  *
- * THE MECHANISM is the `modelLocked` clamp in `createCheckpointGraph`'s
- * `checkpointInputSchema` (`shared/data-graph/generation/common.ts`, the
- * `if (modelLocked && modelVersionId && val.id !== modelVersionId)` branch):
- * on a `modelLocked` ecosystem, ANY id not in the CURRENT workflow's visible
- * version list is replaced with that workflow's `defaultModelId`.
+ * THE MECHANISM is the `modelLocked` clamp in `checkpointDef`'s `correct`
+ * (`shared/form-graph/generation/checkpoint.ts`): on a `modelLocked` ecosystem,
+ * ANY id not in the CURRENT workflow's visible version list is replaced with that
+ * workflow's `defaultModelId` — regardless of its position in the sibling list,
+ * or of whether the ecosystem has ever heard of it.
  *
- * It is NOT `buildModelTransform`'s same-index sibling mapping. That transform
- * is gated on `depsChanged && !isDirectUpdate` (`libs/data-graph/data-graph.ts`)
- * — a one-shot `safeParse` that passes `model` explicitly, which is exactly what
- * this bridge does, IS a direct update, so the transform never runs at all here.
- * It belongs to the interactive form path, where the workflow changes underneath
- * a model the user did not just set. Measured: 0 invocations across these
- * inputs, and stubbing it to `undefined` changes no output.
- *
- * That distinction is not cosmetic: it decides which inputs are affected, and
- * it is pinned by an executed discriminator (see the `SILENTLY SUBSTITUTES to
- * the workflow DEFAULT` tests). Index-mapping and the default-clamp predict
- * different outputs for the index-0 edit version 2133258 — 2110043 vs 2552908.
- * The real graph returns 2552908. Every id lands on the default, regardless of
- * its position or whether the ecosystem has ever heard of it.
+ * It is NOT an index-equivalent remap. One family has that — MageFlow, via its own
+ * `workflow_version_remap` `correct`, which runs first and pre-empts the clamp —
+ * and the distinction decides which inputs are affected, so it is pinned by an
+ * executed discriminator rather than described (the `SILENTLY SUBSTITUTES` tests
+ * in `workflow.service.test.ts` choose ids where the two rules predict differently).
  *
  * Nothing in the response, the snapshot, or the `block_workflows` read-model
  * reveals the substitution, which makes it the worst available failure mode: a
@@ -801,9 +849,9 @@ export function resolveBlockImageWorkflowType(
  *  - An UNRECOGNIZED id (a community checkpoint, a brand-new upload) on a
  *    `modelLocked` ecosystem is also clamped to the workflow default —
  *    `{ workflow: 'txt2img', ecosystem: 'Qwen', model: { id: 987654321 } }`
- *    returns success with `model.id` 2552908. It is NOT "left alone". 23 of the
- *    35 image ecosystems are `modelLocked`, so this is the wide part of the
- *    class, and rejecting it here would reject ids the graph is willing to run.
+ *    returns success with `model.id` 2552908. It is NOT "left alone". MOST image
+ *    ecosystems are `modelLocked`, so this is the wide part of the class, and
+ *    rejecting it here would reject ids the graph is willing to run.
  *  - The reverse direction (a txt2img-only version sent WITH a `sourceImage`)
  *    is substituted the same way and is likewise not rejected here.
  *
@@ -855,14 +903,12 @@ export function assertCheckpointVersionSupportsWorkflow(opts: {
  * Enforce the PER-ECOSYSTEM source-image cap.
  *
  * The cap is not a constant — it is declared per ecosystem in the graph's own
- * `imagesNode({ min, max })` and the spread is wide: Boogu / Flux.1 Kontext /
- * MAI / SD-family accept 1, Qwen / Qwen2 / MageFlow 3, Reve / HiDream-O1 4,
- * WanImage 5, Flux.2 / Klein / OpenAI / NanoBanana / Seedream / Grok 7. A flat
- * constant would over-allow the 1-image ecosystems and under-allow the 7-image
- * ones, so `getImagesLimit` reads the real graph config instead.
+ * `imagesDef({ min, max })` and ranges 1–10. A flat constant would over-allow the
+ * 1-image ecosystems and under-allow the widest ones, so `getImagesLimit` reads the
+ * real graph config instead.
  *
- * WHY REJECT RATHER THAN LET THE GRAPH HANDLE IT: `imagesNode`'s INPUT
- * transform does `arr.slice(0, effectiveMax)` — an over-cap array is silently
+ * WHY REJECT RATHER THAN LET THE GRAPH HANDLE IT: `imagesDef`'s INPUT
+ * transform AND its `correct` truncate — an over-cap array is silently
  * TRUNCATED, and the caller is billed for a generation conditioned on fewer
  * images than it sent, with nothing in the response saying so. Same
  * silent-wrong-answer class the ecosystem/variant guard above exists to stop.
@@ -877,9 +923,9 @@ export function assertCheckpointVersionSupportsWorkflow(opts: {
  * exported so it can be exercised directly rather than left unverified.
  *
  * The MINIMUM is deliberately NOT re-checked here. Every image workflow's
- * `imagesNode` has `min: 1` today, and we only call this with `count >= 1`; if
+ * `imagesDef` has `min: 1` today, and we only call this with `count >= 1`; if
  * a future ecosystem raises its minimum, the graph's own OUTPUT schema
- * (`.min(effectiveMin, 'At least N images are required')`) rejects LOUDLY
+ * (`.min(min, …)`) rejects LOUDLY
  * during `safeParse` — that failure mode is already an error, not a silent
  * wrong answer, so duplicating it here would only add a second place to drift.
  */
@@ -1000,8 +1046,8 @@ export function buildImageWorkflowInput(
   // override-paths). Plain `img2img` ("Image Variations") is SD-family-only and
   // `img2img:edit` is EDIT_IMG_IDS-only (OpenAI/Qwen/Flux Kontext/…) in the
   // generation graph. Reject a variant the checkpoint's ecosystem doesn't support
-  // HERE rather than lean on the graph: `DataGraph.safeParse` runs its auto-
-  // correct pass (`_evaluate`) BEFORE `_validate`, so an unsupported checkpoint
+  // HERE rather than lean on the graph: the hub's `correct` policies rewrite during
+  // the resolve pass, BEFORE validation, so an unsupported checkpoint
   // would be silently REWRITTEN to a supported ecosystem (keeping the caller's
   // checkpoint version id) and returned as a SUCCESSFUL but mis-routed graph —
   // the whatIf preflight would price that mis-route too. Deriving support from
@@ -1159,7 +1205,7 @@ export function buildImageWorkflowInput(
     // qwen-graph: `images` node shown `when: !workflow.startsWith('txt')`). The
     // denoise/edit node applies at its default and output dimensions derive from
     // the source (SD) or the ecosystem's aspectRatio default (edit) — so
-    // aspectRatio is OMITTED here. The graph's imagesNode reads
+    // aspectRatio is OMITTED here. The graph's imagesDef reads
     // { url, width, height }; extra fields are stripped by its object parse.
     //
     // MULTI-IMAGE: the source images are the NORMALIZED array, so the singular

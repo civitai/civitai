@@ -31,8 +31,6 @@ describe('sub-nav default layout', () => {
   it('places every gate-passing item at its default with all flags on', () => {
     const { bar, more } = resolve(allFlags(true));
 
-    // `bounties` is the one item defaulting to More. It was one of five `grouped` items, all of
-    // which showed as pills above `xl` before placement stopped depending on viewport width.
     expect(bar.map((e) => e.key)).toEqual([
       'home',
       'models',
@@ -42,12 +40,13 @@ describe('sub-nav default layout', () => {
       'hubs',
       'articles',
       'comics',
-      'challenges',
+      // Gated on `features.crucible`, so it is absent from the all-flags-off vector below.
+      'crucibles',
       'apps',
       'updates',
       'shop',
     ]);
-    expect(more.map((e) => e.key)).toEqual(['bounties']);
+    expect(more.map((e) => e.key)).toEqual(['bounties', 'challenges']);
   });
 
   /**
@@ -108,10 +107,7 @@ describe('the apps pill gate', () => {
     expect(more).toEqual([]);
   });
 
-  it.each([
-    ['appListings'],
-    ['appBlocks'],
-  ])('shows the pill when %s alone is on', (flag) => {
+  it.each([['appListings'], ['appBlocks']])('shows the pill when %s alone is on', (flag) => {
     const { bar } = resolve(onlyFlags(flag));
     expect(bar.some((e) => e.key === 'apps')).toBe(true);
   });

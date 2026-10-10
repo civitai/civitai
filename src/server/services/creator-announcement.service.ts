@@ -248,7 +248,14 @@ export async function getFollowedAnnouncements({
 async function assertOwnedAnnouncement(id: number, userId: number, isModerator = false) {
   const existing = await dbRead.announcement.findFirst({
     where: isModerator ? { id, userId: { not: null } } : { id, userId },
-    select: { id: true, coverId: true, profileOnly: true, startsAt: true, content: true },
+    select: {
+      id: true,
+      coverId: true,
+      profileOnly: true,
+      startsAt: true,
+      content: true,
+      metadata: true,
+    },
   });
   if (!existing) throw throwAuthorizationError('Announcement not found');
   return existing;
@@ -294,6 +301,20 @@ export function assertContentLength(content: string, previousContent?: string) {
   throw throwBadRequestError(
     `Announcements are limited to ${CREATOR_ANNOUNCEMENT_CONTENT_MAX} characters.`
   );
+}
+
+/**
+ * More than one link button is a member feature. A row that already carries more — saved while its
+ * author was a member — may still be edited with up to as many as it has, so a lapsed membership
+ * does not lock the author out of fixing a typo; it can never gain one.
+ */
+function assertActionCount(
+  count: number,
+  { isMember, previousCount = 0 }: { isMember: boolean; previousCount?: number }
+) {
+  if (count <= 1 || isMember || count <= previousCount) return;
+
+  throw throwAuthorizationError('More than one link button is a membership feature.');
 }
 
 export const MIN_ANNOUNCEMENT_DURATION_MS = 60 * 60 * 1000;
@@ -346,9 +367,15 @@ export function clampAnnouncementWindow({
 export async function upsertCreatorAnnouncement({
   userId,
   isModerator = false,
+  isMember = false,
   ...input
-}: UpsertCreatorAnnouncementSchema & { userId: number; isModerator?: boolean }) {
+}: UpsertCreatorAnnouncementSchema & {
+  userId: number;
+  isModerator?: boolean;
+  isMember?: boolean;
+}) {
   const existing = input.id ? await assertOwnedAnnouncement(input.id, userId) : undefined;
+  const actions = input.actions ?? (input.action ? [input.action] : []);
 
   // Push, not pull: this text is delivered to every follower rather than waiting to be visited.
   //
@@ -357,9 +384,14 @@ export async function upsertCreatorAnnouncement({
   // list" for a caller holding an id they do not own, in place of the authorization failure they
   // should get. This is the router's only gate; the procedure passes straight through.
   await throwOnBlockedUserContent(
-    [input.title, input.content, input.action?.linkText, input.action?.link],
+    [input.title, input.content, ...actions.flatMap((a) => [a.linkText, a.link])],
     { isModerator, surface: 'creatorAnnouncement' }
   );
+
+  assertActionCount(actions.length, {
+    isMember,
+    previousCount: (existing?.metadata as AnnouncementMetaSchema | null)?.actions?.length,
+  });
 
   // An announcement costs a slot when it starts notifying, not when it is created.
   // profileOnly rows notify nobody, so they are free — but flipping one to profileOnly:
@@ -384,15 +416,13 @@ export async function upsertCreatorAnnouncement({
 
   const metadata: AnnouncementMetaSchema = {
     dismissible: true,
-    ...(input.action
+    ...(actions.length
       ? {
-          actions: [
-            {
-              type: 'button' as const,
-              link: toDomainRelativeLink(input.action.link),
-              linkText: input.action.linkText,
-            },
-          ],
+          actions: actions.map((action) => ({
+            type: 'button' as const,
+            link: toDomainRelativeLink(action.link),
+            linkText: action.linkText,
+          })),
         }
       : {}),
   };

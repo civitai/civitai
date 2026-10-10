@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
@@ -92,7 +93,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(405).json({ error: 'Method not allowed' });
     return;
   }
-  if (!env.JOB_TOKEN || !safeEqualHeader(req.headers['x-civitai-internal-token'], env.JOB_TOKEN)) {
+  if (!isConfiguredSecret(env.JOB_TOKEN)) {
+    res.status(503).json({ error: 'Endpoint not configured' });
+    return;
+  }
+  if (!safeEqualHeader(req.headers['x-civitai-internal-token'], env.JOB_TOKEN)) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }

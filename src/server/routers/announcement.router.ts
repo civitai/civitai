@@ -16,6 +16,7 @@ import {
   getCurrentAnnouncementsSchema,
   upsertAnnouncementSchema,
   upsertCreatorAnnouncementSchema,
+  mayAddAnnouncementActions,
 } from '~/server/schema/announcement.schema';
 import {
   deleteAnnouncement,
@@ -117,6 +118,7 @@ export const announcementRouter = router({
         ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        isMember: mayAddAnnouncementActions(ctx.user),
       })
     ),
   deleteCreatorAnnouncement: guardedProcedure.input(getByIdSchema).mutation(({ ctx, input }) =>

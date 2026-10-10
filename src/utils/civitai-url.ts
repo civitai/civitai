@@ -136,6 +136,15 @@ export function parseCivitaiUrlSafe(
   return null;
 }
 
+/** Whether an absolute URL is on one of the site's own hosts (the image CDN is not one). */
+export function isCivitaiSiteUrl(input: string) {
+  try {
+    return hostIsOurs(new URL(input).host, []);
+  } catch {
+    return false;
+  }
+}
+
 export function isCivitaiUrl(input: string, opts?: { hosts?: string[] }) {
   return parseCivitaiUrlSafe(input, opts) !== null;
 }

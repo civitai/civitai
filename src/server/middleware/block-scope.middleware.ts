@@ -222,22 +222,23 @@ export interface BlockTokenClaims {
  *
  * ⚠️ WHY THE STALE WORDING WAS WORSE THAN A MISSING COMMENT, AND HOW IT SURVIVED:
  * it is the FIRST thing a reader meets, and it told them the helper was a pure
- * consolidation. A fifth submit gate written on that understanding open-codes
+ * consolidation. A further submit gate written on that understanding open-codes
  * `claims.buzzBudget`, inherits no editor clamp, and silently gives an editor
  * spend on a taken-down app — the exact failure the "IT IS ONE PLACE BECAUSE
- * FOUR WOULD BE FOUR BUGS" argument below exists to prevent. It survived because
+ * N COPIES WOULD BE N BUGS" argument below exists to prevent. It survived because
  * the belt was added inside a file that ALSO moved on `main`: the paragraph is
  * still verbatim upstream, where it is correct, so a clean `git merge` could not
  * see the contradiction. Semantic conflict, zero textual conflict.
  *
  * Still true, and still the reason the helper exists: `pricesAuthorFee` does not
- * change the number for a non-editor, and the four gates were four copies of one
+ * change the number for a non-editor, and the submit gates were copies of one
  * comparison.
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
- * The four gates spell the same comparison and are NOT interchangeable. Two of
- * them add the per-generation author fee into the value they compare; two do not,
- * because neither has a pre-submit `cost.base` to price a fee from (that split is
+ * The submit gates spell the same comparison and are NOT interchangeable. The
+ * txt2img and registry-step gates add the per-generation author fee into the value
+ * they compare; the custom-comfy and pass-through gates do not, because neither has
+ * a pre-submit `cost.base` to price a fee from, and training charges no fee (that split is
  * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
  * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
  * Any future change to the ceiling is correct for at most one of those two
@@ -255,8 +256,8 @@ export interface BlockTokenClaims {
  *
  * 🔴 A RAISED CEILING WAS PROPOSED HERE AND WITHDRAWN. Minting `buzzBudget` ABOVE
  * the declared ceiling so a fee fits underneath it is sound only where the fee is
- * inside the compared value, and it was unsound in two ways at once. On the two
- * fee-free gates the number that clears the gate is the number reserved and
+ * inside the compared value, and it was unsound in two ways at once. On a
+ * fee-free gate the number that clears the gate is the number reserved and
  * billed, so a raised ceiling spends real viewer Buzz above the ceiling the app's
  * manifest declared. And on a fee-pricing gate it is equally unsound whenever the
  * fee prices to zero — which it does for at least one generation type today — so
@@ -269,6 +270,13 @@ export interface BlockTokenClaims {
  * is granted, read only by a gate that prices the fee into its compared value —
  * never by widening what `buzzBudget` means, which would hand the money-unsafe
  * value to every gate written the obvious way.
+ *
+ * ⚠️ ONE SUCH CEILING EXISTS: `blockTrainingRunCeiling`, for `kind:'training'`. It
+ * is fee-free (the training author fee is zero by decision), so the fee half of the
+ * sentence above does not apply; what replaces it is that the grant is a PER-RUN
+ * confirmation of one exact price, recorded only by the viewer's own signed-in
+ * session — see that function for why that, and not a wider `buzzBudget`, is what
+ * lets it exceed the declared number. It still routes through this helper first.
  *
  * Returns 0 when no budget was minted, so a caller that skipped the
  * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
@@ -284,7 +292,7 @@ export function blockPerCallBudget(
   opts: { pricesAuthorFee: boolean }
 ): number {
   // 🔴 THE EDITOR READ-ONLY BELT — the SECOND layer behind the mint-time scope strip,
-  // and the reason it is HERE rather than at the four submit gates.
+  // and the reason it is HERE rather than at the submit gates.
   //
   // An accepted listing collaborator on a private run of a delisted app is READ-ONLY by
   // operator decision. That is delivered primarily by `clampPrivateRunScopes`, which
@@ -294,16 +302,16 @@ export function blockPerCallBudget(
   // time, while this is re-taken on every submit, so it also covers a token minted
   // before a clamp regression and still inside its lifetime.
   //
-  // 🔴 IT IS ONE PLACE BECAUSE FOUR WOULD BE FOUR BUGS. Four submit gates compare a cost
-  // against this ceiling, and `no-direct-block-budget-claim-read` already forces every
-  // one of them through this function rather than reading `claims.buzzBudget` directly
-  // — which is exactly the property that lets a ceiling decision be made once here and
-  // apply to all four. Open-coding an audience check at each gate would regenerate the
-  // same omission at every site, and the fifth gate would inherit nothing.
+  // 🔴 IT IS ONE PLACE BECAUSE N COPIES WOULD BE N BUGS. Every submit gate compares a
+  // cost against this ceiling (the training gate via `blockTrainingRunCeiling`), and
+  // `no-direct-block-budget-claim-read` forces each through this function rather than
+  // reading `claims.buzzBudget` directly — which is what lets a ceiling decision be made
+  // once here and apply to all of them. Open-coding an audience check at each gate would
+  // regenerate the same omission at every site, and the next gate would inherit nothing.
   //
   // Returning 0 rather than throwing: every caller already treats 0 as "no budget was
   // minted" and fails CLOSED on it, so this reuses a refusal path that is proven rather
-  // than introducing a new error shape into four money gates. A refusal also must not
+  // than introducing a new error shape into the money gates. A refusal also must not
   // be distinguishable from an unbudgeted token — an editor learning that their token
   // was deliberately zeroed, versus merely unbudgeted, is a detail the app does not
   // need.
@@ -314,6 +322,65 @@ export function blockPerCallBudget(
   if (claims.privateRunAudience === 'editor') return 0;
   if (typeof claims.buzzBudget !== 'number') return 0;
   return claims.buzzBudget;
+}
+
+/**
+ * Hard per-run Buzz ceiling for an App Blocks `kind:'training'` run, whatever the
+ * viewer consented to. Every other cap still applies on top.
+ */
+export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
+
+/**
+ * The quote a `kind:'training'` submit is gated against — the server-stored record
+ * written by the estimate and confirmed by the viewer's own signed-in session.
+ */
+export type BlockTrainingQuoteGrant = {
+  userId: number;
+  appBlockId: string;
+  blockInstanceId: string;
+  /** The quoted whole-Buzz price of the run. */
+  total: number;
+  /** The session user who confirmed this exact quote, or null until one does. */
+  consentedBy: number | null;
+};
+
+/**
+ * THE per-run ceiling a `kind:'training'` submit compares against, in place of the
+ * token's per-call budget.
+ *
+ * 🔴 THIS IS THE "SEPARATE, GRANTED CEILING" `blockPerCallBudget` SAYS A RAISED
+ * CEILING MUST BE — and the reason it is allowed to exceed the app's declared
+ * per-call budget is the one thing that budget exists to stand in for. The manifest
+ * number is a ceiling against a compromised app spending the viewer's Buzz without
+ * them; here the viewer confirmed THIS price in host chrome, and that confirmation is
+ * recorded only by a procedure that requires the viewer's own signed-in session —
+ * which the block, holding nothing but its own token, cannot call. The grant is
+ * that record, not a token claim, so `buzzBudget` keeps meaning exactly what it did.
+ *
+ * 0 is the shared "no budget" refusal.
+ *
+ * Fee-free by classification (`pricesAuthorFee: false`): the training author fee
+ * is zero, so the number that clears this gate is the number reserved and charged.
+ */
+export function blockTrainingRunCeiling(
+  claims: Pick<
+    BlockTokenClaims,
+    'buzzBudget' | 'privateRunAudience' | 'appBlockId' | 'blockInstanceId'
+  >,
+  quote: BlockTrainingQuoteGrant,
+  subjectUserId: number
+): number {
+  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) return 0;
+  if (
+    quote.userId !== subjectUserId ||
+    quote.appBlockId !== claims.appBlockId ||
+    quote.blockInstanceId !== claims.blockInstanceId
+  ) {
+    return 0;
+  }
+  if (quote.consentedBy !== subjectUserId) return 0;
+  if (!Number.isInteger(quote.total) || quote.total <= 0) return 0;
+  return Math.min(quote.total, BLOCK_TRAINING_MAX_BUZZ_PER_RUN);
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -1026,12 +1093,14 @@ export function enforceContextBinding(
       case 'social:tip:self':
       case 'goods:read:self':
       case 'goods:purchase:self':
+      case 'apps:store:items:write':
       case 'user:read:self': {
         // Every :self scope requires an authenticated subject — there's no
         // anonymous "self" to read/tip. user:read:self joined this set
         // when /api/v1/blocks/me switched off buzz:read:self (audit I3), and
         // the goods pair joined it because an anonymous viewer has no balance
-        // to charge and no entitlements to hold.
+        // to charge and no entitlements to hold. Store items are published under
+        // the viewer's name, so there is no anonymous author either.
         if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
@@ -1096,8 +1165,10 @@ export function enforceContextBinding(
         // A Post belongs to a USER — there is no anonymous profile to post to, so
         // an anon subject can never satisfy this scope. Presence of the scope +
         // a non-anon subject is the middleware check; the real authority is
-        // `blocks.createPostFromApp` (approval + revocation + write-trust +
-        // per-source ownership/provenance + the host-chrome consent confirm).
+        // `blocks.createPostFromApp` (approval + revocation + a signed-in session
+        // that is the token subject + write-trust + per-source
+        // ownership/provenance). The consent confirm lives in host chrome and is
+        // not something this server can observe.
         //
         // 🔴 THIS CASE IS NOT OPTIONAL. The `default:` arm below throws, so a
         // known scope with no case here 403s EVERY request to the route that
@@ -2010,8 +2081,14 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'item',
   'list',
   'me',
+  // `/api/v1/blocks/sub-listings/mine` — the caller's own store items.
+  'mine',
   'models',
   'poll',
+  // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
+  // the prompt and every parameter ride the POST body, so there is no `:seg`
+  // position on this route and nothing that could fragment the `endpoint` column.
+  'resource-intent',
   // The second segment of `/api/v1/blocks/goods/purchase`. See `goods` above.
   'purchase',
   // `/api/v1/blocks/workflows/query` — the app-subqueue read. Static: the paging
@@ -2022,6 +2099,9 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'report',
   'set',
   'shared-storage',
+  // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}` — store items. Static: the item
+  // key rides the POST body, so no path segment carries a per-item value.
+  'sub-listings',
   'submit',
   'tip',
   'tip-allowance',
@@ -2029,6 +2109,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'top',
   'unvote',
   'update',
+  'upsert',
   // The per-viewer checkpoint override write. Like `app-storage`, nothing
   // identifying is in the path: the install and the viewer both come from the
   // JWT, and the only body field is a bounded integer — so there is no `:seg`

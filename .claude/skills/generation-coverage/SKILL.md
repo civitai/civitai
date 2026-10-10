@@ -27,7 +27,7 @@ The full coverage rules are in [docs/features/generator-model-onboarding.md](../
 | `remove --version <id> [--writable]` | Deletes the row, then busts the cache. |
 | `bust --version <id> [--writable]` | Only the cache bust (`modelVersion.bustCache`). |
 
-- **`--name`** is a free-text label with no behaviour attached. Existing rows use the base model's display name, e.g. `Ideogram 4.0`.
+- **`--name`** is a free-text label with no behaviour attached. Existing rows use the base model's name (`BaseModelRecord.name`), e.g. `Ideogram 4.0` — not the ecosystem's `displayName`.
 - **The cache bust is part of `add` and `remove`.** `resourceDataCache` sits in front of the view with a one-hour TTL. Without the bust, the generator keeps reporting the old coverage for up to an hour.
 
 ## Setup and permission

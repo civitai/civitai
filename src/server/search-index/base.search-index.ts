@@ -206,6 +206,49 @@ const logIdsWithoutDocument = (indexName: string, caller: string, queue: TaskQue
 };
 
 /**
+ * Put the ids of every batch that exhausted its retries back on the Update queue.
+ *
+ * The queue checkout that supplied them is destructive, so without this a failed batch's ids are
+ * gone once `commit()` runs (#5398). Called AFTER `commit()`: a checkout whose bucket-list write
+ * failed leaves the drained bucket as the queue's newest, and an id re-queued before `commit()`
+ * would land in that bucket and be deleted with it. `false` means Redis refused and the ids went
+ * to the Postgres parking lot; if that also failed or hit its cap, `persistDroppedEnqueue` reports
+ * it to Axiom.
+ */
+const requeueFailedIds = async (indexName: string, caller: string, queue: TaskQueue) => {
+  const ids = queue.failedIds;
+  if (!ids.length) return;
+  const queued = await SearchIndexUpdate.queueUpdate({
+    indexName,
+    items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+  });
+  const prefix = `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName}`;
+  const sample = describeIdSample(ids);
+  if (queued)
+    console.error(
+      `${prefix} :: re-queued ${ids.length} ids from batches that exhausted their retries ${sample}`
+    );
+  else
+    console.error(
+      `${prefix} :: could not re-queue ${ids.length} ids from failed batches to Redis ${sample}; attempted the search-index-queue-fallback parking lot (a failure or cap there is logged under that name)`
+    );
+};
+
+/** Ids named in the re-queue log line: enough to recognise the same set recurring across runs. */
+export const REQUEUE_LOG_SAMPLE_SIZE = 10;
+
+/**
+ * A bounded, order-independent fingerprint of an id set — the lowest ids plus the range — so
+ * consecutive runs re-queueing the SAME ids read identically in the log while a fresh backlog
+ * does not. Sorted because `failedIds` is in task-completion order, which varies run to run.
+ */
+const describeIdSample = (ids: number[]) => {
+  const ascending = [...ids].sort((a, b) => a - b);
+  const lowest = ascending.slice(0, REQUEUE_LOG_SAMPLE_SIZE).join(', ');
+  return `(lowest: ${lowest}; min ${ascending[0]}, max ${ascending[ascending.length - 1]})`;
+};
+
+/**
  * One statement, INSIDE `updateSync`, of "an item with no action is an Update" — read by the
  * dedupe key and both of its filters so they cannot disagree about an item that carries no action.
  * Not repo-wide: `SearchIndexUpdate.queueUpdate` states the rule the other way (strict equality,
@@ -324,6 +367,7 @@ const processSearchIndexTask = async (
       return {
         start,
         type: 'push',
+        requestedIds,
         index: task.index,
         total: task.total,
         idCount: task.idCount,
@@ -588,6 +632,10 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // Commit queues:
       await queuedUpdates.commit();
       await queuedDeletes.commit();
+      // Also re-queues failed ids that came from `updateIds` rather than the queue: `setLastUpdate`
+      // below moves the window past them, so the queue is the only place they can be retried.
+      if (!partial && (!queues || queues.includes('update')))
+        await requeueFailedIds(indexName, 'update', queue);
 
       // Use the start time as the time of update
       // Should  help avoid missed items during the run
@@ -841,6 +889,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         logIdsWithoutDocument(indexName, 'processQueues', queue);
 
         await queuedUpdates.commit();
+        if (!partial) await requeueFailedIds(indexName, 'processQueues', queue);
       }
     },
   };

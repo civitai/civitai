@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as PrizeService from '~/server/services/prize.service';
 import client from 'prom-client';
 import { freshPersistedWinner } from '~/server/games/daily-challenge/__tests__/persisted-winner.fixture';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -45,7 +46,7 @@ const {
   mockCreateNotification,
   mockCreateChallengeWinner,
   mockGetChallengeById,
-  mockCreateBuzzTransactionMany,
+  mockCreatePrizes,
   mockGetChallengeBuzzType,
   mockSendChallengeResultsNotification,
 } = vi.hoisted(() => ({
@@ -63,7 +64,7 @@ const {
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
-  mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
+  mockCreatePrizes: vi.fn().mockResolvedValue([]),
   mockGetChallengeBuzzType: vi.fn().mockResolvedValue('yellow'),
   mockSendChallengeResultsNotification: vi.fn().mockResolvedValue(undefined),
 }));
@@ -132,12 +133,17 @@ vi.mock('~/server/games/daily-challenge/generative-content', () => ({
 }));
 
 vi.mock('~/server/services/buzz.service', () => ({
-  createBuzzTransactionMany: mockCreateBuzzTransactionMany,
+  createBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('~/server/services/commentsv2.service', () => ({
   upsertComment: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('~/server/services/prize.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrizeService>()),
+  createPrizes: mockCreatePrizes,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -154,7 +160,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: mockGetChallengeBuzzType,
   reportPoolFundingShortfall: vi.fn(),
 }));
@@ -364,7 +370,7 @@ beforeEach(() => {
   // call counts carry the claim-guard assertions.
   mockGenerateWinners.mockName('generateWinners');
   mockCreateChallengeWinner.mockName('createChallengeWinner');
-  mockCreateBuzzTransactionMany.mockName('createBuzzTransactionMany');
+  mockCreatePrizes.mockName('createPrizes');
   mockCompleteChallengeIfClaimHeld.mockName('completeChallengeIfClaimHeld');
   mockGetChallengeById.mockName('getChallengeById');
   vi.mocked(recordChallengeCompleted).mockName('recordChallengeCompleted');
@@ -496,7 +502,7 @@ describe('pickWinnersForChallenge — emit placement is retry-safe', () => {
 
     expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledTimes(1);
     const completedWriteOrder = mockCompleteChallengeIfClaimHeld.mock.invocationCallOrder[0];
-    const payoutOrder = mockCreateBuzzTransactionMany.mock.invocationCallOrder[0];
+    const payoutOrder = mockCreatePrizes.mock.invocationCallOrder[0];
     const completedEmitOrder = vi.mocked(recordChallengeCompleted).mock.invocationCallOrder[0];
     const prizeEmitOrder = vi.mocked(recordChallengePrizePaidBuzz).mock.invocationCallOrder[0];
 
@@ -587,7 +593,7 @@ describe('pickWinnersForChallenge — claim REVOKED mid-flight', () => {
 
     expect(mockGenerateWinners).not.toHaveBeenCalled();
     expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
-    expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(mockCreatePrizes).not.toHaveBeenCalled();
     expect(mockCompleteChallengeIfClaimHeld).not.toHaveBeenCalled();
     expect(recordChallengeCompleted).not.toHaveBeenCalled();
   });

@@ -1,10 +1,13 @@
 import type {
   ImageResourceTrainingOutput,
+  ImageResouceTrainingModerationStatus,
   ImageResourceTrainingStep,
+  TrainingModerationStatus,
   TrainingOutput,
   TrainingStep,
   Workflow,
 } from '@civitai/client';
+import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { upsertModel } from '~/server/services/model.service';
@@ -14,6 +17,8 @@ import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/work
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -50,7 +55,7 @@ type TrainingStepInputLike = {
   samples?: { prompts?: string[] };
 };
 
-function getTrainingStep(workflow: Workflow) {
+export function getTrainingStep(workflow: Workflow) {
   const step = workflow.steps?.find((s) => (s as { $type?: string }).$type === 'training') as
     | TrainingStep
     | undefined;
@@ -65,6 +70,48 @@ function getTrainingStep(workflow: Workflow) {
   if (stepType !== 'training' && stepType !== 'imageResourceTraining')
     throw throwBadRequestError(`Unsupported training step type: ${stepType ?? 'unknown'}`);
   return { step: first, stepType };
+}
+
+// A typed literal rather than the client's runtime enum object: `@civitai/client` is mocked in the
+// unit test setup, so a value import from it is undefined there.
+const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerationStatus &
+  ImageResouceTrainingModerationStatus;
+
+const TRAINING_NOT_APPROVED_MESSAGE =
+  "This training run's dataset has not been approved, so a model can't be created or published from it.";
+
+/**
+ * The `cause` on every refusal from the training moderation gate, so a caller that must handle the
+ * refusal differently from other errors (the from-orchestrator page) can tell it apart without
+ * matching on message text.
+ */
+export class TrainingNotApprovedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrainingNotApprovedError';
+  }
+}
+
+export function isTrainingNotApprovedRefusal(error: unknown): boolean {
+  return error instanceof TRPCError && error.cause instanceof TrainingNotApprovedError;
+}
+
+function refuse(message: string): never {
+  throw throwBadRequestError(message, new TrainingNotApprovedError(message));
+}
+
+/**
+ * Throws unless the run's training step reports an `approved` training-data moderation status. Both
+ * step types carry the same four values (`evaluating`, `underReview`, `approved`, `rejected`), so the
+ * comparison is against the one approved value: every other status, a step with no status, and a step
+ * with no output at all are refused. Shared by `createDraftModelFromWorkflow` and
+ * `assertTrainingSourcePublishable`, so the two cannot disagree about what counts as approved.
+ */
+export function assertTrainingModerationApproved(workflow: Workflow): void {
+  const { step } = getTrainingStep(workflow);
+  const output = step.output as TrainingOutput | ImageResourceTrainingOutput | null | undefined;
+  if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
+    refuse(TRAINING_NOT_APPROVED_MESSAGE);
 }
 
 /**
@@ -145,9 +192,7 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
         epochNumber: epoch.epochNumber ?? -1,
         modelUrl: epoch.model?.url ?? '',
         modelSize: 0,
-        sampleImages: (epoch.samples ?? [])
-          .map((sample) => sample.url ?? '')
-          .filter((url) => url.length > 0),
+        sampleImages: (epoch.samples ?? []).map(sampleSlotUrl),
       }));
   } else {
     const output = (step as ImageResourceTrainingStep).output as
@@ -158,7 +203,7 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
       epochNumber: epoch.epochNumber ?? -1,
       modelUrl: epoch.blobUrl ?? '',
       modelSize: epoch.blobSize ?? 0,
-      sampleImages: (epoch.sampleImages ?? []).filter((url) => url.length > 0),
+      sampleImages: epoch.sampleImages ?? [],
     }));
   }
 
@@ -176,6 +221,23 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
 }
 
 /**
+ * Set `trainingStudioModerationApproved` on a model whose run was just checked and is approved, as a
+ * single-key write so a concurrent meta write is not overwritten. Best-effort: a failure is logged
+ * and the model stays unstamped.
+ */
+async function stampTrainingModerationApproved(modelId: number): Promise<void> {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model"
+      SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
+      WHERE id = ${modelId}
+    `;
+  } catch (error) {
+    console.error(`approval stamp backfill failed (model ${modelId}):`, error);
+  }
+}
+
+/**
  * Turn a completed Training Studio orchestrator workflow into a Draft Trained Model + v1 ModelVersion +
  * Training-Data ModelFile, so the user can drop into the main app's publish wizard or generate
  * off the draft. Training Studio trains orchestrator-only (no `ModelVersion` exists), so this reconstructs
@@ -185,6 +247,8 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
  * Idempotent per workflow: the first call stamps `meta.trainingStudioWorkflowId`, and later calls for the
  * same workflow return the existing ids instead of creating a duplicate. `selectedEpoch` is null only on
  * that path — once the blobs expire the draft still resolves, but there is nothing left to finalize.
+ *
+ * Refuses (BAD_REQUEST) unless the run's training data is approved — on first entry and on re-entry.
  */
 export async function createDraftModelFromWorkflow({
   user,
@@ -202,6 +266,8 @@ export async function createDraftModelFromWorkflow({
   selectedEpoch: TrainingResultsV2['epochs'][number] | null;
 }> {
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
+  // Ahead of the idempotency lookup, so re-entry on an existing draft is refused too.
+  assertTrainingModerationApproved(workflow);
 
   const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
   const selectedEpoch =
@@ -216,15 +282,22 @@ export async function createDraftModelFromWorkflow({
     },
     select: {
       id: true,
+      meta: true,
       modelVersions: { select: { id: true }, take: 1, orderBy: { index: 'asc' } },
     },
   });
-  if (existing?.modelVersions[0])
+  if (existing?.modelVersions[0]) {
+    // A draft materialized before the approval stamp existed gets it here: the run was just
+    // checked above. Set as one key, so a concurrent meta write is not overwritten. Best-effort: a
+    // failed write leaves the draft unstamped, which only matters once its workflow is gone.
+    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
+      await stampTrainingModerationApproved(existing.id);
     return {
       modelId: existing.id,
       modelVersionId: existing.modelVersions[0].id,
       selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null,
     };
+  }
 
   if (!selectedEpoch?.modelUrl)
     throw throwBadRequestError('This training run has no downloadable checkpoint to publish.');
@@ -295,7 +368,9 @@ export async function createDraftModelFromWorkflow({
     nsfw: false,
     poi: false,
     minor: false,
-    meta: { trainingStudioWorkflowId: workflow.id },
+    // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
+    // approval stamp records that this run passed the moderation check at materialization.
+    serverMeta: { trainingStudioWorkflowId: workflow.id, trainingStudioModerationApproved: true },
   });
   if (!model) throw throwBadRequestError('Could not create the model');
 
@@ -360,6 +435,51 @@ export async function stampWorkflowDraftModel({
       error
     );
   }
+}
+
+/**
+ * Called by every path that makes a model (or one of its versions) published or public, with the
+ * stored model. A model whose meta names no source workflow is not training-studio-born and is not
+ * checked. Otherwise:
+ *
+ * 1. Meta carries the approval stamp → passes without reading the workflow. The stamp records an
+ *    approval already seen, so a stamped model is not re-checked.
+ * 2. The workflow can be read (with the model OWNER's token — a moderator can publish someone else's
+ *    model) → it must report an approved status, or this throws; when it does, the stamp is written
+ *    (best-effort).
+ * 3. The orchestrator returns NOT_FOUND for the workflow, for whatever reason, and there is no stamp →
+ *    passes unchecked. Every model `createDraftModelFromWorkflow` creates carries the stamp, so this
+ *    only reaches models created before the stamp existed; they are grandfathered.
+ *
+ * Any other read failure is rethrown, so the publish fails and can be retried rather than going
+ * ahead unchecked. Both meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`).
+ */
+export async function assertTrainingSourcePublishable({
+  modelId,
+  meta,
+  ownerId,
+  callerId,
+}: {
+  modelId: number;
+  meta: ModelMeta | null | undefined;
+  ownerId: number;
+  callerId: number;
+}): Promise<void> {
+  const workflowId = meta?.trainingStudioWorkflowId;
+  if (!workflowId) return;
+  if (meta?.trainingStudioModerationApproved === true) return;
+  const token = await getOrchestratorToken(ownerId, undefined, {
+    bypassCache: callerId !== ownerId,
+  });
+  let workflow: Workflow;
+  try {
+    workflow = await getWorkflow({ token, path: { workflowId } });
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'NOT_FOUND') return;
+    throw error;
+  }
+  assertTrainingModerationApproved(workflow);
+  await stampTrainingModerationApproved(modelId);
 }
 
 /**

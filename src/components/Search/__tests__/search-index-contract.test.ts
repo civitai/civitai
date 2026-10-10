@@ -128,10 +128,34 @@ describe('the models index sort contract', () => {
   // pointing the client at the new name in the same release leaves the client asking for something
   // the live index has never heard of, and every sorted model search 400s until someone runs a
   // reset. Update these two lists only together with a reset that has actually shipped.
-  it('declares exactly the sortable attributes the live models index is provisioned with', () => {
+  // `insight.qualityScore` was added to this list AHEAD of the reset that provisions it, which the
+  // sibling comment above permits for an ADDITION. Checked 2026-10-06: the production models
+  // index's sortable list now equals this list exactly, `insight.qualityScore` included, and its
+  // filterable list carries `insight.qualityScore`, `insight.role` and `insight.styleFamily` — so
+  // in production the reset HAS shipped. Other environments are not covered by that check: until
+  // `search-index-sync-models-reset` has run in one, its index has never heard of the attribute,
+  // and any client that sorts on it gets `Attribute ... is not sortable` and the query 400s.
+  //
+  // Today no client sorts on it. 🔴 The first client that does must check the target
+  // environment's index has it before shipping.
+  //
+  // ⚠ `sortMetrics` is a separate attribute still waiting on a reset, for a different
+  // reason, recorded at src/components/Search/parsers/model.parser.ts:21-24 (declared
+  // nowhere yet, so the client still sorts on `metrics.*`). An earlier version of this comment
+  // claimed "nothing else in either repo records this", which was wrong.
+  //
+  // ⚠ There is deliberately NO machine-readable pending-set here. One was tried and removed in the
+  // same PR that added it: every assertion it could make was either already made by the
+  // whole-list `toEqual` below (deleting the attribute fails that), or vacuous once the set was
+  // emptied (`[].every(...)` is `true`). Nothing in this repo can observe whether the reset has
+  // actually run, so no guard at this level can distinguish "provisioned" from "still pending" —
+  // which is precisely what such a set would have to read to be worth anything.
+  it('declares exactly the sortable attributes the models index is provisioned with', () => {
     expect(modelsSortableAttributes.slice().sort()).toEqual([
       'createdAt',
       'id',
+      // Provisioned in production (checked 2026-10-06); other environments — see above.
+      'insight.qualityScore',
       'metrics.collectedCount',
       'metrics.commentCount',
       'metrics.downloadCount',

@@ -11,18 +11,19 @@ Before deleting any flag, grep for **all** of these patterns. The destructure pa
 | `features.X`           | `if (features.clubs) ...`                                    |
 | Destructure            | `const { apiKeys, oauthApps } = useFeatureFlags();`          |
 | `ctx.features.X`       | server-side tRPC handlers                                    |
-| `ext.flags?.X`         | DataGraph node extensions (e.g. wan-graph.ts)                |
+| `ext.flags?.X`         | DataGraph node extensions (e.g. image/anima.graph.ts)                |
 | `isFlagProtected('X')` | tRPC router middleware                                       |
 | `'X'` literal          | component-config maps (e.g. AppFooter footer items)          |
-| Flipt key (`X-name`)   | direct `isFlipt(...)` / `evaluateBoolean(FliptFlag.X)` calls |
+| Flipt key (`X-name`)   | direct `isFlipt(...)` / `evaluateBoolean(FLIPT_FEATURE_FLAGS.X)` calls |
 
-Also check the `FliptFlag` enum in [src/server/flipt/client.ts](../src/server/flipt/client.ts).
+Also check the `FLIPT_FEATURE_FLAGS` enum in [src/server/flipt/client.ts](../src/server/flipt/client.ts).
 
 ## Tier 1 — Truly dead (already removed)
 
 | Flag         | Status                                                                                 |
 | ------------ | -------------------------------------------------------------------------------------- |
 | `imageIndex` | ✅ Removed — zero consumers                                                            |
+| `draftMode`  | ✅ Removed — zero consumers; the `txt2img:draft` workflow is ungated                    |
 | `apiKeys`    | ❌ Restored — gates `ApiKeysCard` in [AccountPanes.tsx:92](../src/components/Account/AccountPanes.tsx#L92) and [LegacyAccountPage.tsx:62](../src/components/Account/LegacyAccountPage.tsx#L62) |
 | `oauthApps`  | ❌ Restored — gates `OAuthAppsCard` + `ConnectedAppsCard` in [AccountPanes.tsx:93-94](../src/components/Account/AccountPanes.tsx#L93) and [LegacyAccountPage.tsx:63-64](../src/components/Account/LegacyAccountPage.tsx#L63) |
 
@@ -85,11 +86,11 @@ drifted repeatedly, always toward looking safer than it is:
    defaults — so inlining one removes an existing opt-out even when its `default` is `true`. With
    `default: false` it is additionally off for everyone who has not opted in.
 
-Derive it, don't trust the prose: the current split is 20 safe and 6 not.
+Derive it, don't trust the prose: the current split is 19 safe and 6 not.
 
 **Safe:** `canWrite`, `apiKeys`, `articles`, `articleCreate`, `articleImageScanning`,
 `imageGeneration`, `collections`, `profileCollections`, `buzz`, `cosmeticShop`, `donationGoals`,
-`appTour`, `privateModels`, `toolSearch`, `draftMode`, `membershipsV2`, `prepaidMemberships`,
+`appTour`, `privateModels`, `toolSearch`, `membershipsV2`, `prepaidMemberships`,
 `newsroom`, `creatorComp`, `alternateHome`.
 
 **Not safe, and previously listed as if they were:**
@@ -109,11 +110,11 @@ it against a deleted index with no flag left to switch it off), `challengePlatfo
 kill-switch key), and `vault` (`['user']`).
 
 Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six
-toggleable entries: `air`, `assistant` and `chat` are `default: true` and all three already fail
-condition 1 on their availability, and `trainingStudioUi` fails conditions 1 and 2. The other two —
+toggleable entries: `air`, `assistant`, `chat` and `trainingStudioUi` are `default: true` and all four
+already fail condition 1 on their availability (`trainingStudioUi` fails condition 2 as well). The other two —
 `largerGenerationImages` and `nativeVideoControls` — are `['public']` with no `fliptKey`, so
 condition 3 is the only thing excluding them. That is why `largerGenerationImages` sits in the 6
-above: drop condition 3 and the split is 21/5, not 20/6. `nativeVideoControls` was never on the
+above: drop condition 3 and the split is 20/5, not 19/6. `nativeVideoControls` was never on the
 Tier 4 list so it does not move the split, but it is the same shape and is already in the registry —
 the flag this condition exists to catch is not hypothetical.
 

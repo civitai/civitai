@@ -202,7 +202,7 @@ Reuse the shapes already on the page rather than inventing spacing: panels are
 
 ## Comments
 
-Per the [root guide](../CLAUDE.md#comments), and more strictly here: a comment in these apps earns its
+Per the [root comment guideline](../.claude/rules/comments.md), and more strictly here: a comment in these apps earns its
 place only as a **breakage guard** — an invariant, a cast, an ordering requirement, a hazard a future
 edit would otherwise walk into. No narration, no provenance, no "ported from X", no explaining your work
 to a reviewer. Say that in the PR.
@@ -210,7 +210,7 @@ to a reviewer. Say that in the PR.
 ## Verifying
 
 `typecheck`, never `check` — and `build` is not a check. Both run `svelte-kit sync`, which fights the
-dev server's file watcher; see the root [`CLAUDE.md`](../CLAUDE.md) for the full rule and why. Read
+dev server's file watcher; see [`.claude/rules/sveltekit.md`](../.claude/rules/sveltekit.md) for the full rule and why. Read
 `svelte-check`'s **WARNING** lines as well as its errors: `state_referenced_locally` is a real bug and
 appears nowhere else.
 
@@ -238,6 +238,12 @@ imported at all. Route logic is reachable: import `load`/`actions` from a `+page
 them with the slice of the event they read. Component behaviour is **not** — no SvelteKit app has a
 browser-test project, so anything that depends on `use:enhance`, bindings or lifecycle is verified by
 review and by opening the page, not by a test.
+
+The one exception is static markup branches. `apps/creator-studio` compiles `.svelte` in its vitest
+config, so a test may server-render a page with `svelte/server` (mocking `$app/*`) to pin which branch
+renders, such as a link that must be present or absent. SSR output never runs `use:enhance`, `$state`
+changes or anything after hydration, so do not use it for those. The app's `src/test/setup.ts` stubs
+`@tabler/icons-svelte` for every suite, because compiling the real barrel adds about a minute.
 
 🔴 **A suite must not open a connection to whatever `DATABASE_URL` points at.** Mock the app's db
 module. Where a suite genuinely needs the real schema, plan the statement rather than run it — compile

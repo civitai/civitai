@@ -41,6 +41,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { emptySearchClient } from '~/components/Search/emptySearchClient';
+import { resolveSearchTarget } from '~/components/Search/search-target';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
@@ -183,7 +184,14 @@ const QuickSearchDropdownInner = ({
   // deselect one: Mantine's single-select is deselectable, so `onChange` can hand the change
   // handler `null`, and a bare `'models'` fallback would then move a `supportedIndexes={['users']}`
   // picker onto the models index.
-  const fallbackIndex = startingIndex ?? props.supportedIndexes?.[0] ?? 'models';
+  //
+  // The default goes through `resolveSearchTarget`; it substitutes Models only if
+  // `supportedIndexes` includes it, so the clamp above holds.
+  const fallbackIndex = resolveSearchTarget(
+    startingIndex ?? props.supportedIndexes?.[0] ?? 'models',
+    features,
+    props.supportedIndexes
+  );
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(fallbackIndex);
   const handleTargetChange = (value: SearchIndexKey | null) => {
     setTargetIndex(value ?? fallbackIndex);
@@ -198,8 +206,11 @@ const QuickSearchDropdownInner = ({
     buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
   ].filter(isDefined);
 
-  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
-  // swap to a client that returns nothing (no request to the deleted index) and show a notice.
+  // Images is selectable while image search is retired whenever `imageSearchEntry` offers it, but
+  // the images_v6 index is empty and declares no filterable attributes — so swap to a client that
+  // returns nothing (no request to an index that errors on a filtered query) and show a notice.
+  // 🔴 The index EXISTS, and whenever `imageSearchEntry` offers the Images target this swap is the
+  // only thing keeping a public query off it. Do not remove it as dead code.
   const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
 
   // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
@@ -209,7 +220,7 @@ const QuickSearchDropdownInner = ({
   // Not the same set as the one `fallbackIndex` above falls back into: that one stops at
   // `supportedIndexes` and is deliberately NOT narrowed by flag, so a flag-disabled
   // `startingIndex` reaches `targetIndex` and the `value` expression blanks the label rather than
-  // the fallback rewriting the target.
+  // the fallback rewriting the target (except `resolveSearchTarget`'s `imageSearch` rewrite).
   const enabledTargets = (props.supportedIndexes ?? [])
     .filter(
       (value) =>

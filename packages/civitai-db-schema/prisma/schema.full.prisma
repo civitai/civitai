@@ -419,6 +419,7 @@ model User {
   subscriptions           CustomerSubscription[]
   membershipGiftsGiven    MembershipGift[]       @relation("membershipGiftsGiven")
   membershipGiftsReceived MembershipGift[]       @relation("membershipGiftsReceived")
+  membershipGiftsHeld     MembershipGift[]       @relation("membershipGiftsHeld")
   mutedAt                 DateTime? /// Set on moderator mute-confirmation; cleared via trigger on unmute
   muted                   Boolean                @default(false)
   muteExpiresAt           DateTime? /// For timed mutes from strike escalation
@@ -470,6 +471,7 @@ model User {
   reports              Report[]
   feedback             Feedback[]
   feedbackHandled      Feedback[]                 @relation("FeedbackHandledBy")
+  feedbackOwnerStatus  Feedback[]                 @relation("FeedbackOwnerStatusBy")
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -499,6 +501,8 @@ model User {
   articleEngagements         ArticleEngagement[]
   articleRatingReviewsSubmitted ArticleRatingReview[] @relation("ArticleRatingReviewSubmitter")
   articleRatingReviewsResolved  ArticleRatingReview[] @relation("ArticleRatingReviewResolver")
+  ratingReviewsSubmitted        RatingReview[]        @relation("RatingReviewSubmitter")
+  ratingReviewsResolved         RatingReview[]        @relation("RatingReviewResolver")
   leaderboardResults         LeaderboardResult[]
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
@@ -520,6 +524,7 @@ model User {
   referralRewards            ReferralReward[]                @relation("ReferralRewardUser")
   referralRewardsAsReferee   ReferralReward[]                @relation("ReferralRewardReferee")
   referralMilestones         ReferralMilestone[]
+  creatorMilestones          UserCreatorMilestone[]
   referralRedemptions        ReferralRedemption[]
   referralAttributions       ReferralAttribution[]
   clubs                      Club[]
@@ -573,6 +578,7 @@ model User {
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
+  generationSizePresets       GenerationSizePreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
   blurbs                      Blurb[]
 
@@ -617,6 +623,8 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  appSubListingsAuthored             AppSubListing[]             @relation("AppSubListingAuthor")
+  appSubListingsModerated            AppSubListing[]             @relation("AppSubListingModerator")
   // App Listing Collaborators — editor seats held / issued, the ownership audit
   // trail this user acted in or was targeted by, and any transfer they are party to.
   appCollaboratorSeats               AppCollaborator[]          @relation("AppCollaboratorMember")
@@ -636,6 +644,12 @@ model User {
   placementsMade                     Placement[]                @relation("PlacementPlacer")
   placementsSold                     Placement[]                @relation("PlacementSeller")
   pricingSlots                       PricingSlot[]
+  crucibles                          Crucible[]
+  crucibleEntries                    CrucibleEntry[]
+  crucibleEngagements                CrucibleEngagement[]
+  prizes                             Prize[]
+
+  gameFrameGames          GameFrameGame[]
 
   @@index([deletedAt])
 }
@@ -672,6 +686,8 @@ enum PaymentProvider {
 enum MembershipGiftStatus {
   Pending
   Fulfilled
+  Active
+  Completed
   Failed
   Refunded
   Revoked
@@ -683,6 +699,10 @@ model MembershipGift {
   gifter      User                 @relation("membershipGiftsGiven", fields: [gifterId], references: [id], onDelete: Cascade)
   recipientId Int
   recipient   User                 @relation("membershipGiftsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  // Reads ask "whose gift is this" through holderId, never recipientId, so making gifts
+  // transferable later is a mutation rather than a rewrite of every read path.
+  holderId    Int
+  holder      User                 @relation("membershipGiftsHeld", fields: [holderId], references: [id], onDelete: Cascade)
   tier        String
   months      Int
   amountCents Int
@@ -690,10 +710,20 @@ model MembershipGift {
   message     String?
   anonymous   Boolean              @default(false)
 
+  monthsRemaining Int       @default(0)
+  monthsConsumed  Int       @default(0)
+  acceptedAt      DateTime?
+  expiresAt       DateTime?
+
   stripeCheckoutSessionId String? @unique
   stripePaymentIntentId   String? @unique
   stripeCouponId          String?
   stripeSubscriptionId    String?
+
+  // The single month currently sitting on the holder's subscription. Cleared when an
+  // invoice consumes it. Never more than one month of a gift is live in Stripe.
+  armedCouponId String?
+  armedAt       DateTime?
 
   fulfilledAt DateTime?
   createdAt   DateTime  @default(now())
@@ -701,6 +731,8 @@ model MembershipGift {
 
   @@index([recipientId])
   @@index([gifterId])
+  @@index([holderId, status])
+  @@index([armedCouponId])
 }
 
 model Product {
@@ -1234,6 +1266,7 @@ model ModelVersion {
   imageResources          ImageResource[]
   posts                   Post[]
   resourceReviews         ResourceReview[]
+  resourceInsight         ResourceInsight?
   hashes                  ModelHash[]
   metricsDaily            ModelMetricDaily[]
   modelVersionExploration ModelVersionExploration[]
@@ -1595,6 +1628,9 @@ model Report {
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
   announcement   AnnouncementReport?
+  crucible       CrucibleReport?
+  gameFrameGame  GameFrameGameReport?
+  gameFrameReceipts GameFrameReportReceipt[]
 }
 
 model ResourceReviewReport {
@@ -1767,6 +1803,59 @@ model ResourceReviewReaction {
   @@unique([reviewId, userId, reaction])
 }
 
+// Jev-assigned meaning labels for a published model version (what a resource is
+// FOR: role / style family / content types). One row per version; rows carry the
+// question-spec hash that produced them, so a spec bump marks old rows `stale`
+// for re-labeling instead of silently blending two taxonomies. Written only by
+// the labeling pass (scripts/label-resource-insights.ts) — never by user traffic.
+// The migration is applied manually per environment (no prisma migrate deploy).
+model ResourceInsight {
+  modelVersionId Int          @id
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  role           String
+  styleFamily    String
+  contentTypes   String[]
+  qualityScore   Float
+  confidence     Float
+  specHash       String
+  model          String
+  createdAt      DateTime     @default(now())
+  stale          Boolean      @default(false)
+
+  @@index([stale])
+}
+
+// One build of the resource-intent co-occurrence index (token -> model). Inserted when a build
+// starts ('building'), then set 'ready', 'failed' or 'duplicate' once; a DB trigger refuses any
+// change to a row that is no longer 'building' and sets `builtAt` itself. `contentHash` =
+// sha256(kind, NUL, payload) is the snapshot's identity (unique among ready rows) and is verified
+// on load. Pin rules are a DB CHECK. Written only through raw SQL in
+// src/server/services/resource-intent-cooc/store.ts. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentCoocSnapshot {
+  id                String    @id @default(uuid())
+  kind              String
+  status            String    @default("building")
+  contentHash       String?
+  specHash          String
+  trainStart        DateTime
+  trainEnd          DateTime
+  seed              Int
+  pinnedUntil       DateTime?
+  builtAt           DateTime  @default(now())
+  trainCreatedAtMin DateTime?
+  trainCreatedAtMax DateTime?
+  idsTried          Int?
+  trainRows         Int?
+  vocab             Int?
+  models            Int?
+  keptPairs         Int?
+  payload           Bytes?
+  trainImageIds     Bytes?
+
+  @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
+}
+
 enum ReviewReactions {
   Like
   Dislike
@@ -1802,6 +1891,8 @@ model Post {
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
   nsfwLevel      Int           @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   images          Image[]
   tags            TagsOnPost[]
@@ -1954,6 +2045,11 @@ model Image {
   appListingIcons        AppListing[]           @relation("AppListingIcon")
   appListingCovers       AppListing[]           @relation("AppListingCover")
   appListingScreenshots  AppListingScreenshot[] @relation("AppListingScreenshot")
+  appSubListingImages        AppSubListing[] @relation("AppSubListingImage")
+  appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
+  crucibles              Crucible[]             @relation("CrucibleImage")
+  crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  crucibleEntries        CrucibleEntry[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2025,6 +2121,7 @@ model EntityModeration {
   triggeredLabels String[]               @default([])
   result          Json?
   contentHash     String?
+  nsfwLevel       Int?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 
@@ -2036,6 +2133,17 @@ model EntityModeration {
   // manual migration and is not modeled here because Prisma does not
   // support partial indexes. See:
   // prisma/migrations/20260407111422_add_entity_moderation_retry_index/
+}
+
+model TextScanPrompt {
+  id          Int      @id @default(autoincrement())
+  key         String
+  content     String
+  note        String?
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  @@index([key, id(sort: Desc)])
 }
 
 enum ImageEngagementType {
@@ -2126,6 +2234,31 @@ model ArticleRatingReview {
   @@index([status, createdAt])
   @@index([userId])
   @@index([articleId, createdAt(sort: Desc)])
+}
+
+// Partial unique index `RatingReview_pending_per_entity` ((entityType, entityId) WHERE status = 'Pending')
+// is created by the manual migration; Prisma cannot express it.
+model RatingReview {
+  id               Int          @id @default(autoincrement())
+  entityType       String
+  entityId         Int
+  userId           Int
+  user             User         @relation("RatingReviewSubmitter", fields: [userId], references: [id], onDelete: Cascade)
+  currentLevel     Int
+  suggestedLevel   Int
+  appliedLevel     Int?
+  userComment      String?
+  modComment       String?
+  status           ReportStatus @default(Pending)
+  resolvedBy       Int?
+  resolver         User?        @relation("RatingReviewResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  resolvedAt       DateTime?
+  resolvedTextHash String?
+  createdAt        DateTime     @default(now())
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([entityType, entityId, createdAt(sort: Desc)])
 }
 
 model CollectionMetric {
@@ -2472,9 +2605,37 @@ model Feedback {
   bugId       Int?
   bug         Bug?      @relation(fields: [bugId], references: [id], onDelete: SetNull)
 
+  /// The `app-block` area only: the `Feedback_app_columns_check` CHECK requires this and the seven app
+  /// columns below (appBlockVersion, appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById,
+  /// ownerFlaggedAt, hiddenFromOwnerAt) to be NULL unless `area` is 'app-block'; it requires nothing of
+  /// an app-block row. Always the PARENT listing, never a shadow revision. SetNull, not Cascade:
+  /// deleting a listing must not destroy the report for moderators.
+  appListingId        String?
+  appListing          AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
+  /// The block version live when the feedback was sent, stamped server-side. NULL for off-site apps.
+  appBlockVersion     String?
+  appBlockSha         String?
+
+  /// Owner (developer) status, SEPARATE from the moderator `status` / `triageNote` / `handledBy`
+  /// columns above so an owner can never move moderator triage. NULL = new to the developer; otherwise
+  /// one of FEEDBACK_OWNER_STATUSES (CHECK `Feedback_ownerStatus_check`).
+  ownerStatus         String?
+  ownerStatusAt       DateTime?
+  ownerStatusById     Int?
+  ownerStatusBy       User?       @relation("FeedbackOwnerStatusBy", fields: [ownerStatusById], references: [id], onDelete: SetNull)
+  /// The owner flagged this report as abusive, for moderators.
+  ownerFlaggedAt      DateTime?
+  /// A moderator hid this report from the developer. Which moderator is recorded by the
+  /// append-only ModActivity row written on each hide/unhide, not by a column here.
+  hiddenFromOwnerAt   DateTime?
+
   @@index([area, status, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
+  // The owner inbox. The migration creates this as a PARTIAL index
+  // (WHERE "appListingId" IS NOT NULL), which Prisma cannot express, so it stays a
+  // plain @@index here; the SQL in 20261011120000_feedback_app_listing is authoritative.
+  @@index([appListingId, createdAt(sort: Desc)], map: "Feedback_appListingId_createdAt_idx")
 }
 
 enum ApiKeyType {
@@ -2919,6 +3080,36 @@ model AppBlockPublishRequest {
   @@map("app_block_publish_requests")
 }
 
+/// One row per App Block build-run event: `status = 'triggered'` when civitai starts a run,
+/// then `succeeded` / `failed` for each APPLIED build callback of that run, carrying the
+/// optional failed step, the build service's reason and the derived failure class. A failure
+/// from an older run that arrived after a newer run started is ignored and writes no row.
+/// Append-only: a re-delivered callback appends another row.
+///
+/// 🔴 APPLIED MANUALLY, AND THE APP TOLERATES IT BEING ABSENT. Every read and write goes
+/// through `~/server/services/blocks/build-attempts.service`, which is best-effort, so the
+/// build callbacks keep updating `deploy_state` before this table exists.
+///
+/// Text columns, not enums (same reason as `AppBlockPublishRequest.status`); the migration
+/// bounds `mode` and `status` with CHECK constraints.
+model AppBlockBuildAttempt {
+  id               Int      @id @default(autoincrement())
+  publishRequestId String?  @map("publish_request_id") // no FK: written best-effort, may be unresolved
+  slug             String
+  sha              String
+  runId            String?  @map("run_id") // server-side only; never rendered
+  mode             String // 'build' | 'review'
+  status           String // 'triggered' | 'succeeded' | 'failed'
+  failedStep       String?  @map("failed_step") // clone|validate|build|scan|push|none
+  failedReason     String?  @map("failed_reason") // build service reason word, e.g. TaskRunTimeout
+  failureClass     String?  @map("failure_class") // author|platform|transient|unknown
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([publishRequestId, mode, createdAt(sort: Desc)], map: "app_block_build_attempts_request_idx")
+  @@index([mode, slug, sha, createdAt(sort: Desc)], map: "app_block_build_attempts_version_idx")
+  @@map("app_block_build_attempts")
+}
+
 /// App Store Listings (W13) — the store-facing record, decoupled from runtime.
 /// Fronts BOTH on-site App Blocks (an AppBlock, iframe/page apps we host) and
 /// off-site apps (external-link or OAuth-connect) in one /apps store.
@@ -2966,6 +3157,38 @@ model AppListing {
   // can't express it; canonical code set = APP_LISTING_STATUSES). P3b adds
   // 'removed' (the mod delist target); see app-blocks-p3b-delist-claim-scope.
   status          String       @default("draft")
+  /// Per-listing cohort gate: private|moderators|testers|public, or NULL.
+  ///
+  /// NULLABLE WITH NO DEFAULT, and NULL is NOT the `private` level — it means the owner
+  /// has expressed no choice, so the pre-feature rule for the row's `status` applies
+  /// (approved is visible, non-approved is not). That is what lets a level be
+  /// authoritative on an `approved` listing without a new approval -- of which there are
+  /// eight scattered writes and no chokepoint -- minting a row that vanishes from the
+  /// store. A level that IS set binds at every eligible status, `approved` included, so
+  /// an owner can restrict a live listing (discovery-only: hidden from the store, still
+  /// runnable by slug).
+  ///
+  /// Free-text `text` like `status`; the allowed set is a DB CHECK that lives ONLY in the
+  /// migration .sql (canonical code set = APP_LISTING_VISIBILITIES), and NULL passes that
+  /// CHECK by design. Always an AND with the surface flags, never an override.
+  ///
+  /// 🔴 THE no-type ANNOTATION ON THE FIELD LINE STRIPS IT FROM THE GENERATED CLIENT ON
+  /// PURPOSE, AND THAT
+  /// IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
+  /// declares in its default SELECT/RETURNING, so while this was an ordinary field every
+  /// `appListing` call that returns rows with no explicit `select` emitted it - 18 such sites
+  /// on this tree, 17 of them WRITES - and during the manual-apply window that is
+  /// `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
+  /// delist all 500d on the PR preview. Stripping the field makes every one of those sites
+  /// immune by construction. The column is reached ONLY by raw SQL, in
+  /// `app-listing-visibility.service.ts` (read) and `-write.service.ts` (write). Re-adding it
+  /// to the client re-opens the outage; `app-listing-visibility.no-prisma-field` is the guard.
+  ///
+  /// MANUAL-APPLY, like every migration here. Read it ONLY through
+  /// `app-listing-visibility.service.ts` and never add it to a shared `select`: a
+  /// `select` naming a missing column throws P2022 for the WHOLE query, which on the
+  /// grid's shared select is a public-store outage.
+  visibility      String? // @no-type
   // Maturity rating. For on-site listings this MIRRORS AppBlock.content_rating
   // (single source — the listing must NOT override the runtime .red/.com serving
   // gate). Off-site listings carry their own. Same domain as AppBlock (g..x).
@@ -3054,6 +3277,10 @@ model AppListing {
   collaborators      AppCollaborator[]
   ownershipEvents    AppOwnershipEvent[]
   ownershipTransfers AppOwnershipTransfer[]
+  subListings        AppSubListing[]      @relation("AppSubListings")
+  subListingParent   AppSubListingParent? @relation("AppSubListingParentSwitch")
+  // Private per-app feedback (`Feedback.area = 'app-block'`). Owner + moderators only.
+  feedback           Feedback[]
 
   // Marketplace read-path indexes (future P2 read path).
   @@index([status, kind], map: "app_listings_status_kind_idx")
@@ -3276,6 +3503,66 @@ model AppListingModerationEvent {
   // Correlate events back to the report that triggered them.
   @@index([reportId], map: "app_listing_mod_events_report_idx")
   @@map("app_listing_moderation_events")
+}
+
+/// App Store sub-listings: per-parent switch. No row (or `enabled = false`) means the parent
+/// may not publish sub-listings and the store shows none of its children. Rows are created by
+/// hand. MANUAL-APPLY (`20261010120000_app_sub_listings`); every reader degrades while the
+/// table is absent.
+model AppSubListingParent {
+  parentListingId String     @id @map("parent_listing_id")
+  parentListing   AppListing @relation("AppSubListingParentSwitch", fields: [parentListingId], references: [id], onDelete: Cascade)
+  enabled         Boolean    @default(false)
+  maxPerAuthor    Int        @default(20) @map("max_per_author")
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("app_sub_listing_parents")
+}
+
+/// App Store sub-listing: one item a parent app places in the store as its own card.
+///
+/// The live columns are what the store renders. An edit to an APPROVED row is staged in the
+/// `pending*` columns (a complete snapshot while `pendingSubmittedAt` is set) so the last
+/// approved version stays live until a moderator approves the edit. Status / rating CHECKs
+/// live only in the migration .sql (canonical code sets in `app-sub-listing.constants.ts`).
+/// MANUAL-APPLY (`20261010120000_app_sub_listings`).
+model AppSubListing {
+  id                   String     @id // asl_<ULID>
+  parentListingId      String     @map("parent_listing_id")
+  parentListing        AppListing @relation("AppSubListings", fields: [parentListingId], references: [id], onDelete: Cascade)
+  itemKey              String     @map("item_key")
+  authorUserId         Int        @map("author_user_id")
+  author               User       @relation("AppSubListingAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+  title                String
+  tagline              String?
+  imageId              Int?       @map("image_id")
+  image                Image?     @relation("AppSubListingImage", fields: [imageId], references: [id], onDelete: SetNull)
+  subPath              String     @map("sub_path")
+  contentRating        String?    @map("content_rating")
+  pendingTitle         String?    @map("pending_title")
+  pendingTagline       String?    @map("pending_tagline")
+  pendingImageId       Int?       @map("pending_image_id")
+  pendingImage         Image?     @relation("AppSubListingPendingImage", fields: [pendingImageId], references: [id], onDelete: SetNull)
+  pendingSubPath       String?    @map("pending_sub_path")
+  pendingContentRating String?    @map("pending_content_rating")
+  pendingSubmittedAt   DateTime?  @map("pending_submitted_at") @db.Timestamptz(6)
+  editRejectionReason  String?    @map("edit_rejection_reason")
+  status               String     @default("pending")
+  statusReason         String?    @map("status_reason")
+  moderatedById        Int?       @map("moderated_by_id")
+  moderatedBy          User?      @relation("AppSubListingModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
+  moderatedAt          DateTime?  @map("moderated_at") @db.Timestamptz(6)
+  approvedAt           DateTime?  @map("approved_at") @db.Timestamptz(6)
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([parentListingId, itemKey], map: "app_sub_listings_parent_item_key")
+  @@index([status, createdAt], map: "app_sub_listings_queue_idx")
+  @@index([authorUserId], map: "app_sub_listings_author_idx")
+  @@index([imageId], map: "app_sub_listings_image_idx")
+  @@index([pendingImageId], map: "app_sub_listings_pending_image_idx")
+  @@map("app_sub_listings")
 }
 
 /// App Blocks — agentic mod code-review report (P0 persistence layer).
@@ -4835,6 +5122,8 @@ model Cosmetic {
   purchaseComponents  UserCosmeticShopPurchaseCosmetic[]
   cosmeticShopItems   CosmeticShopItem[]
   packMemberships     CosmeticShopItemCosmetic[]
+  creatorMilestones   CreatorMilestone[]
+  milestoneExtras     CreatorMilestoneCosmetic[]
 
   @@index([createdById])
 }
@@ -4863,6 +5152,88 @@ model UserCosmetic {
   remaining      Int? // Consumable balance; NULL = unlimited (every pre-existing row)
 
   @@id([userId, cosmeticId, claimKey])
+}
+
+/// Written only by the `event_cosmetic_placement_log` trigger on "UserCosmetic"; never insert from app code.
+/// The open-interval partial unique index lives in the migration (Prisma cannot express it).
+model EventCosmeticPlacement {
+  id            BigInt         @id @default(autoincrement())
+  event         String
+  userId        Int
+  cosmeticId    Int
+  claimKey      String
+  team          String
+  entityType    CosmeticEntity
+  entityId      Int
+  entityOwnerId Int?
+  startedAt     DateTime       @default(now()) @db.Timestamptz(3)
+  endedAt       DateTime?      @db.Timestamptz(3)
+  updatedAt     DateTime       @default(now()) @db.Timestamptz(3)
+
+  @@index([event, updatedAt])
+}
+
+model EventCosmeticScoreDaily {
+  event           String
+  day             DateTime @db.Date
+  userId          Int
+  cosmeticId      Int
+  claimKey        String
+  team            String
+  impressions     Int      @default(0)
+  anonImpressions Int      @default(0)
+  reactions       Int      @default(0)
+  comments        Int      @default(0)
+  stickers        Int      @default(0)
+  remixes         Int      @default(0)
+  modelLikes      Int      @default(0)
+  points          Int      @default(0)
+  updatedAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([event, userId, cosmeticId, claimKey, day])
+  @@index([event, day])
+}
+
+/// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
+model CreatorMilestone {
+  key          String                 @id
+  track        String
+  threshold    Int?
+  hidden       Boolean                @default(false)
+  hint         String?
+  name         String
+  description  String?
+  cosmeticId   Int?
+  cosmetic     Cosmetic?              @relation(fields: [cosmeticId], references: [id], onDelete: SetNull)
+  sortOrder      Int                        @default(0)
+  // Read only by the grant job's raw SQL. Kept out of the Prisma client so no Prisma read returns it.
+  detector       Json? // @no-type
+  achievements   UserCreatorMilestone[]
+  extraCosmetics CreatorMilestoneCosmetic[]
+}
+
+/// Cosmetics a milestone grants beyond its badge (`cosmeticId`).
+model CreatorMilestoneCosmetic {
+  milestoneKey String
+  milestone    CreatorMilestone @relation(fields: [milestoneKey], references: [key], onDelete: Cascade)
+  cosmeticId   Int
+  cosmetic     Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+
+  @@id([milestoneKey, cosmeticId])
+  @@index([cosmeticId])
+}
+
+/// Badges are permanent by product decision: no revocation columns.
+model UserCreatorMilestone {
+  userId       Int
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  milestoneKey String
+  milestone    CreatorMilestone @relation(fields: [milestoneKey], references: [key], onDelete: Restrict, onUpdate: Restrict)
+  achievedAt   DateTime         @default(now())
+  seenAt       DateTime?
+
+  @@id([userId, milestoneKey])
+  @@index([milestoneKey])
 }
 
 model CosmeticShopSection {
@@ -4987,6 +5358,29 @@ model UserCosmeticShopPurchases {
   // still scans the table to count one item's rows. Applied by hand — the
   // migration beside this schema carries the plans and what the index does not fix.
   @@index([shopItemId])
+}
+
+// A shop or pack purchase's claim on its charge prefix, written BEFORE the
+// charge. Kept apart from UserCosmeticShopPurchases so that table keeps holding
+// only paid sales: every sold count, the takedown refund and the milestone
+// detectors read it without a status filter. See shop-purchase-charge.ts for the
+// state machine. No foreign keys: a claim is the reconciliation record for money
+// that may have moved, and must outlive the item or account it names.
+model CosmeticShopPurchaseClaim {
+  /// The charge's external transaction id prefix (UserCosmeticShopPurchases.buzzTransactionId once paid).
+  transactionId String   @id
+  userId        Int
+  shopItemId    Int
+  /// What this claim charges. A retry of a pending claim charges this, not the current price.
+  amount        Int
+  /// pending | refunding | refunded | paid (text + CHECK, not an enum).
+  status        String
+  /// Requests that have charged under this claim: 1 for the one that created it, +1 per resume.
+  attempts      Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  @@index([status, createdAt])
 }
 
 model UserCosmeticShopPurchaseCosmetic {
@@ -5252,6 +5646,8 @@ model Collection {
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
   nsfwLevel    Int                          @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   collaborationDisabledAt DateTime?
 
   items        CollectionItem[]
@@ -5483,9 +5879,18 @@ model Bounty {
   poi                     Boolean         @default(false)
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
+  /// When the award (or, with `refunded`, the refund) was recorded under the payout lock.
+  payoutRecordedAt        DateTime?
+  /// When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
+  payoutSettledAt         DateTime?
+  /// The award's winner, captured when it is recorded: the entry it went to can be deleted first.
+  payoutWinnerUserId      Int?
   availability            Availability    @default(Public)
   nsfwLevel               Int             @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   lockedProperties        String[]        @default([])
+  meta                    Json?
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -5513,6 +5918,8 @@ model BountyEntry {
   locked      Boolean  @default(false)
   description String?
   nsfwLevel   Int      @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   benefactors BountyBenefactor[]
   thread      Thread?
@@ -6098,6 +6505,7 @@ enum JobQueueType {
   BlockedImageDelete
   ImageScan
   ReplacedImageDelete
+  ImageStorageDelete
 }
 
 model JobQueue {
@@ -6105,6 +6513,7 @@ model JobQueue {
   entityType EntityType
   entityId   Int
   createdAt  DateTime     @default(now())
+  data       Json?
 
   @@id([entityType, entityId, type])
 }
@@ -6348,10 +6757,11 @@ model Appeal {
   resolvedBy        Int?
   resolvedByUser    User?        @relation("resolvedAppeals", fields: [resolvedBy], references: [id], onDelete: SetNull)
   resolvedMessage   String?
+  resolvedReason    String?
   internalNotes     String?
   buzzTransactionId String?
 
-  @@unique([entityType, entityId, userId])
+  @@index([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
 }
@@ -6636,6 +7046,8 @@ model Challenge {
   coverImageId Int?
   coverImage   Image?  @relation("ChallengeCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
   nsfwLevel    Int     @default(1)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   // Required model versions (optional - empty means any allowed)
   modelVersionIds Int[] @default([]) // Array of allowed model version IDs (OR logic)
@@ -8071,6 +8483,8 @@ model UserRestriction {
   resolvedAt      DateTime?
   resolvedBy      Int?
   resolvedMessage String?
+  resolvedReason  String?
+  internalNotes   String?
   userMessage     String?
   userMessageAt   DateTime?
 
@@ -8083,6 +8497,8 @@ enum UserRestrictionStatus {
   Pending
   Upheld
   Overturned
+  // Not a ruling: closed by `deleteUser`, reopened to Pending by `restoreUser`.
+  AccountDeleted
 }
 
 // Moderator-curated allowlist for false-positive prompt triggers
@@ -8095,6 +8511,7 @@ enum StrikeReason {
   HarassmentContent
   ProhibitedContent
   ManualModAction
+  Scam
 }
 
 enum StrikeStatus {
@@ -8145,6 +8562,20 @@ model GenerationPreset {
   @@unique([userId, ecosystem, name])
   @@index([userId])
   @@index([userId, ecosystem])
+}
+
+/// A custom width × height a user saved. One list per user, offered on every
+/// model whose limits accept the size unchanged; greyed out where they don't.
+model GenerationSizePreset {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  width     Int
+  height    Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, width, height])
+  @@index([userId])
 }
 
 enum WildcardSetKind {
@@ -8900,4 +9331,201 @@ model BlurbReference {
   // RAW partial index (NOT expressible in Prisma — it carries a WHERE):
   // "BlurbReference_pending_idx" ON ("materializedAt") WHERE "pendingSince" IS NOT NULL.
   // Created in 20260825000000_add_blurbs (manual-apply).
+}
+
+// ============================================================================
+// Crucible - Head-to-head content competitions
+// ============================================================================
+
+enum CrucibleStatus {
+  Pending
+  Active
+  Completed
+  Cancelled
+}
+
+enum CrucibleIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
+model Crucible {
+  id                Int            @id @default(autoincrement())
+  userId            Int
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  imageId           Int?
+  image             Image?         @relation("CrucibleImage", fields: [imageId], references: [id], onDelete: SetNull)
+  heroImageId       Int?
+  heroImage         Image?         @relation("CrucibleHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
+  buzzType          String         @default("yellow")
+  nsfwLevel         Int            @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
+  contentType       MediaType      @default(image)
+  entryFee          Int            @default(0)
+  seededPrizePool   Int            @default(0)
+  // Sort key for the feed, kept in step with seed + paid entries. Payouts and every shown pool
+  // derive from the entries instead (getCrucibleTotalPrizePool).
+  prizePool         Int            @default(0)
+  entryLimit        Int            @default(1)
+  // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
+  freeEntriesPerUser Int           @default(0)
+  maxTotalEntries   Int?
+  // Shares of the run, counted back from the end: the submit modal warns from the first, and
+  // entries close at the second.
+  entryWarningPercent Int          @default(20)
+  entryCutoffPercent Int           @default(0)
+  minViewSeconds    Int?
+  maxClipSeconds    Int?
+  prizePositions    Json           @default("[]")
+  allowedResources  Json?
+  // Base model names (basemodel.constants); an entry's checkpoint must be one of them.
+  allowedBaseModels String[]       @default([])
+  duration          Int            @default(480)
+  startAt           DateTime?
+  endAt             DateTime?
+  status            CrucibleStatus @default(Pending)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  buzzTransactionId String?
+  seedTransactionId String?
+  // Text scan of name + description. Defaults to Scanned so rows from before the scan stay visible.
+  ingestion         CrucibleIngestionStatus @default(Scanned)
+  scannedAt         DateTime?
+  // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
+  textNsfw          Boolean        @default(false)
+
+  entries     CrucibleEntry[]
+  reports     CrucibleReport[]
+  engagements CrucibleEngagement[]
+
+  @@index([userId], type: Hash)
+  @@index([status])
+  @@index([endAt])
+  @@index([startAt])
+  @@index([status, ingestion])
+}
+
+enum CrucibleEngagementType {
+  Notify
+}
+
+model CrucibleEngagement {
+  userId     Int
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  crucibleId Int
+  crucible   Crucible               @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  type       CrucibleEngagementType
+  createdAt  DateTime               @default(now())
+
+  @@id([type, crucibleId, userId])
+  @@index([crucibleId])
+  @@index([userId], type: Hash)
+}
+
+model CrucibleReport {
+  crucibleId Int
+  crucible   Crucible @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  reportId   Int      @unique
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, crucibleId])
+  @@index([crucibleId], type: Hash)
+}
+
+/// A Civitai Games (Game Frame) game, mirrored so it can be reported like any other entity. Rows are
+/// only ever written from Game Frame's payloads (/api/internal/game-frame/*); nothing else edits them.
+model GameFrameGame {
+  id         Int       @id @default(autoincrement())
+  slug       String    @unique
+  title      String
+  userId     Int?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  official   Boolean   @default(false)
+  visibility String
+  url        String
+  coverUrl   String?
+  stateAt    DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  reports GameFrameGameReport[]
+
+  @@index([userId])
+}
+
+model GameFrameGameReport {
+  gameFrameGameId Int
+  gameFrameGame   GameFrameGame @relation(fields: [gameFrameGameId], references: [id], onDelete: Cascade)
+  reportId        Int           @unique
+  report          Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, gameFrameGameId])
+  @@index([gameFrameGameId], type: Hash)
+}
+
+/// One row per Game Frame report accepted, so a resend returns the original report.
+model GameFrameReportReceipt {
+  gfReportId String   @id
+  reportId   Int
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
+}
+
+model CrucibleEntry {
+  id                Int      @id @default(autoincrement())
+  crucibleId        Int
+  crucible          Crucible @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Null once its image is deleted: the entry and its fee stay, so the pool and a cancel's refund
+  // still count it.
+  imageId           Int?
+  image             Image?   @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  score             Int      @default(1500)
+  voteCount         Int      @default(0)
+  position          Int?
+  buzzTransactionId String?
+  createdAt         DateTime @default(now())
+
+  @@index([crucibleId], type: Hash)
+  @@index([userId], type: Hash)
+  @@index([crucibleId, score(sort: Desc)])
+}
+
+enum PrizeSourceType {
+  Crucible
+  Challenge
+}
+
+// A Buzz prize owed to a user. The winner picks the currency when claiming; an unclaimed prize is
+// paid green at `autoClaimAt`.
+model Prize {
+  id                    Int             @id @default(autoincrement())
+  userId                Int
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceType            PrizeSourceType
+  sourceId              Int
+  subjectId             Int?
+  position              Int?
+  amount                Int
+  title                 String
+  // The source's ledger key. Currency-independent, so a prize can only ever be paid once.
+  externalTransactionId String          @unique
+  createdAt             DateTime        @default(now())
+  autoClaimAt           DateTime
+  claimedAt             DateTime?
+  buzzType              String? // 'green' | 'yellow'
+  autoClaimed           Boolean         @default(false)
+  paidAt                DateTime?
+  voidedAt              DateTime?
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
 }

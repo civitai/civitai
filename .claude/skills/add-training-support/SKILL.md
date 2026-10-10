@@ -7,7 +7,7 @@ description: Wire an existing ecosystem into the LoRA training system so it appe
 
 Wires an existing ecosystem into the **training** form (the "Train a LoRA" flow), distinct from the generation form. After this, the ecosystem shows up as a selectable base model in Training Step 1 and submits a valid `training` step to the orchestrator.
 
-Training is a **separate subsystem from generation**. The generation handlers/graphs in `src/server/services/orchestrator/ecosystems/*` and `src/shared/data-graph/generation/*` are NOT part of this — do not touch them. The files below are the training path.
+Training is a **separate subsystem from generation**. The generation handlers/graphs in `src/server/services/orchestrator/form-graph/*` and `src/shared/form-graph/generation/*` are NOT part of this — do not touch them. The files below are the training path.
 
 ## When to use
 
@@ -180,7 +180,9 @@ union), a missing spread in the aggregate array, or a `baseModel` string that is
 ## Step 5 — Verify (optional)
 
 With a dev server running (see `dev-server` skill) and the Flipt flag on for your user:
-- Open the training form → Step 1 shows the new base model under its media type.
+- Open the training form (`/models/train`) → Step 1 shows the new base model under its media type.
+  If it lands on `/training-studio`, the Training Studio is your default trainer (`trainingStudioUi`,
+  on by default for moderators) — click **Use the classic trainer** in the banner there first.
 - Selecting it loads the expected default params in Step 3.
 - The `whatif` submit returns a price without a validation error.
 

@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import type { ResolveAttribution } from './resolve-attribution';
 import { parseKey } from './s3-utils';
 
 const deliveryWorkerEndpoint = `${env.DELIVERY_WORKER_ENDPOINT}?token=${env.DELIVERY_WORKER_TOKEN}`;
@@ -111,8 +112,13 @@ export type DeliveryWorkerStatus = {
  * Options that only the storage resolver understands. The delivery-worker
  * fallback silently ignores them, which is correct: it is the legacy path keyed
  * off `ModelFile.url` and has no notion of which host serves the bytes.
+ *
+ * `caller` and `actor` (see `ResolveAttribution`) are required so a new call site
+ * cannot leave them out. They are sent to the resolver to attribute the resolve to
+ * the code path that caused it, and change nothing about the resolve itself; a
+ * resolver that does not know the fields ignores them.
  */
-export type ResolveOptions = {
+export type ResolveOptions = ResolveAttribution & {
   /**
    * Ask for a URL addressing the storage origin rather than the CDN in front of
    * it. Only honoured for backends that have a second address; ignored otherwise.
@@ -126,8 +132,8 @@ export type ResolveOptions = {
 
 export async function getDownloadUrlByFileId(
   fileId: number,
-  fileName?: string,
-  options?: ResolveOptions
+  fileName: string | undefined,
+  options: ResolveOptions
 ): Promise<DownloadInfo> {
   if (!storageResolverEndpoint) {
     throw new Error('STORAGE_RESOLVER_ENDPOINT is not configured');
@@ -139,13 +145,21 @@ export async function getDownloadUrlByFileId(
   // rather than asking and being refused: the resolver's granted="unauthorized"
   // counter is the signal that someone found the cost lever, and our own
   // misconfiguration must not be what fills it.
+  //
+  // `options?.` although the type makes it required: a call that slips past the
+  // type (an `any`, a JS caller) would otherwise throw here, and
+  // `resolveDownloadUrl` catches that and silently falls back to the delivery
+  // worker without ever consulting the resolver.
   const canRequestDirect = Boolean(options?.direct && storageResolverInternalToken);
 
   const body = JSON.stringify({
     fileId,
     fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
-    // Omitted rather than sent as `false` so an older resolver, which does not
-    // know the field, receives a byte-identical request to the one it does today.
+    caller: options?.caller,
+    actor: options?.actor,
+    // Omitted rather than sent as `false`, so a resolver that does not know the
+    // field never sees it on an ordinary resolve. (`caller` and `actor` above are
+    // always sent; the resolver ignores fields it does not know.)
     ...(canRequestDirect ? { direct: true } : {}),
   });
 
@@ -255,8 +269,8 @@ export function isStorageResolverEnabled(): boolean {
 export async function resolveDownloadUrl(
   fileId: number,
   fileUrl: string,
-  fileName?: string,
-  options?: ResolveOptions
+  fileName: string | undefined,
+  options: ResolveOptions
 ): Promise<DownloadInfo> {
   if (isStorageResolverEnabled()) {
     let resolverError: unknown;

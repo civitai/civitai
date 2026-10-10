@@ -17,6 +17,7 @@ const allValidSamplers = [
 ] as const;
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -361,3 +362,11 @@ export const resolveWildcardPackSchema = z.object({
    *  fetches + unzips it client-side, as the logged-in user). */
   modelVersionId: z.number().int().positive(),
 });
+
+export const setEvictableSchema = getByIdSchema.extend({ evictable: z.boolean() });
+export type SetEvictableInput = z.infer<typeof setEvictableSchema>;
+
+export const setAdditionalResourceFeeWaivedSchema = getByIdSchema.extend({ waived: z.boolean() });
+export type SetAdditionalResourceFeeWaivedInput = z.infer<
+  typeof setAdditionalResourceFeeWaivedSchema
+>;

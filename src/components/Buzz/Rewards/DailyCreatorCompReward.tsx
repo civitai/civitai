@@ -38,12 +38,14 @@ import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTex
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { CompensationSource } from '~/server/schema/buzz.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { GenerationBuzzEmptyState } from './GenerationBuzzEmptyState';
+import { useEarningsSource } from './useEarningsSource';
 import { getAccountTypeLabel } from '~/utils/buzz';
 
 ChartJS.register(
@@ -64,6 +66,12 @@ const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 // get date options as month from start of year to now
 const CASH_COLOR = '#26a269';
 
+const SOURCE_TITLES: Record<CompensationSource, string> = {
+  compensation: 'Generation Buzz Earned',
+  licenseFee: 'License Fees Earned',
+  tip: 'Tips Earned',
+};
+
 const dateOptions = monthsUntilNow.reverse().map((month) => {
   const date = dayjs(month).startOf('month').add(15, 'day');
   return {
@@ -82,22 +90,33 @@ export function DailyCreatorCompReward({
   const mobile = useIsMobile({ breakpoint: 'sm' });
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
-  const [source, setSource] = useState<'compensation' | 'licenseFee'>('compensation');
+  const { source, setSource, ready: sourceReady } = useEarningsSource();
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { data, isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, accountType: buzzAccountType, source },
-    { enabled: !!features.buzz }
+    { enabled: !!features.buzz && sourceReady }
   );
   const resources = data?.resources ?? [];
   const hasPublishedResources = data?.hasPublishedResources ?? false;
 
+  // The probes decide which tabs to offer; each is skipped while its own tab is the one showing.
   const { data: licenseProbe } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, source: 'licenseFee' },
-    { enabled: !!features.buzz && source === 'compensation' }
+    { enabled: !!features.buzz && sourceReady && source !== 'licenseFee' }
+  );
+  const { data: tipProbe } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+    { date: selectedDate, source: 'tip' },
+    { enabled: !!features.buzz && sourceReady && source !== 'tip' }
   );
   const hasLicenseEarnings = (licenseProbe?.resources.length ?? 0) > 0 || source === 'licenseFee';
+  const hasTipEarnings = (tipProbe?.resources.length ?? 0) > 0 || source === 'tip';
+  const sourceOptions = [
+    { value: 'compensation', label: 'Compensation' },
+    ...(hasLicenseEarnings ? [{ value: 'licenseFee', label: 'License Fees' }] : []),
+    ...(hasTipEarnings ? [{ value: 'tip', label: 'Tips' }] : []),
+  ];
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
@@ -308,23 +327,18 @@ export function DailyCreatorCompReward({
           {/* Header — always padded */}
           <Stack gap={0} p="md" pb={0}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-xl font-bold">
-                {source === 'licenseFee' ? 'License Fees Earned' : 'Generation Buzz Earned'}
-              </h3>
+              <h3 className="text-xl font-bold">{SOURCE_TITLES[source]}</h3>
               <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
-                {hasLicenseEarnings && (
+                {sourceOptions.length > 1 && (
                   <SegmentedControl
                     className="shrink-0"
                     value={source}
                     onChange={(value) => {
-                      setSource(value as 'compensation' | 'licenseFee');
+                      setSource(value as CompensationSource);
                       setSearch('');
                       setFilteredVersionIds([]);
                     }}
-                    data={[
-                      { value: 'compensation', label: 'Compensation' },
-                      { value: 'licenseFee', label: 'License Fees' },
-                    ]}
+                    data={sourceOptions}
                     size="xs"
                   />
                 )}

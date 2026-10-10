@@ -4,7 +4,8 @@ import {
   type ConsumerBlobPresignResponse,
 } from '@civitai/client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwOrchestratorFailure } from '~/server/services/orchestrator/workflows';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
 export async function getConsumerBlobUploadUrlService({
   token,
@@ -13,22 +14,18 @@ export async function getConsumerBlobUploadUrlService({
 }): Promise<ConsumerBlobPresignResponse> {
   const client = createOrchestratorClient(token);
 
-  const { data, error } = await getConsumerBlobUploadUrl({
+  const { data, error, response } = await getConsumerBlobUploadUrl({
     client,
   }).catch((error) => {
     throw error;
   });
 
   if (!data) {
-    const messages = handleError(error);
-    switch (error.status) {
-      case 400:
-        throw throwBadRequestError(messages);
-      case 401:
-        throw throwAuthorizationError(messages);
-      default:
-        throw new Error(messages);
-    }
+    // A throttle or proxy error may carry no problem-details body.
+    const message = error ? handleError(error) : undefined;
+    // A presign 403 is a denial, not the insufficient-funds meaning it has on paid calls.
+    if (response?.status === 403) throw throwAuthorizationError(message);
+    throwOrchestratorFailure({ error, response, message });
   }
 
   return data;

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { civitaiAppUrl } from './civitai-url';
 import { sql } from '@civitai/db/kysely';
-import { NsfwLevel } from '@civitai/shared';
 import { violationUserMessage } from '$lib/violations';
+import { deprecatedNsfwName } from '$lib/nsfw-levels';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
+import { isSafeToRetry } from '@civitai/buzz';
 import { dbRead } from './db';
 import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
@@ -149,15 +150,6 @@ export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Pro
   });
 }
 
-const NSFW_LEVEL_TO_DEPRECATED: Record<number, 'None' | 'Soft' | 'Mature' | 'X' | 'Blocked'> = {
-  [NsfwLevel.PG]: 'None',
-  [NsfwLevel.PG13]: 'Soft',
-  [NsfwLevel.R]: 'Mature',
-  [NsfwLevel.X]: 'X',
-  [NsfwLevel.XXX]: 'X',
-  [NsfwLevel.Blocked]: 'Blocked',
-};
-
 const NEEDS_REVIEW_TO_VIOLATION: Record<string, string> = {
   minor: 'realisticMinor',
   poi: 'realPerson',
@@ -239,7 +231,7 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
           userId: actorUserId,
           imageId,
           tags: tagRows.map((r) => r.name),
-          nsfw: NSFW_LEVEL_TO_DEPRECATED[nsfwLevel] ?? 'None',
+          nsfw: deprecatedNsfwName(nsfwLevel),
           ip: input.ip ?? 'unknown',
           userAgent: input.userAgent ?? 'unknown',
           ownerId,
@@ -372,28 +364,35 @@ export async function refundAppealFee(appeal: {
   const description = `Refunded appeal ${appeal.id} for Image ${appeal.entityId}`;
   try {
     if (isAppealPrefix(appeal.buzzTransactionId))
-      await getBuzz().refundMultiTransaction({
-        externalTransactionIdPrefix: appeal.buzzTransactionId,
-        description,
-      });
+      // A timed-out refund may still land, so only a request that never reached Buzz is retried.
+      await getBuzz().refundMultiTransaction(
+        { externalTransactionIdPrefix: appeal.buzzTransactionId, description },
+        { shouldRetry: isSafeToRetry }
+      );
     else await getBuzz().refundTransaction(appeal.buzzTransactionId, { description });
   } catch (e) {
-    console.error('refundAppealFee failed', { appealId: appeal.id, error: (e as Error).message });
+    // The appeal is already closed, so this is the only record that the fee is still owed.
+    void logAxiomError(e, {
+      event: 'appeal fee refund failed',
+      appealId: appeal.id,
+      buzzTransactionId: appeal.buzzTransactionId,
+    });
   }
 }
 
 export async function notifyAppealResolved(input: {
-  userId: number;
+  appeal: { id: number; userId: number };
   entityId: number;
   status: 'Approved' | 'Rejected';
   resolvedMessage?: string;
 }): Promise<void> {
   try {
     await getNotifications().createNotification({
-      userId: input.userId,
+      userId: input.appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:Image:${input.entityId}`,
+      // Per appeal, matching the main app: a repeated key reuses the first decision's notification.
+      key: `entity-appeal-resolved:Image:${input.entityId}:${input.appeal.id}`,
       details: {
         entityType: 'Image',
         entityId: input.entityId,

@@ -21,6 +21,8 @@ const ENTITY_PATH: Record<string, string> = {
   resourcereview: 'reviews',
   comicproject: 'comics',
   model3d: '3d-models',
+  crucible: 'crucibles',
+  challenge: 'challenges',
 };
 
 // Callers disagree on casing — ModActivity stores 'image', the report joins label rows 'Image', and
@@ -57,6 +59,14 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
   const base = `${civitaiUrl}/user/${encodeURIComponent(username)}`;
   return section ? `${base}/${section}` : base;
 }
+
+/** The main site's account-level CSAM report for a user. */
+export const csamReportUrl = (civitaiUrl: string, userId: number) =>
+  `${civitaiUrl}/moderator/csam/${userId}`;
+
+/** A workflow-only training run's review page. */
+export const trainingWorkflowReviewUrl = (workflowId: string) =>
+  `/audit/training-data/workflow/${encodeURIComponent(workflowId)}`;
 
 // The `/retool/*` builders live in `@civitai/shared/moderator-paths` so this app and the main app read
 // ONE definition. They were two, each carrying a comment telling the reader to keep them in step, and

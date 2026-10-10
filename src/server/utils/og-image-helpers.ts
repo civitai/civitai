@@ -1,4 +1,4 @@
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import { getEdgeUrl, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -60,7 +60,7 @@ export function buildOgCoverEdgeUrl(
     height: dims.height,
     fit: 'cover',
     quality: 90,
-    ...(isVideo ? { type: MediaType.image, anim: false, transcode: true } : {}),
+    ...(isVideo ? videoStillEdgeOptions : {}),
   });
 }
 
@@ -76,7 +76,10 @@ export type FetchImageAsDataUriOptions = {
  */
 export async function fetchImageAsDataUri(
   url: string,
-  { timeoutMs = OG_IMAGE_FETCH_TIMEOUT_MS, maxBytes = OG_IMAGE_MAX_BYTES }: FetchImageAsDataUriOptions = {}
+  {
+    timeoutMs = OG_IMAGE_FETCH_TIMEOUT_MS,
+    maxBytes = OG_IMAGE_MAX_BYTES,
+  }: FetchImageAsDataUriOptions = {}
 ): Promise<string | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
@@ -100,6 +103,13 @@ export async function fetchImageAsDataUri(
     if (arrayBuffer.byteLength > maxBytes) return null;
 
     const contentType = res.headers.get('content-type')?.split(';')[0]?.trim() || 'image/jpeg';
+    // satori cannot decode WebP, and an optimized edge variant is the only resized one that keeps
+    // transparency (a plain resize comes back as JPEG), so a WebP is re-encoded as PNG here.
+    if (contentType === 'image/webp') {
+      const { default: sharp } = await import('sharp');
+      const png = await sharp(Buffer.from(arrayBuffer)).png().toBuffer();
+      return `data:image/png;base64,${png.toString('base64')}`;
+    }
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     return `data:${contentType};base64,${base64}`;
   } catch {

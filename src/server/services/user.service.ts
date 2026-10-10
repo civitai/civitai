@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -13,7 +12,6 @@ import { moderationActionEmail } from '~/server/email/templates';
 import {
   BanReasonCode,
   BlockedReason,
-  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -21,6 +19,8 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onModelReviewsChanged } from '~/server/events/points/hooks';
+import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
@@ -96,7 +96,6 @@ import {
 import { clearUserEngagement } from '~/server/services/user-engagement';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
-import { getResourceReviewsByUserId } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   isPrismaUniqueViolation,
@@ -120,8 +119,7 @@ import {
   ModelStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
-import blockedUsernames from '~/utils/blocklist-username.json';
-import { assertEmailAllowed, getBlocklistData } from '~/server/services/blocklist.service';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -137,6 +135,13 @@ import {
   clearBlockInstancesForPublisher,
   revokeBlockInstancesForPublisher,
 } from '~/server/services/blocks/publisher-ban-revocation.service';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { releaseUserMute, type MuteReleaseActivity } from '~/server/services/mute-release.service';
+import {
+  closeGenerationRestrictionsOfDeletedAccount,
+  reopenGenerationRestrictionsOfRestoredAccount,
+} from '~/server/services/user-restriction.service';
+
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -432,23 +437,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   });
 };
 
-export const isUsernamePermitted = async (username: string): Promise<boolean> => {
-  const lower = username.toLowerCase();
-
-  // Static JSON baseline (always enforced, can't be removed via UI)
-  const staticBlocked =
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x);
-  if (staticBlocked) return false;
-
-  // Dynamic blocklist from DB/Redis/in-memory cache
-  const [dynamicExact, dynamicPartial] = await Promise.all([
-    getBlocklistData(BlocklistType.UsernameExact),
-    getBlocklistData(BlocklistType.UsernamePartial),
-  ]);
-
-  return !(dynamicExact.some((x) => lower === x) || dynamicPartial.some((x) => lower.includes(x)));
-};
+export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
@@ -481,9 +470,6 @@ export async function clearUserProfileFields({
 }
 
 /**
- * Mod-driven: explicit mute/unmute (vs. legacy toggle).
- */
-/**
  * A moderator's mute, timed or not.
  *
  * `mutedAt` is what marks it as a person's decision: every automatic path (strike escalation, prompt
@@ -491,45 +477,35 @@ export async function clearUserProfileFields({
  * a mute that has it. `processTimedUnmutes` still lifts an expiry on time — that is the point of a timed
  * mute — and clears `mutedAt` with it.
  *
- * This used to need a `meta.manualMute` flag. It did not: `mutedAt` already carried exactly this
- * meaning for `confirm-mutes`, `entity-moderation` and `prepare-leaderboard`, and the flag was written
- * by two apps and read by none.
+ * The unmute half is `releaseUserMute`, which needs the acting moderator.
  */
-export async function setUserMuted({
-  userId,
-  muted,
-  expiresAt,
-}: {
-  userId: number;
-  muted: boolean;
-  expiresAt?: Date | null;
-}) {
-  const date = new Date();
-
-  // The unmute half clears the provenance too; the mute half only sets an expiry when the caller asked
-  // for one, so an ordinary mute keeps today's indefinite behaviour.
-  let data: Prisma.UserUpdateInput;
-  if (muted) {
-    data = {
-      muted: true,
-      mutedAt: date,
-      ...(expiresAt !== undefined ? { muteExpiresAt: expiresAt } : {}),
-    };
-  } else {
-    const existing = await dbRead.user.findUnique({
-      where: { id: userId },
-      select: { meta: true },
+export async function setUserMuted(
+  args:
+    | { userId: number; muted: true; expiresAt?: Date | null }
+    | { userId: number; muted: false; actorId: number; activity?: MuteReleaseActivity }
+) {
+  if (!args.muted) {
+    const result = await releaseUserMute({
+      userId: args.userId,
+      actorId: args.actorId,
+      activity: args.activity,
+      updateSource: 'retool:unmute',
     });
-    data = clearedMuteFields(existing?.meta as UserMeta | null);
+    if (!result.released) throw new Error(`No user with id ${args.userId}`);
+    return result.user;
   }
 
   const user = await updateUserById({
-    id: userId,
-    data,
-    updateSource: muted ? 'retool:mute' : 'retool:unmute',
+    id: args.userId,
+    data: {
+      muted: true,
+      mutedAt: new Date(),
+      ...(args.expiresAt !== undefined ? { muteExpiresAt: args.expiresAt } : {}),
+    },
+    updateSource: 'retool:mute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId, 'moderation');
+  await invalidateSession(args.userId, 'moderation');
   return user;
 }
 
@@ -663,12 +639,20 @@ export const updateUserById = async ({
     data.browsingLevel = Flags.removeFlag(data.browsingLevel, NsfwLevel.Blocked);
   }
 
+  // The account form sends the username on every save; only a real rename is worth a scan.
+  const previousUsername =
+    typeof data.username === 'string'
+      ? (await dbWrite.user.findUnique({ where: { id }, select: { username: true } }))?.username
+      : undefined;
+
   const user = await dbWrite.user.update({ where: { id }, data });
 
   // Track user update with optional source context
   let location = 'user.service:updateUserById';
   if (updateSource) location += `:${updateSource}`;
   userUpdateCounter?.inc({ location });
+  if (typeof data.username === 'string' && data.username !== previousUsername)
+    queueScamScan({ entityType: 'User', entityId: id });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
@@ -715,7 +699,10 @@ export const getUserEngagedModelsByIds = async ({
 }) => {
   const [engagements, recommendedReviews] = await Promise.all([
     listModelEngagements(kyselyRead, { userId: id, modelIds }),
-    getResourceReviewsByUserId({ userId: id, recommended: true, modelIds }),
+    // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+    import('~/server/services/resourceReview.service').then(({ getResourceReviewsByUserId }) =>
+      getResourceReviewsByUserId({ userId: id, recommended: true, modelIds })
+    ),
   ]);
 
   const engagedModels = engagements.reduce<Record<EngagedModelType, number[]>>((acc, model) => {
@@ -1168,6 +1155,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   ]);
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
+  void syncOwnerEventHats(user.id);
 
   // The account is deleted from here on. A failing step must not skip a later one (a skipped
   // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
@@ -1200,6 +1188,9 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  await runStep('close-pending-restrictions', () =>
+    closeGenerationRestrictionsOfDeletedAccount(user.id)
+  );
 
   // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
   await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
@@ -1214,6 +1205,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
     WHERE id = ${id}
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
+  void syncOwnerEventHats(id);
 }
 
 /**
@@ -1327,12 +1319,24 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     disarmAccountDeletionImagePurge(id),
   ]);
 
+  // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
+  await reopenGenerationRestrictionsOfRestoredAccount(id).catch((error) =>
+    logToAxiom({
+      name: 'reopen-pending-restrictions',
+      type: 'error',
+      source: 'restoreUser',
+      userId: id,
+      message: (error as Error)?.message,
+    }).catch(() => null)
+  );
+
   // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
   // already reads NULL, and the drain job's gates can no longer re-hide what it unblocks.
   const imagesPendingRestore = await countPendingAccountDeletionImageRestores(id);
   if (imagesPendingRestore > 0) await recordPendingImageRestore(id);
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
+  void syncOwnerEventHats(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // deleteUser refreshes userBasicCache (username/deletedAt/image, 1-day TTL) after scrubbing the
   // row; mirror that here so the restored identity is visible immediately instead of serving the
@@ -1459,7 +1463,30 @@ export const removeAllContent = async ({
   await dbWrite.bountyEntry.deleteMany({
     where: { userId: id, benefactors: { none: {} } },
   });
-  await dbWrite.bounty.deleteMany({ where: { userId: id } });
+  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
+  const unsettled = await dbWrite.bounty.findMany({
+    // `isPayoutPending` as a query; keep the two in step.
+    where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
+    select: { id: true },
+  });
+  const keptBountyIds: number[] = [];
+  if (unsettled.length) {
+    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
+      '~/server/services/bounty.service'
+    );
+    for (const { id: bountyId } of unsettled)
+      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
+        keptBountyIds.push(bountyId);
+    if (keptBountyIds.length)
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: 'Kept bounties whose payout is not settled',
+        userId: id,
+        bountyIds: keptBountyIds,
+      }).catch(() => undefined);
+  }
+  await dbWrite.bounty.deleteMany({ where: { userId: id, id: { notIn: keptBountyIds } } });
   await dbWrite.answer.deleteMany({ where: { userId: id } });
   await dbWrite.question.deleteMany({ where: { userId: id } });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });
@@ -2093,6 +2120,7 @@ export const toggleBan = async ({
     data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
     updateSource: 'toggleBan',
   });
+  void syncOwnerEventHats(id);
 
   await invalidateSession(id, 'ban');
 
@@ -2511,11 +2539,17 @@ const collectionEntityProps: Partial<Record<CollectionType, string>> = {
 };
 // Image intentionally absent: its metrics are ClickHouse-owned (the legacy PG
 // ImageMetric processor was retired), so image bookmarks skip the PG queueUpdate.
-const collectionEntityMetrics: Partial<Record<CollectionType, typeof articleMetrics>> = {
-  [CollectionType.Article]: articleMetrics,
-  [CollectionType.Model]: modelMetrics,
-  [CollectionType.Post]: postMetrics,
-};
+// A function, not a module-level map: ~/server/metrics reaches this file again through the
+// image.service import cycle, so at load time it can still be half-initialised. A process that
+// imports image.service or post.service first crashed here.
+const collectionEntityMetrics = (type: CollectionType): typeof articleMetrics | undefined =>
+  ((
+    {
+      [CollectionType.Article]: articleMetrics,
+      [CollectionType.Model]: modelMetrics,
+      [CollectionType.Post]: postMetrics,
+    } as Partial<Record<CollectionType, typeof articleMetrics>>
+  )[type]);
 export const toggleBookmarked = async ({
   entityId,
   type,
@@ -2558,7 +2592,7 @@ export const toggleBookmarked = async ({
   }
 
   const entityProp = collectionEntityProps[type];
-  const metricsEngine = collectionEntityMetrics[type];
+  const metricsEngine = collectionEntityMetrics(type);
   if (!entityProp) {
     // TODO(model3d-workstream-E): Model3D bookmarks land here until model3dMetrics ships.
     throw new Error(`toggleBookmarked: no bookmark route for CollectionType.${type}`);
@@ -2666,6 +2700,7 @@ export async function toggleReview({
   }
 
   await preventReplicationLag('resourceReview', userId);
+  void onModelReviewsChanged([{ modelId, userId }]);
 
   return setTo;
 }
@@ -2835,29 +2870,50 @@ export const createUserReferral = async ({
   }
 };
 
+const cosmeticGrantSelect = {
+  id: true,
+  availableStart: true,
+  availableEnd: true,
+  source: true,
+} satisfies Prisma.CosmeticSelect;
+
 export const claimCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
   const cosmetic = await dbRead.cosmetic.findUnique({
-    where: { id, source: { in: [CosmeticSource.Claim, CosmeticSource.Trophy] } },
-    select: { id: true, availableStart: true, availableEnd: true, source: true },
+    where: { id, source: CosmeticSource.Claim },
+    select: cosmeticGrantSelect,
   });
   if (!cosmetic) return null;
-  if (cosmetic.source === CosmeticSource.Claim && !(await isCosmeticAvailable(cosmetic.id, userId)))
-    return null;
+  if (!(await isCosmeticAvailable(cosmetic.id, userId))) return null;
 
+  await grantCosmetic({ cosmeticId: cosmetic.id, userId });
+  return cosmetic;
+};
+
+// Server-side award paths only; never expose through a router.
+export const awardTrophyCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
+  const cosmetic = await dbRead.cosmetic.findUnique({
+    where: { id, source: CosmeticSource.Trophy },
+    select: cosmeticGrantSelect,
+  });
+  if (!cosmetic) return null;
+
+  await grantCosmetic({ cosmeticId: cosmetic.id, userId });
+  return cosmetic;
+};
+
+async function grantCosmetic({ cosmeticId, userId }: { cosmeticId: number; userId: number }) {
   const userCosmetic = await dbRead.userCosmetic.findFirst({
-    where: { userId, cosmeticId: cosmetic.id },
+    where: { userId, cosmeticId },
   });
   if (userCosmetic) throw throwConflictError('You already have this cosmetic');
 
   await dbWrite.userCosmetic.create({
-    data: { userId, cosmeticId: cosmetic.id },
+    data: { userId, cosmeticId },
   });
   await refreshOwnedStickerCache([userId]);
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
-
-  return cosmetic;
-};
+}
 
 export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
   let available = true;
@@ -3084,6 +3140,11 @@ type CachedUserSettings = UserSettingsSchema & {
   autoplayGifs: boolean | null;
 };
 
+/** A stored `settings` value that is a JSON object (not null, not an array, not a scalar). */
+function isPlainSettingsObject(value: unknown): value is UserSettingsSchema {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // Built on first USE, not on import. A module-scope createCachedObject() runs during module
 // evaluation, so any suite that wholesale-mocks `~/server/utils/cache-helpers` or
 // `~/server/redis/client` and merely reaches this service transitively fails at COLLECTION —
@@ -3113,7 +3174,10 @@ function createUserSettingsCache() {
           x.id,
           {
             userId: x.id,
-            ...((x.settings ?? {}) as UserSettingsSchema),
+            // Spread only a plain object. Nothing enforces a shape on the JSON column, and
+            // spreading an array yields `"0"`, `"1"`, … keys — fed back into a write, that
+            // nests each copy of the blob inside the next.
+            ...(isPlainSettingsObject(x.settings) ? x.settings : {}),
             showNsfw: x.showNsfw,
             blurNsfw: x.blurNsfw,
             autoplayGifs: x.autoplayGifs,
@@ -3220,6 +3284,28 @@ export type UserSettingsPatch = {
 
 type RawClient = Pick<typeof dbWrite, '$queryRawUnsafe'>;
 
+/**
+ * The stored `settings` column as a jsonb OBJECT: the stored value when it is one, `{}`
+ * otherwise. Every writer of `User.settings` starts from this, never from the bare column.
+ *
+ * 🔴 `COALESCE(settings, '{}')` is NOT this. It replaces only SQL NULL, so a stored JSON
+ * `null` or an array passes straight through, and the two operations the writers build on
+ * both go wrong on it: `jsonb || jsonb` CONCATENATES instead of merging
+ * (`'null' || '{"a":1}'` is `[null, {"a": 1}]`, and every later write appends another
+ * element — unbounded growth, with every key permanently unreadable), and `jsonb_set`
+ * RAISES (`path element at position 1 is not an integer` on an array, `cannot set path in
+ * scalar` on a scalar), so the write fails outright for that user. Treating a non-object as
+ * `{}` makes the next write repair the row — the same self-healing property the nested-key
+ * guards in `patchUserSettings` restore one level down.
+ *
+ * The top level and every nested key share one builder, `asJsonbObject`, so a change to
+ * the guard cannot reach one level and miss the other.
+ */
+function asJsonbObject(expr: string) {
+  return `(CASE WHEN jsonb_typeof(${expr}) = 'object' THEN ${expr} ELSE '{}'::jsonb END)`;
+}
+const SETTINGS_AS_OBJECT = asJsonbObject('settings');
+
 export async function patchUserSettings(
   userId: number,
   patch: UserSettingsPatch,
@@ -3257,14 +3343,18 @@ export async function patchUserSettings(
       userId
     );
     if (!current.length) throw throwNotFoundError(`No user with id ${userId}`);
-    return current[0]?.settings ?? {};
+    // Same shape rule as the write path, which can only ever RETURN an object.
+    const stored: unknown = current[0]?.settings;
+    return isPlainSettingsObject(stored) ? stored : {};
   }
 
   const values: unknown[] = [];
   // Returns the `$N` placeholder for a newly bound value.
   const bind = (value: unknown) => `$${values.push(value)}`;
 
-  let expr = `COALESCE(settings, '{}'::jsonb)`;
+  // The base is the guarded column, not `COALESCE(settings, …)`: the top level carries the
+  // same concatenate-instead-of-merge hazard as the nested keys below (see SETTINGS_AS_OBJECT).
+  let expr = SETTINGS_AS_OBJECT;
   if (set) expr = `(${expr} || ${bind(JSON.stringify(set))}::jsonb)`;
   for (const [key, value] of mergeInto) {
     // `settings->$key` reads the CURRENT column inside the same statement — that is
@@ -3288,8 +3378,7 @@ export async function patchUserSettings(
     const k = bind(key);
     expr =
       `(${expr} || jsonb_build_object(${k}::text, ` +
-      `CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
-      `THEN settings->${k}::text ELSE '{}'::jsonb END ` +
+      `${asJsonbObject(`settings->${k}::text`)} ` +
       `|| ${bind(JSON.stringify(value))}::jsonb))`;
   }
   for (const [key, subEntries] of deepMergeInto) {
@@ -3298,15 +3387,12 @@ export async function patchUserSettings(
     // malformed `tourSettings.welcome` doesn't either). Both reads are of the STORED
     // column, same reasoning as the `set`/`mergeInto` non-composition note above.
     const k = bind(key);
-    let sub =
-      `(CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
-      `THEN settings->${k}::text ELSE '{}'::jsonb END)`;
+    let sub = asJsonbObject(`settings->${k}::text`);
     for (const [subKey, value] of subEntries) {
       const sk = bind(subKey);
       sub =
         `(${sub} || jsonb_build_object(${sk}::text, ` +
-        `CASE WHEN jsonb_typeof(settings->${k}::text->${sk}::text) = 'object' ` +
-        `THEN settings->${k}::text->${sk}::text ELSE '{}'::jsonb END ` +
+        `${asJsonbObject(`settings->${k}::text->${sk}::text`)} ` +
         `|| ${bind(JSON.stringify(value))}::jsonb))`;
     }
     expr = `(${expr} || jsonb_build_object(${k}::text, ${sub}))`;
@@ -3402,7 +3488,8 @@ export async function setAlertDismissed(userId: number, alertId: string, dismiss
   // shape on a JSON column, and `jsonb_array_elements` raises on a non-array, which
   // would turn one malformed row into a permanent 500 on every dismissal for that user.
   // Treating a non-array as empty self-heals it on the next write, which is what the
-  // whole-array rewrite used to do implicitly.
+  // whole-array rewrite used to do implicitly. The same holds one level up: `jsonb_set`
+  // raises on a non-object `settings`, hence SETTINGS_AS_OBJECT rather than a COALESCE.
   const current = `CASE WHEN jsonb_typeof(settings->'dismissedAlerts') = 'array'
                         THEN settings->'dismissedAlerts' ELSE '[]'::jsonb END`;
   const next = dismissed
@@ -3416,7 +3503,7 @@ export async function setAlertDismissed(userId: number, alertId: string, dismiss
 
   const rows = await dbWrite.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
     `UPDATE "User"
-     SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{dismissedAlerts}', ${next})
+     SET settings = jsonb_set(${SETTINGS_AS_OBJECT}, '{dismissedAlerts}', ${next})
      WHERE id = $2
      RETURNING settings`,
     alertId,

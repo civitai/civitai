@@ -21,18 +21,24 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { getHubCardData } from '~/server/services/user-hub.service';
 import { decodeHubId } from '~/server/utils/hub-id';
+import {
+  BADGE_SIZE,
+  getMilestoneShareCard,
+} from '~/server/services/creator-milestone-share.service';
+import { parseMilestoneShareId } from '~/shared/constants/creator-journey.constants';
+import { decorationFrameBox } from '~/components/UserAvatar/decoration-frame.util';
 
 // --- Schema & Types ---
 
 const querySchema = z.object({
-  type: z.enum(['model', 'post', 'image', 'article', 'bounty', 'challenge', 'hub']),
+  type: z.enum(['model', 'post', 'image', 'article', 'bounty', 'challenge', 'hub', 'milestone']),
   // Read as text and resolved per type below: a hub's is its ENCODED key, not the
   // row's int. This endpoint is unauthenticated and id-addressable, so an int there
   // would make every public hub walkable by counting.
   id: z.string().min(1),
 });
 
-// Every type but `hub` is addressed by the row's own int.
+// Every type but `hub` and `milestone` is addressed by the row's own int.
 function asEntityId(raw: string) {
   const id = Number(raw);
   return Number.isSafeInteger(id) && id > 0 ? id : null;
@@ -410,7 +416,7 @@ async function fetchImageData(id: number): Promise<EntityData | null> {
 async function fetchBountyData(id: number): Promise<EntityData | null> {
   const [bounty, metric, connection] = await Promise.all([
     dbRead.bounty.findFirst({
-      where: { id },
+      where: { id, availability: { not: 'Private' } },
       select: {
         name: true,
         description: true,
@@ -522,7 +528,8 @@ async function fetchHubData(id: number): Promise<EntityData | null> {
 
 // Entity types whose visibility the owner can withdraw after a link is shared. They
 // take the short cache below, so revocation is not deferred by the edge.
-const REVOCABLE_TYPES = new Set(['hub']);
+const REVOCABLE_TYPES = new Set(['hub', 'bounty']);
+const SHORT_CACHE = 'public, max-age=300, s-maxage=300';
 
 const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> = {
   model: fetchModelData,
@@ -772,6 +779,225 @@ function FallbackCard() {
   );
 }
 
+type MilestoneCardData = NonNullable<Awaited<ReturnType<typeof getMilestoneShareCard>>>;
+
+// satori draws in its bundled regular-weight face unless handed others, which is what made the tier
+// name thin. Read once, like the logo; a failed read leaves the default face.
+function loadFont(file: string) {
+  try {
+    return fs.readFileSync(path.join(process.cwd(), 'public/fonts', file));
+  } catch {
+    return null;
+  }
+}
+const MILESTONE_FONTS = [
+  { file: 'Montserrat-Regular.ttf', weight: 400 as const },
+  { file: 'Montserrat-Bold.ttf', weight: 700 as const },
+].flatMap(({ file, weight }) => {
+  const data = loadFont(file);
+  return data ? [{ name: 'Montserrat', data, weight, style: 'normal' as const }] : [];
+});
+
+const MILESTONE_AVATAR = 92;
+
+function MilestoneAvatar({ card }: { card: MilestoneCardData }) {
+  const frame = card.decoration ? decorationFrameBox(MILESTONE_AVATAR, card.decoration) : null;
+  return (
+    <div
+      style={{
+        display: 'flex',
+        position: 'relative',
+        width: MILESTONE_AVATAR,
+        height: MILESTONE_AVATAR,
+        flexShrink: 0,
+      }}
+    >
+      {card.avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={card.avatarUrl}
+          width={MILESTONE_AVATAR}
+          height={MILESTONE_AVATAR}
+          alt=""
+          style={{ borderRadius: MILESTONE_AVATAR }}
+        />
+      ) : (
+        <div
+          style={{
+            display: 'flex',
+            width: MILESTONE_AVATAR,
+            height: MILESTONE_AVATAR,
+            borderRadius: MILESTONE_AVATAR,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(255,255,255,0.12)',
+            color: '#f1f3f5',
+            fontSize: 40,
+            fontWeight: 700,
+          }}
+        >
+          {card.username.slice(0, 1).toUpperCase()}
+        </div>
+      )}
+      {card.decoration && frame ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={card.decoration.url}
+          width={frame.width}
+          height={frame.height}
+          alt=""
+          style={{ position: 'absolute', left: frame.left, top: frame.top }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MilestoneCard({ card }: { card: MilestoneCardData }) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://civitai.com';
+  const accent = card.accent ?? colors.blue;
+  // Sized to the name so a long one ("Supernova") still fits the column beside the badge.
+  const tierFontSize = Math.min(132, Math.floor(640 / (card.tierName.length * 0.68)));
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+        fontFamily: 'Montserrat',
+        backgroundColor: '#0b0b10',
+        backgroundImage: [
+          `radial-gradient(circle at 22% 46%, ${accent}66 0%, ${accent}22 28%, transparent 55%)`,
+          `radial-gradient(circle at 100% 0%, ${accent}33 0%, transparent 45%)`,
+          `linear-gradient(135deg, ${accent}30 0%, #101016 55%, #08080b 100%)`,
+        ].join(', '),
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          flexGrow: 1,
+          alignItems: 'center',
+          paddingLeft: 64,
+          paddingRight: 72,
+          gap: 48,
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            width: BADGE_SIZE,
+            height: BADGE_SIZE,
+            flexShrink: 0,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {card.badgeUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={card.badgeUrl} width={BADGE_SIZE} height={BADGE_SIZE} alt="" />
+          ) : null}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', flexGrow: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 28 }}>
+            <MilestoneAvatar card={card} />
+            <div style={{ display: 'flex', fontSize: 38, fontWeight: 700, color: '#f1f3f5' }}>
+              {truncate(card.username, 20)}
+            </div>
+            {card.profileBadgeUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={card.profileBadgeUrl} width={64} height={64} alt="" />
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              fontSize: 20,
+              fontWeight: 700,
+              letterSpacing: 6,
+              color: accent,
+              textTransform: 'uppercase',
+              marginBottom: 6,
+            }}
+          >
+            Creator Score Tier
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              fontSize: tierFontSize,
+              fontWeight: 700,
+              lineHeight: 1.05,
+              letterSpacing: -2,
+              color: '#fff',
+              backgroundImage: `linear-gradient(180deg, #ffffff 15%, ${accent} 120%)`,
+              backgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              textShadow: `0 0 40px ${accent}88`,
+            }}
+          >
+            {card.tierName}
+          </div>
+          {card.reached && (
+            <div style={{ display: 'flex', fontSize: 22, color: '#adb5bd', marginTop: 14 }}>
+              {`Reached ${card.reached}`}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          height: 72,
+          paddingLeft: 72,
+          paddingRight: 72,
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          backgroundColor: 'rgba(0,0,0,0.35)',
+          borderTop: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={LOGO_DARK_DATA_URI ?? `${baseUrl}/images/logo_dark_mode.png`}
+          width={142}
+          height={30}
+          alt=""
+        />
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          height: ACCENT_HEIGHT,
+          width: CANVAS_WIDTH,
+          backgroundImage: `linear-gradient(90deg, ${accent}, ${accent}55)`,
+        }}
+      />
+    </div>
+  );
+}
+
+/** Embeds the card's remote images first, for the same reason the cover is prefetched below. */
+async function getMilestoneCardElement(raw: string) {
+  const shareId = parseMilestoneShareId(raw);
+  if (!shareId) return null;
+  const card = await getMilestoneShareCard(shareId);
+  if (!card) return null;
+  const [avatarUrl, badgeUrl, decorationUrl, profileBadgeUrl] = await Promise.all([
+    card.avatarUrl ? fetchImageAsDataUri(card.avatarUrl) : null,
+    card.badgeUrl ? fetchImageAsDataUri(card.badgeUrl) : null,
+    card.decoration ? fetchImageAsDataUri(card.decoration.url) : null,
+    card.profileBadgeUrl ? fetchImageAsDataUri(card.profileBadgeUrl) : null,
+  ]);
+  const decoration =
+    card.decoration && decorationUrl ? { ...card.decoration, url: decorationUrl } : null;
+  return <MilestoneCard card={{ ...card, avatarUrl, badgeUrl, decoration, profileBadgeUrl }} />;
+}
+
 // --- Main handler ---
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -787,6 +1013,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { type, id: rawId } = parsed.data;
 
   try {
+    if (type === 'milestone') {
+      const card = await getMilestoneCardElement(rawId);
+      const milestoneImage = new ImageResponse(card ?? <FallbackCard />, {
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+        ...(card && MILESTONE_FONTS.length ? { fonts: MILESTONE_FONTS } : {}),
+      });
+      const milestoneBuffer = Buffer.from(await milestoneImage.arrayBuffer());
+      res.setHeader('Content-Type', 'image/png');
+      // Short either way: a hidden badge or a new strike must take a shared card down within
+      // minutes, and a creator whose card is not live yet must not be stuck on the fallback.
+      res.setHeader('Cache-Control', SHORT_CACHE);
+      return res.send(milestoneBuffer);
+    }
+
     // Inside the try: `decodeHubId` builds on the codec, and anything it can throw
     // belongs to this handler's own fallback path rather than to an unhandled 500.
     const id = type === 'hub' ? decodeHubId(rawId) : asEntityId(rawId);
@@ -833,7 +1074,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // owner every link they handed out stops working. The long branch below would
       // keep serving that hub's name, description and owner from the CDN edge for a
       // week after revocation, so a revocable entity takes a short cache instead.
-      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+      res.setHeader('Cache-Control', SHORT_CACHE);
     } else if (data && !coverFetchFailed) {
       // Real entity card with the cover embedded, OR no cover by design (NSFW /
       // video / genuinely no image — a PERMANENT placeholder) → long edge cache.
@@ -862,7 +1103,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
       const buffer = Buffer.from(await fallback.arrayBuffer());
       res.setHeader('Content-Type', 'image/png');
-      res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+      res.setHeader(
+        'Cache-Control',
+        type === 'milestone' ? SHORT_CACHE : 'public, max-age=3600, s-maxage=3600'
+      );
       res.send(buffer);
     } catch {
       res.status(500).json({ error: 'Failed to generate OG image' });

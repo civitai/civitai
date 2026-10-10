@@ -14,6 +14,8 @@ import {
   IconChevronRight,
   IconClock,
 } from '@tabler/icons-react';
+import { acceptsBlueBuzz } from '@civitai/buzz';
+import { paidAccessBuzzBackground } from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -24,7 +26,11 @@ import classes from './ModelVersionList.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  isAdditionalResourceFeeWaived,
+  isEvictable,
+  isGenerationDisabled,
+} from '~/shared/constants/model-version-flags.constants';
 import { LoadedMark } from '~/components/ResourceLoad/ResourceResidency';
 import { generatorReadiness } from '~/shared/generation/generator-readiness';
 
@@ -140,8 +146,12 @@ export function ModelVersionList({
               key={`early-access-${version.id}`}
               radius="sm"
               size="sm"
-              color="yellow.7"
               style={{
+                // Coloured by the Buzz the gate takes, like the price chips on the buttons.
+                background: paidAccessBuzzBackground({
+                  isGreen: features.isGreen,
+                  acceptsBlueBuzz: acceptsBlueBuzz(version.paidAccess?.terms),
+                }),
                 width: 20,
                 height: 26,
                 borderTopLeftRadius: 0,
@@ -154,7 +164,7 @@ export function ModelVersionList({
                   : {}),
               }}
             >
-              <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+              <IconBolt style={{ fill: theme.white }} color="white" size={16} />
             </ThemeIcon>
           );
 
@@ -239,6 +249,8 @@ export function ModelVersionList({
                 published={published}
                 canGenerate={version.canGenerate}
                 generationDisabled={isGenerationDisabled(version.flags ?? 0)}
+                evictable={isEvictable(version.flags ?? 0)}
+                additionalResourceFeeWaived={isAdditionalResourceFeeWaived(version.flags ?? 0)}
                 showToggleCoverage={showToggleCoverage}
               />
             </Button.Group>

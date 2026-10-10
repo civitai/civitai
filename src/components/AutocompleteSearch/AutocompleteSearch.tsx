@@ -58,6 +58,7 @@ import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope
 import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
+import { resolveSearchTarget } from '~/components/Search/search-target';
 import {
   buildSearchPageUrl,
   checkAIR,
@@ -147,20 +148,25 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // already said.
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
-  const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
+  // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
+  const searchTarget = resolveSearchTarget(
+    targetData.find((t) => t.value === currentSection)?.value ?? 'models',
+    features
+  );
   useEffect(() => {
     // A navigation is not the switch the carry exists for. The input's blur handler empties the
     // visible text WITHOUT emptying the carrier (a blur is how you reach the category selector at
     // all), so text a user typed and walked away from would otherwise reappear — and be searched
     // again — in the next section they land in.
     //
-    // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the line
-    // above collapses every first path segment outside `targetData` to `'models'`, so `/` →
-    // `/models/123/slug`, or any move between two such paths, leaves it unchanged and this never
-    // runs. The other explicit discard is `blurAndDiscardCarriedText`, on submit and on Escape;
-    // separately, emptying the input discards through the setter. Together they narrow the window
-    // rather than closing it, and the remainder is deliberate: text blurred away and then left
-    // alone survives in the carrier until the next pick from the selector re-seeds it.
+    // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the
+    // statement above collapses every first path segment outside `targetData` to `'models'` (and
+    // `images` too while image search is off), so `/` → `/models/123/slug`, or any move between two
+    // such paths, leaves it unchanged and this never runs. The other explicit discard is
+    // `blurAndDiscardCarriedText`, on submit and on Escape; separately, emptying the input discards
+    // through the setter. Together they narrow the window rather than closing it, and the remainder
+    // is deliberate: text blurred away and then left alone survives in the carrier until the next
+    // pick from the selector re-seeds it.
     carriedSearchText.current = '';
     setTargetIndex(searchTarget);
   }, [searchTarget]);
@@ -173,8 +179,10 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
-  // Images stays selectable while image search is retired, but images_v6 is gone — swap to a
-  // client that never reaches the network so the on-mount search can't hit the deleted index.
+  // Images is selectable while image search is retired whenever `imageSearchEntry` offers it, but
+  // images_v6 is empty and declares no filterable attributes — swap to a client that never reaches
+  // the network so the on-mount search can't query it. 🔴 The index EXISTS; this swap is the
+  // protection for that flag combination, not dead belt-and-braces.
   const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
 
   // The options the selector OFFERS: every target, narrowed by feature flag. Computed once here
@@ -293,8 +301,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
 
-  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
-  // show a maintenance notice in place and never refine the query against it.
+  // Images stays selectable while image search is retired, but the images_v6 index is empty and
+  // declares no filterable attributes — so show a maintenance notice in place and never refine the
+  // query against it. The index still exists; this branch is load-bearing, not dead code.
   const imageSearchMaintenance = indexName === 'images' && !features.imageSearch;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);

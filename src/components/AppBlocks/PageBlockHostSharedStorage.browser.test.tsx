@@ -4,7 +4,11 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
-import { SAVE_IMAGE_MAX_CONCURRENT } from '~/components/AppBlocks/saveImageDownload';
+import {
+  SAVE_BYTES_MAX_PER_WINDOW,
+  SAVE_BYTES_WINDOW_MS,
+  SAVE_IMAGE_MAX_CONCURRENT,
+} from '~/components/AppBlocks/saveImageDownload';
 
 /**
  * App Blocks SHARED (cross-user / app-global) storage bridge — host side (Phase 2b).
@@ -57,6 +61,7 @@ const mocks = vi.hoisted(() => ({
   // the top-frame blob download (stubbed so no real network fetch in the test);
   // the origin allowlist + request parse stay REAL (see the partial mock below).
   saveDownload: vi.fn(),
+  saveBytesDownload: vi.fn(),
   // per-user storage reads/writes (also wired at render; inert here)
   storageGet: vi.fn(),
   storageSet: vi.fn(),
@@ -75,7 +80,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // download so the SAVE_IMAGE tests never hit the network.
 vi.mock('~/components/AppBlocks/saveImageDownload', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./saveImageDownload')>();
-  return { ...actual, downloadUrlAsBlob: mocks.saveDownload };
+  return {
+    ...actual,
+    downloadUrlAsBlob: mocks.saveDownload,
+    downloadBytesAsBlob: mocks.saveBytesDownload,
+  };
 });
 
 vi.mock('~/utils/trpc', () => ({
@@ -246,6 +255,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     mocks.invalidate.mockResolvedValue(undefined);
     mocks.getImagesByIds.mockReset();
     mocks.saveDownload.mockReset();
+    mocks.saveBytesDownload.mockReset();
     useDialogStore.getState().closeAll();
   });
 
@@ -309,6 +319,73 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
         nextCursor: 'cur2',
       });
     });
+    replies.stop();
+  });
+
+  // civitai/civitai#5354 Q3 — `mine` forwarding. The test above is the control:
+  // it posts no `mine` and asserts a call object without one, so these two cover
+  // the arm it cannot see. Without the host forwarding it, the server parameter
+  // is reachable by no block at all, which is the defect round 0 of /audit-pr
+  // caught — the capability existed end-to-end except for this line.
+  test('SHARED_LIST forwards mine:true', async () => {
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_LIST', { requestId: 'rq_mine', mine: true });
+
+    await vi.waitFor(() => {
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: undefined,
+          limit: 50,
+          cursor: undefined,
+          mine: true,
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
+    });
+    replies.stop();
+  });
+
+  test('🔴 SHARED_LIST forwards mine ONLY for a literal true — a truthy value is dropped', async () => {
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // The string "true" is the shape a hand-rolled postMessage or a querystring
+    // round-trip produces. `raw.mine === true` rejects it; a `!!raw.mine` or any
+    // truthiness check would narrow the feed on it.
+    //
+    // 🔴 THE `in` CHECK IS LOAD-BEARING AND AN EARLIER VERSION OF THIS TEST
+    // LACKED IT. It asserted `toHaveBeenCalledWith({…, mine: undefined})`, and
+    // `toHaveBeenCalledWith` uses `toEqual` semantics under which an explicit
+    // `undefined` property EQUALS an absent one. Measured: with both hosts
+    // reverted to pre-change, that version still PASSED — it could not tell
+    // "the host dropped a non-literal-true" (key present, value undefined) from
+    // "the host never forwards mine at all" (key absent), which is the whole
+    // thing it claims to pin. `'mine' in arg` is the only assertion that
+    // separates them.
+    postFromBlock('SHARED_LIST', { requestId: 'rq_mine_str', mine: 'true' });
+
+    await vi.waitFor(() => {
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: undefined,
+          limit: 50,
+          cursor: undefined,
+          mine: undefined,
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
+    });
+    const arg = mocks.list.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect('mine' in arg, 'the host must REACH the mine arm, not skip it').toBe(true);
+    expect(arg.mine, 'and resolve a non-literal-true to undefined').toBeUndefined();
     replies.stop();
   });
 
@@ -970,6 +1047,260 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     // Only the N that acquired a slot reached the downloader; the overflow
     // short-circuited to busy BEFORE fetching a byte.
     expect(mocks.saveDownload).toHaveBeenCalledTimes(SAVE_IMAGE_MAX_CONCURRENT);
+    replies.stop();
+  });
+
+  const PNG_BYTES = () =>
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d]).buffer;
+
+  test('SAVE_IMAGE bytes variant: content-classified, saved under the forced extension, ok', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const bytes = PNG_BYTES();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bytes',
+      bytes,
+      filename: 'healed.html',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_bytes', ok: true });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+    const [savedBytes, savedType, savedName] = mocks.saveBytesDownload.mock.calls[0];
+    // toBe, not toEqual: vitest's toEqual treats any two ArrayBuffers as equal.
+    expect(savedBytes).toBe(bytes);
+    expect([savedType, savedName]).toEqual(['image/png', 'healed.png']);
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes variant: an unclassifiable file is refused (ok:false, no download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bin',
+      bytes: new Uint8Array([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00]).buffer,
+      filename: 'setup.exe',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_bin',
+        ok: false,
+        error: 'file type is not allowed',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE with BOTH bytes and url is an invalid request (no download of either)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_bytes_url',
+      bytes: PNG_BYTES(),
+      url: 'https://image.civitai.com/x.jpeg',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_bytes_url',
+        ok: false,
+        error: 'invalid save-image request',
+      });
+    });
+    expect(mocks.saveBytesDownload).not.toHaveBeenCalled();
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes CROSS-FRAME: an ArrayBuffer posted from inside the opaque sandboxed iframe downloads; a Uint8Array is refused', async () => {
+    // Every other bytes test dispatches a same-realm MessageEvent, so its ArrayBuffer is the host
+    // realm's own and `instanceof ArrayBuffer` cannot fail. Here the block's script runs in the
+    // iframe (an opaque, unverified sandbox) and posts with parent.postMessage, so the buffer is
+    // structured-cloned across realms — the path a real block takes.
+    renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    const iframeEl = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    expect(iframeEl.getAttribute('sandbox')?.split(' ')).not.toContain('allow-same-origin');
+    const cw = iframeEl.contentWindow;
+
+    // The frame is cross-origin to us, so it reports what it receives by echoing to the parent.
+    const echoes: Array<{ origin: string; data: { type?: string; payload?: unknown } }> = [];
+    const onEcho = (e: MessageEvent) => {
+      const d = e.data as { __xfEcho?: { type?: string; payload?: unknown } } | null;
+      if (e.source === cw && d && d.__xfEcho) echoes.push({ origin: e.origin, data: d.__xfEcho });
+    };
+    window.addEventListener('message', onEcho);
+    try {
+      // Same contentWindow after the navigation, so the host's event.source pin still matches.
+      iframeEl.srcdoc =
+        `<script>
+        var sent = false;
+        function go() {
+          if (sent) return;
+          sent = true;
+          var png = new Uint8Array([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48]);
+          parent.postMessage({ type: 'SAVE_IMAGE', payload: { requestId: 'rq_xf_ab', bytes: png.buffer.slice(0), filename: 'cross#1.png' } }, '*');
+          parent.postMessage({ type: 'SAVE_IMAGE', payload: { requestId: 'rq_xf_u8', bytes: new Uint8Array(png), filename: 'cross.png' } }, '*');
+        }
+        window.addEventListener('message', function (e) {
+          if (e.source !== parent) return;
+          parent.postMessage({ __xfEcho: e.data }, '*');
+          if (e.data && e.data.type === 'BLOCK_INIT') go();
+        });
+        parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
+        setTimeout(go, 300);
+      </` + `script>`;
+
+      await vi.waitFor(() => {
+        const results = Object.fromEntries(
+          echoes
+            .filter((m) => m.data.type === 'SAVE_IMAGE_RESULT')
+            .map((m) => {
+              const p = m.data.payload as { requestId: string };
+              return [p.requestId, m.data.payload];
+            })
+        );
+        expect(results).toEqual({
+          rq_xf_ab: { requestId: 'rq_xf_ab', ok: true },
+          rq_xf_u8: { requestId: 'rq_xf_u8', ok: false, error: 'invalid save-image request' },
+        });
+      });
+      // Positive control that the messages really came from the frame's realm: an opaque sandbox
+      // posts with origin 'null', which no same-realm dispatch in this file produces.
+      expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
+
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
+      const [savedBytes, savedType, savedName] = mocks.saveBytesDownload.mock.calls[0];
+      expect(savedBytes).toBeInstanceOf(ArrayBuffer);
+      expect(Array.from(new Uint8Array(savedBytes as ArrayBuffer))).toEqual([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+      ]);
+      expect([savedType, savedName]).toEqual(['image/png', 'cross_1.png']);
+    } finally {
+      window.removeEventListener('message', onEcho);
+    }
+  });
+
+  /** Every SAVE_IMAGE_RESULT payload received so far, keyed by requestId. */
+  const saveResults = (replies: ReturnType<typeof listenForReply>) =>
+    Object.fromEntries(
+      replies.received
+        .filter((m) => m.type === 'SAVE_IMAGE_RESULT')
+        .map((m) => {
+          const p = m.payload as { requestId: string; ok: boolean; error?: string };
+          return [p.requestId, p.ok ? 'ok' : p.error];
+        })
+    );
+
+  /** A PNG of `size` bytes: real signature, zero padding (the classifier only sniffs the head). */
+  const pngOfSize = (size: number) => {
+    const u8 = new Uint8Array(size);
+    u8.set(new Uint8Array(PNG_BYTES()));
+    return u8.buffer;
+  };
+
+  test(`SAVE_IMAGE bytes rate limit: the ${
+    SAVE_BYTES_MAX_PER_WINDOW + 1
+  }th save inside the window is busy, and saves are accepted again after it`, async () => {
+    // Real time plus a movable offset, so nothing else in the host sees a frozen clock.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    try {
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      for (let i = 0; i <= SAVE_BYTES_MAX_PER_WINDOW; i++) {
+        postFromBlock('SAVE_IMAGE', { requestId: `rq_rate${i}`, bytes: PNG_BYTES() });
+      }
+      await vi.waitFor(() => {
+        expect(saveResults(replies)).toEqual({
+          rq_rate0: 'ok',
+          rq_rate1: 'ok',
+          rq_rate2: 'ok',
+          rq_rate3: 'ok',
+          rq_rate4: 'ok',
+          rq_rate5: 'busy',
+        });
+      });
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(SAVE_BYTES_MAX_PER_WINDOW);
+
+      offset += SAVE_BYTES_WINDOW_MS;
+      postFromBlock('SAVE_IMAGE', { requestId: 'rq_rate_after', bytes: PNG_BYTES() });
+      await vi.waitFor(() => {
+        expect(saveResults(replies).rq_rate_after).toBe('ok');
+      });
+      expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(SAVE_BYTES_MAX_PER_WINDOW + 1);
+      replies.stop();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test('SAVE_IMAGE bytes rate limit: a save that would push the window over 100 MB is busy', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const MB = 1024 * 1024;
+
+    // 40 + 40 = 80 MB fits; a third 40 MB would make 120 MB. Each is under the 50 MB per-file cap,
+    // so only the window total can refuse the third.
+    for (let i = 0; i < 3; i++) {
+      postFromBlock('SAVE_IMAGE', { requestId: `rq_mb${i}`, bytes: pngOfSize(40 * MB) });
+    }
+    // …while a small one that still fits under 100 MB is accepted: it is the total, not a count.
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_mb_small', bytes: pngOfSize(20 * MB) });
+
+    await vi.waitFor(() => {
+      expect(saveResults(replies)).toEqual({
+        rq_mb0: 'ok',
+        rq_mb1: 'ok',
+        rq_mb2: 'busy',
+        rq_mb_small: 'ok',
+      });
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(3);
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE bytes is not held up by url saves filling the concurrency slots', async () => {
+    mocks.saveDownload.mockReturnValue(new Promise(() => undefined));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    for (let i = 0; i < SAVE_IMAGE_MAX_CONCURRENT; i++) {
+      postFromBlock('SAVE_IMAGE', {
+        requestId: `rq_cb${i}`,
+        url: 'https://image.civitai.com/xG/77/original.jpeg',
+      });
+    }
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_bytes_free', bytes: PNG_BYTES() });
+
+    await vi.waitFor(() => {
+      expect(saveResults(replies).rq_bytes_free).toBe('ok');
+    });
+    expect(mocks.saveBytesDownload).toHaveBeenCalledTimes(1);
     replies.stop();
   });
 

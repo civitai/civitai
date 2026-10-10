@@ -2,12 +2,24 @@ import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
 import { getWorkflow } from '@civitai/client';
 import { dbRead, dbWrite } from './db';
-import { getOrchestratorClient, releaseModerationGate } from './orchestrator';
+import {
+  getManagerWorkflow,
+  getOrchestratorClient,
+  isGoneStatus,
+  probeOrchestratorBlob,
+  type BlobProbe,
+  releaseModerationGate,
+} from './orchestrator';
+import { trainingMediaOf, type TrainingAssetKind } from '$lib/training-media';
 import { syncSearchIndex } from './search-index';
 import { civitaiWebhookUrl } from './civitai-url';
 import { callModEndpoint, type ActionResult } from './user-actions.service';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
+import { getClickhouse } from './clickhouse';
+import { TRAINING_STEP_TYPES } from './training-orchestration.service';
+import { usersByIds } from './users.service';
+import { mapBounded, someBounded } from './bounded';
 
 export const TRAINING_DATA_FILE_TYPE = 'Training Data';
 const ANNOUNCEMENT_KEY = 'training-announcement';
@@ -399,7 +411,7 @@ export async function getPausedTrainingVersions(query: {
         // separating "this workflow is gone" (404 — genuinely not reviewable) from "the orchestrator is
         // refusing or broken" (401/5xx — every row would look gone, and the queue would read empty).
         const status = response?.status ?? 0;
-        return { row, alive: false, reachable: status === 404 || status === 410 };
+        return { row, alive: false, reachable: isGoneStatus(status) };
       } catch {
         return { row, alive: false, reachable: false };
       }
@@ -551,6 +563,7 @@ export async function moderateTrainingData(input: {
 
   const released = await releaseModerationGate(workflowId, input.approve);
   if (!released.ok) return released;
+  invalidatePendingWorkflowGates();
 
   await recordModActivity({
     userId: input.moderatorId,
@@ -647,4 +660,814 @@ async function notifyTrainingWebhook(
     console.error('[training-moderation] training webhook failed', e);
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Workflow-only training runs (no ModelVersion)
+// ---------------------------------------------------------------------------------------------
+//
+// Training Studio and App Block trainings are submitted straight to the orchestrator, so no
+// `ModelVersion` row exists and nothing above can reach them: the Paused queue is a Postgres query, and
+// `moderateTrainingData` refuses a workflow without a `modelVersion:<id>` tag. Everything here is keyed
+// by the WORKFLOW id instead, and reads the run from the orchestrator rather than from our database.
+//
+// The workflow id is assigned by the orchestrator and begins with the submitter's user id. The owner is
+// read from THAT, never from `metadata` or `tags`, which the submitter writes.
+
+const WORKFLOW_ID_PATTERN = /^(\d{1,10})-(\d{14})\d{0,6}(?:-[a-z0-9]{1,32})?$/;
+const MAX_INT4 = 2_147_483_647;
+
+export type ParsedWorkflowId = { ownerId: number; submittedAt: Date };
+
+/** The submitter and submit instant carried by an orchestrator workflow id, or null when the id is not
+ *  one. Doubles as the input guard: nothing that fails this reaches a URL or a query. */
+export function parseWorkflowId(raw: string | null | undefined): ParsedWorkflowId | null {
+  if (typeof raw !== 'string') return null;
+  const match = WORKFLOW_ID_PATTERN.exec(raw);
+  if (!match) return null;
+  const ownerId = Number(match[1]);
+  if (!Number.isInteger(ownerId) || ownerId <= 0 || ownerId > MAX_INT4) return null;
+  const s = match[2];
+  const submittedAt = new Date(
+    Date.UTC(
+      +s.slice(0, 4),
+      +s.slice(4, 6) - 1,
+      +s.slice(6, 8),
+      +s.slice(8, 10),
+      +s.slice(10, 12),
+      +s.slice(12, 14)
+    )
+  );
+  if (Number.isNaN(submittedAt.getTime())) return null;
+  return { ownerId, submittedAt };
+}
+
+/**
+ * Step types that are a training run, as the workflow JSON names them (`$type`). Not the ClickHouse
+ * step-type names in `TRAINING_STEP_TYPES`, which were renamed on 2026-07-16 — the JSON kept these
+ * (a live manager read on 2026-10-05 still returned `training`).
+ */
+const WORKFLOW_TRAINING_STEP_TYPES = ['training', 'imageResourceTraining'] as const;
+type TrainingStepType = (typeof WORKFLOW_TRAINING_STEP_TYPES)[number];
+
+/**
+ * How long the orchestrator holds a gate when the step sets no timeout, per step type. Past it the gate
+ * expires and the run is refunded, so a review that lands later does nothing.
+ */
+const DEFAULT_GATE_WINDOW_MS: Record<TrainingStepType, number> = {
+  training: 48 * 3_600_000,
+  imageResourceTraining: 24 * 3_600_000,
+};
+
+type RawStep = {
+  $type?: unknown;
+  timeout?: unknown;
+  startedAt?: unknown;
+  input?: unknown;
+  output?: unknown;
+};
+type TrainingStep = RawStep & { $type: TrainingStepType };
+type RawWorkflow = {
+  id?: unknown;
+  status?: unknown;
+  createdAt?: unknown;
+  tags?: unknown;
+  steps?: unknown;
+};
+
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+function trainingStepOf(workflow: RawWorkflow): TrainingStep | null {
+  const steps = Array.isArray(workflow.steps) ? (workflow.steps as RawStep[]) : [];
+  const step = steps.find(
+    (s) =>
+      !!s &&
+      typeof s === 'object' &&
+      (WORKFLOW_TRAINING_STEP_TYPES as readonly unknown[]).includes(s.$type)
+  );
+  return (step as TrainingStep | undefined) ?? null;
+}
+
+/** Lower-cased: the manager API writes `UnderReview`, the consumer API `underReview`. */
+function moderationStatusOf(step: RawStep | null): string | null {
+  const output = step?.output as { moderationStatus?: unknown } | null | undefined;
+  const status = str(output?.moderationStatus);
+  return status ? status.toLowerCase() : null;
+}
+
+const UNDER_REVIEW = 'underreview';
+
+function tagsOf(workflow: RawWorkflow): string[] {
+  return Array.isArray(workflow.tags)
+    ? workflow.tags.filter((t): t is string => typeof t === 'string')
+    : [];
+}
+
+/** The version a `modelVersion:<id>` tag CLAIMS; -1 when such a tag is present but unreadable. A claim
+ *  only — see `confirmVersionClaims`. */
+function claimedModelVersionOf(tags: string[]): number | null {
+  for (const tag of tags) {
+    const match = /^modelVersion:(\d{1,10})$/.exec(tag);
+    if (match && Number(match[1]) <= MAX_INT4) return Number(match[1]);
+  }
+  return tags.some((t) => t.startsWith('modelVersion:')) ? -1 : null;
+}
+
+export type WorkflowOrigin =
+  | { kind: 'app-block'; appId: string }
+  | { kind: 'studio' }
+  | { kind: 'other' };
+
+/** Display only — the submitter writes these tags, so nothing is decided on them. */
+function originOf(tags: string[]): WorkflowOrigin {
+  const app = tags.find((t) => t.startsWith('app-block:'));
+  if (app && app.length > 'app-block:'.length)
+    return { kind: 'app-block', appId: app.slice('app-block:'.length) };
+  if (tags.includes('training')) return { kind: 'studio' };
+  return { kind: 'other' };
+}
+
+/** A .NET `TimeSpan` as the orchestrator serialises it — `[d.]hh:mm:ss[.fffffff]` — in ms. */
+export function parseTimeSpanMs(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(?:(\d+)\.)?(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)?$/.exec(value);
+  if (!match) return null;
+  const [, d, h, m, s] = match;
+  return ((Number(d ?? 0) * 24 + Number(h)) * 60 + Number(m)) * 60_000 + Number(s) * 1000;
+}
+
+/**
+ * When the gate stops accepting a ruling: the step's start plus its timeout, or the per-type default.
+ * Approximate — the orchestrator stamps the deadline when it builds the jobs, a moment after start.
+ */
+function gateExpiresAt(workflow: RawWorkflow, step: TrainingStep, submittedAt: Date): string {
+  const startMs = [str(step.startedAt), str(workflow.createdAt)]
+    .map((v) => (v ? Date.parse(v) : NaN))
+    .find((ms) => !Number.isNaN(ms));
+  const start = startMs ?? submittedAt.getTime();
+  const window = parseTimeSpanMs(step.timeout) ?? DEFAULT_GATE_WINDOW_MS[step.$type];
+  return new Date(start + window).toISOString();
+}
+
+const BLOB_KEY_PATTERN = /^[0-9a-fA-F]{32}\.[A-Za-z0-9]{2,5}$/;
+const BLOB_AIR_PREFIX = 'urn:air:other:other:orchestrator:blob@';
+
+/** The blob key an item's `air` names. The orchestrator normalises items to the AIR form at submit, so
+ *  the bare key is accepted only as a fallback; anything else is not served. */
+function blobKeyOf(air: unknown): string | null {
+  const value = str(air);
+  if (!value) return null;
+  const key = value.startsWith(BLOB_AIR_PREFIX) ? value.slice(BLOB_AIR_PREFIX.length) : value;
+  return BLOB_KEY_PATTERN.test(key) ? key : null;
+}
+
+export type WorkflowDatasetItem = {
+  index: number;
+  /** Null when the item names something other than an orchestrator blob; such an item is not served. */
+  blobKey: string | null;
+  caption: string | null;
+  /** Null when the key's extension is not renderable training media. */
+  media: { mimeType: string; kind: TrainingAssetKind } | null;
+};
+
+export type WorkflowDataset =
+  | { kind: 'blobs'; items: WorkflowDatasetItem[] }
+  /** A packaged dataset (a zip). Its contents are not previewable here. */
+  | { kind: 'archive'; count: number | null }
+  | { kind: 'unknown' };
+
+function datasetOf(step: RawStep): WorkflowDataset {
+  const input = step.input as { trainingData?: unknown; trainingDataImagesCount?: unknown } | null;
+  const data = input?.trainingData;
+  if (data && typeof data === 'object') {
+    const d = data as { type?: unknown; items?: unknown; count?: unknown };
+    if (d.type === 'blobs' && Array.isArray(d.items))
+      return {
+        kind: 'blobs',
+        items: d.items.map((raw, index) => {
+          const item = (raw ?? {}) as { air?: unknown; caption?: unknown };
+          const blobKey = blobKeyOf(item.air);
+          return {
+            index,
+            blobKey,
+            caption: str(item.caption),
+            media: blobKey ? trainingMediaOf(blobKey) : null,
+          };
+        }),
+      };
+    if (d.type === 'zip')
+      return { kind: 'archive', count: typeof d.count === 'number' ? d.count : null };
+  }
+  // imageResourceTraining's original shape: a URL to an archive plus a count beside it.
+  if (typeof data === 'string')
+    return {
+      kind: 'archive',
+      count:
+        typeof input?.trainingDataImagesCount === 'number' ? input.trainingDataImagesCount : null,
+    };
+  return { kind: 'unknown' };
+}
+
+/** A run as read from its workflow JSON alone — before the model-version claim is checked. */
+export type WorkflowReading = {
+  workflowId: string;
+  ownerId: number;
+  submittedAt: string;
+  status: string | null;
+  stepType: TrainingStepType;
+  /** Lower-cased (`underreview`, `approved`, …); null when the step reports none yet. */
+  moderationStatus: string | null;
+  underReview: boolean;
+  origin: WorkflowOrigin;
+  /** What a `modelVersion:` tag claims (-1 unreadable), unverified. */
+  claimedModelVersionId: number | null;
+  expiresAt: string;
+  dataset: WorkflowDataset;
+};
+
+export type TrainingWorkflowDetail = WorkflowReading & {
+  username: string | null;
+  /** Set only when the claimed version's GATED training file (`pickGatedTrainingFile`) names THIS
+   *  workflow: the run is then the one the version route releases, and is reviewed there, which also
+   *  takes the version out of Paused. */
+  modelVersionId: number | null;
+  /** A `modelVersion:` tag that is unreadable, or names a version whose review would not release
+   *  this run. The run is treated as workflow-only, and the page says why. */
+  versionClaimUnconfirmed: boolean;
+};
+
+/**
+ * One run, read for review. Pure over the workflow JSON so the ruling, the page, the queue and the blob
+ * route all decide "which run, whose, what state" from the same reading.
+ */
+export function readTrainingWorkflow(
+  workflowId: string,
+  raw: unknown
+): { ok: true; reading: WorkflowReading } | { ok: false; error: string } {
+  const parsed = parseWorkflowId(workflowId);
+  if (!parsed) return { ok: false, error: 'Not a workflow id.' };
+  if (!raw || typeof raw !== 'object')
+    return { ok: false, error: `Workflow ${workflowId} could not be read.` };
+  const workflow = raw as RawWorkflow;
+  // The read is keyed by the id we asked for; a body naming a different one is not this run.
+  // Lenient on an absent id (the field is optional in the generated type), strict on a different one.
+  if (str(workflow.id) && workflow.id !== workflowId)
+    return {
+      ok: false,
+      error: `The orchestrator returned a different workflow for ${workflowId}.`,
+    };
+
+  const step = trainingStepOf(workflow);
+  if (!step) return { ok: false, error: `Workflow ${workflowId} has no training step.` };
+
+  const tags = tagsOf(workflow);
+  const moderationStatus = moderationStatusOf(step);
+  return {
+    ok: true,
+    reading: {
+      workflowId,
+      ownerId: parsed.ownerId,
+      submittedAt: parsed.submittedAt.toISOString(),
+      status: str(workflow.status),
+      stepType: step.$type,
+      moderationStatus,
+      underReview: moderationStatus === UNDER_REVIEW,
+      origin: originOf(tags),
+      claimedModelVersionId: claimedModelVersionOf(tags),
+      expiresAt: gateExpiresAt(workflow, step, parsed.submittedAt),
+      dataset: datasetOf(step),
+    },
+  };
+}
+
+/**
+ * Which of these runs really belong to the version their tag names: the training file that version's
+ * gate review acts on (`pickGatedTrainingFile`) must carry the workflow id. The tag alone is the
+ * submitter's to write, and trusting it would let any run hide from this queue behind a version that
+ * never heard of it — or behind one whose review releases a different run.
+ *
+ * Read through the WRITE connection for the reason `getTrainingVersionDetail` gives: on the replica the
+ * TOASTed `trainingResults` comes back empty. Throws on a database failure — callers decide whether
+ * that is a refusal or an unchecked row.
+ */
+async function confirmVersionClaims(
+  claims: { workflowId: string; versionId: number }[]
+): Promise<Set<string>> {
+  const real = claims.filter((c) => c.versionId > 0);
+  if (!real.length) return new Set();
+  const files = await dbWrite
+    .selectFrom('ModelFile')
+    .select(['id', 'modelVersionId', 'metadata'])
+    .where(
+      'modelVersionId',
+      'in',
+      real.map((c) => c.versionId)
+    )
+    .where('type', '=', TRAINING_DATA_FILE_TYPE)
+    .orderBy('id', 'asc')
+    .execute();
+  const byVersion = new Map<number, typeof files>();
+  for (const file of files) {
+    const list = byVersion.get(file.modelVersionId) ?? [];
+    list.push(file);
+    byVersion.set(file.modelVersionId, list);
+  }
+  // The SAME picker the version route releases with. "Any file names this workflow" would hand the
+  // moderator to a version page whose Approve releases a different run of that version.
+  return new Set(
+    real
+      .filter((c) => {
+        const gated = pickGatedTrainingFile(byVersion.get(c.versionId) ?? []);
+        const tr = (gated?.metadata as FileMetadata | null)?.trainingResults;
+        return tr?.workflowId === c.workflowId;
+      })
+      .map((c) => c.workflowId)
+  );
+}
+
+export type WorkflowLoad =
+  | { ok: true; detail: Omit<TrainingWorkflowDetail, 'username'> }
+  | { ok: false; status: 400 | 404 | 422 | 502; error: string };
+
+/**
+ * The one path from a workflow id to a checked reading: parse, read from the orchestrator, read the
+ * JSON, confirm any version claim. 400 malformed id, 404 the orchestrator does not have it, 422 not a
+ * reviewable training run, 502 something could not be asked.
+ */
+async function loadTrainingWorkflow(workflowId: string): Promise<WorkflowLoad> {
+  if (!parseWorkflowId(workflowId)) return { ok: false, status: 400, error: 'Not a workflow id.' };
+  const loaded = await getManagerWorkflow(workflowId);
+  if (!loaded.ok) return { ok: false, status: loaded.gone ? 404 : 502, error: loaded.error };
+  const read = readTrainingWorkflow(workflowId, loaded.workflow);
+  if (!read.ok) return { ok: false, status: 422, error: read.error };
+
+  const { reading } = read;
+  if (reading.claimedModelVersionId === null)
+    return {
+      ok: true,
+      detail: { ...reading, modelVersionId: null, versionClaimUnconfirmed: false },
+    };
+  let confirmed: Set<string>;
+  try {
+    confirmed = await confirmVersionClaims([
+      { workflowId, versionId: reading.claimedModelVersionId },
+    ]);
+  } catch (e) {
+    console.error('[training-moderation] version claim check failed', e);
+    return {
+      ok: false,
+      status: 502,
+      error: "This run's model-version tag could not be checked against the database.",
+    };
+  }
+  const owned = confirmed.has(workflowId);
+  return {
+    ok: true,
+    detail: {
+      ...reading,
+      modelVersionId: owned ? reading.claimedModelVersionId : null,
+      versionClaimUnconfirmed: !owned,
+    },
+  };
+}
+
+export async function getTrainingWorkflowDetail(
+  workflowId: string
+): Promise<
+  { ok: true; detail: TrainingWorkflowDetail } | { ok: false; status: number; error: string }
+> {
+  const loaded = await loadTrainingWorkflow(workflowId);
+  if (!loaded.ok) return loaded;
+  const users = await usersByIds([loaded.detail.ownerId]).catch(() => new Map());
+  return {
+    ok: true,
+    detail: { ...loaded.detail, username: users.get(loaded.detail.ownerId)?.username ?? null },
+  };
+}
+
+const MAX_RULING_MESSAGE = 1000;
+
+/** Delays between re-reads after a release. The release returns before the run's status reflects it,
+ *  so the first read can still say under review for a ruling that is about to land. */
+const RECHECK_DELAYS_MS = [750, 1500, 3000];
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Approve or deny the moderation gate of a workflow-only training run.
+ *
+ * Every refusal happens BEFORE the gate is touched, from a read this call made itself. The release is
+ * the one irreversible step, so it is recorded the moment the orchestrator accepts it — as the version
+ * path does — whatever the re-read says next. An accepted release is not proof the ruling took effect,
+ * so the run is re-read and only a status that moved is reported as done; one that has not is reported
+ * as not applied. Refunds on deny/expiry are the orchestrator's.
+ */
+export async function moderateTrainingWorkflow(
+  input: {
+    workflowId: string;
+    approve: boolean;
+    message?: string | null;
+    moderatorId: number;
+    /** The moderator confirmed reviewing a dataset this app cannot preview. Required to approve one. */
+    reviewedElsewhere?: boolean;
+  },
+  options: { recheckDelaysMs?: number[]; probeBudgetMs?: number } = {}
+): Promise<{ ok: true; moderationStatus: string } | { ok: false; error: string; needsAck?: true }> {
+  const { workflowId, approve, moderatorId } = input;
+  // A malformed id is refused inside the load, before anything is asked of the orchestrator.
+  const loaded = await loadTrainingWorkflow(workflowId);
+  if (!loaded.ok) return { ok: false, error: `${loaded.error} Nothing was changed.` };
+  const before = loaded.detail;
+
+  if (before.modelVersionId !== null)
+    return {
+      ok: false,
+      error: `This run belongs to model version ${before.modelVersionId} — review it at /audit/training-data/${before.modelVersionId}, which also updates the version. Nothing was changed.`,
+    };
+
+  if (!before.underReview)
+    return {
+      ok: false,
+      error: `This run is not awaiting review (moderation status: ${
+        before.moderationStatus ?? 'none'
+      }). Nothing was changed.`,
+    };
+
+  // Approving what nobody here could look at needs the moderator to say they looked at it elsewhere.
+  // Decided from this call's own probe of the items — the checkbox is only how the page asks — and
+  // the probe answers at the first viewable item: one is all the rule needs.
+  if (
+    approve &&
+    !input.reviewedElsewhere &&
+    !(await anyItemViewable(before.dataset, { budgetMs: options.probeBudgetMs }))
+  )
+    return {
+      ok: false,
+      needsAck: true,
+      error:
+        "No item of this run's dataset could be confirmed viewable just now. Approve only after reviewing it another way, and tick that you did. Nothing was changed.",
+    };
+
+  const message = approve
+    ? undefined
+    : input.message?.trim().slice(0, MAX_RULING_MESSAGE) || undefined;
+  const released = await releaseModerationGate(workflowId, approve, message);
+  if (!released.ok) return { ok: false, error: released.error };
+  invalidatePendingWorkflowGates();
+
+  await recordModActivity({
+    userId: moderatorId,
+    entityType: 'user',
+    entityId: before.ownerId,
+    activity: approve ? 'trainingWorkflow:approve' : 'trainingWorkflow:deny',
+  });
+
+  // Re-read until the status moves. A read that fails is not a verdict either way, so it resets.
+  let after: string | null | undefined;
+  for (const delay of options.recheckDelaysMs ?? RECHECK_DELAYS_MS) {
+    await sleep(delay);
+    const again = await getManagerWorkflow(workflowId);
+    const reread = again.ok ? readTrainingWorkflow(workflowId, again.workflow) : null;
+    after = reread?.ok ? reread.reading.moderationStatus : undefined;
+    if (after !== undefined && after !== UNDER_REVIEW) break;
+  }
+
+  const log = {
+    name: 'training-workflow-moderation',
+    workflowId,
+    ownerId: before.ownerId,
+    approved: approve,
+    moderatorId,
+    after: after ?? null,
+    reason: message ?? null,
+  };
+
+  if (after === undefined) {
+    logToAxiom({ ...log, type: 'error', important: true, message: 'outcome unconfirmed' });
+    return {
+      ok: false,
+      error:
+        'The orchestrator accepted the ruling but the run could not be re-read to confirm it. Reload this page to see the outcome before doing anything else.',
+    };
+  }
+  if (after === UNDER_REVIEW) {
+    logToAxiom({ ...log, type: 'error', important: true, message: 'accepted but not applied' });
+    return {
+      ok: false,
+      error:
+        'The orchestrator accepted the ruling, but the run still reads under review — it was not applied yet. Reload in a moment; if it is still under review then, rule again.',
+    };
+  }
+  const expected = approve ? 'approved' : 'rejected';
+  if (after !== expected) {
+    logToAxiom({ ...log, type: 'error', important: true, message: 'unexpected end state' });
+    return {
+      ok: false,
+      error: `The run is now "${after}", not ${expected}. It may have expired or been ruled on elsewhere at the same moment.`,
+    };
+  }
+
+  logToAxiom({ ...log, type: 'info' });
+  return { ok: true, moderationStatus: after };
+}
+
+/** How far back a pending gate can have been submitted: the longest default gate window plus slack for
+ *  ledger ingestion. A run older than this has expired and been refunded. */
+const PENDING_WINDOW_MS = 49 * 3_600_000;
+/** Workflows read from the orchestrator per page load. Exported for tests. */
+export const MAX_PENDING_CANDIDATES = 300;
+const PENDING_READ_CONCURRENCY = 8;
+/** The whole fan-out of orchestrator reads gets this long; whatever has not answered is listed as
+ *  unchecked rather than holding the page. */
+const PENDING_READ_BUDGET_MS = 20_000;
+/** One queue serves every moderator opening the page within this window, and concurrent loads share
+ *  one build. A ruling clears it — in this process only; another replica can list a ruled run for up
+ *  to this long, and the ruling itself then refuses it as no longer under review. */
+const PENDING_CACHE_MS = 30_000;
+
+export type PendingWorkflowGate = {
+  workflowId: string;
+  ownerId: number;
+  username: string | null;
+  submittedAt: string;
+  origin: WorkflowOrigin | null;
+  expiresAt: string | null;
+  /** False when the run could not be fully checked (orchestrator or database), so it is listed as is. */
+  verified: boolean;
+  /** Carries a `modelVersion:` tag that is unreadable, or names a version whose review would not
+   *  release this run. */
+  versionClaimUnconfirmed: boolean;
+};
+
+export type PendingWorkflowGates = {
+  /** Oldest first — the oldest is the closest to expiring. */
+  items: PendingWorkflowGate[];
+  /** The charge ledger could not be read, so there is no list at all — NOT "nothing to review". */
+  ledgerUnavailable: boolean;
+  /** At least one run could not be checked; those are listed unverified. */
+  workflowFilterUnavailable: boolean;
+  /** More candidates than one load reads; the newest were not checked. */
+  truncated: boolean;
+};
+
+const ymdhms = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+
+/**
+ * Workflow-only training runs waiting on a moderator.
+ *
+ * The orchestrator offers no "open gates" query, so candidates come from the Buzz ledger: every
+ * training charge in the window, less the ones already refunded and the ones whose training step has
+ * already ended (a step row is written only at the end — without this every finished run of the window
+ * would be read). Each survivor is then read from the orchestrator and kept only if it is under review
+ * and not a confirmed model-version run (those are on the version queue above).
+ *
+ * A run submitted at no charge has no ledger row and does not appear here.
+ */
+export function getPendingWorkflowGates(
+  options: { now?: number; readBudgetMs?: number } = {}
+): Promise<PendingWorkflowGates> {
+  // A caller shaping the build (tests) gets its own; the cache holds only the default build.
+  if (options.now !== undefined || options.readBudgetMs !== undefined)
+    return buildPendingWorkflowGates(options);
+  const now = Date.now();
+  if (pendingCache && now - pendingCache.at < PENDING_CACHE_MS) return pendingCache.result;
+  const result = buildPendingWorkflowGates(options);
+  const entry = { at: now, result };
+  pendingCache = entry;
+  // A failed build is not worth holding: the next load should try again.
+  void result.then(
+    (r) => {
+      if (r.ledgerUnavailable && pendingCache === entry) pendingCache = null;
+    },
+    () => {
+      if (pendingCache === entry) pendingCache = null;
+    }
+  );
+  return result;
+}
+
+let pendingCache: { at: number; result: Promise<PendingWorkflowGates> } | null = null;
+
+/** Called after any accepted ruling, and by tests. */
+export function invalidatePendingWorkflowGates(): void {
+  pendingCache = null;
+}
+
+async function buildPendingWorkflowGates(options: {
+  now?: number;
+  readBudgetMs?: number;
+}): Promise<PendingWorkflowGates> {
+  const since = ymdhms((options.now ?? Date.now()) - PENDING_WINDOW_MS);
+  // Three queries, not one: the same anti-join written as `NOT IN (subquery)` measured over 20s against
+  // under 1s for the three run separately.
+  let candidates: string[];
+  try {
+    const ch = getClickhouse();
+    const [charges, refunds, ended] = await Promise.all([
+      ch.$query<{ workflowId: string }>(`
+        SELECT JSONExtractString(details, 'workflowId') AS workflowId
+        FROM buzzTransactions
+        WHERE type = 'training' AND date >= '${since}' AND workflowId != ''
+        GROUP BY workflowId
+        ORDER BY min(date) ASC
+      `),
+      ch.$query<{ workflowId: string }>(`
+        SELECT DISTINCT JSONExtractString(details, 'workflowId') AS workflowId
+        FROM buzzTransactions
+        WHERE type = 'refund' AND date >= '${since}'
+      `),
+      // The type filter is load-bearing: without it this reads every workflow's steps.
+      ch.$query<{ workflowId: string }>(`
+        SELECT DISTINCT workflowId
+        FROM orchestration.workflowSteps
+        WHERE createdAt >= '${since}' AND ${TRAINING_STEP_TYPES}
+      `),
+    ]);
+    const done = new Set([...refunds, ...ended].map((r) => r.workflowId));
+    candidates = charges
+      .map((c) => c.workflowId)
+      .filter((id) => !done.has(id) && parseWorkflowId(id));
+  } catch (e) {
+    console.error('[training-moderation] pending gate ledger read failed', e);
+    return {
+      items: [],
+      ledgerUnavailable: true,
+      workflowFilterUnavailable: false,
+      truncated: false,
+    };
+  }
+
+  const truncated = candidates.length > MAX_PENDING_CANDIDATES;
+  const page = candidates.slice(0, MAX_PENDING_CANDIDATES);
+
+  type Checked = { workflowId: string; reading?: WorkflowReading; unknown: boolean };
+  const checked = await mapBounded(
+    page,
+    async (workflowId): Promise<Checked | null> => {
+      const loaded = await getManagerWorkflow(workflowId);
+      if (!loaded.ok) return loaded.gone ? null : { workflowId, unknown: true };
+      const read = readTrainingWorkflow(workflowId, loaded.workflow);
+      return read.ok && read.reading.underReview
+        ? { workflowId, reading: read.reading, unknown: false }
+        : null;
+    },
+    {
+      concurrency: PENDING_READ_CONCURRENCY,
+      budgetMs: options.readBudgetMs ?? PENDING_READ_BUDGET_MS,
+    }
+  );
+
+  // In ledger order. A read that did not finish within the budget is not an answer: listed, unchecked.
+  const kept = page
+    .map((workflowId, i) => (checked[i] === undefined ? { workflowId, unknown: true } : checked[i]))
+    .filter((c): c is Checked => !!c);
+
+  // Model-version claims, confirmed in one query. A confirmed one is the version queue's; an unconfirmed
+  // one stays here, flagged. If the check itself fails the claimed rows stay, unverified.
+  const claims = kept.flatMap((c) =>
+    c.reading?.claimedModelVersionId != null
+      ? [{ workflowId: c.workflowId, versionId: c.reading.claimedModelVersionId }]
+      : []
+  );
+  let owned: Set<string> | null = new Set();
+  if (claims.length)
+    owned = await confirmVersionClaims(claims).catch((e) => {
+      console.error('[training-moderation] version claim check failed', e);
+      return null;
+    });
+
+  const listed = kept.filter((c) => !owned?.has(c.workflowId));
+  const users = await usersByIds(listed.map((c) => parseWorkflowId(c.workflowId)!.ownerId)).catch(
+    () => new Map()
+  );
+
+  const items = listed.map(({ workflowId, reading, unknown }): PendingWorkflowGate => {
+    const parsed = parseWorkflowId(workflowId)!;
+    const claimed = reading?.claimedModelVersionId != null;
+    return {
+      workflowId,
+      ownerId: parsed.ownerId,
+      username: users.get(parsed.ownerId)?.username ?? null,
+      submittedAt: parsed.submittedAt.toISOString(),
+      origin: reading?.origin ?? null,
+      expiresAt: reading?.expiresAt ?? null,
+      verified: !unknown && !(claimed && owned === null),
+      versionClaimUnconfirmed: claimed && owned !== null,
+    };
+  });
+
+  return {
+    items,
+    ledgerUnavailable: false,
+    workflowFilterUnavailable: items.some((i) => !i.verified),
+    truncated,
+  };
+}
+
+const DATASET_CACHE_MS = 60_000;
+const DATASET_CACHE_MAX = 50;
+const datasetCache = new Map<string, { at: number; dataset: WorkflowDataset; ownerId: number }>();
+
+/** Tests only — the cache is module state. */
+export const clearTrainingWorkflowBlobCache = () => datasetCache.clear();
+
+/**
+ * The blob key behind item `index` of a run's dataset, resolved from a read of the workflow made here —
+ * the browser names a position, never a URL or a key.
+ *
+ * Deliberately NOT gated on the review state or the version claim: a moderator may need to look at a
+ * dataset after the ruling, and the page that links here already decides who can open it.
+ */
+export async function resolveTrainingWorkflowBlob(
+  workflowId: string,
+  index: number
+): Promise<
+  { ok: true; blobKey: string; ownerId: number } | { ok: false; status: number; error: string }
+> {
+  if (!parseWorkflowId(workflowId)) return { ok: false, status: 400, error: 'Not a workflow id.' };
+
+  // The review page asks once per thumbnail, so the read is held briefly rather than repeated for every
+  // item of a large dataset. Still this app's own read of the workflow, keyed by its id.
+  const cached = datasetCache.get(workflowId);
+  let entry = cached && Date.now() - cached.at < DATASET_CACHE_MS ? cached : undefined;
+  if (!entry) {
+    const loaded = await getManagerWorkflow(workflowId);
+    if (!loaded.ok) return { ok: false, status: loaded.gone ? 404 : 502, error: loaded.error };
+    const read = readTrainingWorkflow(workflowId, loaded.workflow);
+    if (!read.ok) return { ok: false, status: 422, error: read.error };
+    entry = { at: Date.now(), dataset: read.reading.dataset, ownerId: read.reading.ownerId };
+    datasetCache.delete(workflowId);
+    if (datasetCache.size >= DATASET_CACHE_MAX)
+      datasetCache.delete(datasetCache.keys().next().value!);
+    datasetCache.set(workflowId, entry);
+  }
+
+  const { dataset, ownerId } = entry;
+  if (dataset.kind !== 'blobs')
+    return { ok: false, status: 404, error: 'This run has no individually stored dataset items.' };
+  const item = Number.isInteger(index) && index >= 0 ? dataset.items[index] : undefined;
+  if (!item) return { ok: false, status: 404, error: 'No such dataset item.' };
+  if (!item.blobKey)
+    return { ok: false, status: 404, error: 'This dataset item is not a stored blob.' };
+  return { ok: true, blobKey: item.blobKey, ownerId };
+}
+
+/**
+ * What a moderator can actually see of each stored dataset item: `blocked` was blocked by the
+ * orchestrator's screening and is not viewable here (it would otherwise render as a placeholder that
+ * reads like the upload), `unavailable` is missing or not yet scanned, `unchecked` got no answer about
+ * the item — none within the budget, or the orchestrator was busy, failing, refused this app or is
+ * not configured.
+ */
+export type DatasetItemState = 'viewable' | 'blocked' | 'unavailable' | 'unchecked';
+
+const ITEM_PROBE_CONCURRENCY = 8;
+const ITEM_PROBE_BUDGET_MS = 20_000;
+
+export async function getDatasetItemStates(
+  dataset: WorkflowDataset,
+  options: { budgetMs?: number } = {}
+): Promise<Record<number, DatasetItemState>> {
+  if (dataset.kind !== 'blobs') return {};
+  const stored = dataset.items.filter((item) => item.blobKey);
+  const probed = await mapBounded(
+    stored,
+    async (item): Promise<DatasetItemState> => {
+      try {
+        const probe = await probeOrchestratorBlob(item.blobKey!);
+        if (isViewableProbe(probe)) return 'viewable';
+        if (probe.kind === 'unavailable' && isNoAnswer(probe.status)) return 'unchecked';
+        return probe.kind;
+      } catch {
+        return 'unchecked';
+      }
+    },
+    { concurrency: ITEM_PROBE_CONCURRENCY, budgetMs: options.budgetMs ?? ITEM_PROBE_BUDGET_MS }
+  );
+  return Object.fromEntries(stored.map((item, i) => [item.index, probed[i] ?? 'unchecked']));
+}
+
+/** THE rule for "a moderator can see this item": the page's `viewable` state and the approve-time
+ *  check both come from it, so `hasViewableItem` on the page and `anyItemViewable` here agree. */
+const isViewableProbe = (probe: BlobProbe) => probe.kind === 'content';
+
+/** A probe status that says nothing about the item — the orchestrator was busy, failing, refused this
+ *  app, or is not configured (0) — as opposed to an answer that the item is missing or unscanned. */
+const isNoAnswer = (status: number) =>
+  status === 0 || status === 401 || status === 403 || status === 429 || status >= 500;
+
+/**
+ * Whether at least one stored item probes viewable — the approve-time form of `hasViewableItem`, which
+ * answers at the first one instead of mapping the whole dataset. `false` includes "none answered in time".
+ */
+async function anyItemViewable(
+  dataset: WorkflowDataset,
+  options: { budgetMs?: number } = {}
+): Promise<boolean> {
+  if (dataset.kind !== 'blobs') return false;
+  return someBounded(
+    dataset.items.filter((item) => item.blobKey),
+    async (item) => isViewableProbe(await probeOrchestratorBlob(item.blobKey!)),
+    { concurrency: ITEM_PROBE_CONCURRENCY, budgetMs: options.budgetMs ?? ITEM_PROBE_BUDGET_MS }
+  );
 }

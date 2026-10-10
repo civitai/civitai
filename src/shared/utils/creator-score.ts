@@ -15,3 +15,37 @@ export function creatorScoreFromMeta(meta: unknown): number {
   const score = (meta as UserMetaScores | null | undefined)?.scores?.total;
   return typeof score === 'number' && Number.isFinite(score) ? score : 0;
 }
+
+/** The session's Creator Score, or undefined when the session carries no scores at all (not zero). */
+export function creatorScoreFromSession(user: { meta?: unknown } | null | undefined) {
+  return (user?.meta as UserMetaScores | null | undefined)?.scores
+    ? creatorScoreFromMeta(user?.meta)
+    : undefined;
+}
+
+const AGGREGATE_CATEGORIES = [
+  'models',
+  'articles',
+  'images',
+  'users',
+  'reportsActioned',
+  'reportsAgainst',
+] as const;
+
+type UserMetaCategoryScores = {
+  scores?: Partial<Record<(typeof AGGREGATE_CATEGORIES)[number] | 'total', unknown>>;
+};
+
+const finiteOr0 = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+/**
+ * The score the Creator Program and announcement gates compare: the larger of the category sum and the
+ * stored total. Mirrors the GREATEST in `getCreatorRequirements`; a category added to the nightly score
+ * job has to be added to both.
+ */
+export function creatorAggregateScoreFromMeta(meta: unknown): number {
+  const scores = (meta as UserMetaCategoryScores | null | undefined)?.scores;
+  const sum = AGGREGATE_CATEGORIES.reduce((acc, key) => acc + finiteOr0(scores?.[key]), 0);
+  return Math.max(sum, finiteOr0(scores?.total));
+}

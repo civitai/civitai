@@ -360,3 +360,105 @@ describe('setPlacementSpace — free slots', () => {
     expect(priceWritten()).toMatchObject({ freeSlots: 0 });
   });
 });
+
+describe('the host decline fee', () => {
+  const promotion = { ...base, surface: 'galleryPromotion' as const };
+  const settingsWritten = () => spaceUpsert.mock.calls[0]?.[0]?.update?.settings;
+
+  it('stores a promotion host fee in the space settings', async () => {
+    await setPlacementSpace({ ...promotion, mode: 'review', declineFeePercent: 15 });
+    expect(settingsWritten()).toEqual({ declineFeePercent: 15 });
+    expect(spaceUpsert.mock.calls[0][0].create.settings).toEqual({ declineFeePercent: 15 });
+  });
+
+  it('keeps the stored fee through a save that does not mention it', async () => {
+    spaceFindUnique.mockResolvedValue({ price: 100, settings: { declineFeePercent: 15 } });
+    await setPlacementSpace({ ...promotion, mode: 'review', settings: {} });
+    expect(settingsWritten()).toEqual({ declineFeePercent: 15 });
+  });
+
+  it('returns to the surface default on null', async () => {
+    spaceFindUnique.mockResolvedValue({ price: 100, settings: { declineFeePercent: 15 } });
+    await setPlacementSpace({ ...promotion, mode: 'review', declineFeePercent: null });
+    expect(settingsWritten()).toEqual({});
+  });
+
+  it.each([31, -1, 12.5])('refuses %s on a promotion surface', async (value) => {
+    await expect(
+      setPlacementSpace({ ...promotion, mode: 'review', declineFeePercent: value })
+    ).rejects.toThrow('whole percent from 0 to 30');
+    expect(spaceUpsert).not.toHaveBeenCalled();
+  });
+
+  it.each(['sticker', 'remixGallery'] as const)(
+    'refuses any fee on %s, whose fee the platform fixes',
+    async (surface) => {
+      await expect(
+        setPlacementSpace({ ...base, surface, mode: 'review', declineFeePercent: 30 })
+      ).rejects.toThrow('is fixed');
+      expect(spaceUpsert).not.toHaveBeenCalled();
+    }
+  );
+
+  it('drops a fee key from a sticker row on save, whatever is stored', async () => {
+    spaceFindUnique.mockResolvedValue({ price: 100, settings: { declineFeePercent: 15 } });
+    await setPlacementSpace({ ...base, mode: 'review', settings: { maxScale: 0.5 } });
+    expect(settingsWritten()).toEqual({ maxScale: 0.5 });
+  });
+
+  it('keeps the other settings keys on a fee-only save', async () => {
+    spaceFindUnique.mockResolvedValue({ price: 100, settings: { contentRule: 'any' } });
+    await setPlacementSpace({ ...promotion, mode: 'review', declineFeePercent: 10 });
+    expect(settingsWritten()).toEqual({ contentRule: 'any', declineFeePercent: 10 });
+  });
+
+  // The default every promotion host starts on, at the layer that sizes the hold.
+  it('resolves a promotion host who never chose to 0%, holding nothing', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ userId: OWNER, user: { username: 'h' } });
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'user', mode: 'review', price: 200, freeSlots: null, settings: {} },
+    ]);
+    const space = await resolvePlacementSpaceFor({
+      surface: 'modelPromotion',
+      targetType: 'model',
+      targetId: 1,
+    });
+    expect([space.hostDeclineFeePercent, space.declineFeeRate, space.declineFee]).toEqual([
+      0, 0, 0,
+    ]);
+  });
+
+  it('resolves a promotion space to the host fee, and a sticker space to 30%', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ userId: OWNER, user: { username: 'h' } });
+    spaceFindMany.mockResolvedValue([
+      {
+        entityType: 'user',
+        mode: 'review',
+        price: 200,
+        freeSlots: null,
+        settings: { declineFeePercent: 15 },
+      },
+    ]);
+    const promoted = await resolvePlacementSpaceFor({
+      surface: 'galleryPromotion',
+      targetType: 'model',
+      targetId: 1,
+    });
+    expect([promoted.hostDeclineFeePercent, promoted.declineFeeRate, promoted.declineFee]).toEqual([
+      15, 0.15, 30,
+    ]);
+
+    // A fee key hand-written onto a sticker row is ignored, not honoured.
+    imageFindUnique.mockResolvedValue({ userId: OWNER, postId: 99, user: { username: 'h' } });
+    const sticker = await resolvePlacementSpaceFor({
+      surface: 'sticker',
+      targetType: 'image',
+      targetId: 1,
+    });
+    expect([sticker.hostDeclineFeePercent, sticker.declineFeeRate, sticker.declineFee]).toEqual([
+      null,
+      0.3,
+      60,
+    ]);
+  });
+});

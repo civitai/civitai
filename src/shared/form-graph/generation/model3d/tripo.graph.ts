@@ -1,14 +1,12 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
-import { SEED, boolDef, enumDef, imagesDef } from '../defs';
+import { clampCorrect, SEED, boolDef, enumDef, imagesDef } from '../defs';
 import { familyScope, type FamilyExt } from '../shared';
 
 /**
- * Tripo (via Fal), ported from `tripo-graph.ts`. Image-to-3D only — no text
+ * Tripo (via Fal). Image-to-3D only — no text
  * branch, no version discriminator.
  */
-
-// ---- copied from tripo-graph.ts, which dies with the data-graph engine ------
 
 export const tripoTextureOptions = [
   { label: 'None', value: 'no' as const },
@@ -29,8 +27,6 @@ export const tripoOrientationOptions = [
 const TRIPO_MIN_FACE_LIMIT = 1_000;
 const TRIPO_MAX_FACE_LIMIT = 500_000;
 
-// ---- end of tripo-graph.ts copies -------------------------------------------
-
 export const tripo = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', imagesDef({ min: 1, max: 1 }))
   .field('texture', enumDef({ options: tripoTextureOptions, default: 'standard' }))
@@ -42,6 +38,13 @@ export const tripo = defineGraph<FamilyExt>({ scope: familyScope })
     input: z.coerce.number().int().min(TRIPO_MIN_FACE_LIMIT).max(TRIPO_MAX_FACE_LIMIT).optional(),
     output: z.number().int().min(TRIPO_MIN_FACE_LIMIT).max(TRIPO_MAX_FACE_LIMIT).optional(),
     default: undefined,
+    // Clamp rather than clear: an out-of-range face limit came from somewhere, and
+    // dropping it silently reverts the user to 'Auto'.
+    correct: clampCorrect({
+      min: TRIPO_MIN_FACE_LIMIT,
+      max: TRIPO_MAX_FACE_LIMIT,
+      fallback: TRIPO_MIN_FACE_LIMIT,
+    }),
     meta: { min: TRIPO_MIN_FACE_LIMIT, max: TRIPO_MAX_FACE_LIMIT, placeholder: 'Auto' },
   })
   .field(

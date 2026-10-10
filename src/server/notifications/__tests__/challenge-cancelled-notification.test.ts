@@ -7,6 +7,7 @@ const mockDbWrite = dbMock.dbWrite;
 const mockLogToAxiom = loggingMock.logToAxiom;
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+dbMock.dbWrite.prize.updateMany.mockResolvedValue({ count: 0 });
 dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
 
 describe('challenge-cancelled notification definition', () => {

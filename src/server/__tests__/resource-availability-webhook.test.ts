@@ -107,6 +107,18 @@ describe('resource-availability webhook', () => {
     expect(executeRaw).not.toHaveBeenCalled();
   });
 
+  it('refuses a whitespace-only secret as unset, even for a caller presenting the same value', async () => {
+    env.WEBHOOK_TOKEN = '  ';
+    versionsExist(1144039);
+
+    const { statusCode } = await call([{ air: air(1144039), workersAvailable: 3 }], {
+      secret: '  ',
+    });
+
+    expect(statusCode).toBe(503);
+    expect(executeRaw).not.toHaveBeenCalled();
+  });
+
   it('refuses every call while the secret is unset, rather than accepting them', async () => {
     env.WEBHOOK_TOKEN = '';
 

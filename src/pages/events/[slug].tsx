@@ -5,7 +5,6 @@ import {
   Center,
   Container,
   Divider,
-  getPrimaryShade,
   Grid,
   Group,
   Loader,
@@ -16,7 +15,6 @@ import {
   Text,
   ThemeIcon,
   Title,
-  useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
@@ -48,9 +46,11 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EventContributors } from '~/components/Events/EventContributors';
 import { EventRewards } from '~/components/Events/EventRewards';
 import type { EventPartners } from '~/components/Events/events.utils';
-import { useMutateEvent, useQueryEvent } from '~/components/Events/events.utils';
+import { useMutateEvent, useQueryEvent, useTeamColor } from '~/components/Events/events.utils';
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
+import { ScoredEventSections } from '~/components/Events/ScoredEvent/ScoredEventSections';
+import { donationEventSections } from '~/components/Events/event-page-sections';
 import { HeroCard } from '~/components/HeroCard/HeroCard';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
@@ -74,12 +74,19 @@ export const getServerSideProps = createServerSideProps({
 
     const { event } = result.data;
     if (ssg) {
-      await Promise.all([
-        ssg.event.getTeamScores.prefetch({ event }),
-        ssg.event.getTeamScoreHistory.prefetch({ event }),
+      // The event's type decides which reads its page makes; the cosmetic is read either way.
+      const [data] = await Promise.all([
+        ssg.event.getData.fetch({ event }).catch(() => undefined),
         ssg.event.getCosmetic.prefetch({ event }),
-        ssg.event.getData.prefetch({ event }),
       ]);
+      await Promise.all(
+        data?.scored
+          ? [ssg.event.getStandings.prefetch({ event })]
+          : [
+              ssg.event.getTeamScores.prefetch({ event }),
+              ssg.event.getTeamScoreHistory.prefetch({ event }),
+            ]
+      );
     }
 
     return { props: { event } };
@@ -113,7 +120,6 @@ export default function EventPageDetails({
   event,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const theme = useMantineTheme();
-  const colorScheme = useComputedColorScheme('dark');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -130,6 +136,7 @@ export default function EventPageDetails({
   const totalTeamScores = teamScores.reduce((acc, teamScore) => acc + teamScore.score, 0);
   const cosmeticData = eventCosmetic?.data as { lights: number; upgradedLights: number };
 
+  const teamColor = useTeamColor();
   const datasets = useMemo(() => {
     const allDates = teamScoresHistory
       .flatMap((teamScore) => teamScore.scores.map((score) => score.date.getTime()))
@@ -138,7 +145,7 @@ export default function EventPageDetails({
 
     const datasets = teamScoresHistory.map(({ team, scores }) => {
       let lastMatchedIndex = 0;
-      const color = theme.colors[team.toLowerCase()][getPrimaryShade(theme, colorScheme)];
+      const color = teamColor(team);
 
       return {
         label: 'Buzz donated',
@@ -156,15 +163,25 @@ export default function EventPageDetails({
     });
 
     return datasets;
-  }, [teamScoresHistory, theme.colors, colorScheme]);
+  }, [teamScoresHistory, teamColor]);
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;
+  if (eventData.scored)
+    return (
+      <>
+        <Meta title={`${eventData.title} | Civitai`} canonical={`/events/${event}`} />
+        <Container size="lg">
+          <ScoredEventSections event={event} data={eventData} />
+        </Container>
+      </>
+    );
 
   const handleFocusDonateInput = () => inputRef.current?.focus();
 
-  const equipped = eventCosmetic?.obtained && eventCosmetic?.equipped;
+  const equipped = !!(eventCosmetic?.obtained && eventCosmetic?.equipped);
   const ended = eventData.endDate < new Date();
+  const sections = donationEventSections({ scored: eventData.scored, equipped, ended });
 
   return (
     <>
@@ -223,171 +240,179 @@ export default function EventPageDetails({
               {formatDate(eventData.endDate, 'MMMM D, YYYY')}
             </Text>
           </Stack>
-          {!equipped && !ended && (
+          {sections.welcome && (
             <WelcomeCard event={event} about={aboutText} learnMore={learnMore} />
           )}
-          <CharitySection visible={!equipped && !ended} partners={partners} />
-          <Grid gutter={48}>
-            {eventCosmetic?.cosmetic && equipped && (
-              <>
-                <Grid.Col span={{ base: 12, sm: 'auto' }} order={ended ? 3 : undefined}>
-                  <Card
-                    className="flex flex-col items-center justify-center bg-gray-0 dark:bg-dark-6"
-                    py="xl"
-                    px="lg"
-                    radius="lg"
-                    h="100%"
-                  >
-                    <HolidayFrame
-                      cosmetic={eventCosmetic.cosmetic}
-                      data={cosmeticData}
-                      force
-                      animated
-                    />
-                    <Stack gap={0} align="center" mt="lg" mb={theme.spacing.lg}>
-                      <Text size="xl" fw={590}>
-                        Your Garland
-                      </Text>
-                      <div className="flex items-end">
-                        <Lightbulb color={userTeam} size={48} transform="rotate(180)" animated />
-                        <Text fz={80} fw={590} c={userTeam} lh="70px">
-                          {cosmeticData?.lights ?? 0}
-                        </Text>
-                        <Text fz={32} fw={590} c="dimmed">
-                          / 12
-                        </Text>
-                      </div>
-                      <Text size="sm" fw={500} c={userTeam} tt="capitalize" mt={5}>
-                        {userTeam} Team
-                      </Text>
-                      <Popover withinPortal shadow="md">
-                        <Popover.Target>
-                          <Text size="xs" c="dimmed" td="underline" className="cursor-pointer">
-                            Missing a Bulb?
+          {sections.donation && (
+            <>
+              <CharitySection visible={!equipped && !ended} partners={partners} />
+              <Grid gutter={48}>
+                {eventCosmetic?.cosmetic && equipped && (
+                  <>
+                    <Grid.Col span={{ base: 12, sm: 'auto' }} order={ended ? 3 : undefined}>
+                      <Card
+                        className="flex flex-col items-center justify-center bg-gray-0 dark:bg-dark-6"
+                        py="xl"
+                        px="lg"
+                        radius="lg"
+                        h="100%"
+                      >
+                        <HolidayFrame
+                          cosmetic={eventCosmetic.cosmetic}
+                          data={cosmeticData}
+                          force
+                          animated
+                        />
+                        <Stack gap={0} align="center" mt="lg" mb={theme.spacing.lg}>
+                          <Text size="xl" fw={590}>
+                            Your Garland
                           </Text>
-                        </Popover.Target>
-                        <Popover.Dropdown maw={300} p="sm">
-                          <Text size="xs" c="dimmed">
-                            {`CivBot reviews challenge entries every 10 minutes and will give you your
+                          <div className="flex items-end">
+                            <Lightbulb
+                              color={userTeam}
+                              size={48}
+                              transform="rotate(180)"
+                              animated
+                            />
+                            <Text fz={80} fw={590} c={userTeam} lh="70px">
+                              {cosmeticData?.lights ?? 0}
+                            </Text>
+                            <Text fz={32} fw={590} c="dimmed">
+                              / 12
+                            </Text>
+                          </div>
+                          <Text size="sm" fw={500} c={userTeam} tt="capitalize" mt={5}>
+                            {userTeam} Team
+                          </Text>
+                          <Popover withinPortal shadow="md">
+                            <Popover.Target>
+                              <Text size="xs" c="dimmed" td="underline" className="cursor-pointer">
+                                Missing a Bulb?
+                              </Text>
+                            </Popover.Target>
+                            <Popover.Dropdown maw={300} p="sm">
+                              <Text size="xs" c="dimmed">
+                                {`CivBot reviews challenge entries every 10 minutes and will give you your
                             bulb for the day after approving your entry. If you haven't received it,
                             wait, then make sure your entry was approved and refresh this page.`}
-                          </Text>
-                        </Popover.Dropdown>
-                      </Popover>
-                    </Stack>
-                    {eventCosmetic.available && !ended && (
-                      <Stack gap="sm" w="100%">
-                        <Button
-                          component={Link}
-                          href="/challenges"
-                          color="gray"
-                          variant="filled"
-                          radius="xl"
-                          fullWidth
-                          disabled={cosmeticData?.lights >= 12}
-                        >
-                          <Group gap={4} wrap="nowrap">
-                            <IconBulb size={18} />
-                            Earn more lights
-                          </Group>
-                        </Button>
-                        <Button
-                          color="gray"
-                          variant="filled"
-                          radius="xl"
-                          onClick={handleFocusDonateInput}
-                          fullWidth
-                        >
-                          <Group gap={4} wrap="nowrap">
-                            <IconBolt size={18} />
-                            Make them brighter
-                          </Group>
-                        </Button>
-                      </Stack>
-                    )}
-                  </Card>
-                </Grid.Col>
-                <Grid.Col span={{ base: 12, sm: 'auto' }} order={ended ? 3 : undefined}>
-                  <Card
-                    py="xl"
-                    px="lg"
-                    radius="lg"
-                    h="100%"
-                    style={{ display: 'flex', alignItems: 'center' }}
-                  >
-                    <Stack w="100%">
-                      <Stack gap={0} align="center">
-                        <Text size="sm" fw={590}>
-                          Total Team Donations
-                        </Text>
-                        <Group gap={4} wrap="nowrap">
-                          <CurrencyIcon currency={Currency.BUZZ} />
-                          <Text fz={32} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {numberWithCommas(totalTeamScores)}
-                          </Text>
-                        </Group>
-                      </Stack>
-                      <Stack gap={8}>
-                        <Group gap={8} className="grow" justify="space-between">
-                          <Text size="sm" fw={590}>
-                            Team Rank
-                          </Text>
-                          <Text size="sm" fw={590}>
-                            Spirit Bank
-                          </Text>
-                        </Group>
-                        {teamScores.map((teamScore) => {
-                          const color = teamScore.team.toLowerCase();
-                          const brightness =
-                            (teamScores.length - teamScore.rank + 1) / teamScores.length;
-
-                          return (
-                            <Fragment key={teamScore.team}>
-                              <Group gap={8} className="grow" justify="space-between">
-                                <Group gap={4} wrap="nowrap">
-                                  <Text size="xl" fw={590}>
-                                    {teamScore.rank}
-                                  </Text>
-                                  <Lightbulb
-                                    color={color}
-                                    brightness={brightness}
-                                    size={32}
-                                    animated
-                                  />
-                                  <Text size="xl" fw={590} tt="capitalize" c={color}>
-                                    {color} Team
-                                  </Text>
-                                </Group>
-                                <Group gap={4} wrap="nowrap">
-                                  <CurrencyIcon currency={Currency.BUZZ} />
-                                  <Text
-                                    size="xl"
-                                    fw={590}
-                                    style={{ fontVariantNumeric: 'tabular-nums' }}
-                                  >
-                                    {numberWithCommas(teamScore.score)}
-                                  </Text>
-                                </Group>
+                              </Text>
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Stack>
+                        {eventCosmetic.available && !ended && (
+                          <Stack gap="sm" w="100%">
+                            <Button
+                              component={Link}
+                              href="/challenges"
+                              color="gray"
+                              variant="filled"
+                              radius="xl"
+                              fullWidth
+                              disabled={cosmeticData?.lights >= 12}
+                            >
+                              <Group gap={4} wrap="nowrap">
+                                <IconBulb size={18} />
+                                Earn more lights
                               </Group>
-                            </Fragment>
-                          );
-                        })}
-                      </Stack>
-                    </Stack>
-                  </Card>
-                </Grid.Col>
-                {!ended && (
-                  <Grid.Col span={12} mt={-40}>
-                    <Text size="md" c="dimmed" ta="center">
-                      You have{' '}
-                      <Text component="span" fw={500} td="underline">
-                        <Countdown endTime={resetTime} />
-                      </Text>{' '}
-                      to earn your light and to claim the top position for your team for the day.
-                    </Text>
-                  </Grid.Col>
-                )}
-                {/* <Grid.Col span={{ base: 12, sm: 'auto' }}>
+                            </Button>
+                            <Button
+                              color="gray"
+                              variant="filled"
+                              radius="xl"
+                              onClick={handleFocusDonateInput}
+                              fullWidth
+                            >
+                              <Group gap={4} wrap="nowrap">
+                                <IconBolt size={18} />
+                                Make them brighter
+                              </Group>
+                            </Button>
+                          </Stack>
+                        )}
+                      </Card>
+                    </Grid.Col>
+                    <Grid.Col span={{ base: 12, sm: 'auto' }} order={ended ? 3 : undefined}>
+                      <Card
+                        py="xl"
+                        px="lg"
+                        radius="lg"
+                        h="100%"
+                        style={{ display: 'flex', alignItems: 'center' }}
+                      >
+                        <Stack w="100%">
+                          <Stack gap={0} align="center">
+                            <Text size="sm" fw={590}>
+                              Total Team Donations
+                            </Text>
+                            <Group gap={4} wrap="nowrap">
+                              <CurrencyIcon currency={Currency.BUZZ} />
+                              <Text fz={32} fw={590} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                                {numberWithCommas(totalTeamScores)}
+                              </Text>
+                            </Group>
+                          </Stack>
+                          <Stack gap={8}>
+                            <Group gap={8} className="grow" justify="space-between">
+                              <Text size="sm" fw={590}>
+                                Team Rank
+                              </Text>
+                              <Text size="sm" fw={590}>
+                                Spirit Bank
+                              </Text>
+                            </Group>
+                            {teamScores.map((teamScore) => {
+                              const color = teamScore.team.toLowerCase();
+                              const brightness =
+                                (teamScores.length - teamScore.rank + 1) / teamScores.length;
+
+                              return (
+                                <Fragment key={teamScore.team}>
+                                  <Group gap={8} className="grow" justify="space-between">
+                                    <Group gap={4} wrap="nowrap">
+                                      <Text size="xl" fw={590}>
+                                        {teamScore.rank}
+                                      </Text>
+                                      <Lightbulb
+                                        color={color}
+                                        brightness={brightness}
+                                        size={32}
+                                        animated
+                                      />
+                                      <Text size="xl" fw={590} tt="capitalize" c={color}>
+                                        {color} Team
+                                      </Text>
+                                    </Group>
+                                    <Group gap={4} wrap="nowrap">
+                                      <CurrencyIcon currency={Currency.BUZZ} />
+                                      <Text
+                                        size="xl"
+                                        fw={590}
+                                        style={{ fontVariantNumeric: 'tabular-nums' }}
+                                      >
+                                        {numberWithCommas(teamScore.score)}
+                                      </Text>
+                                    </Group>
+                                  </Group>
+                                </Fragment>
+                              );
+                            })}
+                          </Stack>
+                        </Stack>
+                      </Card>
+                    </Grid.Col>
+                    {!ended && (
+                      <Grid.Col span={12} mt={-40}>
+                        <Text size="md" c="dimmed" ta="center">
+                          You have{' '}
+                          <Text component="span" fw={500} td="underline">
+                            <Countdown endTime={resetTime} />
+                          </Text>{' '}
+                          to earn your light and to claim the top position for your team for the
+                          day.
+                        </Text>
+                      </Grid.Col>
+                    )}
+                    {/* <Grid.Col span={{ base: 12, sm: 'auto' }}>
                   <Card
                     className={classes.card}
                     py="xl"
@@ -437,68 +462,75 @@ export default function EventPageDetails({
                     </Stack>
                   </Card>
                 </Grid.Col> */}
-              </>
-            )}
-            <Grid.Col span={12} order={ended ? 1 : undefined}>
-              <SectionCard
-                title={
-                  ended ? (
-                    <Group gap={4}>
-                      <CurrencyIcon currency={Currency.BUZZ} size={32} />
-                      <Text>
-                        {abbreviateNumber(totalTeamScores).toUpperCase()} Buzz donated to charity!
-                      </Text>
-                    </Group>
-                  ) : (
-                    'Spirit Bank History'
-                  )
-                }
-                subtitle={
-                  ended
-                    ? `Thank you to everybody who participated in the ${eventData.title} event! Here are the final results`
-                    : 'See how your team is doing. Have the most Buzz banked at the end to get a shiny new badge!'
-                }
-              >
-                {equipped && !ended && <DonateInput event={event} ref={inputRef} />}
-                {loadingHistory ? (
-                  <Center py="xl">
-                    <Loader type="bars" />
-                  </Center>
-                ) : (
-                  <Stack gap={40} w="100%" align="center">
-                    <Line options={options} data={{ datasets }} />
-                    <Group gap="md">
-                      {teamScores.length > 0 &&
-                        teamScores.map((teamScore) => (
-                          <Group key={teamScore.team} gap={4} wrap="nowrap">
-                            <ThemeIcon color={teamScore.team.toLowerCase()} radius="xl" size={12}>
-                              {null}
-                            </ThemeIcon>
-                            <Text
-                              size="xs"
-                              color={teamScore.team.toLowerCase()}
-                              tt="uppercase"
-                              fw={500}
-                              lineClamp={1}
-                            >
-                              {teamScore.team}
-                            </Text>
-                            <Text size="xs" c="dimmed" tt="uppercase" fw={500} lineClamp={1}>
-                              {abbreviateNumber(teamScore.score, { decimals: 2 })}
-                            </Text>
-                          </Group>
-                        ))}
-                    </Group>
-                  </Stack>
+                  </>
                 )}
-              </SectionCard>
-            </Grid.Col>
-            <Grid.Col span={12} order={ended ? 2 : undefined}>
-              <EventRewards event={event} />
-            </Grid.Col>
-          </Grid>
-          <EventContributors event={event} endDate={eventData.endDate} />
-          {(equipped || ended) && (
+                <Grid.Col span={12} order={ended ? 1 : undefined}>
+                  <SectionCard
+                    title={
+                      ended ? (
+                        <Group gap={4}>
+                          <CurrencyIcon currency={Currency.BUZZ} size={32} />
+                          <Text>
+                            {abbreviateNumber(totalTeamScores).toUpperCase()} Buzz donated to
+                            charity!
+                          </Text>
+                        </Group>
+                      ) : (
+                        'Spirit Bank History'
+                      )
+                    }
+                    subtitle={
+                      ended
+                        ? `Thank you to everybody who participated in the ${eventData.title} event! Here are the final results`
+                        : 'See how your team is doing. Have the most Buzz banked at the end to get a shiny new badge!'
+                    }
+                  >
+                    {equipped && !ended && <DonateInput event={event} ref={inputRef} />}
+                    {loadingHistory ? (
+                      <Center py="xl">
+                        <Loader type="bars" />
+                      </Center>
+                    ) : (
+                      <Stack gap={40} w="100%" align="center">
+                        <Line options={options} data={{ datasets }} />
+                        <Group gap="md">
+                          {teamScores.length > 0 &&
+                            teamScores.map((teamScore) => (
+                              <Group key={teamScore.team} gap={4} wrap="nowrap">
+                                <ThemeIcon
+                                  color={teamScore.team.toLowerCase()}
+                                  radius="xl"
+                                  size={12}
+                                >
+                                  {null}
+                                </ThemeIcon>
+                                <Text
+                                  size="xs"
+                                  color={teamScore.team.toLowerCase()}
+                                  tt="uppercase"
+                                  fw={500}
+                                  lineClamp={1}
+                                >
+                                  {teamScore.team}
+                                </Text>
+                                <Text size="xs" c="dimmed" tt="uppercase" fw={500} lineClamp={1}>
+                                  {abbreviateNumber(teamScore.score, { decimals: 2 })}
+                                </Text>
+                              </Group>
+                            ))}
+                        </Group>
+                      </Stack>
+                    )}
+                  </SectionCard>
+                </Grid.Col>
+                <Grid.Col span={12} order={ended ? 2 : undefined}>
+                  <EventRewards event={event} />
+                </Grid.Col>
+              </Grid>
+              <EventContributors event={event} endDate={eventData.endDate} />
+            </>
+          )}
+          {sections.about && (
             <>
               <Divider w="80px" mx="auto" />
               <Stack gap={20}>

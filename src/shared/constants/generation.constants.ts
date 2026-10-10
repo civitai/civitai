@@ -1,4 +1,10 @@
 import type { WorkflowStatus } from '@civitai/client';
+import type {
+  ComfySampler,
+  ComfyScheduler,
+  SdCppSampleMethod,
+  SdCppSchedule,
+} from '@civitai/orchestration-client';
 import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
@@ -19,8 +25,12 @@ import {
   getBaseModelMediaType,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
-import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import type { ModelType } from '~/shared/utils/prisma/enums';
+import {
+  MEGAPIXEL,
+  findClosestAspectRatio,
+  type CustomDimensionLimits,
+} from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
 // Response header the orchestrator router sets when the generation client is behind; UpdateRequiredWatcher
@@ -152,60 +162,50 @@ export const orchestratorPendingStatuses: WorkflowStatus[] = [
 ];
 // #endregion
 
-// #region [injectable resources]
-export type InjectableResource = {
-  id: number;
-  triggerWord?: string;
-  triggerType?: 'negative' | 'positive';
-  baseModelSetType?: BaseModelGroup;
-  sanitize?: (params: TextToImageParams) => Partial<TextToImageParams>;
+// #region [draft mode]
+export const DRAFT_WORKFLOW = 'txt2img:draft';
+
+type SliderRange = { min: number; max: number; default: number };
+
+/**
+ * SD's `txt2img:draft`: an accelerator LoRA the server adds unseen, and the steps/CFG range and
+ * sampler it is trained for.
+ */
+export type SdDraftMode = {
+  loraVersionId: number;
+  /** Pre-computed: the LoRA is never one of the user's resources, so it has no resolved AIR. */
+  air: string;
+  sampler: Sampler;
+  steps: SliderRange;
+  cfgScale: SliderRange;
 };
 
-export const draftInjectableResources = [
-  {
-    id: 391999,
-    baseModelSetType: 'SDXL',
-    sanitize: () => ({
-      steps: 8,
-      cfgScale: 1,
-      sampler: 'Euler',
-    }),
-  } as InjectableResource,
-  {
-    id: 424706,
-    baseModelSetType: 'SD1',
-    sanitize: () => ({
-      steps: 6,
-      cfgScale: 1,
-      sampler: 'LCM',
-    }),
-  } as InjectableResource,
-];
-
-const SD1DraftResource = {
-  id: 424706,
-  baseModel: 'SD 1.5',
-  strength: 1,
-  model: { id: 195519, type: ModelType.LORA },
+const sdxlDraftMode: SdDraftMode = {
+  loraVersionId: 391999, // SDXL Lightning LoRAs — 8 Steps
+  air: 'urn:air:sdxl:lora:civitai:350450@391999',
+  sampler: 'Euler',
+  steps: { min: 4, max: 12, default: 8 },
+  cfgScale: { min: 1, max: 2, default: 1 },
 };
 
-const SDXLDraftResource = {
-  id: 391999,
-  baseModel: 'SDXL 1.0',
-  strength: 1,
-  model: { id: 350450, type: ModelType.LORA },
+const sd1DraftMode: SdDraftMode = {
+  loraVersionId: 424706, // LCM-LoRA for SD 1.5
+  air: 'urn:air:sd1:lora:civitai:195519@424706',
+  sampler: 'LCM',
+  steps: { min: 4, max: 8, default: 6 },
+  cfgScale: { min: 1, max: 2, default: 1 },
 };
 
-export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
-
-export function getInjectableResources(baseModelSetType: BaseModelGroup) {
-  const isSdxl = getIsSdxl(baseModelSetType);
-  let value = baseModelSetType;
-  if (isSdxl) value = 'SDXL';
-  return {
-    draft: draftInjectableResources.find((x) => x.baseModelSetType === value),
-  };
+/** SD1 has its own LoRA; every other SD-family ecosystem uses SDXL's. */
+export function getSdDraftMode(ecosystem: string | undefined): SdDraftMode {
+  return ecosystem === 'SD1' ? sd1DraftMode : sdxlDraftMode;
 }
+
+export const clampToRange = (value: number | undefined, range: SliderRange) =>
+  Math.min(range.max, Math.max(range.min, value ?? range.default));
+
+/** Kept out of model metrics and stripped from remixes: the user never chose these LoRAs. */
+export const allInjectableResourceIds = [sdxlDraftMode, sd1DraftMode].map((x) => x.loraVersionId);
 // #endregion
 
 export const whatIfQueryOverrides = {
@@ -264,14 +264,14 @@ export const generationSamplers = Object.keys(samplersToSchedulers) as Sampler[]
 // !important - undefined maps to the same values as 'DPM++ 2M Karras'
 export const samplersToComfySamplers: Record<
   Sampler | 'undefined',
-  { sampler: string; scheduler: 'normal' | 'karras' | 'exponential' }
+  { sampler: ComfySampler; scheduler: ComfyScheduler }
 > = {
   'Euler a': { sampler: 'euler_ancestral', scheduler: 'normal' },
   Euler: { sampler: 'euler', scheduler: 'normal' },
   LMS: { sampler: 'lms', scheduler: 'normal' },
   Heun: { sampler: 'heun', scheduler: 'normal' },
-  DPM2: { sampler: 'dpmpp_2', scheduler: 'normal' },
-  'DPM2 a': { sampler: 'dpmpp_2_ancestral', scheduler: 'normal' },
+  DPM2: { sampler: 'dpm_2', scheduler: 'normal' },
+  'DPM2 a': { sampler: 'dpm_2_ancestral', scheduler: 'normal' },
   'DPM++ 2S a': { sampler: 'dpmpp_2s_ancestral', scheduler: 'normal' },
   'DPM++ 2M': { sampler: 'dpmpp_2m', scheduler: 'normal' },
   'DPM++ 2M SDE': { sampler: 'dpmpp_2m_sde', scheduler: 'normal' },
@@ -289,10 +289,46 @@ export const samplersToComfySamplers: Record<
   'DPM++ 3M SDE Karras': { sampler: 'dpmpp_3m_sde', scheduler: 'karras' },
   'DPM++ 3M SDE Exponential': { sampler: 'dpmpp_3m_sde', scheduler: 'exponential' },
   DDIM: { sampler: 'ddim', scheduler: 'normal' },
-  PLMS: { sampler: 'plms', scheduler: 'normal' },
+  PLMS: { sampler: 'ddim', scheduler: 'normal' },
   UniPC: { sampler: 'uni_pc', scheduler: 'normal' },
   LCM: { sampler: 'lcm', scheduler: 'normal' },
   undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
+};
+
+// stable-diffusion.cpp ships a smaller sampler set than ComfyUI: LMS, the SDE variants,
+// DPM fast/adaptive, UniPC and PLMS have no equivalent and collapse onto the nearest
+// family member, so a user's sampler choice is not always preserved across this map.
+export const samplersToSdCppSamplers: Record<
+  Sampler | 'undefined',
+  { sampleMethod: SdCppSampleMethod; schedule: SdCppSchedule }
+> = {
+  'Euler a': { sampleMethod: 'euler_a', schedule: 'discrete' },
+  Euler: { sampleMethod: 'euler', schedule: 'discrete' },
+  LMS: { sampleMethod: 'euler', schedule: 'discrete' },
+  Heun: { sampleMethod: 'heun', schedule: 'discrete' },
+  DPM2: { sampleMethod: 'dpm2', schedule: 'discrete' },
+  'DPM2 a': { sampleMethod: 'dpm++2s_a', schedule: 'discrete' },
+  'DPM++ 2S a': { sampleMethod: 'dpm++2s_a', schedule: 'discrete' },
+  'DPM++ 2M': { sampleMethod: 'dpm++2m', schedule: 'discrete' },
+  'DPM++ 2M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM++ SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM fast': { sampleMethod: 'euler', schedule: 'discrete' },
+  'DPM adaptive': { sampleMethod: 'euler', schedule: 'discrete' },
+  'LMS Karras': { sampleMethod: 'euler', schedule: 'karras' },
+  'DPM2 Karras': { sampleMethod: 'dpm2', schedule: 'karras' },
+  'DPM2 a Karras': { sampleMethod: 'dpm++2s_a', schedule: 'karras' },
+  'DPM++ 2S a Karras': { sampleMethod: 'dpm++2s_a', schedule: 'karras' },
+  'DPM++ 2M Karras': { sampleMethod: 'dpm++2m', schedule: 'karras' },
+  'DPM++ SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 2M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 3M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM++ 3M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 3M SDE Exponential': { sampleMethod: 'dpm++2mv2', schedule: 'exponential' },
+  DDIM: { sampleMethod: 'ddim_trailing', schedule: 'discrete' },
+  PLMS: { sampleMethod: 'ddim_trailing', schedule: 'discrete' },
+  UniPC: { sampleMethod: 'dpm++2m', schedule: 'discrete' },
+  LCM: { sampleMethod: 'lcm', schedule: 'lcm' },
+  undefined: { sampleMethod: 'dpm++2m', schedule: 'karras' },
 };
 
 // #region [utils]
@@ -515,7 +551,7 @@ export const fluxProAirId = 922358;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
 // Ecosystems that expose the `enhancedCompatibility` toggle — txt2img only.
-// Off (the default) runs sdcpp; on runs comfyui. Pony/Illustrious/NoobAI are SDXL derivatives and
+// Off (the default) runs sdcpp; on runs comfy. Pony/Illustrious/NoobAI are SDXL derivatives and
 // stay on sdcpp with SDXL.
 export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'SD1',
@@ -524,10 +560,6 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Illustrious',
   'NoobAI',
 ];
-
-// Always comfyui, no toggle. Not workflow-scoped: these have no sdcpp support left, so every
-// textToImage step they emit belongs on comfyui.
-export const COMFY_ONLY_ECOSYSTEMS: string[] = ['Flux1', 'FluxKrea'];
 
 // Ecosystems that qualify for the 2-for-1 quantity bonus + footer alert. Historical name: membership
 // is a pricing decision, not "runs on sdcpp" (Flux2Klein submits 'flux2').
@@ -539,22 +571,16 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   'Flux2Klein_4B_base',
 ];
 
-// Flux Pro 1.1 / Ultra: versions inside comfy-only Flux1 that keep their handler's engine rather
-// than being forced onto comfyui.
+// Flux Pro 1.1 / Ultra: excluded from the sdcpp 2-for-1 bonus and its footer alert.
 export const SDCPP_EXCLUDED_MODEL_IDS: number[] = [fluxProAirId, fluxUltraAirId];
 
-/** Flux Ultra and Flux Pro keep the engine their handler chose, despite Flux1 being comfy-only. */
 export function usesComfyEngine({
   ecosystem,
-  modelId,
   enhancedCompatibility,
 }: {
   ecosystem: string;
-  modelId?: number;
   enhancedCompatibility?: boolean;
 }): boolean {
-  if (modelId !== undefined && SDCPP_EXCLUDED_MODEL_IDS.includes(modelId)) return false;
-  if (COMFY_ONLY_ECOSYSTEMS.includes(ecosystem)) return true;
   return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && enhancedCompatibility === true;
 }
 
@@ -688,14 +714,123 @@ export const aspectRatioDimensions: Record<
  * scaling a clean ratio.
  */
 
-/** SDXL/Flux training buckets (~1024² area, /64 aligned). Used by SDXL, Pony v7,
- * Chroma, Flux v1/v2, Hi-Dream, Z-Image, Anima, and any other ~1M-pixel
- * diffusion model that follows SDXL's bucketing convention. */
-export const sdxlAspectRatioBuckets = [
-  { label: '2:3', value: '2:3', width: 832, height: 1216 },
-  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+/** The SDXL training bucket set (~1024² area, /64 aligned), widest to tallest —
+ * the order AspectRatioInput displays in. Used by every ~1M-pixel diffusion
+ * ecosystem: SDXL, Pony, Illustrious, NoobAI, Pony v7, Anima, Chroma, Flux.1
+ * (comfy modes), Flux.2, Flux.2 Klein, Hi-Dream, Z-Image, Boogu and Ideogram.
+ * Each of those inputs takes any width/height up to 2048 divisible by 16
+ * (Flux.2 and Klein from 512), so all nine fit. Labels are approximate, the
+ * same way 832×1216 is called 2:3. */
+export const sdxlFullAspectRatioBuckets = [
+  { label: '21:9', value: '21:9', width: 1536, height: 640 },
+  { label: '16:9', value: '16:9', width: 1344, height: 768 },
   { label: '3:2', value: '3:2', width: 1216, height: 832 },
+  { label: '4:3', value: '4:3', width: 1152, height: 896 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '3:4', value: '3:4', width: 896, height: 1152 },
+  { label: '2:3', value: '2:3', width: 832, height: 1216 },
+  { label: '9:16', value: '9:16', width: 768, height: 1344 },
+  { label: '9:21', value: '9:21', width: 640, height: 1536 },
 ];
+
+/** Flux.1 Pro (BFL `flux1-pro`) caps each side at 1440 (/32), so the 1536-long
+ * 21:9 and 9:21 buckets are out. */
+export const flux1ProAspectRatioBuckets = sdxlFullAspectRatioBuckets.filter(
+  (b) => b.width <= 1440 && b.height <= 1440
+);
+
+/**
+ * The `value` of a custom width × height, in place of a ratio label. An explicit
+ * marker, not "any size that isn't a bucket": remix and legacy metadata send a
+ * source image's raw size, which must keep snapping to the nearest bucket.
+ */
+export const CUSTOM_ASPECT_RATIO = 'custom';
+
+/**
+ * Custom width × height, grouped by what each model's authors document (model
+ * cards, papers, BFL's docs — checked 2026-10-01): ~1, ~2 and ~4 MP, plus Flux.1
+ * Pro and SD1. The engines accept 64–2048 /16 (Flux.2 and Klein from 512;
+ * flux1-pro 256–1440 /32); these are tighter on purpose: /32
+ * steps, sides from 512, and 2.5:1 at most, which covers the 21:9 bucket
+ * (1536×640 is 2.4:1). Areas are in MEGAPIXEL (1024²) units.
+ *
+ * No image may exceed 4 MP = 2048² — a product ceiling, not an engine one.
+ *
+ * Each group has two levels: `maxArea`, enforced on every parse, and
+ * `recommendedArea`, past which the picker only warns.
+ */
+
+/**
+ * Trained at ~1 MP, nothing larger documented: SDXL, Pony V6, Illustrious, NoobAI,
+ * Chroma, HiDream-I1 — plus Flux.2 Klein and Z-Image Turbo until a test
+ * generation confirms their family's larger figures apply to them. Illustrious
+ * v1.0+ is 1536² native, but the ecosystem can't tell it from the v0.1 merges
+ * that most checkpoints are, so the warning stays at 1 MP.
+ */
+export const sdxlCustomDimensionLimits = {
+  step: 32,
+  minSide: 512,
+  maxSide: 2048,
+  maxArea: 1536 * 1536,
+  recommendedArea: MEGAPIXEL,
+  maxRatio: 2.5,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Documented to ~2 MP: FLUX.1 dev / Krea ("0.1 to 2.0 megapixels"), Anima
+ * (512²–1536²), Pony V7 (768–1536px, larger recommended), Boogu Base/Edit (up to
+ * 2K). Same hard cap as the ~1 MP group; only the warning moves up.
+ */
+export const twoMegapixelCustomDimensionLimits = {
+  ...sdxlCustomDimensionLimits,
+  recommendedArea: 2 * MEGAPIXEL,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Documented to ~4 MP: FLUX.2 dev/pro/flex/max ("up to 4MP"), Ideogram 4 (256–2048
+ * /16), Z-Image Base (512²–2048² total area). Capped at the 4 MP ceiling, which is
+ * also what they recommend, so the picker never warns.
+ */
+export const fourMegapixelCustomDimensionLimits = {
+  ...sdxlCustomDimensionLimits,
+  maxArea: 4 * MEGAPIXEL,
+  recommendedArea: 4 * MEGAPIXEL,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * BFL's flux1-pro takes 256–1440 /32 per side, so 1440² (≈1.98 MP) is its most.
+ * Same 2 MP recommendation as the rest of FLUX.1, so it never warns.
+ */
+export const flux1ProCustomDimensionLimits = {
+  ...twoMegapixelCustomDimensionLimits,
+  maxSide: 1440,
+  maxArea: 1440 * 1440,
+} as const satisfies CustomDimensionLimits;
+
+/** SD1: ~512² training area; the comfy SD1 input caps each side at 1024. */
+export const sd1CustomDimensionLimits = {
+  step: 32,
+  minSide: 256,
+  maxSide: 1024,
+  maxArea: 768 * 768,
+  recommendedArea: 512 * 768,
+  maxRatio: 2.5,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Every set of custom limits. A saved size belongs to the user, not to a model: it
+ * is shown wherever it fits, so saving one only needs some model to accept it.
+ */
+export const allCustomDimensionLimits: readonly CustomDimensionLimits[] = [
+  sdxlCustomDimensionLimits,
+  twoMegapixelCustomDimensionLimits,
+  fourMegapixelCustomDimensionLimits,
+  flux1ProCustomDimensionLimits,
+  sd1CustomDimensionLimits,
+];
+
+/** Shown before the picker's "More" button: the three buckets these pickers offered before. */
+export const sdxlFullPriorityAspectRatios = ['3:2', '1:1', '2:3'];
 
 /** SD1 training buckets (~512² area, /64 aligned). */
 export const sd1AspectRatioBuckets = [
@@ -757,6 +892,14 @@ export function getSizeFromFluxUltraAspectRatio(value: number) {
   return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
 }
 
+/** The label form `Flux1ProUltraImageGenInput.aspectRatio` takes, vs the index the sibling returns. */
+export function getClosestFluxUltraAspectRatioLabel(width = 1024, height = 1024) {
+  const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
+  const index = ratios.indexOf(findClosest(ratios, width / height));
+  return (fluxUltraAspectRatios[index] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex])
+    .label;
+}
+
 export function getClosestFluxUltraAspectRatio(width = 1024, height = 1024) {
   const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
   const closest = findClosest(ratios, width / height);
@@ -815,6 +958,6 @@ function getUpperLowerLimits(value: number) {
   ];
 }
 
-/** The generator's prompt cap. Here so the server's prompt comparison can bound
- * its input without importing the data-graph. */
+/** The generator's prompt cap. Here so the server's prompt comparison can bound its
+ * input without importing the generation graph. */
 export const MAX_PROMPT_LENGTH = 6000;

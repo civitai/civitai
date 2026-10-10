@@ -72,6 +72,10 @@ export type DerivedTrainingWorkflowState = {
   transactionData: TrainingResultsV2['transactionData'] | null;
 };
 
+/** A failed or unavailable sample stays '' so sample N is prompt N. */
+export const sampleSlotUrl = (sample: { url?: string | null; available?: boolean }) =>
+  sample.available !== false && sample.url ? sample.url : '';
+
 /**
  * The single mapping from an orchestrator workflow to our training state. Shared by the
  * write path (webhook / cron / recheck) and the read overlay, so a row rendered from the
@@ -117,7 +121,6 @@ export function deriveTrainingWorkflowState(
     moderationStatus = output?.moderationStatus;
     sampleImagesPrompts = trainingStep.input?.samples?.prompts ?? [];
 
-    // Map TrainingEpochResult to our internal format
     const trainingOutput = output as TrainingOutput | undefined;
     // Pending epochs arrive with an unavailable model; only finished checkpoints belong in trainingResults.
     epochs = (trainingOutput?.epochs ?? [])
@@ -126,7 +129,7 @@ export function deriveTrainingWorkflowState(
         epochNumber: epoch.epochNumber ?? -1,
         blobUrl: epoch.model?.url ?? '',
         blobSize: 0, // Not provided in TrainingStep
-        sampleImages: (epoch.samples ?? []).map((s) => s.url ?? ''),
+        sampleImages: (epoch.samples ?? []).map(sampleSlotUrl),
       }));
   } else if (stepType === 'imageResourceTraining') {
     // ImageResourceTrainingStep: legacy format

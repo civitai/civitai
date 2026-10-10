@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { dbRead } from '~/server/db/client';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -51,18 +52,26 @@ export function getNewCreatorBoardId(entity: NewCreatorEntity, domain?: DomainCo
  *
  * Falls back to the newest date when no marker exists yet (the window between deploy
  * and the first nightly run), which is no worse than the pre-marker behavior.
+ *
+ * `maxFollowers` filters before the LIMIT, so lower-ranked creators backfill the list
+ * rather than it shrinking. It gets its own cache entry: the uncapped list also backs
+ * the browse feed, which does not apply the cap.
  */
 export async function getNewCreatorUserIds({
   entity,
   domain,
+  maxFollowers,
 }: {
   entity: NewCreatorEntity;
   domain?: DomainColor;
+  maxFollowers?: number;
 }): Promise<number[]> {
   const boardId = getNewCreatorBoardId(entity, domain);
+  const capped = maxFollowers !== undefined;
+  const capSuffix = capped ? `:max-followers-${maxFollowers}` : '';
 
   return await fetchThroughCache(
-    `${REDIS_KEYS.CACHES.NEW_CREATORS}:${boardId}`,
+    `${REDIS_KEYS.CACHES.NEW_CREATORS}:${boardId}${capSuffix}`,
     async () => {
       const marker = await dbRead.keyValue.findUnique({
         where: { key: leaderboardPopulatedKey(boardId) },
@@ -72,11 +81,21 @@ export async function getNewCreatorUserIds({
       const results = await dbRead.$queryRaw<{ userId: number }[]>`
         SELECT lr."userId"
         FROM "LeaderboardResult" lr
+        ${
+          capped
+            ? Prisma.sql`LEFT JOIN "UserMetric" um ON um."userId" = lr."userId" AND um.timeframe = 'AllTime'`
+            : Prisma.empty
+        }
         WHERE lr."leaderboardId" = ${boardId}
           AND lr.date = COALESCE(
             ${populatedDate}::date,
             (SELECT MAX(date) FROM "LeaderboardResult" WHERE "leaderboardId" = ${boardId})
           )
+          ${
+            capped
+              ? Prisma.sql`AND COALESCE(um."followerCount", 0) < ${maxFollowers}`
+              : Prisma.empty
+          }
         ORDER BY lr.position
         LIMIT ${FEED_CREATOR_LIMIT}
       `;

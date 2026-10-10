@@ -24,6 +24,7 @@
 
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import type { ModerationListingRow } from '~/server/services/blocks/app-listing.service';
+import { isVisibilityEligibleListingStatus } from '~/shared/utils/app-listing-visibility';
 
 /**
  * The DISPLAY status for the mod management table.
@@ -55,7 +56,8 @@ export type ListingModAction =
   | 'hide'
   | 'relist'
   | 'claim'
-  | 'purge';
+  | 'purge'
+  | 'set-visibility';
 
 /**
  * The ordered set of actions to render for a listing row.
@@ -121,6 +123,29 @@ export function listingModActions(input: {
     }
   }
 
+  /**
+   * 🔴 THE LEVEL CONTROL — OFFERED ON EXACTLY THE STATUSES THE SERVER WILL ACCEPT, asked
+   * via the SHARED predicate rather than a local status list. `applyVisibility` refuses
+   * anything outside `VISIBILITY_ELIGIBLE_LISTING_STATUSES` for a moderator too, so a
+   * second spelling here would drift into offering a button that can only fail — the shape
+   * the `mod-removed` Republish cell exists to forbid on the owner surface.
+   *
+   * Dual-kind: the level is a property of the LISTING row, and an on-site app's store
+   * discoverability is governed by the same column, so there is no `offsite` term.
+   *
+   * 🔴 IT SITS BEFORE THE PURGE BRANCH SO **PURGE STAYS RIGHTMOST**, and that ordering is
+   * an invariant with its own test ("is never the LAST action when a destructive one is
+   * present"), not a cosmetic preference. An earlier draft of this block appended after
+   * purge, which read as harmless — every status that offers purge except ONE also
+   * withholds the level control. The exception is the on-site orphan pre-approval DRAFT,
+   * which is level-eligible AND purgeable, so appending moved a hard-delete button out from
+   * under the moderator's cursor and put a benign one there instead. The invariant test is
+   * what caught it; the fix is the position, not the assertion.
+   */
+  if (isVisibilityEligibleListingStatus(input.status)) {
+    actions.push('set-visibility');
+  }
+
   // 🔴 ON-SITE ORPHAN PRE-APPROVAL DRAFT — the ONLY on-site shape `purgeListing` accepts, and
   // the only way a moderator can reclaim its slug.
   //
@@ -141,6 +166,9 @@ export function listingModActions(input: {
   // — so for an on-site pre-approval draft it is ALWAYS false, and gating on it offered Purge
   // on submissions that were actively under review. The live submission behind such a row is
   // an `AppBlockPublishRequest` joined by SLUG, which is what `hasPendingBlockRequest` carries.
+  //
+  // 🔴 IT STAYS LAST so the destructive button keeps the rightmost position — see the level
+  // control's note above for the one row where that genuinely collided.
   if (
     !offsite &&
     input.status === 'draft' &&
@@ -198,7 +226,18 @@ type ListingModRoute =
   /** `MessageAppOwnerModal` — subject + body, no `reason`. */
   | 'owner-message'
   /** The shared `ListingModActionModal` — one `reason` at `OFFSITE_MOD_REASON_MIN`. */
-  | 'reason';
+  | 'reason'
+  /**
+   * `ModListingVisibilityModal` — a LEVEL plus a `reason`.
+   *
+   * 🔴 A FOURTH ROUTE RATHER THAN REUSING `reason`, because the shared reason-gated modal
+   * has exactly one free-text field and this act needs a second input the moderator must
+   * CHOOSE. Routing it to `reason` would have made `actionRequiresReason` read "shows a
+   * reason textarea" for a surface that shows a radio group as well — the same overclaim
+   * the `message-owner` entry above was separated out to avoid, and the table is
+   * single-valued precisely so that is unrepresentable.
+   */
+  | 'visibility';
 
 /**
  * 🔴 THE ROUTING TABLE, AND THE REASON IT IS A TABLE RATHER THAN TWO PREDICATES.
@@ -245,7 +284,17 @@ const LISTING_MOD_ROUTES: Record<ListingModAction, ListingModRoute> = {
   relist: 'reason',
   claim: 'reason',
   purge: 'reason',
+  'set-visibility': 'visibility',
 };
+
+/**
+ * Whether an action opens the LEVEL picker (a visibility level + a `reason`).
+ *
+ * Disjoint from the other two predicates by construction — one table entry per action.
+ */
+export function actionOpensVisibility(action: ListingModAction): boolean {
+  return LISTING_MOD_ROUTES[action] === 'visibility';
+}
 
 /**
  * Every member of {@link ListingModAction}, derived from {@link LISTING_MOD_ROUTES}
@@ -296,6 +345,8 @@ export function listingModActionLabel(action: ListingModAction): string {
       return 'Claim';
     case 'purge':
       return 'Purge';
+    case 'set-visibility':
+      return 'Visibility';
   }
 }
 

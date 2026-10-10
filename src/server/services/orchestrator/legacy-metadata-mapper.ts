@@ -9,7 +9,7 @@
  *   step.metadata.params: TextToImageParams (prompt, negativePrompt, cfgScale, etc.)
  *
  * New format:
- *   step.metadata.input: GenerationGraphOutput
+ *   step.metadata.input: GenerationData
  *     - model: ResourceData (checkpoint)
  *     - resources: ResourceData[] (LoRAs, etc.)
  *     - vae: ResourceData (optional)
@@ -21,13 +21,14 @@
 import type { WorkflowStep } from '@civitai/client';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
-import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
+import type { ResourceData } from '~/shared/generation/values';
+import { DRAFT_WORKFLOW, getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { parseAIRSafe } from '~/shared/utils/air';
-import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { LooseGenerationData } from './form-graph/types';
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { isMediaHost } from '~/shared/utils/media-host';
 import { logToAxiom } from '~/server/logging/client';
 import { logHostOf } from '~/server/services/orchestrator/trusted-blob-url';
@@ -38,7 +39,7 @@ import {
   getOutputTypeForWorkflow,
   getWorkflowsForEcosystem,
   workflowConfigByKey,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 import {
   ecosystemByKey,
   getBaseModelConfig,
@@ -68,7 +69,6 @@ const COMFY_KEY_TO_WORKFLOW: Record<string, string> = {
 /**
  * Reverse of COMFY_KEY_TO_WORKFLOW: maps graph workflow keys back to legacy comfy keys.
  * Used by mapGraphToLegacyParams to restore the hyphenated format the legacy form expects.
- * Special cases (e.g. txt2img:draft → draft flag) are handled separately.
  */
 const WORKFLOW_TO_COMFY_KEY: Record<string, string> = {
   'txt2img:face-fix': 'txt2img-facefix',
@@ -201,7 +201,7 @@ function ensureEcosystemCompatible(
   if (isEnhancementWorkflow(workflow)) return workflow;
 
   // Try the base workflow (strip variant) before crossing categories.
-  // e.g. txt2img:draft → txt2img when ecosystem doesn't support draft
+  // e.g. txt2img:hires-fix → txt2img when the ecosystem has no hires-fix
   const [base] = workflow.split(':');
   if (base !== workflow && ecosystemSupportsWorkflow(baseModel, base)) {
     return base;
@@ -278,12 +278,7 @@ function resolveWorkflowFromParams(
     if (mapped) return mapped;
   }
 
-  // 2. Draft mode
-  if (params.draft && (!params.process || params.process === 'txt2img')) {
-    return 'txt2img:draft';
-  }
-
-  // 3. If workflow already uses new format (image:*/video:*), migrate to old format
+  // 2. If workflow already uses new format (image:*/video:*), migrate to old format
   // TODO - remove this after 1 month
   if (params.workflow?.startsWith('image:') || params.workflow?.startsWith('video:')) {
     const NEW_TO_OLD: Record<string, string> = {
@@ -304,7 +299,7 @@ function resolveWorkflowFromParams(
     return NEW_TO_OLD[params.workflow] ?? 'txt2img';
   }
 
-  // 4. Determine base process and refine
+  // 3. Determine base process and refine
   const process = params.process ?? params.workflow;
   if (process) {
     switch (process) {
@@ -330,12 +325,12 @@ function resolveWorkflowFromParams(
     }
   }
 
-  // 5. Infer from source images
+  // 4. Infer from source images
   if (params.sourceImage || params.images) {
     return resolveImg2ImgWorkflow(baseModel);
   }
 
-  // 6. Detect video workflow from engine parameter
+  // 5. Detect video workflow from engine parameter
   if (params.engine && ENGINE_TO_BASE_MODEL[params.engine]) {
     if (imageCount > 0) {
       return resolveImg2VidWorkflow(baseModel, imageCount);
@@ -343,7 +338,7 @@ function resolveWorkflowFromParams(
     return 'txt2vid';
   }
 
-  // 7. Fallback — pick the first non-enhancement, non-utility workflow that
+  // 6. Fallback — pick the first non-enhancement, non-utility workflow that
   // matches the baseModel's media type AND is supported by the ecosystem.
   // More future-proof than hardcoding 'txt2music' for audio: new audio
   // ecosystems may have different primary workflows, so we let the workflow
@@ -605,7 +600,7 @@ export function mapDataToGraphInput(
     process: _process,
     engine: _engine,
     fluxMode: _fluxMode,
-    draft: _draft, // Consumed by resolveWorkflow → txt2img:draft variant (image workflows)
+    draft: _draft, // Images name draft by workflow key; re-applied below for video only
     turbo: _turbo, // Legacy Wan field — now mapped to 'draft' node
     // Legacy field names that map to different graph node keys
     openAITransparentBackground,
@@ -624,21 +619,33 @@ export function mapDataToGraphInput(
     _transformations as Array<Record<string, unknown>>
   );
 
-  // For video workflows, pass draft through (image workflows consume it via resolveWorkflow).
-  // Also map legacy 'turbo' → 'draft' for old stored Wan data.
+  // Legacy Wan data stored this node as 'turbo'.
   const isVideoWorkflow =
     typeof workflow === 'string' &&
     ['txt2vid', 'img2vid', 'vid2vid'].some((prefix) => workflow.startsWith(prefix));
   const videoDraft = isVideoWorkflow ? _draft ?? _turbo ?? undefined : undefined;
 
+  // Draft's steps/cfgScale/sampler only cohere with its accelerator (SD's injected LoRA, Flux's
+  // draft build): kept when the remix lands back on the draft workflow, dropped anywhere else. An
+  // image draft is named by its WORKFLOW KEY with no `draft` field; only video stores the flag.
+  const incomingWorkflow =
+    typeof _wf === 'string' ? _wf : typeof _process === 'string' ? _process : '';
+  const wasImageDraft = !isVideoWorkflow && (incomingWorkflow.endsWith(':draft') || !!_draft);
+
+  const passthrough: Record<string, unknown> = { ...rest };
+  if (wasImageDraft && workflow !== DRAFT_WORKFLOW) {
+    delete passthrough.steps;
+    delete passthrough.cfgScale;
+    delete passthrough.sampler;
+  }
+
   return removeEmpty({
-    ...rest,
+    ...passthrough,
     workflow,
     ecosystem, // Maps from legacy 'baseModel' field
     aspectRatio,
     images,
     transformations: mappedTransformations,
-    // For video workflows, preserve draft (not consumed by resolveWorkflow)
     ...(videoDraft != null && { draft: !!videoDraft }),
     // Map legacy field names to graph node keys
     ...(openAITransparentBackground != null && { transparent: openAITransparentBackground }),
@@ -686,12 +693,14 @@ export function getGenerationDisplayKeys(
       ...mapDataToGraphInput(meta, enriched),
       ...splitResourcesByType(enriched),
     };
-    const result = generationGraph.safeParse(input, DISPLAY_GENERATION_CTX);
+    const result = generationHub.parse(reconcileSelectors(input).raw, DISPLAY_GENERATION_CTX);
     if (!result.success) return null;
 
-    return Object.values(result.nodes)
-      .filter((node) => node.kind === 'node')
-      .map((node) => node.key)
+    // Input fields = emitted data minus `computedKeys`. The `meta[key] != null` filter below
+    // bounds any discrepancy: a field absent from the payload cannot be reported.
+    const computed = new Set(result.computedKeys ?? []);
+    return Object.keys(result.data)
+      .filter((key) => !computed.has(key))
       .filter((key) => key !== 'prompt' && key !== 'negativePrompt' && meta[key] != null);
   } catch {
     return null;
@@ -713,7 +722,7 @@ export function getGenerationDisplayKeys(
 export function mapLegacyMetadata(
   step: WorkflowStep,
   enrichedResources: GenerationResource[]
-): Partial<GenerationGraphCtx> | undefined {
+): Partial<LooseGenerationData> | undefined {
   const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
   const legacyMetadata = metadata as GeneratedImageStepMetadata;
@@ -736,14 +745,14 @@ export function mapLegacyMetadata(
   }
 
   // Cast needed: the return is a loose superset of fields from the discriminated union,
-  // which doesn't match any single branch of Partial<GenerationGraphCtx> exactly.
+  // which doesn't match any single branch of Partial<LooseGenerationData> exactly.
   return {
     ...graphInput,
     model,
     upscaler,
     resources,
     vae,
-  } as Partial<GenerationGraphCtx>;
+  } as Partial<LooseGenerationData>;
 }
 
 /**
@@ -806,7 +815,7 @@ export function mapGraphToLegacyParams(
     quality,
     fluxMode,
     workflow,
-    // v2 DataGraph uses 'wanVersion'; legacy form uses 'version'
+    // The generation graph uses 'wanVersion'; the legacy form uses 'version'
     wanVersion,
     // Extract draft so the explicit return value doesn't shadow it from ...rest
     draft: graphDraft,
@@ -827,12 +836,6 @@ export function mapGraphToLegacyParams(
       legacyWorkflow = WORKFLOW_TO_COMFY_KEY[workflow];
     }
 
-    // Handle draft variant: 'txt2img:draft' → workflow='txt2img' + draft=true
-    if (workflow === 'txt2img:draft') {
-      legacyWorkflow = 'txt2img';
-      draft = true;
-    }
-
     // Preserve draft from graph output (e.g. Wan's draft node) when not set by workflow
     if (graphDraft && draft == null) {
       draft = !!graphDraft;
@@ -851,7 +854,7 @@ export function mapGraphToLegacyParams(
   const engine = typeof ecosystem === 'string' ? getEngineFromEcosystem(ecosystem) : undefined;
 
   // Map wanVersion → version for legacy Wan form compatibility.
-  // The v2 DataGraph stores 'wanVersion', but the legacy form expects 'version'.
+  // The generation graph stores 'wanVersion', but the legacy form expects 'version'.
   const version = wanVersion ?? rest.version;
   if (wanVersion) delete rest.version; // avoid both fields
 

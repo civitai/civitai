@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -25,9 +26,13 @@ import { renderWithProviders } from '../../../../test/component-setup';
 // -----------------------------------------------------------------------------
 // Same shape as VideoInput's `vi.mock('~/utils/trpc', ...)`, but the factory
 // declares EVERY procedure the component touches, each with its own vi.fn()
-// useQuery so the two queries are driven INDEPENDENTLY per test:
+// useQuery so the two queries are driven INDEPENDENTLY per test — over an
+// `importOriginal` spread, so only `trpc` is substituted and every other export
+// of the module stays real:
 //
-//   vi.mock('~/utils/trpc', () => ({
+//   import type * as TrpcModule from '~/utils/trpc';
+//   vi.mock('~/utils/trpc', async (importOriginal) => ({
+//     ...(await importOriginal<typeof TrpcModule>()),
 //     trpc: { generation: {
 //       getGenerationData: { useQuery: vi.fn() },   // server-side (on-site drop) path
 //       resolveImageMeta:  { useQuery: vi.fn() },    // client-side EXIF path
@@ -98,28 +103,64 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     it thin so the "Resources (N)" header/count branch is testable without
 //     standing up the whole app-context provider stack. Stub shows the resource
 //     id so the per-resource mapping is still observable.
+//   - `~/components/ResourceLoad/ResourceResidency`: `ResidencyBatchProvider`
+//     wraps the same list and is a REQUIRED-CONTEXT component (it calls
+//     `useCurrentUser()` and `trpc.useQueries`). Stubbed to a passthrough — see
+//     the long note on its `vi.mock` for what leaving it real cost.
 // We do NOT mock Mantine (resolve.dedupe handles dual-React at the scaffold).
 
-// NOTE: vi.mock replaces the WHOLE module, so any OTHER importer of a
-// `~/utils/trpc` export in this component's import chain breaks unless mocked.
-// `generation-graph.store` (imported transitively for the "add to generation"
-// flow) uses `trpcVanilla.generation.getGenerationData.query`, so we stub
-// `trpcVanilla` too (and the other named exports for safety). VideoInput didn't
-// need this because its chain doesn't reach generation-graph.store.
-vi.mock('~/utils/trpc', () => ({
+// 🔴 `importOriginal` SPREAD, not a hand-written module object.
+//
+// SCOPE OF THIS SWITCH, stated precisely: it closes this file's one ERROR-severity lint
+// finding, which is a real half of civitai#5364 — but NOT the half that was making tests
+// red. The `ResidencyBatchProvider` stub below removes both the
+// `missing CivitaiSessionContext` throw and the undeclared `trpc.useQueries` access on
+// its own; verified by putting the hand-written factory back with that stub in place and
+// watching this file still pass 8/8. Two independent fixes in one commit, not one fix
+// with a prerequisite.
+//
+// It is also NOT a consolidation of the class: many other test files still mock
+// `~/utils/trpc` with a bare factory, nearly all of them with no `eslint-disable` — so
+// the mechanism survives everywhere but here. The three figures that used to sit here
+// are deleted rather than restated: two did not reproduce, and the `grep -l` offered
+// alongside them matches every form of the mock (this comment included), so it cannot
+// produce any of them. Telling a bare factory from an `importOriginal` one needs a
+// paren-balanced, comment-stripped walk of each `vi.mock` call — and a figure nobody
+// can re-derive is worse than none.
+//
+// This mock used to name its exports by hand (`trpc`, `trpcVanilla`, `queryClient`,
+// `handleTRPCError`), which `local-rules/no-wholesale-module-mock` flags at
+// error severity for precisely the failure this file suffered: the day the module — or any
+// consumer in this component's import chain — reaches for an export the factory omits, the
+// omission surfaces as `undefined`, and the whole FILE fails to load with 0 tests collected
+// and no failing assertion. The hand-named list was already one round of that whack-a-mole
+// (`trpcVanilla` was added for `generation-graph.store`'s
+// `trpcVanilla.generation.getGenerationData.query`).
+//
+// Spreading the real module keeps every export this file does not drive REAL, so only
+// `trpc` itself is substituted. That is still a substitution, so the two queries the
+// component drives are declared below — but a NEW transitive consumer of some other export
+// now gets a working binding instead of silently zeroing the suite.
+//
+// 🔴 THE COST OF THE SPREAD, so nobody is surprised by it: `queryClient`, `trpcVanilla`
+// and `handleTRPCError` now resolve to the REAL module, where the hand-written factory
+// replaced them with `{}` / a `vi.fn()`. Nothing this file renders reaches any of them
+// today, so this is latent — but for two of them it converts LOUD-wrong into
+// SILENT-wrong if something ever does. The real `queryClient` (`src/utils/trpc.ts:420`)
+// is a lazy Proxy over the browser QueryClient, so `setQueriesData` used to THROW on
+// `{}` and would now quietly mutate a cache no test observes; and the real `trpcVanilla`
+// (`src/utils/trpc.ts:452`) carries a terminating link to `/api/trpc`, i.e. it is one
+// interaction away from a live `fetch` in a scaffold whose own header promises to stay
+// network-free (`test/component-setup.tsx:12`). If a consumer in this chain starts
+// touching either, re-declare that export here rather than leaving it real.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     generation: {
       getGenerationData: { useQuery: vi.fn() },
       resolveImageMeta: { useQuery: vi.fn() },
     },
   },
-  trpcVanilla: {
-    generation: {
-      getGenerationData: { query: vi.fn() },
-    },
-  },
-  queryClient: {},
-  handleTRPCError: vi.fn(),
 }));
 
 vi.mock('~/store/metadata-extraction.store', () => ({
@@ -130,6 +171,45 @@ vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
   EdgeVideo: ({ src }: { src: string }) => <div data-testid="edge-video" data-src={src} />,
 }));
 
+// 🔴 ResidencyBatchProvider is a REQUIRED-CONTEXT wrapper, and leaving it real is
+// what made the `store.resolvedResources` test permanently red (civitai#5364).
+//
+// The panel grew a `<ResidencyBatchProvider>` around the resolved-resources list
+// (MetadataExtractionPanel.tsx:447) after this file was written. That provider calls
+// `useCurrentUser()` -> `useCivitaiSessionContext()`, which THROWS
+// `missing CivitaiSessionContext` under this network-free scaffold, and
+// `trpc.useQueries`, which the wholesale `~/utils/trpc` mock above does not declare.
+// Either one alone kills the render, so `document.body` is EMPTY and the
+// `Resources (2)` assertion burns its full 15s locator timeout — reported as
+// "Cannot find element", i.e. pointing at the assertion rather than the cause.
+// It is the one failing test of the eight in this file.
+//
+// Stubbed to a transparent passthrough: this file asserts the Resources card's
+// COUNT and per-resource mapping, never residency. `importOriginal` keeps every
+// other export real so a future child cannot be silently satisfied by `undefined`.
+vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceResidencyModule>()),
+  // The passthrough DISCARDS `modelVersionIds`, so the panel's
+  // `store.resolvedResources.map((r) => r.id)` -> provider wiring
+  // (MetadataExtractionPanel.tsx:447-448) is NOT observable from this file — the
+  // per-resource mapping that IS observable is the `./ResourceItemContent` stub's
+  // `data-resource-id` below, which is a different edge. To pin the provider's
+  // argument, echo the ids onto a wrapper element here instead of returning a
+  // bare fragment.
+  ResidencyBatchProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+// 🔴 LOAD-BEARING BEYOND THE "Resources (N)" BRANCH — do not delete this stub to
+// "widen coverage". The reason is the one section (3) above already gives for stubbing
+// it: the real `ResourceItemContent` reads AppProvider context
+// (`ResourceItemContent.tsx:165` calls `useAppContext`), and this file mocks no
+// `~/providers/AppProvider`. Measured by deleting only this stub: 1 of the 8 tests
+// fails — `store.resolvedResources render the Resources card`, on the 15s locator
+// timeout, with `missing AppProvider in tree` thrown at
+// `src/providers/AppProvider.tsx:78` from inside `ResourceItemContent`. Not the
+// civitai#5364 residency throw: `missing CivitaiSessionContext` does not appear in that
+// run at all, because the residency leaf sits further down this child and is never
+// reached.
 vi.mock('./ResourceItemContent', () => ({
   ResourceItemContent: ({ resource, actions }: { resource: { id: number }; actions: any }) => (
     <div data-testid="resource-item" data-resource-id={resource.id}>
@@ -138,6 +218,8 @@ vi.mock('./ResourceItemContent', () => ({
   ),
 }));
 
+import type * as ResourceResidencyModule from '~/components/ResourceLoad/ResourceResidency';
+import type * as TrpcModule from '~/utils/trpc';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
 import { trpc } from '~/utils/trpc';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';

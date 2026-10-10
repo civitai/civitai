@@ -10,6 +10,7 @@ import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
 import { projectAppWorkflow } from '~/server/services/blocks/workflow.service';
 import {
+  BLOCK_POST_APP_ID_META_KEY,
   BLOCK_POST_MAX_IMAGES,
   BLOCK_POST_MAX_TAGS,
   isTerminalBlockPostWorkflowStatus,
@@ -27,6 +28,7 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 
 /**
@@ -807,20 +809,22 @@ export async function previewBlockPost(input: {
 /**
  * `Post.metadata` key carrying the publishing app's `OauthClient.id`.
  *
- * SERVER-AUTHORITATIVE BY CONSTRUCTION: no post input schema has a `metadata`
- * field (`postCreateSchema` / `postUpdateSchema` both omit it), so no client —
- * block, browser or API — can set or forge it, and the server writes it
- * unconditionally on this path so a block cannot suppress it either. The one
- * native path that mutates `Post.metadata` (`updatePost`'s anti-bump raw UPDATE)
- * uses targeted key-deletes, so adding a key here is safe.
+ * 🔴 RE-EXPORTED, NOT DECLARED HERE. The declaration moved to the pure
+ * `block-post.logic.ts` once this key gained a READER — the post-detail
+ * "Published with <app>" chip (`post-app-chip.logic.ts`). A reader cannot import
+ * this module (it would pull Prisma into a pure projection), so a constant
+ * declared here forces the reader to re-spell the literal, and a rename on the
+ * write side then kills the chip silently with nothing failing.
  *
- * Same key name and same value semantics as the `Image` precedent
- * (`BLOCK_PUBLISHED_APP_ID_META_KEY`) so ONE moderation sweep can read both.
+ * This export stays so every existing call site keeps working unchanged.
  *
- * 🔴 THE BADGE MUST RENDER FROM THIS COLUMN, NOT FROM THE COPY. A block can write
- * "made with X" into `title`/`detail` and be lying; it cannot write this.
+ * ⚠️ It is `export { <imported binding> }`, NOT `export … from …`. A bare
+ * re-export forwards the name without creating a LOCAL binding, so the write
+ * path's own `metadata: { [BLOCK_POST_APP_ID_META_KEY]: … }` below throws
+ * `ReferenceError` at runtime while typechecking clean. The suite caught it; the
+ * typechecker did not.
  */
-export const BLOCK_POST_APP_ID_META_KEY = 'blockPublishedAppId' as const;
+export { BLOCK_POST_APP_ID_META_KEY };
 
 export type CreatedBlockPost = {
   postId: number;
@@ -1003,6 +1007,9 @@ export async function writeBlockPost(input: {
 
     return created;
   });
+
+  if (input.title || input.detail)
+    scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   return {
     postId: post.id,

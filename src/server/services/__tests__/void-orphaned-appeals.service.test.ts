@@ -3,6 +3,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { isSafeToRetry } from '@civitai/buzz';
 
 /**
  * An appeal whose entity has been deleted can never be reviewed: the moderator queue is driven
@@ -91,7 +92,8 @@ describe('voidOrphanedAppeals', () => {
 
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(mockRefundMultiAccountTransaction).toHaveBeenCalledWith(
-      expect.objectContaining({ externalTransactionIdPrefix: 'appeal-10-1700000000000' })
+      expect.objectContaining({ externalTransactionIdPrefix: 'appeal-10-1700000000000' }),
+      { shouldRetry: isSafeToRetry }
     );
     expect(mockRefundTransaction).toHaveBeenCalledTimes(1);
     expect(mockRefundTransaction.mock.calls[0]?.[0]).toBe('legacy-txn-id');

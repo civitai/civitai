@@ -9,6 +9,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   createDraftModelFromWorkflow,
+  isTrainingNotApprovedRefusal,
   stampWorkflowDraftModel,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -18,6 +19,7 @@ import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import type { Session } from '~/types/session';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -30,7 +32,19 @@ import { trpc } from '~/utils/trpc';
 const wizardUrl = (modelId: number, modelVersionId: number, step: number) =>
   `/models/${modelId}/wizard?step=${step}&modelVersionId=${modelVersionId}`;
 
-export const getServerSideProps = createServerSideProps({
+type PrepareProps = {
+  modelId: number;
+  modelVersionId: number;
+  versionName: string;
+  baseModel: string;
+  epochUrl: string;
+  sampleImages: string[];
+  existingModelFileId: number | null;
+};
+
+type PageProps = { session: Session } & (PrepareProps | { refusal: 'not-approved' });
+
+export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
   resolver: async ({ session, ctx }) => {
     if (!session?.user)
@@ -74,9 +88,12 @@ export const getServerSideProps = createServerSideProps({
         workflow,
         selectedEpochNumber: epoch,
       }));
-    } catch {
-      // Assemble refuses an unresolvable base / a run with no downloadable checkpoint by throwing — send
-      // the user to their models list rather than a 500 page.
+    } catch (error) {
+      // A run whose dataset is not approved renders an explanation instead of the redirect below.
+      if (isTrainingNotApprovedRefusal(error))
+        return { props: { session, refusal: 'not-approved' as const } };
+      // Any other refusal (an unresolvable base, no downloadable checkpoint) sends the user to their
+      // models list rather than a 500 page.
       return { redirect: { destination: '/models', permanent: false } };
     }
 
@@ -123,12 +140,38 @@ export const getServerSideProps = createServerSideProps({
         versionName: version.name,
         baseModel: version.baseModel,
         epochUrl: selectedEpoch.modelUrl,
-        sampleImages: selectedEpoch.sampleImages ?? [],
+        // '' is a failed sample's slot, not an image.
+        sampleImages: (selectedEpoch.sampleImages ?? []).filter(Boolean),
         existingModelFileId: existingModelFile?.id ?? null,
       },
     };
   },
 });
+
+export default function TrainFromOrchestratorPage(
+  props: PrepareProps | { refusal: 'not-approved' }
+) {
+  if ('refusal' in props) return <TrainingNotApproved />;
+  return <PrepareModel {...props} />;
+}
+
+function TrainingNotApproved() {
+  return (
+    <>
+      <Meta title="Can't publish this training run" deIndex />
+      <Center h="60vh">
+        <Stack align="center" gap="sm" maw={440}>
+          <Text ta="center">
+            This training run&rsquo;s dataset hasn&rsquo;t been approved, so a model can&rsquo;t be
+            created from it. If the dataset is still being reviewed, try again once the review is
+            complete.
+          </Text>
+          <Anchor href="/models">Back to models</Anchor>
+        </Stack>
+      </Center>
+    </>
+  );
+}
 
 /**
  * The epoch was already chosen in Training Studio, so this page performs the wizard's
@@ -136,7 +179,7 @@ export const getServerSideProps = createServerSideProps({
  * mark the version Approved, seed the post form with the epoch's samples — and lands the user
  * on "Edit model". The manual picker (wizard step 1) stays reachable as the failure fallback.
  */
-export default function TrainFromOrchestratorPage({
+function PrepareModel({
   modelId,
   modelVersionId,
   versionName,
@@ -144,15 +187,7 @@ export default function TrainFromOrchestratorPage({
   epochUrl,
   sampleImages,
   existingModelFileId,
-}: {
-  modelId: number;
-  modelVersionId: number;
-  versionName: string;
-  baseModel: string;
-  epochUrl: string;
-  sampleImages: string[];
-  existingModelFileId: number | null;
-}) {
+}: PrepareProps) {
   const router = useRouter();
   const [failed, setFailed] = useState(false);
   const moveAssetMutation = trpc.training.moveAsset.useMutation();

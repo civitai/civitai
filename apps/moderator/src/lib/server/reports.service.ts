@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity } from './report-entities';
+import { SYSTEM_USER_ID } from './users.service';
 import { rewardReportReporters } from './rewards';
 import {
   DEFAULT_REPORT_REASONS,
@@ -15,6 +16,15 @@ import {
   type ReportEntity,
   type ReportReason,
 } from '$lib/reports';
+
+/**
+ * Civitai Games guests all file as one account, so after the first a guest report lands in
+ * `details.guests` / `details.guestCount` rather than `alsoReportedBy` (the first is already the filer or
+ * in that array). Without this, forty guest reports on one game count as one reporter.
+ */
+const extraGuests = (alias: string) =>
+  sql<number>`(CASE WHEN ${sql.ref(`${alias}.details`)}->>'guestCount' ~ '^[0-9]{1,6}$'
+    THEN greatest((${sql.ref(`${alias}.details`)}->>'guestCount')::int - 1, 0) ELSE 0 END)`;
 
 export type ModeratorReportRow = {
   id: number;
@@ -118,6 +128,12 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       FROM "Announcement" a JOIN "User" u ON u.id = a."userId"
       WHERE a.id = ${entityId} AND u.username IS NOT NULL
     )`,
+
+  // Absolute, on games.civitai.com: Game Frame computes it, and `getReportItemUrl` uses it as-is.
+  gameFrameGame: (entityId) =>
+    sql<string | null>`(
+      SELECT g.url FROM "GameFrameGame" g WHERE g.id = ${entityId}
+    )`,
 };
 
 /** The types `entityUrl` cannot answer for. Derived from the resolvers so a new one cannot be written
@@ -126,6 +142,30 @@ export const CONTEXT_ENTITIES = Object.keys(CONTEXT_RESOLVERS) as ReportEntity[]
 
 function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<number | null>>) {
   return CONTEXT_RESOLVERS[type]?.(entityId) ?? sql<string | null>`null::text`;
+}
+
+/** Whether the report page can still open this report (it finds one only through the entity's report
+ *  join row, deleted with the entity), plus the content's context URL. Null when the lookup failed:
+ *  read it as unknown, never as gone. */
+export async function reportReachability(
+  type: ReportEntity,
+  entityId: number | null,
+  reportId: number
+): Promise<{ reachable: boolean; contextUrl: string | null } | null> {
+  const join = reportEntity(type);
+  try {
+    const { rows } = await sql<{ reachable: boolean; url: string | null }>`
+      SELECT EXISTS (
+               SELECT 1 FROM ${sql.table(join.reportTable)} WHERE "reportId" = ${reportId}
+             ) AS reachable,
+             ${
+               entityId ? reportContextUrl(type, sql<number>`${entityId}::int`) : sql`null::text`
+             } AS url
+    `.execute(dbRead);
+    return rows[0] ? { reachable: Boolean(rows[0].reachable), contextUrl: rows[0].url } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `'all'` must be said, not implied by omission. These were optional and silently skipped, which is
@@ -208,7 +248,9 @@ export async function getReports({
       'resolver.username as statusSetByUsername',
     ])
     .select(
-      sql<number>`coalesce(array_length("Report"."alsoReportedBy", 1), 0)`.as('alsoReportedByCount')
+      sql<number>`coalesce(array_length("Report"."alsoReportedBy", 1), 0) + ${extraGuests(
+        'Report'
+      )}`.as('alsoReportedByCount')
     )
     .select(entityId.as('entityId'))
     .select(reportContextUrl(type, entityId).as('contextUrl'))
@@ -253,6 +295,8 @@ export async function getReportHistory(
       )} er where er."reportId" = "Report"."id")`
     )
     .where('Report.statusSetAt', 'is not', null)
+    // The daily Clavata expiry closes reports as the system user; nobody worked those.
+    .where('Report.statusSetBy', 'is distinct from', SYSTEM_USER_ID)
     .orderBy('Report.statusSetAt', 'desc')
     .limit(limit + 1)
     .execute()) as ReportHistoryRow[];
@@ -503,7 +547,9 @@ export async function getMostReportedPage({
 async function countMostReported(
   days: number
 ): Promise<{ totalItems: number; urgent: number; worst: number }> {
-  const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1`;
+  const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1 + ${extraGuests(
+    't'
+  )}`;
   const { rows } = await sql<{ total: number; urgent: number; worst: number }>`
     SELECT count(*)::int AS total,
            count(*) FILTER (WHERE ${reportCount} >= ${URGENT_REPORT_COUNT})::int AS urgent,
@@ -541,7 +587,9 @@ async function fetchMostReported({
   // The LIMIT is taken in a CTE and the per-entity subplans resolved OUTSIDE it. Postgres cannot project
   // through a Sort, so in one flat query the target list is evaluated below the ORDER BY — for every
   // pending report of the week, not the twenty kept.
-  const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1`;
+  const reportCount = sql<number>`coalesce(array_length(t."alsoReportedBy", 1), 0) + 1 + ${extraGuests(
+    't'
+  )}`;
   const entityId = (type: ReportEntity) => {
     const join = reportEntity(type);
     return sql<number | null>`(SELECT er.${sql.ref(join.fk)} FROM ${sql.table(join.reportTable)} er
@@ -602,4 +650,37 @@ async function fetchMostReported({
       reportedByUsername: r.reportedByUsername,
     };
   });
+}
+
+export type ReportedGame = { slug: string; reason: string; violation: string | null };
+
+/** The game a report is about, read through its join row. Null for a report that is not a game's. */
+export async function getReportedGame(reportId: number): Promise<ReportedGame | null> {
+  // The primary, not the replica: the moderator is acting on a row they just opened.
+  const row = await dbWrite
+    .selectFrom('Report as r')
+    .innerJoin('GameFrameGameReport as j', 'j.reportId', 'r.id')
+    .innerJoin('GameFrameGame as g', 'g.id', 'j.gameFrameGameId')
+    .select(['g.slug', 'r.reason', 'r.details'])
+    .where('r.id', '=', reportId)
+    .executeTakeFirst();
+  if (!row) return null;
+  const details = row.details as { violation?: unknown } | null;
+  return {
+    slug: row.slug,
+    reason: row.reason,
+    violation: typeof details?.violation === 'string' ? details.violation : null,
+  };
+}
+
+export type GameMirror = { id: number; title: string; visibility: string; official: boolean };
+
+/** What the mirror row says about each reported game, as of Game Frame's last push. */
+export async function getGameMirrors(ids: number[]): Promise<GameMirror[]> {
+  if (!ids.length) return [];
+  return dbRead
+    .selectFrom('GameFrameGame')
+    .select(['id', 'title', 'visibility', 'official'])
+    .where('id', 'in', ids)
+    .execute();
 }

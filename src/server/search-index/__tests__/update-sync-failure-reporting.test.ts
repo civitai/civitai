@@ -69,8 +69,8 @@ describe('updateSync :: failure reporting', () => {
   }, 30_000);
 
   it('attributes a failure at the push step back to the ids that were never written', async () => {
-    // The push task no longer carries the id list, so this pins that the id count survives the
-    // pull -> transform -> push handoff.
+    // Pins that `idCount` survives the pull -> transform -> push handoff, so a push-step failure
+    // is counted.
     const pushData = vi.fn().mockRejectedValue(new Error('meilisearch rejected the batch'));
     const index = buildIndex({ pushData, updateSyncChunkSize: 300 });
 

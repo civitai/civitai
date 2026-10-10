@@ -313,15 +313,25 @@ which is false client-side: `--print-input` shows the graph carries
 `"aspectRatio": "21:9"` as an opaque **string**, with no width/height anywhere —
 so the CLI is faithful and the **server** chose the dimensions.
 
-What was NOT established: whether the server clamps unknown buckets to a nearest
-supported one, ignores them entirely, or rejects 21:9 for that ecosystem
-specifically. Distinguishing those costs another generation and nobody has paid
-for it.
+**Why, established since from the code rather than another paid run:** the
+server snaps the string to the **nearest ratio the ecosystem offers** — it is
+neither ignored nor rejected. The aspect-ratio input transform
+(`aspectRatioDef` in `src/shared/form-graph/generation/defs.ts`) takes an exact match from the
+ecosystem's option list if there is one, and otherwise `findClosestAspectRatio`.
+In September the ~1M-pixel ecosystems offered only 2:3 / 1:1 / 3:2, so 21:9
+landed on 3:2 = 1216×832, which is exactly what was measured.
 
-**So: never trust the requested ratio for a hero.** Measure the produced file
-(`file <img>` prints the dimensions), and expect to crop to the slot geometry
-rather than to generate into it. Budget the hero as *generate wide-ish, then
-crop*, and record the realized dimensions in `taste.json` next to the seed.
+Since October those ecosystems (SDXL, Pony, Illustrious, NoobAI, Pony v7, Anima,
+Chroma, Flux.1, Flux.2, Klein, Hi-Dream, Z-Image, Boogu, Ideogram) offer nine
+buckets including **21:9 = 1536×640** — except Flux.1 Pro, which tops out at
+16:9 — so the same command should now come back at 21:9. Not yet re-measured.
+
+**So: never trust the requested ratio for a hero.** Snapping is per ecosystem,
+and a ratio the ecosystem lacks still lands on its nearest neighbour. Measure the
+produced file (`file <img>` prints the dimensions), and expect to crop to the
+slot geometry rather than to generate into it. Budget the hero as *generate
+wide-ish, then crop*, and record the realized dimensions in `taste.json` next to
+the seed.
 
 Unrelated but same command, worth knowing: the realized charge came in **under**
 the estimate (29 Buzz against 4 × 8 estimated). The estimate is not binding in

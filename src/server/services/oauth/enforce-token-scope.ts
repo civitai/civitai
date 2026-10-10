@@ -20,6 +20,8 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { maybeRecordOauthScopeUsage } from '~/server/services/oauth/oauth-scope-audit';
+import { isFullScopeUserKey } from '~/server/auth/full-user-credential';
+import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
  * Map a settled procedure outcome to an HTTP-ish status for the audit row.
@@ -52,10 +54,13 @@ export function runEnforceTokenScope<T>(opts: {
   ctx: {
     tokenScope: number;
     apiKeyId?: number | null;
+    apiKeyType?: ApiKeyType | null;
     subject?: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string };
     user?: { id: number } | null;
   };
-  meta: { requiredScope?: number; blockApiKeys?: boolean } | undefined;
+  meta:
+    | { requiredScope?: number; blockApiKeys?: boolean; requireFullUserCredential?: boolean }
+    | undefined;
   path: string;
   next: () => Promise<T>;
 }): Promise<T> {
@@ -68,6 +73,16 @@ export function runEnforceTokenScope<T>(opts: {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This action cannot be performed via API key or OAuth token.',
+    });
+  }
+
+  // Unlike req.context, createContext defaults tokenScope to Full for sessions,
+  // so it is not a bearer marker.
+  const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
+  if (meta?.requireFullUserCredential && presentedBearer && !isFullScopeUserKey(ctx)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This action requires a signed-in session or a full-access personal API key.',
     });
   }
 

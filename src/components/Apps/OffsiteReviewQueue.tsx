@@ -87,6 +87,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 
 /**
  * /apps/review — the OFF-SITE (external-link) pending review section (W13 P3a).
@@ -97,8 +98,6 @@ import { trpc } from '~/utils/trpc';
  * `rejectExternalRequest`). Data is `appListings.listPendingRequests`
  * (moderatorProcedure); the whole /apps/review page already requires isModerator.
  */
-
-type OffsiteUser = { id: number; username: string | null; image: string | null };
 
 export type OffsitePendingRow = {
   id: string;
@@ -134,7 +133,17 @@ export type OffsitePendingRow = {
      */
     revisionOfId?: string | null;
   } | null;
-  submittedBy: OffsiteUser | null;
+  /**
+   * 🔴 THE SHARED CHIP, not a local narrowing. This field used to be typed
+   * `{ id, username, image }` here while the SAME tRPC payload was read as
+   * `ReviewSubmitterChip` (with `deletedAt`) two files away — and the two meet in
+   * `unifiedReviewRow`, where assigning the wider object through a non-fresh reference is
+   * structurally legal, so nothing objected. The server now ships `deletedAt` on this
+   * payload; a type that discards it hands the next person who swaps this queue's plain-text
+   * submitter for `UserAvatar` a silent `undefined` ⇒ falsy ⇒ a closed account rendered live
+   * and linked. The on-site half of this very list already made that swap.
+   */
+  submittedBy: ReviewSubmitterChip;
 };
 
 function formatDate(d: string | Date | null | undefined): string {
@@ -148,8 +157,7 @@ function formatDate(d: string | Date | null | undefined): string {
  * review SUBMITTED timestamps — the modal's submitted line + the review queue's
  * "Submitted" column. A mod deciding on a submission cares about the calendar day,
  * not the minute. Audit-trail timestamps (report "Reported", moderation history)
- * keep the full local formatter above where time-of-day matters. Matches
- * `MySubmissionsList.formatSubmissionDate`.
+ * keep the full local formatter above where time-of-day matters.
  */
 function formatSubmittedDate(d: string | Date | null | undefined): string {
   if (!d) return '—';

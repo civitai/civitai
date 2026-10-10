@@ -27,7 +27,10 @@ const QUEUE = resolve(repoRoot, '.claude/skills/dev-server/scripts/test-queue.mj
 // daemon, which is why the verdict below had no test: there was no way to stand a fake one up
 // beside it. Imported on the queue path only, for the reason given above QUEUE.
 const PORT_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-port.mjs');
+// The daemon's client, shared with cli.mjs. Imported on the queue path only, for the reason above.
+const HTTP_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-http.mjs');
 let DAEMON = null;
+let daemonFetch = null;
 // Whether the queue has taken ownership of this run. Once it has, a later failure must NOT be
 // answered by starting a second, unqueued suite — see the note where this is set.
 let accepted = false;
@@ -89,12 +92,13 @@ function runDirect(args) {
   });
 }
 
+function daemonRequest(path, { method = 'GET', body } = {}) {
+  const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
+  return daemonFetch(`${DAEMON}${path}`, { method, headers, body });
+}
+
 async function post(path, body) {
-  const res = await fetch(`${DAEMON}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const res = await daemonRequest(path, { method: 'POST', body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`daemon returned ${res.status}`);
   return res.json();
 }
@@ -141,6 +145,7 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
   try {
     const { resolveDaemonUrl } = await import(pathToFileURL(PORT_MODULE).href);
     DAEMON = resolveDaemonUrl();
+    ({ daemonFetch } = await import(pathToFileURL(HTTP_MODULE).href));
   } catch (err) {
     console.error(`Test queue address unusable (${err.message}); running directly.`);
     return fallback(args);
@@ -183,7 +188,7 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
 
   let lastLog = -1;
   for (;;) {
-    const res = await fetch(`${DAEMON}/test-runs/${run.id}`);
+    const res = await daemonRequest(`/test-runs/${run.id}`);
     if (res.status === 404) {
       console.error(
         `The daemon forgot run ${run.id} — it was most likely restarted. Re-run this command.`
@@ -196,7 +201,7 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
     }
     const state = await res.json();
 
-    const logs = await fetch(`${DAEMON}/test-runs/${run.id}/logs?since=${lastLog}`).then((r) =>
+    const logs = await daemonRequest(`/test-runs/${run.id}/logs?since=${lastLog}`).then((r) =>
       r.json()
     );
     for (const entry of logs.logs ?? []) {
@@ -224,7 +229,13 @@ if (
 ) {
   const args = process.argv.slice(2);
   const decision = queueDecision(args, process.env);
-  if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE)) {
+  if (
+    decision.queue &&
+    existsSync(CLI) &&
+    existsSync(QUEUE) &&
+    existsSync(PORT_MODULE) &&
+    existsSync(HTTP_MODULE)
+  ) {
     // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
     // rejection that kills the process with no tests run.
     //

@@ -37,11 +37,13 @@ const SRC = path.join(REPO_ROOT, 'src');
  */
 const EXEMPT: Record<string, { unguarded: number; reason: string }> = {
   'src/server/routers/blocks.router.ts': {
-    unguarded: 9,
+    unguarded: 10,
     reason:
-      "App Blocks: 5 paid submits + 4 whatIf/quote estimates (the pass-through `kind:'step'` " +
+      "App Blocks: 5 paid submits + 5 whatIf/quote estimates (the pass-through `kind:'step'` " +
       'arm added one of each — it is the same block spend path, so it inherits this exemption ' +
-      'rather than getting a different answer to the same question). The paid ones SHOULD be guarded, ' +
+      "rather than getting a different answer to the same question; the `kind:'training'` arm " +
+      'added a whatIf quote here, while its PAID submit is guarded, because a training workflow ' +
+      'is the same shape the training form already checks). The paid ones SHOULD be guarded, ' +
       'but blocks record spend through reserveBlockBuzzSpend rather than a generation/training ' +
       'buzzTransaction, so their workflow-id shape is not confirmed against the ledger the way ' +
       'the other paths are (1.16M rows, prefix == payer). Guarding on an unconfirmed id shape ' +

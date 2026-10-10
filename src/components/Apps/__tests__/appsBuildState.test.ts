@@ -160,14 +160,21 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
     expect(bad.success).toBe(false);
   });
 
-  it('🔴 the four funnel steps are exactly these', () => {
-    // The rollup query names these strings. Pinned as a SET so adding a fifth step is a
-    // deliberate edit here (and a reminder that `details` is a String column, so a fifth
-    // step needs NO ClickHouse migration — only a new enum VALUE would).
+  it('🔴 the funnel steps are exactly these', () => {
+    // The rollup query names these strings. Pinned as a SET so adding a step is a deliberate
+    // edit here (and a reminder that `details` is a String column, so a new step needs NO
+    // ClickHouse migration — only a new `type` VALUE would).
+    //
+    // `agent_prompt_copy` arrived with `AgentOnboardingCard`: the page now offers two routes
+    // into building an app (copy the three CLI commands, or paste one prompt into a coding
+    // agent) and they are separate steps so the comparison is answerable. The count is
+    // deliberately NOT in this test's name any more — it was "the four funnel steps" and the
+    // number had to be edited in two places to add one step, which is one place too many.
     const arm = trackActionSchema.options.find(
       (o) => o.shape.type.value === 'AppsBuild_Action'
     ) as never as { shape: { details: { shape: { action: { options: readonly string[] } } } } };
     expect([...arm.shape.details.shape.action.options].sort()).toEqual([
+      'agent_prompt_copy',
       'cli_copy',
       'create_entry',
       'request_access',

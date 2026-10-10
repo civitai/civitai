@@ -124,10 +124,10 @@ const LEDGER = [
   },
   {
     file: 'src/server/routers/blocks.router.ts',
-    count: 5,
+    count: 6,
     why:
-      'The tRPC bridge paths: the block-post writer plus the four workflow-submit arms ' +
-      '(txt2img, registry step, custom comfy, pass-through). These do NOT pass through the ' +
+      'The tRPC bridge paths: the block-post writer plus the five workflow-submit arms ' +
+      '(txt2img, registry step, custom comfy, pass-through, training). These do NOT pass through the ' +
       'REST middleware, so the middleware site above does not cover them.',
   },
   {
@@ -160,7 +160,7 @@ const PREDICATE_MODULE = 'src/server/services/blocks/scope-activity-predicate.ts
 /**
  * 🔴 THE CARRIER, AND IT CLOSES A MUTANT THAT SURVIVED THE WHOLE SUITE.
  *
- * Two of the nine writers — the storage set and delete audit rows — never see the claims
+ * Two of the eleven writers — the storage set and delete audit rows — never see the claims
  * object, so they thread a LOCAL destructured off the resolver that verified the token. The
  * accepted-spellings list admits that local by name, which means the per-site check above
  * accepts `privateRun: privateRun === true` without tracing where `privateRun` came from —
@@ -377,11 +377,18 @@ function discoverWriterFiles(): {
   // appending `&& !file.includes('/.')` to the walk's predicate left the whole 864-test gate
   // green with an unmarked writer live in `src/pages/api/.well-known/`.
   //
-  // So the dot region is globbed explicitly. `src/**/*` does not match a leading dot at any
-  // segment, which is why the second pattern is needed rather than a flag.
+  // So the dot region is globbed explicitly, AND AT FIXED DEPTHS. `src/**/*` does not match a
+  // leading dot at any segment, and a flag does not exist — but neither does `src/**/.*/**`
+  // work, because `**` never pairs with a dot segment: measured, `src/**/.well-known/*.ts`
+  // returns 0 for a file `src/pages/api/.well-known/*.ts` returns. A pattern per depth is the
+  // only form that reaches them; (b)'s two-way comparison is what reports a depth going unreached.
+  const dotPatterns = Array.from(
+    { length: 8 },
+    (_, depth) => `src/${'*/'.repeat(depth)}.*/**/*.{ts,tsx}`
+  ).flatMap((pattern) => [pattern, pattern.replace('/**/', '/')]);
   const globbed = [
     ...globSync('src/**/*.{ts,tsx}', { cwd: process.cwd() }),
-    ...globSync('src/**/.*/**/*.{ts,tsx}', { cwd: process.cwd() }),
+    ...dotPatterns.flatMap((pattern) => globSync(pattern, { cwd: process.cwd() })),
   ]
     .map((f) => f.replace(/\\/g, '/'))
     .filter(

@@ -1,5 +1,7 @@
 import { error, fail, type ActionFailure, type RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '@civitai/auth';
+import { GENERATOR_RESTRICTIONS_PATH, SCAM_RESTRICTIONS_PATH } from '$lib/restriction-types';
+import { FLAG_APPEALS_PATH, MINOR_HASH_PATH } from '$lib/minor-flags/paths';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 
 export const APP = 'moderator';
@@ -101,8 +103,14 @@ export const NAVIGATION: NavLink[] = [
       // No `countKey`: the Pending count costs ~10s, and `sidebar-counts.service.ts` is one Promise.all
       // that every navigation in the app waits on. The counts live on the page's own tabs instead,
       // fetched separately. A countKey nothing produces renders as a silently missing badge.
-      { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' },
+      { path: MINOR_HASH_PATH, label: 'Minor Hash Matches' },
+      { path: FLAG_APPEALS_PATH, label: 'Model Flag Appeals' },
     ],
+  },
+  {
+    label: 'Bounties',
+    path: '/bounties',
+    children: [{ path: '/bounties/poi-appeals', label: 'Real-Person Appeals' }],
   },
   {
     label: 'Articles',
@@ -114,9 +122,10 @@ export const NAVIGATION: NavLink[] = [
         countKey: 'articles',
         informational: true,
       },
-      { path: '/articles/ratings', label: 'Rating Disputes', countKey: 'articleRatings' },
     ],
   },
+  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
+  { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
   {
     label: 'Audit',
@@ -125,9 +134,19 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/prohibited-prompts', label: 'Prohibited Prompts' },
       { path: '/audit/prompt-tester', label: 'Prompt Tester' },
       { path: '/audit/scanner-audit', label: 'Scanner Audit' },
-      { path: '/audit/generator-restrictions', label: 'Generator Restrictions' },
+      { path: GENERATOR_RESTRICTIONS_PATH, label: 'Generator Restrictions' },
       { path: '/audit/training-models', label: 'Training Models' },
       { path: '/audit/training-data', label: 'Training Data Review' },
+      { path: '/audit/relabel', label: 'Removal Label Relabel' },
+      { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
+    ],
+  },
+  {
+    label: 'Text Scan',
+    path: '/text-scan',
+    children: [
+      { path: '/text-scan/check', label: 'Check' },
+      { path: '/text-scan/prompts', label: 'Versions' },
     ],
   },
   {
@@ -169,17 +188,31 @@ export const NAVIGATION: NavLink[] = [
   // than being listed: a run and its findings are one thing, and granting the list without the rows
   // would show a moderator a count they cannot open.
   { path: '/abuse', label: 'Abuse Detection' },
+  // One grant covers the inbox and every source's detail pages (`/decisions/support/<groupKey>`,
+  // `/decisions/support/ticket/<id>`), resolved here by prefix like `/abuse`. Recording a ruling is a
+  // separate permission (`decisions.rule`), checked in the action.
+  { path: '/decisions', label: 'Decisions' },
   { path: '/blocklists', label: 'Blocklists' },
   // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history
   // would hide the numbers their review produces.
   { path: '/xguard', label: 'XGuard Lab' },
-  { path: '/users', label: 'Users' },
-  // A SIBLING of `/users`, not a child, and deliberately so. `/users`' grant is what User Lookup's ban,
-  // purge and bulk-comment actions are gated on, so a read-only list living under it would make
-  // "let them see new signups" mean "let them ban anyone". `canAccess` takes the longest matching
-  // grant, so this path carries its own.
-  { path: '/users/newest', label: 'Newest Users' },
+  // A group with no path of its own, so `/users` stays a grantable page: giving the group `/users` would
+  // make it a section, which has no grant — orphaning the stored `/users` row and the ban/purge actions
+  // gated on it.
+  //
+  // Each child carries its OWN grant, and `canAccess` takes the longest matching one. `/users`' grant
+  // gates ban, purge and bulk-comment, so a read-only list living under it would make "let them see new
+  // signups" mean "let them ban anyone"; likewise a scam reviewer must not gain `/users` by holding
+  // `/users/scam-restrictions`.
+  {
+    label: 'Users',
+    children: [
+      { path: '/users', label: 'Users' },
+      { path: '/users/newest', label: 'Newest Users' },
+      { path: SCAM_RESTRICTIONS_PATH, label: 'Scam Restrictions' },
+    ],
+  },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];
@@ -247,7 +280,8 @@ export function grantsSnapshot(): Record<string, Role[]> {
 
 type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
 
-const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);
+/** The admin check: holds `moderator:admin`, which reaches everything and grants everything. */
+export const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);
 
 function allows(path: string, user: RoleUser): boolean {
   if (isSuper(user)) return true;

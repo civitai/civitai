@@ -22,6 +22,7 @@ import {
   IconProgressBolt,
   IconSword,
   IconShoppingBag,
+  IconStairsUp,
   IconSticker,
   IconThumbUp,
   IconTrophy,
@@ -41,6 +42,7 @@ import { useQueryNotificationsCount } from '~/components/Notifications/notificat
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OnboardingSteps } from '~/server/common/enums';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -144,8 +146,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-09-20'),
         },
         {
-          // Same flag swap as the trainer entry below: with the Training Studio on, "my trainings"
-          // IS the studio's run list — the old DB-backed list stays reachable via the banner there.
+          // With the Training Studio on, "my trainings" IS the studio's run list.
           href: features.trainingStudioUi
             ? '/training-studio'
             : `/user/${currentUser?.username as string}/models?section=training`,
@@ -206,6 +207,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Creator Studio',
           newUntil: new Date('2026-09-01'),
+        },
+        {
+          href: CREATOR_JOURNEY_HREF,
+          visible: !!currentUser && features.creatorJourney,
+          icon: IconStairsUp,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Creator Journey',
+          newUntil: new Date('2026-11-15'),
         },
         {
           href: '/user/vault',

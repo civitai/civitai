@@ -456,6 +456,45 @@ export type RatingChanges = {
   rating: Generated<number | null>;
   originalRating: Generated<number>;
 };
+export type relabel_answer = {
+  id: Generated<string>;
+  item_id: string;
+  labeler_id: number;
+  minor_present: string;
+  sexual_level: string;
+  violence: string;
+  school_setting: string;
+  duration_ms: number | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type relabel_item = {
+  id: Generated<string>;
+  token: Generated<string>;
+  batch: string;
+  image_id: number;
+  stratum: string;
+  bucket: string | null;
+  nsfw_level: string | null;
+  stratum_key: string;
+  owner_id: number;
+  removed_at: Timestamp | null;
+  removed_by: number | null;
+  purge_after: Timestamp | null;
+  appeal_status: string | null;
+  appeal_resolved_at: Timestamp | null;
+  relabel: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+};
+export type relabel_prediction = {
+  id: Generated<string>;
+  item_id: string;
+  run_id: string;
+  arm: string;
+  model: string;
+  answers: unknown;
+  created_at: Generated<Timestamp>;
+};
 export type ReToolActions = {
   id: Generated<number>;
   Event: Generated<Timestamp>;
@@ -520,6 +559,37 @@ export type test_import = {
 };
 export type testForm = {
   id: Generated<number>;
+};
+export type text_relabel_answer = {
+  id: Generated<string>;
+  item_id: string;
+  labeler_id: number;
+  label: string;
+  note: string | null;
+  duration_ms: number | null;
+  handed_off_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type text_relabel_item = {
+  id: Generated<string>;
+  token: Generated<string>;
+  batch: string;
+  report_id: number;
+  tag: string;
+  wave: number;
+  entity_type: string;
+  entity_id: number | null;
+  author_id: number | null;
+  visibility: string;
+  confidence: number;
+  confidence_band: string;
+  stratum_key: string;
+  cell_population: number;
+  text_value: string | null;
+  flagged_at: Timestamp;
+  purge_after: Timestamp;
+  created_at: Generated<Timestamp>;
 };
 export type TimedMutes = {
   id: Generated<number>;
@@ -612,6 +682,9 @@ export type DB = {
   Mods_TaskTimers: Mods_TaskTimers;
   products: products;
   RatingChanges: RatingChanges;
+  relabel_answer: relabel_answer;
+  relabel_item: relabel_item;
+  relabel_prediction: relabel_prediction;
   ReToolActions: ReToolActions;
   sample: sample;
   sample_orders: sample_orders;
@@ -620,6 +693,8 @@ export type DB = {
   Temp_FailedLoRATrain: Temp_FailedLoRATrain;
   test_import: test_import;
   testForm: testForm;
+  text_relabel_answer: text_relabel_answer;
+  text_relabel_item: text_relabel_item;
   TimedMutes: TimedMutes;
   TrainingDataReview: TrainingDataReview;
   User: User;

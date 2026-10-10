@@ -204,7 +204,7 @@ group render `noindex`, tick the group.
 - [ ] Auth / claim / redirect (`login`, `login/token`, `verify-email`, `redirect`, `region-blocked`, `preview-restricted`, `redeem-code`, `claim/buzz/[id]`, `claim/cosmetic/[id]`, `intent/avatar`, `intent/post`, `discord/link-role`, `studio/confirm`, `subscribe/[plan]`, `purchase/buzz`)
 - [ ] Payments (`payment/*`, `tipalti/setup`)
 - [ ] Collections helpers (`collections/[collectionId]/join`, `collections/[collectionId]/review`, `collections/youtube/auth`)
-- [ ] Games / one-offs (`games/chopped`, `games/knights-of-new-order`, `dev/onboarding`, `data-graph-v2`, `images/iterate`)
+- [ ] Games / one-offs (`games/chopped`, `games/knights-of-new-order`, `dev/onboarding`, `images/iterate`)
 - [ ] Moderator / internal (`moderator/*`, `research/*`, `testing/*`)
 
 ---

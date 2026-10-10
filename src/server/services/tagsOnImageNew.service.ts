@@ -1,11 +1,14 @@
 import { dbWrite } from '~/server/db/client';
-import { tagIdsForImagesCache, thumbnailCache, imageTagsCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, refreshThumbnailCache, imageTagsCache } from '~/server/redis/caches';
 import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
-import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { createImageTagsForReview } from '~/server/services/image-review.service';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const imageService = () => import('~/server/services/image.service');
 
 type TagsOnImageNewArgs = {
   imageId: number;
@@ -44,8 +47,10 @@ export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
     await imageTagsCache.bust(imageIds);
   });
 
-  await updateImageNsfwLevels(args);
-  await queueImageSearchIndexUpdate({
+  await updateImageNsfwLevels(withTagRules);
+  await (
+    await imageService()
+  ).queueImageSearchIndexUpdate({
     ids: args.map((x) => x.imageId),
     action: SearchIndexUpdateQueueAction.Update,
   });
@@ -78,8 +83,10 @@ export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
     await imageTagsCache.bust(imageIds);
   });
 
-  await updateImageNsfwLevels(args);
-  await queueImageSearchIndexUpdate({
+  await updateImageNsfwLevels(withTagRules);
+  await (
+    await imageService()
+  ).queueImageSearchIndexUpdate({
     ids: args.map((x) => x.imageId),
     action: SearchIndexUpdateQueueAction.Update,
   });
@@ -100,22 +107,70 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
   });
 
   await updateImageNsfwLevels(args);
-  await queueImageSearchIndexUpdate({
+  await (
+    await imageService()
+  ).queueImageSearchIndexUpdate({
     ids: args.map((x) => x.imageId),
     action: SearchIndexUpdateQueueAction.Update,
   });
 }
 
 async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[]) {
-  const moderatedTagIds = await getModeratedTags().then((data) => data.map((x) => x.id));
-  const imageIds = [...new Set(args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId))];
+  const moderatedTags = await getModeratedTags();
+  const moderatedTagIds = moderatedTags.map((x) => x.id);
+  const imageIds = [
+    ...new Set(args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId)),
+  ];
 
   if (!imageIds.length) return;
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
-    await thumbnailCache.refresh(imageIds);
+    await refreshThumbnailCache(imageIds);
   });
+
+  const blockedTagIds = new Set(
+    moderatedTags.filter((x) => x.nsfwLevel === NsfwLevel.Blocked).map((x) => x.id)
+  );
+  await queueBlockedTagReviews(args.filter((x) => blockedTagIds.has(x.tagId)));
+}
+
+// update_nsfw_levels_new raises an image to Blocked but never queues it, so a blocked-level tag
+// that arrives after the scan (votes, tag rules, mod tools) would leave it hidden with no review.
+async function queueBlockedTagReviews(args: { imageId: number; tagId: number }[]) {
+  if (!args.length) return;
+
+  const queued = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+    WITH written AS (
+      SELECT DISTINCT (value ->> 'imageId')::int "imageId", (value ->> 'tagId')::int "tagId"
+      FROM json_array_elements(${JSON.stringify(args)}::json)
+    ), enabled AS (
+      SELECT w."imageId", w."tagId"
+      FROM written w
+      JOIN "TagsOnImageDetails" toi
+        ON toi."imageId" = w."imageId" AND toi."tagId" = w."tagId" AND NOT toi.disabled
+    ), flagged AS (
+      UPDATE "Image" i SET "needsReview" = 'tag'
+      WHERE i.id IN (SELECT "imageId" FROM enabled)
+        AND i."nsfwLevel" = ${NsfwLevel.Blocked}
+        AND i."needsReview" IS NULL
+        AND i.ingestion = 'Scanned'
+        AND i."blockedFor" IS NULL
+        AND NOT i."nsfwLevelLocked"
+      RETURNING i.id
+    )
+    SELECT e."imageId", e."tagId"
+    FROM enabled e
+    JOIN flagged f ON f.id = e."imageId"
+  `;
+
+  const tagIdsByImage = new Map<number, number[]>();
+  for (const { imageId, tagId } of queued) {
+    tagIdsByImage.set(imageId, [...(tagIdsByImage.get(imageId) ?? []), tagId]);
+  }
+  for (const [imageId, tagIds] of tagIdsByImage) {
+    await createImageTagsForReview({ imageId, tagIds });
+  }
 }
 
 export async function applyTagRules(args: TagsOnImageNewArgs[]) {

@@ -54,6 +54,7 @@ export function earlyAccessQuantityForScore(creatorScore: number): number {
 // and the main app enforces the allowance server-side.
 export {
   monthlyPricingAllowance,
+  pricingAllowanceLimits,
   pricingEligibility,
   tierAllowanceRows,
   shouldUpsellAllowance,

@@ -359,6 +359,8 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'item',
       'list',
       'me',
+      // mine, sub-listings, upsert: v1/blocks/sub-listings/*.ts
+      'mine',
       'models',
       'poll',
       'purchase',
@@ -367,8 +369,13 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'query',
       'quota',
       'report',
+      // `v1/blocks/resource-intent.ts` — the Jev resource-intent primitive. The
+      // prompt and every parameter ride the POST body, so there is no `:seg`
+      // position to lose. Added deliberately with the route.
+      'resource-intent',
       'set',
       'shared-storage',
+      'sub-listings',
       'submit',
       'tip',
       'tip-allowance',
@@ -379,6 +386,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'top',
       'unvote',
       'update',
+      'upsert',
       // `user-checkpoint` — the per-viewer checkpoint override write
       // (`v1/blocks/user-checkpoint/set.ts`), the REST twin of the
       // SET_USER_CHECKPOINT bridge message. One new STATIC segment; `set` was

@@ -11,8 +11,7 @@ export const CIVITAI_MEMBERSHIP_URL = 'https://civitai.com/pricing';
 // Its server guard redirects non-members to /pricing, so only link members here.
 export const CIVITAI_MANAGE_MEMBERSHIP_URL = 'https://civitai.com/user/membership';
 
-// Mirrors the main app's MIN_CREATOR_SCORE (src/shared/constants/creator-program.constants.ts). Keep in sync.
-export const MIN_CREATOR_SCORE = 40000;
+export { CREATOR_PROGRAM_MIN_CREATOR_SCORE as MIN_CREATOR_SCORE } from '@civitai/buzz';
 
 export const CREATOR_PROGRAM_PERKS = [
   {
@@ -40,18 +39,18 @@ export const CREATOR_PROGRAM_CAPABILITIES = [
   { label: 'Bank Buzz to claim a share of the Compensation Pool', everyone: false, member: true },
 ];
 
-// Actionable ways to raise the creator score, ordered by impact. Mirrors the main app's scoring job
-// (update-user-score.ts): followers dominate, then model usage (downloads/generations/reviews), then image &
-// article engagement (reactions/comments). Kept qualitative — the exact multipliers live server-side and
-// change, so we don't quote numbers. Moderation/report components are excluded (not creator actions).
+// The scoring multipliers are tunable server-side, so these name categories and activities only: no
+// numbers and no "counts more" ordering. Moderation/report components are excluded (not creator actions).
+// 🔴 The activity wording must match `creatorScoreActivities` in the main app's
+// src/components/Account/creator-score-copy.ts, which this app cannot import; a test pins the two.
 export const CREATOR_SCORE_TIPS = [
   {
     title: 'Build your following',
-    body: 'Followers are the largest factor in your score — post regularly and engage with the community to grow it.',
+    body: 'Your follower count raises your score. Post regularly and engage with the community to grow it.',
   },
   {
     title: 'Publish models people use',
-    body: 'Downloads, on-site generations, and reviews on your models all raise your score.',
+    body: 'Downloads, generations, and positive reviews of your models all raise your score.',
   },
   {
     title: 'Share images & posts',
@@ -59,6 +58,6 @@ export const CREATOR_SCORE_TIPS = [
   },
   {
     title: 'Write articles',
-    body: 'Reactions and comments on your articles add to your score too.',
+    body: 'Views, reactions, and comments on your articles add to your score too.',
   },
 ];

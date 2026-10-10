@@ -58,7 +58,7 @@ describe('orchestrator denylist — the predicate', () => {
   });
 
   it('allows an ordinary generation type', () => {
-    expect(() => assertStepTypeAllowed('textToImage')).not.toThrow();
+    expect(() => assertStepTypeAllowed('imageGen')).not.toThrow();
     expect(() => assertStepTypeAllowed('videoGen')).not.toThrow();
   });
 
@@ -112,6 +112,7 @@ describe('orchestrator denylist — the predicate', () => {
       'modelPickleScan',
       'qwenImageBench',
       'shieldstralModeration',
+      'textToImage',
       'webScrape',
       'webSearch',
       'xGuardModeration',
@@ -130,11 +131,11 @@ describe('orchestrator denylist — the predicate', () => {
   it('the exported denylist cannot be mutated to un-deny a type', () => {
     expect(Object.isFrozen(PLATFORM_INTERNAL_STEP_TYPES)).toBe(true);
     expect(() => {
-      (PLATFORM_INTERNAL_STEP_TYPES as string[]).push('textToImage');
+      (PLATFORM_INTERNAL_STEP_TYPES as string[]).push('imageGen');
     }).toThrow(TypeError);
     // and the guard is unmoved by the attempt
     expect(isPlatformInternalStepType('xGuardModeration')).toBe(true);
-    expect(isPlatformInternalStepType('textToImage')).toBe(false);
+    expect(isPlatformInternalStepType('imageGen')).toBe(false);
   });
 });
 
@@ -227,7 +228,7 @@ describe('orchestrator denylist — case normalization', () => {
    * type — without this, `() => true` would satisfy every assertion above.
    */
   it('still allows a non-denylisted type in any casing (negative control)', () => {
-    for (const t of ['textToImage', 'TEXTTOIMAGE', 'imageBackgroundRemoval', 'chatCompletion']) {
+    for (const t of ['imageGen', 'IMAGEGEN', 'imageBackgroundRemoval', 'chatCompletion']) {
       expect(isPlatformInternalStepType(t)).toBe(false);
       expect(() => assertStepTypeAllowed(t)).not.toThrow();
     }

@@ -111,6 +111,11 @@ export const parseBuzzTransactionDetails = (
       notification: `${baseNotification} on one of your comics!`,
       label: 'Comic',
     },
+    Crucible: {
+      url: `/crucibles/${entityId}`,
+      label: 'Crucible',
+      notification: '',
+    },
   };
 
   return map[entityType] ?? map.default;

@@ -15,8 +15,8 @@ type InlineAnalytics = {
 };
 
 /**
- * Compact, per-approved-app analytics affordance for the /apps/my-submissions
- * list. Shows a small inline runs / unique-users (last 30d) stat and an
+ * Compact, per-approved-app analytics affordance, built for the /apps/my-submissions
+ * list. ⚠ It has no importer since that list (`MySubmissionsList`) was deleted. Shows a small inline runs / unique-users (last 30d) stat and an
  * "Analytics" button that opens the existing AppAnalyticsPanel — scoped to THIS
  * app — in a modal. Reuses `blocks.getMyAppAnalytics` (the same query the
  * /apps/revenue dashboard panel runs) with a 30-day `from`; no new analytics
@@ -30,7 +30,13 @@ type InlineAnalytics = {
  * free gen) still writes a row, so this is "submits", not "spent Buzz".
  * ⚠️ AND IT IS NOT EVERY SUBMIT: the owner-visible reads exclude
  * `status = 'voided'`, so the app owner's OWN runs on their own app
- * (`self_spend`) and a moderator's private run (`manual_review`) are absent.
+ * (`self_spend`) are absent. ⚠️ A moderator's private run is absent too, but NOT via this
+ * filter any more: it writes no attribution row at all (the exclusion moved to the write
+ * side). This line used to credit `manual_review` for it. ⚠️ A correction then claimed
+ * that value's live producers were historical private runs and `backpay.service.ts`;
+ * both are retracted — the flag never shipped, so there are no historical rows, and
+ * backpay writes a DIFFERENT TABLE with `status: 'held'`. What this filter actually
+ * excludes is `self_spend` and `internal_owner`.
  * On the population measured when that filter shipped this was 582 of 639
  * rows, so for an owner who has only self-tested, `runs` is legitimately 0.
  * That zero is MEASURED, not fabricated — do not route it through the

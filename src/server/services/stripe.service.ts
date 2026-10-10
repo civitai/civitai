@@ -393,16 +393,30 @@ export const createSubscribeSession = async ({
         ...(blockAttributionMetadata ?? {}),
       };
 
-      await stripe.subscriptions.update(subscriptionId, {
-        items,
-        billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
-        proration_behavior: 'none',
-        // Makes it so that if a sub. is not paid, it won't start right away. Should cover us for failed payments during upgrades
-        payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
-        // @ts-ignore This is valid as per stripe's documentation
-        discounts,
-        ...(Object.keys(upgradeMetadata).length > 0 ? { metadata: upgradeMetadata } : {}),
-      });
+      const { releaseArmedGiftMonth, restoreArmedGiftMonth } = await import(
+        '~/server/services/membership-gift.service'
+      );
+      const releasedGiftMonth = await releaseArmedGiftMonth({ userId: user.id });
+
+      try {
+        await stripe.subscriptions.update(subscriptionId, {
+          items,
+          billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
+          proration_behavior: 'none',
+          // Makes it so that if a sub. is not paid, it won't start right away. Should cover us for failed payments during upgrades
+          payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
+          ...(releasedGiftMonth
+            ? { coupon: '' }
+            : {
+                // @ts-ignore This is valid as per stripe's documentation
+                discounts,
+              }),
+          ...(Object.keys(upgradeMetadata).length > 0 ? { metadata: upgradeMetadata } : {}),
+        });
+      } catch (error) {
+        if (releasedGiftMonth) await restoreArmedGiftMonth(releasedGiftMonth);
+        throw error;
+      }
 
       if (sanitizedRefCode) {
         const { bindReferralCodeForUser } = await import('~/server/services/referral.service');

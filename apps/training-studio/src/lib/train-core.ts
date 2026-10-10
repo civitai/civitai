@@ -5,6 +5,7 @@ import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // its host config and no callbacks.
 import {
   Air,
+  deleteWorkflow,
   getResource,
   getWorkflow,
   submitWorkflow,
@@ -24,15 +25,19 @@ import {
   isFlux2,
   type OrchestratorClient,
 } from './orchestrator-core';
+import type { ExtraParamField } from '$lib/data/trainingModels';
 import {
+  canDeleteRun,
   CIVITAI_TAG,
   epochModelKey,
   META_VERSION,
   TRAINING_TAG,
   type EpochModelOutput,
   type TrainingStudioMeta,
+  workflowToRow,
 } from '$lib/data/trainingRows';
-import { TARGET_STEPS } from '$lib/data/trainingModels';
+import { EXTRA_PARAM_FIELDS, TARGET_STEPS } from '$lib/data/trainingModels';
+import { slugify } from '$lib/slug';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
  *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
@@ -64,6 +69,15 @@ export interface TrainingRunInput {
   batchSize: number;
   lrScheduler: string;
   optimizer: string;
+  /** The extra ai-toolkit knobs. Optional on the wire — an older client (or the continuation
+   *  rebuild of a run submitted before they shipped) omits them and the orchestrator applies its
+   *  own defaults. `minSnrGamma` is only meaningful for SD-family ecosystems; senders leave it
+   *  undefined elsewhere (`extraParamCapabilities`). */
+  shuffleTokens?: boolean;
+  keepTokens?: number;
+  minSnrGamma?: number;
+  noiseOffset?: number;
+  flipAugmentation?: boolean;
   trigger: string;
   items: TrainingItem[];
   prompts: string[];
@@ -101,6 +115,15 @@ function resolveCurrencies(input?: string[]): BuzzClientAccount[] {
 /** Identity of the blob an item's `air` names, for dedupe. Keys are case-insensitive base32. */
 export function trainingBlobKey(air: string): string {
   return blobIdFromAir(air.trim()).toLowerCase();
+}
+
+/** The extra knobs `obj` actually carries — a submit or continuation sends only what was set, never
+ *  an invented default. Iterates `EXTRA_PARAM_FIELDS` so a sixth knob can't be dropped here. */
+function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unknown> {
+  const source = obj as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
+  return out;
 }
 
 /** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
@@ -159,6 +182,7 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           networkDim: run.networkDim,
           networkAlpha: run.networkAlpha,
           resolution: run.resolution,
+          ...pick(run, EXTRA_PARAM_FIELDS),
           triggerWord: run.trigger,
           // "Keep training": continue from a previous checkpoint's weights instead of the base model.
           ...(run.continueFrom ? { continueFrom: run.continueFrom } : {}),
@@ -178,15 +202,6 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
 // (for finding it). This prefix is the one place the tag shape is written and matched.
 const NAME_TAG_PREFIX = 'name:';
 
-/** A short tag-safe slug of the run name, so a training can be found by name later. */
-function nameSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-}
-
 /** Submit one real training workflow; returns its id. Charges Buzz — the single write in the flow. A
  *  `callbacks` entry registers the orchestrator push that emits live `workflow-update` signals for this run. */
 export async function submitTraining(
@@ -195,8 +210,8 @@ export async function submitTraining(
   { callbacks, traceMode = 'events' }: SubmitOptions = {}
 ): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
-  const slug = run.meta.name ? nameSlug(run.meta.name) : '';
-  const { data, error } = await submitWorkflow({
+  const slug = run.meta.name ? slugify(run.meta.name) : '';
+  const { data, error, response } = await submitWorkflow({
     client,
     body: {
       tags: slug
@@ -209,8 +224,28 @@ export async function submitTraining(
     },
     query: { wait: 0 },
   });
-  if (!data?.id) throw new Error(`training submit failed: ${describeSubmitError(error)}`);
+  if (!data?.id) throw new TrainingSubmitError(describeSubmitError(error), response?.status);
   return data.id;
+}
+
+// Unauthorized (expired token), request timeout, rate limited.
+const TRANSIENT_CLIENT_STATUSES = new Set([401, 408, 429]);
+
+/** The orchestrator did not accept a submit. `status` is its HTTP status, absent when it never answered. */
+export class TrainingSubmitError extends Error {
+  readonly reason: string;
+  readonly status: number | undefined;
+  constructor(reason: string, status: number | undefined) {
+    super(`training submit failed: ${reason}`);
+    this.reason = reason;
+    this.status = status;
+  }
+
+  /** A 4xx is a refusal of this payload that a retry would repeat — except these, which can clear on retry. */
+  get isRefusal(): boolean {
+    if (this.status === undefined || TRANSIENT_CLIENT_STATUSES.has(this.status)) return false;
+    return this.status >= 400 && this.status < 500;
+  }
 }
 
 /** A batch refused before anything was submitted — callers map it to their 400/"bad request" arm. */
@@ -241,6 +276,8 @@ const POSITIVE_NUMBER_FIELDS = [
   'networkAlpha',
   'resolution',
 ] as const;
+const OPTIONAL_NON_NEGATIVE_FIELDS = ['keepTokens', 'minSnrGamma', 'noiseOffset'] as const;
+const OPTIONAL_BOOLEAN_FIELDS = ['shuffleTokens', 'flipAugmentation'] as const;
 const OPTIONAL_STRING_FIELDS = ['modelVariant', 'version', 'engine', 'model'] as const;
 const AIR_FIELDS = ['customModel', 'continueFrom'] as const;
 
@@ -260,6 +297,16 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isNonEmptyString(run.lrScheduler))
     fail(`${field}.lrScheduler`, 'must be a non-empty string.');
   if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
+  for (const key of OPTIONAL_NON_NEGATIVE_FIELDS) {
+    if (run[key] !== undefined && !(isFiniteNumber(run[key]) && run[key] >= 0))
+      fail(`${field}.${key}`, 'must be a non-negative number.');
+  }
+  if (run.keepTokens !== undefined && !Number.isInteger(run.keepTokens))
+    fail(`${field}.keepTokens`, 'must be an integer.');
+  for (const key of OPTIONAL_BOOLEAN_FIELDS) {
+    if (run[key] !== undefined && typeof run[key] !== 'boolean')
+      fail(`${field}.${key}`, 'must be a boolean.');
+  }
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
     fail(`${field}.items`, 'must be a non-empty array.');
@@ -313,14 +360,25 @@ async function assertCustomModelTrainable(
     );
 }
 
+export interface SubmittedBatch {
+  workflowIds: string[];
+  /** Why the runs after `workflowIds` did not start; set only when some runs landed and a later one failed. */
+  failure?: string;
+}
+
+/** A submit failure as the user should read it: the orchestrator's own reason when it gave one. */
+export function submitFailureReason(err: unknown): string {
+  return err instanceof TrainingSubmitError ? err.reason : 'the training service did not respond';
+}
+
 /** Submit a batch of runs, one workflow each, in series, stopping at the first failure. If nothing
  *  landed the failure is rethrown (the whole batch is safe to retry); if some runs already landed
- *  their ids are returned instead, so the already-charged runs are never re-submitted. */
+ *  their ids are returned with the failure's reason, so the already-charged runs are never re-submitted. */
 export async function submitTrainingBatch(
   client: OrchestratorClient,
   runs: TrainingRunInput[] | undefined,
-  opts: SubmitOptions & { onRunError?: (err: unknown) => void } = {}
-): Promise<string[]> {
+  opts: SubmitOptions & { onRunError?: (err: unknown, runIndex: number) => void } = {}
+): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
@@ -337,10 +395,11 @@ export async function submitTrainingBatch(
   try {
     for (const run of runs) workflowIds.push(await submitTraining(client, run, opts));
   } catch (err) {
-    opts.onRunError?.(err);
+    opts.onRunError?.(err, workflowIds.length);
     if (workflowIds.length === 0) throw err;
+    return { workflowIds, failure: submitFailureReason(err) };
   }
-  return workflowIds;
+  return { workflowIds };
 }
 
 type EpochOutput = {
@@ -415,7 +474,7 @@ async function buildContinuation(
     sourceWorkflowId: opts.workflowId,
     sourceEpoch: opts.fromEpoch,
   };
-  const slug = name ? nameSlug(name) : '';
+  const slug = name ? slugify(name) : '';
 
   // Only the fields we submit (mirrors buildStep) — never the server-computed read-only ones the orch echoes
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
@@ -435,6 +494,7 @@ async function buildContinuation(
     networkDim: input.networkDim,
     networkAlpha: input.networkAlpha,
     resolution: input.resolution,
+    ...pick(input, EXTRA_PARAM_FIELDS),
     triggerWord: input.triggerWord,
     continueFrom,
     ...(traceMode !== 'none' ? { trace: traceMode } : {}),
@@ -499,7 +559,7 @@ export async function renameTraining(
 
   const trimmed = name.trim();
   const metadata = { ...(current.metadata ?? {}), name: trimmed };
-  const slug = trimmed ? nameSlug(trimmed) : '';
+  const slug = trimmed ? slugify(trimmed) : '';
   const tags = [
     ...(current.tags ?? []).filter((t) => !t.startsWith(NAME_TAG_PREFIX)),
     ...(slug ? [`${NAME_TAG_PREFIX}${slug}`] : []),
@@ -511,4 +571,35 @@ export async function renameTraining(
     body: { metadata, tags },
   });
   if (error) throw new Error(`rename failed: ${describeSubmitError(error)}`);
+}
+
+export class DeleteRefusedError extends Error {
+  constructor() {
+    super('This training can no longer be deleted — it is running or has a model on Civitai.');
+  }
+}
+
+/** Delete a training, re-checking `canDeleteRun` against the live workflow so a stale list can't
+ *  cancel a run that has since started, or strand a model created since the list loaded. */
+export async function deleteTraining(
+  client: OrchestratorClient,
+  workflowId: string
+): Promise<void> {
+  const {
+    data: current,
+    error: getError,
+    response,
+  } = await getWorkflow({ client, path: { workflowId } });
+  // Already gone (another tab, a double click) is the outcome the caller asked for.
+  if (response?.status === 404) return;
+  if (!current) throw new Error(`delete: workflow not found (${describeSubmitError(getError)})`);
+  const row = workflowToRow(current);
+  if (!row || !canDeleteRun(row)) throw new DeleteRefusedError();
+
+  const { error, response: deleteResponse } = await deleteWorkflow({
+    client,
+    path: { workflowId },
+  });
+  if (error && deleteResponse?.status !== 404)
+    throw new Error(`delete failed: ${describeSubmitError(error)}`);
 }

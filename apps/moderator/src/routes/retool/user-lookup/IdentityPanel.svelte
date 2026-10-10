@@ -3,7 +3,9 @@
   import { FormState } from '$lib/form-state.svelte';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import type { LayoutData } from './$types';
   import { userUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
@@ -39,6 +41,9 @@
   // Both forms on this panel: clearing profile text, and the Enable Edits identity form. Local, so
   // neither shows up in the four other panels that share this page.
   let clearing = $state(false);
+
+  // Scopes the `for`/`id` pairs on the clear-profile-text checkboxes to this instance.
+  const uid = $props.id();
 
   // `reload` on both: the bio and the identity row come from `load`, so unlike the client-fetched
   // panels this one does need the page data back after a write.
@@ -312,14 +317,34 @@
         <form method="POST" action="?/clearProfileText" use:enhance={clearForm.enhance} class="mt-3">
           <input type="hidden" name="userId" value={identity.id} />
           <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <!-- Uncontrolled, exactly as the raw inputs were: nothing here reads the ticks, the
+                 primitive's hidden input carries `fields` and the action reads `form.getAll('fields')`.
+                 Same shape as the `contents` group in
+                 `apps/moderator/src/routes/audit/training-data/[versionId]/CsamReportForm.svelte`. -->
             {#each PROFILE_FIELDS as [field, label] (field)}
-              <label class="flex items-center gap-1.5 text-xs text-dark-2">
-                <input type="checkbox" name="fields" value={field} class="accent-blue-500" />
-                {label}
-              </label>
+              <div class="flex items-center gap-1.5" data-touch-target>
+                <Checkbox id="clear-profile-{field}-{uid}" name="fields" value={field} />
+                <Label for="clear-profile-{field}-{uid}" class="text-xs leading-snug font-normal text-dark-2">
+                  {label}
+                </Label>
+              </div>
             {/each}
-            <Button type="submit" size="sm" variant="destructive" disabled={clearForm.submitting}>Clear</Button>
-            <Button type="button" size="sm" variant="outline" onclick={() => (clearing = false)}>
+            <Button
+              type="submit"
+              size="sm"
+              variant="destructive"
+              disabled={clearForm.submitting}
+              data-touch-target
+            >
+              Clear
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onclick={() => (clearing = false)}
+              data-touch-target
+            >
               Cancel
             </Button>
           </div>

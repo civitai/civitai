@@ -27,13 +27,22 @@ import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { isBlobUrl } from '~/utils/type-guards';
+import {
+  milestoneOgEndpoint,
+  parseScoreTierSlug,
+} from '~/shared/constants/creator-journey.constants';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { username } = router.query as { username: string };
+  const milestone = parseScoreTierSlug(router.query.milestone);
 
   const { isInitialLoading, data: user } = trpc.userProfile.get.useQuery({ username });
+  const { data: milestoneShareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
+    { userId: user?.id ?? 0, slug: milestone ?? 'spark' },
+    { enabled: !!user && !!milestone }
+  );
   const blockedByThem = !!(user && 'blockedByThem' in user && user.blockedByThem);
   const { data: overview } = trpc.userProfile.overview.useQuery(
     { username },
@@ -161,6 +170,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           title={`${user.username} Creator Profile | Civitai`}
           description={metaDescription}
           images={user.profilePicture}
+          ogEndpoint={milestoneOgEndpoint(user.id, milestone, milestoneShareable)}
           canonical={pathname}
           schema={metaSchema}
           deIndex={deIndex}

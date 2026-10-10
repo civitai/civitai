@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { stripComments } from '../test/strip-comments';
+import { classOf, hasAttr, tokenizeTags } from '../test/svelte-tags';
 
 /**
  * ⚠️ A TEXT PIN OVER TWO NAMED LAYOUTS. Nothing here renders a page or measures a pixel.
@@ -29,8 +30,8 @@ const read = (p: string) => stripComments(readFileSync(path.resolve(dir, '..', p
 const LAYOUTS = [
   { name: 'retool/user-lookup', file: 'routes/retool/user-lookup/+layout.svelte' },
   {
-    name: 'audit/generator-restrictions',
-    file: 'routes/audit/generator-restrictions/+page.svelte',
+    name: 'restrictions queue',
+    file: 'lib/components/restrictions/RestrictionQueue.svelte',
   },
 ] as const;
 
@@ -66,24 +67,20 @@ const MIN_CONTENT_PX = 280;
 const BREAKPOINT = String.raw`(?:^|\s)(?:sm|md|lg|xl|2xl):`;
 
 /**
- * Opening tags, tolerating a `>` inside a quoted value (`title="a > b"`) or a simple `{…}`
- * expression (`onclick={() => x}`) — both ordinary Svelte, and a naive `[^>]*` drops the whole
- * element. NOT tolerated: a `}` inside a string inside an expression (`{() => go("}")}`), which
- * ends the `{…}` branch early. That case drops the pane and the control below fails loudly, which
- * is the acceptable direction.
+ * Elements carrying a marker attribute, as their literal `class="…"` (null where it is dynamic).
+ * The tag grammar itself is shared — `src/test/svelte-tags.ts` — because it was written four times
+ * across this file and `checkbox-primitive.test.ts` and the copies had diverged: this one's name
+ * charset could not match a dotted component tag, so an element whose class it needed to read could
+ * silently drop out of the scan. The shared one documents what it still cannot parse.
  */
-const TAGS = /<[a-zA-Z][a-zA-Z0-9-]*(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^>"'{])*>/g;
-
-const classOf = (tag: string) => tag.match(/\sclass="([^"]*)"/)?.[1] ?? null;
-const tagsMarked = (source: string, marker: string) =>
-  [...source.matchAll(TAGS)]
-    .map((m) => m[0])
-    .filter((t) => new RegExp(`\\s${marker}[\\s=>]`).test(t));
+const classesMarked = (source: string, marker: string): (string | null)[] =>
+  tokenizeTags(source)
+    .filter((t) => !t.closing && hasAttr(t, marker))
+    .map(classOf);
 
 /** The `class` of the element marked `data-two-pane`, or null. */
 function container(source: string): string | null {
-  const [tag] = tagsMarked(source, 'data-two-pane');
-  return tag ? classOf(tag) : null;
+  return classesMarked(source, 'data-two-pane')[0] ?? null;
 }
 
 /**
@@ -92,7 +89,7 @@ function container(source: string): string | null {
  * "no width": the control below turns that into a loud failure rather than a false pass.
  */
 function panes(source: string): (string | null)[] {
-  return tagsMarked(source, 'data-pane').map(classOf);
+  return classesMarked(source, 'data-pane');
 }
 
 /**

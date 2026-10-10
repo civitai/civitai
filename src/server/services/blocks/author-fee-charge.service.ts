@@ -2,7 +2,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { isAppBlocksAuthorFeeEnabled } from '~/server/services/app-blocks-flag';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { APP_AUTHOR_FEE_DESCRIPTION, TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import {
@@ -85,7 +85,7 @@ export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 // A submit path that reserves nothing passes 0 and can then charge nothing, no
 // matter what the realized base says — so "did this path remember to price the
 // fee in?" has a mechanical answer instead of resting on a reviewer noticing.
-// Two of the four submit paths are in exactly that state on purpose; see
+// Three of the five submit paths are in exactly that state on purpose; see
 // `chargeBlockAuthorFee`.
 //
 // ── THE MONEY SHAPE ─────────────────────────────────────────────────────────
@@ -398,14 +398,15 @@ export type ChargeBlockAuthorFeeResult =
  * folded into its budget gate and its reservations. `charged = min(reserved,
  * realized)`, so:
  *   * a path that priced no fee (0) can never take one, whatever the realized
- *     base says. TWO OF THE FOUR SUBMIT PATHS ARE DELIBERATELY IN THIS STATE:
+ *     base says. THREE OF THE FIVE SUBMIT PATHS ARE DELIBERATELY IN THIS STATE:
  *     `submitCustomComfyWorkflow` takes no whatIf quote at all (its ceiling IS
  *     the app's declared `maxBuzz`) and `submitPassThroughStepWorkflow`'s quote
  *     helper returns a total only. Neither has a pre-submit `cost.base` to price
- *     a fee from, so neither reserves one, so neither charges one. They still
- *     call this function with 0 so the population of submit paths that route
- *     their fee through one place stays CLOSED and a future path that gains a
- *     base changes one argument rather than re-deriving the rule.
+ *     a fee from, so neither reserves one, so neither charges one. The third,
+ *     `submitTrainingWorkflow`, prices its step but charges no fee by decision
+ *     (the viewer confirms one exact price). None of the three calls this
+ *     function; the `NO_FEE_PATHS` ledger in `no-divergent-author-fee-base.test.ts`
+ *     keeps the population closed.
  *   * a realized base that moved UP between the whatIf and the submit charges the
  *     RESERVED amount, not the realized one. The viewer is never billed past what
  *     their consent budget was measured against.
@@ -574,7 +575,7 @@ async function chargeBlockAuthorFeeUncounted(
         fromAccountType: buzzType,
         toAccountType: buzzType,
         amount: feeBuzz,
-        description: 'App author fee',
+        description: APP_AUTHOR_FEE_DESCRIPTION,
         type: TransactionType.AppAuthorFee,
         externalTransactionId: blockAuthorFeeChargeKey(workflowId),
       },
@@ -1020,7 +1021,7 @@ async function refundBlockAuthorFee(args: {
         fromAccountType: buzzType,
         toAccountType: buzzType,
         amount: feeBuzz,
-        description: 'App author fee refund',
+        description: `${APP_AUTHOR_FEE_DESCRIPTION} refund`,
         type: TransactionType.Refund,
         externalTransactionId: blockAuthorFeeReversalKey(workflowId),
       },

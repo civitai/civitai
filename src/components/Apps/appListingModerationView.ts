@@ -112,6 +112,15 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   // owner's own view, and every `owner-*` label above shows the map is already read
   // second-person there. Blue, matching `claim` — informational, not a takedown.
   'message-owner': { label: 'Message from moderation', color: 'blue' },
+  // 🔴 THE LEVEL CHANGE, AND IT MUST READ CORRECTLY IN THE OWNER'S OWN HISTORY — which is
+  // the whole point of the event. The fallback at the bottom of this function degrades an
+  // unknown action to `{ label: action, color: 'gray' }`, so without this row an owner saw a
+  // gray badge reading the literal kebab-case string `set-visibility`: the only such string
+  // on that surface, and a poor signal for the one audit trail telling them a moderator
+  // changed who can find their app. Phrased in the passive like `reset-to-pending` rather
+  // than second-person like the `owner-*` rows, because a MODERATOR did this, not the owner.
+  // Blue, matching `claim`/`message-owner` — informational, not a takedown.
+  'set-visibility': { label: 'Store visibility changed', color: 'blue' },
   // App Blocks per-user STORAGE takedown — a moderator removed one USER's stored
   // rows from this app. 🔴 MOD-VIEW ONLY in practice: unlike every other entry
   // here, this action is withheld from the owner's own history

@@ -173,6 +173,7 @@ async function postJson(opts: {
  * generated client when that lands.
  */
 export type ModEndpoint =
+  | 'bounty-poi/resolve-appeal'
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
@@ -187,17 +188,20 @@ export type ModEndpoint =
   | 'review/delete'
   | 'review/set-exclude'
   | 'strike/create'
+  | 'text-scan'
   | 'training-data/resolve'
   | 'user/delete'
   | 'user/toggle-moderator'
+  | 'user/unmute'
   | 'user/update-identity';
 
 // `/api/mod/*` (defineModeratorEndpoint) authenticates as the MODERATOR who is acting: the spoke is on
 // the same registrable domain as the hub, so the session cookie the browser sent here is one the hub
 // already accepts, and relaying it server-side attributes the audit row to a person rather than to a
 // shared key. This app therefore needs no moderator API key at all.
-/** One `/api/mod/*` endpoint per action, called as the acting moderator. The ONLY place `auth`
- *  becomes `'session'` — a call site that picks its own scheme is how one gets the wrong one. */
+/** One `/api/mod/*` endpoint per action, called as the acting moderator. With `bustModelVersionCache`,
+ *  the only places `auth` becomes `'session'` — a call site that picks its own scheme is how one gets
+ *  the wrong one. */
 export const callModEndpoint = (
   path: ModEndpoint,
   body: Record<string, unknown>,
@@ -205,6 +209,16 @@ export const callModEndpoint = (
   timeoutMs = 30_000
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
+
+// Best-effort: the resolve already committed, and a missed bust is a stale read that expires with the cache.
+export const bustModelVersionCache = (versionIds: number[]): Promise<JsonResult> =>
+  postJson({
+    path: '/api/v1/model-versions/bust-cache',
+    body: { versionIds },
+    label: 'Refresh model caches',
+    auth: 'session',
+    timeoutMs: 3000,
+  });
 
 /**
  * Retool's `UpdateUserDeets`, behind the Enable Edits toggle. The endpoint already carries this and
@@ -413,20 +427,24 @@ export async function setMuted(input: {
    *  sentences to find an account. */
   reason?: string | null;
 }): Promise<ActionResult> {
+  if (!input.muted)
+    return releaseMute({
+      userId: input.userId,
+      moderatorId: input.moderatorId,
+      activity: 'unmute',
+    });
+
   const now = new Date();
   // `mutedAt` is what marks this as a moderator's decision rather than an automatic one, and strike
   // escalation will neither lift nor shorten a mute carrying it. Nothing extra is needed on `meta` for
   // that — a `manualMute` flag lived here and was read by nobody.
-  const metaPatch = {
-    muteReason: input.muted ? input.reason ?? null : null,
-    mutedBy: input.muted ? input.moderatorId : null,
-  };
+  const metaPatch = { muteReason: input.reason ?? null, mutedBy: input.moderatorId };
   const result = await dbWrite
     .updateTable('User')
     .set({
-      muted: input.muted,
-      mutedAt: input.muted ? now : null,
-      muteExpiresAt: input.muted ? input.until ?? null : null,
+      muted: true,
+      mutedAt: now,
+      muteExpiresAt: input.until ?? null,
       meta: sql`COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(metaPatch)}::jsonb`,
     })
     .where('id', '=', input.userId)
@@ -436,12 +454,28 @@ export async function setMuted(input: {
 
   // Without this the mute does not take effect until the user's session refreshes.
   await invalidateUserSessions(input.userId);
-  await logAction(
-    input.activity ?? (input.muted ? 'mute' : 'unmute'),
-    input.userId,
-    input.moderatorId
+  await logAction(input.activity ?? 'mute', input.userId, input.moderatorId);
+  await recordUserActivity('Muted', input.userId, input.moderatorId);
+  return { ok: true };
+}
+
+/**
+ * Every unmute is the main app's: it dates the unmute for the scam auto-mute, closes the scam cases
+ * the unmute lifts and restores what they hid, all under the account row lock. That endpoint also
+ * writes the ModActivity row against the acting moderator, so none is written here.
+ */
+async function releaseMute(input: {
+  userId: number;
+  moderatorId: number;
+  activity: 'unmute' | 'revokeTimedMute';
+}): Promise<ActionResult> {
+  const result = await callModEndpoint(
+    'user/unmute',
+    { userId: input.userId, activity: input.activity },
+    input.activity === 'revokeTimedMute' ? 'Revoke timed mute' : 'Unmute'
   );
-  await recordUserActivity(input.muted ? 'Muted' : 'Unmuted', input.userId, input.moderatorId);
+  if (!result.ok) return result;
+  await recordUserActivity('Unmuted', input.userId, input.moderatorId);
   return { ok: true };
 }
 
@@ -722,6 +756,8 @@ export async function resolveRestriction(input: {
   userRestrictionId: number;
   status: 'Overturned' | 'Upheld';
   resolvedMessage?: string;
+  resolvedReason: string;
+  internalNotes?: string;
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
@@ -730,7 +766,9 @@ export async function resolveRestriction(input: {
     {
       userRestrictionId: input.userRestrictionId,
       status: input.status,
+      resolvedReason: input.resolvedReason,
       ...(input.resolvedMessage ? { resolvedMessage: input.resolvedMessage } : {}),
+      ...(input.internalNotes ? { internalNotes: input.internalNotes } : {}),
     },
     'Restriction ruling'
   );
@@ -1398,7 +1436,7 @@ export async function addTimedMute(input: {
  * once and not revalidated, so its row can be stale: if the mute expired and the strike engine has since
  * escalated to an indefinite, flagged-for-review mute, a plain `setMuted(false)` would lift THAT and
  * report success — the operator believes they cancelled a 24-hour mute and has actually released a
- * review hold. The old side-table version got this for free from its 0-rows check.
+ * review hold. The main app re-checks this under its row lock; the read here only words the refusal.
  */
 export async function revokeTimedMute(input: {
   userId: number;
@@ -1408,9 +1446,8 @@ export async function revokeTimedMute(input: {
   if (!current)
     return { ok: false, error: 'No timed mute is in force on this account — reload the page.' };
 
-  return setMuted({
+  return releaseMute({
     userId: input.userId,
-    muted: false,
     moderatorId: input.moderatorId,
     activity: 'revokeTimedMute',
   });

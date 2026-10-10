@@ -34,7 +34,7 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
 /**
  * THE ONE ACCESS PREDICATE FOR A PRIVATE RUN OF A DELISTED / SUSPENDED APP.
  *
- * ── WHY THERE IS EXACTLY ONE, AND WHY BOTH CALLERS MUST USE IT ────────────────
+ * ── WHY THERE IS EXACTLY ONE, AND WHY EVERY CALLER MUST USE IT ────────────────
  * 🔴 THE DEFECT THIS FILE EXISTS TO PREVENT IS AN SSR↔MINT ASYMMETRY, AND THAT
  * DEFECT HAS ALREADY HAPPENED ONCE ON THIS EXACT SURFACE. The dev-tunnel SSR route
  * mounts an owned app at ANY status (`resolveDevPageBlockForAuthor`), while the page
@@ -44,10 +44,27 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  * surface with two independently-written gates would regrow it.
  *
  * So: the SSR resolver and the PHASE 3 mint branch call THIS, and nothing else
- * decides who may privately run a delisted app. `private-run-access.call-site-ledger`
- * pins that there are exactly two callers, and a behavioural test drives one fixture
+ * decides who may privately run a delisted app. A behavioural test drives one fixture
  * through both and asserts they agree — because a structural ledger type-checks past
  * a wrong argument.
+ *
+ * ⚠️ THE CALLER COUNT IS **THREE**, NOT TWO, AND THIS LINE SAID TWO FOR LONGER THAN THE
+ * ERROR SURVIVED ANYWHERE ELSE. `private-run-access.call-site-ledger` pins THREE:
+ * the SSR route, the mint, and `private-run-impression.service.ts` — the analytics
+ * impression gate, which takes no access decision and grants nothing (it reads
+ * `allowed` and drops a telemetry row), which is why it cannot reproduce the
+ * SSR↔MINT asymmetry this file exists to prevent and why it is nonetheless required
+ * to share the predicate rather than hand-roll a lookalike.
+ * 🔴 THE RETRACTION ALREADY EXISTED — in `private-run-impression.service.ts`, whose
+ * docblock says in as many words that defining it elsewhere "would have … left the
+ * ledger reporting 'exactly two callers' while being wrong". It was written in the
+ * file the author was looking at, and the two files that ASSERT the count were never
+ * swept. A correction lands where you were looking, not where a reader arrives from:
+ * when you retract a count, grep the whole tree for it before you stop.
+ *
+ * ⚠️ NOT EVERY "two callers" PHRASE BELOW IS WRONG. The ones describing the SSR↔MINT
+ * SEAM — the two surfaces that take an access decision and could DISAGREE — are
+ * correct and deliberately unchanged; only claims about the LEDGER'S COUNT were.
  *
  * ── IT CALLS THE REAL ROLE RESOLVER, NOT A COPY ───────────────────────────────
  * 🔴 `resolveAppAccess` IS INVOKED, NEVER RE-IMPLEMENTED. The precedent is exact:
@@ -249,6 +266,39 @@ export async function resolvePrivateRunAccess(args: {
   // the audit-only `appListing` relation is the cheapest single win (−1 per resolve). `block-approval.service.ts` deliberately avoids the same mechanism ten
   // lines from a near-identical select; if this surface ever gets real traffic, that is
   // the pattern to copy.
+  //
+  // 🔴🔴 OPERATOR RULING, 2026-10-01 — D4 BINDS PRE-APPROVAL ONLY. THIS IS A DECISION,
+  // NOT AN OVERSIGHT AND NOT A TODO.
+  //
+  // The `approved` refusal below is also the reason the W14 per-listing visibility feature's
+  // owner-invisibility guarantee STOPS AT THE APPROVAL BOUNDARY. A listing may be set to
+  // `visibility: 'moderators'` at any eligible status (see `maxVisibilityForStatus`). On a
+  // `draft`/`pending` listing a moderator's review run falls through to this predicate, is
+  // admitted, mints the verified `privateRun` claim, and every owner-invisibility rail fires
+  // — the analytics reads, the spend attribution, the author-fee payee resolver and the
+  // `blockRenders` writer skip. On an `approved` listing it CANNOT: the public path owns that
+  // status unconditionally, no claim is minted, and so:
+  //
+  //   🔴 A MODERATOR REVIEWING AN APPROVED LISTING SET TO `moderators` IS DEBITED BUZZ, AND
+  //      THE PUBLISHER IS CREDITED THE AUTHOR FEE. The run also appears in that owner's
+  //      analytics and spend attribution, exactly like any other run.
+  //
+  // Accepted on two grounds. The app is already APPROVED and publicly runnable by anyone
+  // holding its slug, so the run is genuinely indistinguishable from real usage — the level
+  // governs store DISCOVERY, not run access. And the alternative was to give the author-fee
+  // payee resolver a second arm that consults the listing's level, which puts a blocking
+  // listing read on the generation hot path; the readers on that path are fail-open by
+  // contract precisely so they can never take a generation down.
+  //
+  // Narrowing D2 instead — refusing `moderators` on an approved listing — was considered and
+  // REJECTED: the owner keeps free choice within the enum.
+  //
+  // 🔴 DO NOT "COMPLETE" THIS BY WIRING THE LISTING LEVEL INTO THE EXCLUSION RAILS. Those
+  // rails are deliberately AUDIENCE-BLIND: they key on this one verified claim and nothing
+  // else. Teaching any of them about `app_listings.visibility` reverses a ruling rather than
+  // fixing a bug, and it is guarded —
+  // `__tests__/app-listing-visibility.d4-ruling.test.ts` fails if a visibility symbol
+  // appears in any of them. Revisit the ruling first.
   const resolved = await BlockRegistry.resolvePrivateRunPageBlock(by, { db: pool });
   if (!resolved.ok) return { allowed: false, reason: resolved.reason };
   const block = resolved.block;

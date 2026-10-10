@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { branch, defFamily, defineGraph } from 'form-graph';
+import { branch, defFamily, defineGraph, rootScope } from 'form-graph';
 import { VID_QUANTITY_ECOSYSTEMS } from '~/shared/constants/generation.constants';
 import { getEcosystemStates } from '../ecosystem-gates';
 import { modelSelectorRules } from '../reconcile';
@@ -37,6 +37,19 @@ const QUANTITY = defFamily((max: number) => {
     output: z.number().min(1).max(max),
     default: 1,
     meta: { min: 1, max, step: 1 },
+    // `store.set()` writes trusted intent and skips `input`, so a quantity carried in by a
+    // remix from an image family or a wider entitlement is stored verbatim and then fails
+    // `output` and blocks the submit. The footer names the field; the quantity control
+    // renders no error of its own. The image hub's twin
+    // of this field had the same hole (see `image/hub.graph.ts`).
+    //
+    // `correct`, not `coerce`: `input` already snaps the same value, so this cannot widen the
+    // server parse. Non-finite goes to the default rather than through `snap`, which
+    // propagates NaN and fails the output just as silently.
+    correct: (value: number) => {
+      const snapped = Number.isFinite(value) ? snap(value) : 1;
+      return snapped === value ? undefined : { value: snapped, reason: 'quantity_out_of_range' };
+    },
   };
 });
 
@@ -58,10 +71,11 @@ export const videoHub = defineGraph<RootCtx>()
       ...ecosystemFieldSchemas(
         _ext.workflow,
         hiddenEcosystems,
-        ecosystemStates.map((e) => e.key)
+        ecosystemStates.map((e) => e.key),
+        usableEcosystems
       ),
       default: defaultValue,
-      // v1 stores the ecosystem selection per OUTPUT type
+      // The ecosystem selection is stored per OUTPUT type.
       scope: 'video',
       meta: {
         compatibleEcosystems,
@@ -75,7 +89,10 @@ export const videoHub = defineGraph<RootCtx>()
   })
   .field('quantity', ({ ecosystem, _ext }) => {
     if (!VID_QUANTITY_ECOSYSTEMS.has(ecosystem)) return null;
-    return QUANTITY(_ext.limits.vidQuantity);
+    // Scoped per output, like the image hub's quantity: vidQuantity can equal
+    // maxQuantity (gold: 4), so clamping alone doesn't stop an image count of 4
+    // carrying into LTXV and queueing 4 videos.
+    return { ...QUANTITY(_ext.limits.vidQuantity), scope: rootScope('video') };
   })
   .use(
     // one entry per family, however many ecosystems it serves — the keys

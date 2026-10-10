@@ -54,6 +54,7 @@ vi.mock('~/server/jobs/job', () => ({
 
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockLogToAxiom = loggingMock.logToAxiom;
@@ -326,8 +327,23 @@ describe('processScheduledPublishing :: standalone sweep window', () => {
     const interval = standaloneCall().find(
       (value) => typeof (value as Prisma.Sql)?.sql === 'string'
     ) as Prisma.Sql;
-    expect(interval.sql).toBe('make_interval(mins => 60)');
+    expect(interval.sql).toBe('make_interval(mins => 10)');
     expect(interval.values).toEqual([]);
+  });
+
+  // To whoever is about to give the sweep its own, larger offset: post.controller skips the
+  // inline reward for any post scheduled at least POST_MINIMUM_SCHEDULE_MINUTES out, and this
+  // sweep is then its only reward. A post created and scheduled the same minimum ahead sits
+  // only about that far past createdAt, so an offset above the minimum never pays it at all.
+  // Model and version publishes also stamp Post.publishedAt with no inline reward, so this
+  // offset decides which of their gallery posts earn it too.
+  it('offsets the sweep by no more than the schedule minimum', async () => {
+    await runJob();
+    const interval = standaloneCall().find(
+      (value) => typeof (value as Prisma.Sql)?.sql === 'string'
+    ) as Prisma.Sql;
+    const offset = Number(/mins => (\d+)/.exec(interval.sql)?.[1]);
+    expect(offset).toBeLessThanOrEqual(POST_MINIMUM_SCHEDULE_MINUTES);
   });
 });
 

@@ -791,12 +791,12 @@ jobs:
     # (`unit*`, `@civitai/*`, `app:*`), and its only CI home is the preview
     # pipeline's report-only `preview / component-tests`. Adding it here is a
     # much larger change than this harness and belongs in its own PR, on measured
-    # cost: locally, on a 16-core box, `geometry` is 6 files / 73 tests in 44.93s (2026-09-15)
-    # while `component` is 212 files / 2,362 tests in 112.92s wall — and 334s of
+    # cost: locally, on a 16-core box, `geometry` runs in well under a minute while
+    # `component` is an order of magnitude larger in files, tests and wall time — and most of
     # that is test time spread across workers, so a 2-core runner (browser pool
     # `min(12, cpus - 1)` = 1 instance) does not divide it. That is a job an order
-    # of magnitude more expensive, with 212 files of pass/fail history nobody has
-    # ever seen in this workflow. Do it deliberately, not as a rider.
+    # of magnitude more expensive, with hundreds of files of pass/fail history nobody
+    # has ever seen in this workflow. Do it deliberately, not as a rider.
     #
     # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` — the same expression
     # `unit` uses, and NOT a literal `true`. Both halves matter:
@@ -827,7 +827,8 @@ jobs:
     # 2-core runner. This tier has no import/transform phase to blame, unlike
     # `unit`, so a red is either the code or the browser — both worth someone's
     # attention. (Runner wall time has not been re-measured since the tier was
-    # 10 tests; it is 73 now.)
+    # 10 tests. Derive the current count rather than reading one here — every figure
+    # written into this file has gone stale within a commit or two.)
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 15
     steps:
@@ -863,7 +864,7 @@ jobs:
       # chromium-1228 against this repo's 1200) is a property of THAT HOST, not of
       # this repo. The escape hatch is `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`,
       # honoured by vitest.config.mts. Do NOT move the repo's playwright pin to
-      # match a laptop — see CLAUDE.md, "Browser/component tests on NixOS".
+      # match a laptop — see docs/dev/worktrees.md, "Browser/component tests on NixOS".
       - name: Install Chromium for Playwright
         run: pnpm exec playwright install --with-deps chromium
 
@@ -879,7 +880,8 @@ jobs:
       # than no job, because it reports success.
       #
       # Both numbers are FLOORS, not equalities, so adding a geometry test never
-      # breaks this — only losing one does.
+      # breaks this. Which floor to raise when you add to the tier is stated at the floors
+      # themselves, below.
       #
       # 🔴 THE FILE COUNT COMES FROM `testResults.length`, NOT FROM
       # `numTotalTestSuites`. Measured against a real report when the tier was 2
@@ -899,13 +901,36 @@ jobs:
         if: always()
         run: |
           node - <<'JS'
-          // Minimum ledger for the `geometry` tier. Measured 2026-09-15: 6 files / 73 tests.
-          // FILES ratchets at exactly current — files do not merge by accident, so a drop means a
-          // file stopped being collected, which is the thing this ledger exists to catch. TESTS
-          // stays conservative: a legitimate refactor merges cases, and a test-count ratchet at
-          // current would teach people to raise the floor rather than investigate the drop.
-          const MIN_FILES = 6;
-          const MIN_TESTS = 10;
+          // Minimum ledger for the `geometry` tier. Both numbers are FLOORS (see the `<`
+          // comparison below). ⚠️ NO CURRENT-COUNT FIGURE IS QUOTED HERE: three consecutive
+          // commits restated one and each went stale in the commit that changed the tier,
+          // including one that added a test and left the number it had just invalidated.
+          // Derive it — `--reporter=json`, `testResults.length` and `numTotalTests`. What is
+          // durable: MIN_TESTS carries real headroom by design, MIN_FILES is MEANT to sit at
+          // exactly the collected count, so adding a file does not red but losing one does.
+          //
+          // 🔴 "MEANT TO" IS DOING REAL WORK IN THAT SENTENCE — THE FILE FLOOR HAS NOW DRIFTED
+          // TWICE AND IS THE ONE THING IN THIS BLOCK NOBODY MAINTAINS. It sat at 6 against 7
+          // on one base branch, and at 8 against 11 collected on the next, so by then THREE
+          // files could have stopped being collected with no red; the test floor sat at 10
+          // against 101, so ninety could have. An earlier draft claimed FILES "ratchets at
+          // exactly current" — that contract is NOT implemented, and a floor that has gone
+          // stale on every second change is evidence the instruction below is not enough. If
+          // you want a drop of one to be caught reliably, the honest fix is an equality
+          // against a count derived from the glob, not a hand-maintained floor. Until someone
+          // writes that: raise MIN_FILES when you add a file — it has no headroom, which is
+          // the whole point of it — and leave MIN_TESTS alone, which is what "a fraction of
+          // current" below means. (An earlier pairing of these comments told you to raise
+          // both, which contradicted that.)
+          const MIN_FILES = 11;
+          // It was 10 — which had ZERO headroom when it was written (the tier was 10 tests
+          // then, the same configuration this comment praises the FILE floor for), and became
+          // unfailable as the tier grew past it. The GATE was not that weak — it is
+          // `files < MIN_FILES || tests < MIN_TESTS`, so the FILE term still caught a dropped
+          // file — the hole was in this clause. Deliberately a
+          // fraction of current rather than a ratchet, so merging cases in a refactor does
+          // not force a floor bump — but a floor that cannot fail is not conservative.
+          const MIN_TESTS = 80;
           const REPORT = 'geometry-report.json';
 
           const fs = require('fs');

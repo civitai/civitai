@@ -3,6 +3,10 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../../test/component-setup';
 import { useRouter } from 'next/router';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+import type * as OnsiteReviewModalMod from '~/components/Apps/OnsiteReviewModal';
+import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../test/trpcProxyStub';
 
 /**
  * REVIEW QUEUE dual-path row selection (Phase 1 migration) — browser mode.
@@ -19,6 +23,8 @@ import { useRouter } from 'next/router';
 
 const state = vi.hoisted(() => ({
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
+  subListingCount: 0,
+  flaggedCount: 0,
 }));
 
 // Page's getServerSideProps calls createServerSideProps at module top — stub so
@@ -58,7 +64,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // Stub the modal component (assert whether a selection opened it) but keep the
 // real byte/date formatters + request types the queue table depends on.
 vi.mock('~/components/Apps/OnsiteReviewModal', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/components/Apps/OnsiteReviewModal')>();
+  const actual = await importOriginal<typeof OnsiteReviewModalMod>();
   return {
     ...actual,
     OnsiteReviewModal: ({ selection }: { selection: { request: { slug: string } } | null }) =>
@@ -87,6 +93,14 @@ vi.mock('~/components/Apps/OffsiteReviewQueue', () => ({
   OffsiteReviewModalBody: () => null,
 }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
+// Stubbed: the real `UserAvatar` reaches providers this network-free test does not mount.
+// Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({ user }: { user: { id: number; username?: string | null } }) => (
+    <span>{user.username ?? `#${user.id}`}</span>
+  ),
+}));
 
 const PENDING = {
   id: 'onsite-req-1',
@@ -106,7 +120,7 @@ const PENDING = {
   manifestDiffSummary: { kind: 'first-version', fields: [] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const inert = { invalidate: vi.fn() };
@@ -117,22 +131,11 @@ const emptyQuery = () => ({
   isError: false,
   error: null,
 });
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    useUtils: () => ({
-      blocks: {
-        listPendingRequests: inert,
-        listApprovedRequests: inert,
-        listRejectedRequests: inert,
-      },
-      appListings: {
-        listPendingRequests: inert,
-        listApprovedRequests: inert,
-        listRejectedRequests: inert,
-      },
-    }),
-    blocks: {
-      listPendingRequests: {
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcMod>()),
+  trpc: makeTrpcProxy(
+    {
+      'blocks.listPendingRequests': {
         useQuery: () => ({
           data: { items: [PENDING], nextCursor: null },
           isLoading: false,
@@ -141,28 +144,98 @@ vi.mock('~/utils/trpc', () => ({
           error: null,
         }),
       },
-      listApprovedRequests: { useQuery: emptyQuery },
-      listRejectedRequests: { useQuery: emptyQuery },
+      'blocks.listApprovedRequests': { useQuery: emptyQuery },
+      'blocks.listRejectedRequests': { useQuery: emptyQuery },
+      // The page mounts `PriorVersionsModal`, whose read is `enabled`-gated but whose
+      // HOOK still runs on every render.
+      'blocks.listVersionHistory': { useQuery: emptyQuery },
+      // The unified pending queue also reads the OFF-SITE pending source; return an
+      // empty page so this test isolates the single on-site row's selection path.
+      'appListings.listPendingRequests': { useQuery: emptyQuery },
+      'appListings.listApprovedRequests': { useQuery: emptyQuery },
+      'appListings.listRejectedRequests': { useQuery: emptyQuery },
+      // The Sub-listings tab label's pending count runs on every render of the page.
+      'appListings.countSubListingQueue': {
+        useQuery: () => ({ data: { count: state.subListingCount } }),
+      },
+      'appFeedback.modCountFlagged': { useQuery: () => ({ data: state.flaggedCount }) },
     },
-    // The unified pending queue also reads the OFF-SITE pending source; return an
-    // empty page so this test isolates the single on-site row's selection path.
-    appListings: {
-      listPendingRequests: { useQuery: emptyQuery },
-      listApprovedRequests: { useQuery: emptyQuery },
-      listRejectedRequests: { useQuery: emptyQuery },
-    },
-  },
+    {
+      useUtils: () => ({
+        blocks: {
+          listPendingRequests: inert,
+          listApprovedRequests: inert,
+          listRejectedRequests: inert,
+        },
+        appListings: {
+          listPendingRequests: inert,
+          listApprovedRequests: inert,
+          listRejectedRequests: inert,
+        },
+      }),
+    }
+  ),
 }));
 
 const ReviewQueuePage = (await import('~/pages/apps/review')).default;
 
+// The global `next/router` mock returns one router object; read it outside React through an
+// alias so the hook rule does not mistake this helper for a component.
+const readRouter = useRouter;
 function routerPush() {
-  return (useRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push;
+  return (readRouter() as unknown as { push: ReturnType<typeof vi.fn> }).push;
+}
+
+function routerState() {
+  return readRouter() as unknown as { query: Record<string, string> };
 }
 
 beforeEach(() => {
   state.flags = { appBlocks: true, appReviewPage: true };
+  state.subListingCount = 0;
+  state.flaggedCount = 0;
+  routerState().query = {};
   routerPush().mockClear();
+});
+
+describe('ReviewQueuePage — App feedback tab', () => {
+  test('the tab shows the flagged count on its label', async () => {
+    state.flaggedCount = 3;
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-feedback-flagged-count')).toHaveTextContent('3');
+  });
+
+  test('no badge when nothing flagged is waiting', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /App feedback/ })).toBeInTheDocument();
+    expect(page.getByTestId('app-feedback-flagged-count').elements()).toHaveLength(0);
+  });
+
+  test('?tab=app-feedback opens it', async () => {
+    routerState().query = { tab: 'app-feedback' };
+    renderWithProviders(<ReviewQueuePage />);
+    await expect
+      .element(page.getByRole('tab', { name: /App feedback/ }))
+      .toHaveAttribute('aria-selected', 'true');
+    await expect.element(page.getByTestId('app-feedback-mod-queue')).toBeInTheDocument();
+  });
+});
+
+describe('ReviewQueuePage — Sub-listings tab', () => {
+  test('shows the pending store-item count on the tab label', async () => {
+    state.subListingCount = 4;
+    renderWithProviders(<ReviewQueuePage />);
+    const tab = page.getByRole('tab', { name: /Sub-listings/ });
+    await expect.element(tab).toBeInTheDocument();
+    await expect.element(page.getByTestId('sub-listing-pending-count')).toHaveTextContent('4');
+  });
+
+  test('shows no count badge when nothing is waiting', async () => {
+    renderWithProviders(<ReviewQueuePage />);
+    await expect.element(page.getByRole('tab', { name: /Sub-listings/ })).toBeInTheDocument();
+    expect(page.getByTestId('sub-listing-pending-count').elements()).toHaveLength(0);
+  });
 });
 
 describe('ReviewQueuePage — dual-path row selection', () => {

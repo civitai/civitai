@@ -4,16 +4,19 @@ import {
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
   purchaseStickerUsesSchema,
-  setCosmeticFlagSchema,
+  setStickerPlacementRatingSchema,
+  unequipCosmeticSchema,
+  updateEventHatFitSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
-  setCosmeticFlag,
+  setStickerPlacementRating,
   getCosmeticDetail,
   getStickerCosmetics,
   getStickerAttribution,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
   unequipCosmetic,
+  updateEventHatFit,
 } from '~/server/services/cosmetic.service';
 import {
   getStickerBalances,
@@ -87,15 +90,21 @@ export const cosmeticRouter = router({
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),
-  setFlag: moderatorProcedure
-    .input(setCosmeticFlagSchema)
-    .mutation(({ input }) => setCosmeticFlag(input)),
+  setStickerPlacementRating: moderatorProcedure
+    .input(setStickerPlacementRatingSchema)
+    .mutation(({ input }) => setStickerPlacementRating(input)),
+  // Takes effect on every card wearing the hat at once; the editor previews it first.
+  updateEventHatFit: moderatorProcedure
+    .input(updateEventHatFitSchema)
+    .mutation(({ input }) => updateEventHatFit(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)
-    .mutation(({ input, ctx }) => equipCosmeticToEntity({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      equipCosmeticToEntity({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   unequipCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
-    .input(equipCosmeticSchema)
+    .input(unequipCosmeticSchema)
     .mutation(({ input, ctx }) => unequipCosmetic({ ...input, userId: ctx.user.id })),
 });

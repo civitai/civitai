@@ -6,6 +6,7 @@ import {
   recordStoreScopeResolution,
 } from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
+import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
 import {
   narrowStoreScope,
   type StoreVisibilityScope as StoreVisibilityScopeValue,
@@ -577,7 +578,7 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
 
 /**
  * Dedicated kill-switch for the PRIVATE RUN of a DELISTED / SUSPENDED app — the
- * `/apps/private-run/<slug>` SSR route plus the PHASE 3 page-token mint branch, which
+ * `/apps/run/<slug>` SSR route's private-run fallback plus the PHASE 3 page-token mint branch, which
  * together serve a taken-down app's ALREADY-DEPLOYED bundle to its owner, an accepted
  * listing collaborator, or a moderator. Never publicly: the public run route and the
  * public page mint keep their `status: 'approved'` requirement untouched.
@@ -616,11 +617,31 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * decision rather than a filter, so "three rails" is a claim about writers and not about
  * how many aggregates the owner's panel serves:
  *
- *   1. ✅ `block_spend_attribution` — CLOSED. A private run's row is written VOIDED, and
- *      both owner-visible reads in `app-analytics.service.ts` now exclude
+ *   1. ✅ `block_spend_attribution` — CLOSED, BY A DIFFERENT MECHANISM THAN THIS ITEM
+ *      ORIGINALLY DESCRIBED. A private run now writes **NO ROW AT ALL**: the exclusion is
+ *      WRITE-side, an early return in `recordSpendAttribution` before the row is built.
+ *      ⚠️ THIS LINE PREVIOUSLY READ "A private run's row is written VOIDED", which was
+ *      true when written and was falsified by the write-side change. It is corrected
+ *      here rather than in a later sweep because this ledger's own 🔴 rule below says to
+ *      fix THIS summary in the same commit that satisfies an item — and the rot it
+ *      warns about is exactly what happened: the mechanism changed and the description
+ *      did not, in the one file the Flipt description points a widener at.
+ *      The owner-visible reads in `app-analytics.service.ts` still exclude
  *      `status = 'voided'` (the aggregate spreads `OWNER_VISIBLE_SPEND_FILTER`; the raw
- *      series binds the same constant as a parameter). Measured both directions in
- *      `blocks/__tests__/app-analytics.void-exclusion.test.ts`.
+ *      series binds the same constant as a parameter), measured both directions in
+ *      `blocks/__tests__/app-analytics.void-exclusion.test.ts`. 🔴 THOSE FILTERS WERE
+ *      DELIBERATELY KEPT and are NOT dead code — but for ONE reason, not three: they
+ *      exclude `self_spend` and `internal_owner`, which are the entire live voided
+ *      population (the 582 rows below, every one `self_spend`).
+ *      ⚠️ THIS SENTENCE CLAIMED THREE REASONS AND TWO WERE FALSE. It said the filters
+ *      "still exclude the historical private-run rows written before the change" and that
+ *      "`'manual_review'` has a SECOND live producer in `backpay.service.ts` (held rows)".
+ *      There are no historical rows — the flag never shipped, so no private run ever wrote
+ *      one. And `backpay.service.ts` writes `blockSubscriptionAttribution`, a DIFFERENT
+ *      TABLE, with `status: 'held'`, which a `status = 'voided'` filter does not exclude
+ *      in any case. 🔴 THIS COPY SURVIVED THE SWEEP THAT RETRACTED THE OTHER FOUR — in
+ *      the one file this ledger itself calls the one a widener opens. A retraction is a
+ *      tree-wide sweep or it is nothing.
  *      ⚠️ IT SHIPPED AS A DELIBERATE CHANGE TO EXISTING DISPLAYED NUMBERS, which is the
  *      part an operator should know rather than discover: 639 rows to 57 (91.08%), 4,738
  *      Buzz to 268 (94.34%). The two reasons it had been HELD were both settled by
@@ -655,15 +676,27 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            that gate sits on the `/api/track/block-render` beacon. Left here as a
  *            SATISFIED entry rather than deleted: the requirement still binds if anyone
  *            ever removes that row, and a deleted line cannot say so.
- *        (b) 🔴 NEITHER OF THE TWO WRITERS IS RATE-LIMITED, and once this flag admits
- *            anyone, each one's gate can reach the private-run access predicate — which
- *            touches the write primary — on a caller-chosen app id. Before that change
- *            the common beacon path did zero Postgres queries. Settle it for BOTH
- *            writers, not one: a rate limit on each, or confirm this flag's rollout
- *            admits only the moderators segment. Both writers are enumerated in
- *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so "both"
- *            is followable. (Keep this at the level of the missing control — this repo
- *            is public.)
+ *        (b) 🔴 NOTHING ON THIS SURFACE IS RATE-LIMITED, AND THE POPULATION IS THREE
+ *            DOORS, NOT TWO. Once this flag admits anyone, each door can reach the
+ *            private-run access predicate — which touches the write primary — on a
+ *            caller-chosen app id.
+ *            ⚠️ THIS ITEM READ "NEITHER OF THE TWO WRITERS IS RATE-LIMITED … Settle it
+ *            for BOTH writers, not one … Both writers are enumerated in
+ *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so 'both'
+ *            is followable." That enumeration is now INCOMPLETE and following it would
+ *            leave a door open: it covers the two `blockRenders` beacon writers, and the
+ *            THIRD door is the SSR run route `src/pages/apps/run/[slug]/[[...path]].tsx`,
+ *            which reaches the same predicate as a fallback and is PUBLIC, linked and
+ *            crawlable. Note the subject also shifts — `blockRenders` WRITERS and callers
+ *            of the ACCESS PREDICATE are different populations; the predicate's own
+ *            enumeration is `blocks/__tests__/private-run-access.call-site-ledger.test.ts`
+ *            (three callers), which is the one to follow for THIS item.
+ *            🔴 SETTLING IT: the rate-limiter PR was closed unmerged — it bounded one of
+ *            the beacon callers while the SSR route drove the same read unbounded — so the
+ *            cost bound today is THE FLAG ITSELF, by decision. That is sound only while
+ *            the flag admits trusted audiences. RE-PRICE BEFORE WIDENING TO ALL APP
+ *            OWNERS: an owner is not an operator.
+ *            (Keep this at the level of the missing control — this repo is public.)
  *   4. ⚖️ `block_buzz_attribution` (owner-visible `buzzPurchased`) — NOT FILTERED, BY
  *      DECISION, and recorded here so the enumeration is not mistaken for complete at
  *      three. `getMyAppAnalytics` aggregates this table into `buzzPurchased` with no
@@ -685,11 +718,28 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *
  * So, before widening on THIS count, exactly TWO things remain — item 1's filter has LANDED
  * and item 3's flag-key carry-over is SATISFIED:
- *   · item 3(b): the two unrate-limited `blockRenders` writers.
+ *   · item 3(b): 🔴 RESTATED — it is no longer "the two unrate-limited `blockRenders`
+ *     writers". NOTHING on this surface is rate-limited: the limiter PR was closed
+ *     unmerged (its limiter covered one of two callers of the access predicate while the
+ *     SSR route drove the same read unbounded), and the rescope then wired the PUBLIC,
+ *     linked, crawlable `/apps/run/<slug>` into that same predicate as a fallback. So the
+ *     enumeration is THREE doors, not two, and the cost bound is now THE FLAG ITSELF
+ *     rather than any limiter. That is a deliberate operator decision on the grounds that
+ *     the flag admits only trusted audiences — and it is only sound while that holds.
+ *     🔴 RE-PRICE THIS BEFORE WIDENING TO ALL APP OWNERS: an owner is not an operator,
+ *     and `private-run-access.service.ts`'s `dbWrite.user.findUnique` ignores the
+ *     `db: 'read'` argument it is passed, so a resolve that REACHES it hits the write
+ *     primary. ⚠️ Not "every resolve": it sits behind the flag check, the session-level
+ *     viewer check and the block resolve, so `flag-off`, anonymous, `no-app`, `approved`
+ *     and `not-a-page` all return before it. The earlier wording overstated the reachable
+ *     population — in the conservative direction, but this figure is the input to the
+ *     re-price decision this paragraph triggers, so it should be the real one.
  *   · item 1's acceptance check: one real private run, read on the owner's own analytics panel.
- * All three analytics rails now filter, so the void DOES deliver the invisibility at the row
- * level; what it does not deliver on its own is the evidence that it works end to end, which
- * is what the acceptance check buys.
+ * ⚠️ THIS PARAGRAPH SAID "All three analytics rails now filter, so the void DOES deliver
+ * the invisibility at the row level." Rail 1 no longer filters and there is no void — a
+ * private run writes NO spend-attribution row at all. The other rails are unchanged. What
+ * is still true is the part that mattered: none of it delivers the evidence that the
+ * feature works end to end, which is what the acceptance check buys.
  *
  * ⚠️ THIS PARAGRAPH IS A COUNT, AND A COUNT IS THE THING THAT ROTS. It said "item 3's two
  * carry-overs (the flag key existing in `flipt-state`, …)" while that key had ALREADY been
@@ -1010,6 +1060,27 @@ export async function isAppBlocksPostCreationEnabled(opts?: {
 }
 
 /**
+ * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind —
+ * `blocks.prepareTrainingDataset`, the training estimate/submit arm of
+ * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
+ * `RUN_TRAINING` consent pair (`blocks.previewTrainingQuote` /
+ * `blocks.consentTrainingQuote`).
+ *
+ * Same posture as `app-blocks-post-creation`: independent of the runtime flag so a
+ * GA widening of `app-blocks-enabled` does not arm training on the same day; an
+ * ABSENT flag resolves `false` for everyone. Evaluated with the TOKEN SUBJECT'S
+ * hydrated `SessionUser`, never `ctx.user`.
+ */
+export const APP_BLOCKS_TRAINING_KIND_FLAG = 'app-blocks-training-kind';
+
+export async function isAppBlocksTrainingKindEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_TRAINING_KIND_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated flag for the EXTERNAL-ONLY App-store read scope — the mechanism that
  * lets the store serve `kind='offsite'` (external app) listings to a viewer while
  * `kind='onsite'` App Blocks stay hidden from them. This is a SEPARATE, ORTHOGONAL
@@ -1184,6 +1255,59 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
   if (await isExternalListingsPublicEnabled(opts)) return 'public-external';
   // Fail-closed: neither flag → dark.
   return 'none';
+}
+
+/**
+ * Resolve the viewer's LISTING AUDIENCE FLOOR — the narrowest per-listing visibility level
+ * that still admits them.
+ *
+ * 🔴 THIS IS A SECOND AXIS, NOT A REPLACEMENT FOR {@link resolveStoreVisibilityScope}, and
+ * the two are ANDed by the caller. The scope answers "may this viewer see the store at
+ * all, and which KINDS" — a surface question. This answers "which per-listing levels admit
+ * this viewer" — a cohort question. A listing at `public` is still invisible to a viewer
+ * whose scope is `none`; nothing here can lift that.
+ *
+ * 🔴 THE TESTER COHORT IS READ OFF `app-blocks-enabled`, AND THAT CHOICE IS THE WHOLE
+ * REASON THIS FEATURE NEEDS NO NEW FLAG. A level stores an ENUM and is mapped to a cohort
+ * here, server-side, so no flag state is created, widened or referenced by key from the
+ * database. The two existing flags already partition the population the way the levels
+ * need:
+ *   · `app-listings` is the SURFACE flag and is the one that widens to public at GA;
+ *   · `app-blocks-enabled` is the runtime gate and stays mods + `app-dev-testers`
+ *     segmented — this file says so where that flag is declared.
+ * So post-GA a general viewer fails `app-blocks-enabled` and floors at `public`, while a
+ * tester passes it and floors at `testers`, which is exactly the distinction the enum
+ * draws.
+ *
+ * ⚠️ ALL FOUR LEVELS ARE ALREADY DISTINGUISHABLE — an earlier revision of this paragraph
+ * claimed `testers` and `public` "admit the same population pre-GA", and that was false in
+ * the REASSURING direction. A live floor-`public` population exists today: both public
+ * `/api/v1/apps` endpoints pass `floor: 'public'` explicitly while
+ * `resolvePublicAppsCatalogScope` grants an anonymous caller `full` SURFACE scope, so a
+ * `testers` listing is hidden there while a `public` one is served. The two axes are
+ * independent, which is the whole reason they are resolved separately.
+ *
+ * 🔴 FAIL-CLOSED IS `public`, WHICH READS BACKWARDS AND IS CORRECT. The floor is the
+ * NARROWEST level that admits the viewer, so the least-privileged answer is the WIDEST
+ * level — `public`, which admits them to nothing a level has restricted. An absent flag or
+ * an unreachable Flipt makes `isFlipt` return `false`, so an unknown viewer floors at
+ * `public` and sees only listings their owner marked public.
+ *
+ * Moderators short-circuit on the server-stamped session flag rather than on a flag eval,
+ * for the same reason the private-run predicate does: a moderator is typically outside
+ * every cohort segment, and requiring a flag for them would refuse the audience the
+ * `moderators` level exists for.
+ */
+export async function resolveViewerAudienceFloor(opts?: {
+  user?: SessionUser;
+}): Promise<ListingAudienceFloor> {
+  const user = opts?.user;
+  if (user?.isModerator === true) return 'moderators';
+  // Anonymous: no cohort to resolve, and a no-user eval would return the flag's BASE value
+  // rather than denying (see GLOBAL-EVAL SEMANTICS at the top of this file). Answer the
+  // least-privileged floor directly instead of asking a question that cannot refuse.
+  if (!user) return 'public';
+  return (await isAppBlocksEnabled({ user })) ? 'testers' : 'public';
 }
 
 /** The three flags a `full` / `public-external` scope can come from. */

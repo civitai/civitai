@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -200,6 +201,12 @@ export type ListApprovedRequestsInput = z.infer<typeof listApprovedRequestsSchem
 export const listRejectedRequestsSchema = listPendingRequestsSchema;
 export type ListRejectedRequestsInput = z.infer<typeof listRejectedRequestsSchema>;
 
+/** Mod-only: one app's publish-request history. Same column as `getMyPendingForSlug`, so
+ *  the same schema rather than a second copy of its bounds. */
+export const listVersionHistorySchema = getMyPendingForSlugSchema;
+
+export type ListVersionHistoryInput = z.infer<typeof listVersionHistorySchema>;
+
 export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
@@ -217,10 +224,7 @@ export const PUBLISH_REJECTION_REASON_MAX = 2000;
 
 export const rejectRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
-  rejectionReason: z
-    .string()
-    .min(PUBLISH_REJECTION_REASON_MIN)
-    .max(PUBLISH_REJECTION_REASON_MAX),
+  rejectionReason: z.string().min(PUBLISH_REJECTION_REASON_MIN).max(PUBLISH_REJECTION_REASON_MAX),
 });
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
@@ -246,9 +250,7 @@ export const getPublishRequestScreenshotsSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });
 
-export type GetPublishRequestScreenshotsInput = z.infer<
-  typeof getPublishRequestScreenshotsSchema
->;
+export type GetPublishRequestScreenshotsInput = z.infer<typeof getPublishRequestScreenshotsSchema>;
 
 /** Input for the MOD-ONLY `blocks.getPublishRequestDiff` (line-level code diff). */
 export const getPublishRequestDiffSchema = z.object({
@@ -297,11 +299,37 @@ export const mintReviewBlockTokenSchema = z.object({
 
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
 
+/**
+ * 🔴 THE ZOD ENUM IS BUILT FROM THE SHARED LEDGER, not a fourth hand-typed copy.
+ * `AGENT_REVIEW_SECTIONS` lives in `~/shared/constants/agent-review-section.constants`
+ * (zod-free, Prisma-free, React-free) so this schema, the provisioning service and the
+ * client renderer cannot disagree about which analyses exist.
+ */
+
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
- *  dispatches an ephemeral review agent for a PENDING request. Same shape as
- *  previewRequest (the pending request id). */
+ *  dispatches an ephemeral review agent for a PENDING request. */
 export const startAgentReviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
+  /**
+   * Re-run only these analyses.
+   *
+   * 🔴 OMITTED MEANS ALL THREE, AND THAT IS THE DEFAULT PATH — a first dispatch and the
+   * whole-report "Re-run all analyses" both leave this out, and the provisioned Job is then
+   * byte-identical to what it was before this field existed.
+   *
+   * 🔴 WHAT A SUBSET BUYS TODAY, STATED PLAINLY SO NOBODY OVER-READS IT. Civitai-side it
+   * (a) carries the list to the agent as a contract env var, and (b) SEEDS the new report
+   * row with the previous report's surviving sections, so a targeted retry can never lose a
+   * completed analysis no matter what the runner does. Whether the runner actually SKIPS the
+   * other two — the part that saves money — depends on the agent template consuming that
+   * env var, which ships separately. Until it does, a targeted re-run costs the same as a
+   * full one; it is never WORSE than today's only option, which is a full re-run.
+   */
+  sections: z
+    .array(z.enum(AGENT_REVIEW_SECTIONS))
+    .min(1)
+    .max(AGENT_REVIEW_SECTIONS.length)
+    .optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;

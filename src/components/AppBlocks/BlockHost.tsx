@@ -11,9 +11,22 @@ interface BlockHostProps {
 /**
  * Dispatches a single block install to the correct host implementation.
  *
- * In v1 every approved block has `trustTier='unverified'`, so the dispatcher
- * always routes to IframeHost. The InlineHost code path is in the file tree
- * so v2 can light it up without a structural refactor.
+ * ⚠️ RETRACTED (#5209): this used to claim "in v1 every approved block has
+ * `trustTier='unverified'`", and the codebase itself refutes it. See
+ * `~/server/services/blocks/app-cap-limits.constants.ts`, which records a live-DB
+ * measurement from 2026-07-31: **3 rows at `trust_tier='internal'`** against 18
+ * `unverified`. The tier is not uniform and never was.
+ *
+ * The dispatcher always routes to IframeHost regardless, because the InlineHost
+ * path is not lit up yet — that is the real reason, and it is unrelated to the
+ * tier. The InlineHost code path is in the file tree so v2 can light it up
+ * without a structural refactor.
+ *
+ * Why the correction matters rather than being pedantry: `internal`/`verified`
+ * tiers get `allow-same-origin` (`intersectSandbox`), so such a frame runs at a
+ * REAL origin with cookies. Anyone reasoning about what a link, a popup or a
+ * postMessage transport can do in a block frame gets the opposite answer for
+ * those 3 rows, and the retracted sentence said there were none.
  */
 export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
   const {

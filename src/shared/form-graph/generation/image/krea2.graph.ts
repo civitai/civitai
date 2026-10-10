@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
+import { fourMegapixelCustomDimensionLimits } from '~/shared/constants/generation.constants';
+import { fitCustomDimensions } from '~/utils/aspect-ratio-helpers';
 import { SEED, aspectRatioDef, enumDef, imagesDef, workflowScoped } from '../defs';
 import {
   familyResources,
@@ -12,14 +14,12 @@ import {
 } from '../shared';
 
 /**
- * Krea 2, ported from `krea2-graph.ts`. One locked checkpoint whose version
+ * Krea 2. One locked checkpoint whose version
  * selector splits across two engines: medium/large are FAL size tiers
  * (creativity + style references, no LoRA), raw/turbo are comfy builds (LoRA,
  * negative prompt, cfg/steps). `img2img:edit` overrides the version into the
  * comfy edit variants and swaps the picker down to the two comfy builds.
  */
-
-// ---- copied from krea2-graph.ts, which dies with the data-graph engine ------
 
 export const krea2VersionIds = {
   medium: 2983023,
@@ -59,7 +59,9 @@ const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
   [krea2VersionIds.turbo, 'turbo'],
 ]);
 
-/** Krea renders ~1MP area buckets — see krea2-graph.ts for the measurements. */
+export const isOfficialKrea2Version = (id: number) => krea2VersionIdToVariant.has(id);
+
+/** Krea renders ~1MP area buckets. */
 const krea2AspectRatioDimensions: Record<string, { width: number; height: number }> = {
   '16:9': { width: 1376, height: 768 },
   '4:3': { width: 1184, height: 896 },
@@ -76,10 +78,23 @@ const krea2ResolutionOptions = [
   { label: '2K', value: '2K' },
 ] as const;
 
+/**
+ * 2K: each ~1MP bucket doubled, then fitted. A straight doubling sends 16:9 as
+ * 2752 × 1536 — past the comfy input's 2048 per side (and the 4 MP ceiling), so the
+ * orchestrator refused every 2K ratio but 1:1. Fitting shrinks both sides together,
+ * so each keeps its ratio: 16:9 is 2048 × 1152.
+ */
 const krea2AspectRatioOptionsFor = (scale: number) =>
   Object.keys(krea2AspectRatioDimensions).map((ratio) => {
     const { width, height } = krea2AspectRatioDimensions[ratio]!;
-    return { label: ratio, value: ratio, width: width * scale, height: height * scale };
+    const size =
+      scale === 1
+        ? { width, height }
+        : fitCustomDimensions(
+            { width: width * scale, height: height * scale },
+            fourMegapixelCustomDimensionLimits
+          )!;
+    return { label: ratio, value: ratio, ...size };
   });
 
 const krea2AspectRatioOptionsByResolution: Record<
@@ -163,6 +178,13 @@ const styleReferencesDef = {
     )
     .pipe(styleReferenceEntryOutputSchema.array().optional()),
   default: [] as Krea2StyleReferenceEntry[],
+  // Staged references outlive the family they were staged under, so the limit they came
+  // from is not the limit they end up under. `correct`, not `coerce`: the input above
+  // carries the same `.max()`, so this can never fire on the server parse.
+  correct: (value: Krea2StyleReferenceEntry[] | undefined) =>
+    (value?.length ?? 0) > KREA2_STYLE_REFERENCES_LIMIT
+      ? { value: value!.slice(0, KREA2_STYLE_REFERENCES_LIMIT), reason: 'over_cap' }
+      : undefined,
   meta: {
     limit: KREA2_STYLE_REFERENCES_LIMIT,
     strength: {
@@ -174,14 +196,12 @@ const styleReferencesDef = {
   },
 };
 
-// ---- end of krea2-graph.ts copies -------------------------------------------
-
 type Krea2VariantExt = FamilyExt & { model?: unknown };
 
 // Unknown ids are community checkpoints. Only the comfy builds can load one
 // via `diffusionModel`, so they fall back off the FAL tiers — and to the
 // full-step build, since turbo's 15-step / cfg-2 ceilings can't drive an
-// undistilled model. (v1 parity: kaydaxter's krea2-custom-checkpoints fix.)
+// undistilled model.
 const variantOf = (ext: Krea2VariantExt): Krea2Variant => {
   const id = modelIdOf(ext.model);
   if (ext.workflow === 'img2img:edit')
@@ -223,17 +243,23 @@ const editRaw = defineGraph<Krea2VariantExt>()
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 3 }))
   .field('steps', perModelSlider({ min: 1, max: 60, default: 30 }));
 
-/** Tagged: v1's `krea2Variant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `krea2Variant`. */
 const variants = branch('krea2Variant', variantOf, { fal, raw, turbo, editRaw, editTurbo });
 
 const RESOLUTION = enumDef({ options: krea2ResolutionOptions, default: '1K' });
 
-const AR = defFamily((resolution: string) =>
+/**
+ * Custom sizes on the comfy builds only: they take any width × height (64–2048
+ * /16), while the FAL tiers take a ratio label and nothing else. Grouped with the
+ * ~4 MP models, the size the 2K tier reaches.
+ */
+const AR = defFamily((resolution: string, comfy: boolean) =>
   aspectRatioDef({
     options:
       krea2AspectRatioOptionsByResolution[resolution] ?? krea2AspectRatioOptionsByResolution['1K']!,
     default: '1:1',
     priorityOptions: krea2PriorityRatios,
+    custom: comfy ? fourMegapixelCustomDimensionLimits : undefined,
   })
 );
 
@@ -251,7 +277,9 @@ export const krea2 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('resolution', ({ model, _ext }) =>
     krea2UsesComfyEngine(modelIdOf(model) ?? undefined, _ext.workflow) ? RESOLUTION : null
   )
-  .field('aspectRatio', ({ resolution }) => AR(resolution ?? '1K'))
+  .field('aspectRatio', ({ resolution, model, _ext }) =>
+    AR(resolution ?? '1K', krea2UsesComfyEngine(modelIdOf(model) ?? undefined, _ext.workflow))
+  )
   .use(variants)
   // negativePrompt exists only in the comfy variants; its in-branch snippet
   // registration never fires

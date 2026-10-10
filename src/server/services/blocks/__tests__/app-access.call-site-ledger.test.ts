@@ -96,6 +96,34 @@ const GATE_LEDGER: Record<string, string> = {
     'invitee does not. NO mod bypass — preserved exactly as it was (D1). getMyApps is ' +
     'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
+  'src/server/services/blocks/app-listing-visibility-write.service.ts':
+    'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
+    'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
+    'through dbWrite so a seat accepted moments ago is visible. NO mod bypass, ' +
+    'deliberately — and the moderator half is a SEPARATE proc rather than a bypass here. ' +
+    'setListingVisibilityAsModerator now EXISTS (added with the owner-facing UI): ' +
+    'moderatorProcedure at the router, a REQUIRED audited reason, and a `set-visibility` ' +
+    'moderation event written inside the SAME interactive transaction as the level write. ' +
+    '🔴 THE TRANSACTION IS THE SUPPORT, NOT THE ORDERING. An earlier wording here derived ' +
+    'the invariant from the event being written AFTER the level lands — which is exactly ' +
+    'the two-round-trip shape that SHIPPED and produced a committed level change with no ' +
+    'audit row. Ordering is what failed; atomicity is what fixes it. So a moderator cannot ' +
+    "change a stranger's discoverability without a row the OWNER can read in their own " +
+    'listing history — and if the `$transaction` is ever removed, THIS invariant is gone ' +
+    'with it, whatever the ordering. The earlier ledger entry asserted this proc while it did NOT exist ' +
+    '(it had been deferred), which is worse in a ledger than in prose because a ledger is ' +
+    'the authoritative in-tree record — so note that the claim is now TRUE and was ' +
+    'verified against the router and the service, not inferred from this sentence. ' +
+    'Admitting a moderator to the OWNER path would still be an unaudited write, which is ' +
+    'why that path is unchanged and has no mod bypass. D1 and the review ceiling bind for ' +
+    'moderators too (applyVisibility enforces both for every caller), so a mod cannot ' +
+    'make a draft public — they approve it instead. A missing row ' +
+    'and a caller ' +
+    'with no role produce the SAME refusal, so the proc is not an existence oracle over ' +
+    'listing ids. The resolver is NOT status-aware (its own header says so), so D1 ' +
+    '("levels apply to non-suspended listings only") is enforced separately in ' +
+    'applyVisibility against VISIBILITY_ELIGIBLE_LISTING_STATUSES plus the backing ' +
+    "block's own suspension, and re-asserted in the CAS write's WHERE clause.",
   'src/server/services/blocks/app-listing-assets.service.ts':
     'loadOwnedListing is THE gate: owner | ACCEPTED collaborator | moderator, with BOTH ' +
     'the owner half and the seat half resolved by resolveListingAccess — never the ' +
@@ -319,6 +347,18 @@ const GATE_LEDGER: Record<string, string> = {
     'AppListing or a kind at all. Branch 1 (no listing at all → app.userId) is ' +
     'load-bearing and must not be dropped — most blocks predating W13 would otherwise go ' +
     'UNrevoked, which for a security control is worse than over-revoking.',
+  'src/server/services/blocks/app-feedback.service.ts':
+    'Private per-app feedback, TWO gates in opposite directions. (1) The owner INBOX ' +
+    '(resolveInboxListingId: list, set owner status, flag as abusive) admits owner | ' +
+    'ACCEPTED collaborator via resolveListingAccess, keyed on the SEAT listing, so an ' +
+    'editor reads and triages the inbox exactly as the owner does (product decision) and ' +
+    'a pending/rejected invitee does not. NO mod bypass: moderators read every row through ' +
+    'the separate moderatorProcedure list, and an owner-path write by a mod would stamp ' +
+    'the mod as the developer. The writes resolve through dbWrite so a seat revoked a ' +
+    'moment ago cannot still write off a lagging replica. (2) The SUBMIT gate ' +
+    '(resolveAppFeedbackTarget) REFUSES anyone with a role — owner AND editor — because ' +
+    'people who read the inbox do not write to it. Both halves take the canonical, ' +
+    'kind-aware owner from resolveListingAccess, never the denormalized column (D5).',
   'src/server/services/blocks/user-app-surface.service.ts':
     'NOT an access gate at all — an owner SUPPRESSION on a read of the viewer’s OWN data. ' +
     'listMyScopeGrants’ activity leg skips a row when AppBlock.app.userId === the viewer, ' +

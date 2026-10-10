@@ -17,6 +17,16 @@ const simpleUser = Prisma.validator<Prisma.UserDefaultArgs>()({
 
 export type SimpleUser = Prisma.UserGetPayload<typeof simpleUser>;
 
+/**
+ * ⚠️ The App-Block review surfaces' user chip — `simpleUserSelect` MINUS `profilePicture` —
+ * deliberately does NOT live here. It is in `~/server/selectors/review-user-chip.selector`,
+ * a leaf with a TYPE-ONLY Prisma import, because this module calls `Prisma.validator` at
+ * load and pulls in `image.selector` → `tag.selector`, which several service suites cannot
+ * tolerate (they mock `@prisma/client` with a narrow factory and die on
+ * `Prisma.validator is not a function`). That file's header carries the full reasoning, and
+ * `review-submitter-select-parity.test.ts` asserts the two stay in the stated relationship.
+ */
+
 export const userWithCosmeticsSelect = Prisma.validator<Prisma.UserSelect>()({
   ...simpleUserSelect,
   // TODO.leaderboard: uncomment when migration is done

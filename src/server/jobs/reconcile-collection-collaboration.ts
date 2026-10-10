@@ -1,4 +1,5 @@
 import { dbWrite } from '~/server/db/client';
+import { collaborationMemberUserIds } from '~/server/services/collection-collaboration-lapse';
 import { createJob } from './job';
 
 export const reconcileCollectionCollaboration = createJob(
@@ -6,19 +7,7 @@ export const reconcileCollectionCollaboration = createJob(
   '20 0 * * *',
   async () => {
     await dbWrite.$executeRaw`
-      WITH active_member AS (
-        SELECT DISTINCT cs."userId"
-        FROM "CustomerSubscription" cs
-        WHERE cs.status IN ('active', 'trialing')
-          AND cs."currentPeriodEnd" >= NOW()
-        UNION
-        -- The invite gate reads the owner's tier off the hub session, which ranks comped tiers
-        -- from UserMembershipOverride alongside real subscriptions. Reading subscriptions alone
-        -- here would let a comped owner invite successfully and then be switched off overnight.
-        SELECT o."userId"
-        FROM "UserMembershipOverride" o
-        WHERE o.tier <> 'free'
-      ),
+      WITH active_member AS (${collaborationMemberUserIds}),
       collaborative AS (
         SELECT c.id, c."userId", c."collaborationDisabledAt"
         FROM "Collection" c

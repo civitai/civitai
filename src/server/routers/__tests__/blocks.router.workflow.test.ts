@@ -575,14 +575,15 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 // #3520 — real collector (not a stub): the router reads `.list()` off the
 // context's collector, so using the genuine implementation keeps the test
 // honest about the shape it consumes.
-import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
-import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import { createModelSubstitutionCollector } from '~/shared/generation/model-substitution';
+import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
 // #4159 — the REAL validator. `createWorkflowStepsFromGraphInput` is mocked for
 // this whole file, which is exactly why the LoRA defect was invisible here; the
-// regression suite re-arms `generationGraph.safeParse` inside that mock so the
-// input the router builds is graded by the thing that actually rejected it in
-// production. NOT mocked anywhere, so this is the shipped graph.
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
+// regression suite re-arms the hub parse inside that mock so the input the router
+// builds is graded by the thing that actually rejected it in production. NOT mocked
+// anywhere, so this is the shipped graph.
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 // The PASS-THROUGH arm's one control, imported REAL (the `steps` module is
 // mocked above, but `orchestrator-denylist` is a sibling module and is not).
@@ -592,6 +593,7 @@ import {
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.redis;
@@ -4079,7 +4081,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     //
     // WHAT THIS DOES NOT PROVE: that getResourceData's REAL hasAccess/Private
     // logic actually rejects those models — that logic is mocked away here (it
-    // lives in orchestrator/common.ts and is exercised by its own suite). This
+    // lives in the orchestrator service and is exercised by its own suite). This
     // test pins the ORDERING + fail-shape contract (belt before spend, throw →
     // no reservation), not the belt's internal entitlement maths. A DEPLOYED
     // browser run against a real early-access / Private model is still required
@@ -4708,7 +4710,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     // graph — the thing that rejected the built input — never ran. Every test
     // above that submits a compatible LoRA is green on `main` while production
     // returns HTTP 400. So these tests re-arm the ONE step that was stubbed out:
-    // the mock runs the REAL `generationGraph.safeParse` on the input the router
+    // the mock runs the REAL `generationHub.parse` on the input the router
     // actually built, and reproduces `validateInput`'s throw on failure (same
     // `Validation failed: <key>: <message>` shape). Nothing else is unmocked.
     //
@@ -4741,7 +4743,10 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
           [];
         mockCreateStepsFromGraph.mockImplementation(
           async ({ input }: { input: Record<string, unknown> }) => {
-            const result = generationGraph.safeParse(input as never, graphCtx as never) as {
+            const result = generationHub.parse(
+              reconcileSelectors(input).raw,
+              graphCtx as never
+            ) as {
               success: boolean;
               errors?: Record<string, { message: string }>;
               data?: Record<string, unknown>;
@@ -4904,9 +4909,9 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
 
       // NEGATIVE CONTROL for the harness above: the same re-armed validator must
       // be able to go RED. Without this, a green first arm is indistinguishable
-      // from a `safeParse` that cannot fail.
+      // from a parse that cannot fail.
       it('CONTROL: the re-armed validator DOES reject a genuinely invalid graph input', async () => {
-        const bad = generationGraph.safeParse(
+        const bad = generationHub.parse(
           {
             workflow: 'txt2img',
             ecosystem: 'SDXL',
@@ -4918,7 +4923,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
             steps: 25,
             quantity: 1,
             priority: 'low',
-          } as never,
+          },
           graphCtx as never
         ) as { success: boolean; errors?: Record<string, { message: string }> };
         expect(bad.success).toBe(false);
@@ -10340,6 +10345,189 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:02:05');
     });
 
+    // A training run outlasts any `maxBuzz` read as seconds, so the stamped
+    // timeout above would cancel it partway. With no quote it is refused instead,
+    // before anything is reserved or submitted.
+    describe('an UNQUOTED training step is refused, not timed out', () => {
+      const TRAINING_TYPES = ['training', 'imageResourceTraining'] as const;
+      const REFUSAL = {
+        workflowId: 'failed',
+        status: 'failed',
+        error: 'Training needs a price quote and none could be obtained; try again.',
+      };
+      const blockCapIncrs = () =>
+        mockSysRedis.incrBy.mock.calls.filter((c) =>
+          String(c[0]).startsWith('system:blocks:buzz-cap:')
+        );
+
+      it.each(TRAINING_TYPES)(
+        'submit of an unquoted `%s` is refused; nothing reserved or submitted',
+        async ($type) => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          ptQuoting(null, 4);
+          const result = await caller().submitWorkflow({
+            blockToken: 'tok',
+            body: ptBody({ $type }),
+            idempotencyKey: 'idem-train-1',
+          });
+          expect(result.snapshot).toEqual(REFUSAL);
+          expect(ptWhatIfs(), 'the quote is what decided this').toHaveLength(1);
+          expect(ptRealSubmits()).toHaveLength(0);
+          expect(mockReserveAppSpend).not.toHaveBeenCalled();
+          expect(blockCapIncrs()).toHaveLength(0);
+          expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+          // The claim is taken (so a replay can win) and then released.
+          expect(mockClaimGen).toHaveBeenCalledTimes(1);
+          expect(mockReleaseGen).toHaveBeenCalledTimes(1);
+          expect(mockFinalizeGen).not.toHaveBeenCalled();
+          // The refusal is still counted, as the ratio the counter exists for.
+          expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'absent');
+        }
+      );
+
+      it('a refused key can be retried and goes through once a quote exists', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(null, 4);
+        const body = ptBody({ $type: 'training' });
+        const first = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-retry',
+        });
+        expect(first.snapshot).toEqual(REFUSAL);
+        ptQuoting(31, 31);
+        const second = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-retry',
+        });
+        expect(second.snapshot.workflowId).toBe('wf_pt_1');
+        expect(ptRealSubmits()).toHaveLength(1);
+      });
+
+      // A same-key retry of a run that already went through must get its REPLAY,
+      // not a "try again" — which would invite a second paid training run.
+      it('a same-key retry of a COMMITTED training submit replays it, even unquoted', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(31, 31);
+        const body = ptBody({ $type: 'training' });
+        const first = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-replay',
+        });
+        expect(first.snapshot.workflowId).toBe('wf_pt_1');
+        ptQuoting(null, 4);
+        const retry = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-replay',
+        });
+        expect(retry.snapshot).toEqual(first.snapshot);
+        expect(ptRealSubmits(), 'no second training run').toHaveLength(1);
+      });
+
+      it('a QUOTED training submit is unchanged: submitted, reserves the quote, no timeout', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(31, 31);
+        const result = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body: ptBody({ $type: 'training' }),
+        });
+        expect(result.snapshot.workflowId).toBe('wf_pt_1');
+        expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 31);
+        // Positive control for the zero-count filter used by the refusal cases.
+        expect(blockCapIncrs().length).toBeGreaterThan(0);
+        expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBeUndefined();
+      });
+
+      // [INVARIANT GUARD] the refusal is keyed on the training set, not on "no
+      // quote". `trainingData` is a near-miss name outside that set.
+      it.each([PT_TYPE, 'trainingData'])(
+        'an unquoted NON-training `%s` still submits with the stamped maxBuzz timeout',
+        async ($type) => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          ptQuoting(null, 31);
+          const result = await caller().submitWorkflow({
+            blockToken: 'tok',
+            body: ptBody({ $type }),
+          });
+          expect(result.snapshot.workflowId).toBe('wf_pt_1');
+          expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBe('00:00:20');
+          expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', MAX_BUZZ);
+        }
+      );
+
+      it.each(TRAINING_TYPES)(
+        'estimate of an unquoted `%s` is a failed snapshot with no cost',
+        async ($type) => {
+          mockVerifyBlockToken.mockResolvedValue(ptClaims());
+          happyUser();
+          ptQuoting(null, 4);
+          const result = await caller().estimateWorkflow({
+            blockToken: 'tok',
+            body: ptBody({ $type }),
+          });
+          expect(result.snapshot).toEqual(REFUSAL);
+          expect(result.snapshot).not.toHaveProperty('cost');
+          expect(ptRealSubmits()).toHaveLength(0);
+          expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(
+            '__passthrough__',
+            'estimate_absent'
+          );
+        }
+      );
+
+      it('estimate of a training step is refused when the token cannot be minted either', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(31, 31);
+        mockGetOrchestratorToken.mockRejectedValue(new Error('no token'));
+        const result = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: ptBody({ $type: 'training' }),
+        });
+        expect(result.snapshot).toEqual(REFUSAL);
+        expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      });
+
+      it('estimate of a QUOTED training step still answers max(maxBuzz, quote)', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(31, 31);
+        const result = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: ptBody({ $type: 'training' }),
+        });
+        expect(result.snapshot).toEqual({
+          workflowId: 'wf_estimate',
+          status: 'pending',
+          cost: { total: 31 },
+        });
+      });
+
+      // [INVARIANT GUARD] non-training estimates keep degrading to the ceiling.
+      it('estimate of an unquoted NON-training `trainingData` still answers maxBuzz', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(null, 4);
+        const result = await caller().estimateWorkflow({
+          blockToken: 'tok',
+          body: ptBody({ $type: 'trainingData' }),
+        });
+        expect(result.snapshot).toEqual({
+          workflowId: 'wf_estimate',
+          status: 'pending',
+          cost: { total: MAX_BUZZ },
+        });
+      });
+    });
+
     it('persists a settle record at the RESERVED ceiling, with constant labels', async () => {
       mockVerifyBlockToken.mockResolvedValue(ptClaims());
       happyUser();
@@ -10697,6 +10885,37 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(tags).toContain('passthrough');
     });
 
+    // civitai-app-starters#541 — `/models/train/from-orchestrator` admits only
+    // workflows carrying the training tag, so without it a block-run training
+    // can never reach the publish wizard.
+    it.each(['training', 'imageResourceTraining'])(
+      'adds the training tag to a `%s` submit and its quote, keeping app-block provenance',
+      async ($type) => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) });
+        for (const call of [ptRealSubmits()[0], ptWhatIfs()[0]]) {
+          const tags: string[] = call[0].body.tags;
+          expect(tags).toContain(TRAINING_WORKFLOW_TAG);
+          expect(tags).toContain('app-block:app_test');
+          expect(tags).toContain('passthrough');
+        }
+      }
+    );
+
+    it.each([PT_TYPE, 'trainingData'])(
+      'does NOT add the training tag to `%s` (submit or quote)',
+      async ($type) => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) });
+        expect(ptRealSubmits()[0][0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
+        expect(ptWhatIfs()[0][0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
+      }
+    );
+
     // The price-check counter is the only thing that can tell "the block saw a
     // live quote" from "the orchestrator stopped pricing and every job silently
     // fell back to its declared ceiling" — which this arm does by design.
@@ -10819,7 +11038,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(stamped).toBe('step:imageBackgroundRemoval');
     });
 
-    it('NAMESPACES a $type that collides with a kind key — never bare `textToImage`', async () => {
+    it('NAMESPACES a $type that collides with a kind key — never bare `customComfy`', async () => {
       // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
       // flows through. `textToImage` is itself a live orchestrator `$type`
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
@@ -10830,12 +11049,26 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       ptQuoting(5, 5);
       await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ptBody({ $type: 'textToImage' }),
+        body: ptBody({ $type: 'customComfy' }),
       });
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      expect(stamped).toBe('step:textToImage');
-      expect(stamped).not.toBe('textToImage');
+      expect(stamped).toBe('step:customComfy');
+      expect(stamped).not.toBe('customComfy');
+    });
+
+    // The collision this namespacing was written for is now closed at the door instead:
+    // `textToImage` is retired, so the arm refuses it rather than stamping it. The
+    // namespacing above is what proves no PAST submit was miscounted as a body-kind one
+    // — prod recorded `step:imageBackgroundRemoval` and no `step:textToImage` at all.
+    it('refuses a bare textToImage outright — the step type is retired', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'textToImage' }) })
+      ).rejects.toThrow(/platform-internal and cannot be submitted by an app block/);
+      expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
     });
 
     it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {

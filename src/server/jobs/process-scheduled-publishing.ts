@@ -89,11 +89,11 @@ export const processScheduledPublishing = createJob(
 
     // Standalone scheduled posts go live passively once feeds stop filtering on
     // "publishedAt" — no status flips, so this window is the only publish-time hook.
-    // The createdAt offset can't exclude a scheduled post (the offset is enforced at
-    // schedule time) but it does let through drafts that sat over an hour before
-    // being published normally — roughly a sixth of all publishes. They're harmless
-    // to the reward, which dedups per post, but any further side effect added to this
-    // sweep fires on them too.
+    // The createdAt offset must never exceed the schedule minimum: post.controller treats
+    // anything that far ahead as scheduled and skips the inline reward, so a larger offset
+    // here leaves short schedules unrewarded for good. It also lets through drafts published
+    // normally after sitting that long. They're harmless to the reward, which dedups per
+    // post, but any further side effect added to this sweep fires on them too.
     //
     // Never widen the window past the start of the UTC day: the reward's dedup entry
     // expires then, so a window spanning midnight re-grants yesterday's posts. That

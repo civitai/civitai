@@ -14,7 +14,7 @@
 
 ## As built
 
-- **Resolver** — [`src/shared/data-graph/generation/gates.ts`](../../src/shared/data-graph/generation/gates.ts):
+- **Resolver** — [`src/shared/generation/gates.ts`](../../src/shared/generation/gates.ts):
   `gateRuleSchema` (+ `GateRule` via `z.infer`), `applicableRulesFor` (server,
   `availableTo` filter), `rulesToStates` / `mergeGateStates` / `pickStrongerGate`
   (graph, no user). **Positive "available to" framing** — `moderators` /
@@ -202,8 +202,8 @@ apply and are unioned in. The Redis-backed `experimentalEcosystems` list this
 replaced is gone — see "Migration".
 
 The markers and alerts read the rules from a client store that
-`ExperimentalRulesSync` fills. **Each generator root must mount it** — the
-v2 `GenerationFormProvider` and form-graph's `BaseGenerationForm` both do. A
+`ExperimentalRulesSync` fills. **The generator root must mount it** —
+`BaseGenerationForm` does. A
 root without it renders no flask and no alert, with no error.
 
 The alert cannot be dismissed: it shows for as long as the selection hits its
@@ -251,7 +251,7 @@ of the server pre-resolving per-user gated lists and shipping those, we ship the
 blocking rules separately — see "As built".)
 
 1. **Shared resolver** — the `GateRule` / `GateState` types + the
-   rules→states resolver live in a shared module (`src/shared/data-graph/generation/gates.ts`),
+   rules→states resolver live in a shared module (`src/shared/generation/gates.ts`),
    since the graph is shared.
 2. **Server returns the user's _applicable_ rules** — `getGenerationConfig`
    includes `gateRules: GateRule[]`, with **`availableTo` evaluated server-side**
@@ -320,7 +320,7 @@ and can be deleted.
 The self-hosted toggle (`selfHostedMode` + `SELF_HOSTED_ECOSYSTEM_KEYS` +
 `getSelfHostedDisabledEcosystems` + `SelfHostedGenerationStatusCard`) is kept as
 its own feature. It's expressible as one rule
-(`{ availableTo: 'members', presentation: 'disabled', ecosystems: [<the 26>] }`),
+(`{ availableTo: 'members', presentation: 'disabled', ecosystems: SELF_HOSTED_ECOSYSTEM_KEYS }`),
 but the set is **code** knowledge (orchestrator engine routing), not a mod
 opinion — so folding it in cleanly wants a `@self-hosted` target-group reference
 that expands at resolve time, rather than a hand-maintained list. Out of scope

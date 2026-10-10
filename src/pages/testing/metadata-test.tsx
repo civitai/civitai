@@ -28,7 +28,6 @@ import {
 } from '@civitai/generation-metadata';
 /* eslint-enable no-restricted-imports */
 import { civitai } from '@civitai/generation-metadata/civitai';
-import { isProd } from '~/env/other';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { auditMetaData } from '~/utils/metadata/audit';
@@ -148,8 +147,6 @@ export default function MetadataTester() {
     return () => document.removeEventListener('paste', onPaste);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  if (isProd) return null;
 
   return (
     <Container size="md" py="xl">

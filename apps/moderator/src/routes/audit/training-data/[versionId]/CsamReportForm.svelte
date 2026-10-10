@@ -49,7 +49,7 @@
       </legend>
       <div class="flex flex-col gap-2">
         {#each Object.entries(contents) as [key, label] (key)}
-          <div class="flex items-start gap-2">
+          <div class="flex items-start gap-2" data-touch-target>
             <Checkbox id="content-{key}" name="contents" value={key} />
             <Label for="content-{key}" class="font-normal text-dark-0">{label}</Label>
           </div>
@@ -57,18 +57,28 @@
       </div>
     </fieldset>
 
-    <div class="mb-3 flex items-center gap-2">
+    <div class="mb-3 flex items-center gap-2" data-touch-target>
       <Checkbox id="csam-confirm" bind:checked={confirmed} />
       <Label for="csam-confirm" class="font-normal text-dark-0">
         I am sure this content is CSAM.
       </Label>
     </div>
 
+    <!-- Files a CyberTipline report and deletes the account — the most irreversible action in this
+         app, so it carries the coarse-pointer floor. -->
     <div class="flex gap-2">
-      <Button type="submit" size="sm" variant="destructive" disabled={busy || !confirmed}>
+      <Button
+        type="submit"
+        size="sm"
+        variant="destructive"
+        disabled={busy || !confirmed}
+        data-touch-target
+      >
         {busy ? 'Filing…' : 'File CSAM report'}
       </Button>
-      <Button type="button" size="sm" variant="outline" onclick={onCancel}>Cancel</Button>
+      <Button type="button" size="sm" variant="outline" onclick={onCancel} data-touch-target>
+        Cancel
+      </Button>
     </div>
   </div>
 </form>

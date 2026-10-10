@@ -3,39 +3,15 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { UNRUNNABLE_JOB_CRON } from '~/server/jobs/job';
+import { RUN_JOBS_ROUTE, jobsArrayEntries } from '~/server/jobs/__tests__/run-jobs-array';
 import { BOT_ACCOUNT_COHORT_WINDOW_HOURS } from '~/server/services/bot-account-detection/cohort';
 
 /** The schedule this job is expected to publish. Daily, clear of the other board writers. */
 const DAILY_NOON_UTC = '0 12 * * *';
 
-const RUN_JOBS_ROUTE = path.resolve(
-  __dirname,
-  '../../../../pages/api/webhooks/run-jobs/[[...run]].ts'
-);
-
 /** The job file itself — the ONLY wiring, so what it passes to the run is what a production run
  *  actually gets. */
 const JOB_FILE = path.resolve(__dirname, '../../../jobs/bot-account-detection.ts');
-
-/**
- * The `jobs` array the route dispatches on, as source.
- *
- * Read rather than imported: importing that route pulls in every job in the application, which is
- * most of the server. The claim is about one line of a list, and a list is something a file can be
- * asked about directly.
- */
-function jobsArrayEntries(): string[] {
-  const source = readFileSync(RUN_JOBS_ROUTE, 'utf8');
-  const start = source.indexOf('export const jobs: Job[] = [');
-  if (start === -1) throw new Error(`no \`jobs\` array in ${RUN_JOBS_ROUTE}`);
-  const end = source.indexOf('\n];', start);
-  if (end === -1) throw new Error(`unterminated \`jobs\` array in ${RUN_JOBS_ROUTE}`);
-  return source
-    .slice(start, end)
-    .split('\n')
-    .map((line) => line.trim().replace(/,$/, ''))
-    .filter((line) => line.length > 0 && !line.startsWith('//'));
-}
 
 /**
  * How this job is REGISTERED, as distinct from what it does.

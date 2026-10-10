@@ -47,7 +47,12 @@ export function capturingDb(
       return {
         // Generic in `R` to satisfy `DatabaseConnection`; a concrete row type here makes svelte-check
         // reject the whole dialect.
-        executeQuery: async <R>() => ({ rows: rows as R[] }),
+        // A write reports the canned rows as the rows it touched, so a chain that refuses on a zero
+        // count keeps going exactly as far as it would against a matching row.
+        executeQuery: async <R>() => ({
+          rows: rows as R[],
+          numAffectedRows: BigInt(rows.length),
+        }),
         streamQuery: async function* () {
           yield { rows: [] };
         },

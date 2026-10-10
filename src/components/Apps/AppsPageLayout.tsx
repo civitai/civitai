@@ -282,27 +282,6 @@ export function AppsPageLayout({
                 measured red the naive `border` + `padding` form produces — is on the class
                 itself in `src/components/Apps/AppsPageLayout.module.scss`. */}
             <div className={classes.railSurface} data-apps-chrome="rail-surface">
-              <Group justify={collapsed ? 'center' : 'flex-end'} gap={0} mb={4}>
-                <Tooltip
-                  label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
-                  position="right"
-                  openDelay={300}
-                >
-                  <LegacyActionIcon
-                    variant="subtle"
-                    color="gray"
-                    onClick={toggle}
-                    aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
-                    aria-expanded={!collapsed}
-                  >
-                    {collapsed ? (
-                      <IconLayoutSidebarLeftExpand size={18} />
-                    ) : (
-                      <IconLayoutSidebarLeftCollapse size={18} />
-                    )}
-                  </LegacyActionIcon>
-                </Tooltip>
-              </Group>
               {/* ⚠️ THE TOGGLE SITS INSIDE THE RAIL, NOT IN THE GUTTER — a deliberate
                   deviation from `CollectionsLayout`, which absolutely-positions its
                   toggle at `right: -32px`. That works there because the gutter it
@@ -310,11 +289,46 @@ export function AppsPageLayout({
                   button is 28px, so a gutter toggle would overlap the page body on every
                   route and would need `overflow: visible` maintained up the whole
                   ancestor chain (a hazard that file documents at length). An in-rail
-                  toggle costs one row and cannot be clipped out of existence. */}
+                  toggle cannot be clipped out of existence.
+
+                  🔴 AND IT COSTS NO ROW OF ITS OWN ANY MORE. It used to render in a
+                  `<Group mb={4}>` here, ABOVE the nav, while `AppsRailNavView` drew the
+                  first group heading ("Discover") underneath with its own `pt="sm"` — so
+                  the rail opened with a toggle band, then whitespace, then the heading.
+                  It is now passed INTO the nav as `headerAction` and shares that
+                  heading's row. Two consequences worth stating because neither is
+                  visible from this call site:
+                    • the mobile `Drawer` below renders the same component and does NOT
+                      pass an action, so it gets no toggle — the drawer is always full
+                      width and has nothing to collapse. That is why this is a prop and
+                      not a flag inside the nav.
+                    • `AppsRailNavView` owns the heading, so the row's padding and its
+                      collapsed centring live there, not here. */}
               <AppsRailNavView
                 sections={sections}
                 currentPath={router.pathname}
                 collapsed={collapsed}
+                headerAction={
+                  <Tooltip
+                    label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                    position="right"
+                    openDelay={300}
+                  >
+                    <LegacyActionIcon
+                      variant="subtle"
+                      color="gray"
+                      onClick={toggle}
+                      aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                      aria-expanded={!collapsed}
+                    >
+                      {collapsed ? (
+                        <IconLayoutSidebarLeftExpand size={18} />
+                      ) : (
+                        <IconLayoutSidebarLeftCollapse size={18} />
+                      )}
+                    </LegacyActionIcon>
+                  </Tooltip>
+                }
               />
             </div>
           </aside>

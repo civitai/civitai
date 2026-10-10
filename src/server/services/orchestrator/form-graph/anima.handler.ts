@@ -8,8 +8,8 @@ import type {
   PreprocessImageStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
-import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { defineHandler } from '../handlers/handler-factory';
+import { buildControlNetSteps } from '../handlers/controlnets.helper';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 

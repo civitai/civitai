@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+import type * as NotificationsModule from '~/utils/notifications';
 
 /**
  * On-site (App Block) review modal — browser-mode render test (report-only in
@@ -48,7 +50,7 @@ const ONSITE_PENDING = {
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const ONSITE_APPROVED = {
@@ -57,7 +59,7 @@ const ONSITE_APPROVED = {
   slug: 'approved-block',
   reviewedAt: new Date('2026-01-02T00:00:00Z'),
   approvalNotes: 'looks good, shipping it',
-  reviewedBy: { id: 99, username: 'mod-user', image: null },
+  reviewedBy: { id: 99, username: 'mod-user', deletedAt: null, image: null },
 };
 
 // A SECOND pending request (distinct `id`) used to prove the transient
@@ -81,6 +83,34 @@ const mocks = vi.hoisted(() => ({
   pending: false,
 }));
 
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
+}));
+
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
@@ -93,7 +123,16 @@ vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({
 }));
 
 const showError = vi.fn();
-vi.mock('~/utils/notifications', () => ({
+/*
+  🔴 SPREAD THE ORIGINAL, never a one-key factory. A factory that omits an export fails the
+  WHOLE FILE at import the day anything in its graph starts calling it — and vitest reports
+  that as 0 tests collected, not as a failing assertion, so it reads as a skipped file. This
+  PR hit it four times at once: the panel gained a `showWarningNotification` call and every
+  suite listing only two exports stopped importing. `local-rules/no-wholesale-module-mock`
+  reds on the narrow form.
+*/
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
@@ -313,6 +352,202 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
     // Neither spelling renders when the manifest declares no category.
     expect(page.getByText('generation', { exact: true }).elements()).toHaveLength(0);
     expect(page.getByText('Generation', { exact: true }).elements()).toHaveLength(0);
+  });
+});
+
+describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
+  /**
+   * 🔴 WHY THIS SUITE EXISTS — stated precisely, because the first version of this
+   * docblock got it wrong. An `app_unlock` good is what makes an app charge for
+   * ADMISSION. The sensitive-permissions panel does NOT announce that for an app
+   * that already sells ordinary goods: `goods:purchase:self` was declared and
+   * justified once, and adding an unlock moves no scope, so that panel renders
+   * exactly what it rendered before. If the goods card fails to render, nothing on
+   * the moderator's screen says the app now charges — and the approve button still
+   * works. A review signal that silently does not render is the entire failure mode,
+   * which is why both its PRESENCE and its PLACEMENT are asserted rather than
+   * assumed.
+   */
+  const UNLOCK_GOOD = {
+    id: 'full-access',
+    title: 'Unlock the whole app',
+    priceBuzz: 3100,
+    kind: 'app_unlock',
+    justification: 'Each session runs a paid model; this covers it once per viewer.',
+  };
+
+  test('an app_unlock good renders the "becoming PAID" alert with its price and stated reason', async () => {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: { ...ONSITE_PENDING.manifest, goods: [UNLOCK_GOOD] },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('This app is becoming PAID')).toBeInTheDocument();
+    // The PRICE, formatted as the mod sees it — this is the number being approved.
+    // Thousands-separated, so it cannot accidentally match the raw `3100` in the
+    // JSON disclosure.
+    await expect.element(page.getByText('3,100 Buzz')).toBeInTheDocument();
+    // 🔴 `exact: true` IS LOAD-BEARING ON EVERY FIELD ALSO PRESENT IN THE RAW JSON.
+    // `goods` is deliberately left in the "Other manifest fields" disclosure as well
+    // (it carries an opaque `payload` this card does not render), so each of these
+    // strings legitimately appears TWICE — once in the card, once inside the
+    // collapsed `<pre>`. A non-exact query matches the `<pre>` too and fails strict
+    // mode. The duplication is the intended trade-off, not a defect.
+    await expect
+      .element(page.getByText('Unlock the whole app', { exact: true }))
+      .toBeInTheDocument();
+    // The developer's stated reason — the free→paid review trigger's whole payload.
+    // Asserted as the LABEL + the reason together: the card renders the label in a
+    // nested span, so the reason alone is not any single element's full text, and a
+    // non-exact match would also hit the raw-JSON `<pre>`. Pinning the whole string
+    // fixes both, and additionally proves the reason is LABELLED for the mod rather
+    // than floating unexplained.
+    await expect
+      .element(
+        page.getByText(
+          'Why this app charges: Each session runs a paid model; this covers it once per viewer.',
+          { exact: true }
+        )
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByText('Digital goods (1)')).toBeInTheDocument();
+
+    // 🔴 THE PLACEMENT, NOT JUST THE PRESENCE — the claim the panel's docblock makes
+    // in capitals ("INLINE, NOT IN THE 'Other manifest fields' DISCLOSURE") and the
+    // one every `toBeInTheDocument()` above is blind to. Mantine keeps a COLLAPSED
+    // Accordion panel's content MOUNTED but hidden (this file already records that at
+    // the iframe-disclosure test), so moving the card inside that panel keeps every
+    // assertion above green while the moderator sees nothing without clicking.
+    //
+    // `aria-hidden` is the discriminator rather than `toBeVisible()`: Mantine's
+    // collapsed style is `height: 0; overflow: hidden` plus `aria-hidden`, and
+    // jest-dom's visibility check inspects display/visibility/opacity — none of which
+    // move — so `toBeVisible()` can pass in BOTH placements. Watched to fail with the
+    // card relocated into the disclosure.
+    const alert = page.getByText('This app is becoming PAID').element();
+    expect(alert.closest('[aria-hidden="true"]')).toBeNull();
+    // Belt: the disclosure itself is still present and still CLOSED, so the assertion
+    // above is about a card outside it rather than about a panel that failed to mount.
+    const otherCtrl = page.getByRole('button', { name: /^Other manifest fields/ });
+    await expect.element(otherCtrl).toHaveAttribute('aria-expanded', 'false');
+
+    // 🔴 POSITIVE CONTROL ON THE DISCRIMINATOR ITSELF. Everything above rests on the
+    // claim that Mantine marks a collapsed panel's subtree `aria-hidden="true"`. That
+    // was prose; if a Mantine upgrade switches to `hidden` / `display:none` /
+    // unmounting, `closest(...)` returns null for EVERYTHING and the `toBeNull()`
+    // above becomes permanently, silently true in both placements — the exact vacuity
+    // this test rejected `toBeVisible()` for. So assert that content which IS inside
+    // the collapsed disclosure genuinely reports hidden. The raw-JSON `<pre>` is the
+    // handle (`goods` is deliberately left in that dump), reached non-exactly on
+    // purpose so it resolves the `<pre>` rather than the card.
+    const rawJson = page.getByText(/"full-access"/).element();
+    expect(rawJson.closest('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  test('an ARITY-violating catalog shows BOTH the paid alert and the errors card', async () => {
+    // 🔴 PINS AN INTENTIONAL ASYMMETRY THAT IS EASY TO MISREAD AS A BUG. The arity
+    // rule is the one catalog-level error that leaves `goods` POPULATED, precisely so
+    // this card can show a moderator WHAT was declared. So an invalid-by-arity
+    // manifest renders the alert for both unlocks AND the "does not validate" card —
+    // unlike an unjustified unlock, which is dropped and renders only the errors card.
+    // "Invalid ⇒ no alert" is therefore NOT true in general, and the parser comment
+    // owes this consumer the populated array.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: {
+              ...ONSITE_PENDING.manifest,
+              goods: [UNLOCK_GOOD, { ...UNLOCK_GOOD, id: 'full-access-2', priceBuzz: 4200 }],
+            },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('This app is becoming PAID')).toBeInTheDocument();
+    await expect.element(page.getByText(/Goods catalog does not validate/)).toBeInTheDocument();
+    await expect.element(page.getByText(/at most 1 app_unlock good/)).toBeInTheDocument();
+    // Both unlocks are shown, so the moderator sees the whole declaration.
+    await expect.element(page.getByText('3,100 Buzz')).toBeInTheDocument();
+    await expect.element(page.getByText('4,200 Buzz')).toBeInTheDocument();
+  });
+
+  test('an ORDINARY goods catalog renders the goods card but NOT the paid-app alert', async () => {
+    // The discriminating control. Without it, an alert hardcoded to render whenever
+    // `goods` exists would pass the case above — and would cry "becoming PAID" at
+    // every app that merely sells an in-app item.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: {
+              ...ONSITE_PENDING.manifest,
+              goods: [{ id: 'extra-slots', title: 'Extra slots', priceBuzz: 1300 }],
+            },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('Digital goods (1)')).toBeInTheDocument();
+    // `exact: true` for the same reason as above — the title is also in the raw JSON.
+    await expect.element(page.getByText('Extra slots', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
+  });
+
+  test('a manifest with NO goods renders NEITHER the goods card nor the paid alert', async () => {
+    // 🔴 THE INERTNESS PROOF ON THE REVIEW SURFACE. Every app approved to date
+    // declares no `goods`, so this change must add nothing at all to their review
+    // screens — an empty panel on every review would be pure noise.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    // Positive control: the modal DID render, so the two zeros below mean "absent",
+    // not "nothing mounted".
+    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
+    expect(page.getByText(/^Digital goods/).elements()).toHaveLength(0);
+  });
+
+  test('an INVALID goods catalog is reported in words, not left as odd-looking JSON', async () => {
+    // An app_unlock with no justification: rejected by the parser, so the catalog
+    // sells nothing. The mod must be told why rather than inferring it.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: {
+              ...ONSITE_PENDING.manifest,
+              goods: [
+                { id: 'full-access', title: 'Full access', priceBuzz: 3100, kind: 'app_unlock' },
+              ],
+            },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText(/Goods catalog does not validate/)).toBeInTheDocument();
+    await expect.element(page.getByText(/justification is required/)).toBeInTheDocument();
+    // …and it must NOT be announced as a working paid app, because it cannot sell.
+    expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
   });
 });
 

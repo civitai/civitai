@@ -12,7 +12,9 @@ import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
+  BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
   blockPerCallBudget,
+  blockTrainingRunCeiling,
   parseSubjectUserId,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
@@ -52,11 +54,13 @@ import {
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
+  checkBlockTrainingDatasetRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   claimGenIdempotency,
   composeBlockExternalId,
+  composeTrainingBlockExternalId,
   finalizeGenIdempotency,
   mintServerBlockExternalId,
   releaseGenIdempotency,
@@ -94,6 +98,7 @@ import {
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
   listRejectedRequestsSchema,
+  listVersionHistorySchema,
   mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
@@ -102,8 +107,16 @@ import {
   teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
-import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
-import type { BlockWorkflowBody } from '~/server/schema/blocks/workflow.schema';
+import {
+  BLOCK_TRAINING_QUOTE_ID_REGEX,
+  blockTrainingDatasetItemsSchema,
+  blockWorkflowBodySchema,
+} from '~/server/schema/blocks/workflow.schema';
+import type {
+  BlockTrainingBody,
+  BlockWorkflowBody,
+  BlockWorkflowSnapshot,
+} from '~/server/schema/blocks/workflow.schema';
 import type { Context } from '~/server/createContext';
 import {
   allowMatureContentForCeiling,
@@ -118,8 +131,11 @@ import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
+  getGoodsSalesForOwner,
   getRecentAttributionsForOwner,
   getRevenueForOwner,
+  isMissingGoodsTableError,
+  unreadableGoodsSales,
 } from '~/server/services/blocks/buzz-attribution.service';
 import {
   emptyAnalytics,
@@ -165,7 +181,7 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
-import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
+import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -188,9 +204,11 @@ import {
   containsAirReference,
   estimateStepBuzz,
   getStep,
+  isTrainingStepType,
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
   PlatformInternalStepTypeError,
@@ -289,6 +307,10 @@ import {
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import {
+  getOrchestratorSubmitFailure,
+  isDefiniteOrchestratorSubmitRefusal,
+} from '~/server/services/orchestrator/submit-failure';
+import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -297,6 +319,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
+  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -470,9 +493,8 @@ const blockPostPayloadShape = {
  * REQUIRED, changed from optional: an integrity check a caller may decline is not
  * an invariant, it is a suggestion. Every caller now states the count it showed.
  *
- * It is safe to trust because it is host chrome, not the block: the block never
- * holds the block token and cannot reach this procedure — it can only post a
- * message the host chooses to act on.
+ * Sent by host chrome, echoed from the server's own preview: an integrity check
+ * against the set the dialog showed, not evidence of a confirm.
  */
 const confirmedImageCountInput = z.number().int().positive().max(100);
 
@@ -485,13 +507,14 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  * ⚠️ IT IS NOT A CLAIM THAT THE TWO PROCEDURES HAVE THE SAME GATE SET, AND
  * READING IT THAT WAY WOULD BE WRONG. The write deliberately carries gates the
  * preview does not — `assertSharedWriteTrust` (#6 in the `createPostFromApp`
- * enumeration) and the two post rate buckets are WRITE-ONLY, because a read that
- * renders a dialog is not the act those gates exist to bound, and charging a rate
- * bucket for a preview would let a dialog the viewer never confirmed consume the
- * budget. The resulting asymmetry — a resolvable preview for a subject who would
- * be refused the post — is the accepted position and is asserted by a test, not
- * an oversight. What this helper guarantees is narrower and exact: NEITHER
- * procedure can be reached without all five of the gates below.
+ * enumeration) and the two post rate buckets are WRITE-ONLY. They are write-only
+ * because a read that renders a dialog is not the act those gates exist to bound,
+ * and charging a rate bucket for a preview would let a dialog the viewer never
+ * confirmed consume the budget. The resulting asymmetry — a resolvable
+ * preview for a subject who would be refused the post — is the accepted position
+ * and is asserted by a test, not an oversight. What this helper guarantees is
+ * narrower and exact: NEITHER procedure can be reached without all five of the
+ * gates below.
  *
  * 🔴 THE GUARD CALL LIVES HERE, AND THAT IS WHY THIS IS A MODULE-SCOPE HELPER
  * RATHER THAN AN IMPORT. `no-unguarded-block-bridge-token.test.ts` computes
@@ -506,7 +529,9 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  *      it is the ONLY place the bridge resolves claims.
  *   2. scope — cheap, and refusing an unscoped app before hydrating a session
  *      keeps the unauthorized path off the auth hub.
- *   3. non-anon subject.
+ *   3. non-anon subject — and that subject IS the signed-in user the request
+ *      arrived with. Both procedures are `protectedProcedure`s and pass that
+ *      user's id; the helper takes it as a required argument.
  *   4. the App-Blocks RUNTIME flag, evaluated on the token SUBJECT.
  *   5. the SUBJECT HYDRATES. Refused on its own terms, with its own message, and
  *      NOT folded into (6) — see the docblock on the refusal itself.
@@ -543,7 +568,8 @@ type BlockPostRequestAuth = {
  */
 async function authorizeBlockPostRequest(
   blockToken: string,
-  surface: AppBlockPostSurface
+  surface: AppBlockPostSurface,
+  sessionUserId: number
 ): Promise<BlockPostRequestAuth> {
   const claims = await authorizeBlockBridgeToken(blockToken);
   // NOT `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
@@ -560,6 +586,10 @@ async function authorizeBlockPostRequest(
       message: 'posting requires an authenticated viewer',
     });
   }
+  // Both halves are bound to the signed-in viewer: the token's subject must be
+  // the session the request arrived with. Checked before any flag or hydration
+  // read, so a mismatched request does no further work.
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
   await assertAppBlocksEnabledForTokenUser(userId);
 
   const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
@@ -913,7 +943,7 @@ function buildGateVersion(gate: {
 //   3. enforces the platform's REAL generation-compatibility check against the
 //      checkpoint.
 // The compatibility check is the correctness boundary: the orchestrator belt
-// filters by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by
+// filters by resource TYPE (the belt keeps a LoRA-typed resource), NOT by
 // generation compatibility — so an incompatible LoRA of type LORA is PASSED
 // downstream and billed for, producing a gen the viewer paid for that quietly
 // ignored (or degraded) their LoRA. This explicit check is what prevents such a
@@ -1831,6 +1861,22 @@ async function createBlockTextToImageStep(opts: {
   };
 }
 
+/**
+ * Refuses unless the block token's subject is the signed-in user the request
+ * arrived with. For bridge writes that run as `protectedProcedure`s: the session
+ * proves who is at the keyboard, the token proves which app and install is asking,
+ * and the two must name the same person. Shared by `publishGenerationOutputs` and
+ * both post procedures (via `authorizeBlockPostRequest`).
+ */
+function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: number): void {
+  if (subjectUserId !== sessionUserId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'this app session belongs to a different account; reload the page to continue',
+    });
+  }
+}
+
 export const blocksRouter = router({
   /**
    * Lists enabled block installs for a (modelId, slotId). Public — anon users
@@ -2248,6 +2294,29 @@ export const blocksRouter = router({
     }),
 
   /**
+   * Mod-only: every publish request for ONE app, newest-first. Powers the prior-versions
+   * modal on the `/apps/review` queue's Version column.
+   *
+   * slug-keyed, not `appBlockId` — see `~/server/services/blocks/publish-request.service`.
+   *
+   * 🔴 DO NOT COUNT `enforceAppBlocksFlag` AS A GATE HERE — for a `query` it falls through
+   * with `_appBlocksDisabled` rather than throwing, and this proc does not read that
+   * marker. Pinned in `__tests__/blocks.router.listVersionHistory.test.ts`.
+   */
+  listVersionHistory: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listVersionHistorySchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review history is restricted to civitai team');
+      }
+      const { listVersionHistory } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      return listVersionHistory({ slug: input.slug });
+    }),
+
+  /**
    * MOD-ONLY (F-E E5): derive the submitted bundle's screenshots for ONE publish
    * request so the reviewer can SEE the publisher-supplied images before
    * approving (publisher images = an abuse vector → must be reviewed with the
@@ -2486,6 +2555,9 @@ export const blocksRouter = router({
         return await startAgentReview({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
+          // Optional targeted re-run (one failed analysis instead of all three).
+          // `undefined` ⇒ a full run, exactly as before this field existed.
+          sections: input.sections,
         });
       } catch (err) {
         // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a
@@ -2814,9 +2886,10 @@ export const blocksRouter = router({
    * `retriggerBuildSchema` and the service's supersede guard.
    *
    * MOD-ONLY IS A DELIBERATE CHOICE, not an oversight: owner self-service would
-   * need its own abuse controls and a build-capacity budget. The owner instead
-   * gets the real build-failure reason on /apps/my-submissions plus a
-   * "contact a moderator" affordance.
+   * need its own abuse controls and a build-capacity budget. The app's team instead
+   * sees the failure on the listing's History tab (`ListingHistoryPanel`): a
+   * headline, a best-effort cause, the build-log excerpt, and — for anything that
+   * is not their code to fix — guidance to contact us rather than resubmit.
    */
   retriggerBuild: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -5074,8 +5147,13 @@ export const blocksRouter = router({
   /**
    * PUBLISH selected outputs of ONE of the calling app's OWN workflows as bare,
    * REAL-SCANNED public `Image` rows — the write half of the Model-Benchmarking
-   * shared-grid seam. FAIL-CLOSED, and identical gate order to
-   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard.
+   * shared-grid seam. FAIL-CLOSED, and the same gate order as
+   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard, plus one gate
+   * those two do not carry: the request must arrive with the viewer's signed-in
+   * session (`protectedProcedure`, API-key and OAuth-token requests refused), and
+   * the token's subject must be that session's user. That comparison runs right
+   * after the non-anon subject check, before any flag read, rate bucket or
+   * orchestrator call.
    *
    * The block sends `workflowId` + optional `imageIndexes` (indexes into the same
    * ordered `images` array queryAppWorkflows exposes) — NEVER urls: the HOST
@@ -5094,7 +5172,8 @@ export const blocksRouter = router({
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
-  publishGenerationOutputs: publicProcedure
+  publishGenerationOutputs: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -5120,6 +5199,7 @@ export const blocksRouter = router({
           message: 'publishing requires an authenticated viewer',
         });
       }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
       // Publish has its OWN (image-weighted) bucket — separate from the catalog
       // read bucket. Charge a base token per call up front (bounds call frequency
@@ -5264,13 +5344,22 @@ export const blocksRouter = router({
    * a caller that skips the preview gets the identical refusals and a
    * preview/commit divergence is a UX bug, never an authorization hole.
    *
+   * Bound the same way as the write: a signed-in browser session whose user is
+   * the token subject (API-key and OAuth-token requests refused), so the preview
+   * and the write cannot disagree about who is asking.
+   *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows), despite
    * being a pure read.
    */
-  previewPostFromApp: publicProcedure
+  previewPostFromApp: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
     .mutation(async ({ ctx, input }) => {
-      const { claims, userId } = await authorizeBlockPostRequest(input.blockToken, 'preview');
+      const { claims, userId } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'preview',
+        ctx.user.id
+      );
       // NOTE: the CATALOG bucket, not the post bucket. The preview writes
       // nothing, so charging it against the 3-posts/hour ceiling would let a
       // block exhaust its own posting budget by rendering dialogs — and the
@@ -5320,13 +5409,17 @@ export const blocksRouter = router({
    * app") is FALSE for a profile post, and that sentence is the security control.
    *
    * GUARDS, in order — those marked ✚ are additions over the publish path:
+   *   0. a signed-in browser session (`protectedProcedure`, with API-key and
+   *      OAuth-token requests refused) — the publish path carries this too.
    *   1. `authorizeBlockBridgeToken` — token validity, instance revocation, and
    *      the backing app still `approved`. All three, in one call, because that
    *      helper is the single gate for every bridge proc.
    *   2. ✚ scope `posts:write:self` — consent-GATED and sensitive, NOT
    *      `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
    *      generation has NOT thereby been authorised to publish under their name.
-   *   3. non-anon subject — there is no anonymous profile to post to.
+   *   3. non-anon subject — there is no anonymous profile to post to — and
+   *      that subject is the signed-in user from (0); anything else is refused.
+   *      The publish path makes the same subject/session check.
    *   4. `assertAppBlocksEnabledForTokenUser` — the runtime flag, on the SUBJECT.
    *   5. ✚ `isAppBlocksPostCreationEnabled` — the DEDICATED fail-closed flag, so
    *      a GA widening of the runtime flag does not arm public post creation on
@@ -5354,12 +5447,14 @@ export const blocksRouter = router({
    *
    * 🔴 THE HOST CONFIRM IS NOT ONE OF THESE GUARDS AND MUST NOT BE READ AS ONE.
    * It is the CONSENT boundary and it lives in host chrome, outside this proc's
-   * reach; every line above is enforced server-side and would still refuse a
-   * caller that never rendered a dialog.
+   * reach. The server cannot see whether a dialog was rendered; what it enforces
+   * is that the request carries the viewer's own signed-in session (0, 3) and
+   * passes every check above.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
-  createPostFromApp: publicProcedure
+  createPostFromApp: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -5372,7 +5467,8 @@ export const blocksRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { claims, userId, subjectUser } = await authorizeBlockPostRequest(
         input.blockToken,
-        'create'
+        'create',
+        ctx.user.id
       );
 
       // WRITE TRUST. Reused from the shared-storage path. "Verified email" is
@@ -5751,6 +5847,193 @@ export const blocksRouter = router({
     }),
 
   /**
+   * ── TRAINING DATASET: the `kind:'training'` data primitive. ─────────────────
+   *
+   * A block names the viewer's image ids and per-image captions; the server
+   * admits only the viewer's OWN images that pass the gated-image predicate under
+   * the token's maturity ceiling, moderates the captions, imports the admitted
+   * images into orchestrator blobs under the viewer's orchestrator token, and
+   * returns an opaque `datasetId` bound to this subject, app and install. The
+   * training body names that handle — never images, blob references or a count.
+   *
+   * Same gates as the training estimate/submit (page token, ordinary viewer, spend
+   * scope, runtime + training flags on the token subject), so an app cannot prepare
+   * a dataset for a run it could not submit.
+   *
+   * RATE LIMIT — its own image-weighted bucket keyed per (install, viewer): a page
+   * app's install id is shared by every viewer, and the publish bucket would let one
+   * viewer's dataset starve another's (and the app's publishing). Charged before any
+   * image is read. MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  prepareTrainingDataset: publicProcedure
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        items: blockTrainingDatasetItemsSchema,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const { userId, user } = await assertTrainingRequestAllowed(claims, ctx);
+      const rate = await checkBlockTrainingDatasetRateLimit(
+        claims.blockInstanceId,
+        userId,
+        input.items.length
+      );
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { resolveViewerBrowsingLevel } = await import(
+        '~/server/services/blocks/block-gated-images.service'
+      );
+      const { prepareBlockTrainingDataset } = await import(
+        '~/server/services/blocks/block-training-dataset.service'
+      );
+      const { allowMatureContent } = resolveBlockMaturity(claims);
+      const token = await getOrchestratorToken(userId, ctx);
+      return prepareBlockTrainingDataset({
+        actor: {
+          userId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
+          allowMatureContent,
+        },
+        items: input.items,
+        token,
+        auditCaptions: (text) => auditBlockTrainingText({ claims, userId, user, text }),
+      });
+    }),
+
+  /**
+   * ── RUN_TRAINING, part 1 of 2: the READ-ONLY consent preview. ───────────────
+   *
+   * Resolves everything the host's training consent dialog shows — the quoted
+   * price, the base model, epochs/steps, the image count and thumbnails, the
+   * quote's expiry, and how much Buzz the viewer is short — from the server-stored
+   * QUOTE and DATASET, never from the block. A sandboxed block cannot be trusted to
+   * display a price truthfully, and the dialog is where the viewer agrees to one.
+   *
+   * It CONFERS NOTHING. Bound like the write below: a signed-in browser session
+   * whose user is the token subject (API-key and OAuth-token requests refused).
+   */
+  previewTrainingQuote: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockTrainingConsentRequest(
+        input.blockToken,
+        ctx,
+        ctx.user.id
+      );
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const binding = {
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+      };
+      const { readTrainingQuote } = await import(
+        '~/server/services/blocks/block-training-quote.service'
+      );
+      const { loadBlockTrainingDataset } = await import(
+        '~/server/services/blocks/block-training-dataset.service'
+      );
+      const quote = await readTrainingQuote(input.quoteId, binding);
+      if (!quote) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'training quote not found or expired' });
+      }
+      const dataset = await loadBlockTrainingDataset(quote.datasetId, binding);
+      // How much more Buzz the viewer needs, across the accounts this submit may
+      // draw from. Fail-open to `null` (unknown) — here it only decides whether the
+      // dialog offers a top-up; the submit runs the same read as its own gate.
+      let shortfall: number | null = null;
+      try {
+        shortfall = Math.max(
+          0,
+          quote.total - (await readBlockTrainingSpendableBuzz(claims, userId))
+        );
+      } catch {
+        shortfall = null;
+      }
+      return {
+        quoteId: quote.quoteId,
+        total: quote.total,
+        imageCount: quote.imageCount,
+        modelName: quote.modelName,
+        epochs: quote.epochs,
+        steps: quote.steps,
+        expiresAt: quote.expiresAt,
+        thumbnails: (dataset?.items ?? []).slice(0, 12).map((item) => item.thumbnailUrl),
+        shortfall,
+      };
+    }),
+
+  /**
+   * ── RUN_TRAINING, part 2 of 2: the viewer's CONFIRMATION. ───────────────────
+   *
+   * Records that the signed-in viewer confirmed this exact quote. The training
+   * submit refuses a quote no one confirmed, and only this procedure can confirm
+   * one — it requires the viewer's own session, which the block (holding nothing
+   * but its own token) cannot present. That is the control; the host dialog that
+   * precedes the call is the consent surface, not the enforcement.
+   *
+   * The confirmation does not extend the quote's life, and a confirmed quote is
+   * still single-use and still re-quoted at submit.
+   */
+  consentTrainingQuote: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockTrainingConsentRequest(
+        input.blockToken,
+        ctx,
+        ctx.user.id
+      );
+      // The read bucket, like the preview: one Redis read + write per call.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { recordTrainingQuoteConsent } = await import(
+        '~/server/services/blocks/block-training-quote.service'
+      );
+      const updated = await recordTrainingQuoteConsent(
+        input.quoteId,
+        { userId, appBlockId: claims.appBlockId, blockInstanceId: claims.blockInstanceId },
+        ctx.user.id
+      );
+      if (!updated) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'training quote not found or expired' });
+      }
+      return { quoteId: updated.quoteId, total: updated.total, consented: true as const };
+    }),
+
+  /**
    * Cost-only preview. Builds the same orchestrator step `submitWorkflow`
    * would, then calls submit with `whatif:true` so the orchestrator computes
    * cost without queueing the job. No budget gate — estimate is how the block
@@ -5809,6 +6092,11 @@ export const blocksRouter = router({
       // branch). Everything customComfy-specific lives in the helper.
       if (input.body.kind === 'customComfy') {
         return await estimateCustomComfyWorkflow({ claims, body: input.body });
+      }
+      // App Blocks TRAINING kind: prices the run and stores the quote the viewer
+      // confirms. Everything training-specific lives in the helper.
+      if (input.body.kind === 'training') {
+        return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
       }
       // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
       // step's cost now comes from a real `whatif` quote, with the declared
@@ -6223,6 +6511,12 @@ export const blocksRouter = router({
           body: input.body,
           idempotencyKey: input.idempotencyKey,
         });
+      }
+      // App Blocks TRAINING kind — charged against the viewer-CONFIRMED quote the
+      // body names, not the token's per-call budget. Its idempotency key is that
+      // quote, so a client `idempotencyKey` is not used on this arm.
+      if (input.body.kind === 'training') {
+        return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
       // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1) — a SPEND
       // path. Branch to the registry-backed handler, which runs the same
@@ -7783,8 +8077,12 @@ export const blocksRouter = router({
    * consistent choice, for the reasons spelled out on getMyAppAnalytics.
    *
    * 🔴 DELIBERATELY **NOT** WIDENED FOR COLLABORATORS. This proc answers "what have
-   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId`, and
-   * that is exactly the right question for it to keep answering:
+   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId` — and,
+   * for the `goods` bucket, the snapshotted `block_good_purchase.app_owner_user_id`,
+   * which was chosen for the identical reason. Both arguments below therefore hold for
+   * both rails, which is what made the goods bridge a safe addition to THIS proc and
+   * not to the collaborator ones. That is exactly the right question for it to keep
+   * answering:
    *   - an editor calling it sees THEIR OWN portfolio, and nothing of the owner's —
    *     no leak, no change;
    *   - an owner who TRANSFERRED an app away still sees the rows they accrued before
@@ -7826,17 +8124,80 @@ export const blocksRouter = router({
         return emptyRevenue();
       }
       const user = ctx.user as SessionUser;
-      const { summary, topApps } = await getRevenueForOwner({
-        ownerUserId: user.id,
-        appBlockId: input.appBlockId,
-        from: input.from ? new Date(input.from) : undefined,
-        to: input.to ? new Date(input.to) : undefined,
-      });
-      const recentAttributions = await getRecentAttributionsForOwner({
-        ownerUserId: user.id,
-        appBlockId: input.appBlockId,
-      });
-      return { summary, topApps, recentAttributions };
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      // THREE BRANCHES, **SEVEN** CONCURRENT READS — do not read this as "three
+      // queries". `getRevenueForOwner` is itself a `Promise.all` of five (four
+      // single-status aggregates plus a groupBy), `getRecentAttributionsForOwner`
+      // is one, and the goods bridge is one.
+      //
+      // ⚠️ SEVEN IS THE ONLY NUMBER HERE THAT IS DERIVABLE FROM THIS REPO, and an
+      // earlier version of this comment also claimed the call holds "~20% of a
+      // pod's read pool, so ~5 concurrent callers exhaust it". That was removed as
+      // unfounded: the pool size comes from `connection_limit` on `DATABASE_URL`,
+      // which is deployment configuration this repo does not set, and Prisma's
+      // default is `num_cpus * 2 + 1` — on a small pod that is single digits, under
+      // which seven concurrent reads is most of the pool rather than a fifth. A
+      // fabricated capacity figure is worse than none, because the next author
+      // widening this proc would have budgeted against it.
+      //
+      // What survives is the shape of the concern: this proc fans out SEVEN reads
+      // per call, it is only acceptable because `appDeveloperProcedure` plus the
+      // `appBlocks` flag keeps the audience tiny, and anyone widening the audience
+      // should measure the live pool rather than trust a number in a comment.
+      //
+      // Parallel rather than sequential is still right: the connections are held
+      // for the same total work either way, just longer, and
+      // `/apps/[appBlockId]/revenue` documents at its `<RevenuePanel>` mount that
+      // it refuses to serialize independent reads on a money screen.
+      //
+      // `getGoodsSalesForOwner` is the digital-goods bridge: sales record into
+      // `block_good_purchase` and write no attribution row, so the owner's own
+      // revenue page sees them only because this call is here. It is a READ, not
+      // a back-fill — see the function's docblock for why that distinction was
+      // chosen deliberately.
+      const [{ summary, topApps }, recentAttributions, goods] = await Promise.all([
+        getRevenueForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId, from, to }),
+        getRecentAttributionsForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId }),
+        // 🔴 THE ONLY BRANCH THAT MAY DEGRADE, and only for ONE error. The table
+        // `block_good_purchase` is applied BY HAND per environment (see the
+        // migration header), so this code can legitimately run against a database
+        // that does not have it. Unguarded, that took down BOTH revenue pages
+        // entirely — including the card-purchase figures, which were readable.
+        //
+        // 🔴 `isMissingGoodsTableError` IS WHAT MAKES THIS SAFE, AND THE WIDE
+        // VERSION OF THIS CATCH WAS A BUG. Catching every rejection means a column
+        // rename, a bad argument or a `TypeError` in the aggregate is reported to
+        // the owner as "sales could not be loaded" — politely, in production,
+        // indefinitely. That is the invisible-revenue defect this change exists to
+        // fix, re-entering through the error path. Anything that is not the missing
+        // table RETHROWS and the proc fails loudly, as it should.
+        //
+        // 🔴 AND IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `emptyGoodsSales()` here
+        // would report "no sales" for a rail that was never read — the fabricated
+        // zero this surface is built to prevent. `unreadableGoodsSales()` carries
+        // `unavailable: 'unreadable'` and `RevenuePanel` branches on it.
+        getGoodsSalesForOwner({
+          ownerUserId: user.id,
+          appBlockId: input.appBlockId,
+          from,
+          to,
+        }).catch((error) => {
+          if (!isMissingGoodsTableError(error)) throw error;
+          logToAxiom(
+            {
+              name: 'block-goods-earnings',
+              type: 'error',
+              message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
+              ownerUserId: user.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            'civitai-prod'
+          ).catch(() => undefined);
+          return unreadableGoodsSales();
+        }),
+      ]);
+      return { summary, topApps, recentAttributions, goods };
     }),
 
   /**
@@ -9675,6 +10036,31 @@ function stampUnquotedTimeout(
 }
 
 /**
+ * The refusal for a training `$type` the orchestrator would not quote, or `null`
+ * when the step may proceed. Shared by the pass-through estimate and submit so
+ * the two cannot disagree about which steps are refused.
+ *
+ * A training run takes far longer than any `maxBuzz` an app could sensibly
+ * declare as seconds, so the stamped-timeout fallback (`stampUnquotedTimeout`)
+ * would cancel the run partway through. Refusing up front lets the block retry
+ * once a quote is available.
+ *
+ * The snapshot carries no `cost`: there is no price to show, and the declared
+ * `maxBuzz` is not one.
+ */
+const UNQUOTED_TRAINING_ERROR =
+  'Training needs a price quote and none could be obtained; try again.';
+function refuseUnquotedTraining(
+  stepType: string,
+  quotedBuzz: number | null
+): { snapshot: BlockWorkflowSnapshot } | null {
+  if (quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
+  return {
+    snapshot: { workflowId: 'failed', status: 'failed', error: UNQUOTED_TRAINING_ERROR },
+  };
+}
+
+/**
  * Resolve the registry entry from the (schema-gated) `step` id. The wire
  * schema's `z.enum(REGISTERED_STEP_IDS)` already rejected any unregistered id at
  * the union, so this never returns undefined for a schema-valid body — the
@@ -10971,6 +11357,9 @@ async function submitStepWorkflow(opts: {
  * at the `ceiling` in `submitPassThroughStepWorkflow`: the stamped `timeout`
  * bounds a GPU-second-metered step and nothing else, so for a per-unit-priced
  * `$type` an unquotable submit reserves `maxBuzz` and may bill more.
+ *
+ * Training `$type`s are the exception on BOTH paths: with no quote, the estimate
+ * returns a failed snapshot and the submit refuses (`refuseUnquotedTraining`).
  */
 async function estimatePassThroughStepWorkflow(opts: {
   ctx: Context;
@@ -11000,6 +11389,9 @@ async function estimatePassThroughStepWorkflow(opts: {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
   }
 
+  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  if (refusal) return refusal;
+
   return {
     snapshot: {
       // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
@@ -11023,7 +11415,8 @@ async function estimatePassThroughStepWorkflow(opts: {
  * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
  * it borrows the counter from. There a missing quote fails the submit closed, so
  * the outage is loud; here the arm deliberately falls back to the declared
- * `maxBuzz` and proceeds — so without this pair, an orchestrator that stopped
+ * `maxBuzz` and proceeds (a training `$type` excepted, see
+ * `refuseUnquotedTraining`) — so without this pair, an orchestrator that stopped
  * pricing would move every pass-through job onto its declared ceiling with
  * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
  *
@@ -11061,7 +11454,7 @@ async function quotePassThroughBuzz(opts: {
       body: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         steps: [orchestratorStep as any],
-        tags: buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step'),
+        tags: buildPassThroughWorkflowTags(claims, body.$type),
         currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
       },
@@ -11133,18 +11526,8 @@ async function submitPassThroughStepWorkflow(opts: {
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
-  // 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
-  // arms pass a bounded server-side id there (a registry step id, a recipe id);
-  // `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
-  // verbatim into the same array as `app-block:<appId>` — the tag
-  // `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
-  // app-scoping boundary. The argument that it is safe anyway (an unknown
-  // `$type` fails the submit, so no workflow persists the forged tag) delegates
-  // the control to an orchestrator behaviour this repo does not own and has not
-  // measured. A constant needs no such argument. The per-`$type` dimension is
-  // kept on the audit row's `detail` JSON, which has no scoping meaning and no
-  // cardinality budget.
-  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+  // `$type` never reaches the tag array as text — see `buildPassThroughWorkflowTags`.
+  const tags = buildPassThroughWorkflowTags(claims, body.$type);
 
   const token = await getOrchestratorToken(userId, ctx);
   const quotedBuzz = await quotePassThroughBuzz({
@@ -11171,6 +11554,9 @@ async function submitPassThroughStepWorkflow(opts: {
   // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
   // reachable types are priced per unit at submit, where a timeout bounds
   // wall-clock and nothing else. Operator decision, recorded in the PR.
+  //
+  // The exception is a training `$type`, refused after the idempotency claim
+  // below — see `refuseUnquotedTraining`.
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
 
   if (quotedBuzz === null) stampUnquotedTimeout(orchestratorStep, body.maxBuzz);
@@ -11223,6 +11609,16 @@ async function submitPassThroughStepWorkflow(opts: {
       });
     }
     genClaimKey = claim.key;
+  }
+
+  // 🔴 AFTER THE CLAIM, NOT BEFORE IT: a same-key retry of a submit that already
+  // went through must get its replay (or CONFLICT while it is in flight), never
+  // a "try again" that invites a second paid run. Still before any reservation,
+  // and the claim is released so the key can be retried once a quote exists.
+  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  if (refusal) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return refusal;
   }
 
   // (2) Reserve the CEILING against the per-user cumulative cap.
@@ -11562,6 +11958,768 @@ async function submitPassThroughStepWorkflow(opts: {
   return genResult;
 }
 
+// ── App Blocks TRAINING kind (`kind:'training'`) ──────────────────────────────
+//
+// An ai-toolkit LoRA run on a server-prepared dataset of the viewer's own images.
+// The confirmation the submit requires is recorded only by the session-only
+// `blocks.consentTrainingQuote`, which the block (holding only its token) cannot
+// call — that is why a confirmed run may exceed `buzzBudget`; see
+// `blockTrainingRunCeiling`.
+//
+// Labels are constants (metric cardinality), like the pass-through arm's.
+const TRAINING_ENGINE_LABEL = 'training';
+const TRAINING_RECIPE_LABEL = '__training__';
+// The submit's answer when the orchestrator call was attempted but its outcome is
+// unknown (`submissionUnconfirmed: true` on the result).
+const BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE =
+  'the training run could not be confirmed — it may be running; check your trainings before retrying';
+
+type TrainingRequestAuth = {
+  userId: number;
+  user: SessionUser;
+  features: Record<string, boolean | undefined>;
+};
+
+/**
+ * The gates every `kind:'training'` request passes first — estimate, submit and
+ * dataset preparation alike, so a caller can never price or prepare a run it could
+ * not submit.
+ *
+ * PAGE tokens only, and of those only an ordinary viewer's: a DEV token (local
+ * harness, dev tunnel, review sandbox — run-for-real included) is refused because
+ * there is no host page whose chrome can show the viewer a price, and an editor's
+ * read-only private run is refused because its per-call budget is zero. Hub/OAuth
+ * claims never reach the tRPC bridge (`verifyBlockToken` admits only signed block
+ * JWTs), so they need no branch here.
+ */
+async function assertTrainingRequestAllowed(
+  claims: BlockClaims,
+  ctx: Context
+): Promise<TrainingRequestAuth> {
+  if (!isPageToken(claims)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'training is page-only' });
+  }
+  if (claims.dev === true || claims.reviewRunForReal === true) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'training is not available from a development or review session',
+    });
+  }
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
+  // The shared per-call ceiling helper, consulted for its REFUSAL only: 0 means no
+  // budget was minted or this is an editor's read-only private run.
+  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'training requires an authenticated viewer',
+    });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const user = await getBlockSessionUser(userId);
+  const { isAppBlocksTrainingKindEnabled } = await import('~/server/services/app-blocks-flag');
+  if (!(await isAppBlocksTrainingKindEnabled({ user }))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'training from apps is not enabled' });
+  }
+  const { getFeatureFlagsLazy } = await import('~/server/services/feature-flags.service');
+  const features = getFeatureFlagsLazy({ user, req: ctx.req });
+  return { userId, user, features: features as Record<string, boolean | undefined> };
+}
+
+/**
+ * The training run's tags: the provenance set every block workflow carries, with
+ * `TRAINING_WORKFLOW_TAG` in the workflow-type slot (it admits the run to the
+ * training publish wizard and the viewer's Training Studio list) and the engine in
+ * the baseModel slot — server constants only, never app text. Shared by the quote
+ * and the submit.
+ */
+function buildBlockTrainingTags(claims: BlockClaims): string[] {
+  return buildWorkflowTags(claims, 'ai-toolkit', TRAINING_WORKFLOW_TAG);
+}
+
+/**
+ * The orchestrator's `whatif` price for an already-built training step, or `null`.
+ *
+ * 🔴 FAIL-CLOSED, UNLIKE THE PASS-THROUGH QUOTE. `null` — and therefore a refusal
+ * at both call sites — for a throw, a missing or non-finite total, a total that is
+ * not positive, and a VARIABLE (cap) price. A training run is charged against a
+ * number a person confirmed, so there is no declared ceiling to fall back to.
+ */
+async function quoteBlockTrainingStep(opts: {
+  claims: BlockClaims;
+  step: Record<string, unknown>;
+  token: string;
+}): Promise<number | null> {
+  const { claims, step, token } = opts;
+  try {
+    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const quote = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [step as any],
+        tags: buildBlockTrainingTags(claims),
+        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+      },
+      query: { whatif: true },
+    });
+    const total = quote.cost?.total;
+    if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null;
+    if (quote.cost?.variable === true) return null;
+    return Math.ceil(total);
+  } catch {
+    return null;
+  }
+}
+
+type BlockTrainingConsentAuth = { claims: BlockClaims; userId: number };
+
+/**
+ * The preamble of the two SESSION-bound training procedures (preview + confirm):
+ * the bridge token, the spend scope, a real subject, that subject being the
+ * signed-in user the request arrived with, and then the same training gates the
+ * estimate and submit run. Keep the signature on one line — see the note on
+ * `authorizeBlockPostRequest` about how the bridge-token ledger chunks this file.
+ */
+async function authorizeBlockTrainingConsentRequest(
+  blockToken: string,
+  ctx: Context,
+  sessionUserId: number
+): Promise<BlockTrainingConsentAuth> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'training requires an authenticated viewer',
+    });
+  }
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
+  await assertTrainingRequestAllowed(claims, ctx);
+  return { claims, userId };
+}
+
+/**
+ * The dataset a `kind:'training'` body names, bound to this subject, app and install —
+ * or a refusal. Reads only the dataset record; the estimate uses this alone.
+ */
+async function loadBoundBlockTrainingDataset(
+  claims: BlockClaims,
+  userId: number,
+  datasetId: string
+) {
+  const { loadBlockTrainingDataset } = await import(
+    '~/server/services/blocks/block-training-dataset.service'
+  );
+  const dataset = await loadBlockTrainingDataset(datasetId, {
+    userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+  });
+  if (!dataset) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'training dataset not found or expired' });
+  }
+  return dataset;
+}
+
+/**
+ * The bound dataset with every image re-admitted on the primary — the submit's check,
+ * run before anything is charged.
+ */
+async function loadEligibleBlockTrainingDataset(
+  claims: BlockClaims,
+  userId: number,
+  datasetId: string
+) {
+  const dataset = await loadBoundBlockTrainingDataset(claims, userId, datasetId);
+  const { assertBlockTrainingDatasetStillEligible } = await import(
+    '~/server/services/blocks/block-training-dataset.service'
+  );
+  const { resolveViewerBrowsingLevel } = await import(
+    '~/server/services/blocks/block-gated-images.service'
+  );
+  await assertBlockTrainingDatasetStillEligible(
+    dataset,
+    resolveViewerBrowsingLevel(claims.maxBrowsingLevel)
+  );
+  return dataset;
+}
+
+/**
+ * The viewer's Buzz across the accounts a training run charges: the block's allowed
+ * set for its maturity (`getBlockAllowedAccountTypes`), the same set
+ * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
+ * Throws when the balance cannot be read — including a response naming none of
+ * those accounts, which is an unreadable balance, not a zero one.
+ */
+async function readBlockTrainingSpendableBuzz(claims: BlockClaims, userId: number) {
+  const { isGreen } = resolveBlockMaturity(claims);
+  const accounts = (await getUserBuzzAccounts({ userId })) as Record<string, number | null>;
+  const types = getBlockAllowedAccountTypes(isGreen);
+  if (!types.some((type) => typeof accounts[type] === 'number')) {
+    throw new Error('balance response names none of the charged accounts');
+  }
+  return types.reduce((sum, type) => sum + (accounts[type] ?? 0), 0);
+}
+
+/**
+ * TRAINING ESTIMATE — prices the run and stores the quote the viewer will confirm.
+ * Creates nothing and reserves nothing.
+ */
+async function estimateTrainingWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: BlockTrainingBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const { userId, user, features } = await assertTrainingRequestAllowed(claims, ctx);
+  // Binding only: images are re-admitted at submit, before anything is charged.
+  const dataset = await loadBoundBlockTrainingDataset(claims, userId, body.datasetId);
+
+  const { getTrainingServiceStatus } = await import('~/server/services/training.service');
+  const { resolveBlockTrainingRun, hashTrainingBody, storeTrainingQuote } = await import(
+    '~/server/services/blocks/block-training-quote.service'
+  );
+  const run = resolveBlockTrainingRun({
+    body,
+    dataset,
+    status: await getTrainingServiceStatus(),
+    features,
+    isModerator: !!user.isModerator,
+  });
+
+  // App-supplied text that drives sample generation — moderated like a prompt.
+  await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+
+  const step = { ...run.step, name: BLOCK_STEP_NAME };
+  const token = await getOrchestratorToken(userId, ctx);
+  const total = await quoteBlockTrainingStep({ claims, step, token });
+  if (total === null) {
+    throw new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'the training price could not be determined — please retry',
+    });
+  }
+  if (total > BLOCK_TRAINING_MAX_BUZZ_PER_RUN) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `this training run costs ${total} Buzz, above the per-run limit of ${BLOCK_TRAINING_MAX_BUZZ_PER_RUN} for apps`,
+    });
+  }
+
+  const quote = await storeTrainingQuote({
+    userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+    total,
+    bodyHash: hashTrainingBody(body),
+    datasetId: dataset.datasetId,
+    imageCount: dataset.count,
+    modelKey: run.modelKey,
+    modelName: run.modelName,
+    ecosystem: run.ecosystem,
+    epochs: run.epochs,
+    steps: run.steps,
+  });
+
+  return {
+    snapshot: {
+      // Non-empty sentinel, as on the other estimate arms: the block treats an
+      // estimate as a quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total },
+      trainingQuote: {
+        quoteId: quote.quoteId,
+        total,
+        imageCount: dataset.count,
+        expiresAt: quote.expiresAt,
+      },
+    },
+  };
+}
+
+/**
+ * The one prompt-moderation pass for `kind:'training'` text: dataset captions, and a
+ * body's trigger word + sample prompts. Not a generation submit, so it joins the
+ * `other` moderation-source population.
+ */
+async function auditBlockTrainingText(opts: {
+  claims: BlockClaims;
+  userId: number;
+  user: SessionUser;
+  text: string;
+}): Promise<void> {
+  const { claims, userId, user, text } = opts;
+  if (text.length === 0) return;
+  const { isGreen } = resolveBlockMaturity(claims);
+  await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
+}
+
+/** A training body's own free text, joined for one audit. */
+function trainingBodyAuditText(body: BlockTrainingBody): string {
+  return [body.triggerWord, ...body.samplePrompts]
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .join('\n');
+}
+
+/**
+ * TRAINING SUBMIT. Post-paid on the pass-through arm's reservation belt, but its
+ * ceiling is the viewer-confirmed quote, not the token's per-call budget.
+ *
+ * A lost-response retry of this submit replays (claim keyed on the quote). The
+ * orchestrator `externalId` is keyed on the RUN (`trainingRunKey`): a retry after an
+ * ambiguous failure — which needs a fresh quote — dedupes there instead of charging
+ * twice, and a deliberate re-run after a definite submit is a new run. Nothing that
+ * costs Buzz happens before the re-quote check.
+ */
+async function submitTrainingWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: BlockTrainingBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const { userId, user, features } = await assertTrainingRequestAllowed(claims, ctx);
+  const quoteId = body.quoteId;
+  if (!quoteId) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'a training submit must name the confirmed quoteId from its estimate',
+    });
+  }
+
+  const {
+    bumpTrainingRunGeneration,
+    claimTrainingQuote,
+    hashTrainingBody,
+    readTrainingRunGeneration,
+    resolveBlockTrainingRun,
+    trainingRunKey,
+  } = await import('~/server/services/blocks/block-training-quote.service');
+  const runKey = trainingRunKey(claims.appBlockId, body, await readTrainingRunGeneration(body));
+
+  // The replay claim is per QUOTE (a lost-response retry of this submit replays); the
+  // orchestrator id is per RUN (below). The colon is outside the client key charset,
+  // so this claim can never collide with a key a block chose.
+  let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+  try {
+    claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+      userId,
+      claims.appBlockId,
+      `training-quote:${quoteId}`
+    );
+  } catch {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'generation idempotency unavailable; please retry',
+    });
+  }
+  if (claim.state === 'replay') return claim.result;
+  if (claim.state === 'in_progress') {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'this training run is already being submitted',
+    });
+  }
+  const genClaimKey = claim.key;
+
+  // Everything before a reservation. Any refusal releases the claim.
+  let runBuzz: number;
+  let step: Record<string, unknown>;
+  let token: string;
+  let ecosystem: string;
+  try {
+    const quote = await claimTrainingQuote(quoteId);
+    if (!quote) {
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: 'training quote not found, expired or already used — estimate again',
+      });
+    }
+    // THE money gate for this kind, and the ONLY check of the quote's binding and
+    // confirmation — deliberately not repeated here, so `blockTrainingRunCeiling`
+    // is load-bearing rather than a shadowed second copy. 0 = refused.
+    const ceiling = blockTrainingRunCeiling(claims, quote, userId);
+    if (ceiling <= 0) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'this training run has not been confirmed by the viewer in this session',
+      });
+    }
+    if (quote.bodyHash !== hashTrainingBody(body)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'the training body differs from the one that was quoted — estimate again',
+      });
+    }
+
+    const dataset = await loadEligibleBlockTrainingDataset(claims, userId, body.datasetId);
+    const { getTrainingServiceStatus } = await import('~/server/services/training.service');
+    const run = resolveBlockTrainingRun({
+      body,
+      dataset,
+      status: await getTrainingServiceStatus(),
+      features,
+      isModerator: !!user.isModerator,
+    });
+    await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+    ecosystem = run.ecosystem;
+    // `name` is what the snapshot/publish extractors key on; NO `timeout` — the
+    // run is bounded by its confirmed price, never by an app-supplied number.
+    step = { ...run.step, name: BLOCK_STEP_NAME };
+    token = await getOrchestratorToken(userId, ctx);
+
+    const requote = await quoteBlockTrainingStep({ claims, step, token });
+    if (requote === null) {
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'the training price could not be confirmed — estimate again',
+      });
+    }
+    if (requote > quote.total) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `the training price changed from ${quote.total} to ${requote} Buzz since it was confirmed — estimate again`,
+      });
+    }
+    // The per-run cap half of the same ceiling: a confirmed quote above
+    // `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (the estimate never stores one, so this
+    // binds a record from anywhere else) still cannot be charged past it.
+    if (requote > ceiling) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: `insufficient buzz budget: training run ${requote} exceeds the per-run limit ${ceiling}`,
+      });
+    }
+    // A definite refusal before anything is reserved and before the run is submitted.
+    // The orchestrator's own funds refusal is definite only on its first attempt, so
+    // checking here keeps the common case definite. Fail-open on a balance-read error —
+    // the orchestrator still checks.
+    let spendable: number | null = null;
+    try {
+      spendable = await readBlockTrainingSpendableBuzz(claims, userId);
+    } catch {
+      spendable = null;
+    }
+    if (spendable !== null && spendable < requote) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Not enough Buzz for this training run.' });
+    }
+    runBuzz = requote;
+  } catch (e) {
+    await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+  const tags = buildBlockTrainingTags(claims);
+  const blockExternalId = composeTrainingBlockExternalId(runKey);
+
+  // ── (4) Reserve the re-quoted price against the per-user cumulative cap.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, runBuzz);
+  } catch (e) {
+    await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzReservation(reservation, runBuzz);
+    await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: runBuzz },
+        error:
+          claims.privateRun === true
+            ? `private run Buzz cap reached: this training run costs ${runBuzz}, ` +
+              `cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - runBuzz} already spent today ` +
+              `across your installed apps, this training run costs ${runBuzz}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  if (consentBudgetExceeded(reservation)) {
+    await refundBlockBuzzReservation(reservation, runBuzz);
+    await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: runBuzz },
+        error: consentBudgetRejection(
+          reservation.consent,
+          runBuzz,
+          `this training run costs ${runBuzz}`
+        ),
+      },
+    };
+  }
+
+  // Per-app aggregate (daily Buzz + velocity). `claims.dev` is refused above.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, runBuzz);
+    if (!appSpend.allowed) {
+      await refundBlockBuzzReservation(reservation, runBuzz);
+      await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: runBuzz },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: runBuzz };
+  }
+
+  // Dev-tunnel per-session backstop, as on every other arm.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        runBuzz,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzReservation(reservation, runBuzz);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: runBuzz },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this training run costs ${runBuzz}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: runBuzz };
+    }
+  }
+
+  // ── Submit.
+  const submittedAt = Date.now();
+  let submitted: Awaited<ReturnType<typeof submitWorkflow>>;
+  try {
+    try {
+      submitted = await submitWorkflow({
+        token,
+        body: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          steps: [step as any],
+          tags,
+          currencies,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          externalId: blockExternalId,
+        },
+      });
+    } catch (e) {
+      // DEFINITE only for a 4xx on the first attempt (see
+      // `isDefiniteOrchestratorSubmitRefusal`): refunded below. Anything else is
+      // AMBIGUOUS — an earlier attempt may have created and charged the run.
+      const definite = isDefiniteOrchestratorSubmitRefusal(e);
+      const failure = getOrchestratorSubmitFailure(e);
+      logToAxiom({
+        name: 'block-training-submit-failed',
+        type: definite ? 'warning' : 'error',
+        outcome: definite ? 'refused' : 'unconfirmed',
+        userId,
+        appBlockId: claims.appBlockId,
+        quoteId,
+        externalId: blockExternalId,
+        code: e instanceof TRPCError ? e.code : null,
+        attempt: failure?.attempt ?? null,
+        status: failure?.status ?? null,
+        error: e instanceof Error ? e.message : String(e),
+      }).catch(() => undefined);
+      if (definite) throw e;
+      // AMBIGUOUS: the reservations are NOT refunded. With no workflow id there is no
+      // settle record, so nothing reconciles them later — each stays counted until
+      // its own window key expires. The run generation is not advanced, so a retry of
+      // this body (after a fresh estimate) reuses the same orchestrator `externalId`.
+      await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: runBuzz },
+          error: BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE,
+        },
+        submissionUnconfirmed: true as const,
+      };
+    }
+    // The owner check the training form's own submit runs: a run the orchestrator
+    // attributed to someone else is torn down and refused — a definite outcome for
+    // this viewer, so it is refunded below like a refusal.
+    const { assertWorkflowOwner } = await import(
+      '~/server/services/orchestrator/assert-workflow-owner'
+    );
+    await assertWorkflowOwner(submitted, userId, token);
+  } catch (e) {
+    // A DEFINITE refusal (a first-attempt orchestrator 4xx, or an owner mismatch): no run is
+    // charged to this viewer, so every reservation is refunded.
+    await refundBlockBuzzReservation(reservation, runBuzz);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const snapshot = snapshotFromWorkflow(submitted);
+  const realizedTransactions = submitted.transactions;
+  const realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+  const realizedPriceIsCap = submitted.cost?.variable === true;
+
+  const genResult = { snapshot };
+  await finalizeGenIdempotency(genClaimKey, genResult);
+  // Only a DEFINITE submit advances the run; an ambiguous failure (the throw arm
+  // above) does not, so its retry keeps the same orchestrator id.
+  await bumpTrainingRunGeneration(body);
+
+  // ── Settle record + persistent output queue, as on the other post-paid arms.
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      ceiling: runBuzz,
+      engine: TRAINING_ENGINE_LABEL,
+      recipe: TRAINING_RECIPE_LABEL,
+      submittedAt,
+    });
+    const realWorkflowId = snapshot.workflowId;
+    void (async () => {
+      const { upsertBlockWorkflowOnSubmit } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      await upsertBlockWorkflowOnSubmit({
+        workflowId: realWorkflowId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        userId,
+        status: snapshot.status,
+      });
+    })().catch(() => {
+      /* best-effort: a failed queue write never breaks (or slows) submit */
+    });
+  }
+
+  // ── Durable audit row, server-derived and fire-and-forget.
+  {
+    const invocationCost = snapshot.cost?.total ?? runBuzz;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: 'workflow:submit',
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          step: TRAINING_ENGINE_LABEL,
+          variant: ecosystem,
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+        },
+        dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  // 🔴 SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON
+  // THIS PATH, AND THAT EXCLUSION IS A DEFENSIVE GUARD RATHER THAN AN ACTIVE
+  // BEHAVIOUR CHANGE. Same reasoning as the pass-through arm. No author fee here
+  // (ledgered in `NO_FEE_PATHS`).
+  const spendWorkflowId = snapshot.workflowId;
+  if (
+    spendWorkflowId &&
+    spendWorkflowId !== 'failed' &&
+    spendWorkflowId !== 'whatif' &&
+    snapshot.status !== 'failed'
+  ) {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        snapshot.cost?.total ?? runBuzz
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
+        modelId: null,
+        sharedContentKey: null,
+        baseGenerationBuzz: realizedBaseCost,
+        generationPriceIsCap: realizedPriceIsCap,
+        // `training:<ecosystem>` — the `training` coarse key, whose author-fee
+        // override is zero.
+        generationType: resolveBlockGenerationType(body),
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
+  return genResult;
+}
+
 /**
  * Derive the PAYOUT-SAFE currency basis (buzzType + buzzAmount) for a block
  * spend-attribution row off the orchestrator's REALIZED per-account
@@ -11642,6 +12800,31 @@ function buildWorkflowTags(
     `app-block:block:${claims.blockId}`,
     `app-block:instance:${claims.blockInstanceId}`,
   ];
+}
+
+/**
+ * The pass-through arm's tags — the quote and the submit both build them here.
+ *
+ * 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
+ * arms pass a bounded server-side id there (a registry step id, a recipe id);
+ * `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
+ * verbatim into the same array as `app-block:<appId>` — the tag
+ * `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
+ * app-scoping boundary. The argument that it is safe anyway (an unknown
+ * `$type` fails the submit, so no workflow persists the forged tag) delegates
+ * the control to an orchestrator behaviour this repo does not own and has not
+ * measured. A constant needs no such argument. The per-`$type` dimension is
+ * kept on the audit row's `detail` JSON, which has no scoping meaning and no
+ * cardinality budget.
+ *
+ * A training `$type` ALSO gets `TRAINING_WORKFLOW_TAG` — a server constant chosen
+ * by a closed-set test, so still no app text — because that tag is what admits a
+ * workflow to `/models/train/from-orchestrator`, the publish wizard a block hands
+ * its viewer to. It also lists the run in the viewer's Training Studio.
+ */
+function buildPassThroughWorkflowTags(claims: BlockClaims, stepType: string): string[] {
+  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+  return isTrainingStepType(stepType) ? [...tags, TRAINING_WORKFLOW_TAG] : tags;
 }
 
 /**

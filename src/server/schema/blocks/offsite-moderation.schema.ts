@@ -1,5 +1,7 @@
 import * as z from 'zod';
 
+import { APP_LISTING_VISIBILITIES } from '~/shared/utils/app-listing-visibility';
+
 /**
  * App Store Listings (W13) — P3b OFF-SITE MODERATION schemas.
  *
@@ -78,10 +80,36 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * (`reset-to-pending`/`owner-unpublish`/`owner-republish`) are added by the W13
  * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
  * superset — additive DROP+ADD CHECK), `message-owner` by
- * `20260824120000_app_listing_mod_action_message_owner`, and `purge-user-storage` by
- * `20260912120000_app_listing_mod_action_purge_user_storage`. A drift here would let a proc
+ * `20260824120000_app_listing_mod_action_message_owner`, `purge-user-storage` by
+ * `20260912120000_app_listing_mod_action_purge_user_storage`, and `set-visibility` by
+ * `20261004120000_app_listing_mod_action_set_visibility`. A drift here would let a proc
  * write an `action` the DB rejects (23514). The action-agreement unit test pins this
  * tuple against the LATEST action-CHECK migration's IN-list.
+ *
+ * 🔴 THAT TEST IS A CODE/DDL AGREEMENT CHECK, NOT AN APPLY, AND THE DIFFERENCE BIT THIS
+ * TUPLE ONCE. `set-visibility` shipped as a bare inline literal at its create site with no
+ * entry here and no widen migration: nothing failed, because all three of this repo's gates
+ * for this class (`UnclassifiedModerationAction`, the partition test, the agreement test)
+ * fire on REGISTERING an action, and an unregistered one is invisible to every one of them.
+ * Measured on prod AGAINST THE REVISION THAT SHIPPED, in which the level `UPDATE` and its
+ * event INSERT were TWO SEPARATE ROUND TRIPS: the insert was rejected with 23514 while the
+ * level write had already committed, leaving a changed audience with no audit row.
+ *
+ * ⚠️ THAT MEASUREMENT IS HISTORY, NOT CURRENT BEHAVIOUR, AND THIS SITE DID NOT SAY SO UNTIL
+ * ROUND 5 OF THE AUDIT — the two sites in `app-listing-visibility-write.service.ts` that
+ * carry the same measurement each open with the scoping qualifier and this one did not, in a
+ * different file, so a reader arriving here had none of that context. NOW:
+ * `setListingVisibilityAsModerator` runs both halves on ONE interactive transaction, so a
+ * rejected event ABORTS the transaction and the `UPDATE` rolls back with it — the proc 500s
+ * and NOTHING is written: no level change, no audit row. The scope is spelled out rather
+ * than left to the reader because the stale version INVERTS THE REMEDIATION: whoever
+ * registers the next action is the same person who deploys without the DDL, and read as
+ * current this sentence sends them to plan a data reconciliation over
+ * `app_listings.visibility` for orphaned level changes that cannot exist.
+ *
+ * Registering the action is what ARMS those gates — so add the tuple member and
+ * the migration TOGETHER, and reference a named constant at the create site rather than a
+ * literal, or the next one is invisible in exactly the same way.
  *
  * NOTE the hyphen form (`report-resolve`/`report-dismiss`/`reset-to-pending`/
  * `owner-unpublish`/`owner-republish`) — it matches the shipped/widened migration
@@ -127,6 +155,22 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // enumerates every `after` state. Do not re-describe them here — this comment
   // has been falsified by a later commit of the same change twice already.
   'purge-user-storage',
+  // The per-listing VISIBILITY LEVEL, set by a MODERATOR on someone else's listing
+  // (`setListingVisibilityAsModerator`). Like `message-owner` and `purge-user-storage` it
+  // changes NO listing state: `app_listings.status` is untouched and the act is confined to
+  // the `visibility` column, so it must never displace the event that explains a removal.
+  //
+  // `reason`  — the moderator's required rationale (3..1000 chars), surfaced in the OWNER's
+  //             own history so a discoverability change is never silent to them.
+  // `before`  — { visibility: <level|null> } — the pre-state. 🔴 `null` is a REAL value here
+  //             meaning "no choice expressed", NOT the `private` level; recording it as
+  //             `private` would misreport what the moderator changed.
+  // `after`   — { visibility: <level> }.
+  //
+  // 🔴 NO `status` IN EITHER SNAPSHOT, deliberately — every sibling records a status
+  // transition because that is what it changed; this one changes none, so a `status` key
+  // would describe a transition that did not happen.
+  'set-visibility',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 
@@ -162,6 +206,29 @@ export const relistListingSchema = z.object({
   reason: modReason,
 });
 export type RelistListingInput = z.infer<typeof relistListingSchema>;
+
+/**
+ * MOD set the per-listing VISIBILITY LEVEL on ANY listing (D2's moderator half).
+ *
+ * 🔴 `reason` IS REQUIRED HERE AND OPTIONAL ON THE OWNER PATH, AND THAT ASYMMETRY IS THE
+ * POINT. This is a moderator writing a discoverability change to someone else's app — the
+ * same class of act as `delist`/`relist`/`claim`, every one of which takes a `modReason`
+ * and lands a moderation event. An owner changing their own listing's level owes nobody an
+ * explanation; a moderator doing it to a stranger's app owes an audit trail, and the
+ * `reason` is what makes the resulting event legible in the listing history the OWNER can
+ * read (`listMyListingModerationEvents`).
+ *
+ * The acting moderator is bound to `ctx.user.id` in the service and is never supplied by
+ * the client, matching every other proc in this file.
+ */
+export const setListingVisibilityAsModeratorSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  visibility: z.enum(APP_LISTING_VISIBILITIES),
+  reason: modReason,
+});
+export type SetListingVisibilityAsModeratorInput = z.infer<
+  typeof setListingVisibilityAsModeratorSchema
+>;
 
 /**
  * MOD claim (reassign ownership of) an off-site listing (PR4) — mod-arbitrated

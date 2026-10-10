@@ -11,6 +11,7 @@ import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   blockInitFragmentEnabled,
   BLOCK_HOST_DEEP_LINK_BASE,
+  BLOCK_HOST_SITE_NAVIGATION,
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
@@ -28,6 +29,7 @@ import {
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
+  resolveNavigateRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
@@ -50,6 +52,15 @@ import {
   type CreatePostPreview,
 } from './createPostFromAppGate';
 import { CreatePostConsentBody } from './CreatePostConsentBody';
+import { handlePrepareTrainingDataset } from './prepareTrainingDatasetGate';
+import {
+  buildTrainingConsentCopy,
+  resolveRunTrainingRequest,
+  trainingSubmitReplyFromError,
+  trainingSubmitReplyFromResult,
+  type TrainingQuotePreview,
+} from './runTrainingGate';
+import { TrainingConsentBody } from './TrainingConsentBody';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -83,11 +94,14 @@ import { BlockConsentNotice } from './BlockConsentNotice';
 import { openBlockConsentModal } from './openBlockConsentModal';
 import { resolveRequestSignIn } from './requestSignInGate';
 import {
+  downloadBytesAsBlob,
   downloadUrlAsBlob,
   isAllowedSaveImageUrl,
+  processSaveBytes,
   resolveSaveImageRequest,
   sanitizeDownloadFilename,
   SAVE_IMAGE_MAX_CONCURRENT,
+  type SaveBytesWindowEntry,
 } from './saveImageDownload';
 import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -176,9 +190,29 @@ function storageErrorMessage(err: unknown): string {
  *     never "*"); incoming messages from other origins are dropped.
  *   - Sandbox is the manifest ∩ trust-tier allowlist (client-side belt).
  *   - referrerPolicy=no-referrer; the page never carries a model/money scope.
- *   - Block-requested navigation (NAVIGATE) is constrained to the page's own
- *     sub-path space and uses shallow routing — a block can deep-link WITHIN
- *     its page but can't push the host off to an arbitrary route.
+ *   - Block-requested navigation (NAVIGATE) resolves in one of TWO spaces,
+ *     selected by an EXPLICIT `scope` field that defaults to `'app'`: `'app'` is a
+ *     shallow push under the block's own route, `'site'` lets the block send the
+ *     viewer to a civitai.com page route. A leading slash means nothing in either
+ *     — it is normalised away — so a block deployed before `scope` existed keeps
+ *     its old, app-scoped behaviour for both spellings. There is deliberately no
+ *     destination allowlist; what is refused is other ORIGINS (any scheme,
+ *     protocol-relative, backslash, control characters, and — structurally — a
+ *     resolved origin that is not the sentinel), any path whose RESOLVED form has
+ *     a different SEGMENT STRUCTURE from the one the block sent (which covers
+ *     traversal in every spelling, `..` and `%2e` alike, rather than the
+ *     literal-segment blocklist that shipped first and was bypassed by
+ *     `/%2e%2e/api/auth/logout`), an app-scoped path that escapes the block's own
+ *     route, site scope on a surface that does not hold the
+ *     `BLOCK_HOST_SITE_NAVIGATION` capability, and site-scope `/api/*`, which is
+ *     not a page route and whose `/api/auth/logout` — a GET with no method gate —
+ *     would end the viewer's session on a block's say-so.
+ *     `resolveNavigateRequest` in `pageBlockHostLogic` owns that decision and is
+ *     unit-tested, so a block cannot reach another origin in either space.
+ *     `target: 'new_tab'` is opened by the HOST from the parent frame — the
+ *     destination is host-validated and the tab inherits no sandbox, so it gets a
+ *     real origin; `allow-popups-to-escape-sandbox` is deliberately still absent
+ *     from `ALLOWED_SANDBOX_TOKENS`. (#5209)
  */
 
 /**
@@ -216,10 +250,25 @@ export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
  * wrapped in AppBlockChrome.)
  *
  * Implemented with a plain CSS opacity/transform transition rather than the
- * `motion` package: `motion` is NOT in the `/apps` route graph today (its only
- * importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached via
- * a `next/dynamic` ChatWindow chunk), so importing it here would pull a new
- * animation runtime into the run-page bundle for one cross-fade.
+ * `motion` package, because importing it here would pull an animation runtime
+ * into the run-page bundle for one cross-fade.
+ *
+ * ⚠️ THE ORIGINAL REASON — "`motion` is NOT in the `/apps` route graph today (its
+ * only importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached
+ * via a `next/dynamic` ChatWindow chunk)" — IS NO LONGER TRUE, and is corrected here
+ * rather than deleted, because the conclusion above survives it while the premise
+ * does not. `src/components/Apps/AgentOnboardingCard.tsx` statically imports
+ * `motion/react` and `motion/react-m` and is reached from `src/pages/apps/build.tsx`
+ * with no `next/dynamic`, so `/apps/build` now carries them. It defers only the
+ * `domAnimation` feature bundle via `LazyMotion`; the static half it still pays is
+ * measured in that component's header — deliberately NOT restated here, so there is
+ * only one copy of a number to keep true.
+ *
+ * So the live argument is narrower and still decides this file the same way: that
+ * card is one route's deliberate exception, THIS page is a different route, and a
+ * cross-fade is not worth re-paying for. Do not read the exception as a precedent
+ * for reaching for `motion` here. (Corrected when the card landed; a stale premise
+ * stated this confidently enough that a reader could have taken it as license.)
  */
 export const LAUNCH_REVEAL_MS = 260;
 
@@ -229,6 +278,37 @@ export const LAUNCH_REVEAL_MS = 260;
 const BUZZ_PURCHASE_AMOUNT_CAP = 50_000;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
+
+/**
+ * The NAVIGATE wire payload as the HOST reads it — every field `unknown`, because
+ * it comes from an untrusted frame and `resolveNavigateRequest` is what decides
+ * what any of it means.
+ *
+ * ⚠️ THIS IS DOCUMENTATION OF THE WIRE SHAPE, NOT A GATE — AND THIS COMMENT USED
+ * TO CLAIM THE OPPOSITE. It read "🔴 EVERY FIELD THE HOST MEANS TO READ MUST
+ * APPEAR HERE … a field absent from the generic is a field the handler cannot
+ * see", and that is MEASURED FALSE. Stripping this alias back to the inline
+ * `{ path?: unknown } | undefined` it replaced leaves `node scripts/typecheck.mjs`
+ * at 0 type errors and `pageBlockHostLogic.test.ts` at 133/133 — measured, with a
+ * negative control confirming that typecheck does report an error planted in this
+ * very file. The reason is structural: `raw` is handed straight to
+ * `resolveNavigateRequest(raw: unknown, …)`, which casts to
+ * `Record<string, unknown>` and reads `obj.scope` / `obj.target` off that. Nothing
+ * on the path dereferences a typed field, so the field list here is INERT.
+ *
+ * WHAT ACTUALLY MAKES A FIELD READABLE IS THE RESOLVER READING IT. The #5209
+ * defect was the handler never reading `target` at all — not this type omitting
+ * it. Listing `target` here would not have fixed it, and delisting it would not
+ * reintroduce it. What pins both fields is behavioural: the "defaults to
+ * 'current' for absent, unknown and non-string targets" and "`target` and `scope`
+ * are independent" cases in `pageBlockHostLogic.test.ts`, which fail on a resolver
+ * that stops reading either one.
+ *
+ * The fields stay listed because an accurate record of what the wire carries is
+ * worth its two lines, and someone adding a field is at least looking in a file
+ * that names the others. Do not read the list as coverage.
+ */
+type NavigateMessage = { path?: unknown; scope?: unknown; target?: unknown } | undefined;
 
 // MOD REVIEW SANDBOX (#2831): the reason string every reviewMode NACK carries — a
 // clear, block-surfaced message so the mod (and the block's own error UI)
@@ -287,7 +367,8 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  *
  *   available = innerHeight − 60 (header) − 57 (AppFooter 45 + its mt-3 12)
  *                           − AdhesiveAd (90 desktop / 50 mobile / 0 for paid)
- *                           − RewardsBonusBanner (~32 when active)
+ *                           − nav announcement slot (Buzz Bonus ~32 when active,
+ *                             plus 44 per event strip)
  *
  * 🔴 `innerHeight`, NOT the screen height — an earlier version of this comment
  * justified 400 with "a 768px laptop has 561px after chrome, so the floor never
@@ -691,7 +772,7 @@ export interface PageBlockHostProps {
    * 🔴 WHY THE DEFAULT IS WRONG FOR A FULL-PAGE APP, and why 'fill' exists.
    * `calc(100dvh - HEADER_HEIGHT_PX)` subtracts ONLY the site header. Inside the default
    * scrolling layout the actual space left to the page is
-   * `100dvh − header − subNav − its mb-3 − RewardsBonusBanner − AppFooter −
+   * `100dvh − header − subNav − its mb-3 − nav announcement strips − AppFooter −
    * AdhesiveAd`, every term of which is ≥ 0 and several of which are > 0 on a
    * normal render. So the host is UNCONDITIONALLY taller than its scroll
    * viewport: the layout's `ScrollArea` grows a vertical scrollbar it can only
@@ -1858,51 +1939,136 @@ export function PageBlockHost({
     reviewRunForReal,
   ]);
 
-  // Deep-link bridge — block requests in-page navigation. The block may push a
-  // new sub-path WITHIN its own page space; we constrain it to the page route so
-  // a block can't navigate the host off to an arbitrary path. `path` is an
-  // untrusted same-origin sub-path: reject absolute URLs, protocol-relative
-  // (`//`), and `..` traversal. Shallow routing keeps the page mounted (no SSR
-  // round-trip) and the subPath change reflects back into the block via the
-  // popstate handler below.
+  // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected
+  // by an EXPLICIT `scope` field: `{ scope: 'site', path: 'models/500' }` leaves
+  // the app and lands on the site page (non-shallow), while `{ path: 'detail/500' }`
+  // — no `scope`, the DEFAULT — resolves under the block's own route, shallow, so
+  // the page stays mounted and the subPath change reflects back into the block via
+  // the popstate handler below.
+  //
+  // 🔴 #5209 — THE SITE SPACE USED TO BE UNREACHABLE: the handler stripped a
+  // leading slash before anything could read it, so the SDK's own documented
+  // example (`navigate('/models/12345')`) produced a URL-bar change with no page
+  // change and a URL that 404s on reload. 🔴 AND THE FIRST FIX FOR THAT KEYED THE
+  // SCOPE ON THE SLASH ITSELF, which is why `scope` exists: a page block owns a
+  // whole sub-path space, so `navigate('/settings')` is the standard SPA spelling
+  // of an app's OWN route and reading it as "leave the app" silently changed the
+  // meaning of every block already deployed. `scope` defaults to `'app'`, so a
+  // block that sends none behaves exactly as it did before. The whole validation
+  // + resolution decision lives in `resolveNavigateRequest` (pure, unit-tested):
+  // what is refused, which space a path lands in, and whether the push is
+  // shallow. This handler keeps only the conditions that are about the HOST.
   useEffect(() => {
-    const off = onMessage<{ path?: unknown } | undefined>('NAVIGATE', (raw) => {
+    const off = onMessage<NavigateMessage>('NAVIGATE', (raw) => {
       // reviewMode: the review host is a MODAL, not the `/apps/run/<slug>` page —
       // let a block yank the mod's router and it would navigate them off the
       // review flow (to a page a pending app doesn't even have). Fire-and-forget
-      // ⇒ dropping it never hangs the block.
+      // ⇒ dropping it never hangs the block. 🔴 This is the FIRST of TWO
+      // independent refusals covering the review surface, deliberately: this one
+      // reads the `reviewMode` prop, and `BLOCK_HOST_DEEP_LINK_BASE` maps
+      // `review-preview` to `null` so the resolver refuses as well. They were ONE
+      // condition expressed twice by convention — every `surface: 'review-preview'`
+      // mount also passes `reviewMode` — and a site-absolute contract raises the
+      // stake on that coupling enough to make it structural instead: a future
+      // mount that forgets `reviewMode` would otherwise let UNREVIEWED code move a
+      // moderator's tab anywhere on the site.
       if (reviewMode) return;
       // FIFTH status-gated handler (the four money/permission gates are the
       // others) — it reads the same render-body mirror for the same reason. No
       // NACK: NAVIGATE is fire-and-forget with no requestId, so a drop is
       // incapable of hanging the block.
       if (readGateStatus() !== 'ready') return; // pre-handshake blocks can't drive nav
-      const rawPath = raw && typeof raw === 'object' ? (raw as { path?: unknown }).path : undefined;
-      if (typeof rawPath !== 'string') return;
-      // Normalize: strip a single leading slash; reject anything unsafe.
-      const cleaned = rawPath.replace(/^\/+/, '');
-      if (cleaned.startsWith('/') || cleaned.includes('//') || cleaned.split('/').includes('..')) {
-        return;
-      }
-      // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — and hardcoding it
-      // was a real dead end, not a tidiness issue. A block's own client router pushes
-      // sub-paths through this handler; on the PRIVATE-RUN surface a hardcoded
-      // `/apps/run/<slug>` sends the viewer to the PUBLIC run route, which requires
-      // `status: 'approved'` and therefore **404s for the very suspended app they are
-      // looking at**. The app would work until the first in-app navigation and then
-      // vanish, which reads as "the private-run feature is broken".
+      // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — the total record is
+      // what makes a NEW surface a compile error rather than a silent inheritance of the
+      // public base.
+      //
+      // ⚠️ THE ARGUMENT THIS COMMENT USED TO MAKE IS NOW FALSE, AND ACTING ON IT WOULD
+      // BREAK THE FEATURE — it is corrected rather than deleted, because the old wording
+      // pointed the reader at a route that no longer exists. It said: on the PRIVATE-RUN
+      // surface a hardcoded `/apps/run/<slug>` "sends the viewer to the PUBLIC run route,
+      // which requires `status: 'approved'` and therefore 404s for the very suspended app
+      // they are looking at". That was true while the private run had its OWN route.
+      //
+      // It does not have one any more. `/apps/run/<slug>` now serves the private run
+      // itself, as a fallback behind the approved-only resolver returning null, and
+      // `BLOCK_HOST_DEEP_LINK_BASE['private-run']` is therefore `/apps/run` BY DESIGN.
+      // 🔴 Do NOT "fix" it back to `/apps/private-run`: that route is DELETED, so the
+      // change would guarantee the 404-on-first-navigation this paragraph warns about,
+      // rather than prevent it. Nothing pins that record's values, so this comment is the
+      // only thing standing between a reader and that edit.
       //
       // `BLOCK_HOST_DEEP_LINK_BASE` is a TOTAL record over `BlockHostSurface`, so a new
       // surface is a compile error there rather than silently inheriting the public
       // route — see its docblock, which also records that `dev-tunnel`'s mapping to the
       // public route is pre-existing behaviour rather than a decision. A `null` base
-      // means "drop the navigation"; nothing maps to `null` on a page surface today.
-      const base = BLOCK_HOST_DEEP_LINK_BASE[surface];
-      if (base == null) return;
-      const target = cleaned
-        ? `${base}/${encodeURIComponent(slug)}/${cleaned}`
-        : `${base}/${encodeURIComponent(slug)}`;
-      void router.push(target, undefined, { shallow: true });
+      // means "drop APP-SCOPED navigation".
+      //
+      // 🔴 SITE SCOPE IS A SEPARATE PER-SURFACE CAPABILITY, `BLOCK_HOST_SITE_NAVIGATION`,
+      // and it is separate because `private-run` answers the two questions
+      // DIFFERENTLY: it keeps a non-null app base and is refused site navigation,
+      // because that surface resolves an audience including `moderator`, serves
+      // suspended/delisted apps, and passes no `reviewMode` — so without the
+      // capability refusal a suspended app could move a moderator's tab anywhere on
+      // the site. Also a total record: a new surface is a compile error in BOTH maps
+      // until someone decides both.
+      //
+      // ⚠️ AN EARLIER WORDING SAID `private-run` "keeps its OWN app route", AND THE
+      // ROUTE MERGE ABOVE FALSIFIED IT. There is no separate private route any more,
+      // and `BLOCK_HOST_DEEP_LINK_BASE['private-run']` is the same `'/apps/run'` that
+      // `page-run` carries — so the base below cannot distinguish the two surfaces
+      // and `BLOCK_HOST_SITE_NAVIGATION` is the only thing here that does. That makes
+      // the split MORE load-bearing than when it was written, not less: collapsing
+      // site scope into the base map would hand a suspended app the public surface's
+      // capability by value equality alone, with nothing at this call site to notice.
+      const req = resolveNavigateRequest(raw, {
+        base: BLOCK_HOST_DEEP_LINK_BASE[surface],
+        slug,
+        siteNavigation: BLOCK_HOST_SITE_NAVIGATION[surface],
+      });
+      if (!req) return;
+      // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
+      // SYNCHRONOUS CALL BELOW IS LOAD-BEARING. Three facts, all MEASURED in
+      // Brave/Chromium 152 with the popup blocker ON (a no-gesture
+      // `window.open` was confirmed BLOCKED in the same run, so the blocker was
+      // genuinely active and the positive results are not an artefact of a
+      // permissive harness):
+      //
+      //   1. User activation from a click inside a CROSS-ORIGIN SANDBOXED iframe
+      //      (`allow-scripts allow-forms`, `event.origin === 'null'`) DOES reach
+      //      this frame — `navigator.userActivation.isActive` was `true` here —
+      //      so the open is permitted. The intuition that `postMessage` cannot
+      //      carry activation is right about the message and wrong about the
+      //      outcome: activation propagates up the frame tree independently.
+      //   2. 🔴 IT IS TRANSIENT. Deferring the same open by 6s (past the
+      //      activation window) was BLOCKED. So this MUST stay synchronous in the
+      //      message handler — no `await`, no `setTimeout`, nothing that yields
+      //      before the call. Adding one silently kills the feature, and it
+      //      cannot be caught by a unit test.
+      //   3. The opened tab gets a REAL origin: it read a host-set cookie and
+      //      wrote `localStorage`. That is the whole reason the HOST opens it. A
+      //      popup opened by the BLOCK inherits the opener's sandbox flags and
+      //      lands at an opaque origin — a logged-out page, worse than no link
+      //      at all — which is why `allow-popups-to-escape-sandbox` is NOT the
+      //      fix here and stays out of `ALLOWED_SANDBOX_TOKENS` (granting
+      //      third-party code the right to escape its own sandbox is a real
+      //      escalation; a host-opened tab gets the same result with none of it).
+      //
+      // The host also decides the destination, so the block cannot aim the tab
+      // at another origin — `resolveNavigateRequest` has already refused every
+      // scheme, protocol-relative form and traversal shape above.
+      //
+      // NOT MEASURED: any non-Chromium engine. If one blocks this, the viewer
+      // gets no tab — the pre-#5209 behaviour — rather than a wrong one, so the
+      // downside is a dead affordance, not a hazard.
+      if (req.target === 'new_tab') {
+        // `noopener` also means `window.open` returns null on SUCCESS, so the
+        // return value is deliberately not read: there is nothing actionable to
+        // do with a blocked popup (NAVIGATE has no reply channel) and a false
+        // "blocked" reading would be worse than none.
+        window.open(req.href, '_blank', 'noopener');
+        return;
+      }
+      void router.push(req.href, undefined, req.shallow ? { shallow: true } : undefined);
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
@@ -2001,7 +2167,8 @@ export function PageBlockHost({
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
   // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
-  // consent payload server-side, then the write. Both are block-token-authed.
+  // consent payload server-side, then the write. Both take the block token and
+  // both require the viewer's signed-in session.
   const previewPostFromAppMutation = trpc.blocks.previewPostFromApp.useMutation();
   const createPostFromAppMutation = trpc.blocks.createPostFromApp.useMutation();
 
@@ -2289,7 +2456,8 @@ export function PageBlockHost({
   // the host opens its OWN confirm dialog and only calls the mutation on an
   // explicit click — that click IS the consent boundary (the iframe can't fake
   // it, like the resource picker). The block sends INDEXES not urls; the SERVER
-  // resolves urls + is FAIL-CLOSED behind the ownership+app-tag guard. REQUEST-
+  // resolves urls + is FAIL-CLOSED behind the ownership+app-tag guard, and also
+  // requires the viewer's signed-in session, matching the token's subject. REQUEST-
   // style ⇒ every terminal path (no token / cancel / success / error) MUST reply
   // exactly once or the block hangs; a `settled` latch guards a double-reply.
   useEffect(() => {
@@ -2426,10 +2594,10 @@ export function PageBlockHost({
   }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack, reportNoToken]);
 
   // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
-  // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
-  // scope-gated token's power directly); the server self-binds off the token
-  // `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path MUST reply or
-  // the block hangs; on a null token we reply with the ERROR variant (mirrors
+  // The Buzz-dashboard ledger read. Host-MEDIATED: the block posts a request and
+  // the host makes the call with the page's block token. The server self-binds
+  // off the token `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path
+  // MUST reply or the block hangs; on a null token we reply with the ERROR variant (mirrors
   // GET_BUZZ_BALANCE) rather than dropping. A missing requestId is dropped.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
@@ -3015,6 +3183,7 @@ export function PageBlockHost({
           prefix?: unknown;
           limit?: unknown;
           cursor?: unknown;
+          mine?: unknown;
         }
       | undefined
     >('SHARED_LIST', async (raw) => {
@@ -3033,12 +3202,20 @@ export function PageBlockHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        // civitai/civitai#5354 Q3. Narrow to the viewer's own rows. 🔴 Forwarded
+        // ONLY when it is literally `true`: every other value — absent, `false`,
+        // the string "true", a truthy object — resolves to `undefined`, so a
+        // malformed payload cannot silently narrow someone's feed. The server
+        // still decides WHOSE rows (the resolved token subject); the block never
+        // names an author, and this message carries no user id to name one with.
+        const mine = raw.mine === true ? true : undefined;
         const result = await trpcUtils.apps.shared.list.fetch(
           {
             blockToken: token,
             prefix,
             limit,
             cursor,
+            mine,
           },
           BLOCK_STORAGE_READ_OPTS
         );
@@ -3432,10 +3609,14 @@ export function PageBlockHost({
   // synchronously in the message handler (single-threaded ⇒ check→increment before
   // the first await is atomic per message), mirroring wildcardInFlightRef.
   const saveImageInFlightRef = useRef<number>(0);
+  // `bytes` saves are limited separately, over a rolling window (processSaveBytes):
+  // they never await, so the in-flight count above would be released before the
+  // next message and bound nothing. Same ref-not-state reasoning.
+  const saveBytesWindowRef = useRef<SaveBytesWindowEntry[]>([]);
 
   // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
   // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
-  // has no allow-downloads). TWO variants, each with its own security gate:
+  // has no allow-downloads). THREE variants, each with its own security gate:
   //   • url  — the block's OWN output. MUST pass the civitai image/blob origin
   //            allowlist (isAllowedSaveImageUrl) — never a host-side fetch of an
   //            attacker origin (an opaque-origin block's url/data is untrusted).
@@ -3443,6 +3624,12 @@ export function PageBlockHost({
   //            gated read (blocks.getImagesByIds) that GET_IMAGES_BY_IDS uses, so
   //            a withheld/above-ceiling image (status !== 'visible', or omitted)
   //            can NEVER be saved.
+  //   • bytes — a file the block produced in its tab. Nothing is fetched; the type
+  //            is classified from the content (processSaveBytes) and only
+  //            image/JSON/text can be saved, under the classified extension.
+  //            Limited per host to SAVE_BYTES_MAX_PER_WINDOW saves and
+  //            SAVE_BYTES_MAX_BYTES_PER_WINDOW bytes per rolling window; past
+  //            either it replies `busy`.
   // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
   // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
   // so the block never hangs.
@@ -3453,6 +3640,24 @@ export function PageBlockHost({
       const { requestId } = req;
       if (req.kind === 'invalid') {
         send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
+        return;
+      }
+      if (req.kind === 'bytes') {
+        try {
+          // Per-file cap, then window pre-check (both on byteLength alone), then classify, then
+          // record: a refused save is never decoded/parsed on this main thread, and an over-cap
+          // file is too-large rather than `busy` (processSaveBytes).
+          const { result, recent } = processSaveBytes(req, saveBytesWindowRef.current, Date.now());
+          saveBytesWindowRef.current = recent;
+          if (!result.ok) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: result.error });
+            return;
+          }
+          downloadBytesAsBlob(req.bytes, result.type, result.filename);
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
         return;
       }
       // F2 concurrency cap (host-side backpressure): bound concurrent host-side
@@ -3642,10 +3847,29 @@ export function PageBlockHost({
       const { requestId, baseModelGroup } = req;
 
       // Normalize the optional family hint through getBaseModelGroup (accepts an
-      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). Empty /
-      // unresolved group → baseModels:[] → no checkpoints rather than all
-      // families (matching IframeHost: "all" would include incompatible families
-      // that 400 at submit).
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). An
+      // absent/unresolved group → baseModels:[] → NO baseModel narrowing: the
+      // modal emits the bare `type = Checkpoint` clause, so it returns ALL
+      // checkpoints (still gated by `canGenerate`), NOT a subset and NOT none.
+      // Identical mechanism to OPEN_RESOURCE_PICKER above — same expression,
+      // same `resources:[{type, baseModels}]`, same modal. That is intentional
+      // and safe for the same reason: the server is the authority on family
+      // compatibility at spend, so an incompatible pick is rejected there rather
+      // than being silently filtered out of the picker here.
+      //
+      // This comment used to claim the opposite ("no checkpoints rather than all
+      // families"). It was wrong. Three layers each special-case the empty array
+      // as "no narrowing": ResourceSelectProvider (`resourceBaseModels.length > 0
+      // ? … : filterBaseModels`), `selectableVersions` in resource-select.types
+      // (`modelBaseModels.length === 0 ||`), and the query builder in
+      // resource-select.service (`_baseModels.length ? and(eq(type), inArray(…))
+      // : eq(type)`).
+      //
+      // NB `getBaseModelGroup('')` returns the REAL ecosystem key 'Other', not
+      // null — so an empty string is NOT an "unconstrained" hint, it narrows to
+      // the Other family. resolveCheckpointPickerRequest already strips '' to
+      // undefined, which is what keeps the guard below correct; callers wanting
+      // an unconstrained pick must OMIT the key rather than send ''.
       const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
 
@@ -4249,9 +4473,7 @@ export function PageBlockHost({
                   // SERVER'S OWN preview — never from the block. Preview and
                   // write resolve `sources` independently, so a workflow that
                   // gains an output between them would publish more images than
-                  // the dialog displayed. The server refuses on a mismatch. This
-                  // value is host chrome, not block input: the block never holds
-                  // the block token and cannot reach the procedure.
+                  // the dialog displayed. The server refuses on a mismatch.
                   confirmedImageCount: preview.images.length,
                 });
                 settlement.reply({ result });
@@ -4281,6 +4503,131 @@ export function PageBlockHost({
     createPostFromAppMutation,
     reportNoToken,
   ]);
+
+  // ── RUN_TRAINING → TRAINING_RESULT ─────────────────────────────────────────
+  // Preview the stored quote, confirm in host chrome, record consent (session-only),
+  // then submit — see `runTrainingGate.ts`. Preview/consent use `trpcUtils.client`
+  // so no render-time hook is added. REQUEST-style: `createPostSettlement` owns the
+  // exactly-once reply and keeps `declined` meaning "no run was submitted".
+  useEffect(() => {
+    const off = onMessage<unknown>('RUN_TRAINING', (raw) => {
+      const gate = resolveRunTrainingRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('TRAINING_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, quoteId, body } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('TRAINING_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('RUN_TRAINING');
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        let preview: TrainingQuotePreview;
+        try {
+          preview = (await trpcUtils.client.blocks.previewTrainingQuote.mutate({
+            blockToken: token,
+            quoteId,
+          })) as TrainingQuotePreview;
+        } catch (err) {
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        const copy = buildTrainingConsentCopy({ appName, preview });
+        const openBuyBuzz =
+          preview.shortfall != null && preview.shortfall > 0
+            ? () =>
+                dialogStore.trigger<BuyBuzzModalProps>({
+                  id: `block-training-buy-buzz-${requestId}`,
+                  component: BuyBuzzModal,
+                  props: { minBuzzAmount: preview.shortfall ?? undefined },
+                })
+            : undefined;
+        dialogStore.trigger({
+          // Per-request id — a deduped dialog would be a request that never replies.
+          id: `block-run-training-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: <TrainingConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not be
+              // able to claim `declined` for a run that is being submitted.
+              settlement.markConsented();
+              try {
+                await trpcUtils.client.blocks.consentTrainingQuote.mutate({
+                  blockToken: token,
+                  quoteId,
+                });
+                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+                try {
+                  result = await submitWorkflowMutation.mutateAsync({
+                    blockToken: token,
+                    // Schema-validated server-side and checked against the quote's
+                    // body hash; the host never renders or trusts it.
+                    body: body as never,
+                  });
+                } catch (err) {
+                  // Never resent: the quote is spent once. See runTrainingGate.ts.
+                  settlement.reply(trainingSubmitReplyFromError(err));
+                  return;
+                }
+                settlement.reply(trainingSubmitReplyFromResult(result));
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    submitWorkflowMutation,
+    reportNoToken,
+  ]);
+
+  // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
+  // Step 1 of the training flow: the host calls `blocks.prepareTrainingDataset`
+  // with the page's block token, which the block's own origin cannot reach. No
+  // dialog — nothing is charged. Decision + reply live in `prepareTrainingDatasetGate.ts`.
+  useEffect(() => {
+    const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
+      void handlePrepareTrainingDataset({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+        token,
+        prepare: (input) => trpcUtils.client.blocks.prepareTrainingDataset.mutate(input),
+        send,
+        onNoToken: () => reportNoToken('PREPARE_TRAINING_DATASET'),
+      });
+    });
+    return off;
+  }, [onMessage, send, token, readGateStatus, viewer, reviewNack, trpcUtils, reportNoToken]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from

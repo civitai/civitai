@@ -10,12 +10,20 @@ import {
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 
 const { entityChangesMock, outcomeMock } = vi.hoisted(() => ({
   entityChangesMock: vi.fn(),
   outcomeMock: vi.fn(),
 }));
 
+// Pinned off so this suite stays about the XGuard path, not about what Flipt answers here.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
+}));
+// Hand-listed, as in challenge-moderation-adapter.test.ts: the text-scan notify path imports it.
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/prom/model-moderation.metrics', () => ({
   recordModelTextModerationOutcome: outcomeMock,
 }));

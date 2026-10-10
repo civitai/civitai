@@ -12,9 +12,10 @@ There are **two** trainers, and a new trainable model has to land in both or it 
    per-model **Flipt flag** (mod-only until launch).
 2. **Training Studio** — the SvelteKit replacement at `apps/training-studio`. **AI-Toolkit only.** Its
    model catalog is a **vendored mirror** of the in-app trainer's list, and it has its own per-model gate:
-   a `ModelCard.flagKey` (Flipt, fail-closed, resolved server-side) hides a new model from everyone but
-   the segmented cohort until launch — the mirror of the main app's `<name>Training` flag. A card with no
-   `flagKey` is visible to every signed-in user immediately.
+   a `ModelCard.flagKey` (Flipt, fail-closed) hides a new model from everyone but the segmented cohort
+   until launch — the mirror of the main app's `<name>Training` flag. Whichever host mounts the Studio
+   resolves it: the standalone shell's server, or the main app for the `/training-studio` embed (through
+   `studioModelFlagFeatures`). A card with no `flagKey` is visible to every signed-in user immediately.
 
 This skill is the umbrella that keeps the two in step. It owns the **decision layer** (the three facts
 below), delegates the pieces that already have skills, and owns the Training Studio mirror step, which
@@ -86,6 +87,7 @@ Add trainer model: <Name>
   Main-app Flipt flag: <name>Training / <name>-training  (mod-only)
   Training Studio: new card | new version on the <family> card
     flagKey: '<name>-training' (gate a new model) | none (launch to all) — see Step 3
+    embed map: studioModelFlagFeatures['<name>-training'] → <name>Training  (register a new main-app flag only for a Studio-specific key)
 ```
 
 Wait for confirmation, then make each trainer's edits in one pass.
@@ -129,7 +131,8 @@ The catalog is `apps/training-studio/src/lib/data/trainingModels.ts` — a hand-
 > 🔴 **Gate a new/experimental model behind a feature flag here too — same policy as the main app.** The
 > in-app trainer mod-gates a new model behind its `<name>Training` Flipt flag; the Training Studio has the
 > matching mechanism: set **`flagKey`** on the card (Step 1 below). A card with a `flagKey` is offered only
-> to users the server evaluated that flag `true` for — and it is **fail-closed**: until the flag is created
+> to users its host evaluated that flag `true` for (the shell's server, or the main app for the embed) —
+> and it is **fail-closed**: until the flag is created
 > and segmented in the `civitai-app` Flipt environment, only moderators see it, so the model ships dark. An
 > ungated card (no `flagKey`) is shown to everyone; that is the right choice only for a model launching to
 > all users at once. **When in doubt, gate it** — an unflagged new model is live for everyone the moment
@@ -150,7 +153,10 @@ Edit `trainingModels.ts`:
    - **`flagKey`** → set it (to the Flipt gate key, e.g. `'<name>-training'`, reusing the main-app
      training flag or a Studio-specific one) for any new/experimental model so it stays mod-only until
      launch. Omit it only for a model going live to everyone. Create the flag with the `flipt` skill in
-     the `civitai-app` environment; gating is fail-closed until it exists. The gate applies to the whole
+     the `civitai-app` environment; gating is fail-closed until it exists. **Also add the key to
+     `studioModelFlagFeatures` in `src/utils/training.ts`** (and register a main-app feature flag for a
+     Studio-specific key) — the embedded element can't evaluate Flipt, so a gate missing from that map
+     hides the card on `/training-studio` for everyone, moderators included. The gate applies to the whole
      **card** (family) — for a *new version of an already-launched family*, gate at the card level only if
      the whole family should re-close, which is unusual; a single gated version within a shown card is not
      supported (note it in `REVIEW.md` if you hit that case).
@@ -174,11 +180,12 @@ Edit `trainingModels.ts`:
 5. **Update the mirror-date comment** at the top of `trainingModels.ts` (and the `PARAM_DEFAULTS`
    comment if numbers changed) so the next re-mirror knows the snapshot moved.
 
-## Step 4 — Typecheck both trainers
+## Step 4 — Typecheck both trainers, then the gate test
 
 ```bash
 pnpm run typecheck                                            # main app (TS 5.9, authoritative)
 pnpm --filter @civitai/training-studio-app run typecheck      # Training Studio (svelte-check; NEVER `check`)
+pnpm exec vitest run --project 'unit*' src/utils/__tests__/new-training-models.test.ts   # every catalog flagKey is in studioModelFlagFeatures — typecheck cannot see a missing key
 ```
 
 `typecheck` (svelte-check alone) is the right one for the Training Studio — never `check`, which runs
@@ -192,13 +199,19 @@ both are clean.
 ## Step 5 — Verify (optional)
 
 - **In-app trainer**: with a dev server (`dev-server` skill) and the `<name>Training` Flipt flag on for
-  your user, open the training form → Step 1 shows the new base model under its media; selecting it
-  loads the expected defaults; a `whatif` submit returns a price with no validation error.
+  your user, open the training form (`/models/train`) → Step 1 shows the new base model under its media;
+  selecting it loads the expected defaults; a `whatif` submit returns a price with no validation error.
+  The Training Studio is the default trainer for everyone `trainingStudioUi` covers (every moderator),
+  so `/models/train` redirects to `/training-studio` until you click **Use the classic trainer** in the
+  banner there. The choice is stored per user.
 - **Training Studio**: `pnpm dev:training-studio` (`TRAINING_STUDIO_DEV_LOGIN=1` in its `.env` to skip
   OAuth) → the Select step shows the new card/version, auto-picks the right labeler (tags vs captions),
   and the Review step's whatif price resolves. The dev-login stub sees the whole catalog including gated
   cards; to check the **gate** itself, evaluate the flag against a real signed-in non-mod user (or toggle
-  it in Flipt) and confirm a gated card is hidden until the flag is on.
+  it in Flipt) and confirm a gated card is hidden until the flag is on. The embed is a second evaluator:
+  open `/training-studio?view=new` in the main app (behind `trainingStudioUi` — on by default, but off
+  if you switched to the classic trainer for the check above; **Switch to Training Studio** on
+  `/models/train` turns it back on) and confirm the card appears there too — a key missing from `studioModelFlagFeatures` stays hidden there even for moderators.
 
 ## Recap of what lives where
 
@@ -207,7 +220,7 @@ both are clean.
 | Model catalog | `src/utils/training.ts` `trainingModelInfo` | `trainingModels.ts` `MODEL_CARDS` (mirror) |
 | Advanced param defaults | `TrainingParams.tsx` `trainingSettings` | `trainingModels.ts` `PARAM_DEFAULTS` |
 | Submission validation | `training.schema.ts` union | (server uses main-app orchestrator schema) |
-| Feature flag gate | `<name>Training` (Flipt, mod-only) | `ModelCard.flagKey` (Flipt, fail-closed; omit to launch to all) |
+| Feature flag gate | `<name>Training` (Flipt, mod-only) | `ModelCard.flagKey` (Flipt, fail-closed; omit to launch to all) + its `studioModelFlagFeatures` entry for the embed |
 | Engine | ai-toolkit / imageResourceTraining | ai-toolkit only |
 
 ## Notes

@@ -1,27 +1,50 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconPencil, IconX } from '@tabler/icons-svelte';
+  import { IconArrowBackUp, IconPencil, IconPlus, IconX } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
+  import { mediaCount, type Media } from '$lib/data/trainingModels';
   import { splitTags, type Img } from './trainingFlow';
 
-  // Dataset-wide rename/remove of one tag. `images` is the flow's own state proxy, so mutating a
+  // Dataset-wide add/rename/remove of one tag. `images` is the flow's own state proxy, so mutating a
   // tile's tags here applies live to the grid (the label editor's contract). Exact-string tag
-  // identity — the rows come from the stored tags themselves.
+  // identity — the rows come from the stored tags themselves. Every change is undoable once: a
+  // dataset-wide edit that lands wrong has no other way back.
   let {
     open = $bindable(false),
     tagFreq,
     images,
+    media,
   }: {
     open: boolean;
     /** [tag, occurrence count], frequency-ranked (DataStep's tagFreq). */
     tagFreq: [string, number][];
     images: Img[];
+    media: Media;
   } = $props();
 
   let renameFrom = $state<string | null>(null);
   let renameDraft = $state('');
+  let addDraft = $state('');
+
+  // Keyed by image id, never index, so an image removed from the dataset in between simply drops
+  // out of the restore.
+  let lastChange = $state<{ summary: string; before: Map<number, string[]> } | null>(null);
+
+  const trainableWithTags = $derived(images.filter((i) => i.tags.length > 0).length);
+
+  function record(summary: string, touched: Img[]) {
+    lastChange = { summary, before: new Map(touched.map((img) => [img.id, [...img.tags]])) };
+  }
+  function undo() {
+    if (!lastChange) return;
+    for (const img of images) {
+      const tags = lastChange.before.get(img.id);
+      if (tags) img.tags = tags;
+    }
+    lastChange = null;
+  }
 
   function startTagRename(tag: string) {
     renameFrom = tag;
@@ -32,8 +55,9 @@
     const to = splitTags(renameDraft);
     renameFrom = null;
     if (!from || to.length === 0 || (to.length === 1 && to[0] === from)) return;
-    for (const img of images) {
-      if (!img.tags.includes(from)) continue;
+    const touched = images.filter((img) => img.tags.includes(from));
+    record(`Renamed "${from}" to "${to.join(', ')}" on ${mediaCount(touched.length, media)}`, touched);
+    for (const img of touched) {
       // Map in place (keeps the tag's position) and dedupe in case a target already exists.
       const seen = new Set<string>();
       const next: string[] = [];
@@ -49,8 +73,24 @@
     }
   }
   function removeTagEverywhere(tag: string) {
-    for (const img of images) {
-      if (img.tags.includes(tag)) img.tags = img.tags.filter((t) => t !== tag);
+    const touched = images.filter((img) => img.tags.includes(tag));
+    record(`Removed "${tag}" from ${mediaCount(touched.length, media)}`, touched);
+    for (const img of touched) img.tags = img.tags.filter((t) => t !== tag);
+  }
+  // Prepended — where a trigger-like tag belongs. Unlabeled images are skipped: a tag alone is not a
+  // label, and auto-label would overwrite it.
+  function addTagEverywhere() {
+    const tags = splitTags(addDraft);
+    addDraft = '';
+    if (tags.length === 0) return;
+    const touched = images.filter(
+      (img) => img.tags.length > 0 && tags.some((t) => !img.tags.includes(t))
+    );
+    if (touched.length === 0) return;
+    record(`Added "${tags.join(', ')}" to ${mediaCount(touched.length, media)}`, touched);
+    for (const img of touched) {
+      const missing = tags.filter((t) => !img.tags.includes(t));
+      img.tags = [...missing, ...img.tags];
     }
   }
 </script>
@@ -60,8 +100,11 @@
     () => open,
     (v) => {
       open = v;
-      // An inline rename left open must not ride onto the next opening.
-      if (!v) renameFrom = null;
+      // An inline rename left open must not ride onto the next opening; neither should a stale Undo.
+      if (!v) {
+        renameFrom = null;
+        lastChange = null;
+      }
     }
   }
 >
@@ -69,9 +112,27 @@
     <Dialog.Header>
       <Dialog.Title>Manage tags</Dialog.Title>
       <Dialog.Description>
-        Rename or remove a tag across the whole dataset. Changes apply immediately.
+        Add, rename or remove a tag across the whole dataset. Changes apply immediately and the last
+        one can be undone.
       </Dialog.Description>
     </Dialog.Header>
+    <form
+      class="flex items-center gap-2"
+      onsubmit={(e) => {
+        e.preventDefault();
+        addTagEverywhere();
+      }}
+    >
+      <Input
+        bind:value={addDraft}
+        placeholder="Add a tag to every labeled image…"
+        aria-label="Tag to add to every labeled image"
+        class="h-8 flex-1 font-mono text-xs"
+      />
+      <Button type="submit" size="sm" variant="outline" disabled={!addDraft.trim() || trainableWithTags === 0}>
+        <IconPlus size={13} stroke={2} class="mr-1 inline" />Add to all
+      </Button>
+    </form>
     {#if tagFreq.length === 0}
       <p class="font-mono text-xs text-dark-2">No tags in this dataset.</p>
     {:else}
@@ -101,7 +162,7 @@
                 {tag}
               </span>
               <span class="shrink-0 font-mono text-xs text-dark-2">
-                {count} image{count === 1 ? '' : 's'}
+                {count} / {trainableWithTags}
               </span>
               <button
                 type="button"
@@ -123,6 +184,17 @@
           </li>
         {/each}
       </ul>
+    {/if}
+    {#if lastChange}
+      <div
+        role="status"
+        class="flex items-center gap-2 rounded-md border border-dark-4 bg-dark-7 px-2.5 py-1.5 font-mono text-xs text-dark-1"
+      >
+        <span class="min-w-0 flex-1 truncate" title={lastChange.summary}>{lastChange.summary}</span>
+        <Button size="xs" variant="outline" onclick={undo}>
+          <IconArrowBackUp size={13} stroke={2} class="mr-1 inline" />Undo
+        </Button>
+      </div>
     {/if}
   </Dialog.Content>
 </Dialog.Root>

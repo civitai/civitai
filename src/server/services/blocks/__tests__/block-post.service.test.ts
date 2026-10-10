@@ -967,6 +967,30 @@ describe('🔴 the attribution marker is NOT client-settable — a structural cl
     expect(BLOCK_POST_APP_ID_META_KEY).toBe('blockPublishedAppId');
   });
 
+  it('the WRITER and the post-detail chip READER share one declaration', async () => {
+    // ⚠️ A READER now exists as well as the two writers above, and the ledger has
+    // to name it or a reader of the ledger concludes there are two holders when
+    // there are three.
+    //
+    // 🔴 This one is an IDENTITY, not an agreement: the post-detail "Published
+    // with <app>" chip imports the same constant out of `block-post.logic.ts`
+    // (the pure module) rather than re-spelling the literal, so the write side
+    // and the read side cannot disagree by construction. That is the whole reason
+    // the declaration lives there — a reader cannot import the SERVICE without
+    // pulling Prisma into a pure projection, and before the move it had to
+    // re-spell `'blockPublishedAppId'`, which made a rename here a silently dead
+    // chip with nothing failing.
+    const { BLOCK_POST_APP_ID_META_KEY: fromLogic } = await import(
+      '~/server/services/blocks/block-post.logic'
+    );
+    expect(BLOCK_POST_APP_ID_META_KEY).toBe(fromLogic);
+    // And the reader actually reads THAT key, not a coincidentally-equal one.
+    const { readBlockPublishedAppId } = await import(
+      '~/server/services/blocks/post-app-chip.logic'
+    );
+    expect(readBlockPublishedAppId({ [fromLogic]: 'appblk-x' })).toBe('appblk-x');
+  });
+
   it('no post input schema exposes `metadata`, so no client can forge or suppress it', async () => {
     // The whole security property of `Post.metadata.blockPublishedAppId` rests on
     // this: the server writes it unconditionally and nothing on the wire can. A

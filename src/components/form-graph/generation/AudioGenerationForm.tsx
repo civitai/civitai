@@ -1,11 +1,13 @@
 import { Checkbox, Input, Stack, Textarea } from '@mantine/core';
+import { FieldCorrectionNote } from './FieldCorrectionNote';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
-import { Controller, useField } from 'form-graph/react';
+import { Controller, MultiController, useField } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
+import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
@@ -19,8 +21,8 @@ import type { GenerationStore } from './store';
 /**
  * The AUDIO generation form — one `<Controller graph={audioHub}>` per field.
  * The graph decides which fields apply to the selected ecosystem, so
- * this holds the superset of audio fields. `title` exists in the Ace graph
- * but has no control, matching v1.
+ * this holds the superset of audio fields. `title` exists in the Ace graph but has no
+ * control.
  */
 
 export function AudioGenerationForm({ store }: { store: GenerationStore }) {
@@ -59,6 +61,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
             </>
           );
         }}
+      />
+      <MultiController
+        graph={audioHub}
+        names={['model'] as const}
+        render={({ values }) => <ResourceAlerts model={values.model} />}
       />
       <GateRuleWarnings />
       <Controller
@@ -325,8 +332,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={audioHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
       </AccordionLayout>

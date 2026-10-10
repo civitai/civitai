@@ -1,22 +1,20 @@
 /**
- * Step-input router for the form-graph lane: `generationHub.parse().data` in,
- * @civitai/client steps out. Mirrors the data-graph dispatcher
- * (`../ecosystems/index.ts`) for the ported families; an unported ecosystem is
- * a loud error rather than a silent fallthrough, because reaching here with
- * one means the caller routed a family this lane cannot serve yet.
+ * Step-input router: `generationHub.parse().data` in, @civitai/client steps out.
+ * An unrouted ecosystem is a loud error rather than a silent fallthrough —
+ * reaching here with one means the caller routed a family this has no handler for.
  *
  * `data.ecosystem` is the WIRE value — for wan that is the derived backend
  * key, which is exactly what the version lookup wants.
  */
 
 import { maxRandomSeed } from '~/server/common/constants';
-import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
-import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
+import type { GenerationHandlerCtx, StepInput } from '../handlers';
 import { createChromaInput } from './chroma.handler';
 import { createFluxInput } from './flux.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
 import { createFlux2Input } from './flux2.handler';
+import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
@@ -65,13 +63,14 @@ import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createWanSteps } from './wan.handler';
 import type { WanGenerationData } from './wan.handler';
 import { createZImageInput } from './z-image.handler';
-import type { EcosystemGenerationData, LooseGenerationData } from './types';
+import type { EcosystemGenerationData } from './types';
 
 export type { EcosystemGenerationData, GenerationData, LooseGenerationData } from './types';
 export { createChromaInput } from './chroma.handler';
 export { createFluxInput } from './flux.handler';
 export { createFluxKontextInput } from './flux-kontext.handler';
 export { createFlux2Input } from './flux2.handler';
+export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
@@ -125,32 +124,15 @@ export async function createFormGraphStepInput(
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
   const normalizedData = withSeed(data);
-  const loose = normalizedData as LooseGenerationData;
 
-  const steps = await createStep(normalizedData, handlerCtx);
-
-  if (
-    usesComfyEngine({
-      ecosystem: loose.ecosystem ?? '',
-      modelId: loose.model?.id,
-      enhancedCompatibility: loose.enhancedCompatibility,
-    })
-  ) {
-    for (const step of steps) {
-      if (step.$type === 'textToImage') {
-        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
-      }
-    }
-  }
-
-  return steps;
+  return createStep(normalizedData, handlerCtx);
 }
 
 /**
  * Fill the seed preserving the arm type. Constrained to `object`, not
  * `{ seed?: ... }` — that is a weak type, and an arm with no seed field at
  * all (Flux3Video) fails the no-common-properties rule. The extra key on such
- * an arm is inert: v1's dispatcher seeds unconditionally the same way.
+ * an arm is inert.
  */
 function withSeed<T extends object>(data: T): T {
   const seed = (data as { seed?: number }).seed;
@@ -165,7 +147,6 @@ function createStep(
 
   switch (data.ecosystem) {
     case 'SD1':
-    case 'SD2':
     case 'SDXL':
     case 'Pony':
     case 'Illustrious':
@@ -188,6 +169,8 @@ function createStep(
 
     case 'Flux2':
       return createFlux2Input(data, handlerCtx);
+    case 'Flux3':
+      return createFlux3Input(data, handlerCtx);
 
     case 'Flux2Klein_9B':
     case 'Flux2Klein_9B_base':

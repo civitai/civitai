@@ -31,6 +31,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconSpeakerphone,
   IconExclamationMark,
   IconFlag,
   IconLock,
@@ -50,6 +51,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -68,6 +70,7 @@ import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ModelPromotionModal } from '~/components/Promotion/ModelPromotionModal';
 
 const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection'),
@@ -106,6 +109,7 @@ import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
@@ -129,9 +133,8 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   getIsSafeBrowsingLevel,
@@ -354,7 +357,6 @@ export const getServerSideProps = createServerSideProps({
           // Query key won't line up and the client refetches. Fail-soft on any miss.
           model && modelVersionIdParsed
             ? (async () => {
-                const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
                 // Mirror ModelCarousel: a minor model forces its carousel to SFW for
                 // non-moderators, so SSR must resolve at that same forced level. Using
                 // the viewer's own level here would key on a different disableMinor
@@ -369,11 +371,10 @@ export const getServerSideProps = createServerSideProps({
                       canViewNsfw: features?.canViewNsfw ?? false,
                       user: session?.user,
                     });
-                const addons = await getBrowsingSettingAddons().catch(() => null);
-                if (!addons) return null;
-                const addonSettings = resolveBrowsingSettingsAddons(addons, browsingLevel, {
+                const filters = await getServerImageQueryFilters(browsingLevel, {
                   isModerator: session?.user?.isModerator,
                 });
+                if (!filters) return null;
                 return ssg.image.getInfinite
                   .prefetchInfinite({
                     modelVersionId: modelVersionIdParsed as number,
@@ -384,10 +385,7 @@ export const getServerSideProps = createServerSideProps({
                     pending: true,
                     include: [],
                     withMeta: false,
-                    browsingLevel,
-                    excludedTagIds: addonSettings.excludedTagIds,
-                    disablePoi: addonSettings.disablePoi,
-                    disableMinor: addonSettings.disableMinor,
+                    ...filters,
                   })
                   .catch(() => null);
               })()
@@ -1120,6 +1118,19 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </>
                         )}
+                        {isCreator && published && features.creatorPromotions && (
+                          <Menu.Item
+                            leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: ModelPromotionModal,
+                                props: { modelId: model.id },
+                              })
+                            }
+                          >
+                            Promote this model
+                          </Menu.Item>
+                        )}
                         {features.collections && (
                           <AddToCollectionMenuItem
                             onClick={() =>
@@ -1172,7 +1183,7 @@ export default function ModelDetailsV2({
                             <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
                             <BlockUserButton as="menu-item" userId={model.user.id} />
-                            <HideModelButton as="menu-item" modelId={model.id} />
+                            <HideModelButton as="menu-item" model={model} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}
                               onClick={() =>
@@ -1467,7 +1478,10 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
-              {isCreator && model.minorFlagged && <ModelMinorFlagAlert model={model} />}
+              {isCreator && (model.minorFlagged || model.poiFlagged) && (
+                <ModelMinorFlagAlert model={model} />
+              )}
+              <OwnerRatingControls entityType="Model" entityId={model.id} isOwner={isCreator} />
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">
@@ -1488,6 +1502,14 @@ export default function ModelDetailsV2({
                     ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
                     : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
                 </AlertWithIcon>
+              )}
+              {model.status === ModelStatus.Published && (
+                <FirstPublishCard
+                  entityType="model"
+                  entityId={model.id}
+                  ownerId={model.user.id}
+                  publishedAt={model.publishedAt}
+                />
               )}
             </Stack>
             <Group gap={4} wrap="nowrap">
@@ -1544,44 +1566,47 @@ export default function ModelDetailsV2({
           {versionCount > 1 ? (
             <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
           ) : null}
-          {canLoadBelowTheFold && (
-            <>
-              {(isOwner || model.hasSuggestedResources) && (
-                <>
-                  {model.hasSuggestedResources && <AdUnitTopSection />}
-                  {selectedVersion && (
-                    <AssociatedModels
-                      fromId={model.id}
-                      type="Suggested"
-                      ownerId={model.user.id}
-                      label={
-                        <Group gap={8} wrap="nowrap">
-                          Suggested Resources{' '}
-                          <InfoPopover>
-                            <Text size="sm" fw={400}>
-                              These are resources suggested by the creator of this model. They may
-                              be related to this model or created by the same user.
-                            </Text>
-                          </InfoPopover>
-                        </Group>
-                      }
-                    />
-                  )}
-                </>
-              )}
-              <AdUnitTopSection />
-              <ModelDiscussion
-                canDiscuss={canDiscuss}
-                onlyEarlyAccess={onlyEarlyAccess}
-                modelId={model.id}
-                modelUserId={model.user.id}
-                locked={model.locked || model.meta?.commentsLocked}
-              />
-            </>
-          )}
         </Container>
         {showRail && <div className={classes.rail}>{canShowRail && <AdUnitSide_1 />}</div>}
       </div>
+      {canLoadBelowTheFold && (
+        <>
+          {/* A sponsored card can run on a page with no suggestions of its own. */}
+          {(isOwner || model.hasSuggestedResources || features.creatorPromotions) && (
+            <>
+              {model.hasSuggestedResources && <AdUnitTopSection />}
+              {selectedVersion && (
+                <AssociatedModels
+                  fromId={model.id}
+                  type="Suggested"
+                  ownerId={model.user.id}
+                  label={
+                    <Group gap={8} wrap="nowrap">
+                      Suggested Resources{' '}
+                      <InfoPopover>
+                        <Text size="sm" fw={400}>
+                          These are resources suggested by the creator of this model. They may be
+                          related to this model or created by the same user.
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  }
+                />
+              )}
+            </>
+          )}
+          <AdUnitTopSection />
+          <Container size="xl" my="xl">
+            <ModelDiscussion
+              canDiscuss={canDiscuss}
+              onlyEarlyAccess={onlyEarlyAccess}
+              modelId={model.id}
+              modelUserId={model.user.id}
+              locked={model.locked || model.meta?.commentsLocked}
+            />
+          </Container>
+        </>
+      )}
       {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box id="gallery" mt="md">
           <ModelGallery

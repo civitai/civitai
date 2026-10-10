@@ -36,6 +36,25 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 
 const base = { title: 'Hello', content: 'body text', color: 'blue' as const };
 
+/**
+ * Runs `act`, reporting whether the card cancelled the event's default, then cancels it anyway so
+ * the test frame neither navigates nor opens a tab (either ends the run with the rest skipped).
+ */
+async function withDefaultObserved(type: 'click' | 'auxclick' | 'contextmenu', act: () => unknown) {
+  let cardPrevented: boolean | undefined;
+  const observe = (e: Event) => {
+    cardPrevented = e.defaultPrevented;
+    e.preventDefault();
+  };
+  window.addEventListener(type, observe);
+  try {
+    await act();
+  } finally {
+    window.removeEventListener(type, observe);
+  }
+  return cardPrevented;
+}
+
 describe('AnnouncementCard actions', () => {
   beforeEach(() => {
     mocks.openExternalLinkWarning.mockClear();
@@ -51,26 +70,35 @@ describe('AnnouncementCard actions', () => {
     await expect.element(cta).toHaveAttribute('href', '/models/123');
   });
 
-  test('an external action opens the interstitial instead of navigating', async () => {
+  test('a member announcement renders every one of its three buttons', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
-    renderWithProviders(
-      <AnnouncementCard
-        {...base}
-        actions={[{ link: 'https://t.me/SomeGroup', linkText: 'Join the group' }]}
-      />
-    );
+    const actions = [1, 2, 3].map((n) => ({ link: `/models/${n}`, linkText: `Button ${n}` }));
+    renderWithProviders(<AnnouncementCard {...base} actions={actions} />);
 
-    const cta = page.getByRole('button', { name: 'Join the group' });
-    await expect.element(cta).toBeVisible();
-    // 🔴 An anchor stays middle-, cmd-clickable and copyable — all routes around the
-    // interstitial. The missing href IS the fix.
-    await expect.element(cta).not.toHaveAttribute('href');
-
-    await cta.click();
-    expect(mocks.openExternalLinkWarning).toHaveBeenCalledWith('https://t.me/SomeGroup');
+    for (const n of [1, 2, 3])
+      await expect
+        .element(page.getByRole('link', { name: `Button ${n}` }))
+        .toHaveAttribute('href', `/models/${n}`);
   });
 
-  test('an external action still reports the click to analytics', async () => {
+  // External, so the click opens the (mocked) interstitial instead of navigating the test frame away.
+  test('reports which of several buttons was pressed', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const onActionClick = vi.fn();
+    const actions = [1, 2, 3].map((n) => ({
+      link: `https://example.com/${n}`,
+      linkText: `Button ${n}`,
+    }));
+    renderWithProviders(
+      <AnnouncementCard {...base} actions={actions} onActionClick={onActionClick} />
+    );
+
+    await withDefaultObserved('click', () => page.getByRole('link', { name: 'Button 3' }).click());
+    expect(onActionClick).toHaveBeenCalledTimes(1);
+    expect(onActionClick).toHaveBeenCalledWith(actions[2], 2);
+  });
+
+  test('a plain click on an external action opens the interstitial instead of navigating', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
     const onActionClick = vi.fn();
     const action = { link: 'https://t.me/SomeGroup', linkText: 'Join the group' };
@@ -78,8 +106,72 @@ describe('AnnouncementCard actions', () => {
       <AnnouncementCard {...base} actions={[action]} onActionClick={onActionClick} />
     );
 
-    await page.getByRole('button', { name: 'Join the group' }).click();
+    const cta = page.getByRole('link', { name: 'Join the group' });
+    // The href is the leaving-Civitai page, so the routes a plain click does not take —
+    // middle-click, cmd-click, a copied link — still land on the warning.
+    await expect.element(cta).toHaveAttribute('href', '/leaving?url=https://t.me/SomeGroup');
+
+    const cardPrevented = await withDefaultObserved('click', () => cta.click());
+    expect(cardPrevented).toBe(true);
+    expect(mocks.openExternalLinkWarning).toHaveBeenCalledWith('https://t.me/SomeGroup');
+    expect(onActionClick).toHaveBeenCalledTimes(1);
     expect(onActionClick).toHaveBeenCalledWith(action, 0);
+  });
+
+  test.each([
+    ['ctrl/cmd', { modifiers: ['ControlOrMeta'] }],
+    ['shift', { modifiers: ['Shift'] }],
+  ] as const)(
+    'a %s-click on an external action leaves the browser to open the warning page',
+    async (_, options) => {
+      const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+      const onActionClick = vi.fn();
+      const action = { link: 'https://t.me/SomeGroup', linkText: 'Join the group' };
+      renderWithProviders(
+        <AnnouncementCard {...base} actions={[action]} onActionClick={onActionClick} />
+      );
+
+      const cardPrevented = await withDefaultObserved('click', () =>
+        page.getByRole('link', { name: 'Join the group' }).click({ ...options })
+      );
+      expect(cardPrevented).toBe(false);
+      expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
+      expect(onActionClick).toHaveBeenCalledTimes(1);
+      expect(onActionClick).toHaveBeenCalledWith(action, 0);
+    }
+  );
+
+  test('a middle-click on an external action is reported once and opens no modal', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const onActionClick = vi.fn();
+    const action = { link: 'https://t.me/SomeGroup', linkText: 'Join the group' };
+    renderWithProviders(
+      <AnnouncementCard {...base} actions={[action]} onActionClick={onActionClick} />
+    );
+
+    await withDefaultObserved('auxclick', () =>
+      page.getByRole('link', { name: 'Join the group' }).click({ button: 'middle' })
+    );
+    expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
+    expect(onActionClick).toHaveBeenCalledTimes(1);
+    expect(onActionClick).toHaveBeenCalledWith(action, 0);
+  });
+
+  test('a right-click on an external action is not reported', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const onActionClick = vi.fn();
+    renderWithProviders(
+      <AnnouncementCard
+        {...base}
+        actions={[{ link: 'https://t.me/SomeGroup', linkText: 'Join the group' }]}
+        onActionClick={onActionClick}
+      />
+    );
+
+    await withDefaultObserved('contextmenu', () =>
+      page.getByRole('link', { name: 'Join the group' }).click({ button: 'right' })
+    );
+    expect(onActionClick).not.toHaveBeenCalled();
   });
 
   test('an internal action also reports the click to analytics', async () => {
@@ -94,19 +186,34 @@ describe('AnnouncementCard actions', () => {
     );
 
     await page.getByRole('link', { name: 'See the model' }).click();
+    expect(onActionClick).toHaveBeenCalledTimes(1);
     expect(onActionClick).toHaveBeenCalledWith(action, 0);
   });
 
-  test('an external link in the body opens the interstitial', async () => {
+  test('an external link in the body links to the warning page and opens the interstitial', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
     renderWithProviders(
       <AnnouncementCard {...base} content="grab them at [my telegram](https://t.me/SomeGroup)" />
     );
 
     const link = page.getByRole('link', { name: 'my telegram' });
-    await expect.element(link).toBeVisible();
-    await link.click();
+    await expect.element(link).toHaveAttribute('href', '/leaving?url=https://t.me/SomeGroup');
+    const cardPrevented = await withDefaultObserved('click', () => link.click());
+    expect(cardPrevented).toBe(true);
     expect(mocks.openExternalLinkWarning).toHaveBeenCalledWith('https://t.me/SomeGroup');
+  });
+
+  test('a ctrl/cmd-click on an external body link leaves the browser to open the warning page', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    renderWithProviders(
+      <AnnouncementCard {...base} content="grab them at [my telegram](https://t.me/SomeGroup)" />
+    );
+
+    const cardPrevented = await withDefaultObserved('click', () =>
+      page.getByRole('link', { name: 'my telegram' }).click({ modifiers: ['ControlOrMeta'] })
+    );
+    expect(cardPrevented).toBe(false);
+    expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
   });
 
   test('an internal link in the body is left alone', async () => {

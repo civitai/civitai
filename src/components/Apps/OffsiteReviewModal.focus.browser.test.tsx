@@ -63,7 +63,7 @@ const hoisted = vi.hoisted(() => ({
       category: 'utility',
       contentRating: 'g',
     },
-    submittedBy: { id: 42, username: 'author-dev', image: null },
+    submittedBy: { id: 42, username: 'author-dev', deletedAt: null, image: null },
   },
 }));
 

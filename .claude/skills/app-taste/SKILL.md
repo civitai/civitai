@@ -66,6 +66,11 @@ The hue and mark come from the brand system, never invented here — read the li
 values as `listing-media` instructs, and treat any hue table you find in prose as
 a snapshot.
 
+🔴 **The wheel's ≥40° separation bar binds hue CHOICE, not inheritance** — a hue
+measured from the app's approved live mark is recorded in the ledger's `wheelGate`
+block and ships as-is. Never contort a palette to satisfy the bar; the skin must
+stay in sync with the icon and cover already approved on the store.
+
 **Decide brand DEPTH explicitly and record it** (`taste.json` → `brandDepth`):
 
 | depth | surfaces | who owns light/dark |
@@ -85,9 +90,10 @@ longer does.
 Record the prompt and seed in `taste.json` so the hero is reproducible; commit
 the rendered asset, not the intent to render one.
 
-🔴 **`--aspect-ratio` is not honoured — generate wide-ish, then CROP.** The
-dry-run echoes your requested ratio back, which is not acceptance, and the
-realized file can be nothing like it (constraints §11). Measure the output with
+🔴 **`--aspect-ratio` snaps to the ecosystem's nearest ratio — generate
+wide-ish, then CROP.** The dry-run echoes your requested ratio back, which is not
+acceptance; the server picks the closest ratio that ecosystem offers, and the
+realized file can be nothing like what you asked for (constraints §11). Measure the output with
 `file` and record the real dimensions beside the seed. Generate a small batch and
 pick; a single render is a coin flip you will pay to re-roll anyway.
 

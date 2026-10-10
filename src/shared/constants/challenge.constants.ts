@@ -63,6 +63,16 @@ export const CHALLENGE_TIER_ACTIVE_LIMITS: Record<string, number> = {
 
 export const CHALLENGE_DEFAULT_ACTIVE_LIMIT = 1;
 
+export function describeActiveLimitsByTier() {
+  const byLimit = new Map<number, string[]>();
+  for (const [tier, limit] of Object.entries(CHALLENGE_TIER_ACTIVE_LIMITS))
+    byLimit.set(limit, [...(byLimit.get(limit) ?? []), tier[0].toUpperCase() + tier.slice(1)]);
+  return [...byLimit]
+    .sort(([a], [b]) => a - b)
+    .map(([limit, tiers]) => `${tiers.join(' and ')} ${limit}`)
+    .join(', ');
+}
+
 export function getChallengeActiveLimit(tier?: string | null): number {
   if (!tier) return CHALLENGE_DEFAULT_ACTIVE_LIMIT;
   return CHALLENGE_TIER_ACTIVE_LIMITS[tier] ?? CHALLENGE_DEFAULT_ACTIVE_LIMIT;

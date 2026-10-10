@@ -248,6 +248,38 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     expect((props.options?.resources?.[0].baseModels ?? []).length).toBeGreaterThan(0);
   });
 
+  // 🔴 THE PROPERTY THREE REPOS' PROSE RESTS ON, AND NOTHING PINNED IT.
+  //
+  // An ABSENT baseModelGroup must leave `baseModels` EMPTY, because the empty
+  // array is exactly what the three consuming layers special-case as "no
+  // narrowing" (ResourceSelectProvider's `resourceBaseModels.length > 0 ? … :
+  // filterBaseModels`, `selectableVersions`'s `modelBaseModels.length === 0 ||`,
+  // and the query builder's `_baseModels.length ? … : eq(type)`) — so the modal
+  // emits the bare `type = Checkpoint` clause and offers every
+  // generation-covered checkpoint.
+  //
+  // The bare-request cases below already post `{ requestId }` with no family,
+  // but each asserts the REPLY projection, never the modal's options — so a
+  // future default on `baseModels` (falling back to the viewer's last-used
+  // family, say) would silently re-narrow every unconstrained pick with no test
+  // going red, while simultaneously falsifying the handler comments here, the
+  // SDK hook's own documentation and every scaffold that omits the key. This is
+  // the one assertion that fails first instead.
+  test('a BARE request (no baseModelGroup) leaves baseModels EMPTY — no narrowing at all', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('OPEN_CHECKPOINT_PICKER', { requestId: 'rq_bare' });
+
+    await vi.waitFor(() => {
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const props = lastResourceModalProps();
+    expect(props.options?.resources).toHaveLength(1);
+    expect(props.options?.resources?.[0].type).toBe('Checkpoint');
+    expect(props.options?.resources?.[0].baseModels).toEqual([]);
+  });
+
   test('on select posts back ONLY the name/id-only pick — no catalog / private / early-access leak', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();

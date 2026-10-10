@@ -6,6 +6,7 @@ import type {
 import type JSZip from 'jszip';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
   TrainingDetailsBaseModelList,
@@ -13,6 +14,24 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+
+/** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
+ *  app; the embedded element can't evaluate Flipt itself. A gate missing from this map is hidden
+ *  in the embed for everyone. */
+export const studioModelFlagFeatures = {
+  'ming-training': 'mingTraining',
+  'qwen21-training': 'qwen21Training',
+  'yue2-training': 'yue2Training',
+  'training-studio-audio-training': 'trainingStudioAudioTraining',
+} as const satisfies Record<string, FeatureFlagKey>;
+
+export function enabledStudioModelFlags(
+  features: Partial<Record<FeatureFlagKey, boolean>>
+): string[] {
+  return Object.entries(studioModelFlagFeatures)
+    .filter(([, feature]) => features[feature])
+    .map(([flagKey]) => flagKey);
+}
 
 /** Whether a user may generate with UNPUBLISHED training results (epoch checkpoints). The single
  *  definition behind the training-results Generate affordances and the Training Studio embed's

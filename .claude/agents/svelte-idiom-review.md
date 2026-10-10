@@ -1,6 +1,7 @@
 ---
 name: svelte-idiom-review
 description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio) for Svelte 5 idiom (runes, async, forms, keys) and the shared UI conventions (shadcn primitives, text-dark-2, panel styling). Use before calling a segment done, alongside svelte-correctness-review and svelte-abstraction-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 

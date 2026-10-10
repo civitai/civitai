@@ -1,11 +1,19 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
-import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import type { EventInput } from '~/server/schema/event.schema';
-import { eventSchema, teamScoreHistorySchema } from '~/server/schema/event.schema';
+import {
+  eventCosmeticScoresSchema,
+  eventSchema,
+  teamScoreHistorySchema,
+  watchEventPointsSchema,
+  wornEventHatSchema,
+} from '~/server/schema/event.schema';
+import { markEventPointsWatched } from '~/server/events/points/watch.service';
 import {
   activateEventCosmetic,
   donate,
+  getViewerEventAccess,
   getEventCosmetic,
   getEventData,
   getEventRewards,
@@ -14,44 +22,87 @@ import {
   getEventContributors,
   getUserRank,
   getEventPartners,
+  getEventStandings,
+  getMyEventCosmeticScores,
+  getEventCosmeticScores,
+  getEventHatCatalog,
+  getMyEventHats,
+  getPlaceableEventContent,
+  getWornEventHat,
 } from '~/server/services/event.service';
-import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { getNavBanners } from '~/server/services/nav-banner.service';
+import { middleware, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
+// Reads an event the viewer cannot see as an unknown one, ahead of any cache: a cached response
+// must never answer for the gate. A viewer who sees the event differently from a signed-out viewer
+// (a tester in the preview, or a moderator while the flag's base is off) gets a response that is
+// never cached, at the edge or in Redis, where someone else could be served it.
+const eventGate = middleware(async ({ ctx, input, next }) => {
+  const { event } = input as EventInput;
+  const access = await getViewerEventAccess({ event, viewer: ctx.user });
+  if (access === 'closed') throw throwNotFoundError("That event doesn't exist");
+  if (!ctx.cache || !ctx.user) return next();
+  if ((await getViewerEventAccess({ event, viewer: undefined })) === access) return next();
+  return next({ ctx: { cache: { ...ctx.cache, skip: true, canCache: false } } });
+});
+
+// A response that fell back from the live totals is not cached at the edge. edgeCacheIt re-reads
+// `skip` after the resolver runs (see home-block.controller for the same in-resolver opt-out).
+const skipEdgeCache = (ctx: { cache?: { skip?: boolean } | null }) => {
+  if (ctx.cache) ctx.cache.skip = true;
+};
+
 export const eventRouter = router({
+  // What the viewer may do with an event: closed, preview, open or ended. Per viewer, so uncached.
+  getAccess: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getViewerEventAccess({ ...input, viewer: ctx.user })),
+  // The nav strips for events this viewer can play. Seeded by the settings bootstrap; see
+  // nav-banner.service.ts for why it never reads cookies.
+  getNavBanners: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .query(({ ctx }) => getNavBanners({ viewer: ctx.user })),
   getData: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(eventGate)
     // .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ input }) => getEventData(input)),
+    .query(({ ctx, input }) => getEventData({ ...input, viewer: ctx.user })),
   getTeamScores: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ input }) => getTeamScores(input)),
+    .query(({ ctx, input }) => getTeamScores({ ...input, viewer: ctx.user })),
   getTeamScoreHistory: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(teamScoreHistorySchema)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
-    .query(({ input }) => getTeamScoreHistory(input)),
+    .query(({ ctx, input }) => getTeamScoreHistory({ ...input, viewer: ctx.user })),
   getCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getEventCosmetic({ userId: ctx.user.id, ...input })),
+    .query(({ ctx, input }) => getEventCosmetic({ user: ctx.user, ...input })),
   getPartners: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.day }))
-    .query(({ input }) => getEventPartners(input)),
+    .query(({ ctx, input }) => getEventPartners({ ...input, viewer: ctx.user })),
   getRewards: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(eventGate)
     .use(edgeCacheIt({ ttl: CacheTTL.lg }))
-    .query(({ input }) => getEventRewards(input)),
+    .query(({ ctx, input }) => getEventRewards({ ...input, viewer: ctx.user })),
   activateCosmetic: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(eventSchema)
-    .mutation(({ ctx, input }) => activateEventCosmetic({ userId: ctx.user.id, ...input })),
+    .mutation(({ ctx, input }) => activateEventCosmetic({ user: ctx.user, ...input })),
   donate: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialTip, blockApiKeys: true })
     .input(eventSchema.extend({ amount: z.number() }))
@@ -59,6 +110,7 @@ export const eventRouter = router({
   getDonors: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
+    .use(eventGate)
     .use(
       cacheIt({
         ttl: CacheTTL.day,
@@ -71,9 +123,61 @@ export const eventRouter = router({
         tags: () => ['event-donors'],
       })
     )
-    .query(({ input }) => getEventContributors(input)),
+    .query(({ ctx, input }) => getEventContributors({ ...input, viewer: ctx.user })),
+  getStandings: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .use(eventGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(({ ctx, input }) =>
+      getEventStandings({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+    ),
+  getHatCatalog: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .use(eventGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.lg }))
+    .query(({ ctx, input }) => getEventHatCatalog({ ...input, viewer: ctx.user })),
+  getMyCosmeticScores: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyEventCosmeticScores({ user: ctx.user, ...input })),
+  getCosmeticScores: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventCosmeticScoresSchema)
+    .use(eventGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(({ ctx, input }) => getEventCosmeticScores({ ...input, viewer: ctx.user })),
+  // The hat on one card, read when its popover opens. The same for every viewer who sees the event.
+  // Short-lived at the edge: its points are a live total, and an open popover only moves on pushes.
+  getWornHat: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(wornEventHatSchema)
+    .use(eventGate)
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(({ ctx, input }) =>
+      getWornEventHat({ ...input, viewer: ctx.user, onDegraded: () => skipEdgeCache(ctx) })
+    ),
+  // The caller's own hats and content: per user, so never cached.
+  getMyHats: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getMyEventHats({ user: ctx.user, ...input })),
+  getPlaceableContent: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(eventSchema)
+    .query(({ ctx, input }) => getPlaceableEventContent({ user: ctx.user, ...input })),
+  // Marks live point topics as on screen, so the pusher sends them (events/points/watch.ts). Called on
+  // view and every 30s while in view; no Postgres on this path. A page refreshing its sections makes
+  // about 6 a minute, plus one per section scrolled into view and one per 50 hats; anonymous viewers
+  // share a bucket per IP. 60 a minute leaves room for that without letting one caller churn the set.
+  watchPoints: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(watchEventPointsSchema)
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .mutation(({ input }) => markEventPointsWatched(input)),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
-    .query(({ ctx, input }) => getUserRank({ userId: ctx.user.id, ...input })),
+    .query(({ ctx, input }) => getUserRank({ user: ctx.user, ...input })),
 });

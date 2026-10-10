@@ -669,12 +669,14 @@ export default function TrainingSelectFile({
 
     setAwaitInvalidate(true);
 
-    const publishImages =
+    // '' is a failed sample's slot, not an image.
+    const publishImages = (
       trainingResults?.version === 2
         ? (trainingResults?.epochs ?? []).find((e) => e.modelUrl === fileUrl)?.sampleImages
         : (trainingResults?.epochs ?? [])
             .find((e) => e.model_url === fileUrl)
-            ?.sample_images?.map((si) => si.image_url);
+            ?.sample_images?.map((si) => si.image_url)
+    )?.filter(Boolean);
 
     if (publishImages?.length) {
       orchestratorMediaTransmitter.setUrls(

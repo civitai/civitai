@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { NavGateContext, NavRegistryEntry } from '~/components/HomeContentToggle/nav-registry';
+import {
+  navRegistry,
+  type NavGateContext,
+  type NavRegistryEntry,
+} from '~/components/HomeContentToggle/nav-registry';
 import type { NavConfig } from '~/components/HomeContentToggle/resolve-nav-items';
 import {
   resolveNavItems,
@@ -203,5 +207,29 @@ describe('resolveNavItems — defaultHidden', () => {
       config({ bar: ['home', 'posts', 'events'], hidden: ['events'] })
     );
     expect(keys(resolved.bar)).toEqual(['home', 'posts']);
+  });
+});
+
+describe('resolveNavItems — real registry gates', () => {
+  // `getFeatureFlags` emits only the flags that are ON, so an off flag is ABSENT, not `false`.
+  const all = (features: Partial<FeatureAccess>) =>
+    keys(
+      Object.values(
+        resolveNavItems(navRegistry, {
+          features: features as FeatureAccess,
+          isAuthed: true,
+        })
+      )
+        .filter(Array.isArray)
+        .flat()
+    );
+
+  it('hides a flag-gated item when its flag is absent from FeatureAccess', () => {
+    expect(all({})).not.toContain('crucibles');
+    expect(all({})).not.toContain('bounties');
+  });
+
+  it('shows it once the flag is on', () => {
+    expect(all({ crucible: true })).toContain('crucibles');
   });
 });

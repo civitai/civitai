@@ -41,6 +41,10 @@ export function getTrainingWorkflow(
   return core.getTrainingWorkflow(orchestratorClient(token), workflowId);
 }
 
+export function createEpochArchive(token: string, workflowId: string): Promise<core.EpochArchive> {
+  return core.createEpochArchive(orchestratorClient(token), workflowId);
+}
+
 export function getRunDataset(
   token: string,
   workflowId: string

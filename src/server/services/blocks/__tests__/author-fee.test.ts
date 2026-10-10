@@ -180,9 +180,10 @@ describe('author fee — the platform defaults and ceilings', () => {
     ).not.toMatch(/Math\.\w+|\*|\//);
   });
 
-  it('seeds exactly ONE per-type override: chat-completion pays nothing', () => {
+  it('seeds exactly TWO per-type overrides: chat-completion and training pay nothing', () => {
     expect(BLOCK_AUTHOR_FEE_PLATFORM_CONFIG.byType).toEqual([
       ['chat-completion', { flatBuzz: 0, pctOfBase: 0 }],
+      ['training', { flatBuzz: 0, pctOfBase: 0 }],
     ]);
   });
 });
@@ -209,6 +210,19 @@ describe('author fee — the PLATFORM table, as production resolves it', () => {
     expect(r.governingLeg).toBe('none');
     expect(r.source).toBe('type');
     expect(r.coarseType).toBe('chat-completion');
+  });
+
+  it("a `kind:'training'` run charges NOTHING — the coarse `training` override, at any ecosystem", () => {
+    // The viewer confirms one exact price for a training run; a fee on top would
+    // charge more than they confirmed. The value the submit records is
+    // `training:<ecosystem>`, so the override must apply through the COARSE key.
+    for (const generationType of ['training:sdxl', 'training:flux1', 'training'] as const) {
+      const r = computeBlockAuthorFee({ baseGenerationBuzz: BASE, generationType });
+      expect(r.feeBuzz).toBe(0);
+      expect(r.governingLeg).toBe('none');
+      expect(r.coarseType).toBe('training');
+      expect(r.source).toBe(generationType === 'training' ? 'type' : 'coarse');
+    }
   });
 
   it('…while a SAME-BASE generation of another type pays the default 5%', () => {

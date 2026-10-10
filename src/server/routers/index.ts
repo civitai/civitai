@@ -10,6 +10,9 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  appFeedback: lazy(() =>
+    import('~/server/routers/app-feedback.router').then((m) => m.appFeedbackRouter)
+  ),
   appCollaborators: lazy(() =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter)
   ),
@@ -49,7 +52,9 @@ export const appRouter = router({
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
+  promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
+  ratingReview: lazy(() => import('./rating-review.router').then((m) => m.ratingReviewRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
@@ -72,6 +77,9 @@ export const appRouter = router({
   generation: lazy(() => import('./generation.router').then((m) => m.generationRouter)),
   generationPreset: lazy(() =>
     import('./generation-preset.router').then((m) => m.generationPresetRouter)
+  ),
+  generationSizePreset: lazy(() =>
+    import('./generation-size-preset.router').then((m) => m.generationSizePresetRouter)
   ),
   wildcardSet: lazy(() => import('./wildcard-set.router').then((m) => m.wildcardSetRouter)),
   newsletter: lazy(() => import('./newsletter.router').then((m) => m.newsletterRouter)),
@@ -140,6 +148,9 @@ export const appRouter = router({
   creatorProgram: lazy(() =>
     import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)
   ),
+  creatorJourney: lazy(() =>
+    import('~/server/routers/creator-journey.router').then((m) => m.creatorJourneyRouter)
+  ),
   auction: lazy(() => import('~/server/routers/auction.router').then((m) => m.auctionRouter)),
   resourceLoad: lazy(() =>
     import('~/server/routers/resource-load.router').then((m) => m.resourceLoadRouter)
@@ -164,6 +175,8 @@ export const appRouter = router({
   scannerPolicies: lazy(() =>
     import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
   ),
+  crucible: lazy(() => import('./crucible.router').then((m) => m.crucibleRouter)),
+  prize: lazy(() => import('./prize.router').then((m) => m.prizeRouter)),
 });
 
 // export type definition of API

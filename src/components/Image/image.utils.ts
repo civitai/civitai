@@ -23,6 +23,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { isViewer, isViewerUsername } from '~/utils/is-viewer';
 
 const imageSections = ['images', 'reactions'] as const;
 export type ImageSections = (typeof imageSections)[number];
@@ -205,6 +206,13 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
+export function isViewingOwnImages(
+  currentUser: { id: number; username?: string | null } | null | undefined,
+  filters: { username?: string; userId?: number }
+) {
+  return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
+}
+
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
@@ -220,13 +228,7 @@ export const useQueryImages = (
   // this is the forced level, which is what those queries should be asking for.
   const contextBrowsingLevel = useBrowsingLevelDebounced();
 
-  // `!!currentUser` guards against `filters.userId === currentUser?.id` being
-  // `undefined === undefined` for anonymous users, which treats them as the owner.
-  const isOwnImages =
-    !!currentUser &&
-    ((!!filters.username &&
-      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
-      filters.userId === currentUser.id);
+  const isOwnImages = isViewingOwnImages(currentUser, filters);
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
     ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),

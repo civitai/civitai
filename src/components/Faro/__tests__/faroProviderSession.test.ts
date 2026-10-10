@@ -120,7 +120,6 @@ describe('FaroProvider — session-attributes wiring', () => {
     const attrs = initOptions().sessionTracking.session?.attributes;
     expect(attrs).toMatchObject({
       // experiment side (both cohorts, from buildRumExperimentAttributes)
-      exp_feed_reserve_cls: 'false',
       exp_gen_tab_defer_view: 'false',
       // geo side (from buildRumGeoAttributes, built from the region prop)
       region: 'US',
@@ -138,7 +137,6 @@ describe('FaroProvider — session-attributes wiring', () => {
     expect(attrs?.region).toBe('unknown');
     expect(attrs?.timezone).toBe('America/New_York');
     // Both experiment attributes still present — neither side of the merge was dropped.
-    expect(attrs?.exp_feed_reserve_cls).toBe('false');
     expect(attrs?.exp_gen_tab_defer_view).toBe('false');
   });
 

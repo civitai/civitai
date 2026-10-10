@@ -55,18 +55,21 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 }));
 
 import { deletePost } from '../post.service';
+import { userImageVideoCountCaches } from '~/server/redis/caches';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const POST_ID = 500;
-const OWNER_IMAGE = { id: 1, url: 'owner-url', deletable: true };
-const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', deletable: false };
+const POSTER_ID = 3307;
+const FOREIGN_USER_ID = 4419;
+const OWNER_IMAGE = { id: 1, url: 'owner-url', userId: POSTER_ID, deletable: true };
+const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', userId: FOREIGN_USER_ID, deletable: false };
 
 // Dispatched on SQL text, not call order: the number of $queryRaw calls ahead of the
 // delete is not stable.
 const sqlTextOf = (strings: TemplateStringsArray | string[]) => Array.from(strings).join('?');
 
-function primeQueries(images: { id: number; url: string; deletable: boolean }[]) {
+function primeQueries(images: (typeof OWNER_IMAGE)[]) {
   const deletable = images.filter((i) => i.deletable);
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = sqlTextOf(strings);
@@ -101,6 +104,7 @@ describe('deletePost orphan de-indexing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: any) => fn(dbMock.dbWrite));
+    vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   });
 
   it('scopes the delete to poster-owned images in SQL', async () => {
@@ -173,5 +177,16 @@ describe('deletePost orphan de-indexing', () => {
     });
     expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
     expect(mockInvalidateManyImageExistence).not.toHaveBeenCalled();
+  });
+
+  // Orphaned images leave the count too: a NULL `postId` fails the count query's `NOT IN`.
+  it("busts the image count of every image's owner, including orphaned ones", async () => {
+    primeQueries([OWNER_IMAGE, FOREIGN_IMAGE]);
+
+    await deletePost({ id: POST_ID });
+
+    expect(selectImagesSql()).toContain('i."userId"');
+    expect(userImageVideoCountCaches.bust).toHaveBeenCalledTimes(1);
+    expect(userImageVideoCountCaches.bust).toHaveBeenCalledWith([POSTER_ID, FOREIGN_USER_ID]);
   });
 });

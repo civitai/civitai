@@ -12,6 +12,7 @@ import { chroma } from './chroma.graph';
 import { flux } from './flux.graph';
 import { fluxKontext } from './flux-kontext.graph';
 import { flux2 } from './flux2.graph';
+import { flux3 } from './flux3.graph';
 import { flux2Klein } from './flux2-klein.graph';
 import { boogu } from './boogu.graph';
 import { krea2 } from './krea2.graph';
@@ -40,8 +41,7 @@ import { zimage } from './zimage.graph';
 /**
  * The IMAGE hub: ecosystem selection scoped to image output, the image-only
  * family dispatch (a keyed branch whose table types each arm) and the two
- * fields the oracle declares AFTER its family discriminator because they read
- * family state (`enhancedCompatibility` reads the model; `quantity` reads
+ * fields declared AFTER the family discriminator because they read family state (`enhancedCompatibility` reads the model; `quantity` reads
  * both). Workflow and the output/input computeds live on the root
  * (`../hub.graph.ts`).
  */
@@ -64,10 +64,11 @@ export const imageHub = defineGraph<RootCtx>()
       ...ecosystemFieldSchemas(
         _ext.workflow,
         hiddenEcosystems,
-        ecosystemStates.map((e) => e.key)
+        ecosystemStates.map((e) => e.key),
+        usableEcosystems
       ),
       default: defaultValue,
-      // v1 stores the ecosystem selection per OUTPUT type
+      // The ecosystem selection is stored per OUTPUT type.
       scope: 'image',
       meta: {
         compatibleEcosystems,
@@ -81,12 +82,13 @@ export const imageHub = defineGraph<RootCtx>()
     // one entry per family, however many ecosystems it serves — the keys
     // type each arm's `ecosystem` literal
     branch('ecosystem', [
-      [['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'], sd],
+      [['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'], sd],
       [['ZImageTurbo', 'ZImageBase'], zimage],
       [['Chroma'], chroma],
       [['Flux1', 'FluxKrea'], flux],
       [['Flux1Kontext'], fluxKontext],
       [['Flux2'], flux2],
+      [['Flux3'], flux3],
       [['Flux2Klein_9B', 'Flux2Klein_9B_base', 'Flux2Klein_4B', 'Flux2Klein_4B_base'], flux2Klein],
       [['Boogu'], boogu],
       [['Krea2'], krea2],
@@ -111,9 +113,8 @@ export const imageHub = defineGraph<RootCtx>()
       [['Grok'], grokImage],
     ] as const)
   )
-  // Both read the family's DERIVED ecosystem where one exists (v1 reads its
-  // conflated key after the checkpoint effect has moved it); families without
-  // a derivation declare nothing and the selection stands.
+  // Both read the family's DERIVED ecosystem where one exists; families without a
+  // derivation declare nothing and the selection stands.
   .field('enhancedCompatibility', ({ model, effectiveEcosystem, ecosystem, _ext }) =>
     _ext.workflow === 'txt2img' &&
     supportsEnhancedCompatibility(effectiveEcosystem ?? ecosystem, model?.id)
@@ -121,21 +122,28 @@ export const imageHub = defineGraph<RootCtx>()
       : null
   )
   .field('quantity', ({ model, effectiveEcosystem, ecosystem, enhancedCompatibility, _ext }) => {
-    const isDraft = _ext.workflow === 'txt2img:draft';
     const bogoActive =
       !!_ext.flags?.enhancedCompatibilitySdcpp &&
       _ext.workflow === 'txt2img' &&
       supportsSdcpp(effectiveEcosystem ?? ecosystem, model?.id) &&
       enhancedCompatibility !== true;
-    const step = isDraft ? 4 : bogoActive ? 2 : 1;
-    // draft's 4-step quantity gets its own bucket (v1's conditional group);
-    // everywhere else quantity is global — so a stored value below bogo's
-    // step floor must be corrected, or it fails min(step) and dead-submits
+    const step = bogoActive ? 2 : 1;
+    // quantity is shared across image families, so a stored value below bogo's
+    // step floor must be corrected, or it fails min(step) and dead-submits.
+    // Scoped to image rather than bare: video keeps its own (see video/hub.graph.ts),
+    // and a scoped read falls back to the bare key, so a bare image value
+    // would leak into video.
+    //
+    // 🔴 FALLS THROUGH to the def's own `correct`. Overriding it outright covered the
+    // floor and silently dropped the CEILING: `max` is the user's own
+    // `limits.maxQuantity`, so a quantity written by a trusted ingestion from a wider
+    // entitlement stayed above it and dead-submitted.
+    const base = quantityDef({ max: _ext.limits.maxQuantity, step });
     return {
-      ...quantityDef({ max: _ext.limits.maxQuantity, step }),
-      scope: isDraft ? rootScope(_ext.workflow) : rootScope(),
+      ...base,
+      scope: rootScope('image'),
       correct: (v: number) =>
-        v < step ? { value: step, reason: 'quantity_step_floor' } : undefined,
+        v < step ? { value: step, reason: 'quantity_step_floor' } : base.correct?.(v),
     };
   })
   // interactive model picks reconcile selectors the same way the parse boundary does

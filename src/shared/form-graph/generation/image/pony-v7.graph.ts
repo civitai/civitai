@@ -1,10 +1,10 @@
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_SQUARE_AR, SEED, guidancePresetsLowBalHigh, sliderDef } from '../defs';
+import { SDXL_FULL_AR_2MP, SEED, guidancePresetsLowBalHigh, sliderDef } from '../defs';
 import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Pony V7 (AuraFlow architecture), ported from `pony-v7-graph.ts`. LoRAs
+ * Pony V7 (AuraFlow architecture). LoRAs
  * supported; no negative prompt, sampler, or CLIP skip. Works best at 40+
  * steps, hence the default.
  */
@@ -22,7 +22,7 @@ export const ponyV7 = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .field('resources', familyResources)
   .use(promptOnlyTextBlock)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR_2MP)
   .field(
     'cfgScale',
     sliderDef({ min: 2, max: 20, default: 3.5, step: 0.5, presets: guidancePresetsLowBalHigh })

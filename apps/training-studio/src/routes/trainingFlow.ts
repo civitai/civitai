@@ -1,12 +1,16 @@
 import {
+  EXTRA_PARAM_FIELDS,
   LORA_TYPES,
   MODEL_CARDS,
   TE_TRAINING_UNSUPPORTED,
   cardByType,
+  extraParamCapabilities,
+  extraParamDefaults,
   paramsForVersion,
   cardsForMedia,
   versionStepDefault,
   versionSuffix,
+  type ExtraParamField,
   type LabelType,
   type Media,
   type ModelCard,
@@ -66,15 +70,27 @@ export function captionTriggerHit(
   trigger: string,
   caption: string
 ): { before: string; match: string; after: string } | null {
+  const hit = findTrigger(trigger, caption);
+  if (!hit) return null;
+  return {
+    before: caption.slice(0, hit.index),
+    match: caption.slice(hit.index, hit.index + hit.length),
+    after: caption.slice(hit.index + hit.length),
+  };
+}
+
+/** Where the trigger word occurs in a text — case-insensitive, as a whole term (a trigger `art` is
+ *  not inside `portrait`). The ONE matcher behind the caption highlight and the sample-prompt check,
+ *  so the Data step and the Review step can't disagree about whether a text carries the trigger. */
+export function findTrigger(
+  trigger: string,
+  text: string
+): { index: number; length: number } | null {
   const t = trigger.trim();
   if (!t) return null;
-  const idx = caption.toLowerCase().indexOf(t.toLowerCase());
-  if (idx < 0) return null;
-  return {
-    before: caption.slice(0, idx),
-    match: caption.slice(idx, idx + t.length),
-    after: caption.slice(idx + t.length),
-  };
+  const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`(^|[^\\p{L}\\p{N}_])(${escaped})(?=$|[^\\p{L}\\p{N}_])`, 'iu').exec(text);
+  return m ? { index: m.index + m[1]!.length, length: m[2]!.length } : null;
 }
 
 /** Client-side selection carried across the flow. Nothing here is persisted until Start. */
@@ -82,6 +98,9 @@ export interface Selection {
   media: Media;
   loraType: string;
   runs: Run[];
+  /** True once the user picked a base model by hand. While false the primary run follows the type's
+   *  recommendation as the type changes; once true a type change leaves the model alone. */
+  userPickedModel?: boolean;
 }
 
 export function runCard(run: Run): ModelCard {
@@ -139,6 +158,11 @@ export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
 export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature';
 
+let imgSeq = 0;
+/** Client id for a dataset tile. Module-level because the flow keeps `images` across Back/Continue
+ *  while the Data step remounts. */
+export const nextImgId = () => ++imgSeq;
+
 /** A dataset item: its source file, upload/scan state against the orchestrator, and its label.
  *  Owned by the flow so it survives Back/Continue. Once uploaded the bytes live in the orchestrator
  *  (`blobId` is the training-data reference, `blobUrl` the scanned media URL); labels are edited
@@ -191,15 +215,80 @@ export function blobAirFromUrl(url: string): string {
 export interface RunParams {
   steps: number;
   epochs: number;
-  unetLr: string;
-  textEncoderLr: string;
-  networkDim: string;
-  networkAlpha: string;
+  unetLr: NumericInput;
+  textEncoderLr: NumericInput;
+  networkDim: NumericInput;
+  networkAlpha: NumericInput;
   lrScheduler: string;
   optimizer: string;
-  resolution: string;
-  batchSize: string;
+  resolution: NumericInput;
+  batchSize: NumericInput;
+  shuffleTokens: boolean;
+  keepTokens: NumericInput;
+  minSnrGamma: NumericInput;
+  noiseOffset: NumericInput;
+  flipAugmentation: boolean;
 }
+
+/** What a `type="number"` input's binding hands back: the number, or '' when cleared. Stored as-is —
+ *  round-tripping through `String()` makes Svelte rewrite the field on every keystroke, and a
+ *  decimal being typed (`0.0`) collapses to `0` before the next digit lands. */
+export type NumericInput = string | number;
+
+/** Human label per param — typed against `RunParams` so a new field without one fails typecheck
+ *  instead of rendering its key. */
+export const PARAM_LABELS: Record<keyof RunParams, string> = {
+  steps: 'Steps',
+  epochs: 'Checkpoints (epochs)',
+  batchSize: 'Batch size',
+  unetLr: 'UNet LR',
+  textEncoderLr: 'Text encoder LR',
+  networkDim: 'Network dim',
+  networkAlpha: 'Network alpha',
+  resolution: 'Resolution',
+  lrScheduler: 'LR scheduler',
+  optimizer: 'Optimizer',
+  shuffleTokens: 'Shuffle tags',
+  keepTokens: 'Keep first tags',
+  minSnrGamma: 'Min SNR gamma',
+  noiseOffset: 'Noise offset',
+  flipAugmentation: 'Flip augmentation',
+};
+
+/** Help text per param, written for someone doing their first LoRA. `{recommended}` is replaced
+ *  with the model's own default at render time so the explanation names a number. */
+export const PARAM_HELP: Record<keyof RunParams, string> = {
+  steps:
+    'How many optimisation steps the run makes. More steps means each image is seen more often; too many and the model memorises the dataset instead of learning it. The recommended budget for this model is {recommended}.',
+  epochs:
+    'How many checkpoints are saved, evenly spread over the run. Each becomes a downloadable, testable version — more checkpoints make it easier to pick the best point without changing how long training takes. Recommended: {recommended}.',
+  batchSize:
+    'How many images are trained on at once. Larger batches smooth out each update and use more VRAM; the ceiling is fixed per model. Recommended: {recommended}.',
+  unetLr:
+    'How strongly the image model (UNet / transformer) is updated per step. Too high burns in artefacts, too low under-trains. Recommended for this model: {recommended}.',
+  textEncoderLr:
+    'How strongly the text encoder is trained. Helps the model tie your trigger word and tags to what it sees; some architectures cannot train it at all. Recommended for this model: {recommended}.',
+  networkDim:
+    'The LoRA rank — its capacity. Higher values can hold more detail but make a bigger file and overfit more easily. Recommended for this model: {recommended}.',
+  networkAlpha:
+    'Scales the LoRA weights: the effective strength is alpha ÷ dim. Alpha equal to dim applies the learning rate as-is; a smaller alpha dampens it. Recommended: {recommended}.',
+  resolution:
+    'The longest edge images are scaled to for training. Higher costs VRAM and time; the range is fixed per model family. Recommended: {recommended}.',
+  lrScheduler:
+    'How the learning rate changes over the run: constant holds it, cosine eases it down towards the end, linear ramps it down evenly. Recommended: {recommended}.',
+  optimizer:
+    'The algorithm that applies each update. AdamW8Bit is the common default; Prodigy and Automagic tune their own learning rate. Recommended for this model: {recommended}.',
+  shuffleTokens:
+    'Randomly reorders the tags of each image every time it is seen, so the model does not learn that a tag matters more because it always comes first. Only meaningful for tag datasets.',
+  keepTokens:
+    'How many leading tags stay in place when tags are shuffled — set it to 1 to keep your trigger word first. Does nothing unless Shuffle tags is on.',
+  minSnrGamma:
+    'Weights the loss by how noisy each training step is, which stabilises SD-family training. 5 is the usual value; 0 turns it off.',
+  noiseOffset:
+    'Adds a small brightness/contrast offset to the training noise, which helps the model produce very dark or very bright images. 0 turns it off; large values wash out results. Recommended for this model: {recommended}.',
+  flipAugmentation:
+    'Randomly mirrors images horizontally to double the effective dataset. Good for symmetric subjects; keep it off for characters with asymmetric details, text, logos or handedness.',
+};
 
 /** A run + its chosen params, produced by the Review step's Start and fed to `buildTrainingRuns`. */
 export interface LaunchedRun {
@@ -251,6 +340,7 @@ export function defaultStepsForRun(run: Run): number {
 /** A run's Review-step params from its chosen model's defaults — per run, since a sweep can mix models. */
 export function defaultRunParams(run: Run): RunParams {
   const d = paramsForVersion(runCard(run), run.versionKey);
+  const x = extraParamDefaults(runCard(run), run.versionKey);
   return {
     steps: defaultStepsForRun(run),
     epochs: d.epochs,
@@ -262,7 +352,70 @@ export function defaultRunParams(run: Run): RunParams {
     optimizer: d.optimizer,
     resolution: String(d.resolution),
     batchSize: String(d.batchSize),
+    shuffleTokens: x.shuffleTokens,
+    keepTokens: String(x.keepTokens),
+    minSnrGamma: String(x.minSnrGamma),
+    noiseOffset: String(x.noiseOffset),
+    flipAugmentation: x.flipAugmentation,
   };
+}
+
+/** Which of the extra AI-Toolkit fields a run can actually use, given the dataset's label mode. */
+export function runExtraCapabilities(run: Run, labelMode: LabelType) {
+  return extraParamCapabilities(runCard(run), runVersion(run), labelMode);
+}
+
+/** The text-encoder rate is locked at 0 for models whose backend can't train it. */
+export const teLocked = (run: Run): boolean => TE_TRAINING_UNSUPPORTED.has(run.versionKey);
+
+export interface ParamDeviation {
+  field: keyof RunParams;
+  label: string;
+  value: string;
+  recommended: string;
+}
+
+/** Display form of one param value — numbers as typed, booleans as On/Off. */
+export function paramDisplay(value: NumericInput | boolean): string {
+  return typeof value === 'boolean' ? (value ? 'On' : 'Off') : String(value);
+}
+
+/** Two param values agree when they read as the same number (so `0.00005` equals `5e-5`), else as
+ *  the same string. */
+function paramEquals(a: NumericInput | boolean, b: NumericInput | boolean): boolean {
+  if (typeof a === 'boolean' || typeof b === 'boolean') return a === b;
+  const na = Number(a);
+  const nb = Number(b);
+  if (a !== '' && b !== '' && Number.isFinite(na) && Number.isFinite(nb)) return na === nb;
+  return String(a) === String(b);
+}
+
+/** Fields where the run's params differ from the model's recommendation, in form order. Fields the
+ *  run can't use (a locked TE rate, an unsupported extra) never count. */
+export function paramDeviations(
+  run: Run,
+  params: RunParams,
+  labelMode: LabelType
+): ParamDeviation[] {
+  const defaults = defaultRunParams(run);
+  const caps = runExtraCapabilities(run, labelMode);
+  const out: ParamDeviation[] = [];
+  for (const field of Object.keys(defaults) as (keyof RunParams)[]) {
+    if (field === 'textEncoderLr' && teLocked(run)) continue;
+    if (
+      EXTRA_PARAM_FIELDS.includes(field as ExtraParamField) &&
+      !caps[field as ExtraParamField].supported
+    )
+      continue;
+    if (paramEquals(params[field], defaults[field])) continue;
+    out.push({
+      field,
+      label: PARAM_LABELS[field],
+      value: paramDisplay(params[field]),
+      recommended: paramDisplay(defaults[field]),
+    });
+  }
+  return out;
 }
 
 /** Identity of a run's Review params: a run whose base or version changed on Select gets fresh model
@@ -274,15 +427,34 @@ export interface SamplePrompt {
   text: string;
 }
 
+/** Whether a sample prompt already carries the trigger word (`findTrigger`). Always true when there
+ *  is no trigger, so callers can use it directly as "nothing to warn about". */
+export function promptHasTrigger(trigger: string, text: string): boolean {
+  return trigger.trim().length === 0 || findTrigger(trigger, text) !== null;
+}
+
+/** The prompt with the trigger word leading it, unless it is already present. Tags and captions both
+ *  take it as a leading comma-separated term — the same place the dataset's own labels carry it. */
+export function withTrigger(trigger: string, text: string): string {
+  const t = trigger.trim();
+  if (!t || promptHasTrigger(t, text)) return text;
+  const rest = text.trim();
+  return rest ? `${t}, ${rest}` : t;
+}
+
 /** Sample prompts seeded from the dataset itself — 3 random labels — so the test images generated during
- *  training reflect what the model is learning. A generic prompt when the dataset carries no labels. */
-export function seedPrompts(labels: string[]): SamplePrompt[] {
+ *  training reflect what the model is learning. A generic prompt when the dataset carries no labels. Every
+ *  seed carries the trigger word: a sample that omits it never tests whether the LoRA learned it. */
+export function seedPrompts(labels: string[], trigger = ''): SamplePrompt[] {
   const pool = labels.map((l) => l.trim()).filter((l) => l.length > 0);
   const picks: string[] = [];
   while (picks.length < 3 && pool.length > 0) {
     picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]!);
   }
-  return (picks.length > 0 ? picks : ['a photo']).map((text, id) => ({ id, text }));
+  return (picks.length > 0 ? picks : ['a photo']).map((text, id) => ({
+    id,
+    text: withTrigger(trigger, text),
+  }));
 }
 
 /** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption
@@ -315,7 +487,7 @@ export function parseLabel(text: string, mode: LabelType): { tags: string[]; cap
 // Parse a Review-step numeric field, falling back to a safe generic value when blank/garbage: Number('') is
 // NaN, which JSON-serializes to null, and the orchestrator rejects a null `lr`. The seeds are per-model
 // (PARAM_DEFAULTS); this is only the last-resort fallback if a field is cleared.
-function num(value: string, fallback: number): number {
+function num(value: NumericInput, fallback: number): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
@@ -341,6 +513,11 @@ export function buildTrainingRuns(
 
   return launched.map(({ run, params }) => {
     const version = runVersion(run);
+    const caps = runExtraCapabilities(run, labelMode);
+    // Fields the run can't use — a locked TE rate, tag-only fields on a caption dataset, image-only
+    // ones on video — go out as 0/off whatever the form holds: a value edited before a model or
+    // label-mode switch must not ride into a run that hangs on it or misreads it.
+    const tags = caps.shuffleTokens.supported;
     return {
       ecosystem: version.ecosystem,
       modelVariant: version.modelVariant,
@@ -351,17 +528,18 @@ export function buildTrainingRuns(
       steps: params.steps,
       epochs: params.epochs,
       unetLr: num(params.unetLr, 0.0004),
-      // Zeroed at submit, not just disabled in the UI — a param edited before switching models
-      // could otherwise carry a TE rate into a run that hangs on it.
-      textEncoderLr: TE_TRAINING_UNSUPPORTED.has(run.versionKey)
-        ? 0
-        : num(params.textEncoderLr, 0.00005),
+      textEncoderLr: teLocked(run) ? 0 : num(params.textEncoderLr, 0.00005),
       networkDim: num(params.networkDim, 32),
       networkAlpha: num(params.networkAlpha, 16),
       resolution: num(params.resolution, 1024),
       batchSize: num(params.batchSize, 2),
       lrScheduler: params.lrScheduler,
       optimizer: params.optimizer,
+      shuffleTokens: tags && params.shuffleTokens,
+      keepTokens: tags ? Math.max(0, Math.round(num(params.keepTokens, 0))) : 0,
+      minSnrGamma: caps.minSnrGamma.supported ? num(params.minSnrGamma, 0) : undefined,
+      noiseOffset: caps.noiseOffset.supported ? num(params.noiseOffset, 0) : 0,
+      flipAugmentation: caps.flipAugmentation.supported && params.flipAugmentation,
       trigger: t,
       items,
       prompts,

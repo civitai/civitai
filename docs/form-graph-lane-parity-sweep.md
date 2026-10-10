@@ -1,5 +1,11 @@
 # form-graph lane parity sweep — 2026-09-23
 
+> **Decided and executed (`feat/remove-data-graph`).** `GenerationFormV2` and the whole data-graph
+> lane are deleted. Everything below is the record of the read-across that supported that decision —
+> the lane comparison, the shadow-parse divergence analysis and the Phase 6 sizing are history and
+> are not re-checkable. Two findings outlived the sweep and are still open; they are restated at the
+> top of "What is left".
+
 A read-across of the two generation form lanes, to decide whether `GenerationFormV2` (the data-graph
 lane) can be retired. Run after the header revert of the same date (see
 [`features/generator-header-redesign.md`](features/generator-header-redesign.md)), which put the
@@ -102,22 +108,29 @@ It now takes `ready`/`isLoading` as props, and each lane wraps it in a two-line 
 reading its own context. (`ResourceAlerts` itself never touched the context, which is why it already
 worked on both lanes.)
 
-### 5. `ResourceAlerts` is missing from the audio and 3D bodies
+### 5. `ResourceAlerts` is missing from the audio body — FIXED (3D was not a gap)
 
-v2 renders it once for every output type, because it has one body. The form-graph lane mounts it in
-`ImageGenerationForm.tsx:116` and `VideoGenerationForm.tsx:135` only, so unstable and
-content-restricted resource warnings do not appear on audio or 3D. `GateRuleWarnings` *is* on all
-four.
+v2 renders it once for every output type, because it has one body. The form-graph lane mounted it in
+`ImageGenerationForm.tsx` and `VideoGenerationForm.tsx` only, so unstable and content-restricted
+resource warnings did not appear on audio. `GateRuleWarnings` *is* on all four.
 
-*Closes when:* all four bodies mount `ResourceAlerts`, or it moves up into `BaseGenerationForm`.
+**Only three of the four bodies can report anything, so "all four" was the wrong target.** Counting
+`.field(...)` declarations per hub: image has `model`/`resources`/`vae`, video has
+`model`/`resources`, audio has `model` alone, and **model3d declares none of the three**. So audio
+now mounts it on the checkpoint alone (`ResourceAlerts` tolerates `resources`/`vae` undefined —
+`getSelectedResources` takes all three optionally), and 3D deliberately does not: there is no resource
+field for the alert to read, so a mount there is dead UI. That also rules out moving it up into
+`BaseGenerationForm`, which cannot name fields the 3D hub does not declare.
 
-### 6. `MissingPreprocessorExamplesAlert` is not rendered
+### 6. `MissingPreprocessorExamplesAlert` is not rendered — FIXED
 
 Moderator-only alert flagging preprocessors with no example output — i.e. ones likely failing on the
-orchestrator. v2: `GenerationForm.tsx:776`. The form-graph lane renders `PreprocessorExamples` and
-`PreprocessKindParamsInput` but not this.
+orchestrator. v2 mounts it inside the `preprocessKind` controller; the form-graph lane rendered
+`PreprocessorExamples` and `PreprocessKindParamsInput` but not this.
 
-*Closes when:* the alert appears on `img2img:preprocess` for a moderator in both lanes.
+**Fix:** it takes no props and self-gates on `isModerator` plus a non-empty
+`getPreprocessKindsMissingExamples()`, so it mounts beside `PreprocessorExamples` in
+`ImageGenerationForm`, matching the v2 site.
 
 ### 7. The Veo 3 `version` radio has no control — latent
 
@@ -163,6 +176,8 @@ control in v2** — the form-graph lane renders it. The lane is not a strict sub
 
 ## Scope beyond the form: what retiring the lane actually touches
 
+**(Historical — this is the sizing that `feat/remove-data-graph` executed against.)**
+
 `grep -rln "libs/data-graph\|shared/data-graph/generation" src` outside the graph directories
 themselves: **175 files**.
 
@@ -180,11 +195,61 @@ themselves: **175 files**.
 
 ## What is left
 
-Findings **3** (needs a decision on silent redirect vs confirm modal), **5**, **6** and **7**. None
-blocks widening the flag; 5 and 6 can ride any later commit and 7 is latent until Veo ships a second
-API version.
+Still open, and now the only live items in this file:
 
-`src/components/form-graph/generation/__tests__/lane-parity.test.ts` guards the three fixed findings
-by reading both lane entry files — the defect class is "the call site is absent in one lane", which
-source can answer, and rendering either lane needs its whole provider stack. Mutation-checked:
-deleting `useGenerationTour()` from `BaseGenerationForm` fails it by name.
+- **Finding 3** — needs a decision on silent redirect vs confirm modal.
+- **Finding 7** — the Veo 3 `version` field has no control; latent until `veo3ApiVersions` has a
+  second entry. *Closes when:* a second entry produces a radio group, or the field is removed.
+
+Everything after this paragraph concerns the shadow comparison, which was deleted with the lane.
+
+Bigger than either, and not a form gap — though the largest class of it is now addressed: the shadow comparison
+(`orchestrator/form-graph/shadow-parse.ts`) is not at zero, which is the counter's own stated
+criterion for widening. Over the 7 days to 2026-09-29, `civitai-prod` logged 1,451 divergences —
+1,010 `success-disagreement` and 441 `data-keys` — all one-directional, the hub accepting what v1
+rejects and never the reverse. 984 of the disagreements are `errorKeys: ["ecosystem"]` on
+`txt2img`; the largest field class is a single field, `snippets` (265). Axiom only receives
+non-matches, so there is no denominator here — the match count is in Prometheus.
+
+**The `ecosystem` class was a correction-placement difference, not a lost gate.** Both engines carry
+the identical output refusal for a hidden/disabled ecosystem. What differed is where the
+workflow-incompatible REDIRECT happens: v1 used an effect keyed on `workflow`, and
+`data-graph.ts` skips an entry unless one of its deps is in the changed set — so a one-shot parse
+supplying `ecosystem` without `workflow` skipped the redirect (and, at `:1963`, the input
+transform) and failed validation. The hub attached it to the field, so it runs on whatever the caller
+sent. That placement is the better one and it stays; it now uses the lib's `correct` hook instead of
+an `input` transform, which yields a `ResolutionNote` with a reason, and its fallback is
+gate-aware (v1 chose from the usable set; `getDefaultEcosystemForWorkflow` is `ecosystemIds[0]`
+and cannot see the gate). `shadow-parse` now carries those notes as `key:kind` labels — never
+`detail`, which holds the values — so a divergence the hub EXPLAINS is separable from one it cannot.
+
+Nothing here needed a change in the form-graph library: `correct` and `ValidationResult.notes`
+already existed, and the app was using an `input` transform and discarding `result.notes`.
+
+**The `data-keys` classes, worked through.** Of 441/week:
+
+- **`snippets` (265) — a real hub bug, fixed.** v1 registers each text editor as a
+  `snippets.targets` slice through an effect; the port bakes the set into the value instead, which
+  is the better shape — but it did it in `coerce`, which the library runs for trusted `set()`
+  writes only. So a parse that SUPPLIED a snippets value kept the caller's targets and registered
+  no editors. A bare parse uses `default`, which already baked them, which is why it survived
+  review. Now done on the `input` path as well.
+- **Z-Image (28) and MageFlow (28) — closed by the ecosystem correction** moving onto the field.
+  Both now match.
+- **MiniMax (102) — the hub is right and v1 is wrong.** `ecosystemByKey.get('MiniMax')` is
+  `undefined`: it is a legacy key predating the H3 rename, still arriving from stored client
+  state. The hub drops an unknown key at the boundary so the default applies and the payload comes
+  out complete; v1 keeps it and returns `aspectRatio`/`duration` undefined on a txt2vid submit.
+  No hub change — but it means the CURRENT lane emits an incomplete payload for those users.
+- ~32 remain across small per-workflow tails (img2img 10, img2vid:ref2vid 6, img2img:face-fix 5,
+  img2vid 3, img2img:edit 2, a `duration`-only class 6). Not examined.
+
+So the counter should not be read as "441 bugs": one class was a hub defect, two were fixed
+upstream of it, and the largest remaining class is v1's. That is what the `corrections` labels in
+`shadow-parse` exist to make legible without this kind of manual pass.
+
+`src/components/form-graph/generation/__tests__/generation-form-mounts.test.ts` (renamed from
+`lane-parity.test.ts` when the second lane was deleted) guards the five fixed findings by reading the
+entry file plus the image and audio bodies for the two per-body mounts — the defect class is "the call
+site is absent", which source can answer, and rendering the form needs its whole provider stack.
+Mutation-checked: deleting `useGenerationTour()` from `BaseGenerationForm` fails it by name.

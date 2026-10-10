@@ -7,11 +7,18 @@ export enum FLIPT_FEATURE_FLAGS {
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
+  // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
+  RATING_DISPUTE = 'rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
   // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
+  // The same for the public REST images endpoint, apart so either can be rolled back alone.
+  FEED_SERVICE_REST_IMAGES = 'feed-service-rest-images',
+  // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
+  // missing, a hub stays on Meilisearch while every other shape follows the flag above.
+  FEED_SERVICE_HUBS = 'feed-service-hubs',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
@@ -62,7 +69,6 @@ export enum FLIPT_FEATURE_FLAGS {
   GENERATION_TESTING = 'generation-testing',
   GENERATION_EXPERIMENTAL = 'generation-experimental',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
-  WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
@@ -96,6 +102,21 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
+  // LOCAL moderation of App Blocks shared-storage `data` leaves and counter keys, in SHADOW: scan
+  // after the write commits and record what would have been blocked, without rejecting anything.
+  // Same submit/apply split as the XGuard pair above. DEFAULT-OFF.
+  //
+  // 🔴 EVALUATED PER APP — entityId = the app block id, NO context — so ramp by boolean, by
+  // percentage (a sticky subset of apps), or by an ENTITY_ID segment listing app block ids. A
+  // context-reading segment (moderators, testers, any cohort) matches nothing here and returns the
+  // base value. See `shared-data-moderation.ts`.
+  APP_BLOCKS_SHARED_DATA_MODERATION = 'app-blocks-shared-data-moderation',
+  // ENFORCE: reject a hit inline, with the title/body belt's consequences. Implies the scan — with
+  // this on, the shadow flag no longer changes anything. Same evaluation as above. DEFAULT-OFF.
+  APP_BLOCKS_SHARED_DATA_MODERATION_ENFORCE = 'app-blocks-shared-data-moderation-enforce',
+  // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
+  // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
+  TEXT_SCAN = 'text-scan',
   // Arms the reaction reconciliation audit's repair path to WRITE compensating
   // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
   // or an unreachable Flipt, and for a path that mutates production metrics that
@@ -149,6 +170,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 
+  // Kill switch for the event points engine (src/server/events/points). DEFAULT-OFF: an unknown
+  // flag, or a client that never initialised, stops every award, removal, hat sync, signals tick
+  // and referee run. Evaluated with no context and one fixed entity, so set the boolean and add no
+  // rules: a ramp is all or nothing, and a rule can override the boolean.
+  EVENT_POINTS_ENGINE = 'event-points-engine',
+
   // Submits image ingestion as one imageScanning step instead of wdTagging + mediaRating.
   // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
   // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
@@ -157,6 +184,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
   // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
   SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
+
+  // Runs build-resource-intent-cooc (the weekly co-occurrence index build). DEFAULT-OFF. Turn it on
+  // only after the ResourceIntentCoocSnapshot migration is applied in that environment, or every
+  // run fails at the insert. Boolean only.
+  RESOURCE_INTENT_COOC_BUILD = 'resource-intent-cooc-build',
 
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
   // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).
@@ -312,6 +344,10 @@ export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.
 export const getFliptCacheStats = flipt.getCacheStats;
+// The underlying SDK client (or `null` before init), for a short-lived process that must
+// `close()` it on the way out — its config poller is a timer that otherwise keeps the
+// process alive. `getClientSync` closes over the instance (no `this`), like the above.
+export const getFliptClientSync = flipt.getClientSync;
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`

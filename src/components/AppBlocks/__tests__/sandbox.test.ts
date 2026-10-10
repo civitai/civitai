@@ -26,9 +26,7 @@ describe('intersectSandbox', () => {
   it('adds allow-same-origin only for trusted tiers', () => {
     expect(intersectSandbox(undefined, 'verified').split(' ')).toContain('allow-same-origin');
     expect(intersectSandbox(undefined, 'internal').split(' ')).toContain('allow-same-origin');
-    expect(intersectSandbox(undefined, 'unverified').split(' ')).not.toContain(
-      'allow-same-origin'
-    );
+    expect(intersectSandbox(undefined, 'unverified').split(' ')).not.toContain('allow-same-origin');
   });
 
   it('honors recognized declared tokens (union with the minimal floor)', () => {
@@ -43,6 +41,33 @@ describe('intersectSandbox', () => {
     expect(out).toContain('allow-forms');
     expect(out).not.toContain('allow-top-navigation');
     expect(out).not.toContain('evil');
+  });
+
+  it('NEVER grants allow-popups-to-escape-sandbox, at ANY trust tier (#5209)', () => {
+    // 🔴 PINS A DECISION, not an implementation detail. #5209 asked for
+    // `navigate(path, 'new_tab')` to work; the tempting fix was to add this token
+    // so the BLOCK could open its own tab. It was refused: a popup opened by the
+    // frame inherits the opener's sandbox, so without this token it lands at an
+    // opaque origin (logged out — worse than no link), and WITH it a third-party
+    // block gets a browsing context free of the sandbox it was placed in. That is
+    // a real escalation. The HOST opens the tab instead, from the unsandboxed
+    // parent frame, where the destination is host-validated and the new context
+    // inherits no sandbox at all.
+    //
+    // The pre-existing strip test above uses the fixture `'... allow-top-navigation
+    // evil'`, so it never named THIS token — a future widening of
+    // ALLOWED_SANDBOX_TOKENS would have gone unnoticed by every sandbox test.
+    for (const tier of ['unverified', 'verified', 'internal', 'whatever-future-tier']) {
+      const out = intersectSandbox(
+        'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox',
+        tier
+      ).split(/\s+/);
+      // Positive control in the same assertion: a sibling token from the SAME
+      // declaration IS honoured, so a `toContain`-fails-open reading is excluded
+      // and this is a measurement of the allowlist rather than of a broken input.
+      expect(out, tier).toContain('allow-popups');
+      expect(out, tier).not.toContain('allow-popups-to-escape-sandbox');
+    }
   });
 
   it('result is never wider than declared ∪ minimal ∪ (tier same-origin)', () => {
@@ -97,7 +122,10 @@ describe('clampReviewSandbox (mod review render-only clamp)', () => {
   it('the clamped string, run through intersectSandbox(unverified), stays opaque + render-only', () => {
     // Mirror the real wiring: ReviewBlockPreviewHost passes clampReviewSandbox()
     // and PageBlockHost re-runs intersectSandbox(…, 'unverified').
-    const eff = intersectSandbox(clampReviewSandbox('allow-scripts allow-popups allow-downloads'), 'unverified');
+    const eff = intersectSandbox(
+      clampReviewSandbox('allow-scripts allow-popups allow-downloads'),
+      'unverified'
+    );
     const tokens = eff.split(/\s+/);
     expect(tokens).toContain('allow-scripts');
     expect(tokens).not.toContain('allow-popups');

@@ -89,6 +89,12 @@ export const TOS_REASONS: CannedReason[] = [
     tos: '9.6',
   },
   {
+    label: 'Minor with violence',
+    message: 'Violence against, or implied harm to, characters who appear young is not allowed.',
+    violation: 'minorViolence',
+    tos: '9.6',
+  },
+  {
     label: 'Realistic minor',
     message: 'Realistic images of minors is not allowed.',
     violation: 'realisticMinor',
