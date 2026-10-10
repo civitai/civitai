@@ -173,10 +173,11 @@ describe('routes under src/pages/api/mod', () => {
 
 /**
  * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above: in the
- * route file, or in a module its default export draws on, followed up to three hops (see
- * `defaultExportOrigins`). A read is the identifier or a string element access
- * (`x['isModerator']`). Not seen: a check under another name, a computed key, a module the default
- * export does not name, or one further away. Each route found must be listed here.
+ * route file, or in a module `defaultExportOrigins` reaches from it, up to three hops. A read is the
+ * identifier or a string element access (`x['isModerator']`). Not seen: a check under another
+ * name, a computed key, an import used only as a callee or inside a function body, an intermediate
+ * module that re-exports by name without `export … from`, or a module further away. Each route
+ * found must be listed here.
  *
  * - `full credential`: a moderator-only route; it must call `requireFullScopeSession`.
  * - every other entry names why moderator status there is not a moderator-only gate.
@@ -252,7 +253,8 @@ function resolveModule(root: string, fromFile: string, specifier: string): strin
 
 /**
  * The modules a file's default export draws on: each imported binding the exported expression
- * names, through call arguments, property access, `as` and a top-level `const` alias; the module
+ * names, through call arguments, property access, type assertions and top-level variable aliases;
+ * the module
  * of an `export { … as default }`; and every module the file re-exports from.
  */
 function defaultExportOrigins(root: string, file: string, source: string): string[] {
@@ -288,7 +290,8 @@ function defaultExportOrigins(root: string, file: string, source: string): strin
   }
 
   // A call contributes its arguments, not its callee: `AuthedEndpoint(handler)` draws on `handler`.
-  // A function literal's body is in this file, which is already read.
+  // Function bodies are not followed: route bodies call services, and following them would pull in
+  // the service graph.
   const seen = new Set<string>();
   const visit = (node: ts.Node): void => {
     if (ts.isIdentifier(node)) {
@@ -379,6 +382,8 @@ describe('routeReadsModeratorFlag', () => {
   write('src/server/gated.ts', `${gate}export default handler;\n`);
   write('src/server/open.ts', 'export default function handler() {}\n');
   write('src/server/hop.ts', "export { handler } from './gated';\n");
+  write('src/server/hop2.ts', "export { handler } from './hop';\n");
+  write('src/server/hop3.ts', "export { handler } from './hop2';\n");
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
   it.each([
@@ -423,6 +428,11 @@ describe('routeReadsModeratorFlag', () => {
       "import { handler } from '~/server/gated';\nexport default handler as unknown;",
     ],
     ['a second hop', "import { handler } from '~/server/hop';\nexport default handler;"],
+    ['a third hop', "import { handler } from '~/server/hop2';\nexport default handler;"],
+    [
+      'a satisfies expression',
+      "import { handler } from '~/server/gated';\nexport default (handler satisfies unknown)!;",
+    ],
   ])('sees %s', (_label, source) => {
     expect(routeReadsModeratorFlag(root, write('src/pages/api/route.ts', source))).toBe(true);
   });
@@ -431,6 +441,7 @@ describe('routeReadsModeratorFlag', () => {
     ['a comment', '// user.isModerator\nexport default () => null;'],
     ['a re-export of a module without the read', "export { default } from '~/server/open';"],
     ['a package import', "import handler from 'next';\nexport default handler;"],
+    ['a fourth hop', "import { handler } from '~/server/hop3';\nexport default handler;"],
     [
       'a wrapper whose own module reads the flag',
       "import { handler as wrap } from '~/server/gated';\nexport default wrap(() => null);",
