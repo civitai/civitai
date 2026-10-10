@@ -5,6 +5,7 @@ import { performance } from 'node:perf_hooks';
 import client from 'prom-client';
 import { type DbLogFn } from './env';
 import { limitConcurrency } from './concurrency-helpers';
+import { guardPool } from './pool-guard';
 
 // Fix Dates: TIMESTAMP comes back as a UTC Date (was set per-pool-module in the app).
 types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
@@ -150,6 +151,10 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
     statement_timeout: statementTimeout,
     application_name: applicationName,
   }) as AugmentedPool;
+
+  // Before anything else, so every client the pool creates gets the per-client listener. Logs to the
+  // console, not `log`: `log` defaults to a no-op.
+  guardPool(pool, label);
 
   // Per-connection statement_timeout for PgBouncer-fronted pools (which ignore the startup param).
   if (perConnectionStatementTimeout) {
