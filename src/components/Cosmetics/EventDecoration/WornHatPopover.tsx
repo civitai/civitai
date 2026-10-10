@@ -65,9 +65,6 @@ export function WornHatPopover({
       {/* Portalled, but React still bubbles its clicks to the card underneath. */}
       <Popover.Dropdown onClick={(e) => e.stopPropagation()} data-testid="worn-hat-popover">
         <Stack gap="xs">
-          <Text size="xs" fw={700} c="dimmed" tt="uppercase" style={{ letterSpacing: 0.5 }}>
-            {definition?.eventTitle ?? 'Event'} · Team hat
-          </Text>
           {isLoading ? (
             <Stack gap={8}>
               <Skeleton height={18} width="70%" />

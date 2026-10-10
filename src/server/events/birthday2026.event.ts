@@ -24,6 +24,7 @@ export const birthday2026 = createEvent(name, {
     headline: 'Civitai turns 4.',
     headlineAccent: 'Pick up a hat.',
     heroImage: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
+    heroVideo: { id: '2a717391-711f-4005-97df-16921dc25e07', title: 'Hats On' },
     dates: 'Nov 1 to Nov 30',
     summary:
       'Four colour teams. Put party hats on your images, models and articles, and every view and reaction they get scores for your team.',

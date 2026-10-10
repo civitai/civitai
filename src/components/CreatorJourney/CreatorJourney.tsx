@@ -44,6 +44,9 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 type Journey = RouterOutput['creatorJourney']['getMine'];
+// The page container is wide so five-rung ladders fit; the score sections keep the md width.
+const scoreSectionWidth =
+  'mx-auto w-full max-w-[calc(var(--container-size-md)_-_2*var(--mantine-spacing-md))]';
 const accentOf = (tier: CreatorScoreTier | null | undefined) =>
   (tier && tierAccents[tier.key]) ?? DEFAULT_ACCENT;
 
@@ -81,7 +84,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
 
   return (
     <Stack gap="xl">
-      <Stack gap={4}>
+      <Stack gap={4} className={scoreSectionWidth}>
         <Title order={1}>Your Creator Journey</Title>
         <Text c="dimmed">
           Where your Creator Score stands, what it unlocks next, and the badges you have earned.
@@ -96,7 +99,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
         withBorder
         radius="lg"
         p={0}
-        className="relative overflow-hidden"
+        className={clsx('relative overflow-hidden', scoreSectionWidth)}
         style={accentVar(accent)}
       >
         <div
@@ -152,7 +155,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
         </div>
       </Card>
 
-      <Stack gap="sm">
+      <Stack gap="sm" className={scoreSectionWidth}>
         <Title order={2} size="h3">
           The Ladder
         </Title>
@@ -171,7 +174,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
         </Stack>
       </Stack>
 
-      <Stack gap="sm">
+      <Stack gap="sm" className={scoreSectionWidth}>
         <Title order={2} size="h3">
           Where Your Score Comes From
         </Title>
@@ -188,7 +191,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
           Badges Earned
         </Title>
         {shelf.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             {shelf.map((badge) => {
               const slug = scoreTierSlugFromKey(badge.key);
               return (

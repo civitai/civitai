@@ -248,6 +248,7 @@ import type {
 import {
   Availability,
   BlockImageReason,
+  CosmeticEntity,
   CollectionItemStatus,
   CollectionMode,
   AppealStatus,
@@ -6832,11 +6833,18 @@ type GetEntityImageRaw = {
   minor?: boolean;
 };
 
+const isCosmeticEntity = (value: string): value is CosmeticEntity =>
+  (Object.values(CosmeticEntity) as string[]).includes(value);
+
 export const getEntityCoverImage = async ({
   entities,
   include,
+  eventDecorationViewer,
 }: GetEntitiesCoverImage & {
   include?: ['tags'];
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Pass one only
+  // where the result is never cached for someone else.
+  eventDecorationViewer?: EventViewer;
 }) => {
   if (entities.length === 0) {
     return [];
@@ -7069,15 +7077,33 @@ export const getEntityCoverImage = async ({
   }
 
   const imageIds = images.map((i) => i.id);
+  // The hat is the covered entity's own, as on that entity's feed card: a Model wears the
+  // Model's hat, not whatever its cover image wears. An Image entity is its own cover.
+  const decoratedIds = new Map<CosmeticEntity, number[]>();
+  for (const { entityType, entityId } of images) {
+    if (!isCosmeticEntity(entityType)) continue;
+    decoratedIds.set(entityType, [...(decoratedIds.get(entityType) ?? []), entityId]);
+  }
   const [cosmetics, eventDecorations] = await Promise.all([
     getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }),
-    getEventDecorationsForEntity({ ids: imageIds, entity: 'Image' }),
+    Promise.all(
+      [...decoratedIds].map(async ([entity, ids]) => ({
+        entity,
+        decorations: await getEventDecorationsForEntity({
+          ids,
+          entity,
+          viewer: eventDecorationViewer,
+        }),
+      }))
+    ),
   ]);
+  const eventDecorationOf = (entityType: string, entityId: number) =>
+    eventDecorations.find((x) => x.entity === entityType)?.decorations[entityId] ?? null;
 
   return attachTagsToImages(images, tagsVar).map((i) => ({
     ...i,
     cosmetic: cosmetics[i.id],
-    eventDecoration: eventDecorations[i.id] ?? null,
+    eventDecoration: eventDecorationOf(i.entityType, i.entityId),
   }));
 };
 

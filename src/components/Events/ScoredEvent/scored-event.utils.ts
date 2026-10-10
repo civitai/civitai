@@ -1,4 +1,6 @@
+import type { EdgeUrlProps } from '~/client-utils/edge-url';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 export type TeamHistory = { team: string; scores: { date: Date; score: number }[] };
 
@@ -54,6 +56,12 @@ export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
 
 /** The page's card surface (shop tiles, hat cards, standings rows): a step lighter than the page. */
 export const EVENT_CARD_SURFACE = 'bg-white dark:bg-dark-6';
+
+/** The event film as uploaded, so the hero's length and the player read the same file. */
+export const HERO_VIDEO_OPTIONS = {
+  type: MediaType.video,
+  original: true,
+} satisfies Omit<EdgeUrlProps, 'src'>;
 
 export type ScoredSection = 'standings' | 'hats' | 'shop' | 'topHats' | 'rules';
 

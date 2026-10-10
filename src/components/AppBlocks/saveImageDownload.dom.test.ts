@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { downloadUrlAsBlob, SAVE_IMAGE_MAX_BYTES } from './saveImageDownload';
+import { downloadBytesAsBlob, downloadUrlAsBlob, SAVE_IMAGE_MAX_BYTES } from './saveImageDownload';
 
 /**
  * F4 — executed coverage for `downloadUrlAsBlob` (the browser-side XHR→blob→
@@ -198,5 +198,22 @@ describe('downloadUrlAsBlob (F4 executed coverage)', () => {
     xhr.response = new Blob(['x'], { type: 'image/png' });
     xhr.emit('loadend');
     await expect(p).resolves.toBeUndefined();
+  });
+});
+
+describe('downloadBytesAsBlob', () => {
+  it('builds the Blob with the classified type and downloads it under the given name', async () => {
+    const bytes = new TextEncoder().encode('{"a":1}').buffer as ArrayBuffer;
+    downloadBytesAsBlob(bytes, 'application/json', 'meta.json');
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe('application/json');
+    expect(await blob.text()).toBe('{"a":1}');
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+    expect(clickedAnchor?.download).toBe('meta.json');
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+    // No network: the bytes variant never constructs an XHR.
+    expect(FakeXHR.instances).toHaveLength(0);
   });
 });
