@@ -47,23 +47,30 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(page.getByRole('heading', { name: 'Publish' }).elements()).toHaveLength(0);
   });
 
-  test('🔴 the order is hero, agent card, banner, "What you get", manual setup', async () => {
+  test('🔴 the order is hero, agent card, banner, "What you get"', async () => {
     await renderWithProviders(<GetStartedBody />);
-    const hero = page.getByRole('heading', { name: 'Build on Civitai', level: 1 });
-    const card = page.getByTestId(AGENT_CARD);
-    const banner = page.getByRole('img', { name: 'Build apps on Civitai' });
-    const whatYouGet = page.getByRole('heading', { name: 'What you get' });
-    const manualToggle = page.getByTestId(MANUAL_TOGGLE);
-    for (const locator of [hero, card, banner, whatYouGet, manualToggle]) {
-      await expect.element(locator).toBeInTheDocument();
-    }
+    const located = [
+      page.getByRole('heading', { name: 'Build on Civitai', level: 1 }),
+      page.getByTestId(AGENT_CARD),
+      page.getByRole('img', { name: 'Build apps on Civitai' }),
+      page.getByRole('heading', { name: 'What you get' }),
+    ];
+    for (const locator of located) await expect.element(locator).toBeInTheDocument();
 
-    const order = [hero, card, banner, whatYouGet, manualToggle].map((l) => l.element());
+    const order = located.map((locator) => locator.element());
     for (let i = 1; i < order.length; i++) {
       expect(follows(order[i - 1], order[i]), `element ${i} must follow element ${i - 1}`).toBe(
         true
       );
     }
+  });
+
+  test('🔴 the manual setup comes last, after "What you get" and the toolkit links', async () => {
+    await renderWithProviders(<GetStartedBody />);
+    const toggle = page.getByTestId(MANUAL_TOGGLE);
+    await expect.element(toggle).toBeInTheDocument();
+    const appSdk = page.getByRole('link', { name: '@civitai/app-sdk' });
+    expect(follows(appSdk.element(), toggle.element())).toBe(true);
   });
 
   test('🔴 the agent card precedes the manual commands, which are npm-first', async () => {

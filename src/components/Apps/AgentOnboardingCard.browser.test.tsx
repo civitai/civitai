@@ -323,7 +323,9 @@ describe('AgentOnboardingCard — tone', () => {
     // `inline` sits inside the workbench's collapsed strip, which has no heading hierarchy
     // for an `h3` to belong to, so it uses emphasised text instead of inventing one.
     await rerender(<AgentOnboardingCard tone="inline" />);
-    await expect.element(page.getByText('Let your agent do it')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Let your agent do it', { exact: true }))
+      .toBeInTheDocument();
     expect(page.getByRole('heading', { name: 'Let your agent build it' }).elements()).toHaveLength(
       0
     );

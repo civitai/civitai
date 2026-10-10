@@ -36,10 +36,14 @@ export function ManualSetupSteps({ onCopyCommand }: ManualSetupProps) {
         : install it, create an app, run it locally.
       </Text>
       <CopyableCommand command={CLI_INSTALL_NPM} onCopy={onCopyCommand} />
-      <Text size="xs" c="dimmed">
-        Or with Homebrew on macOS or Linux: <Code>{CLI_INSTALL_BREW}</Code>. Or from source:{' '}
-        <Code>{CLI_INSTALL_GO}</Code>
-      </Text>
+      <Stack gap={4}>
+        <Text size="xs" c="dimmed">
+          Or with Homebrew on macOS or Linux: <Code>{CLI_INSTALL_BREW}</Code>
+        </Text>
+        <Text size="xs" c="dimmed">
+          Or from source: <Code>{CLI_INSTALL_GO}</Code>
+        </Text>
+      </Stack>
       <CopyableCommand command={CLI_CREATE_SAMPLE_COMMAND} onCopy={onCopyCommand} />
       <CopyableCommand command={CLI_RUN_COMMAND} onCopy={onCopyCommand} />
     </Stack>
