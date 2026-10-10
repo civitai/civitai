@@ -200,7 +200,8 @@ describe('moderator endpoints', () => {
 
     const ok = res();
     await endpoint(req(ORDINARY_TOKEN), ok);
-    expect(ok.statusCode).not.toBe(401);
+    expect(ok.statusCode).toBe(200);
+    expect(handlerSpy).toHaveBeenCalledTimes(1);
   });
 });
 
