@@ -135,6 +135,34 @@ describe('event points pusher', () => {
     expect(pusher.dirtyCount()).toBe(1);
   });
 
+  // The whole case for dropping rests on the lease it lost to having lapsed: a full window.
+  it('counts a loss as the second only a full window after the first', async () => {
+    const { pusher } = setup({ claimTeamsPush: vi.fn(async () => false) });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    vi.setSystemTime(NOW.getTime() + PUSH_WINDOW_MS - 1);
+    await pusher.flush();
+    expect(pusher.dirtyCount()).toBe(1);
+    vi.setSystemTime(NOW.getTime() + PUSH_WINDOW_MS);
+    await pusher.flush();
+    expect(pusher.dirtyCount()).toBe(0);
+  });
+
+  it('a grant marked while a losing flush runs gets its own tries', async () => {
+    let calls = 0;
+    const { pusher } = setup({
+      claimTeamsPush: vi.fn(async () => {
+        if (calls++ === 0) pusher.markDirty(event, HAT, new Date());
+        return false;
+      }),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    // The next loss is that grant's first, so its teams are kept for one more try.
+    expect(pusher.dirtyCount()).toBe(1);
+  });
+
   it('a new grant after a loss gets its own tries', async () => {
     const claimTeamsPush = vi.fn(async () => false);
     const { pusher } = setup({ claimTeamsPush });
@@ -145,6 +173,7 @@ describe('event points pusher', () => {
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
     // The second loss came after a fresh mark, so it counts as that mark's first.
     expect(pusher.dirtyCount()).toBe(1);
+    expect(claimTeamsPush).toHaveBeenCalledTimes(2);
   });
 
   it('claims no lease when nobody watches the team totals', async () => {
