@@ -165,6 +165,10 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
   LOGGING: '',
 
+  // The schema defaults this to `isProd`, read when the schema loads: inside the test file's own
+  // import, under its mocks. ~20 files mock `~/env/other` with `isProd: true`.
+  DATABASE_IS_PROD: false,
+
   // Schema defaults overridden for test speed/behaviour:
   DATABASE_SSL: false, // schema default: true — tests don't need SSL
   DATABASE_POOL_MAX: 10, // schema default: 20 — smaller pool for tests
