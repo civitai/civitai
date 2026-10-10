@@ -200,5 +200,7 @@ describe('ScoredEventSections: Your hats', () => {
       )
     );
     expect(live.teams.at(-1)).toEqual(['birthday2026', false]);
+    // The top hats freeze with them, though every section is in view.
+    expect(live.topHats).toEqual(expect.objectContaining({ inView: false }));
   });
 });
