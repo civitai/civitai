@@ -297,11 +297,10 @@ export async function ingestBlockEvents(args: {
             error: error instanceof Error ? error.name : typeof error,
           },
           'clickhouse'
-        ).then(
-          () => undefined,
-          () => undefined
-        );
+        ).then(() => undefined);
       }
-    );
+    )
+    // Nothing awaits `written` on the request path, so it must never reject.
+    .catch(() => undefined);
   return { written };
 }
