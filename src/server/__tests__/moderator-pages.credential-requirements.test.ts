@@ -47,6 +47,7 @@ const openPageAlwaysPrefetching = page(false, 'always');
 
 const MODERATOR = { id: 4242, username: 'mod', isModerator: true, bannedAt: null };
 const MEMBER = { ...MODERATOR, isModerator: false };
+const OTHER_USER = { id: 777, username: 'other', isModerator: false, bannedAt: null };
 
 const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number) => ({
   user: MODERATOR,
@@ -91,7 +92,11 @@ function load(
     query: queryToken ? { token: queryToken } : {},
     resolvedUrl: queryToken ? `${PATH}?token=${queryToken}` : PATH,
   } as unknown as GetServerSidePropsContext) as Promise<{
-    props?: { rendered?: boolean; trpcState?: unknown };
+    props?: {
+      rendered?: boolean;
+      trpcState?: unknown;
+      session?: { user?: { id?: number } } | null;
+    };
     redirect?: { destination: string };
   }>;
 }
@@ -241,11 +246,12 @@ describe('a moderator procedure prefetched by a page without requireModerator', 
     }
   );
 
-  it('does not run for an OAuth access token in the query string of a request with a seeded session', async () => {
+  it('runs as the seeded moderator session when the query string carries a token', async () => {
     bearerSession.mockResolvedValue(oauthToken(TokenScope.Full));
     const result = await load(openPage, { queryToken: 'oauth-access' }, { user: MODERATOR });
-    expect(result.props?.rendered).toBe(true);
-    expect(moderatorQuery).not.toHaveBeenCalled();
+    expect(JSON.stringify(result.props?.trpcState)).toContain('moderator-data');
+    expect(moderatorQuery).toHaveBeenCalledTimes(1);
+    expect(bearerSession).not.toHaveBeenCalled();
   });
 
   it.each(refusedBearers)('does not run for a moderator presenting %s', async (_label, session) => {
@@ -254,5 +260,34 @@ describe('a moderator procedure prefetched by a page without requireModerator', 
     expect(result.props?.rendered).toBe(true);
     expect(JSON.stringify(result.props?.trpcState)).not.toContain('moderator-data');
     expect(moderatorQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('a page with requireModerator and a query-string token', () => {
+  it('sends a signed-out visitor home when the token resolves to nothing', async () => {
+    const result = await load(moderatorPage, { queryToken: 'not-a-key' });
+    expect(result).toEqual({ redirect: { destination: '/', permanent: false } });
+    expect(moderatorQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('the session a page renders with', () => {
+  it("stays the seeded member when the query string carries another account's key", async () => {
+    bearerSession.mockResolvedValue({ ...nonOauthKey('User', TokenScope.Full), user: OTHER_USER });
+    const result = await load(openPage, { queryToken: 'other-key' }, { user: MEMBER });
+    expect(result.props?.session?.user?.id).toBe(MEMBER.id);
+    expect(bearerSession).not.toHaveBeenCalled();
+  });
+
+  it('stays the seeded member when the query-string token resolves to nothing', async () => {
+    const result = await load(openPage, { queryToken: 'not-a-key' }, { user: MEMBER });
+    expect(result.props?.session?.user?.id).toBe(MEMBER.id);
+  });
+
+  it("is the Authorization header's account, not the seeded one", async () => {
+    bearerSession.mockResolvedValue({ ...nonOauthKey('User', TokenScope.Full), user: OTHER_USER });
+    const result = await load(openPage, { authorization: 'Bearer other-key' }, { user: MEMBER });
+    expect(result.props?.session?.user?.id).toBe(OTHER_USER.id);
+    expect(bearerSession).toHaveBeenCalledTimes(1);
   });
 });

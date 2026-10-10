@@ -69,19 +69,19 @@ export function createServerSideProps<P>({
     context: GetServerSidePropsContext
   ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
-    // A request presenting a token always resolves here, because that is what records its
-    // credential on `req.context`; the session `_app` seeded came from another request object.
-    const presentsToken =
-      !!context.req.headers.authorization ||
-      requestCarriesQueryToken(context.req as NextApiRequest);
+    // `_app` seeds `req.session` from its own request, which carries this request's headers but not
+    // its URL. With an Authorization header the seed holds that token's user but not its
+    // credential, so it resolves here, which records the credential on `req.context`.
+    const presentsHeader = !!context.req.headers.authorization;
     const session =
-      (presentsToken ? null : ((context.req as any)['session'] as Session | null)) ??
-      (useSession || requireModerator || !isClient || presentsToken
+      (presentsHeader ? null : ((context.req as any)['session'] as Session | null)) ??
+      (useSession || requireModerator || !isClient || presentsHeader
         ? await getServerAuthSession(context)
         : null);
 
-    // Page-level moderator gate. Anon with no token → login; any other refusal → home (login can't
-    // change the outcome and would loop back here). Runs on SSR AND client-nav data fetches.
+    // Page-level moderator gate. Anon with no token → login; any other refusal →
+    // home (login can't change the outcome and would loop back here). Runs on SSR AND client-nav
+    // data fetches.
     if (
       requireModerator &&
       (!session?.user?.isModerator || !isFullScopeSession(context.req as NextApiRequest))
@@ -89,7 +89,9 @@ export function createServerSideProps<P>({
       return {
         redirect: {
           destination:
-            session?.user || presentsToken
+            session?.user ||
+            presentsHeader ||
+            requestCarriesQueryToken(context.req as NextApiRequest)
               ? '/'
               : `/login?returnUrl=${encodeURIComponent(context.resolvedUrl)}`,
           permanent: false,

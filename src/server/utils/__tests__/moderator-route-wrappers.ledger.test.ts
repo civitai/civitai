@@ -169,3 +169,154 @@ describe('routes under src/pages/api/mod', () => {
     expect(routesOn('WebhookEndpoint')).toEqual(WEBHOOK_ROUTES);
   });
 });
+
+/**
+ * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above. Each is
+ * listed here, so a new one fails until it is classified.
+ *
+ * - `full credential`: a moderator-only route; it must call `requireFullScopeSession`.
+ * - every other entry names why moderator status there is not a moderator-only gate.
+ */
+const FULL_CREDENTIAL = 'full credential';
+const OUTSIDE_WRAPPERS: Record<string, string> = {
+  'media/ingest/[mediaId]': FULL_CREDENTIAL,
+  'testing/model3d-seed': FULL_CREDENTIAL,
+  'download/attachments/[fileId]': 'file access check that also admits owners and public files',
+  'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
+  'v1/announcements/index': 'owner-or-moderator edit of a creator announcement',
+  'v1/block-tokens/index': 'install token mint; moderators may mint for model slots',
+  'v1/blocks/collections/[id]/index': 'collection permission check for the block subject',
+  'v1/me': 'reports the flag',
+  'v1/model-versions/[id]': 'moderators also see unpublished versions',
+  'v1/model-versions/bust-cache': 'owner-or-moderator cache bust; owners bust their own versions',
+  'v1/model-versions/early-access': 'owner-or-moderator early-access settings',
+  'v1/model-versions/mini/[id]': 'moderators also see unpublished versions',
+  'v1/permissions/check': 'entity access check that also admits owners and public entities',
+};
+
+/**
+ * Gated to App Blocks authors and called by the App Blocks CLI with an OAuth token carrying the
+ * opt-in `AppBlocksSubmit` scope, so they take that token rather than the moderator credential
+ * rule. Documented in `docs/auth/oauth-developer-docs.md`.
+ */
+const APP_BLOCKS_CLI_ROUTES = [
+  'v1/blocks/dev-token',
+  'v1/blocks/submissions',
+  'v1/blocks/submit-version',
+  'v1/blocks/withdraw',
+];
+
+const API_ROUTES = path.join(REPO_ROOT, 'src/pages/api');
+const routeName = (file: string) =>
+  path
+    .relative(API_ROUTES, file)
+    .replace(/\\/g, '/')
+    .replace(/\.tsx?$/, '');
+
+function parse(fileName: string, source: string) {
+  return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+}
+
+/** Whether the code names `name` anywhere; comments are not part of the tree. */
+function namesIdentifier(fileName: string, source: string, name: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === name) found = true;
+    else ts.forEachChild(node, visit);
+  };
+  visit(parse(fileName, source));
+  return found;
+}
+
+/** Whether the code calls `name` imported from `module`. */
+function callsImported(fileName: string, source: string, name: string, module: string): boolean {
+  const file = parse(fileName, source);
+  const local = file.statements
+    .filter(ts.isImportDeclaration)
+    .filter((s) => ts.isStringLiteral(s.moduleSpecifier) && s.moduleSpecifier.text === module)
+    .flatMap((s) => {
+      const bindings = s.importClause?.namedBindings;
+      return bindings && ts.isNamedImports(bindings) ? [...bindings.elements] : [];
+    })
+    .find((e) => (e.propertyName ?? e.name).text === name)?.name.text;
+  if (!local) return false;
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === local
+    )
+      found = true;
+    else ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+describe('namesIdentifier and callsImported', () => {
+  it('see code and not comments', () => {
+    expect(namesIdentifier('a.ts', 'const ok = user.isModerator;', 'isModerator')).toBe(true);
+    expect(namesIdentifier('a.ts', 'f({ isModerator });', 'isModerator')).toBe(true);
+    expect(namesIdentifier('a.ts', '// user.isModerator\n/* isModerator */', 'isModerator')).toBe(
+      false
+    );
+  });
+
+  it('find a call only to the imported function', () => {
+    const imported = `import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';`;
+    const check = (src: string) =>
+      callsImported(
+        'a.ts',
+        src,
+        'requireFullScopeSession',
+        '~/server/utils/require-full-scope-session'
+      );
+    expect(check(`${imported}\nif (!requireFullScopeSession(req, res)) return;`)).toBe(true);
+    expect(check(`${imported}\n// requireFullScopeSession(req, res)`)).toBe(false);
+    expect(check(`const requireFullScopeSession = () => true;\nrequireFullScopeSession();`)).toBe(
+      false
+    );
+  });
+});
+
+describe('routes under src/pages/api outside the moderator wrappers', () => {
+  const files = routeFiles(API_ROUTES).filter((f) => /\.tsx?$/.test(f));
+  const sources = new Map(files.map((f) => [routeName(f), fs.readFileSync(f, 'utf8')]));
+  const outsideWrappers = [...sources]
+    .filter(([route, source]) => !(defaultExportWrapper(route, source) in WRAPPERS))
+    .filter(([route, source]) => namesIdentifier(route, source, 'isModerator'))
+    .map(([route]) => route)
+    .sort();
+
+  it('walks the api tree', () => {
+    expect(files.length).toBeGreaterThan(300);
+  });
+
+  it('that read isModerator are each classified', () => {
+    expect(outsideWrappers).toEqual(Object.keys(OUTSIDE_WRAPPERS).sort());
+  });
+
+  it.each(
+    Object.entries(OUTSIDE_WRAPPERS)
+      .filter(([, kind]) => kind === FULL_CREDENTIAL)
+      .map(([route]) => route)
+  )('%s applies the moderator credential rule', (route) => {
+    expect(
+      callsImported(
+        route,
+        sources.get(route) ?? '',
+        'requireFullScopeSession',
+        '~/server/utils/require-full-scope-session'
+      )
+    ).toBe(true);
+  });
+
+  it.each(APP_BLOCKS_CLI_ROUTES)('%s is an App Blocks CLI route', (route) => {
+    const source = sources.get(route) ?? '';
+    expect(source).not.toBe('');
+    expect(namesIdentifier(route, source, 'AppBlocksSubmit')).toBe(true);
+  });
+});
