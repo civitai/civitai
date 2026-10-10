@@ -9,6 +9,7 @@ import {
   cosmeticCache,
   cosmeticEntityCaches,
   eventDecorationEntityCaches,
+  publicContentCaches,
   refreshOwnedStickerCache,
   userCosmeticCache,
   userOwnedStickerCache,
@@ -424,6 +425,29 @@ export async function getEventDecorationsForEntity({
       };
     }
   return visible;
+}
+
+/**
+ * This viewer's event decorations on ids the caller names, for cards served from a cache every
+ * viewer shares. The ids are the caller's, not a feed's, so only public content answers: a hat on
+ * anything else would tell the caller it exists.
+ */
+export async function getViewerEventDecorations({
+  ids,
+  entity,
+  viewer,
+}: {
+  ids: number[];
+  entity: 'Image' | 'Model' | 'Article';
+  viewer: EventViewer;
+}) {
+  const decorations = await getEventDecorationsForEntity({ ids, entity, viewer });
+  const worn = Object.keys(decorations).map(Number);
+  if (!worn.length) return decorations;
+  const visible = (await publicContentCaches[entity]?.fetch(worn)) ?? {};
+  return Object.fromEntries(
+    Object.entries(decorations).filter(([id]) => visible[Number(id)])
+  ) as typeof decorations;
 }
 
 const equippedHatSelect = {

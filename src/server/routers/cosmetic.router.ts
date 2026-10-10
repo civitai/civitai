@@ -16,7 +16,7 @@ import {
   getStickerAttribution,
   getPaginatedCosmetics,
   equipCosmeticToEntity,
-  getEventDecorationsForEntity,
+  getViewerEventDecorations,
   unequipCosmetic,
   updateEventHatFit,
 } from '~/server/services/cosmetic.service';
@@ -27,7 +27,8 @@ import {
   purchaseStickerUses,
 } from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
-import { noEdgeCache } from '~/server/middleware.trpc';
+import { noEdgeCache, rateLimit } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 import {
   moderatorProcedure,
   protectedProcedure,
@@ -106,8 +107,10 @@ export const cosmeticRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getViewerEventDecorationsSchema)
     .use(noEdgeCache())
+    // A flagged viewer's homepage asks once per block section, about a dozen times a load.
+    .use(rateLimit({ limit: 120, period: CacheTTL.xs }))
     .query(({ input, ctx }) =>
-      getEventDecorationsForEntity({ ids: input.ids, entity: input.entityType, viewer: ctx.user })
+      getViewerEventDecorations({ ids: input.ids, entity: input.entityType, viewer: ctx.user })
     ),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })

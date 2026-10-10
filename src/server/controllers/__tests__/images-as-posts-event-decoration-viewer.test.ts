@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ImageService from '~/server/services/image.service';
@@ -64,4 +66,22 @@ describe('getImagesAsPostsInfiniteHandler event decorations', () => {
       for (const call of calls) expect(call.eventDecorationViewer).toBe(user);
     }
   );
+});
+
+/**
+ * Naming the viewer is safe only while this route caches nothing per URL: `edgeCacheIt` sets an
+ * edge TTL even for a signed-in caller, which would serve one viewer's preview hats to everyone.
+ * Drop the viewer before adding a cache here.
+ */
+describe('image.getImagesAsPostsInfinite stays per-viewer', () => {
+  it('has no cache middleware', () => {
+    const router = readFileSync(join(process.cwd(), 'src/server/routers/image.router.ts'), 'utf8');
+    const start = router.indexOf('getImagesAsPostsInfinite: ');
+    expect(start, 'getImagesAsPostsInfinite procedure not found').toBeGreaterThan(-1);
+    const end = router.indexOf('.query(getImagesAsPostsInfiniteHandler)', start);
+    expect(end).toBeGreaterThan(start);
+    const route = router.slice(start, end);
+    expect(route).not.toMatch(/edgeCacheIt|cacheIt/);
+    expect(route).not.toMatch(/\.use\(/);
+  });
 });

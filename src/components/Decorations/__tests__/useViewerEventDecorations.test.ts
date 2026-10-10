@@ -10,10 +10,10 @@ import type * as TrpcModule from '~/utils/trpc';
  * a viewer the event's flag is on for, and only during the preview: it runs for all homepage
  * traffic, and from `startsAt` the shared payload carries the hats itself.
  */
-const VIEWER = 6235605;
+const VIEWER = 501;
 
 const state = vi.hoisted(() => ({
-  user: { id: 6235605 } as { id: number } | undefined,
+  user: { id: 501 } as { id: number } | undefined,
   features: {} as Record<string, boolean>,
   results: [] as { data?: Record<number, unknown>; dataUpdatedAt: number }[],
   asked: [] as { input: { entityType: string; ids: number[] }; opts: { staleTime: number } }[],
@@ -201,6 +201,45 @@ describe('useViewerEventDecorations', () => {
     );
     expect(state.asked).toEqual([]);
     expect(result.current).toBe(items);
+    unmount();
+  });
+
+  it('stops asking when the viewer signs out', () => {
+    const { result, rerender, unmount } = renderHook(() =>
+      useViewerEventDecorations(items, { entity: 'image' })
+    );
+    expect(state.asked).toHaveLength(1);
+
+    state.user = undefined;
+    state.results = [{ data: { 11: hat(11) }, dataUpdatedAt: 1 }];
+    rerender();
+    expect(state.asked).toEqual([]);
+    expect(result.current).toBe(items);
+    unmount();
+  });
+
+  it('merges every chunk, and a chunk that answers later', () => {
+    const pool = Array.from({ length: 150 }, (_, i) => ({ id: i + 1, eventDecoration: null }));
+    state.results = [
+      { data: { 1: hat(1) }, dataUpdatedAt: 1 },
+      { data: undefined, dataUpdatedAt: 0 },
+    ];
+    const { result, rerender, unmount } = renderHook(() =>
+      useViewerEventDecorations(pool, { entity: 'image' })
+    );
+    expect(state.asked.map((x) => x.input.ids.length)).toEqual([100, 50]);
+    expect(state.asked[1].input.ids[0]).toBe(101);
+    expect(result.current[0].eventDecoration?.id).toBe(1);
+    expect(result.current[149].eventDecoration).toBeNull();
+
+    // Only the second chunk changes.
+    state.results = [
+      { data: { 1: hat(1) }, dataUpdatedAt: 1 },
+      { data: { 150: hat(150) }, dataUpdatedAt: 2 },
+    ];
+    rerender();
+    expect(result.current[0].eventDecoration?.id).toBe(1);
+    expect(result.current[149].eventDecoration?.id).toBe(150);
     unmount();
   });
 

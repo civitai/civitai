@@ -20,8 +20,18 @@ const blocks = readdirSync(blockDir)
 
 const cardBlocks = blocks.filter((b) => /<(ImageCard|ModelCard|ArticleCard)\b/.test(b.source));
 
+// The overlay's own arguments are captured too: the list must be the one hidden preferences already
+// filtered, and the entity the one the block's cards are (a model grid asking about image hats would
+// hat the wrong content).
 const OVERLAID_CAP =
-  /useDedupedCappedItems\(\s*(?:useHydratedImageReactions\(\s*)?useViewerEventDecorations\(/g;
+  /useDedupedCappedItems\(\s*(?:useHydratedImageReactions\(\s*)?useViewerEventDecorations\(\s*filtered,\s*\{\s*entity:\s*('image'|'model'|type)\s*\}\s*\)/g;
+
+const EXPECTED_ENTITIES: Record<string, string[]> = {
+  'CollectionHomeBlock.tsx': ['type'],
+  'FeaturedCollectionsHomeBlock.tsx': ['type'],
+  'FeaturedModelVersionHomeBlock.tsx': ["'model'"],
+  'FeedHomeBlock.tsx': ["'image'", "'model'"],
+};
 
 describe('home blocks overlay the viewer event hats their shared payload cannot carry', () => {
   it('finds the blocks that render content cards', () => {
@@ -35,7 +45,7 @@ describe('home blocks overlay the viewer event hats their shared payload cannot 
     );
   });
 
-  it.each(cardBlocks)('$file overlays every list it caps', ({ source }) => {
+  it.each(cardBlocks)('$file overlays every list it caps', ({ file, source }) => {
     const caps = source.match(/useDedupedCappedItems\(/g) ?? [];
     expect(caps.length, 'no capped list found; this guard reads the wrong shape').toBeGreaterThan(
       0
@@ -44,5 +54,9 @@ describe('home blocks overlay the viewer event hats their shared payload cannot 
       (source.match(OVERLAID_CAP) ?? []).length,
       'compose useViewerEventDecorations into each useDedupedCappedItems call'
     ).toBe(caps.length);
+    const entities = [...source.matchAll(OVERLAID_CAP)].map((m) => m[1]);
+    expect(entities, 'each grid asks about the entity its cards are').toEqual(
+      EXPECTED_ENTITIES[file]
+    );
   });
 });
