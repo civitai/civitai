@@ -14,6 +14,7 @@ import {
   eventPointsWindow,
   eventSeasonKeys,
   hatField,
+  hatTopicId,
   liveBucket,
   utcDay,
 } from '~/server/events/points/keys';
@@ -62,6 +63,9 @@ type LoadedEvent = {
   weights: Partial<Record<EventPointType, number>>;
   // Last hatsLog entry applied to `hats`.
   cursor: string;
+  // Topic id -> how many entries of `hats` wear that hat. Built on first use by the watch endpoint,
+  // then kept in step by followHats one change at a time; a full reload drops it.
+  topicIds?: Map<string, number>;
 };
 
 export type EventPointsRedis = Pick<
@@ -156,15 +160,19 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       const hat = decodeHat(value);
       if (hat) hats.set(key, hat);
     }
-    return { hats, cursor: last?.id ?? '0-0' };
+    // A fresh map: any topic-id index built over the old one no longer applies.
+    return { hats, cursor: last?.id ?? '0-0', topicIds: undefined };
   }
 
   // Applies the changes logged since the cursor. If the log was trimmed past the cursor, some changes
   // are gone, so it reloads instead. Usually nothing is new: one XRANGE that comes back empty.
-  async function followHats(event: string, prev: Pick<LoadedEvent, 'hats' | 'cursor'>) {
+  async function followHats(
+    event: string,
+    prev: Pick<LoadedEvent, 'hats' | 'cursor' | 'topicIds'>
+  ): Promise<Pick<LoadedEvent, 'hats' | 'cursor' | 'topicIds'>> {
     const keys = eventPointKeys(event);
     const entries = await deps.redis.xRange(keys.hatsLog, `(${prev.cursor}`, '+');
-    if (!entries.length) return { hats: prev.hats, cursor: prev.cursor };
+    if (!entries.length) return { hats: prev.hats, cursor: prev.cursor, topicIds: prev.topicIds };
     if (prev.cursor === '0-0') return loadHats(event);
     const [first] = await deps.redis.xRange(keys.hatsLog, '-', '+', { COUNT: 1 });
     if (first && streamIdBefore(prev.cursor, first.id)) return loadHats(event);
@@ -174,12 +182,18 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     const values = await deps.redis.hmGet(keys.hats, changed);
     // In place: reads are synchronous, so nothing sees a half-applied batch.
     const hats = prev.hats;
+    const { topicIds } = prev;
     changed.forEach((key, i) => {
       const hat = values[i] ? decodeHat(values[i]!) : undefined;
+      if (topicIds) {
+        const old = hats.get(key);
+        if (old) countTopic(topicIds, hatTopicId(old), -1);
+        if (hat) countTopic(topicIds, hatTopicId(hat), 1);
+      }
       if (hat) hats.set(key, hat);
       else hats.delete(key);
     });
-    return { hats, cursor: entries[entries.length - 1].id };
+    return { hats, cursor: entries[entries.length - 1].id, topicIds };
   }
 
   async function refresh() {
@@ -399,7 +413,35 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     return isHattedEntity(entityType, entityId);
   }
 
-  return { awardEventPoints, removeEventPoints, isHattedEntity, isHattedEntityOnceLoaded, refresh };
+  // Whether a hat topic id names a hat this server knows for the event. For the watch endpoint, so a
+  // client cannot fill the interest set with ids that name nothing. A server that has not loaded its
+  // hat map waits for that load (Redis only), and knows nothing if it fails.
+  async function isKnownHatTopic(event: string, topicId: string) {
+    await ensureFresh();
+    const loadedEvent = loaded.find((l) => l.def.name === event);
+    if (!loadedEvent) return false;
+    if (!loadedEvent.topicIds) {
+      const index = new Map<string, number>();
+      for (const hat of loadedEvent.hats.values()) countTopic(index, hatTopicId(hat), 1);
+      loadedEvent.topicIds = index;
+    }
+    return (loadedEvent.topicIds.get(topicId) ?? 0) > 0;
+  }
+
+  return {
+    awardEventPoints,
+    removeEventPoints,
+    isHattedEntity,
+    isHattedEntityOnceLoaded,
+    isKnownHatTopic,
+    refresh,
+  };
+}
+
+function countTopic(index: Map<string, number>, topicId: string, by: 1 | -1) {
+  const n = (index.get(topicId) ?? 0) + by;
+  if (n > 0) index.set(topicId, n);
+  else index.delete(topicId);
 }
 
 // Event-scoped dedupe keys live until two days after scoring finalizes.
@@ -469,3 +511,5 @@ export const isHattedEntity = (entityType: string, entityId: number) =>
 export const isHattedEntityOnceLoaded = async (entityType: string, entityId: number) =>
   (await isEventPointsEnabled().catch(() => false)) &&
   getEngine().isHattedEntityOnceLoaded(entityType, entityId);
+export const isKnownHatTopic = (event: string, topicId: string) =>
+  getEngine().isKnownHatTopic(event, topicId);

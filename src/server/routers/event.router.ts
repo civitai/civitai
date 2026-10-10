@@ -1,13 +1,15 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
-import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import type { EventInput } from '~/server/schema/event.schema';
 import {
   eventCosmeticScoresSchema,
   eventSchema,
   teamScoreHistorySchema,
+  watchEventPointsSchema,
   wornEventHatSchema,
 } from '~/server/schema/event.schema';
+import { markEventPointsWatched } from '~/server/events/points/watch.service';
 import {
   activateEventCosmetic,
   donate,
@@ -165,6 +167,15 @@ export const eventRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
     .query(({ ctx, input }) => getPlaceableEventContent({ user: ctx.user, ...input })),
+  // Marks live point topics as on screen, so the pusher sends them (events/points/watch.ts). Called on
+  // view and every 30s while in view; no Postgres on this path. A page refreshing its sections makes
+  // about 6 a minute, plus one per section scrolled into view and one per 50 hats; anonymous viewers
+  // share a bucket per IP. 60 a minute leaves room for that without letting one caller churn the set.
+  watchPoints: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(watchEventPointsSchema)
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .mutation(({ input }) => markEventPointsWatched(input)),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)

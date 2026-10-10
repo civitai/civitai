@@ -9,6 +9,7 @@ import {
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 /**
@@ -82,7 +83,7 @@ export function HatStats({
           className={clsx('tabular-nums', compact ? 'text-xl' : 'text-[26px]')}
           lh={1.05}
         >
-          {abbreviateNumber(stats.points)}
+          <AnimatedCount value={stats.points} />
         </Text>
         <Text size="xs" c="dimmed">
           points

@@ -53,6 +53,18 @@ vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
     return null;
   },
 }));
+// Formats as the real one does (Intl compact, so 1.2K), without its digit columns.
+vi.mock('~/components/Metrics/AnimatedCount', () => ({
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
+}));
 vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: () => null,
   EdgeMedia2: () => null,
@@ -162,7 +174,7 @@ describe('a hatted feed card', () => {
     expect(dropdown.textContent).toContain('Party Cap');
     expect(dropdown.textContent).toContain('Worn by');
     expect(dropdown.querySelector('[data-testid="wearer"]')?.textContent).toBe('civbot');
-    expect(dropdown.textContent).toContain('1.2k');
+    expect(dropdown.textContent).toContain('1.2K');
     expect(dropdown.textContent).toContain('56.8k');
     expect(dropdown.textContent).toContain("Scores for Team Blue while it's worn");
     const link = [...dropdown.querySelectorAll('a')].find((a) =>
@@ -223,7 +235,7 @@ describe('a hatted feed card', () => {
     clickHat();
     expect(popover()!.textContent).not.toContain('Worn by');
     expect(popover()!.textContent).not.toContain('Your hat');
-    expect(popover()!.textContent).toContain('1.2k');
+    expect(popover()!.textContent).toContain('1.2K');
   });
 
   // A click leaves focus on the hat, outside the dropdown that handles Escape itself.
@@ -467,7 +479,7 @@ describe('the popover layout', () => {
     renderCard();
     clickHat();
     expect(stats().querySelector('[data-testid="hat-stat-points"]')?.textContent).toBe(
-      '1.2kpoints'
+      '1.2Kpoints'
     );
     // Comments and remixes score from scoring v2 on: until the server sends them, a dash, not a 0.
     expect(ways()).toEqual([

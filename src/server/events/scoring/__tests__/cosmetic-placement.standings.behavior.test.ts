@@ -427,6 +427,10 @@ describe('referee snapshot', () => {
       redisMock.sysRedis.hmGet.mockImplementation(async (k: string, fields: string[]) =>
         fields.map((f) => hashes.get(k)?.[f] ?? null)
       );
+      // Every topic is on someone's screen; the interest set's own rules are tested in watch.test.ts.
+      redisMock.sysRedis.zmScore.mockImplementation(async (_k: string, members: string[]) =>
+        members.map(() => Date.now() + 60_000)
+      );
       signals.topicSend.mockClear();
       const withPreview = { ...scored, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
       const preview = await runEventPointsReferee(withPreview, 'preview', HOURLY);

@@ -112,7 +112,13 @@ describe('WornHatLivePoints', () => {
 
 describe('MyHatsLivePoints', () => {
   it('subscribes to every hat and writes a push to the getMyHats query', () => {
-    render(React.createElement(MyHatsLivePoints, { event: 'birthday2026', topicIds: ['a', 'b'] }));
+    render(
+      React.createElement(MyHatsLivePoints, {
+        event: 'birthday2026',
+        topicIds: ['a', 'b'],
+        inView: true,
+      })
+    );
     expect(signals.topics).toEqual(
       expect.arrayContaining(['event-points:birthday2026:hat:a', 'event-points:birthday2026:hat:b'])
     );

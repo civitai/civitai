@@ -14,6 +14,8 @@ export function eventPointKeys(event: string) {
     hats: `${root}:hats` as const,
     // Stream of changes to `hats` (fields k = entity key, v = encoded hat, '' when it came off).
     hatsLog: `${root}:hats-log` as const,
+    // The topics someone has on screen (a hat topic id, or `teams`) -> when that lapses (ms).
+    watch: `${root}:watch` as const,
   } as const;
 }
 
