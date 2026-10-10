@@ -1,5 +1,3 @@
-import { createHash } from 'crypto';
-import { SignalTopic } from '~/server/common/enums';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import type { EventHat, EventPointEntityType, EventPointType } from './types';
 
@@ -39,13 +37,11 @@ export const hatField = ({ ownerId, cosmeticId, claimKey }: Omit<EventHat, 'team
   `${ownerId}:${cosmeticId}:${claimKey}`;
 
 // The signals topic a hat's live total is pushed to. Clients subscribe while its popover or the
-// owner's hat cards are open. Keyed by an opaque id so the claim key never leaves the server.
-export const hatTopicId = (hat: Omit<EventHat, 'team'>) =>
-  createHash('sha256').update(hatField(hat)).digest('hex').slice(0, 16);
-export const eventHatTopic = (event: string, topicId: string) =>
-  `${SignalTopic.EventPoints}:${event}:hat:${topicId}` as const;
+// owner's hat cards are open.
+export const eventHatTopic = (event: string, hat: Omit<EventHat, 'team'>) =>
+  `event-points:${event}:hat:${hatField(hat)}`;
 // One topic for the event page's team standings.
-export const eventTeamsTopic = (event: string) => `${SignalTopic.EventPoints}:${event}:teams` as const;
+export const eventTeamsTopic = (event: string) => `event-points:${event}:teams`;
 
 export const LIVE_BUCKET_MS = 5 * 60 * 1000;
 export const liveBucket = (time: Date) => Math.floor(time.getTime() / LIVE_BUCKET_MS);
