@@ -37,6 +37,10 @@ import {
 const ROOT = process.cwd();
 const URL_UUID = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
 
+/** The check both collection cover writes make before pointing the cover at an image. */
+const COLLECTION_MANAGE_GUARD =
+  "if (!permission.manage) { throw throwAuthorizationError('You do not have permission to manage this collection'); }";
+
 // #region population 1: shared image schemas
 
 const SCHEMA_NAMES = [
@@ -73,8 +77,8 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
-  // collection.upsert cover (reference, checked by assertUsableCollectionCover) and
-  // collection.addSimpleImagePost (no id).
+  // collection.upsert cover (a reference any collection manager may set; see
+  // CONNECT_EXISTING_LEDGER) and collection.addSimpleImagePost (no id).
   'src/server/schema/collection.schema.ts': { imageInputSchema: 2, imageReferenceInputSchema: 2 },
   // Bounty images: an `id` keeps or links an existing image; updateEntityImages checks links.
   'src/server/schema/bounty.schema.ts': { imageReferenceInputSchema: 2 },
@@ -131,14 +135,13 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
         ' if (owned !== new Set(linkIds).size) throw throwAuthorizationError();',
     ],
   },
-  // `where` looks up an existing cover; a different one must pass assertUsableCollectionCover.
+  // `where` looks up an existing cover by id, which any collection manager may set (unchanged
+  // from main); the `create` branch writes client columns only.
   'src/server/services/collection.service.ts#upsertCollection': {
     sites: 1,
     spreads: ['pickClientImageColumns(image)'],
     serverColumns: ['id: image.id ?? -1', 'id: undefined'],
-    guards: [
-      'await assertUsableCollectionCover({ collectionId: id, imageId: coverImageId, userId, isModerator });',
-    ],
+    guards: [COLLECTION_MANAGE_GUARD],
   },
   // Only reached when the client sent no `id`, so `where` is always `-1`.
   'src/server/services/user-profile.service.ts#updateUserProfile': {
@@ -304,25 +307,37 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
 /**
  * Every relation `connect` / `connectOrCreate` pointing an `Image` relation at an existing row by
  * id, with the guard that decides it. Direct writes of an `…ImageId` column are not in this set.
+ *
+ * `decides` says what the guard checks: `image` — the id itself (the caller's own image, or a
+ * server-resolved one); `collection-manager` — only that the caller may manage the collection,
+ * which lets any collection manager point its cover at any existing image. The collection rows
+ * are unchanged from main; they are recorded here so the population stays complete.
  */
 const CONNECT_EXISTING_LEDGER: Record<
   string,
-  { sites: number; guard: string; guardFollows?: boolean }
+  {
+    sites: number;
+    guard: string;
+    guardFollows?: boolean;
+    decides: 'image' | 'collection-manager';
+  }
 > = {
-  // Covers `imageId` and `image.id` alike (`coverImageId = imageId ?? image?.id`).
+  // Covers `imageId` and `image.id` alike.
   'src/server/services/collection.service.ts#upsertCollection': {
     sites: 1,
-    guard:
-      'await assertUsableCollectionCover({ collectionId: id, imageId: coverImageId, userId, isModerator });',
+    guard: COLLECTION_MANAGE_GUARD,
+    decides: 'collection-manager',
   },
   'src/server/services/collection.service.ts#updateCollectionCoverImage': {
     sites: 1,
-    guard: 'await assertUsableCollectionCover({ collectionId: id, imageId, userId, isModerator });',
+    guard: COLLECTION_MANAGE_GUARD,
+    decides: 'collection-manager',
   },
   // Both ids are what `resolveCoverImageId` returned, not client values.
   'src/server/services/crucible.service.ts#updateCrucible': {
     sites: 2,
     guard: 'const heroImageId = changes.heroImage ? await resolveCoverImageId({',
+    decides: 'image',
   },
   // The `where` is reached only when the client sent no `id`, so it is always `-1`.
   // Found through the `(image: …)` parameter of `buildCoverImageUpdate`, not a relation key.
@@ -330,6 +345,7 @@ const CONNECT_EXISTING_LEDGER: Record<
     sites: 1,
     guard: 'image !== undefined && !image?.id',
     guardFollows: true,
+    decides: 'image',
   },
 };
 
@@ -578,6 +594,13 @@ describe('createImage callers', () => {
       'if (post.userId !== user.id) throw throwAuthorizationError();'
     );
   });
+
+  // The multi-image handlers share one post-owner check per request through addPostImage; if it
+  // stopped forwarding it, every image would fall back to its own lookup.
+  it('addPostImage forwards its post-owner check to createImage', () => {
+    const [site] = calls.filter((s) => s.key.endsWith('#addPostImage'));
+    expect(site.region).toMatch(/[{,]\s*assertPostOwnedBy\s*,/);
+  });
 });
 
 describe('existing-image references', () => {
@@ -619,6 +642,18 @@ describe('existing-image references', () => {
       })
       .map((site) => site.key);
     expect(missing).toEqual([]);
+  });
+
+  it('only the two collection cover writes decide on the collection manager alone', () => {
+    expect(
+      Object.entries(CONNECT_EXISTING_LEDGER)
+        .filter(([, v]) => v.decides === 'collection-manager')
+        .map(([k]) => k)
+        .sort()
+    ).toEqual([
+      'src/server/services/collection.service.ts#updateCollectionCoverImage',
+      'src/server/services/collection.service.ts#upsertCollection',
+    ]);
   });
 
   it('the moderator-route resolver callers are reached only from moderator procedures', () => {

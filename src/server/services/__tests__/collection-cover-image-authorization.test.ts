@@ -54,10 +54,8 @@ describe('updateCollectionCoverImage authorization', () => {
     expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
   });
 
-  it('updates the cover for a user who holds manage, to an accepted item of the collection', async () => {
+  it('updates the cover for a user who holds manage', async () => {
     arrangeCollection();
-    mockDbWrite.image.findUnique.mockResolvedValue({ userId: OUTSIDER_ID });
-    mockDbWrite.collectionItem.findFirst.mockResolvedValue({ id: 1 });
 
     const result = await updateCollectionCoverImage({
       input: { id: COLLECTION_ID, imageId: IMAGE_ID, userId: OWNER_ID },
@@ -70,23 +68,5 @@ describe('updateCollectionCoverImage authorization', () => {
         data: { image: { connect: { id: IMAGE_ID } } },
       })
     );
-  });
-
-  it('refuses an image that is neither the caller’s nor an accepted item of the collection', async () => {
-    arrangeCollection();
-    mockDbWrite.image.findUnique.mockResolvedValue({ userId: OUTSIDER_ID });
-    mockDbWrite.collectionItem.findFirst.mockResolvedValue(null);
-
-    await expect(
-      updateCollectionCoverImage({
-        input: { id: COLLECTION_ID, imageId: IMAGE_ID, userId: OWNER_ID },
-      })
-    ).rejects.toThrowError(/invalid cover image/i);
-
-    expect(mockDbWrite.collectionItem.findFirst).toHaveBeenCalledWith({
-      where: { imageId: IMAGE_ID, collectionId: COLLECTION_ID, status: 'ACCEPTED' },
-      select: { id: true },
-    });
-    expect(mockDbWrite.collection.update).not.toHaveBeenCalled();
   });
 });

@@ -58,6 +58,7 @@ import type { Collaborator } from '~/server/services/collection-collaborator.ser
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
 import { setModelShowcaseCollection } from '~/server/services/model.service';
 import { addPostImage, createPost } from '~/server/services/post.service';
+import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -579,6 +580,8 @@ export const addSimpleImagePostHandler = async ({
       publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
     });
 
+    // One post-owner lookup for the whole batch rather than one per image.
+    const assertPostOwnedBy = createPostOwnerCheck();
     const postImages = await Promise.all(
       images.map((image, index) =>
         addPostImage({
@@ -586,6 +589,7 @@ export const addSimpleImagePostHandler = async ({
           postId: post.id,
           index,
           user: ctx.user,
+          assertPostOwnedBy,
         })
       )
     );

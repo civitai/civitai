@@ -31,8 +31,10 @@ import { resolveCoverImageId, type CoverImageDeps } from '~/server/services/cove
 import {
   createEntityImages,
   createImage,
+  createPostOwnerCheck,
   setVideoThumbnail,
   updateEntityImages,
+  type AssertPostOwnedBy,
 } from '~/server/services/image.service';
 import { CLIENT_IMAGE_COLUMNS, pickClientImageColumns } from '~/server/utils/image-columns';
 
@@ -278,6 +280,64 @@ describe('createImage', () => {
     });
 
     expect(createData()).toMatchObject({ url: URL_KEY, userId: OWNER, postId: OWN_POST, index: 4 });
+  });
+
+  const ownerLookups = () =>
+    dbMock.dbWrite.post.findUnique.mock.calls.filter(
+      ([args]) => (args as { select?: { userId?: boolean } }).select?.userId
+    ).length;
+  const intoPost = (postId: number, assertPostOwnedBy?: AssertPostOwnedBy) =>
+    createImage({
+      url: URL_KEY,
+      type: 'image',
+      userId: OWNER,
+      postId,
+      skipIngestion: true,
+      assertPostOwnedBy,
+    });
+
+  it('checks the post on every call that is given no shared check', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OWNER } as never);
+
+    await intoPost(OWN_POST);
+    await intoPost(OWN_POST);
+
+    expect(ownerLookups()).toBe(2);
+  });
+
+  it('looks the post up once across calls sharing a check, sequential or concurrent', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OWNER } as never);
+
+    const sequential = createPostOwnerCheck();
+    for (let i = 0; i < 3; i++) await intoPost(OWN_POST, sequential);
+    expect(ownerLookups()).toBe(1);
+
+    const concurrent = createPostOwnerCheck();
+    await Promise.all([1, 2, 3].map(() => intoPost(OWN_POST, concurrent)));
+    expect(ownerLookups()).toBe(2);
+    expect(dbMock.dbWrite.image.create).toHaveBeenCalledTimes(6);
+  });
+
+  it('a shared check still looks up each distinct post', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OWNER } as never);
+    const check = createPostOwnerCheck();
+
+    await intoPost(OWN_POST, check);
+    await intoPost(OWN_POST + 1, check);
+    await intoPost(OWN_POST, check);
+
+    expect(ownerLookups()).toBe(2);
+  });
+
+  it('a shared check refuses a foreign post for every image, writing none', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OTHER_USER } as never);
+    const check = createPostOwnerCheck();
+
+    const results = await Promise.allSettled([1, 2, 3].map(() => intoPost(FOREIGN_POST, check)));
+
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected', 'rejected']);
+    expect(ownerLookups()).toBe(1);
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
   });
 
   it('never inserts a passed id, and skips the post check without a post', async () => {

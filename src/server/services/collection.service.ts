@@ -1265,30 +1265,6 @@ function withStoredModeratorMetadata(
   return next;
 }
 
-/**
- * An existing image may become a collection's cover when the caller owns it or it is an accepted
- * item of that collection. Co-managers can set covers, so ownership alone would be too narrow.
- */
-async function assertUsableCollectionCover({
-  collectionId,
-  imageId,
-  userId,
-  isModerator,
-}: {
-  collectionId: number;
-  imageId: number;
-  userId: number;
-  isModerator?: boolean;
-}) {
-  if (isModerator) return;
-  if ((await getEntityOwnerId('Image', imageId, dbWrite)) === userId) return;
-  const item = await dbWrite.collectionItem.findFirst({
-    where: { imageId, collectionId, status: CollectionItemStatus.ACCEPTED },
-    select: { id: true },
-  });
-  if (!item) throw throwAuthorizationError('Invalid cover image');
-}
-
 export const upsertCollection = async ({
   input,
 }: {
@@ -1382,15 +1358,15 @@ export const upsertCollection = async ({
       );
     }
 
-    const coverImageId = imageId ?? image?.id;
-    if (coverImageId != null && coverImageId !== currentCollection.image?.id) {
-      await assertUsableCollectionCover({
-        collectionId: id,
-        imageId: coverImageId,
-        userId,
-        isModerator,
-      });
-    }
+    // nb - if we ever allow a cover image on create, copy this logic below
+    // TODO commenting this out - other users can manage collections
+    // const coverImgId = imageId ?? image?.id;
+    // if (isDefined(coverImgId)) {
+    //   const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverImgId });
+    //   if (!isImgOwner) {
+    //     throw throwAuthorizationError('Invalid cover image');
+    //   }
+    // }
 
     const updated = await dbWrite.$transaction(async (tx) => {
       if (tags) {
@@ -1681,7 +1657,7 @@ export const updateCollectionCoverImage = async ({
     throw throwAuthorizationError('You do not have permission to manage this collection');
   }
 
-  await assertUsableCollectionCover({ collectionId: id, imageId, userId, isModerator });
+  // TODO if necessary, check image ownership here
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },

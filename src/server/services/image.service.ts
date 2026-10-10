@@ -6490,9 +6490,30 @@ export const getImagesByEntity = async ({
   return attachTagsToImages(images, tagsVar);
 };
 
-/** An image may only be written into a post owned by the image's own user. */
-async function assertPostOwnedBy({ postId, userId }: { postId: number; userId: number }) {
-  if ((await getEntityOwnerId('Post', postId, dbWrite)) !== userId) throw throwAuthorizationError();
+/** Refuses unless `postId` belongs to `userId`. */
+export type AssertPostOwnedBy = (args: { postId: number; userId: number }) => Promise<void>;
+
+/**
+ * An image may only be written into a post owned by the image's own user. The returned check
+ * looks each (post, user) pair up once and reuses that answer for later calls, including calls
+ * made while the first lookup is still in flight.
+ *
+ * Create one per request — a handler adding several images to one post shares it across them —
+ * and never hold one beyond that request.
+ */
+export function createPostOwnerCheck(): AssertPostOwnedBy {
+  const checks = new Map<string, Promise<void>>();
+  return ({ postId, userId }) => {
+    const key = `${postId}:${userId}`;
+    let check = checks.get(key);
+    if (!check) {
+      check = getEntityOwnerId('Post', postId, dbWrite).then((ownerId) => {
+        if (ownerId !== userId) throw throwAuthorizationError();
+      });
+      checks.set(key, check);
+    }
+    return check;
+  };
 }
 
 export async function createImage({
@@ -6501,6 +6522,7 @@ export async function createImage({
   skipIngestion,
   verifiedSourceImageIds,
   blockProvenance,
+  assertPostOwnedBy = createPostOwnerCheck(),
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6516,6 +6538,11 @@ export async function createImage({
    * row gets a `BLOCK_PROVENANCE_METADATA_KEYS` entry: any copy in `metadata` is dropped.
    */
   blockProvenance?: { key: BlockProvenanceMetadataKey; appId: string } | null;
+  /**
+   * The request's post-owner check, from {@link createPostOwnerCheck}. A caller adding several
+   * images to one post passes one so the post is looked up once; without it, each call checks.
+   */
+  assertPostOwnedBy?: AssertPostOwnedBy;
 }) {
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
