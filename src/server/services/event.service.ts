@@ -311,7 +311,9 @@ export async function getEventStandings({ event, viewer }: EventInput & Viewer) 
         return [id, { name: c.name, url: typeof url === 'string' ? url : null }];
       })
     );
-    return { ...standings, users, cosmetics, teamHats };
+    // A hat's claimKey stays with its owner; the page is public.
+    const topCosmetics = standings.topCosmetics.map(({ claimKey: _, ...hat }) => hat);
+    return { ...standings, topCosmetics, users, cosmetics, teamHats };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
