@@ -329,6 +329,32 @@ describe('createImage', () => {
     expect(ownerLookups()).toBe(2);
   });
 
+  it('a shared check keys on the user as well as the post', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OWNER } as never);
+    const asUser = (userId: number, check: AssertPostOwnedBy) =>
+      createImage({
+        url: URL_KEY,
+        type: 'image',
+        userId,
+        postId: OWN_POST,
+        skipIngestion: true,
+        assertPostOwnedBy: check,
+      });
+
+    // The owner's answer is not reused for another user on the same post…
+    const ownerFirst = createPostOwnerCheck();
+    await expect(asUser(OWNER, ownerFirst)).resolves.toBeDefined();
+    await expect(asUser(OTHER_USER, ownerFirst)).rejects.toThrow(/authoriz/i);
+    expect(ownerLookups()).toBe(2);
+
+    // …and another user's refusal is not reused for the owner.
+    const otherFirst = createPostOwnerCheck();
+    await expect(asUser(OTHER_USER, otherFirst)).rejects.toThrow(/authoriz/i);
+    await expect(asUser(OWNER, otherFirst)).resolves.toBeDefined();
+    expect(ownerLookups()).toBe(4);
+    expect(dbMock.dbWrite.image.create).toHaveBeenCalledTimes(2);
+  });
+
   it('a shared check refuses a foreign post for every image, writing none', async () => {
     dbMock.dbWrite.post.findUnique.mockResolvedValue({ userId: OTHER_USER } as never);
     const check = createPostOwnerCheck();

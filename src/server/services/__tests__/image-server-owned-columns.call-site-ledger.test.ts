@@ -28,6 +28,9 @@ import {
  *     is how client input reaches a server-owned column, so each one is listed.
  *
  * Plus the `createImage` callers, since `createImage` writes the `postId`/`index` it is given.
+ * And every literal write of an image foreign-key column (`…ImageId`, `imageId`, `coverId`, …)
+ * under `src/server`, with how it decides the id: a route may only point at an image the caller
+ * may use. See IMAGE_FK_WRITE_LEDGER for what that detector does not see.
  *
  * Population: non-test `.ts`/`.tsx` under `src/`. A nested create is found when it follows an
  * `Image` relation key within 300 characters of the same statement. Sites are counted per
@@ -310,7 +313,8 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
 
 /**
  * Every relation `connect` / `connectOrCreate` pointing an `Image` relation at an existing row by
- * id, with the guard that decides it. Direct writes of an `…ImageId` column are not in this set.
+ * id, with the guard that decides it. Direct writes of an image foreign-key column are in
+ * IMAGE_FK_WRITE_LEDGER.
  *
  * `decides` says what the guard checks: `image` — the id itself (the caller's own image, or a
  * server-resolved one); `collection-manager` — only that the caller may manage the collection,
@@ -355,6 +359,305 @@ const CONNECT_EXISTING_LEDGER: Record<
 
 // #endregion
 
+// #region image foreign-key writes
+
+/**
+ * How a site decides the image id it writes into an image foreign-key column:
+ *
+ *  - `owner-checked`: the id comes from the client and `guards` maps each such write to the
+ *    check that must run before it in the same function.
+ *  - `route-guard`: the id comes from the client and the procedure's middleware checks it
+ *    (see `ROUTE_GUARDS`).
+ *  - `server-derived`: an image the server just created, a row the server read, or a job input.
+ *  - `resolver`: what `resolveCoverImageId` returned (its callers are in
+ *    `COVER_RESOLVER_CALLER_LEDGER`).
+ *  - `moderator-route`: reached only from moderator procedures.
+ *  - `collection-manager`: main's collection cover rule — any collection manager may set it.
+ *  - `subject`: the row records an action on an image (a reaction, a rating vote, a hide), so
+ *    any image the caller can see is a valid target by design.
+ *  - `clears`: writes `null` only.
+ *  - `not-a-write`: the detector's pattern inside a lookup, SQL text or a type.
+ */
+type FkDecision =
+  | 'owner-checked'
+  | 'route-guard'
+  | 'server-derived'
+  | 'resolver'
+  | 'moderator-route'
+  | 'collection-manager'
+  | 'subject'
+  | 'clears'
+  | 'not-a-write';
+
+/**
+ * Every literal write of an image foreign-key column under `src/server` — a `column: value` (or
+ * shorthand) key in a Prisma write call's arguments, `where`/`select`/`include`/`orderBy`/`cursor`
+ * blocks excluded, or a `x.column = value` assignment building a `data` object — keyed by the
+ * nearest function or tRPC procedure.
+ *
+ * Not covered: a column set through a computed key, through an object built away from the call
+ * and passed or spread into it, or in raw SQL.
+ */
+const IMAGE_FK_WRITE_LEDGER: Record<
+  string,
+  { writes: string[]; decision: FkDecision; guards?: Record<string, string> }
+> = {
+  // Called from the daily-challenge jobs, and from upsertUserChallenge with its resolved cover.
+  'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeRecord': {
+    writes: ['coverImageId: input.coverImageId'],
+    decision: 'server-derived',
+  },
+  'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeWinner': {
+    writes: ['imageId: input.imageId'],
+    decision: 'server-derived',
+  },
+  'src/server/jobs/daily-challenge-processing.ts#createChallengeFromSelection': {
+    writes: ['imageId: coverImageId'],
+    decision: 'server-derived',
+  },
+  // Comics: every `image.id` is the row `createImage` just returned, except where noted.
+  'src/server/routers/comics.router.ts#addReferenceImages': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#bulkCreatePanels': {
+    writes: ['imageId: image.id', 'imageId: image.id'],
+    decision: 'owner-checked',
+    guards: {
+      'imageId: image.id':
+        'const image = await getOwnedImageOrThrow(panelDef.imageId, ctx.user!.id);',
+    },
+  },
+  'src/server/routers/comics.router.ts#createPanelFromImage': {
+    writes: ['imageId: input.imageId'],
+    decision: 'owner-checked',
+    guards: {
+      'imageId: input.imageId':
+        'const image = await getOwnedImageOrThrow(input.imageId, ctx.user!.id);',
+    },
+  },
+  'src/server/routers/comics.router.ts#createProject': {
+    writes: ['coverImageId: image.id', 'heroImageId: image.id'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#duplicateChapter': {
+    writes: ['imageId: panel.imageId'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#duplicatePanel': {
+    writes: ['imageId: panel.imageId'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#enhancePanel': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#pollPanelStatus': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#replacePanelImage': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#selectPanelImage': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  'src/server/routers/comics.router.ts#unlockPanelGeneration': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  // Clearing, or re-sending the project's current image, skips the lookup.
+  'src/server/routers/comics.router.ts#updateProject': {
+    writes: [
+      'data.coverImageId = input.coverImageId',
+      'data.coverImageId = image.id',
+      'data.coverImageId = null',
+      'data.heroImageId = input.heroImageId',
+      'data.heroImageId = image.id',
+      'data.heroImageId = null',
+    ],
+    decision: 'owner-checked',
+    guards: {
+      'data.coverImageId = input.coverImageId':
+        'if (input.coverImageId !== null && input.coverImageId !== project.coverImageId) { await getOwnedImageOrThrow(input.coverImageId, ctx.user.id); }',
+      'data.heroImageId = input.heroImageId':
+        'if (input.heroImageId !== null && input.heroImageId !== project.heroImageId) { await getOwnedImageOrThrow(input.heroImageId, ctx.user.id); }',
+    },
+  },
+  'src/server/services/article.service.ts#linkArticleContentImages': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  'src/server/services/article.service.ts#upsertArticle': {
+    writes: ['coverId', 'coverId'],
+    decision: 'resolver',
+  },
+  'src/server/services/auto-feature-images.service.ts#runAutoFeatureImages': {
+    writes: ['imageId: p.imageId'],
+    decision: 'server-derived',
+  },
+  // `loadValidatedImage` refuses an image the caller does not own (moderators excepted).
+  'src/server/services/blocks/app-listing-assets.service.ts#addListingScreenshot': {
+    writes: ['imageId'],
+    decision: 'owner-checked',
+    guards: {
+      imageId:
+        "const validated = await loadValidatedImage(args.imageId, 'screenshot', user, { allowPending: true, });",
+    },
+  },
+  'src/server/services/blocks/app-listing-assets.service.ts#backfillListingAssets': {
+    writes: ['imageId', 'coverId: firstScreenshotImageId', 'iconId'],
+    decision: 'server-derived',
+  },
+  'src/server/services/blocks/app-listing-assets.service.ts#setListingCover': {
+    writes: ['coverId: validated.imageId'],
+    decision: 'owner-checked',
+    guards: {
+      'coverId: validated.imageId':
+        "const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });",
+    },
+  },
+  'src/server/services/blocks/app-listing-assets.service.ts#setListingIcon': {
+    writes: ['iconId: validated.imageId'],
+    decision: 'owner-checked',
+    guards: {
+      'iconId: validated.imageId':
+        "const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });",
+    },
+  },
+  // Copies between a listing and its revision.
+  'src/server/services/blocks/offsite-listing.service.ts#applyApprovedRevision': {
+    writes: [
+      'iconId: shadow.iconId',
+      'coverId: shadow.coverId',
+      'iconId: shadow.iconId',
+      'coverId: shadow.coverId',
+    ],
+    decision: 'server-derived',
+  },
+  'src/server/services/blocks/offsite-listing.service.ts#beginListingRevision': {
+    writes: [
+      'iconId: parent.iconId',
+      'coverId: parent.coverId',
+      'imageId: number | null; order: number; caption: string | null',
+      'imageId: s.imageId',
+    ],
+    decision: 'server-derived',
+  },
+  // Nested inside upsertChallenge (moderatorProcedure), so the nearest declaration is this one.
+  'src/server/services/challenge.service.ts#tryGenerateThemeElements': {
+    writes: ['coverImageId', 'imageId: coverImageId', 'coverImageId'],
+    decision: 'moderator-route',
+  },
+  'src/server/services/challenge.service.ts#upsertChallengeEvent': {
+    writes: ['coverImageId', 'coverImageId: coverImageId ?? null'],
+    decision: 'moderator-route',
+  },
+  'src/server/services/challenge.service.ts#upsertUserChallenge': {
+    writes: ['imageId: coverImageId'],
+    decision: 'resolver',
+  },
+  'src/server/services/collection.service.ts#upsertCollection': {
+    writes: ['imageId'],
+    decision: 'collection-manager',
+  },
+  'src/server/services/collection.service.ts#validateContestCollectionEntry': {
+    writes: ['whereClause.imageId = { in: imageIds }'],
+    decision: 'not-a-write',
+  },
+  'src/server/services/cosmetic-shop.service.ts#upsertCosmeticShopSection': {
+    writes: [
+      'imageId: image === null ? null : image === undefined ? undefined : image?.id ?? imageRecord?.id',
+      'imageId: image?.id ?? imageRecord?.id',
+    ],
+    decision: 'moderator-route',
+  },
+  'src/server/services/crucible.service.ts#createCrucible': {
+    writes: ['imageId', 'heroImageId'],
+    decision: 'resolver',
+  },
+  'src/server/services/crucible.service.ts#submitEntry': {
+    writes: ['imageId'],
+    decision: 'owner-checked',
+    guards: {
+      imageId:
+        "if (image.userId !== userId) { return throwBadRequestError('You can only submit your own images'); }",
+    },
+  },
+  'src/server/services/crucible.service.ts#withdrawCrucibleEntry': {
+    writes: ['imageId: null'],
+    decision: 'clears',
+  },
+  'src/server/services/games/new-order.service.ts#processFinalRatings': {
+    writes: [
+      "new.imageId = orig.imageId WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte'",
+    ],
+    decision: 'not-a-write',
+  },
+  'src/server/services/image.service.ts#createEntityImages': {
+    writes: ['imageId: image.id'],
+    decision: 'server-derived',
+  },
+  // The linked ids pass the `owned` count in INSERT_SITE_LEDGER's guard.
+  'src/server/services/image.service.ts#updateEntityImages': {
+    writes: ['imageId: id'],
+    decision: 'owner-checked',
+    guards: {
+      'imageId: id':
+        'const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } }); if (owned !== new Set(linkIds).size) throw throwAuthorizationError();',
+    },
+  },
+  'src/server/services/image.service.ts#updateImageNsfwLevel': {
+    writes: ['imageId: id'],
+    decision: 'subject',
+  },
+  'src/server/services/model3d.service.ts#upsertModel3DFromWorkflow': {
+    writes: ['thumbnailImageId', 'sourceImageId'],
+    decision: 'server-derived',
+  },
+  'src/server/services/post.service.ts#addResourceToPostImage': {
+    writes: ['imageId'],
+    decision: 'route-guard',
+  },
+  'src/server/services/purchasable-reward.service.ts#purchasableRewardPurchase': {
+    writes: ['coverImageId: reward.coverImageId'],
+    decision: 'server-derived',
+  },
+  'src/server/services/purchasable-reward.service.ts#purchasableRewardUpsert': {
+    writes: ['coverImageId: coverImage === null', 'coverImageId: coverImage === null'],
+    decision: 'moderator-route',
+  },
+  'src/server/services/reaction.service.ts#createReaction': {
+    writes: ['imageId: entityId'],
+    decision: 'subject',
+  },
+  'src/server/services/report.service.ts#createImageRatingRequest': {
+    writes: ['imageId: id', 'imageId: id'],
+    decision: 'subject',
+  },
+  'src/server/services/user-preferences.service.ts#toggleHideImage': {
+    writes: ['imageId'],
+    decision: 'subject',
+  },
+  'src/server/services/user.service.ts#deleteUser': {
+    writes: ['profilePictureId: null'],
+    decision: 'clears',
+  },
+};
+
+/** The middleware each `route-guard` site sits behind, as it appears in its router. */
+const ROUTE_GUARDS: Record<string, { router: string; procedure: string }> = {
+  'src/server/services/post.service.ts#addResourceToPostImage': {
+    router: 'src/server/routers/post.router.ts',
+    procedure:
+      'addResourceToImage: verifiedProcedure .meta({ requiredScope: TokenScope.MediaWrite }) .input(addResourceToPostImageInput) .use(isImageOwnerOrModerator) .mutation(addResourceToPostImageHandler)',
+  },
+};
+
+// #endregion
+
 // #region detectors
 
 const WRITE_CALL = /\.image\s*\.\s*(?:create|createMany|createManyAndReturn|upsert)\s*\(/g;
@@ -390,12 +693,21 @@ const CONNECT_EXISTING = new RegExp(
 
 const DECLARATION =
   /(?:\bfunction\s*\*?\s*(\w+)\s*[<(])|(?:\b(?:const|let)\s+(\w+)\s*=\s*async\b)/g;
+/** {@link DECLARATION}, plus a tRPC procedure key (`  updateProject: comicProtectedProcedure`). */
+const DECLARATION_OR_PROCEDURE = new RegExp(
+  String.raw`${DECLARATION.source}|(?:\n  (\w+): \w*[pP]rocedure\b)`,
+  'g'
+);
 
-function enclosingFunction(text: string, offset: number): { name: string; start: number } {
+function enclosingFunction(
+  text: string,
+  offset: number,
+  declaration: RegExp = DECLARATION
+): { name: string; start: number } {
   let found = { name: '<module>', start: 0 };
-  for (const m of text.matchAll(DECLARATION)) {
+  for (const m of text.matchAll(declaration)) {
     if (m.index === undefined || m.index >= offset) break;
-    found = { name: m[1] ?? m[2], start: m.index };
+    found = { name: m[1] ?? m[2] ?? m[3], start: m.index };
   }
   return found;
 }
@@ -480,6 +792,73 @@ function serverColumnsOf(region: string): string[] {
     ...[...text.matchAll(SERVER_COLUMN)].map((m) => collapse(`${m[2]}: ${m[3]}`)),
     ...[...text.matchAll(SERVER_COLUMN_SHORTHAND)].map((m) => m[1]),
   ];
+}
+
+/** An image foreign-key column, by name: `…ImageId`, `imageId`, `coverId`, `profilePictureId`,
+ * `iconId`, `avatarId`. Name-based, so a new column spelled this way is caught before it has a
+ * relation in the Prisma schema. */
+const IMAGE_ID_COLUMN = String.raw`\w*ImageId|imageId|coverId|profilePictureId|iconId|avatarId`;
+
+/** A Prisma write call on any model. */
+const PRISMA_WRITE =
+  /\.\w+\s*\.\s*(?:create|createMany|createManyAndReturn|update|updateMany|upsert)\s*\(/g;
+/** `x.coverImageId = …` / `x['coverImageId'] = …`: a write `data` object built up before the call. */
+const PROPERTY_ASSIGN = new RegExp(
+  String.raw`\b\w+(?:\.(?:${IMAGE_ID_COLUMN})|\[\s*['"](?:${IMAGE_ID_COLUMN})['"]\s*\])\s*=(?![=>])`,
+  'g'
+);
+
+/** Strips `key: { … }` blocks for each key: they name rows to find or columns to read. */
+function withoutBlocks(region: string, keys: string[]): string {
+  const re = new RegExp(String.raw`\b(?:${keys.join('|')})\s*:\s*\{`);
+  let out = region;
+  for (let i = out.search(re); i !== -1; i = out.search(re)) {
+    const block = balanced(out, out.indexOf('{', i), '{', '}');
+    out = out.slice(0, i) + out.slice(out.indexOf('{', i) + block.length);
+  }
+  return out;
+}
+
+const FK_ASSIGN = new RegExp(
+  String.raw`(?<![\w.])(['"]?)(${IMAGE_ID_COLUMN})\1\s*:\s*([^,\n}]+)`,
+  'g'
+);
+const FK_SHORTHAND = new RegExp(String.raw`[{,]\s*(${IMAGE_ID_COLUMN})\s*(?=[,}\n])`, 'g');
+
+/** Every image foreign-key column a write assigns, as `column: value`, lookups excluded. */
+function imageFkWritesOf(region: string): string[] {
+  const text = withoutBlocks(region, ['where', 'select', 'include', 'orderBy', 'cursor']);
+  return [
+    ...[...text.matchAll(FK_ASSIGN)].map((m) => collapse(`${m[2]}: ${m[3]}`)),
+    ...[...text.matchAll(FK_SHORTHAND)].map((m) => m[1]),
+  ];
+}
+
+type FkSite = { key: string; writes: string[]; body: string };
+
+function fkSitesIn(file: string, text: string): FkSite[] {
+  const at = (offset: number) => enclosingFunction(text, offset, DECLARATION_OR_PROCEDURE);
+  const calls = [...text.matchAll(PRISMA_WRITE)].map((m) => {
+    const offset = m.index ?? 0;
+    const fn = at(offset);
+    const region = balanced(text, offset + m[0].length - 1, '(', ')');
+    return {
+      key: `${file}#${fn.name}`,
+      writes: imageFkWritesOf(region),
+      body: text.slice(fn.start, offset),
+    };
+  });
+  const assigns = [...text.matchAll(PROPERTY_ASSIGN)].map((m) => {
+    const offset = m.index ?? 0;
+    const fn = at(offset);
+    const end = text.indexOf(';', offset);
+    return {
+      key: `${file}#${fn.name}`,
+      writes: [collapse(text.slice(offset, end === -1 ? undefined : end))],
+      body: text.slice(fn.start, offset),
+    };
+  });
+  return [...calls, ...assigns].filter((s) => s.writes.length > 0);
 }
 
 // #endregion
@@ -599,8 +978,9 @@ describe('createImage callers', () => {
     );
   });
 
-  // The multi-image handlers share one post-owner check per request through addPostImage; if it
-  // stopped forwarding it, every image would fall back to its own lookup.
+  // The multi-image handlers share createImage's post-owner check per request through
+  // addPostImage, which keeps its own per-image check as well. If it stopped forwarding the
+  // shared check, createImage would also look the post up once per image.
   it('addPostImage forwards its post-owner check to createImage', () => {
     const [site] = calls.filter((s) => s.key.endsWith('#addPostImage'));
     expect(site.region).toMatch(/[{,]\s*assertPostOwnedBy\s*,/);
@@ -702,7 +1082,79 @@ describe('existing-image references', () => {
   });
 });
 
+describe('image foreign-key writes', () => {
+  const sites = files
+    .filter((f) => f.startsWith('src/server/'))
+    .flatMap((f) => fkSitesIn(f, commentless.get(f)!));
+
+  it('every literal image foreign-key write under src/server is classified, and none has gone', () => {
+    const actual: Record<string, string[]> = {};
+    for (const s of sites) (actual[s.key] ??= []).push(...s.writes);
+    expect(actual).toEqual(
+      Object.fromEntries(Object.entries(IMAGE_FK_WRITE_LEDGER).map(([k, v]) => [k, v.writes]))
+    );
+  });
+
+  it('each owner-checked write has its guard before it', () => {
+    const owned = Object.entries(IMAGE_FK_WRITE_LEDGER).filter(
+      ([, v]) => v.decision === 'owner-checked'
+    );
+    expect(owned.length).toBeGreaterThan(0);
+    const missing: string[] = [];
+    for (const [key, { guards }] of owned) {
+      expect(guards, key).toBeDefined();
+      for (const [write, guard] of Object.entries(guards!)) {
+        const at = sites.filter((s) => s.key === key && s.writes.includes(write));
+        if (at.length === 0) missing.push(`${key}: no write ${write}`);
+        for (const s of at)
+          if (!normalized(s.body).includes(normalized(guard))) missing.push(`${key}: ${guard}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('each route-guard write sits behind its middleware', () => {
+    const routed = Object.entries(IMAGE_FK_WRITE_LEDGER)
+      .filter(([, v]) => v.decision === 'route-guard')
+      .map(([k]) => k);
+    expect(routed).toEqual(Object.keys(ROUTE_GUARDS));
+    for (const [key, { router, procedure }] of Object.entries(ROUTE_GUARDS)) {
+      expect(normalized(commentless.get(router)!), key).toContain(normalized(procedure));
+    }
+  });
+
+  it('only the collection cover upsert decides on the collection manager alone', () => {
+    expect(
+      Object.entries(IMAGE_FK_WRITE_LEDGER)
+        .filter(([, v]) => v.decision === 'collection-manager')
+        .map(([k]) => k)
+    ).toEqual(['src/server/services/collection.service.ts#upsertCollection']);
+  });
+});
+
 describe('detector controls', () => {
+  it('finds image foreign-key writes in call arguments and data assignments, not lookups', () => {
+    const src = [
+      'async function a(input) { await db.x.update({ where: { imageId: input.w }, data: { coverImageId: input.c, fooImageId: input.f, name: 1 }, select: { iconId: true } }); }',
+      'async function b(imageId) { await tx.y.createMany({ data: ids.map((id) => ({ imageId, coverId: id })) }); }',
+      'async function c(input) { const data = {}; data.heroImageId = input.h; data["profilePictureId"] = null; await db.z.update({ data }); }',
+      'async function d() { await db.w.findMany({ where: { imageId: 1 } }); }',
+    ].join('\n');
+    const found = fkSitesIn('x.ts', stripComments(src)).map((s) => [s.key, s.writes]);
+    expect(found).toEqual([
+      ['x.ts#a', ['coverImageId: input.c', 'fooImageId: input.f']],
+      ['x.ts#b', ['coverId: id', 'imageId']],
+      ['x.ts#c', ['data.heroImageId = input.h']],
+      ['x.ts#c', ['data["profilePictureId"] = null']],
+    ]);
+  });
+
+  it('keys a write inside a tRPC procedure by the procedure', () => {
+    const src =
+      'const r = router({\n  setCover: protectedProcedure\n    .mutation(async ({ input }) => { await db.p.update({ data: { coverImageId: input.id } }); }),\n});';
+    expect(fkSitesIn('x.ts', src).map((s) => s.key)).toEqual(['x.ts#setCover']);
+  });
+
   const at = (src: string, re: RegExp) => sitesIn('x.ts', stripComments(src), re);
 
   it('finds an Image relation pointed at an existing row in every spelling', () => {

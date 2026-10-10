@@ -580,7 +580,8 @@ export const addSimpleImagePostHandler = async ({
       publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
     });
 
-    // One post-owner lookup for the whole batch rather than one per image.
+    // createImage's own primary-DB post-owner check runs once per request per post;
+    // addPostImage keeps its existing per-image check.
     const assertPostOwnedBy = createPostOwnerCheck();
     const postImages = await Promise.all(
       images.map((image, index) =>

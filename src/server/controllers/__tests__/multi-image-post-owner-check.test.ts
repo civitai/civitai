@@ -3,12 +3,15 @@ import type * as CollectionService from '~/server/services/collection.service';
 import type * as PostService from '~/server/services/post.service';
 
 /**
- * The two handlers that add several images to one post share one post-owner check across the
- * batch, so the post is looked up once per request rather than once per image.
+ * The two handlers that add several images to one post share `createImage`'s post-owner check
+ * across the batch, so `createImage`'s own primary-DB check runs once per request per post.
+ * `addPostImage` keeps its existing per-image check, so a whole request still makes one lookup
+ * per image plus this one.
  *
  * `addPostImage` is replaced by a stand-in that forwards to the REAL `createImage` exactly what
  * `addPostImage` forwards (the call-site ledger pins that `addPostImage` passes the check on),
- * so the owner lookup counted here is the one `createImage` makes.
+ * so the owner lookup counted here is the one `createImage` makes — the stand-in omits
+ * `addPostImage`'s own check, which this file does not count.
  */
 const mocks = vi.hoisted(() => ({
   getCollectionById: vi.fn(),
@@ -120,7 +123,7 @@ describe.each([
   ['collection.addSimpleImagePost', addSimpleImagePost],
   ['post.createWithImages', createWithImages],
 ])('%s', (_name, run) => {
-  it('looks the post owner up once for a batch of images', async () => {
+  it("runs createImage's primary-DB post-owner check once for a batch of images", async () => {
     postOwnedBy(USER_ID);
 
     await run(4);
@@ -129,7 +132,7 @@ describe.each([
     expect(ownerLookups()).toBe(1);
   });
 
-  it('looks it up again on the next request', async () => {
+  it("runs createImage's check again on the next request", async () => {
     postOwnedBy(USER_ID);
 
     await run(2);

@@ -174,7 +174,8 @@ export const createPostWithImagesHandler = async ({
     // 2) Attach each image in order.
     const sortedImages = [...images].sort((a, b) => a.index - b.index);
     const attachedImageIds: number[] = [];
-    // One post-owner lookup for the whole batch rather than one per image.
+    // createImage's own primary-DB post-owner check runs once per request per post;
+    // addPostImage keeps its existing per-image check.
     const assertPostOwnedBy = createPostOwnerCheck();
     for (const image of sortedImages) {
       const attached = await addPostImage({
