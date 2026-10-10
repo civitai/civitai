@@ -11,7 +11,7 @@ const {
   PUSH_WINDOW_MS,
   SEND_CONCURRENCY,
 } = await import('~/server/events/points/push');
-const { hatField, hatTopicId } = await import('~/server/events/points/keys');
+const { hatField, hatTopicId, previewTopicId } = await import('~/server/events/points/keys');
 
 const NOW = new Date('2026-11-05T12:00:00.000Z');
 const event = {
@@ -422,7 +422,7 @@ describe('event points pusher', () => {
     expect(sent).toEqual([teamsSend(), hatSend(HAT, 10)]);
   });
 
-  it('never marks a preview award', async () => {
+  it('without a preview, never marks an award before the start', async () => {
     const { pusher, sent } = setup();
     pusher.markDirty(event, HAT, new Date(event.startDate.getTime() - 1));
     expect(pusher.dirtyCount()).toBe(0);
@@ -430,6 +430,14 @@ describe('event points pusher', () => {
     expect(sent).toEqual([]);
     pusher.markDirty(event, HAT, event.startDate);
     expect(pusher.dirtyCount()).toBe(1);
+  });
+
+  // The live season's naming, as before the preview had topics of its own.
+  it('asks the interest set in the live naming once the event has started', async () => {
+    const { pusher, deps } = setup();
+    pusher.markDirty({ ...event, previewFrom: new Date('2026-10-20T00:00:00.000Z') }, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(deps.selectWatched).toHaveBeenCalledWith(expect.anything(), [HAT], true, 'live');
   });
 
   it('puts no claim key in any topic or payload', async () => {
@@ -441,6 +449,59 @@ describe('event points pusher', () => {
     expect(wire).toContain(hatTopicId(HAT));
     expect(hatField(HAT)).toContain(HAT.claimKey);
     expect(wire.includes(HAT.claimKey)).toBe(false);
+  });
+
+  describe('in the preview', () => {
+    const PREVIEW_NOW = new Date('2026-10-25T12:00:00.000Z');
+    const previewEvent = { ...event, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
+
+    // One lease per event and window, whichever season's teams topic it sends: only one season is
+    // current at a time, so the preview's team totals go out from one server a window like the live.
+    it("takes the event's team push lease for the preview's team totals too", async () => {
+      vi.setSystemTime(PREVIEW_NOW);
+      const claimTeamsPush = vi.fn(async () => false);
+      const { pusher, sent } = setup({ claimTeamsPush });
+      pusher.markDirty(previewEvent, HAT, PREVIEW_NOW);
+      await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+      expect(claimTeamsPush).toHaveBeenCalledWith(previewEvent);
+      expect(sent.map((s) => s.target)).toEqual(['event-points:hat']);
+      // The control: holding the lease, the keyed teams topic goes out.
+      claimTeamsPush.mockResolvedValue(true);
+      pusher.markDirty(previewEvent, HAT, new Date());
+      await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS * 3);
+      expect(sent.map((s) => s.topic)).toContain(
+        `event-points:birthday2026:teams:${previewTopicId('birthday2026', 'teams')}`
+      );
+    });
+
+    it('marks from the preview start, and pushes to the keyed topics', async () => {
+      vi.setSystemTime(PREVIEW_NOW);
+      const { pusher, sent, deps } = setup();
+      const before = new Date(previewEvent.previewFrom.getTime() - 1);
+      expect(pusher.markDirty(previewEvent, HAT, before)).toBe(false);
+      expect(pusher.markDirty(previewEvent, HAT, PREVIEW_NOW)).toBe(true);
+      await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+      const keyed = previewTopicId('birthday2026', hatField(HAT));
+      const teams = previewTopicId('birthday2026', 'teams');
+      expect(sent).toEqual([
+        {
+          topic: `event-points:birthday2026:teams:${teams}`,
+          target: 'event-points:teams',
+          data: { event: 'birthday2026', teams: { Blue: 900, Pink: 40 } },
+        },
+        {
+          topic: `event-points:birthday2026:hat:${keyed}`,
+          target: 'event-points:hat',
+          data: { event: 'birthday2026', topicId: keyed, points: 10 },
+        },
+      ]);
+      expect(deps.selectWatched).toHaveBeenCalledWith(previewEvent, [HAT], true, 'preview');
+      // The totals are read at the flush's time, which is what makes them the preview season's.
+      expect(vi.mocked(deps.getHatPoints).mock.calls[0][2]).toEqual(
+        new Date(PREVIEW_NOW.getTime() + PUSH_WINDOW_MS)
+      );
+      expect(JSON.stringify(sent)).not.toContain(hatTopicId(HAT));
+    });
   });
 
   it('pushes only the hats and team standings the seams say are watched', async () => {

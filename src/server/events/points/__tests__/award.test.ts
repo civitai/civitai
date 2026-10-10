@@ -11,8 +11,15 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 const { cappedGrant, createEventPointsEngine, streamIdBefore } = await import(
   '~/server/events/points/award'
 );
-const { encodeHat, eventPointKeys, eventSeasonKeys, hatField, hatTopicId, liveBucket } =
-  await import('~/server/events/points/keys');
+const {
+  encodeHat,
+  eventPointKeys,
+  eventSeasonKeys,
+  hatField,
+  hatTopicId,
+  liveBucket,
+  previewTopicId,
+} = await import('~/server/events/points/keys');
 
 // A small Redis with real set, hash and stream semantics: the engine's correctness is in how it
 // combines SADD and HINCRBY results, so a fake that records calls would test nothing.
@@ -607,14 +614,14 @@ describe('isKnownHatTopic', () => {
   const OTHER = { ...HAT, claimKey: 'other' };
 
   it('knows the topic of a hat on this server, and nothing else', async () => {
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(false);
-    expect(await engine.isKnownHatTopic('another-event', hatTopicId(HAT))).toBe(false);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'live')).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER), 'live')).toBe(false);
+    expect(await engine.isKnownHatTopic('another-event', hatTopicId(HAT), 'live')).toBe(false);
   });
 
   it('rebuilds its index when the 2s follow has to reload the whole map', async () => {
     const THIRD = { ...HAT, claimKey: 'third' };
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'live')).toBe(true);
     // A change the log no longer holds: the follow must reload the map rather than replay the log.
     fake.setHatUnlogged(EVENT.name, 'Image:401', encodeHat(OTHER));
     fake.setHat(EVENT.name, 'Image:402', encodeHat(THIRD));
@@ -622,39 +629,55 @@ describe('isKnownHatTopic', () => {
     // Past the follow interval, inside the full refresh's: the follow, not refresh(), runs.
     now = new Date(now.getTime() + 2_500);
     await vi.waitFor(async () =>
-      expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(THIRD))).toBe(true)
+      expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(THIRD), 'live')).toBe(true)
     );
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER), 'live')).toBe(true);
   });
 
   it('follows the hat map: a hat placed is known, a hat taken off is not', async () => {
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(false);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER), 'live')).toBe(false);
     fake.setHat(EVENT.name, 'Image:300', encodeHat(OTHER));
     fake.setHat(EVENT.name, 'Image:100', '');
     now = new Date(now.getTime() + 31 * 1000);
     await engine.refresh();
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER))).toBe(true);
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER), 'live')).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'live')).toBe(false);
   });
 
   it('keeps a hat known while any entry still wears it', async () => {
     fake.setHat(EVENT.name, 'Image:301', encodeHat(HAT));
     now = new Date(now.getTime() + 31 * 1000);
     await engine.refresh();
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'live')).toBe(true);
     fake.setHat(EVENT.name, 'Image:100', '');
     now = new Date(now.getTime() + 31 * 1000);
     await engine.refresh();
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'live')).toBe(true);
     fake.setHat(EVENT.name, 'Image:301', '');
     now = new Date(now.getTime() + 31 * 1000);
     await engine.refresh();
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'live')).toBe(false);
+  });
+
+  // The preview's ids are keyed (keys.ts): in that season the index holds those and nothing else,
+  // and the follow keeps it in step in the same naming.
+  it('in the preview, knows a hat by its keyed id only, and follows it in that naming', async () => {
+    const keyed = (hat: typeof HAT) => previewTopicId(EVENT.name, hatField(hat));
+    expect(await engine.isKnownHatTopic(EVENT.name, keyed(HAT), 'preview')).toBe(true);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'preview')).toBe(false);
+    expect(await engine.isKnownHatTopic(EVENT.name, keyed(OTHER), 'preview')).toBe(false);
+    fake.setHat(EVENT.name, 'Image:300', encodeHat(OTHER));
+    now = new Date(now.getTime() + 31 * 1000);
+    await engine.refresh();
+    expect(await engine.isKnownHatTopic(EVENT.name, keyed(OTHER), 'preview')).toBe(true);
+    // Asked in the other season, it answers in that season's naming.
+    expect(await engine.isKnownHatTopic(EVENT.name, keyed(OTHER), 'live')).toBe(false);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(OTHER), 'live')).toBe(true);
   });
 
   it('knows nothing while its hat map cannot load, rather than reading anywhere else', async () => {
     build({ loadScoredEvents: () => Promise.reject(new Error('down')) });
-    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT))).toBe(false);
+    expect(await engine.isKnownHatTopic(EVENT.name, hatTopicId(HAT), 'live')).toBe(false);
   });
 });
 

@@ -42,8 +42,11 @@ import {
   decodeHat,
   entityKey,
   eventPointKeys,
+  eventPointSeason,
   hatField,
-  hatTopicId,
+  seasonHatTopicId,
+  seasonTeamsTopicId,
+  type EventPointSeason,
 } from '~/server/events/points/keys';
 import { getHatPoints, getTeamPoints } from '~/server/events/points/read';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
@@ -77,14 +80,17 @@ async function liveHatPoints(
   }
 }
 
-// Per-type counts come from the hourly snapshot; the total comes live.
+// Per-type counts come from the hourly snapshot; the total comes live. The topic id is the current
+// season's: in the preview, a keyed one only a read the preview allows hands out (points/keys.ts).
 function hatScore(
+  event: SeasonEvent,
+  season: EventPointSeason,
   hat: Omit<EventHat, 'team'>,
   score: CosmeticScore | undefined,
   live: Record<string, number> | null
 ) {
   return {
-    topicId: hatTopicId(hat),
+    topicId: seasonHatTopicId(event.name, hat, season),
     points: live ? live[hatField(hat)] ?? 0 : score?.points ?? 0,
     impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
     reactions: score?.reactions ?? 0,
@@ -379,12 +385,20 @@ export async function getEventStandings({
       })
     );
     // Public and edge-cached: a bought hat's claim key is its purchase's transaction id, so each
-    // hat goes out under its opaque topic id instead.
+    // hat goes out under its opaque topic id instead. In the preview the ids are keyed ones, and the
+    // gate never caches a tester's response.
+    const season = eventPointSeason(scored.startDate, new Date());
     const topCosmetics = standings.topCosmetics.map(({ claimKey, ...rest }) => ({
       ...rest,
-      topicId: hatTopicId({ ownerId: rest.userId, cosmeticId: rest.cosmeticId, claimKey }),
+      topicId: seasonHatTopicId(
+        scored.name,
+        { ownerId: rest.userId, cosmeticId: rest.cosmeticId, claimKey },
+        season
+      ),
     }));
-    return { ...standings, topCosmetics, users, cosmetics, teamHats };
+    // What the page subscribes to and marks for the live team totals.
+    const teamsTopicId = seasonTeamsTopicId(scored.name, season);
+    return { ...standings, topCosmetics, teamsTopicId, users, cosmetics, teamHats };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -550,6 +564,7 @@ export async function getMyEventHats({
     ]);
 
     const now = Date.now();
+    const season = eventPointSeason(scored.startDate, new Date(now));
     return rows.map((r) => {
       const placedAt = r.placedAt ? new Date(r.placedAt) : null;
       const movableAt =
@@ -574,7 +589,7 @@ export async function getMyEventHats({
           movableAt && definition
             ? Math.min(definition.moveCooldownMs, Math.max(0, movableAt.getTime() - now))
             : 0,
-        ...hatScore(hat, score, live),
+        ...hatScore(scored, season, hat, score, live),
       };
     });
   } catch (error) {
@@ -762,7 +777,15 @@ export async function getWornEventHat({
               profilePicture: profilePictures[owner.id] ?? null,
             }
           : null,
-      ...(hat && key ? hatScore(hat, scores?.[cosmeticScoreKey(key)], live) : UNSCORED_HAT),
+      ...(hat && key
+        ? hatScore(
+            scored,
+            eventPointSeason(scored.startDate, new Date()),
+            hat,
+            scores?.[cosmeticScoreKey(key)],
+            live
+          )
+        : UNSCORED_HAT),
     };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DecorationConstants from '~/shared/constants/event-decoration.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { encodeHat, eventPointKeys, hatTopicId } from '~/server/events/points/keys';
+import { encodeHat, eventPointKeys, hatTopicId, previewTopicId } from '~/server/events/points/keys';
 import type { EventHat } from '~/server/events/points/types';
 
 /**
@@ -94,6 +94,14 @@ const scored = {
   scoreFrom: new Date('2026-10-20T00:00:00Z'),
 };
 const season = { name: 'birthday2026', startDate: scored.startDate };
+// Topic ids follow the season of the read's own clock: the public id once the event has started,
+// a keyed one in the preview (points/keys.ts).
+const LIVE_NOW = '2026-11-02T00:00:00Z';
+const PREVIEW_NOW = '2026-10-25T00:00:00Z';
+const at = (now: string) => vi.useFakeTimers({ now: new Date(now), toFake: ['Date'] });
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -301,6 +309,7 @@ describe('getMyEventHats', () => {
   // An unplaced hat has no score row; reading hats from the scores would drop it, and a hat you
   // just bought would not appear until it had earned something.
   it('lists every owned hat, placed or not, with its score and where it is', async () => {
+    at(LIVE_NOW);
     const hats = await service.getMyEventHats({ event: 'birthday2026', user });
     expect(hats.map((h) => [h.cosmeticId, h.claimKey])).toEqual([
       [31, 'claimed'],
@@ -317,6 +326,22 @@ describe('getMyEventHats', () => {
       placedOn: { entityType: 'Image', entityId: 500, image: { id: 77 } },
     });
     expect(hats[1]).toMatchObject({ points: 0, comments: 0, placedOn: null, movableAt: null });
+  });
+
+  // Only a caller the preview lets in reaches this read before the start, so only they learn these.
+  it('in the preview, gives each hat its keyed id: unlike its live id, the same on every read', async () => {
+    at(PREVIEW_NOW);
+    const first = await service.getMyEventHats({ event: 'birthday2026', user });
+    const again = await service.getMyEventHats({ event: 'birthday2026', user });
+    const keyed = [
+      previewTopicId('birthday2026', '9:31:claimed'),
+      previewTopicId('birthday2026', '9:32:txn-9'),
+    ];
+    expect(first.map((h) => h.topicId)).toEqual(keyed);
+    // Read as the caller, so the gate decides on them: a tester gets past it, nobody else does.
+    expect(engine.getReadableScoredEvent).toHaveBeenCalledWith('birthday2026', user);
+    expect(again.map((h) => h.topicId)).toEqual(keyed);
+    expect(keyed[0]).not.toBe(hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'claimed' }));
   });
 
   // A live read that answers is the total, even where it has nothing: the snapshot is only for when
@@ -564,6 +589,7 @@ describe('getEventStandings decoration', () => {
 
   // Public and edge-cached, and a bought hat's claim key is its purchase's transaction id.
   it('sends each top hat under its opaque topic id, never its claim key', async () => {
+    at(LIVE_NOW);
     const hat = { userId: 7, cosmeticId: 21, team: 'Yellow', points: 5 };
     const claimKey = 'cosmetic-purchase-txn-9';
     scoring.getEventStandings.mockResolvedValueOnce({
@@ -576,6 +602,30 @@ describe('getEventStandings decoration', () => {
     expect(res.topCosmetics).toStrictEqual([
       { ...hat, topicId: hatTopicId({ ownerId: 7, cosmeticId: 21, claimKey }) },
     ]);
+    expect(res.teamsTopicId).toBe('teams');
+  });
+
+  it('in the preview, names the top hats and the team totals by their keyed ids', async () => {
+    at(PREVIEW_NOW);
+    const hat = { userId: 7, cosmeticId: 21, team: 'Yellow', points: 5 };
+    const claimKey = 'cosmetic-purchase-txn-9';
+    scoring.getEventStandings.mockResolvedValue({
+      teams: [],
+      topCosmetics: [{ ...hat, claimKey }],
+      topUsers: {},
+    });
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    const again = await service.getEventStandings({ event: 'birthday2026', viewer });
+    const keyed = previewTopicId('birthday2026', `7:21:${claimKey}`);
+    expect(res.topCosmetics).toStrictEqual([{ ...hat, topicId: keyed }]);
+    expect(res.teamsTopicId).toBe(previewTopicId('birthday2026', 'teams'));
+    expect(again.topCosmetics[0].topicId).toBe(keyed);
+    expect(again.teamsTopicId).toBe(res.teamsTopicId);
+    // The key never goes out with the ids it makes.
+    const { env } = await import('~/env/server');
+    expect(env.NEXTAUTH_SECRET.length).toBeGreaterThan(0);
+    expect(JSON.stringify(res)).not.toContain(env.NEXTAUTH_SECRET);
+    expect(JSON.stringify(res)).not.toContain(claimKey);
   });
 
   // The art is decoration: a failed lookup must cost the hats, never the standings.
@@ -730,6 +780,15 @@ describe('getWornEventHat', () => {
     caches.worn.fetch.mockResolvedValue({});
     caches.visible.fetch.mockResolvedValue({ 5: { id: 5 } });
     redisMock.sysRedis.hGet.mockResolvedValue(null);
+    at(LIVE_NOW);
+  });
+
+  it('in the preview, gives the worn hat its keyed id, never its live one', async () => {
+    wearing();
+    inHatMap('claimed');
+    at(PREVIEW_NOW);
+    expect((await read())?.topicId).toBe(previewTopicId('birthday2026', '9:31:claimed'));
+    expect(engine.getReadableScoredEvent).toHaveBeenCalledWith('birthday2026', viewer);
   });
 
   afterEach(() => {
@@ -794,6 +853,7 @@ describe('getWornEventHat', () => {
       }),
     });
     live.getHatPoints.mockResolvedValue({ '9:31:claimed': 64 });
+    at(LIVE_NOW);
     expect(await read()).toEqual({
       cosmeticId: 31,
       name: 'Party Cap',

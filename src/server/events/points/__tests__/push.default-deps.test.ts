@@ -24,9 +24,8 @@ vi.mock('~/server/events/points/enabled', () => ({
 
 const { logToAxiom } = await import('~/server/logging/client');
 const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');
-const { eventPointKeys, eventPointSeason, eventSeasonKeys, hatTopicId } = await import(
-  '~/server/events/points/keys'
-);
+const { eventPointKeys, eventPointSeason, eventSeasonKeys, hatField, hatTopicId, previewTopicId } =
+  await import('~/server/events/points/keys');
 
 const event = {
   name: 'birthday2026',
@@ -197,5 +196,90 @@ describe('the pusher with its default deps', () => {
         },
       ],
     ]);
+  });
+});
+
+// In the preview, a tester who was handed the keyed ids (and marked them) gets the preview season's
+// totals pushed to the keyed topics; nothing goes to the public ones, and the key never leaves.
+describe('the pusher in the preview', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const preview = {
+    ...event,
+    previewFrom: new Date(Date.now() - DAY),
+    startDate: new Date(Date.now() + DAY),
+  };
+  const keyedHat = previewTopicId(preview.name, hatField(HAT));
+  const keyedTeams = previewTopicId(preview.name, 'teams');
+  const previewTotals = () => {
+    const keys = eventSeasonKeys(preview.name, 'preview');
+    const sys = redisMock.sysRedis;
+    sys.get.mockResolvedValue(null);
+    sys.hmGet.mockImplementation(async (key: string, fields: string[]) =>
+      key === keys.base('hat')
+        ? ['7']
+        : key === keys.base('team')
+        ? ['3', '4']
+        : fields.map(() => null)
+    );
+  };
+
+  it("pushes the preview season's totals to the keyed topics that are watched", async () => {
+    previewTotals();
+    watch.set(keyedHat, Date.now() + 60_000);
+    watch.set(keyedTeams, Date.now() + 60_000);
+    expect(markEventPointsDirty(preview, HAT, new Date())).toBe(true);
+    expect(await drainEventPointsPush()).toEqual({ left: 0 });
+    expect(zmScore().mock.calls).toEqual([
+      [eventPointKeys(preview.name).watch, [keyedHat, keyedTeams]],
+    ]);
+    expect(topicSend.mock.calls).toEqual([
+      [
+        {
+          topic: `event-points:birthday2026:teams:${keyedTeams}`,
+          target: 'event-points:teams',
+          data: { event: 'birthday2026', teams: { Blue: 3, Pink: 4 } },
+        },
+      ],
+      [
+        {
+          topic: `event-points:birthday2026:hat:${keyedHat}`,
+          target: 'event-points:hat',
+          data: { event: 'birthday2026', topicId: keyedHat, points: 7 },
+        },
+      ],
+    ]);
+  });
+
+  it('sends nothing in the preview to marks under the public ids', async () => {
+    previewTotals();
+    watch.set(hatTopicId(HAT), Date.now() + 60_000);
+    watch.set('teams', Date.now() + 60_000);
+    markEventPointsDirty(preview, HAT, new Date());
+    await drainEventPointsPush();
+    expect(topicSend).not.toHaveBeenCalled();
+  });
+
+  it('marks nothing before the preview opens', () => {
+    const early = { ...preview, previewFrom: new Date(Date.now() + 60_000) };
+    expect(markEventPointsDirty(early, HAT, new Date())).toBe(false);
+  });
+
+  it('puts the key in no payload and no log line, even when a send fails', async () => {
+    const { env } = await import('~/env/server');
+    expect(env.NEXTAUTH_SECRET.length).toBeGreaterThan(0);
+    previewTotals();
+    watch.set(keyedHat, Date.now() + 60_000);
+    watch.set(keyedTeams, Date.now() + 60_000);
+    vi.mocked(logToAxiom).mockClear();
+    topicSend.mockRejectedValueOnce(new Error('signals down'));
+    markEventPointsDirty(preview, HAT, new Date());
+    await drainEventPointsPush();
+    const wire = JSON.stringify(topicSend.mock.calls);
+    const logs = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    // The control: both were written to, and the keyed ids did go out.
+    expect(wire).toContain(keyedHat);
+    expect(logs).toContain('signals sends failed');
+    expect(wire).not.toContain(env.NEXTAUTH_SECRET);
+    expect(logs).not.toContain(env.NEXTAUTH_SECRET);
   });
 });
