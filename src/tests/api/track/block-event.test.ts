@@ -4,6 +4,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as CivitaiRedis from '@civitai/redis';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as RateLimitModule from '~/server/services/blocks/block-event-rate-limit';
 
@@ -118,34 +119,13 @@ const VIEWER_IP = '198.51.100.23';
 
 // ── Redis must never be touched ──────────────────────────────────────────────
 
-/** Every call made to any command of either canonical Redis client, by command path. */
+/**
+ * Every call made to ANY command of the canonical Redis mock (`redis`, `sysRedis` and the
+ * `withSysReadDeadline` seam), at any depth, since the last mock reset. Read from the hybrid
+ * mock's own node registry, so a command nobody listed here is seen as well.
+ */
 function redisTouched(): string[] {
-  const touched: string[] = [];
-  for (const [root, node] of [
-    ['redis', redisMock.redis],
-    ['sysRedis', redisMock.sysRedis],
-  ] as const) {
-    for (const command of [
-      'get',
-      'set',
-      'incr',
-      'incrBy',
-      'expire',
-      'ttl',
-      'del',
-      'exists',
-      'mGet',
-      'hGet',
-      'hSet',
-    ]) {
-      if (
-        (node as unknown as Record<string, { mock: { calls: unknown[] } }>)[command].mock.calls
-          .length > 0
-      )
-        touched.push(`${root}.${command}`);
-    }
-  }
-  return touched;
+  return calledHybridNodes(['redis', 'sysRedis', 'withSysReadDeadline']);
 }
 
 // ── harness ──────────────────────────────────────────────────────────────────
@@ -287,6 +267,17 @@ afterEach(() => {
   vi.unstubAllEnvs();
   // No path of the ingest uses Redis; a call here would be a new storage dependency.
   expect(redisTouched()).toEqual([]);
+});
+
+describe('the Redis guard itself', () => {
+  it('POSITIVE CONTROL: sees a call to any command, at any depth, and is clean after a reset', () => {
+    redisMock.sysRedis.hGetAll('k');
+    redisMock.redis.zAdd('k', []);
+    redisMock.redis.packed.get('k');
+    expect(redisTouched()).toEqual(['redis.packed.get', 'redis.zAdd', 'sysRedis.hGetAll']);
+    vi.clearAllMocks();
+    expect(redisTouched()).toEqual([]);
+  });
 });
 
 // ── the request gates ────────────────────────────────────────────────────────
@@ -931,6 +922,17 @@ describe('POST /api/track/block-event — which address is trusted', () => {
     );
     expect(insertedRows()).toHaveLength(150);
     expect(delta).toEqual({ accepted: 50, unattested_address: 50 });
+  });
+
+  it('flags every unattested row, including the ones the drained fallback budget refuses', async () => {
+    const handler = await loadHandler();
+    const batch = { events: Array.from({ length: 50 }, () => event()) };
+    await post(batch, { handler, noEdge: true });
+    await post(batch, { handler, noEdge: true });
+    // The fallback bucket is now empty: every row of the next batch is refused AND flagged.
+    const delta = await outcomeDelta(() => post(batch, { handler, noEdge: true }));
+    expect(insertedRows()).toHaveLength(100);
+    expect(delta).toEqual({ rate_limited: 50, unattested_address: 50 });
   });
 
   it('🔴 does not fall back to the transport peer, which behind a proxy is the proxy', async () => {

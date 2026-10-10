@@ -72,8 +72,8 @@ let inflightInserts = 0;
 export const DEPLOYMENT_ENVIRONMENT_VAR = 'CIVITAI_DEPLOYMENT_ENVIRONMENT';
 
 /**
- * Whether this process may write. Non-production deployments can be configured with the
- * production ClickHouse, and a row written from one is indistinguishable from a real one.
+ * Whether this process may write. Non-production deployments may share the same ClickHouse, and
+ * a row written from one is indistinguishable from a real one.
  *
  * FAILS CLOSED: a write needs the deployment to say, by exact value, that it is production. An
  * absent, empty or unrecognised value skips the write, so a deployment nobody configured cannot
@@ -241,6 +241,7 @@ export async function ingestBlockEvents(args: {
       recordBlockCustomEvents('unknown_app', group.length);
       continue;
     }
+    if (!clientIp) recordBlockCustomEvents('unattested_address', group.length);
     const granted = limiter.take(`${budgetKey} ${appBlockId}`, group.length, nowMs);
     recordBlockCustomEvents('rate_limited', group.length - granted);
     if (granted > 0) {
@@ -248,7 +249,6 @@ export async function ingestBlockEvents(args: {
       admittedRows += granted;
     }
   }
-  if (!clientIp) recordBlockCustomEvents('unattested_address', admittedRows);
   if (admitted.length === 0) return done;
 
   // Identity comes from the session, never from the body.
