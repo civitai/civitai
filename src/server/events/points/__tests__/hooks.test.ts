@@ -381,3 +381,39 @@ describe('round 1', () => {
     expect(removeEventPoints).not.toHaveBeenCalled();
   });
 });
+
+describe('round 3', () => {
+  const batch = (...entities: { entityType: string; entityId: number }[]) =>
+    [
+      { kind: 'impression', data: { sessionKey: 'k', surface: 'images', entities } },
+    ] as unknown as TrackBatchInput;
+
+  it('awards each hatted entity in a batch once', () => {
+    hatted.add('Image:1');
+    expect(
+      hattedImpressionEntities(
+        batch({ entityType: 'Image', entityId: 1 }, { entityType: 'Image', entityId: 1 })
+      )
+    ).toEqual([{ entityType: 'Image', entityId: 1 }]);
+  });
+
+  it('caps the hatted entities one batch can award', () => {
+    const entities = Array.from({ length: 300 }, (_, i) => ({ entityType: 'Image', entityId: i }));
+    for (const { entityId } of entities) hatted.add(`Image:${entityId}`);
+    expect(hattedImpressionEntities(batch(...entities))).toHaveLength(250);
+  });
+
+  it("passes the viewer's account dates as dates, even when the session carries strings", async () => {
+    const createdAt = '2026-01-02T00:00:00.000Z';
+    const bannedAt = '2026-03-04T00:00:00.000Z';
+    await awardViewPoints(
+      async () => ({ user: { id: ACTOR, createdAt, bannedAt } } as never),
+      [{ entityType: 'Image', entityId: 1 }]
+    );
+    const [[[action]]] = awardEventPoints.mock.calls as unknown as [[[{ actor: unknown }]]];
+    expect(action.actor).toStrictEqual({
+      createdAt: new Date(createdAt),
+      bannedAt: new Date(bannedAt),
+    });
+  });
+});

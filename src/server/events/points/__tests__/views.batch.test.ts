@@ -33,7 +33,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
 import handler from '~/pages/api/track/batch';
 
 const CREATED = new Date('2026-01-02T00:00:00Z');
-const SIGNED_IN = { user: { id: 5, createdAt: CREATED, bannedAt: undefined } };
+const BANNED = new Date('2026-03-04T00:00:00Z');
+const SIGNED_IN = { user: { id: 5, createdAt: CREATED, bannedAt: BANNED } };
 
 function post(entities: { entityType: string; entityId: number }[]) {
   const res = {
@@ -78,7 +79,7 @@ describe('POST /api/track/batch event points', () => {
         type: 'view',
         actorId: 5,
         // The account, so the engine can skip new and banned accounts live.
-        actor: { createdAt: CREATED, bannedAt: undefined },
+        actor: { createdAt: CREATED, bannedAt: BANNED },
         entityType: 'Image',
         entityId: 11,
       },

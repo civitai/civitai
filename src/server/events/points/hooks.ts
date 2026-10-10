@@ -36,21 +36,35 @@ const swallow = (name: string) => (error: unknown) =>
 type Entity = { entityType: EventPointEntityType; entityId: number };
 
 // #region views
+// Most hatted entities one tracking batch can award. A batch may carry 25,000 entities and hat ids
+// are public, so without a ceiling one request could fan out into tens of thousands of Redis calls.
+export const MAX_HATTED_VIEWS_PER_BATCH = 250;
+
 /**
- * The hatted entities in a tracking batch's impressions. Synchronous and allocation-free for a
- * batch with no hatted entity, which is nearly every batch: this runs on every impression flush.
+ * The distinct hatted entities in a tracking batch's impressions, at most
+ * MAX_HATTED_VIEWS_PER_BATCH. Synchronous and allocation-free for a batch with no hatted entity,
+ * which is nearly every batch: this runs on every impression flush.
  */
 export function hattedImpressionEntities(events: TrackBatchInput): Entity[] {
-  let hatted: Entity[] | undefined;
+  let seen: Set<string> | undefined;
+  const hatted: Entity[] = [];
   for (const event of events) {
     if (event.kind !== 'impression') continue;
     for (const { entityType, entityId } of event.data.entities) {
       if (!isPointEntityType(entityType) || !isHattedEntity(entityType, entityId)) continue;
-      (hatted ??= []).push({ entityType, entityId });
+      const key = `${entityType}:${entityId}`;
+      if ((seen ??= new Set()).has(key)) continue;
+      seen.add(key);
+      hatted.push({ entityType, entityId });
+      if (hatted.length >= MAX_HATTED_VIEWS_PER_BATCH) return hatted;
     }
   }
-  return hatted ?? [];
+  return hatted;
 }
+
+// Session dates arrive as ISO strings when the session came from the auth hub rather than a cache.
+const toDate = (value: Date | string | null | undefined) =>
+  value == null ? value : new Date(value);
 
 /**
  * Views of hatted entities, for a signed-in viewer only. Resolves the session itself. A session from
@@ -72,7 +86,7 @@ export async function awardViewPoints(
         type: 'view',
         actorId: user.id,
         // Lets the live total skip new and banned accounts at once, not only at the hourly referee.
-        actor: { createdAt: user.createdAt, bannedAt: user.bannedAt },
+        actor: { createdAt: toDate(user.createdAt), bannedAt: toDate(user.bannedAt) },
         entityType,
         entityId,
       }))

@@ -118,13 +118,14 @@ describe('ResourceReview event points', () => {
   });
 
   it('removes for each author in a moderator bulk delete', async () => {
-    dbMock.dbRead.resourceReview.findMany.mockResolvedValue([row]);
+    // Seeded on the primary only: a read from the replica would find nothing.
+    db.resourceReview.findMany.mockResolvedValue([row]);
     db.resourceReview.deleteMany.mockResolvedValue({ count: 1 });
     db.resourceReview.count.mockResolvedValue(0);
     await deleteResourceReviews({ ids: [7] });
     await settle();
     expect(removeEventPoints).toHaveBeenCalledWith([modelLike]);
-    expect(dbMock.dbRead.resourceReview.findMany.mock.calls[0][0]).toMatchObject({
+    expect(db.resourceReview.findMany.mock.calls[0][0]).toMatchObject({
       select: expect.objectContaining({ userId: true }),
     });
   });

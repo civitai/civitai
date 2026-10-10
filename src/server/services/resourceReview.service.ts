@@ -452,8 +452,9 @@ export async function setExcludeResourceReviews({
 export async function deleteResourceReviews({ ids }: { ids: number[] }) {
   if (ids.length === 0) return { count: 0 };
   // Fetch model/version ids BEFORE the delete so we can bust the rating-totals
-  // cache after.
-  const affected = await dbRead.resourceReview.findMany({
+  // cache and send event point removals after. From the primary: a review too new
+  // to have replicated would otherwise be missed and keep its point.
+  const affected = await dbWrite.resourceReview.findMany({
     where: { id: { in: ids } },
     select: { modelId: true, modelVersionId: true, userId: true },
   });
