@@ -21,7 +21,7 @@ async function main() {
   const [name, flag] = process.argv.slice(2);
   if (!name) throw new Error('Pass the event name, e.g. birthday2026');
   const event = (await rosterEvents()).find((e) => e.name === name);
-  if (!event) throw new Error(`${name} has no roster open now (no join, or outside its window)`);
+  if (!event) throw new Error(`${name} has no roster (no join, or its preview has not started)`);
 
   if (flag !== '--execute') {
     const [{ count }] = await dbWrite.$queryRaw<{ count: number }[]>`

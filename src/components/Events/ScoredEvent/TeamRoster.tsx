@@ -51,7 +51,21 @@ export function TeamRoster({
     trpc.event.getTeamRoster.useInfiniteQuery(input, {
       getNextPageParam: (page) => page.nextCursor,
     });
-  const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
+  // The roster is edge-cached for about a minute, so a refetch right after opting out can still
+  // list you: your own status, read uncached, decides your own card.
+  const currentUser = useCurrentUser();
+  const { data: status } = trpc.event.getMyRosterStatus.useQuery(
+    { event },
+    { enabled: !!currentUser }
+  );
+  const hideSelf = !!currentUser && !!status && !status.listedTeam;
+  const items = useMemo(
+    () =>
+      (data?.pages.flatMap((p) => p.items) ?? []).filter(
+        (i) => !(hideSelf && i.user.id === currentUser?.id)
+      ),
+    [data, hideSelf, currentUser?.id]
+  );
   const total = data?.pages[0]?.total ?? 0;
 
   // The cards in view, whose totals are followed live.
@@ -200,6 +214,11 @@ function RosterOptIn({ event }: { event: string }) {
         disabled={!status || isPending}
         onChange={(e) => mutate({ event, optIn: e.currentTarget.checked })}
       />
+      {optedIn && status?.listedTeam && (
+        <Text size="xs" c="dimmed">
+          You&apos;re on the roster. It can take a minute to show for everyone.
+        </Text>
+      )}
       {optedIn && status && !status.listedTeam && (
         <Text size="xs" c="dimmed">
           Saved. You will appear once your account can earn points for your team.

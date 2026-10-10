@@ -3,7 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { loadEvents } from '~/server/events/load-events';
 import { eventPointSeason, seasonOwnerTopicId } from '~/server/events/points/keys';
 import { getOwnerPoints } from '~/server/events/points/read';
-import { eventRosterKeys, type RosterHat } from '~/server/events/points/roster';
+import { eventRosterKeys, TOMBSTONE_PREFIX, type RosterHat } from '~/server/events/points/roster';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 
@@ -17,6 +17,9 @@ export type RosterEvent = {
   startDate: Date;
   teams: readonly string[];
   join: { claimKey: string; design: string };
+  // After this the hourly reconcile stops re-deriving members (their totals are final), but still
+  // prunes tombstones. Absent: never stops.
+  resyncUntil?: Date;
 };
 
 // What Postgres says about one user, for one event.
@@ -112,7 +115,7 @@ export type RosterWriteRedis = Pick<
 
 // What an unlisted member's gate entry holds for a while: never a team, so no read lists them, and
 // different from what any sync in flight read, so its listing write (below) fails.
-const HIDDEN_PREFIX = 'x:';
+const HIDDEN_PREFIX = TOMBSTONE_PREFIX;
 export const isTombstone = (value: string | null | undefined) =>
   !!value && value.startsWith(HIDDEN_PREFIX);
 export const rosterTeam = (value: string | null | undefined) =>
@@ -156,8 +159,9 @@ const seasonsFrom = (event: RosterEvent, now: Date) =>
 export async function syncRosterMembersWith(
   event: RosterEvent,
   userIds: number[],
-  deps: RosterSyncDeps
-) {
+  deps: RosterSyncDeps,
+  attempt = 1
+): Promise<{ listed: number; removed: number }> {
   const ids = [...new Set(userIds)].filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return { listed: 0, removed: 0 };
   const keys = eventRosterKeys(event.name);
@@ -168,6 +172,33 @@ export async function syncRosterMembersWith(
   const states = await deps.loadStates(event, ids);
   const listed = states.filter((s) => isListed(s, event));
   const unlisted = states.filter((s) => !isListed(s, event));
+  // Members whose gate changed under this sync: re-derived from fresh reads below.
+  const changed: number[] = [];
+  const gateWrite = (userId: number, value: string) =>
+    deps.redis
+      .eval(LIST_IF_UNCHANGED, {
+        keys: [keys.members],
+        arguments: [String(userId), previous.get(userId) ?? '', value],
+      })
+      .then((opened) => Number(opened) === 1);
+
+  // Unlisting closes the gate first, so no read can pair a remaining score with a listed member.
+  // Everyone unlisted gets a fresh tombstone, listed before or not: a ban or an opt-out can land
+  // while someone's first opt-in is still in flight, and only a changed gate stops that listing.
+  // The reconcile prunes them after TOMBSTONE_TTL_MS.
+  const closed: number[] = [];
+  for (const group of chunk(unlisted, LIST_CONCURRENCY))
+    await Promise.all(
+      group.map(async (s) => {
+        if (await gateWrite(s.userId, `${HIDDEN_PREFIX}${now.getTime()}`)) closed.push(s.userId);
+        else changed.push(s.userId);
+      })
+    );
+  await clearEntries(event, closed, deps);
+  const removed = closed.filter((id) => rosterTeam(previous.get(id))).length;
+
+  // Listing writes the scores first and opens the gate last. Members go LIST_CONCURRENCY at a
+  // time: each is a few round trips, and a reconcile lists hundreds a batch.
   const points = listed.length
     ? await deps.ownerPoints(
         event,
@@ -175,36 +206,36 @@ export async function syncRosterMembersWith(
         now
       )
     : {};
-
-  // Unlisting closes the gate first, so no read can pair a remaining score with a listed member.
-  // Everyone unlisted gets a fresh tombstone, listed before or not: a ban or an opt-out can land
-  // while someone's first opt-in is still in flight, and only a changed gate stops that listing.
-  // The reconcile prunes them after TOMBSTONE_TTL_MS.
-  const removed = unlisted.filter((s) => rosterTeam(previous.get(s.userId))).length;
-  if (unlisted.length)
-    await deps.redis.hSet(
-      keys.members,
-      Object.fromEntries(
-        unlisted.map((s) => [String(s.userId), `${HIDDEN_PREFIX}${now.getTime()}`])
-      )
-    );
-  await clearEntries(
-    event,
-    unlisted.map((s) => s.userId),
-    deps
-  );
-
-  // Listing writes the scores first and opens the gate last. Members go LIST_CONCURRENCY at a
-  // time: each is a few round trips, and a reconcile lists hundreds a batch.
   for (const group of chunk(listed, LIST_CONCURRENCY))
     await Promise.all(group.map((s) => listOne(s)));
-  return { listed: listed.length, removed };
+
+  // The gate moved under these (an opt-in, opt-out, ban or prune landed meanwhile): what this sync
+  // read may be stale either way, so derive them again from fresh reads. After MAX_SYNC_ATTEMPTS
+  // the member is left hidden, which is the side to fail on.
+  let retried = { listed: 0, removed: 0 };
+  if (changed.length && attempt < MAX_SYNC_ATTEMPTS)
+    retried = await syncRosterMembersWith(event, changed, deps, attempt + 1);
+  else if (changed.length) {
+    const current = await deps.redis.hmGet(keys.members, changed.map(String));
+    await clearEntries(
+      event,
+      changed.filter((_, i) => !rosterTeam(current[i])),
+      deps
+    );
+    logRoster('warning', 'syncRosterMembersWith', { event: event.name, gaveUp: changed.length });
+  }
+  return {
+    listed:
+      listed.length -
+      changed.filter((id) => listed.some((s) => s.userId === id)).length +
+      retried.listed,
+    removed: removed + retried.removed,
+  };
 
   async function listOne(s: RosterMemberState) {
     const team = s.team!;
     const member = String(s.userId);
-    const was = previous.get(s.userId);
-    const wasTeam = rosterTeam(was);
+    const wasTeam = rosterTeam(previous.get(s.userId));
     if (wasTeam && wasTeam !== team)
       await Promise.all(teamKeys(keys, wasTeam).map((k) => deps.redis.zRem(k, member)));
     await Promise.all([
@@ -232,18 +263,12 @@ export async function syncRosterMembersWith(
         )
       ),
     ]);
-    const opened = await deps.redis.eval(LIST_IF_UNCHANGED, {
-      keys: [keys.members],
-      arguments: [member, was ?? '', team],
-    });
-    if (Number(opened) === 1) return;
-    // Refused: the gate changed while this ran. Take back what it wrote, unless another sync
-    // listed them meanwhile (its entries are the same member's, and current).
-    const [current] = await deps.redis.hmGet(keys.members, [member]);
-    if (!rosterTeam(current)) await clearEntries(event, [s.userId], deps);
+    if (!(await gateWrite(s.userId, team))) changed.push(s.userId);
   }
 }
 const LIST_CONCURRENCY = 25;
+// How many times a member whose gate keeps moving is derived again before being left hidden.
+const MAX_SYNC_ATTEMPTS = 3;
 
 // Everything but the gate: a member's scores, hat list and owner topics.
 async function clearEntries(event: RosterEvent, userIds: number[], deps: RosterSyncDeps) {
@@ -287,8 +312,18 @@ export async function rosterEvents(now = new Date()): Promise<RosterEvent[]> {
   const events = await loadEvents();
   return events
     .filter((e) => e.scoring && e.join && now >= (e.previewFrom ?? e.startDate))
-    .map((e) => ({ name: e.name, startDate: e.startDate, teams: e.teams, join: e.join! }));
+    .map((e) => ({
+      name: e.name,
+      startDate: e.startDate,
+      teams: e.teams,
+      join: e.join!,
+      resyncUntil: new Date(
+        e.endDate.getTime() + (e.scoring?.finalizeAfterMs ?? 0) + RESYNC_AFTER_FINAL_MS
+      ),
+    }));
 }
+// How long after an event's scores are final the reconcile keeps re-deriving its roster.
+const RESYNC_AFTER_FINAL_MS = 3 * 24 * 60 * 60 * 1000;
 
 // For write paths that may change someone's listing (a hat bought or put on, a ban). Never throws: a
 // failure only leaves the entry stale until the hourly reconcile. `onlyIfListed` is for changes that
@@ -308,11 +343,19 @@ export async function syncEventRosterMembers(
   deps: RosterSyncDeps = defaultRosterSyncDeps(),
   events?: RosterEvent[]
 ) {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return;
+  let all: RosterEvent[];
   try {
-    const ids = [...new Set(userIds)];
-    if (!ids.length) return;
-    for (const event of events ?? (await rosterEvents())) {
-      if (onlyEvent && event.name !== onlyEvent) continue;
+    all = events ?? (await rosterEvents());
+  } catch (error) {
+    logRoster('error', 'syncEventRosterMembers', { error: (error as Error).message });
+    return;
+  }
+  // One event's failure must not skip the others: a ban still has to reach every roster.
+  for (const event of all) {
+    if (onlyEvent && event.name !== onlyEvent) continue;
+    try {
       let todo = ids;
       if (onlyIfListed) {
         const gate = await deps.redis.hmGet(eventRosterKeys(event.name).members, ids.map(String));
@@ -320,12 +363,13 @@ export async function syncEventRosterMembers(
       }
       for (const batch of chunk(todo, RECONCILE_BATCH))
         await syncRosterMembersWith(event, batch, deps);
+    } catch (error) {
+      logRoster('error', 'syncEventRosterMembers', {
+        event: event.name,
+        users: ids.length,
+        error: (error as Error).message,
+      });
     }
-  } catch (error) {
-    logRoster('error', 'syncEventRosterMembers', {
-      users: userIds.length,
-      error: (error as Error).message,
-    });
   }
 }
 
@@ -361,6 +405,7 @@ export async function reconcileEventRosters(
           keys: [eventRosterKeys(event.name).members],
           arguments: stale.flatMap((id) => [id, gate[id]]),
         });
+      if (event.resyncUntil && now > event.resyncUntil.getTime()) continue;
       const ids = Object.entries(gate)
         .filter(([, v]) => rosterTeam(v))
         .map(([id]) => Number(id));

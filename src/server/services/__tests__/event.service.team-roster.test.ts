@@ -153,6 +153,17 @@ describe('setRosterOptIn', () => {
     expect(result).toEqual({ optedIn: true, listedTeam: 'Blue' });
   });
 
+  it('writes an opt-out as false, and only changes the setting before the preview', async () => {
+    sync.rosterEvents.mockResolvedValue([]);
+    redisMock.sysRedis.hGet.mockResolvedValue(null);
+    await setRosterOptIn({ event: EVENT.name, optIn: false, user: { id: 5 } });
+    expect(settings.patchUserSettings).toHaveBeenCalledWith(5, {
+      mergeInto: { eventRosterOptIn: { birthday2026: false } },
+      location: 'event.service:setRosterOptIn',
+    });
+    expect(sync.syncRosterMembersWith).not.toHaveBeenCalled();
+  });
+
   it('reports a tombstone as not listed', async () => {
     sync.rosterEvents.mockResolvedValue([EVENT]);
     redisMock.sysRedis.hGet.mockResolvedValue('x:123');

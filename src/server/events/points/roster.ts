@@ -153,19 +153,31 @@ export function addRosterPoints(
   );
 }
 
-// The listed members among `ownerIds`, by owner topic id: for the pusher, which must not send a
-// total for someone who has since left the roster. One read.
+// The listed members among these owner topic ids: for the pusher and the interest set, which must
+// never serve someone who has left the roster. The topic map only names the owner; the gate decides,
+// so a topic entry a failed unlisting left behind serves nobody. Two reads.
 export async function listedOwnerTopics(
   event: string,
   topicIds: string[],
   redis: Pick<RosterRedis, 'hmGet'> = sysRedis
 ) {
-  if (!topicIds.length) return new Map<string, number>();
-  const owners = await redis.hmGet(eventRosterKeys(event).topics, topicIds);
   const listed = new Map<string, number>();
-  topicIds.forEach((topicId, i) => {
+  if (!topicIds.length) return listed;
+  const keys = eventRosterKeys(event);
+  const owners = await redis.hmGet(keys.topics, topicIds);
+  const named = topicIds.flatMap((topicId, i) => {
     const ownerId = Number(owners[i]);
-    if (owners[i] && Number.isInteger(ownerId) && ownerId > 0) listed.set(topicId, ownerId);
+    return owners[i] && Number.isInteger(ownerId) && ownerId > 0 ? [{ topicId, ownerId }] : [];
+  });
+  if (!named.length) return listed;
+  const gate = await redis.hmGet(
+    keys.members,
+    named.map((n) => String(n.ownerId))
+  );
+  named.forEach(({ topicId, ownerId }, i) => {
+    if (gate[i] && !gate[i]!.startsWith(TOMBSTONE_PREFIX)) listed.set(topicId, ownerId);
   });
   return listed;
 }
+// The gate's tombstone prefix (roster-sync.ts): a member hidden, not a team.
+export const TOMBSTONE_PREFIX = 'x:';

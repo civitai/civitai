@@ -865,7 +865,8 @@ describe('roster points', () => {
   it('keeps the points when the roster write fails, and logs it', async () => {
     const logError = vi.fn();
     build({ logError });
-    (fake.redis as { zAddIncr: unknown }).zAddIncr = async () => {
+    // A synchronous throw, not a rejection: it must not escape into the grant's Promise.all.
+    (fake.redis as { zAddIncr: unknown }).zAddIncr = () => {
       throw new Error('roster down');
     };
     await engine.awardEventPoints([reaction(1)]);

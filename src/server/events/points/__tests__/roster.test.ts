@@ -578,4 +578,115 @@ describe('team roster', () => {
     await syncEventRosterMembers([1, 2], {}, deps, [EVENT]);
     expect(loaded).toEqual([[1], [1, 2]]);
   });
+
+  // The topic map names a listed member's owner topics, in both seasons during the preview, so the
+  // pusher and the interest set can find them; the gate still decides.
+  it('writes owner topics for a listed member, and serves them only while the gate lists them', async () => {
+    const s = setup([member(1)]);
+    await syncRosterMembersWith(EVENT, [1], s.deps);
+    const topics = (['preview', 'live'] as const).map((x) => seasonOwnerTopicId(EVENT.name, 1, x));
+    expect(await listedOwnerTopics(EVENT.name, topics, s.redis as never)).toEqual(
+      new Map(topics.map((t) => [t, 1]))
+    );
+    // A topic entry left behind by a failed unlisting serves nobody once the gate is a tombstone.
+    await s.redis.hSet(keys.members, '1', 'x:1');
+    expect(await listedOwnerTopics(EVENT.name, topics, s.redis as never)).toEqual(new Map());
+  });
+
+  // A prune between a sync's gate read and its write made the gate empty: the write is refused, and
+  // the member is derived again from fresh reads instead of being dropped.
+  it('lists a member whose old tombstone was pruned while their opt-in synced', async () => {
+    const s = setup([member(1)]);
+    await s.redis.hSet(keys.members, '1', 'x:1');
+    const pruned: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        const states = await s.deps.loadStates(event, ids);
+        if (s.hashes.get(keys.members)?.get('1') === 'x:1') await s.redis.hDel(keys.members, '1');
+        return states;
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], pruned);
+    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+  });
+
+  // A sync that read someone as not opted in, just before their opt-in landed and listed them, must
+  // not tombstone them: its write is refused, and fresh reads see the opt-in.
+  it('never hides a member whose opt-in landed during a sync that read them as hidden', async () => {
+    const s = setup([member(1, { optedIn: false })]);
+    const stale: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        const states = await s.deps.loadStates(event, ids);
+        if (!s.hashes.get(keys.members)?.has('1')) {
+          s.db.set(1, member(1));
+          await syncRosterMembersWith(EVENT, [1], s.deps);
+        }
+        return states;
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], stale);
+    expect(s.hashes.get(keys.members)?.get('1')).toBe('Blue');
+    expect((await s.read('hats')).rows.map((r) => r.userId)).toEqual([1]);
+  });
+
+  it('gives up after a few moving gates and leaves the member hidden, with nothing behind', async () => {
+    const s = setup([member(1)]);
+    let n = 0;
+    const churn: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        await s.redis.hSet(keys.members, '1', `x:churn-${n++}`);
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    await syncRosterMembersWith(EVENT, [1], churn);
+    expect(n).toBe(3);
+    expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
+    expect(s.allKeysHolding('1')).toEqual([]);
+  });
+
+  it('stops re-deriving an event long after its scores are final, but still prunes', async () => {
+    let now = LIVE_NOW;
+    const s = setup([member(1), member(2)], LIVE_NOW);
+    s.deps.now = () => now;
+    await syncRosterMembersWith(EVENT, [1, 2], s.deps);
+    s.db.set(2, member(2, { optedIn: false }));
+    await syncRosterMembersWith(EVENT, [2], s.deps);
+    const loaded = vi.fn(s.deps.loadStates);
+    const gate = async () => Object.fromEntries(s.hashes.get(keys.members) ?? []);
+    const ended = { ...EVENT, resyncUntil: new Date(LIVE_NOW.getTime() + 60_000) };
+    now = new Date(LIVE_NOW.getTime() + 2 * 60 * 60_000);
+    await reconcileEventRosters({ ...s.deps, loadStates: loaded, gate }, [ended]);
+    expect(loaded).not.toHaveBeenCalled();
+    expect(s.hashes.get(keys.members)?.has('2')).toBe(false);
+    // Before the cutoff it re-derives.
+    await reconcileEventRosters({ ...s.deps, loadStates: loaded, gate }, [
+      { ...EVENT, resyncUntil: new Date(now.getTime() + 1) },
+    ]);
+    expect(loaded).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncs in batches of 500, skips the hidden on a listed-only change, and survives a failing event', async () => {
+    const states = Array.from({ length: 1_001 }, (_, i) => member(i + 1));
+    const s = setup(states);
+    const loaded: number[] = [];
+    const deps: RosterSyncDeps = {
+      ...s.deps,
+      loadStates: async (event, ids) => {
+        if (event.name === 'broken') throw new Error('db down');
+        loaded.push(ids.length);
+        return s.deps.loadStates(event, ids);
+      },
+    };
+    const ids = states.map((x) => x.userId);
+    await syncEventRosterMembers(ids, {}, deps, [{ ...EVENT, name: 'broken' }, EVENT]);
+    expect(loaded).toEqual([500, 500, 1]);
+    // Now hide one: a listed-only change skips them, and the never-listed are skipped too.
+    await s.redis.hSet(keys.members, '1', 'x:1');
+    loaded.length = 0;
+    await syncEventRosterMembers([1, 2, 5000], { onlyIfListed: true }, deps, [EVENT]);
+    expect(loaded).toEqual([1]);
+  });
 });

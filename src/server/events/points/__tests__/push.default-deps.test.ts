@@ -239,6 +239,8 @@ describe('roster card pushes with the default deps', () => {
       [keys.base('owner')]: { [String(HAT.ownerId)]: '77' },
       // The roster's topic map names only members listed now (roster.ts).
       [eventRosterKeys(event.name).topics]: listed ? { [owner()]: String(HAT.ownerId) } : {},
+      // ...and the gate decides who is listed.
+      [eventRosterKeys(event.name).members]: listed ? { [String(HAT.ownerId)]: 'Blue' } : {},
     });
   };
   const ownerSends = () =>
@@ -262,6 +264,21 @@ describe('roster card pushes with the default deps', () => {
 
   it('pushes nothing for a listed owner whose card nobody has on screen', async () => {
     serve(true);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([]);
+  });
+
+  // A topic entry a failed unlisting left behind: the topic map still names them, the gate does not.
+  it('pushes nothing for an owner the topic map names but the gate has hidden', async () => {
+    const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
+    serveHashes({
+      [keys.base('hat')]: { [hatField(HAT)]: '30' },
+      [keys.base('owner')]: { [String(HAT.ownerId)]: '77' },
+      [eventRosterKeys(event.name).topics]: { [owner()]: String(HAT.ownerId) },
+      [eventRosterKeys(event.name).members]: { [String(HAT.ownerId)]: 'x:1760000000000' },
+    });
+    watch.set(owner(), Date.now() + 60_000);
     markEventPointsDirty(event, HAT, new Date());
     await drainEventPointsPush();
     expect(ownerSends()).toEqual([]);
