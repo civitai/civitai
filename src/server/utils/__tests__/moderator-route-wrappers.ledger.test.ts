@@ -174,10 +174,10 @@ describe('routes under src/pages/api/mod', () => {
 /**
  * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above: in the
  * route file, or in a module `defaultExportOrigins` reaches from it, up to three hops. A read is the
- * identifier or a string element access (`x['isModerator']`). Not seen: a check under another
- * name, a computed key, an import used only as a callee or inside a function body, an intermediate
- * module that re-exports by name without `export … from`, or a module further away. Each route
- * found must be listed here.
+ * identifier or a string element access (`x['isModerator']`). Not seen, among others: a check
+ * under another name, a computed key, an import used only as a callee or inside a function body,
+ * an intermediate module that re-exports by name without `export … from`, or a module further
+ * away. Each route found must be listed here.
  *
  * - `full credential`: a moderator-only route; it must call `requireFullScopeSession`.
  * - every other entry names why moderator status there is not a moderator-only gate.
@@ -253,9 +253,9 @@ function resolveModule(root: string, fromFile: string, specifier: string): strin
 
 /**
  * The modules a file's default export draws on: each imported binding the exported expression
- * names, through call arguments, property access, type assertions and top-level variable aliases;
- * the module
- * of an `export { … as default }`; and every module the file re-exports from.
+ * names, through call arguments, property access, `as`, `satisfies`, `!`, parentheses and
+ * top-level variable aliases; the module of an `export { … as default }`; and every module the
+ * file re-exports from.
  */
 function defaultExportOrigins(root: string, file: string, source: string): string[] {
   const tree = parse(file, source);
@@ -430,7 +430,7 @@ describe('routeReadsModeratorFlag', () => {
     ['a second hop', "import { handler } from '~/server/hop';\nexport default handler;"],
     ['a third hop', "import { handler } from '~/server/hop2';\nexport default handler;"],
     [
-      'a satisfies expression',
+      'satisfies, non-null and parentheses',
       "import { handler } from '~/server/gated';\nexport default (handler satisfies unknown)!;",
     ],
   ])('sees %s', (_label, source) => {
