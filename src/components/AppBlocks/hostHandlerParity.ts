@@ -61,6 +61,13 @@ export type HostFile = 'IframeHost.tsx' | 'PageBlockHost.tsx' | 'InlineHost.tsx'
  *
  * Keep one-line rationales human-readable — they ARE the documentation a future
  * maintainer reads when the parity test fails.
+ *
+ * The per-host column is also read at RUNTIME: when a host has no handler for a
+ * type, `unhandledOutcomeFor` (`bridgeTelemetry.ts`) reports
+ * `outcome="not_applicable"` where the column holds a rationale string and
+ * `outcome="no_handler"` where it holds `'required'` (or the type is absent). So
+ * flipping an entry between the two moves its unhandled traffic between those
+ * series on `civitai_app_block_bridge_messages_total`.
  */
 export type HostReq = 'required' | string; // string = N/A reason
 

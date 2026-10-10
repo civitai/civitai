@@ -10,6 +10,7 @@ import {
   boundBridgeMessageType,
   isBareReplyType,
   nackReplyTypeFor,
+  unhandledOutcomeFor,
 } from '~/components/AppBlocks/bridgeTelemetry';
 import { blockMessageBatchSchema } from '~/server/schema/track.schema';
 import { buildBridgeNackReply } from '~/components/AppBlocks/bridgeNackReply';
@@ -57,13 +58,13 @@ describe('boundBridgeMessageType (the `type` label bound)', () => {
 });
 
 describe('the label enums are closed', () => {
-  test('outcomes are exactly the six a bridge message can end in', () => {
+  test('outcomes are exactly the seven a bridge message can end in', () => {
     // 🔴 THE WHOLE LIST, IN ORDER, NOT A `toContain` — this is the wire contract
     // the beacon's `z.enum(BRIDGE_MESSAGE_OUTCOMES)` is built from, and a zod
     // array rejects WHOLESALE: an outcome the emitter sends and the schema does
     // not know 400s the entire batch and destroys every good row riding with it.
     //
-    // Five of the six are reported by code in this repo. `validator_rejected` is
+    // Six of the seven are reported by code in this repo. `validator_rejected` is
     // the exception and deliberately so: it is SELF-REPORTED by the block over
     // `BLOCK_MESSAGE_REJECTED`, because the SDK's validator runs in the iframe
     // after this host has already replied — from here that exchange is `handled`,
@@ -75,6 +76,7 @@ describe('the label enums are closed', () => {
       'deduped',
       'no_token',
       'validator_rejected',
+      'not_applicable',
     ]);
   });
 
@@ -117,6 +119,51 @@ describe('the label enums are closed', () => {
     // DECLARED N/A, which is the single most important read on this counter.
     for (const host of BRIDGE_HOSTS) {
       expect(INVENTORY.GET_VIEWER).toHaveProperty(host);
+    }
+  });
+});
+
+describe('unhandledOutcomeFor (declared N/A vs a missing handler)', () => {
+  // Literal expectations, not values read back off INVENTORY: these are the
+  // cases the outcome split exists for, pinned so a predicate that drifted from
+  // the inventory's meaning goes red here.
+  test('a type declared N/A for THIS host is not_applicable', () => {
+    expect(unhandledOutcomeFor('RESIZE_IFRAME', 'PageBlockHost')).toBe('not_applicable');
+    expect(unhandledOutcomeFor('GET_VIEWER', 'IframeHost')).toBe('not_applicable');
+    expect(unhandledOutcomeFor('NAVIGATE', 'IframeHost')).toBe('not_applicable');
+  });
+
+  test('the SAME type on a host that declares it required is no_handler', () => {
+    // The host lookup is the whole predicate: RESIZE_IFRAME is N/A on the page
+    // host and required on the model slot, so one type must yield both outcomes.
+    expect(unhandledOutcomeFor('RESIZE_IFRAME', 'IframeHost')).toBe('no_handler');
+    expect(unhandledOutcomeFor('GET_VIEWER', 'PageBlockHost')).toBe('no_handler');
+    expect(unhandledOutcomeFor('NAVIGATE', 'PageBlockHost')).toBe('no_handler');
+  });
+
+  test('a type the inventory does not declare is no_handler on both hosts', () => {
+    for (const host of BRIDGE_HOSTS) {
+      expect(unhandledOutcomeFor('NOT_A_REAL_MESSAGE', host)).toBe('no_handler');
+      expect(unhandledOutcomeFor('', host)).toBe('no_handler');
+    }
+  });
+
+  test('a PROTOTYPE key is no_handler, never filed as a declared N/A', () => {
+    // `INVENTORY['toString'][host]` is `undefined`, which is not `'required'` —
+    // an `in`/index lookup would therefore call it N/A and hide it.
+    for (const key of ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty']) {
+      for (const host of BRIDGE_HOSTS) {
+        expect(unhandledOutcomeFor(key, host)).toBe('no_handler');
+      }
+    }
+  });
+
+  test('both outcomes are reachable on both hosts (positive control)', () => {
+    // A predicate answering one constant would pass half the cases above; this
+    // proves each host has at least one inventory type on each side of the split.
+    for (const host of BRIDGE_HOSTS) {
+      const outcomes = new Set(Object.keys(INVENTORY).map((t) => unhandledOutcomeFor(t, host)));
+      expect([...outcomes].sort()).toEqual(['no_handler', 'not_applicable']);
     }
   });
 });

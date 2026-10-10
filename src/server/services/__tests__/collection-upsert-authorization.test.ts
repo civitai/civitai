@@ -618,3 +618,39 @@ describe('upsertCollection create-path scan', () => {
     expect(enqueueJobs).not.toHaveBeenCalled();
   });
 });
+
+describe('upsertCollection cover image', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const COVER_KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+  const EXISTING_IMAGE = 4_321;
+
+  const save = (image: Record<string, unknown>, actorId = MANAGER_ID) =>
+    upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Covered', image, userId: actorId, isMember: true },
+    } as never);
+
+  it('points the cover at an existing image by id', async () => {
+    arrange({ actorId: MANAGER_ID });
+
+    await save({ id: EXISTING_IMAGE, url: COVER_KEY, type: 'image' });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image.connectOrCreate.where).toEqual({ id: EXISTING_IMAGE });
+  });
+
+  it('creates a new cover from client columns only', async () => {
+    arrange({ actorId: MANAGER_ID });
+
+    await save({ url: COVER_KEY, type: 'image', width: 10, postId: 9_001, index: 2 });
+
+    const { image } = mockDbWrite.collection.update.mock.calls[0][0].data;
+    expect(image.connectOrCreate.create).toMatchObject({
+      url: COVER_KEY,
+      width: 10,
+      userId: MANAGER_ID,
+    });
+    expect(image.connectOrCreate.create).not.toHaveProperty('postId');
+    expect(image.connectOrCreate.create).not.toHaveProperty('index');
+  });
+});

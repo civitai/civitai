@@ -9,6 +9,7 @@ import {
   BRIDGE_NACK_NO_TOKEN,
   type BridgeHost,
   type BridgeMessageOutcome,
+  unhandledOutcomeFor,
 } from './bridgeTelemetry';
 
 /**
@@ -41,10 +42,12 @@ import {
  * three are present in 0.14.0 — zero of them is ahead. Measure it.
  *
  * ⚠️ And the consequence is worse than an absence, not better: the reports do not
- * vanish, they land on `no_handler` under the NEW type — unclamped, since it would
- * be an INVENTORY key — so `validator_rejected` sits at the zero the HELP string
- * tells a reader to read as a rollout gap while the signal is filed under another
- * outcome entirely.
+ * vanish, they land on an unhandled-message outcome under the NEW type — unclamped,
+ * since it would be an INVENTORY key — so `validator_rejected` sits at the zero the
+ * HELP string tells a reader to read as a rollout gap while the signal is filed
+ * under another outcome entirely. Which one depends on how the new key is
+ * declared: `no_handler` if `'required'`, but `not_applicable` if it copies this
+ * entry's per-host N/A rationale — the likelier edit, and the quieter series.
  *
  * It is still strictly better than the bare literal it replaced — it catches an
  * outright key deletion and a typo in either place. But NOTHING here closes the
@@ -61,9 +64,9 @@ interface UsePostMessageOptions {
    * Which host owns this bridge. Drives the `host` label on
    * `civitai_app_block_bridge_messages_total` and is REQUIRED so a new host
    * cannot be wired up without deciding what it reports as — an unlabelled host
-   * would silently merge into another host's series, and the whole point of the
-   * `no_handler` outcome is that it is per-host (a page-only message unhandled on
-   * the model slot is the expected state; unhandled on the page host is a bug).
+   * would silently merge into another host's series. It also selects
+   * `no_handler` vs `not_applicable` for an unhandled type (see
+   * `unhandledOutcomeFor`).
    */
   host: BridgeHost;
   /**
@@ -380,7 +383,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // 🔴 EXACTLY ONE INCREMENT, AND NOT `handled` — returning here keeps the report
       // out of the denominator, or one rejection moves two series by one and every
       // ratio read against `handled` goes quietly wrong. ABOVE the limiter and the
-      // dedup map, for the same reason the `no_handler` branch is: a flood of junk
+      // dedup map, for the same reason the unhandled-type branch is: a flood of junk
       // must not burn the budget legitimate BLOCK_ERROR reporting needs. Dedup would
       // also be wrong — these carry no `requestId`, and two rejections are two facts.
       if (data.type === BLOCK_MESSAGE_REJECTED) {
@@ -397,7 +400,9 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // lock out legitimate BLOCK_ERROR reporting.
       const subscribers = handlersRef.current.get(data.type);
       if (!subscribers || subscribers.size === 0) {
-        report(data.type, 'no_handler');
+        // Only the label differs: a `not_applicable` request must still reach the
+        // NACK below, or it hangs to its SDK timeout.
+        report(data.type, unhandledOutcomeFor(data.type, host));
         // NACK: a REQUEST-style message with no handler is the expensive silence
         // — the block awaits a reply that will never come and hangs to its SDK
         // timeout class (30s default, 120s workflow, 600s human-in-the-loop).
@@ -464,7 +469,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       report(data.type, 'handled');
       for (const handler of subscribers) handler(data.payload);
     },
-    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock]
+    [expectedOrigin, iframeRef, opaqueOrigin, report, postToBlock, host]
   );
 
   useEffect(() => {

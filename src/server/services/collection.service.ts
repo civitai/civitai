@@ -66,6 +66,7 @@ import type { GetModelsWithImagesAndModelVersions } from '~/server/services/mode
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -1414,7 +1415,7 @@ export const upsertCollection = async ({
                   connectOrCreate: {
                     where: { id: image.id ?? -1 },
                     create: {
-                      ...image,
+                      ...pickClientImageColumns(image),
                       meta:
                         (sanitizeProvenance(
                           image?.meta as Record<string, unknown> | null | undefined
