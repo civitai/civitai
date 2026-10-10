@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 /**
  * Every route under `src/pages/api/mod` must default-export a call to one of the wrappers below,
@@ -172,10 +172,11 @@ describe('routes under src/pages/api/mod', () => {
 });
 
 /**
- * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above, in the
- * route file or in the module its default export comes from. A read is the identifier or a string
- * element access (`x['isModerator']`); a check under another name, or one further down the import
- * graph, is not seen. Each route found must be listed here.
+ * Routes elsewhere under `src/pages/api` that read `isModerator` outside the wrappers above: in the
+ * route file, or in a module its default export draws on, followed up to three hops (see
+ * `defaultExportOrigins`). A read is the identifier or a string element access
+ * (`x['isModerator']`). Not seen: a check under another name, a computed key, a module the default
+ * export does not name, or one further away. Each route found must be listed here.
  *
  * - `full credential`: a moderator-only route; it must call `requireFullScopeSession`.
  * - every other entry names why moderator status there is not a moderator-only gate.
@@ -249,11 +250,17 @@ function resolveModule(root: string, fromFile: string, specifier: string): strin
     .find((candidate) => fs.existsSync(candidate));
 }
 
-/** The module a file's default export is imported or re-exported from, if it is one. */
-function defaultExportOrigin(root: string, file: string, source: string): string | undefined {
+/**
+ * The modules a file's default export draws on: each imported binding the exported expression
+ * names, through call arguments, property access, `as` and a top-level `const` alias; the module
+ * of an `export { … as default }`; and every module the file re-exports from.
+ */
+function defaultExportOrigins(root: string, file: string, source: string): string[] {
   const tree = parse(file, source);
   const importedFrom = new Map<string, string>();
-  let origin: string | undefined;
+  const aliases = new Map<string, ts.Expression>();
+  const specifiers = new Set<string>();
+  const exported: ts.Expression[] = [];
   for (const statement of tree.statements) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
       const clause = statement.importClause;
@@ -262,34 +269,63 @@ function defaultExportOrigin(root: string, file: string, source: string): string
       const bindings = clause?.namedBindings;
       if (bindings && ts.isNamedImports(bindings))
         for (const element of bindings.elements) importedFrom.set(element.name.text, specifier);
+      if (bindings && ts.isNamespaceImport(bindings))
+        importedFrom.set(bindings.name.text, specifier);
     }
-    if (
-      ts.isExportDeclaration(statement) &&
-      statement.moduleSpecifier &&
-      ts.isStringLiteral(statement.moduleSpecifier) &&
-      statement.exportClause &&
-      ts.isNamedExports(statement.exportClause) &&
-      statement.exportClause.elements.some((e) => e.name.text === 'default')
-    )
-      origin = statement.moduleSpecifier.text;
-    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
-      let expression = statement.expression;
-      while (ts.isCallExpression(expression) || ts.isParenthesizedExpression(expression))
-        expression = ts.isCallExpression(expression)
-          ? expression.arguments[0] ?? expression.expression
-          : expression.expression;
-      if (ts.isIdentifier(expression)) origin = importedFrom.get(expression.text);
+    if (ts.isVariableStatement(statement))
+      for (const declaration of statement.declarationList.declarations)
+        if (ts.isIdentifier(declaration.name) && declaration.initializer)
+          aliases.set(declaration.name.text, declaration.initializer);
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier))
+        specifiers.add(statement.moduleSpecifier.text);
+      else if (statement.exportClause && ts.isNamedExports(statement.exportClause))
+        for (const element of statement.exportClause.elements)
+          if (element.name.text === 'default') exported.push(element.propertyName ?? element.name);
     }
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals)
+      exported.push(statement.expression);
   }
-  return origin && resolveModule(root, file, origin);
+
+  // A call contributes its arguments, not its callee: `AuthedEndpoint(handler)` draws on `handler`.
+  // A function literal's body is in this file, which is already read.
+  const seen = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) {
+      if (seen.has(node.text)) return;
+      seen.add(node.text);
+      const specifier = importedFrom.get(node.text);
+      if (specifier) specifiers.add(specifier);
+      const alias = aliases.get(node.text);
+      if (alias) visit(alias);
+    } else if (ts.isPropertyAccessExpression(node)) visit(node.expression);
+    else if (ts.isCallExpression(node)) node.arguments.forEach(visit);
+    else if (
+      ts.isAsExpression(node) ||
+      ts.isParenthesizedExpression(node) ||
+      ts.isSatisfiesExpression(node) ||
+      ts.isNonNullExpression(node)
+    )
+      visit(node.expression);
+  };
+  exported.forEach(visit);
+
+  return [...specifiers]
+    .map((specifier) => resolveModule(root, file, specifier))
+    .filter((origin): origin is string => !!origin);
 }
 
-/** Whether a route, or the module its default export comes from, reads the moderator flag. */
-function routeReadsModeratorFlag(root: string, file: string): boolean {
+/**
+ * Whether a route, or a module its default export draws on (followed `depth` hops), reads the
+ * moderator flag.
+ */
+function routeReadsModeratorFlag(root: string, file: string, depth = 3): boolean {
   const source = fs.readFileSync(file, 'utf8');
   if (readsModeratorFlag(file, source)) return true;
-  const origin = defaultExportOrigin(root, file, source);
-  return !!origin && readsModeratorFlag(origin, fs.readFileSync(origin, 'utf8'));
+  if (depth === 0) return false;
+  return defaultExportOrigins(root, file, source).some((origin) =>
+    routeReadsModeratorFlag(root, origin, depth - 1)
+  );
 }
 
 /** Whether the code names `name` anywhere; comments are not part of the tree. */
@@ -342,6 +378,8 @@ describe('routeReadsModeratorFlag', () => {
   const gate = 'export function handler(s: any) { if (!s?.user?.isModerator) throw 0; }\n';
   write('src/server/gated.ts', `${gate}export default handler;\n`);
   write('src/server/open.ts', 'export default function handler() {}\n');
+  write('src/server/hop.ts', "export { handler } from './gated';\n");
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
 
   it.each([
     ['an identifier read in the route', 'export default (s: any) => s.user.isModerator;'],
@@ -363,6 +401,28 @@ describe('routeReadsModeratorFlag', () => {
       'a wrapped imported gated handler',
       "import { handler } from '../../server/gated';\nexport default withAxiom(handler);",
     ],
+    [
+      'a handler passed after other wrapper arguments',
+      "import { handler } from '~/server/gated';\nexport default withA({}, withB(handler));",
+    ],
+    ['a default import', "import gated from '~/server/gated';\nexport default gated;"],
+    [
+      'a namespace import',
+      "import * as gated from '~/server/gated';\nexport default gated.handler;",
+    ],
+    [
+      'a local export as default',
+      "import { handler } from '~/server/gated';\nexport { handler as default };",
+    ],
+    [
+      'a local alias',
+      "import { handler } from '~/server/gated';\nconst h = handler;\nexport default h;",
+    ],
+    [
+      'an as-expression',
+      "import { handler } from '~/server/gated';\nexport default handler as unknown;",
+    ],
+    ['a second hop', "import { handler } from '~/server/hop';\nexport default handler;"],
   ])('sees %s', (_label, source) => {
     expect(routeReadsModeratorFlag(root, write('src/pages/api/route.ts', source))).toBe(true);
   });
@@ -371,6 +431,10 @@ describe('routeReadsModeratorFlag', () => {
     ['a comment', '// user.isModerator\nexport default () => null;'],
     ['a re-export of a module without the read', "export { default } from '~/server/open';"],
     ['a package import', "import handler from 'next';\nexport default handler;"],
+    [
+      'a wrapper whose own module reads the flag',
+      "import { handler as wrap } from '~/server/gated';\nexport default wrap(() => null);",
+    ],
   ])('does not see %s', (_label, source) => {
     expect(routeReadsModeratorFlag(root, write('src/pages/api/route.ts', source))).toBe(false);
   });
@@ -415,11 +479,11 @@ describe('routes under src/pages/api outside the moderator wrappers', () => {
     expect(files.length).toBeGreaterThan(300);
   });
 
-  it('follows a default export to the module it comes from', () => {
+  it("resolves a real route's default export to its module", () => {
     const route = path.join(API_ROUTES, 'internal/game-frame/reports/index.ts');
-    expect(defaultExportOrigin(REPO_ROOT, route, fs.readFileSync(route, 'utf8'))).toBe(
-      path.join(REPO_ROOT, 'src/server/game-frame/report-endpoints.ts')
-    );
+    expect(defaultExportOrigins(REPO_ROOT, route, fs.readFileSync(route, 'utf8'))).toEqual([
+      path.join(REPO_ROOT, 'src/server/game-frame/report-endpoints.ts'),
+    ]);
   });
 
   it('that read isModerator are each classified', () => {
