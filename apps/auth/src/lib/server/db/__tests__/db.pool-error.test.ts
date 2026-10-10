@@ -26,7 +26,7 @@ vi.mock('pg', async (importOriginal) => {
 
 vi.mock('../../axiom', () => ({ logAxiomError: h.logAxiomError }));
 
-process.env.DATABASE_URL ??= 'postgresql://user:pass@127.0.0.1:1/test';
+process.env.DATABASE_URL = 'postgresql://user:pass@127.0.0.1:1/test';
 
 const dropped = () => new Error('Connection terminated unexpectedly');
 
@@ -59,5 +59,18 @@ describe('auth hub db pool', () => {
       err,
       expect.objectContaining({ event: expect.any(String) })
     );
+  });
+
+  it('survives a second error on the same checked-out client', () => {
+    // A socket error is followed by the socket's 'end', which pg reports as a second 'error' on the same
+    // client — so the listener must outlive the first one.
+    const Client = h.Client;
+    if (!Client) throw new Error('pg mock did not run');
+    const client = new Client();
+    pool.emit('connect', client);
+
+    expect(() => client.emit('error', new Error('read ECONNRESET'))).not.toThrow();
+    expect(() => client.emit('error', dropped())).not.toThrow();
+    expect(h.logAxiomError).toHaveBeenCalledTimes(2);
   });
 });
