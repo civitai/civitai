@@ -144,9 +144,9 @@ export function projectSubListingCard(
 /**
  * Sub-listing rows for the store grid, hydrated live below the catalog cache.
  *
- * Only `approved` rows by authors who are not banned or deleted are returned, so a child that
- * changed after its id was cached drops out on the next render rather than waiting for the
- * cache to expire.
+ * Only `approved` rows by authors who are not banned or deleted, and, for an off-site parent, with
+ * a usable link template, are returned, so a child that changed after its id was cached drops out
+ * on the next render rather than waiting for the cache to expire.
  */
 export async function hydrateSubListingCards(
   db: Pick<PrismaClient, '$queryRaw'>,

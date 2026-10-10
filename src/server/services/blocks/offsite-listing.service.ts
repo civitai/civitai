@@ -267,7 +267,7 @@ export async function submitExternalListing(opts: {
 
   // Load + gate the caller's OAuth client (exists / owned / not-app-block). The
   // listing's requested scopes are AUTO-DERIVED from the client's CURRENT
-  // `allowedScopes` — the client already declares its scopes at creation, so a
+  // consentable scopes — the client already declares its scopes at creation, so a
   // form-supplied `input.requestedScopes` mask is IGNORED (server-authoritative
   // snapshot). This snapshots the reviewed set: a later widening of the client's
   // allowedScopes does NOT silently expand a live/approved listing (a re-submit /
@@ -396,7 +396,8 @@ export async function submitExternalListing(opts: {
  * Load an OAuth client and assert it is eligible to back an external listing: it must
  * EXIST and NOT be an App-Block client (`isAppBlockOauthClientId` — those are managed
  * by the App Blocks flow, not hand-listed). By default it must also be OWNED by
- * `userId` (IDOR). Returns the client's `allowedScopes` ceiling. An external listing
+ * `userId` (IDOR). Returns the client's consentable scopes (`consentableScopes`) as its
+ * `allowedScopes` ceiling. An external listing
  * does NOT require the client to be `isVerified` (decision Q4). All failures are
  * friendly TRPCErrors (parity with `submitExternalListing`'s validation style).
  *
@@ -519,7 +520,7 @@ export async function deriveScopePatch(opts: {
   }
   const connectAllowedScopes = consentableScopes(client.allowedScopes);
   // SERVER-AUTHORITATIVE snapshot: the disclosed set is ALWAYS the client's CURRENT
-  // allowedScopes; the form-supplied `patch.requestedScopes` is overwritten. A drift
+  // consentable scopes (`consentableScopes(allowedScopes)`); the form-supplied `patch.requestedScopes` is overwritten. A drift
   // from the stored snapshot is then a MATERIAL change (patchHasMaterialChange) → the
   // approved edit re-enters mod review via a shadow revision.
   const effectivePatch: UpdateListingPatch = { ...patch, requestedScopes: connectAllowedScopes };
@@ -2026,7 +2027,7 @@ export type GetMyListingForEditResult = {
   /** The linked OAuth client id (null for a non-connect listing — none in the merged model). */
   connectClientId: string | null;
   /**
-   * The client's CURRENT `allowedScopes` (null when no client / not found). This IS
+   * The client's CURRENT consentable scopes (null when no client / not found). This IS
    * the derived requested-scope set the edit form displays read-only + submits — the
    * server re-snapshots `requestedScopes` from it on save.
    */
@@ -2283,7 +2284,7 @@ export async function getMyListingForEdit(opts: {
     listingId
   );
 
-  // Resolve the connect client's CURRENT allowedScopes — this is the derived
+  // Resolve the connect client's CURRENT consentable scopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
   // re-snapshots `requestedScopes` from it on save). null when the listing has no
   // client or the client no longer exists.

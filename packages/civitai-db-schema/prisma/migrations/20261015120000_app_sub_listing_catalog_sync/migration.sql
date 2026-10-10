@@ -6,9 +6,9 @@
 -- database (the one holding `app_sub_listing_parents`), dev first, then production. It needs
 -- `20261010120000_app_sub_listings` applied first.
 --
--- Either order with the code deploy is safe. Before this file is applied, the catalog endpoints
--- (`/api/v1/catalog/items*`) answer 503 and the store keeps its previous behaviour: no off-site
--- parent's children are shown, and on-site children are unaffected.
+-- Safe in either order with the code deploy: until applied, the catalog endpoints
+-- (`/api/v1/catalog/items*`) answer 503 and off-site children stay out of the store; on-site
+-- children are unaffected.
 --
 -- ADDITIVE ONLY. One nullable column with a CHECK on `app_sub_listing_parents`; no row changes.
 -- Idempotent (`IF NOT EXISTS`), so a re-run is a no-op.
@@ -18,10 +18,10 @@
 -- an off-site parent's children only while it is set. It is set by hand, per parent.
 --
 -- LOCKS. Adding a nullable column without a default is a catalog-only change, but it takes an
--- ACCESS EXCLUSIVE lock on `app_sub_listing_parents` (a handful of rows), and the CHECK is
--- validated by scanning it. While the lock is held or queued, the store's sub-listing read
--- waits. `lock_timeout` caps the wait at 3s: on `canceling statement due to lock timeout`
--- nothing was applied (one transaction); wait and re-run.
+-- ACCESS EXCLUSIVE lock on `app_sub_listing_parents`, and the CHECK is validated by scanning it.
+-- While the lock is held or queued, the store's sub-listing read waits. `lock_timeout` caps the
+-- wait at 3s: on `canceling statement due to lock timeout` nothing was applied (one
+-- transaction); wait and re-run.
 --
 -- ROLLBACK (drops every parent's link template; off-site children then leave the store and the
 -- catalog endpoints answer 503 again):

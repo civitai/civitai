@@ -2,7 +2,7 @@ import { redirect, fail, error } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
-import { scopeLabels } from '$lib/server/oauth/scope';
+import { carriesClientCredentialsOnlyScope, scopeLabels } from '$lib/server/oauth/scope';
 import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import {
@@ -68,6 +68,7 @@ export const load: PageServerLoad = async ({ url, locals, cookies }) => {
   // UserRead is the forced baseline — reflect it in the displayed + submitted scope.
   const scope =
     (parseInt(params.scope ?? url.searchParams.get('scope') ?? '0', 10) || 0) | TokenScope.UserRead;
+  if (carriesClientCredentialsOnlyScope(scope)) return { invalid: true as const };
   const scopes = scopeLabels(scope);
 
   // Hidden-field values for the Approve form (normalized scope incl. UserRead). Typed as a Record so

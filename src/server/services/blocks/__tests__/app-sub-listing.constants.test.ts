@@ -177,6 +177,14 @@ describe('isValidSubListingLinkTemplate', () => {
     ['userinfo', 'https://user@games.example.com/{id}'],
     ['too long', `https://games.example.com/${'a'.repeat(300)}{id}`],
   ])('refuses %s', (_label, t) => expect(isValidSubListingLinkTemplate(t)).toBe(false));
+
+  it('accepts exactly 300 characters and refuses 301', () => {
+    const base = 'https://g.example.com/{id}';
+    const at = base + 'a'.repeat(300 - base.length);
+    expect(at).toHaveLength(300);
+    expect(isValidSubListingLinkTemplate(at)).toBe(true);
+    expect(isValidSubListingLinkTemplate(at + 'a')).toBe(false);
+  });
 });
 
 describe('subListingExternalHref', () => {

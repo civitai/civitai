@@ -109,7 +109,7 @@ export function isValidSubListingExternalId(value: string): boolean {
 
 export const APP_SUB_LISTING_LINK_TEMPLATE_MAX = 300;
 export const APP_SUB_LISTING_LINK_TEMPLATE_PLACEHOLDER = '{id}';
-/** An https origin followed by a path. Byte-identical to the DB CHECK. */
+/** An https origin followed by a path; the DB CHECK uses the same pattern (a test pins them). */
 export const APP_SUB_LISTING_LINK_TEMPLATE_PREFIX_RE = /^https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?\//;
 
 /** The DB CHECK on `app_sub_listing_parents.link_template`: https, bounded, exactly one `{id}`. */

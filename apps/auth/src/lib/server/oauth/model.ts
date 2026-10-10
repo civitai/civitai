@@ -370,8 +370,8 @@ export const oauthModel = {
   // ─── Scope Validation ──────────────────────────────────────
 
   async validateScope(user: User, client: Client, scope: string[]): Promise<string[] | false> {
-    // UserRead is always granted as a baseline (see createOAuthTokenPair).
-    // Force it into the requested set so it propagates to the issued token.
+    // UserRead is always granted as a baseline: force it into the requested set so it propagates to
+    // the issued token.
     const requestedScope = stringToScope(scope) | TokenScope.UserRead;
     // Default a MISSING ceiling to UserRead (read-only), NOT Full — the safer fallback for third-party
     // clients. First-party clients are unaffected: they carry an explicit `Full` ceiling (the synthesized

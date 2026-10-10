@@ -9,7 +9,10 @@ import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing
 import { PARENT_LINK_TEMPLATE_SQL } from '~/server/services/blocks/app-sub-listing-store.service';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
-import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
+import {
+  assertSharedWriteTrust,
+  hasLinkedOAuthAccount,
+} from '~/server/services/blocks/block-write-trust.service';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -46,8 +49,8 @@ import type {
  * `/apps/review`. A write busts the store catalog cache when it changes what the cached id
  * page can contain.
  *
- * The tables are manual-apply. While they are absent every function here throws
- * `SubListingError` with status 503 rather than a raw Prisma error.
+ * The tables and the `link_template` column are manual-apply. While they are absent every
+ * function here throws `SubListingError` with status 503 rather than a raw Prisma error.
  */
 
 export type SubListingErrorCode =
@@ -747,7 +750,7 @@ async function resolveCatalogAuthor(
 ): Promise<SessionUser> {
   const authorId = creatorUserId ?? parent.ownerUserId;
   if (authorId !== parent.ownerUserId) {
-    const consent = await dbRead.oauthConsent.findUnique({
+    const consent = await dbWrite.oauthConsent.findUnique({
       where: { userId_clientId: { userId: authorId, clientId } },
       select: { id: true },
     });
@@ -761,8 +764,7 @@ async function resolveCatalogAuthor(
   }
   const user = (await sessionClient.getSessionUserById(authorId)) as SessionUser | null;
   if (!user) throw new SubListingError(404, 'creator_not_found', 'Creator not found');
-  const hasLinkedOAuth =
-    !user.emailVerified && (await dbRead.account.count({ where: { userId: authorId } })) > 0;
+  const hasLinkedOAuth = await hasLinkedOAuthAccount(user);
   try {
     assertSharedWriteTrust(user, hasLinkedOAuth);
   } catch {
@@ -873,24 +875,44 @@ export async function upsertCatalogSubListing(args: {
   }
 }
 
-/** Withdraw a catalog item, whoever authored it. A hidden item stays hidden. */
+/**
+ * Withdraw a catalog item, whoever authored it. A hidden item stays hidden, but can then only be
+ * restored to review: its platform no longer lists it. Deleting an unknown or already withdrawn
+ * item changes nothing and is not rate limited.
+ */
 export async function withdrawCatalogSubListing(args: {
   parentListingId: string;
   externalId: string;
 }): Promise<{ ok: true; withdrawn: boolean }> {
   assertExternalId(args.externalId);
-  const rate = await checkSubListingSyncRateLimit(args.parentListingId);
-  if (!rate.allowed) {
-    throw new SubListingError(
-      429,
-      'rate_limited',
-      'Too many store item updates, retry later',
-      rate.retryAfterSeconds
-    );
-  }
+  const where = { parentListingId: args.parentListingId, itemKey: args.externalId };
   try {
+    const row = await dbWrite.appSubListing.findUnique({
+      where: { parentListingId_itemKey: where },
+      select: { status: true, approvedAt: true },
+    });
+    if (!row || row.status === 'withdrawn' || (row.status === 'hidden' && !row.approvedAt)) {
+      return { ok: true, withdrawn: false };
+    }
+    const rate = await checkSubListingSyncRateLimit(args.parentListingId);
+    if (!rate.allowed) {
+      throw new SubListingError(
+        429,
+        'rate_limited',
+        'Too many store item updates, retry later',
+        rate.retryAfterSeconds
+      );
+    }
+    if (row.status === 'hidden') {
+      // Moving `updated_at` also fails a restore that read the row before this change.
+      await dbWrite.appSubListing.updateMany({
+        where: { ...where, status: 'hidden' },
+        data: { approvedAt: null, updatedAt: new Date() },
+      });
+      return { ok: true, withdrawn: false };
+    }
     const count = await transitionActive({
-      where: { parentListingId: args.parentListingId, itemKey: args.externalId },
+      where,
       data: { status: 'withdrawn', ...CLEAR_PENDING },
     });
     return { ok: true, withdrawn: count > 0 };
@@ -924,7 +946,8 @@ export async function listCatalogSubListings(args: {
   try {
     const rows = await dbRead.appSubListing.findMany({
       where: { parentListingId: args.parentListingId },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      // Ids are ULIDs, so this is creation order, and the primary key serves it.
+      orderBy: { id: 'asc' },
       take: CATALOG_LIST_PAGE_SIZE + 1,
       ...(args.cursor ? { cursor: { id: args.cursor }, skip: 1 } : {}),
       select: {

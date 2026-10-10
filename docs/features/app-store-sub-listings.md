@@ -99,21 +99,24 @@ statusReason, editRejectionReason, updatedAt`.
 
 A PUT follows the same rules as an in-app publish: a new item, or a withdrawn one republished,
 waits for a moderator; an edit to an approved item is staged and the live card keeps serving; a
-hidden item answers `200` with `status: "hidden"` and is not changed. An identical re-sync writes
-nothing and is not rate limited. Title and tagline go through cleaning and the shared text-safety
-check (never as a moderator), and the rating may not be less mature than the parent's. There are
-no item images yet: the card shows the parent's cover.
+hidden item answers `200` with `status: "hidden"` (to its own creator) and is not changed. An
+identical re-sync writes nothing and is not rate limited. The title (1-80 characters) and tagline
+(at most 140) go through cleaning and the shared text-safety check (never as a moderator), and the
+rating may not be less mature than the parent's. There are no item images yet: the card shows the
+parent's cover.
 
 The author is the listing's owner, or `creatorUserId` when that user has signed in to the platform
 with Civitai (an OAuth consent to the token's client). Either must pass the shared-write trust
 check. An existing item is never re-attributed. A DELETE withdraws the item whoever authored it
-and never lifts a hide.
+and never lifts a hide; a hidden item it targets can afterwards only be restored to review, not
+straight back into the store. Deleting an unknown or already withdrawn item changes nothing and is
+not rate limited.
 
 | Status | Code                                                       | When                                                                                      |
 | ------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | 401    | `invalid_token`                                            | missing, unknown, expired or non-OAuth token, or a token sent anywhere but the header     |
 | 403    | `insufficient_scope`                                       | no `AppStoreCatalogWrite`, or not a client-credentials token of its client                |
-| 403    | `not_enabled`                                              | no enabled parent for the client                                                          |
+| 403    | `not_enabled`                                              | no listing qualifies as the client's parent (see Endpoints above)                         |
 | 409    | `parent_ambiguous`                                         | more than one (a configuration error)                                                     |
 | 400    | `invalid_body`, `text_rejected`, `rating_too_loose`        | as named                                                                                  |
 | 403    | `creator_not_linked`, `untrusted`                          | the creator has no consent to the client, or fails the trust check                        |

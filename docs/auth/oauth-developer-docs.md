@@ -198,7 +198,7 @@ Responses:
 
 ## Client Credentials Flow
 
-For server-to-server communication (no user context):
+For server-to-server communication (the client acts as itself):
 
 ```
 POST https://auth.civitai.com/api/auth/oauth/token

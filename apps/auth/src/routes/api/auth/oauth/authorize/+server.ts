@@ -9,7 +9,7 @@ import { getOrCreateDeviceId, touchAccount } from '$lib/server/auth/device';
 import { resolveAuthorizingUser } from '$lib/server/auth/pending-authz';
 import { getOrProduceSessionUser } from '$lib/server/auth/session-producer';
 import { redirectUriMatches } from '$lib/server/oauth/redirect-uri';
-import { hasScope } from '$lib/server/oauth/scope';
+import { carriesClientCredentialsOnlyScope, hasScope } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { resolveClientLite, authorizeRedirectUriStore } from '$lib/server/oauth/model';
 import { checkClientAccess } from '$lib/server/oauth/access';
@@ -127,6 +127,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // intersection (validateScope) is the real auth gate.
   if (isNaN(rawScope) || rawScope < 0 || rawScope > ALL_SCOPES) {
     return oauthError(400, 'invalid_scope', 'Invalid scope value');
+  }
+  // Refused before the consent screen, so a user is never asked for it and no consent row stores it.
+  if (carriesClientCredentialsOnlyScope(rawScope)) {
+    return oauthError(400, 'invalid_scope', 'This scope cannot be granted by a user');
   }
   // UserRead is the mandatory baseline (createOAuthTokenPair forces it on the issued token); force it
   // here too so the stored consent + consent screen reflect what the token actually carries.

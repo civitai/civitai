@@ -134,7 +134,7 @@ beforeEach(() => {
   }
   mockPoolQuery.mockReset();
   read.appListing.findFirst.mockResolvedValue(catalogParent());
-  read.oauthConsent.findUnique.mockResolvedValue(null);
+  write.oauthConsent.findUnique.mockResolvedValue(null);
   read.account.count.mockResolvedValue(0);
   mockGetSessionUser.mockImplementation(async (id: number) => user(id));
   write.appSubListing.findUnique.mockResolvedValue(null);
@@ -188,6 +188,15 @@ describe('upsertCatalogSubListing — new items', () => {
     expect(mockTextSafe).toHaveBeenCalledWith(
       expect.objectContaining({ userId: OWNER, isModerator: false })
     );
+  });
+
+  it('stores the title and tagline the text check returns, not the raw input', async () => {
+    mockTextSafe.mockResolvedValueOnce({ title: 'Neon Drift (clean)', body: 'Arcade (clean)' });
+    await put();
+    expect(write.appSubListing.create.mock.calls[0][0].data).toMatchObject({
+      title: 'Neon Drift (clean)',
+      tagline: 'Arcade (clean)',
+    });
   });
 
   it('refuses when the client has no enabled parent', async () => {
@@ -251,9 +260,9 @@ describe('upsertCatalogSubListing — creator attribution', () => {
   const asCreator = () => put({ ...BODY, creatorUserId: CREATOR });
 
   it('attributes the item to a creator who consented to the same client', async () => {
-    read.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
+    write.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
     await asCreator();
-    expect(read.oauthConsent.findUnique.mock.calls[0][0].where).toEqual({
+    expect(write.oauthConsent.findUnique.mock.calls[0][0].where).toEqual({
       userId_clientId: { userId: CREATOR, clientId: CLIENT },
     });
     expect(write.appSubListing.create.mock.calls[0][0].data.authorUserId).toBe(CREATOR);
@@ -267,7 +276,7 @@ describe('upsertCatalogSubListing — creator attribution', () => {
   });
 
   it('refuses a creator whose account is gone', async () => {
-    read.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
+    write.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
     mockGetSessionUser.mockResolvedValueOnce(null);
     await expectError(asCreator(), 404, 'creator_not_found');
     nothingWritten();
@@ -279,7 +288,7 @@ describe('upsertCatalogSubListing — creator attribution', () => {
     ['not onboarded', { onboarding: 0 }],
     ['unverified with no linked account', { emailVerified: null }],
   ])('refuses a %s creator', async (_label, over) => {
-    read.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
+    write.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
     mockGetSessionUser.mockResolvedValueOnce(user(CREATOR, over));
     await expectError(asCreator(), 403, 'untrusted');
     nothingWritten();
@@ -287,12 +296,20 @@ describe('upsertCatalogSubListing — creator attribution', () => {
 
   it('needs no consent for the listing owner named explicitly', async () => {
     await put({ ...BODY, creatorUserId: OWNER });
-    expect(read.oauthConsent.findUnique).not.toHaveBeenCalled();
+    expect(write.oauthConsent.findUnique).not.toHaveBeenCalled();
     expect(write.appSubListing.create.mock.calls[0][0].data.authorUserId).toBe(OWNER);
   });
 
+  it('reports author_mismatch when another creator’s row appears while saving', async () => {
+    write.appSubListing.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(itemRow({ authorUserId: 99 }));
+    await expectError(put(), 409, 'author_mismatch');
+    nothingWritten();
+  });
+
   it('never re-attributes an existing item to another creator', async () => {
-    read.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
+    write.oauthConsent.findUnique.mockResolvedValueOnce({ id: 1 });
     write.appSubListing.findUnique.mockResolvedValueOnce(itemRow({ authorUserId: OWNER }));
     await expectError(asCreator(), 409, 'author_mismatch');
     expect(mockSyncRate).not.toHaveBeenCalled();
@@ -312,6 +329,29 @@ describe('upsertCatalogSubListing — existing items', () => {
     expect(mockSyncRate).not.toHaveBeenCalled();
     expect(mockTextSafe).not.toHaveBeenCalled();
     nothingWritten();
+  });
+
+  it('an identical re-sync of a pending item writes nothing either', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(itemRow({ status: 'pending' }));
+    await expect(put()).resolves.toMatchObject({ status: 'pending', pendingEdit: false });
+    expect(mockSyncRate).not.toHaveBeenCalled();
+    nothingWritten();
+  });
+
+  it('re-syncing the live content of an approved item clears its staged edit', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(
+      itemRow({
+        pendingTitle: 'Neon Drift 2',
+        pendingSubPath: 'neon-drift',
+        pendingSubmittedAt: new Date(VERSION),
+      })
+    );
+    await expect(put()).resolves.toMatchObject({ status: 'approved', pendingEdit: false });
+    expect(write.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
+      pendingTitle: null,
+      pendingSubmittedAt: null,
+    });
+    expect(mockSyncRate).toHaveBeenCalledTimes(1);
   });
 
   it('a changed approved item stages the edit and keeps the live card', async () => {
@@ -363,10 +403,12 @@ describe('upsertCatalogSubListing — existing items', () => {
 });
 
 describe('withdrawCatalogSubListing', () => {
+  const del = (externalId = 'neon-drift') =>
+    withdrawCatalogSubListing({ parentListingId: PARENT, externalId });
+
   it('withdraws the item whoever authored it, pending or approved only', async () => {
-    await expect(
-      withdrawCatalogSubListing({ parentListingId: PARENT, externalId: 'neon-drift' })
-    ).resolves.toEqual({ ok: true, withdrawn: true });
+    write.appSubListing.findUnique.mockResolvedValueOnce(itemRow({ authorUserId: CREATOR }));
+    await expect(del()).resolves.toEqual({ ok: true, withdrawn: true });
     const wheres = write.appSubListing.updateMany.mock.calls.map(
       (c: [{ where: Record<string, unknown> }]) => c[0].where
     );
@@ -377,27 +419,48 @@ describe('withdrawCatalogSubListing', () => {
     expect(write.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
       status: 'withdrawn',
     });
+    expect(mockSyncRate).toHaveBeenCalledWith(PARENT);
   });
 
-  it('reports withdrawn:false for an unknown, hidden or already withdrawn item', async () => {
-    write.appSubListing.updateMany.mockResolvedValue({ count: 0 });
+  it.each([
+    ['unknown', null],
+    ['already withdrawn', itemRow({ status: 'withdrawn' })],
+    ['hidden and never approved', itemRow({ status: 'hidden', approvedAt: null })],
+  ])('an %s item changes nothing and is not rate limited', async (_label, row) => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(row);
+    await expect(del()).resolves.toEqual({ ok: true, withdrawn: false });
+    expect(mockSyncRate).not.toHaveBeenCalled();
+    nothingWritten();
+  });
+
+  it('a hidden, once-approved item stays hidden but can then only be restored to review', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(itemRow({ status: 'hidden' }));
+    await expect(del()).resolves.toEqual({ ok: true, withdrawn: false });
+    expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
+    const { where, data } = write.appSubListing.updateMany.mock.calls[0][0];
+    expect(where).toEqual({ parentListingId: PARENT, itemKey: 'neon-drift', status: 'hidden' });
+    expect(data).toMatchObject({ approvedAt: null });
+    expect(data.updatedAt).toBeInstanceOf(Date);
+    expect(data).not.toHaveProperty('status');
+
+    // The restore that follows sends it back to review, not into the store.
+    write.appSubListing.findUnique.mockResolvedValueOnce(
+      itemRow({ status: 'hidden', approvedAt: null })
+    );
+    read.appListing.findUnique.mockResolvedValueOnce({ kind: 'offsite', appBlock: null });
     await expect(
-      withdrawCatalogSubListing({ parentListingId: PARENT, externalId: 'gone' })
-    ).resolves.toEqual({ ok: true, withdrawn: false });
+      moderateSubListing({
+        input: { id: ROW_ID, action: 'restore', version: VERSION },
+        moderatorId: 9,
+      })
+    ).resolves.toMatchObject({ status: 'pending' });
   });
 
   it('refuses a malformed id and is rate limited per parent', async () => {
-    await expectError(
-      withdrawCatalogSubListing({ parentListingId: PARENT, externalId: '../x' }),
-      400,
-      'invalid_body'
-    );
+    await expectError(del('../x'), 400, 'invalid_body');
+    write.appSubListing.findUnique.mockResolvedValueOnce(itemRow());
     mockSyncRate.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 5 });
-    await expectError(
-      withdrawCatalogSubListing({ parentListingId: PARENT, externalId: 'x' }),
-      429,
-      'rate_limited'
-    );
+    await expectError(del(), 429, 'rate_limited');
     expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 });
@@ -435,6 +498,38 @@ describe('listCatalogSubListings', () => {
     expect(read.appSubListing.findMany.mock.calls[0][0].where).toEqual({
       parentListingId: PARENT,
     });
+  });
+
+  it('resumes after a valid cursor, in id order, and ends on a short page', async () => {
+    read.appSubListing.findMany.mockResolvedValueOnce([]);
+    const res = await listCatalogSubListings({ parentListingId: PARENT, cursor: ROW_ID });
+    expect(res).toEqual({ items: [], nextCursor: null });
+    expect(read.appSubListing.findMany.mock.calls[0][0]).toMatchObject({
+      where: { parentListingId: PARENT },
+      orderBy: { id: 'asc' },
+      take: 101,
+      cursor: { id: ROW_ID },
+      skip: 1,
+    });
+  });
+
+  it('has no next page when exactly a full page remains', async () => {
+    read.appSubListing.findMany.mockResolvedValueOnce(
+      Array.from({ length: 100 }, (_, i) => ({
+        id: `asl_${i}`,
+        itemKey: `game-${i}`,
+        status: 'approved',
+        title: 'G',
+        authorUserId: OWNER,
+        pendingSubmittedAt: null,
+        statusReason: null,
+        editRejectionReason: null,
+        updatedAt: new Date(VERSION),
+      }))
+    );
+    const res = await listCatalogSubListings({ parentListingId: PARENT });
+    expect(res.items).toHaveLength(100);
+    expect(res.nextCursor).toBeNull();
   });
 
   it('refuses a cursor that is not a store item id', async () => {
@@ -491,7 +586,11 @@ describe('moderation of an off-site parent’s items', () => {
         kind: 'onsite',
       }),
     ]);
-    read.$queryRaw.mockResolvedValueOnce([{ id: PARENT, link_template: TEMPLATE }]);
+    // A template on the on-site parent too, so only the kind check keeps its link off.
+    read.$queryRaw.mockResolvedValueOnce([
+      { id: PARENT, link_template: TEMPLATE },
+      { id: 'apl_ONSITE', link_template: TEMPLATE },
+    ]);
     const { items } = await listSubListingQueue({ view: 'queue', limit: 50 });
     expect(items.map((i) => i.externalHref)).toEqual([
       'https://games.example.com/?game=neon-drift',

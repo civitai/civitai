@@ -71,17 +71,18 @@ function confidentialClient(over: Record<string, unknown> = {}) {
   };
 }
 
-async function token(scope: number, secret = SECRET) {
+async function token(scope: number | null, secret = SECRET) {
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: 'game-frame',
+    client_secret: secret,
+  });
+  if (scope !== null) body.set('scope', String(scope));
   const res = await POST({
     request: new Request('https://auth.civitai.com/api/auth/oauth/token', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: 'game-frame',
-        client_secret: secret,
-        scope: String(scope),
-      }),
+      body,
     }),
   } as never);
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -107,6 +108,13 @@ describe('client_credentials grant', () => {
       clientId: 'game-frame',
       tokenScope: CATALOG | TokenScope.UserRead,
     });
+  });
+
+  it('grants only UserRead when no scope is requested', async () => {
+    const res = await token(null);
+    expect(res.status).toBe(200);
+    expect(res.body.scope).toEqual([String(TokenScope.UserRead)]);
+    expect(res.body).not.toHaveProperty('refresh_token');
   });
 
   it('refuses a scope inside the client ceiling but outside the client_credentials cap', async () => {

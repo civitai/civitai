@@ -87,8 +87,8 @@ export const TokenScope = {
 
   // App Store catalog sync — publish and withdraw store items under the off-site listing linked
   // to the calling OAuth client. Opt-in and EXCLUDED from `Full`, and only ever minted through
-  // the `client_credentials` grant (see `CLIENT_CREDENTIALS_ONLY_SCOPES`), so it never appears on
-  // a consent screen.
+  // the `client_credentials` grant (see `CLIENT_CREDENTIALS_ONLY_SCOPES`); the hub refuses it on
+  // every user-facing flow, the consent screen included.
   AppStoreCatalogWrite: 1 << 28, // 268435456
 
   // All scopes

@@ -117,6 +117,8 @@ describe('resolveCatalogCaller', () => {
     ['a personal API key', session({ apiKeyType: 'User', subject: { type: 'apiKey', id: 5 } })],
     ['a refresh token used as a bearer', session({ apiKeyType: 'Refresh' })],
     ['an access token without a client', session({ subject: { type: 'apiKey', id: 5 } })],
+    ['a session without a user', session({ user: undefined })],
+    ['an oauth subject with a non-string id', session({ subject: { type: 'oauth', id: 5 } })],
   ])('401 for %s', async (_label, value) => {
     mockSession.mockResolvedValueOnce(value);
     await expectError(resolveCatalogCaller(req()), 401, 'invalid_token');
