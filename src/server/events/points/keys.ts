@@ -1,4 +1,5 @@
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
+import { env } from '~/env/server';
 import { SignalTopic } from '~/server/common/enums';
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import type { EventHat, EventPointEntityType, EventPointType } from './types';
@@ -106,6 +107,30 @@ export const eventHatTopic = (event: string, topicId: string) =>
 // One topic for the event page's team standings.
 export const eventTeamsTopic = (event: string) =>
   `${SignalTopic.EventPoints}:${event}:teams` as const;
+
+// The live season's topics are named by public facts, so anyone can subscribe to them. The preview's
+// are not: their ids are keyed with a server secret and reach a client only through a read the
+// preview lets it make, so a public client cannot guess one. 128 bits, the secret never leaves here.
+export function previewTopicId(event: string, member: string) {
+  return createHmac('sha256', env.NEXTAUTH_SECRET)
+    .update(`event-points:preview:${event}:${member}`)
+    .digest('hex')
+    .slice(0, 32);
+}
+// A hat's topic id in a season: what reads hand out, what the interest set holds, what pushes name.
+export const seasonHatTopicId = (
+  event: string,
+  hat: Omit<EventHat, 'team'>,
+  season: EventPointSeason
+) => (season === 'live' ? hatTopicId(hat) : previewTopicId(event, hatField(hat)));
+// The team standings' id in a season: the live one is the interest-set member `teams`.
+export const seasonTeamsTopicId = (event: string, season: EventPointSeason) =>
+  season === 'live' ? TEAMS_TOPIC_ID : previewTopicId(event, TEAMS_TOPIC_ID);
+export const TEAMS_TOPIC_ID = 'teams';
+export const seasonTeamsTopic = (event: string, topicId: string) =>
+  topicId === TEAMS_TOPIC_ID
+    ? eventTeamsTopic(event)
+    : (`${eventTeamsTopic(event)}:${topicId}` as const);
 
 export const LIVE_BUCKET_MS = 5 * 60 * 1000;
 export const liveBucket = (time: Date) => Math.floor(time.getTime() / LIVE_BUCKET_MS);

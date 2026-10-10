@@ -2,9 +2,17 @@ import { SignalMessages } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { signalClient } from '~/utils/signal-client';
 import { isEventPointsEnabledSync } from './enabled';
-import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from './keys';
+import {
+  eventHatTopic,
+  eventPointSeason,
+  hatField,
+  seasonHatTopicId,
+  seasonTeamsTopic,
+  seasonTeamsTopicId,
+  type EventPointSeason,
+} from './keys';
 import { getHatPoints, getTeamPoints } from './read';
-import { readWatched, TEAMS_WATCH } from './watch';
+import { readWatched } from './watch';
 import type { EventHat } from './types';
 
 // Awards inside one window collapse into one push per topic.
@@ -30,6 +38,7 @@ export const REFEREE_DRAIN_MS = 5_000;
 
 export type PushEvent = {
   name: string;
+  previewFrom?: Date;
   startDate: Date;
   endDate: Date;
   teams: readonly string[];
@@ -39,13 +48,20 @@ type Hat = Omit<EventHat, 'team'>;
 // Narrows a flush to the topics someone has on screen (watch.ts), with one interest-set read per
 // event. Fails closed: if the read fails nothing is pushed, since pushing everything would restore
 // the unwatched fan-out exactly while Redis is struggling; screens catch up on their next read.
-export async function selectWatched(event: PushEvent, hats: Hat[], teams: boolean) {
-  const topics = [...hats.map(hatTopicId), ...(teams ? [TEAMS_WATCH] : [])];
+export async function selectWatched(
+  event: PushEvent,
+  hats: Hat[],
+  teams: boolean,
+  season: EventPointSeason
+) {
+  const hatId = (hat: Hat) => seasonHatTopicId(event.name, hat, season);
+  const teamsId = seasonTeamsTopicId(event.name, season);
+  const topics = [...hats.map(hatId), ...(teams ? [teamsId] : [])];
   try {
     const watched = await readWatched(event.name, topics, Date.now());
     return {
-      hats: hats.filter((hat) => watched.has(hatTopicId(hat))),
-      teams: teams && watched.has(TEAMS_WATCH),
+      hats: hats.filter((hat) => watched.has(hatId(hat))),
+      teams: teams && watched.has(teamsId),
     };
   } catch (error) {
     logPush('error', event.name, {
@@ -104,10 +120,11 @@ export function createEventPointsPusher(deps: PushDeps) {
     return entry;
   }
 
-  // Marks a hat, and its team, whose total just moved; false when it was not marked. Preview totals
-  // are never pushed: topics are named by the public event name, and anyone can subscribe to them.
+  // Marks a hat, and its team, whose total just moved; false when it was not marked. From the preview
+  // on: a flush pushes the season it runs in, and the preview's topics are unguessable (keys.ts).
   function markDirty(event: PushEvent, hat: Hat, time: Date) {
-    if (time < event.startDate || isOpen() || !deps.isEnabled()) return false;
+    if (time < (event.previewFrom ?? event.startDate) || isOpen() || !deps.isEnabled())
+      return false;
     const entry = entryFor(event);
     const field = hatField(hat);
     if (entry.hats.size >= MAX_DIRTY_HATS && !entry.hats.has(field)) {
@@ -129,6 +146,8 @@ export function createEventPointsPusher(deps: PushDeps) {
     for (const [name, entry] of [...dirty]) {
       if (queue.length >= budget) break;
       const { event } = entry;
+      // Totals are read for the season of `now` (read.ts), so the topics are named for it too.
+      const season = eventPointSeason(event.startDate, now);
       // Once the event has ended the page names a winner from the settled standings; live team
       // totals must not reach it.
       const teams = entry.teams && event.endDate > now;
@@ -144,7 +163,7 @@ export function createEventPointsPusher(deps: PushDeps) {
       try {
         const { hats: watchedHats, teams: watchedTeams } =
           taken.length || teams
-            ? await deps.selectWatched(event, taken, teams)
+            ? await deps.selectWatched(event, taken, teams, season)
             : { hats: [] as Hat[], teams: false };
         const [points, totals] = await Promise.all([
           watchedHats.length
@@ -155,14 +174,14 @@ export function createEventPointsPusher(deps: PushDeps) {
         if (totals)
           queue.push({
             send: {
-              topic: eventTeamsTopic(name),
+              topic: seasonTeamsTopic(name, seasonTeamsTopicId(name, season)),
               target: SignalMessages.EventPointsTeams,
               data: { event: name, teams: totals },
             },
             putBack: () => (entryFor(event).teams = true),
           });
         for (const hat of watchedHats) {
-          const topicId = hatTopicId(hat);
+          const topicId = seasonHatTopicId(name, hat, season);
           queue.push({
             send: {
               topic: eventHatTopic(name, topicId),

@@ -141,7 +141,7 @@ describe('MyHatsLivePoints', () => {
 
 describe('useEventTeamsLivePoints', () => {
   function Teams({ enabled }: { enabled: boolean }) {
-    useEventTeamsLivePoints('birthday2026', enabled);
+    useEventTeamsLivePoints('birthday2026', 'teams', enabled);
     return null;
   }
   const push = { event: 'birthday2026', teams: { Blue: 900, Pink: 950 } };

@@ -27,7 +27,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     },
     'event.getStandings': {
       useQuery: () => ({
-        data: { teams: [], topCosmetics: [{ topicId: 'top1', points: 1 }], teamHats: {} },
+        data: {
+          teams: [],
+          topCosmetics: [{ topicId: 'top1', points: 1 }],
+          teamsTopicId: 'keyed-teams',
+          teamHats: {},
+        },
       }),
     },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1_234_567 }) },
@@ -48,13 +53,13 @@ vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({
 }));
 // The live points subscriptions need the app's SignalProvider; record what the page asks for.
 const live = vi.hoisted(() => ({
-  teams: [] as [string, boolean][],
+  teams: [] as [string, string | undefined, boolean][],
   myHats: undefined as Record<string, unknown> | undefined,
   topHats: undefined as Record<string, unknown> | undefined,
 }));
 vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
-  useEventTeamsLivePoints: (event: string, enabled: boolean) =>
-    void live.teams.push([event, enabled]),
+  useEventTeamsLivePoints: (event: string, topicId: string | undefined, enabled: boolean) =>
+    void live.teams.push([event, topicId, enabled]),
   MyHatsLivePoints: (props: Record<string, unknown>) => {
     live.myHats = props;
     return null;
@@ -109,7 +114,8 @@ describe('ScoredEventSections: Your hats', () => {
     expect(myHatsProps?.hats).toBe(hats);
     expect(myHatsProps?.fetchedAt).toBe(1_234_567);
     // While the page is open it follows the team totals and each of the viewer's hats live.
-    expect(live.teams.at(-1)).toEqual(['birthday2026', true]);
+    // The team totals follow the id the standings read handed out.
+    expect(live.teams.at(-1)).toEqual(['birthday2026', 'keyed-teams', true]);
     expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'], inView: true });
   });
 
@@ -172,7 +178,7 @@ describe('ScoredEventSections: Your hats', () => {
           )
         )
       );
-      expect(live.teams.at(-1)).toEqual(['birthday2026', teams]);
+      expect(live.teams.at(-1)).toEqual(['birthday2026', 'keyed-teams', teams]);
       expect(live.myHats).toEqual(expect.objectContaining({ inView: hats }));
       expect(live.topHats).toEqual({ event: 'birthday2026', topicIds: ['top1'], inView: top });
     } finally {
@@ -199,7 +205,7 @@ describe('ScoredEventSections: Your hats', () => {
         )
       )
     );
-    expect(live.teams.at(-1)).toEqual(['birthday2026', false]);
+    expect(live.teams.at(-1)).toEqual(['birthday2026', 'keyed-teams', false]);
     // The top hats freeze with them, though every section is in view.
     expect(live.topHats).toEqual(expect.objectContaining({ inView: false }));
   });

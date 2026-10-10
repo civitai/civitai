@@ -11,13 +11,17 @@ import { trpc } from '~/utils/trpc';
 // refetch.
 
 // Built here rather than imported from the server's keys.ts, which pulls in Redis. Pinned to the
-// server's topics by a test.
+// server's topics by a test. Topic ids always come from a read: in the preview they are keyed on the
+// server, so a client cannot make one up.
 export const hatTopic = (event: string, topicId: string) =>
   `${SignalTopic.EventPoints}:${event}:hat:${topicId}` as const;
-export const teamsTopic = (event: string) => `${SignalTopic.EventPoints}:${event}:teams` as const;
-// The interest-set member for the team totals, and how often a mark is refreshed while in view.
-// Pinned to the server's (watch.ts) by a test.
+// The live team totals' id, and how often a mark is refreshed while in view. Pinned to the server's
+// (keys.ts, watch.ts) by a test.
 export const TEAMS_WATCH = 'teams';
+export const teamsTopic = (event: string, topicId: string) =>
+  topicId === TEAMS_WATCH
+    ? (`${SignalTopic.EventPoints}:${event}:teams` as const)
+    : (`${SignalTopic.EventPoints}:${event}:teams:${topicId}` as const);
 export const WATCH_REFRESH_MS = 30_000;
 const WATCH_BATCH = 50;
 
@@ -202,11 +206,19 @@ export function TopHatsLivePoints({
   return <WatchedHatTopics event={event} topicIds={topicIds} active={inView} />;
 }
 
-/** While the team totals are in view and the event running: the team totals, live. */
-export function useEventTeamsLivePoints(event: string, active: boolean) {
+/**
+ * While the team totals are in view and the event running: the team totals, live. `topicId` is the
+ * getStandings row's `teamsTopicId`; nothing is followed until it is there.
+ */
+export function useEventTeamsLivePoints(
+  event: string,
+  topicId: string | undefined,
+  inView: boolean
+) {
   const utils = trpc.useUtils();
-  useSignalTopic(active ? teamsTopic(event) : undefined);
-  useWatchEventPoints(event, [TEAMS_WATCH], active);
+  const active = inView && !!topicId;
+  useSignalTopic(active && topicId ? teamsTopic(event, topicId) : undefined);
+  useWatchEventPoints(event, topicId ? [topicId] : [], active);
   const onPush = useCallback(
     (raw: unknown) => {
       const totals = active ? readTeamsPush(raw, event) : null;

@@ -37,7 +37,7 @@ const {
 } = await import('~/server/events/scoring/cosmetic-placement.service');
 const { runEventPointsReferee } = await import('~/server/events/points/referee');
 const { eventPointsRefereeUsersSql } = await import('~/server/events/points/referee.sql');
-const { eventSeasonKeys, hatTopicId } = await import('~/server/events/points/keys');
+const { eventSeasonKeys, hatTopicId, previewTopicId } = await import('~/server/events/points/keys');
 
 const MIGRATIONS = ['20261012130000_event_cosmetic_placement', '20261015120000_event_points'].map(
   (name) =>
@@ -420,8 +420,8 @@ describe('referee snapshot', () => {
   });
 
   // The referee runs in a job: its corrections reach the screens before it returns, read back
-  // through the live read path, never as a preview total.
-  it('pushes its corrections before it returns, and none for the preview season', async () => {
+  // through the live read path. A preview settle after the start pushes nothing.
+  it('pushes its corrections before it returns, and none for a preview settled after the start', async () => {
     vi.useFakeTimers({ now: HOURLY, toFake: ['Date'] });
     try {
       redisMock.sysRedis.hmGet.mockImplementation(async (k: string, fields: string[]) =>
@@ -467,6 +467,33 @@ describe('referee snapshot', () => {
           },
         ],
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // During the preview its corrections go to the preview's keyed topics, which only testers hold.
+  it('pushes preview corrections to the keyed topics while the preview runs', async () => {
+    const PREVIEW_HOURLY = new Date('2026-10-25T05:00:00.000Z');
+    vi.useFakeTimers({ now: PREVIEW_HOURLY, toFake: ['Date'] });
+    try {
+      redisMock.sysRedis.hmGet.mockImplementation(async (k: string, fields: string[]) =>
+        fields.map((f) => hashes.get(k)?.[f] ?? null)
+      );
+      redisMock.sysRedis.zmScore.mockImplementation(async (_k: string, members: string[]) =>
+        members.map(() => Date.now() + 60_000)
+      );
+      signals.topicSend.mockClear();
+      const withPreview = { ...scored, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
+      const result = await runEventPointsReferee(withPreview, 'preview', PREVIEW_HOURLY);
+      expect(result).toEqual(expect.objectContaining({ changed: 1, unpushed: 0 }));
+      const hat = previewTopicId('scoretest', '1:21:claimed');
+      const sent = signals.topicSend.mock.calls.map(([s]) => s as { topic: string; data: object });
+      expect(sent.map((s) => s.topic)).toEqual([
+        `event-points:scoretest:teams:${previewTopicId('scoretest', 'teams')}`,
+        `event-points:scoretest:hat:${hat}`,
+      ]);
+      expect(sent[1].data).toEqual(expect.objectContaining({ topicId: hat }));
     } finally {
       vi.useRealTimers();
     }

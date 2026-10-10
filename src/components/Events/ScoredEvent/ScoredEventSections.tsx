@@ -57,7 +57,11 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
   const hatsView = useInView();
   const topHatsView = useInView();
   // Frozen once ended: the winner the page names must be the settled one the payout uses.
-  useEventTeamsLivePoints(event, !ended && (heroView.inView || standingsView.inView));
+  useEventTeamsLivePoints(
+    event,
+    standings?.teamsTopicId,
+    !ended && (heroView.inView || standingsView.inView)
+  );
   // Scores take late data until finalAt, and the standings snapshot is hourly: the result is final
   // only once a snapshot taken after finalAt is on the page.
   const finalizing =

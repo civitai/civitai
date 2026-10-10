@@ -9,7 +9,7 @@ const {
   TEAMS_WATCH,
   WATCH_TTL_MS,
 } = await import('~/server/events/points/watch');
-const { eventPointKeys } = await import('~/server/events/points/keys');
+const { eventPointKeys, previewTopicId } = await import('~/server/events/points/keys');
 
 // A sorted set with real ZADD / ZMSCORE / ZCARD / ZREMRANGEBYSCORE semantics, and a log of writes.
 function fakeZset() {
@@ -49,6 +49,7 @@ function fakeZset() {
 const NOW = new Date('2026-11-05T12:00:00.000Z').getTime();
 const EVENT = {
   name: 'birthday2026',
+  previewFrom: new Date('2026-10-20T00:00:00.000Z'),
   startDate: new Date('2026-11-01T00:00:00.000Z'),
   endDate: new Date('2026-12-01T00:00:00.000Z'),
   finalizeAfterMs: 24 * 60 * 60 * 1000,
@@ -56,17 +57,24 @@ const EVENT = {
 const KEY = eventPointKeys(EVENT.name).watch;
 const hatId = (n: number) => n.toString(16).padStart(16, '0');
 const KNOWN = new Set([hatId(1), hatId(2), hatId(3)]);
+// The preview's ids, as keys.ts makes them for hats 1 and 2, and for the team totals.
+const previewHatId = (n: number) => previewTopicId(EVENT.name, `${n}:1:claim`);
+const KNOWN_PREVIEW = new Set([previewHatId(1), previewHatId(2)]);
+const PREVIEW_TEAMS = previewTopicId(EVENT.name, TEAMS_WATCH);
+const PREVIEW_NOW = new Date('2026-10-25T12:00:00.000Z').getTime();
 
 let fake: ReturnType<typeof fakeZset>;
 let now: number;
 let enabled: boolean;
+let previewer: boolean;
 function deps(overrides: Partial<MarkWatchDeps> = {}): MarkWatchDeps {
   return {
     redis: fake.redis,
     now: () => now,
     isEnabled: async () => enabled,
     getEvent: async (name) => (name === EVENT.name ? EVENT : undefined),
-    isKnownHatTopic: async (_e, id) => KNOWN.has(id),
+    isKnownHatTopic: async (_e, id, season) => (season === 'live' ? KNOWN : KNOWN_PREVIEW).has(id),
+    canWatchPreview: async () => previewer,
     ...overrides,
   };
 }
@@ -76,6 +84,7 @@ beforeEach(() => {
   fake = fakeZset();
   now = NOW;
   enabled = true;
+  previewer = false;
 });
 
 describe('markWatched', () => {
@@ -108,7 +117,7 @@ describe('markWatched', () => {
     expect(fake.writes).toEqual([]);
     // The control: a well-formed id is asked about, and marked.
     expect(await mark([hatId(7)], deps({ isKnownHatTopic }))).toBe(1);
-    expect(isKnownHatTopic).toHaveBeenCalledWith(EVENT.name, hatId(7));
+    expect(isKnownHatTopic).toHaveBeenCalledWith(EVENT.name, hatId(7), 'live');
   });
 
   it('writes nothing with the engine switched off', async () => {
@@ -118,9 +127,10 @@ describe('markWatched', () => {
     expect(fake.sets.size).toBe(0);
   });
 
-  it('writes nothing before the start (the preview) or after scoring finalizes, or for no event', async () => {
+  it('writes nothing before the start for a caller the preview does not let in, after scoring finalizes, or for no event', async () => {
     now = EVENT.startDate.getTime() - 1;
     expect(await mark([TEAMS_WATCH])).toBe(0);
+    expect(await mark([PREVIEW_TEAMS])).toBe(0);
     now = EVENT.endDate.getTime() + EVENT.finalizeAfterMs + 1;
     expect(await mark([TEAMS_WATCH])).toBe(0);
     now = NOW;
@@ -176,6 +186,77 @@ describe('markWatched', () => {
     for (let i = 0; i < MAX_WATCHED_PER_EVENT; i++) fake.set(KEY).set(`m${i}`, NOW - 1);
     expect(await mark([hatId(1)])).toBe(1);
     expect(fake.set(KEY).size).toBe(1);
+  });
+});
+
+describe('markWatched in the preview', () => {
+  beforeEach(() => {
+    now = PREVIEW_NOW;
+  });
+
+  // The threat: a public client guessing preview ids, or probing which ones exist.
+  it('gives a caller it does not let in the same 0 for a real id as for a guess, and asks nothing', async () => {
+    const isKnownHatTopic = vi.fn(async () => true);
+    const canWatchPreview = vi.fn(async () => previewer);
+    const d = deps({ isKnownHatTopic, canWatchPreview });
+    const guess = 'ab'.repeat(16);
+    expect(await mark([previewHatId(1)], d)).toBe(0);
+    expect(await mark([guess], d)).toBe(0);
+    expect(await mark([PREVIEW_TEAMS], d)).toBe(0);
+    expect(await mark([TEAMS_WATCH, hatId(1)], d)).toBe(0);
+    expect(isKnownHatTopic).not.toHaveBeenCalled();
+    expect(canWatchPreview).toHaveBeenCalledWith(EVENT.name);
+    expect(fake.writes).toEqual([]);
+    expect(fake.sets.size).toBe(0);
+    // The control: let in, the same call marks.
+    previewer = true;
+    expect(await mark([PREVIEW_TEAMS], d)).toBe(1);
+  });
+
+  it("marks a previewer's keyed ids, and refuses live ones and unknown keyed ones", async () => {
+    previewer = true;
+    const unknown = 'cd'.repeat(16);
+    const topics = [PREVIEW_TEAMS, previewHatId(1), TEAMS_WATCH, hatId(1), unknown];
+    expect(await mark(topics)).toBe(2);
+    expect(fake.writes).toEqual([PREVIEW_TEAMS, previewHatId(1)]);
+    expect(fake.set(KEY).get(previewHatId(1))).toBe(PREVIEW_NOW + WATCH_TTL_MS);
+  });
+
+  it('asks the hat map in the preview naming', async () => {
+    previewer = true;
+    const isKnownHatTopic = vi.fn(async () => true);
+    expect(await mark([previewHatId(2)], deps({ isKnownHatTopic }))).toBe(1);
+    expect(isKnownHatTopic).toHaveBeenCalledWith(EVENT.name, previewHatId(2), 'preview');
+  });
+
+  it('writes nothing before the preview opens, even for a previewer', async () => {
+    previewer = true;
+    now = EVENT.previewFrom.getTime() - 1;
+    expect(await mark([PREVIEW_TEAMS])).toBe(0);
+    now = EVENT.previewFrom.getTime();
+    expect(await mark([PREVIEW_TEAMS])).toBe(1);
+  });
+
+  it('treats an access check that fails as no access', async () => {
+    const canWatchPreview = vi.fn(() => Promise.reject(new Error('flipt down')));
+    expect(await mark([PREVIEW_TEAMS], deps({ canWatchPreview }))).toBe(0);
+    expect(fake.writes).toEqual([]);
+  });
+
+  it('always has room for the keyed team totals', async () => {
+    previewer = true;
+    for (let i = 0; i < MAX_WATCHED_PER_EVENT; i++) fake.set(KEY).set(`m${i}`, now + 60_000);
+    expect(await mark([previewHatId(1), PREVIEW_TEAMS])).toBe(1);
+    expect(fake.set(KEY).has(PREVIEW_TEAMS)).toBe(true);
+  });
+
+  it('once live, refuses keyed ids and never asks about access', async () => {
+    now = NOW;
+    previewer = true;
+    const canWatchPreview = vi.fn(async () => true);
+    expect(await mark([previewHatId(1), PREVIEW_TEAMS], deps({ canWatchPreview }))).toBe(0);
+    expect(canWatchPreview).not.toHaveBeenCalled();
+    expect(await mark([TEAMS_WATCH], deps({ canWatchPreview }))).toBe(1);
   });
 });
 

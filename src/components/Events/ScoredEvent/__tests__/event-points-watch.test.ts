@@ -59,12 +59,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function Teams({ active }: { active: boolean }) {
-  live.useEventTeamsLivePoints('birthday2026', active);
+function Teams({ active, topicId = 'teams' }: { active: boolean; topicId?: string }) {
+  live.useEventTeamsLivePoints('birthday2026', topicId, active);
   return null;
 }
-const renderTeams = (active: boolean) =>
-  act(() => root!.render(React.createElement(Teams, { active })));
+const renderTeams = (active: boolean, topicId?: string) =>
+  act(() => root!.render(React.createElement(Teams, { active, topicId })));
 
 describe('team totals', () => {
   it('in view: subscribes to the teams topic and marks it watched now and every 30s', () => {
@@ -73,6 +73,28 @@ describe('team totals', () => {
     expect(mutate.mock.calls).toEqual([[{ event: 'birthday2026', topics: ['teams'] }]]);
     act(() => vi.advanceTimersByTime(live.WATCH_REFRESH_MS));
     expect(mutate).toHaveBeenCalledTimes(2);
+  });
+
+  // In the preview the standings read hands out a keyed id; that is what is followed and marked.
+  it('follows and marks the keyed id the read handed out, not the live one', () => {
+    const keyed = 'ab'.repeat(16);
+    renderTeams(true, keyed);
+    expect(topics.at(-1)).toBe(`event-points:birthday2026:teams:${keyed}`);
+    expect(mutate.mock.calls).toEqual([[{ event: 'birthday2026', topics: [keyed] }]]);
+  });
+
+  it('before the read has answered, neither subscribes nor marks', () => {
+    act(() =>
+      root!.render(
+        React.createElement(function NoId() {
+          live.useEventTeamsLivePoints('birthday2026', undefined, true);
+          return null;
+        })
+      )
+    );
+    act(() => vi.advanceTimersByTime(live.WATCH_REFRESH_MS));
+    expect(topics.every((t) => t === undefined)).toBe(true);
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it('out of view: unsubscribes and stops marking', () => {

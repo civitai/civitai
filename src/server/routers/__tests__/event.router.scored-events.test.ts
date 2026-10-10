@@ -19,6 +19,8 @@ const { service } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/services/event.service', () => service);
+const watch = vi.hoisted(() => ({ markEventPointsWatched: vi.fn(async () => ({ marked: 0 })) }));
+vi.mock('~/server/events/points/watch.service', () => watch);
 
 const { eventRouter } = await import('~/server/routers/event.router');
 
@@ -39,6 +41,17 @@ function callerFor(user: { id: number } | undefined) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('scored-event route access', () => {
+  // The preview's ids are accepted only from a caller the preview lets in, so the caller must reach
+  // the check: signed in, as themself; signed out, as nobody.
+  it('hands watchPoints the caller, or nobody when signed out', async () => {
+    await callerFor({ id: 7 }).watchPoints({ event: 'birthday2026', topics: ['teams'] });
+    await callerFor(undefined).watchPoints({ event: 'birthday2026', topics: ['teams'] });
+    const calls = watch.markEventPointsWatched.mock.calls as unknown as [object, unknown][];
+    expect(calls.map(([, viewer]) => viewer)).toEqual([{ id: 7 }, undefined]);
+    for (const [input] of calls)
+      expect(input).toMatchObject({ event: 'birthday2026', topics: ['teams'] });
+  });
+
   it('refuses getMyCosmeticScores to a signed-out caller without reading anything', async () => {
     await expect(
       callerFor(undefined).getMyCosmeticScores({ event: 'birthday2026' })

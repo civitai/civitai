@@ -5,6 +5,7 @@ import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   eventPointKeys,
+  eventPointSeason,
   eventPointsWindow,
   eventSeasonKeys,
   hatField,
@@ -348,11 +349,12 @@ export async function runEventPointsReferee(
     window.cut,
     refereeTotals([...final, ...rows])
   );
-  // This runs in a job: its corrections go out before it returns, not on a later window. Preview
-  // corrections are never pushed; `unpushed` counts live ones the pusher refused (paused or off).
-  // What the drain leaves unsent it logs itself.
+  // This runs in a job: its corrections go out before it returns, not on a later window. A season's
+  // corrections are pushed while it is the current one: the preview's settle after the start would
+  // go to the live topics. `unpushed` counts those the pusher refused (paused or off). What the
+  // drain leaves unsent it logs itself.
   let unpushed = 0;
-  if (season === 'live' && changed.length) {
+  if (season === eventPointSeason(event.startDate, now) && changed.length) {
     for (const field of changed) {
       const hat = parseHatField(field);
       if (!hat || !markEventPointsDirty(event, hat, now)) unpushed++;

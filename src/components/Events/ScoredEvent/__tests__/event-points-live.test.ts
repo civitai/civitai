@@ -9,7 +9,15 @@ import {
   teamsTopic,
 } from '~/components/Events/ScoredEvent/event-points-live';
 import { SignalMessages } from '~/server/common/enums';
-import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from '~/server/events/points/keys';
+import {
+  eventHatTopic,
+  eventTeamsTopic,
+  hatField,
+  hatTopicId,
+  previewTopicId,
+  seasonTeamsTopic,
+  seasonTeamsTopicId,
+} from '~/server/events/points/keys';
 import { createEventPointsPusher } from '~/server/events/points/push';
 import * as serverWatch from '~/server/events/points/watch';
 
@@ -27,8 +35,14 @@ describe('topics', () => {
     expect(hatTopic('birthday2026', 'a1b2c3d4e5f60718')).toBe(
       eventHatTopic('birthday2026', 'a1b2c3d4e5f60718')
     );
-    expect(teamsTopic('birthday2026')).toBe(eventTeamsTopic('birthday2026'));
+    expect(teamsTopic('birthday2026', live.TEAMS_WATCH)).toBe(eventTeamsTopic('birthday2026'));
     expect(hatTopic('birthday2026', 'x')).toBe('event-points:birthday2026:hat:x');
+    // The preview's team totals: the client joins the id it was handed onto the same prefix.
+    const keyed = seasonTeamsTopicId('birthday2026', 'preview');
+    expect(teamsTopic('birthday2026', keyed)).toBe(seasonTeamsTopic('birthday2026', keyed));
+    expect(teamsTopic('birthday2026', keyed)).toBe(`event-points:birthday2026:teams:${keyed}`);
+    expect(seasonTeamsTopicId('birthday2026', 'live')).toBe(live.TEAMS_WATCH);
+    expect(keyed).toBe(previewTopicId('birthday2026', 'teams'));
   });
 });
 

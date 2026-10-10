@@ -14,8 +14,9 @@ import {
   eventPointsWindow,
   eventSeasonKeys,
   hatField,
-  hatTopicId,
   liveBucket,
+  seasonHatTopicId,
+  type EventPointSeason,
   utcDay,
 } from '~/server/events/points/keys';
 import { markEventPointsDirty } from '~/server/events/points/push';
@@ -51,6 +52,7 @@ export function cappedGrant(weight: number, totalAfter: number, cap: number) {
 
 type ScoredEventDef = {
   name: string;
+  previewFrom?: Date;
   startDate: Date;
   endDate: Date;
   teams: readonly string[];
@@ -63,10 +65,13 @@ type LoadedEvent = {
   weights: Partial<Record<EventPointType, number>>;
   // Last hatsLog entry applied to `hats`.
   cursor: string;
-  // Topic id -> how many entries of `hats` wear that hat. Built on first use by the watch endpoint,
-  // then kept in step by followHats one change at a time; a full reload drops it.
-  topicIds?: Map<string, number>;
+  // For one season, topic id -> how many entries of `hats` wear that hat. Built on first use by the
+  // watch endpoint, then kept in step by followHats one change at a time; a full reload, or a
+  // question about the other season, drops it.
+  topicIds?: TopicIndex;
 };
+
+type TopicIndex = { season: EventPointSeason; ids: Map<string, number> };
 
 export type EventPointsRedis = Pick<
   typeof sysRedis,
@@ -187,8 +192,9 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       const hat = values[i] ? decodeHat(values[i]!) : undefined;
       if (topicIds) {
         const old = hats.get(key);
-        if (old) countTopic(topicIds, hatTopicId(old), -1);
-        if (hat) countTopic(topicIds, hatTopicId(hat), 1);
+        const id = (h: EventHat) => seasonHatTopicId(event, h, topicIds.season);
+        if (old) countTopic(topicIds.ids, id(old), -1);
+        if (hat) countTopic(topicIds.ids, id(hat), 1);
       }
       if (hat) hats.set(key, hat);
       else hats.delete(key);
@@ -413,19 +419,20 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     return isHattedEntity(entityType, entityId);
   }
 
-  // Whether a hat topic id names a hat this server knows for the event. For the watch endpoint, so a
-  // client cannot fill the interest set with ids that name nothing. A server that has not loaded its
-  // hat map waits for that load (Redis only), and knows nothing if it fails.
-  async function isKnownHatTopic(event: string, topicId: string) {
+  // Whether a hat topic id names a hat this server knows for the event, in that season's naming. For
+  // the watch endpoint, so a client cannot fill the interest set with ids that name nothing. A server
+  // that has not loaded its hat map waits for that load (Redis only), and knows nothing if it fails.
+  async function isKnownHatTopic(event: string, topicId: string, season: EventPointSeason) {
     await ensureFresh();
     const loadedEvent = loaded.find((l) => l.def.name === event);
     if (!loadedEvent) return false;
-    if (!loadedEvent.topicIds) {
-      const index = new Map<string, number>();
-      for (const hat of loadedEvent.hats.values()) countTopic(index, hatTopicId(hat), 1);
-      loadedEvent.topicIds = index;
+    if (loadedEvent.topicIds?.season !== season) {
+      const ids = new Map<string, number>();
+      for (const hat of loadedEvent.hats.values())
+        countTopic(ids, seasonHatTopicId(event, hat, season), 1);
+      loadedEvent.topicIds = { season, ids };
     }
-    return (loadedEvent.topicIds.get(topicId) ?? 0) > 0;
+    return (loadedEvent.topicIds.ids.get(topicId) ?? 0) > 0;
   }
 
   return {
@@ -461,6 +468,7 @@ async function loadScoredEvents(now: Date): Promise<ScoredEventDef[]> {
     if (now < window.from || now > window.to) continue;
     scored.push({
       name: e.name,
+      previewFrom: e.previewFrom,
       startDate: e.startDate,
       endDate: e.endDate,
       teams: e.teams,
@@ -511,5 +519,5 @@ export const isHattedEntity = (entityType: string, entityId: number) =>
 export const isHattedEntityOnceLoaded = async (entityType: string, entityId: number) =>
   (await isEventPointsEnabled().catch(() => false)) &&
   getEngine().isHattedEntityOnceLoaded(entityType, entityId);
-export const isKnownHatTopic = (event: string, topicId: string) =>
-  getEngine().isKnownHatTopic(event, topicId);
+export const isKnownHatTopic = (event: string, topicId: string, season: EventPointSeason) =>
+  getEngine().isKnownHatTopic(event, topicId, season);

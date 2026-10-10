@@ -175,7 +175,7 @@ export const eventRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(watchEventPointsSchema)
     .use(rateLimit({ limit: 60, period: 60 }))
-    .mutation(({ input }) => markEventPointsWatched(input)),
+    .mutation(({ ctx, input }) => markEventPointsWatched(input, ctx.user)),
   getUserRank: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(eventSchema)
