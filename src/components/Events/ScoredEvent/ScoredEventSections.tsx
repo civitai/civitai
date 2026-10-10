@@ -3,6 +3,7 @@ import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
 import { EventRules } from '~/components/Events/ScoredEvent/EventRules';
 import {
   MyHatsLivePoints,
+  TopHatsLivePoints,
   useEventTeamsLivePoints,
 } from '~/components/Events/ScoredEvent/event-points-live';
 import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPreview';
@@ -11,6 +12,7 @@ import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero
 import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
 import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from '~/hooks/useInView';
 import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -49,8 +51,13 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     : undefined;
 
   const { data: standings } = trpc.event.getStandings.useQuery({ event });
+  // Each section that shows points is live only while it is in view (event-points-live.tsx).
+  const heroView = useInView();
+  const standingsView = useInView();
+  const hatsView = useInView();
+  const topHatsView = useInView();
   // Frozen once ended: the winner the page names must be the settled one the payout uses.
-  useEventTeamsLivePoints(event, !ended);
+  useEventTeamsLivePoints(event, !ended && (heroView.inView || standingsView.inView));
   // Scores take late data until finalAt, and the standings snapshot is hourly: the result is final
   // only once a snapshot taken after finalAt is on the page.
   const finalizing =
@@ -78,11 +85,17 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
 
   const sections: Record<ScoredSection, ReactNode> = {
     standings: standings && (
-      <TeamStandings standings={standings} myTeam={team} startDate={data.startDate} />
+      <div ref={standingsView.ref}>
+        <TeamStandings standings={standings} myTeam={team} startDate={data.startDate} />
+      </div>
     ),
     hats: joined && hats.length > 0 && (
-      <>
-        <MyHatsLivePoints event={event} topicIds={hats.map((h) => h.topicId)} />
+      <div ref={hatsView.ref}>
+        <MyHatsLivePoints
+          event={event}
+          topicIds={hats.map((h) => h.topicId)}
+          inView={hatsView.inView}
+        />
         <MyEventHats
           event={event}
           hats={hats}
@@ -90,32 +103,44 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           teamColor={color}
           ended={ended}
         />
-      </>
+      </div>
     ),
     shop: team ? (
       <TeamHatShelf event={event} team={team} />
     ) : (
       <HatCatalogPreview event={event} onJoin={handleJoin} joining={equipping} />
     ),
-    topHats: standings && <TopHats standings={standings} />,
+    topHats: standings && (
+      <div ref={topHatsView.ref}>
+        <TopHatsLivePoints
+          event={event}
+          topicIds={standings.topCosmetics.slice(0, 10).map((c) => c.topicId)}
+          // Frozen with the team totals once ended: the page names the settled result.
+          inView={topHatsView.inView && !ended}
+        />
+        <TopHats standings={standings} />
+      </div>
+    ),
     rules: <EventRules data={data} />,
   };
 
   return (
     <Stack gap={56}>
-      <ScoredEventHero
-        data={data}
-        team={team}
-        rank={myStanding?.rank}
-        teamPoints={myStanding?.score}
-        points={points}
-        ended={ended}
-        finalizing={finalizing}
-        winner={ended && !finalizing ? winnerOf(standings?.teams) : undefined}
-        teamHats={standings?.teamHats}
-        onJoin={handleJoin}
-        joining={equipping}
-      />
+      <div ref={heroView.ref}>
+        <ScoredEventHero
+          data={data}
+          team={team}
+          rank={myStanding?.rank}
+          teamPoints={myStanding?.score}
+          points={points}
+          ended={ended}
+          finalizing={finalizing}
+          winner={ended && !finalizing ? winnerOf(standings?.teams) : undefined}
+          teamHats={standings?.teamHats}
+          onJoin={handleJoin}
+          joining={equipping}
+        />
+      </div>
       {scoredSectionOrder({ joined, ended }).map((key) => (
         <Fragment key={key}>{sections[key]}</Fragment>
       ))}

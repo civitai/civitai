@@ -60,7 +60,13 @@ vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({ MyEventHats: mar
 vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
   useEventTeamsLivePoints: () => undefined,
   MyHatsLivePoints: () => null,
+  TopHatsLivePoints: () => null,
 }));
+// Every section counts as in view; the in-view gating is tested in event-points-watch.test.ts.
+vi.mock('~/hooks/useInView', () => ({
+  useInView: () => ({ ref: { current: null }, inView: true }),
+}));
+
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: marker('shop') }));
 vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
   HatCatalogPreview: marker('catalog'),
@@ -116,9 +122,14 @@ function sections({
       )
     )
   );
-  // The page's own children in order.
+  // The page's own children in order. A section that is live while in view sits in a wrapper the
+  // in-view hook observes; it is named by the one section inside it.
   const page = host.querySelector('.mantine-Stack-root')!;
-  return [...page.children].map((el) => el.getAttribute('data-section') ?? el.outerHTML);
+  return [...page.children].map((el) => {
+    if (el.hasAttribute('data-section')) return el.getAttribute('data-section');
+    const inner = el.querySelectorAll('[data-section]');
+    return inner.length === 1 ? inner[0].getAttribute('data-section') : el.outerHTML;
+  });
 }
 
 describe('ScoredEventSections order', () => {

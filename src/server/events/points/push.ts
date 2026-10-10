@@ -4,6 +4,7 @@ import { signalClient } from '~/utils/signal-client';
 import { isEventPointsEnabledSync } from './enabled';
 import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from './keys';
 import { getHatPoints, getTeamPoints } from './read';
+import { readWatched, TEAMS_WATCH } from './watch';
 import type { EventHat } from './types';
 
 // Awards inside one window collapse into one push per topic.
@@ -35,18 +36,28 @@ export type PushEvent = {
 };
 type Hat = Omit<EventHat, 'team'>;
 
-// Narrows a flush's hats to those someone is watching. Identity until the interest set lands.
-export async function selectWatchedHats(_event: PushEvent, hats: Hat[]) {
-  return hats;
-}
-// Whether anyone is watching the event's team standings. Always, until the interest set lands.
-export async function selectWatchedTeams(_event: PushEvent) {
-  return true;
+// Narrows a flush to the topics someone has on screen (watch.ts), with one interest-set read per
+// event. Fails closed: if the read fails nothing is pushed, since pushing everything would restore
+// the unwatched fan-out exactly while Redis is struggling; screens catch up on their next read.
+export async function selectWatched(event: PushEvent, hats: Hat[], teams: boolean) {
+  const topics = [...hats.map(hatTopicId), ...(teams ? [TEAMS_WATCH] : [])];
+  try {
+    const watched = await readWatched(event.name, topics, Date.now());
+    return {
+      hats: hats.filter((hat) => watched.has(hatTopicId(hat))),
+      teams: teams && watched.has(TEAMS_WATCH),
+    };
+  } catch (error) {
+    logPush('error', event.name, {
+      message: 'interest set read failed',
+      error: (error as Error).message,
+    });
+    return { hats: [] as Hat[], teams: false };
+  }
 }
 
 export type PushDeps = {
-  selectWatchedHats: typeof selectWatchedHats;
-  selectWatchedTeams: typeof selectWatchedTeams;
+  selectWatched: typeof selectWatched;
   getHatPoints: typeof getHatPoints;
   getTeamPoints: typeof getTeamPoints;
   topicSend: typeof signalClient.topicSend;
@@ -131,10 +142,10 @@ export function createEventPointsPusher(deps: PushDeps) {
       }
       if (!entry.hats.size) dirty.delete(name);
       try {
-        const [watchedHats, watchedTeams] = await Promise.all([
-          taken.length ? deps.selectWatchedHats(event, taken) : ([] as Hat[]),
-          teams ? deps.selectWatchedTeams(event) : false,
-        ]);
+        const { hats: watchedHats, teams: watchedTeams } =
+          taken.length || teams
+            ? await deps.selectWatched(event, taken, teams)
+            : { hats: [] as Hat[], teams: false };
         const [points, totals] = await Promise.all([
           watchedHats.length
             ? deps.getHatPoints(event, watchedHats, now)
@@ -271,8 +282,7 @@ function logPush(type: 'warning' | 'error', event: string | undefined, extra: ob
 let pusher: ReturnType<typeof createEventPointsPusher> | undefined;
 function getPusher() {
   pusher ??= createEventPointsPusher({
-    selectWatchedHats,
-    selectWatchedTeams,
+    selectWatched,
     getHatPoints,
     getTeamPoints,
     topicSend: (args) => signalClient.topicSend(args),

@@ -25,7 +25,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'event.getCosmetic': {
       useQuery: () => ({ data: { obtained: true, cosmetic: { data: { team: 'Pink' } } } }),
     },
-    'event.getStandings': { useQuery: () => ({ data: undefined }) },
+    'event.getStandings': {
+      useQuery: () => ({
+        data: { teams: [], topCosmetics: [{ topicId: 'top1', points: 1 }], teamHats: {} },
+      }),
+    },
     'event.getMyHats': { useQuery: () => ({ data: hats, dataUpdatedAt: 1_234_567 }) },
   }),
 }));
@@ -46,6 +50,7 @@ vi.mock('~/components/Events/ScoredEvent/MyEventHats', () => ({
 const live = vi.hoisted(() => ({
   teams: [] as [string, boolean][],
   myHats: undefined as Record<string, unknown> | undefined,
+  topHats: undefined as Record<string, unknown> | undefined,
 }));
 vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
   useEventTeamsLivePoints: (event: string, enabled: boolean) =>
@@ -54,7 +59,17 @@ vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
     live.myHats = props;
     return null;
   },
+  TopHatsLivePoints: (props: Record<string, unknown>) => {
+    live.topHats = props;
+    return null;
+  },
 }));
+// Each section's own in-view flag, in the order the page asks: hero, standings, hats, top hats.
+const view = vi.hoisted(() => ({ flags: [true, true, true, true], call: 0 }));
+vi.mock('~/hooks/useInView', () => ({
+  useInView: () => ({ ref: { current: null }, inView: view.flags[view.call++ % 4] }),
+}));
+
 vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({ ScoredEventHero: () => null }));
 vi.mock('~/components/Events/ScoredEvent/TeamHatShelf', () => ({ TeamHatShelf: () => null }));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () => null }));
@@ -95,7 +110,74 @@ describe('ScoredEventSections: Your hats', () => {
     expect(myHatsProps?.fetchedAt).toBe(1_234_567);
     // While the page is open it follows the team totals and each of the viewer's hats live.
     expect(live.teams.at(-1)).toEqual(['birthday2026', true]);
-    expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'] });
+    expect(live.myHats).toEqual({ event: 'birthday2026', topicIds: ['t31'], inView: true });
+  });
+
+  // Each feed follows only its own section(s): the team totals the hero or the standings, "Your
+  // hats" its list, the top hats theirs.
+  it.each([
+    {
+      inView: 'nothing',
+      flags: [false, false, false, false],
+      teams: false,
+      hats: false,
+      top: false,
+    },
+    {
+      inView: 'the hero',
+      flags: [true, false, false, false],
+      teams: true,
+      hats: false,
+      top: false,
+    },
+    {
+      inView: 'the standings',
+      flags: [false, true, false, false],
+      teams: true,
+      hats: false,
+      top: false,
+    },
+    {
+      inView: 'your hats',
+      flags: [false, false, true, false],
+      teams: false,
+      hats: true,
+      top: false,
+    },
+    {
+      inView: 'the top hats',
+      flags: [false, false, false, true],
+      teams: false,
+      hats: false,
+      top: true,
+    },
+  ])('with $inView in view, follows only what that shows', ({ flags, teams, hats, top }) => {
+    view.flags = flags;
+    view.call = 0;
+    try {
+      host = document.createElement('div');
+      document.body.appendChild(host);
+      root = createRoot(host);
+      const data = {
+        title: 'Birthday',
+        startDate: new Date(Date.now() - 60_000),
+        endDate: new Date(Date.now() + 60_000),
+      } as unknown as React.ComponentProps<typeof ScoredEventSections>['data'];
+      act(() =>
+        root!.render(
+          React.createElement(
+            MantineProvider,
+            null,
+            React.createElement(ScoredEventSections, { event: 'birthday2026', data })
+          )
+        )
+      );
+      expect(live.teams.at(-1)).toEqual(['birthday2026', teams]);
+      expect(live.myHats).toEqual(expect.objectContaining({ inView: hats }));
+      expect(live.topHats).toEqual({ event: 'birthday2026', topicIds: ['top1'], inView: top });
+    } finally {
+      view.flags = [true, true, true, true];
+    }
   });
 
   // After the end the page names a winner; it must be the settled one the payout uses.
@@ -118,5 +200,7 @@ describe('ScoredEventSections: Your hats', () => {
       )
     );
     expect(live.teams.at(-1)).toEqual(['birthday2026', false]);
+    // The top hats freeze with them, though every section is in view.
+    expect(live.topHats).toEqual(expect.objectContaining({ inView: false }));
   });
 });

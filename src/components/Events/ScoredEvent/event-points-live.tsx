@@ -1,18 +1,25 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
-// The points engine pushes a hat's new total, and the event's team totals, while a screen showing
-// them is open (src/server/events/points/push.ts). These apply each push to the query that
-// screen already holds, so the number moves without a refetch.
+// The points engine pushes a hat's new total, and the event's team totals, only while someone has
+// them on screen (src/server/events/points/push.ts and watch.ts). A section that shows them
+// subscribes and marks its topics as watched while it is in view, and does neither once it is not.
+// These apply each push to the query that screen already holds, so the number moves without a
+// refetch.
 
 // Built here rather than imported from the server's keys.ts, which pulls in Redis. Pinned to the
 // server's topics by a test.
 export const hatTopic = (event: string, topicId: string) =>
   `${SignalTopic.EventPoints}:${event}:hat:${topicId}` as const;
 export const teamsTopic = (event: string) => `${SignalTopic.EventPoints}:${event}:teams` as const;
+// The interest-set member for the team totals, and how often a mark is refreshed while in view.
+// Pinned to the server's (watch.ts) by a test.
+export const TEAMS_WATCH = 'teams';
+export const WATCH_REFRESH_MS = 30_000;
+const WATCH_BATCH = 50;
 
 const isPoints = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
@@ -56,6 +63,63 @@ export function applyTeamPoints<
   return { ...standings, teams };
 }
 
+/** Standings with a pushed hat total on its top-hats row, re-sorted; the same object otherwise. */
+export function applyTopHatPoints<
+  T extends { topCosmetics: { topicId: string; points: number }[] }
+>(standings: T | undefined, topicId: string, points: number) {
+  const rows = applyHatPoints(standings?.topCosmetics, topicId, points);
+  if (!standings || rows === standings.topCosmetics) return standings;
+  return { ...standings, topCosmetics: [...rows!].sort((a, b) => b.points - a.points) };
+}
+
+/**
+ * While `active`, marks `topics` (hat topic ids, or TEAMS_WATCH) as on screen now and every
+ * WATCH_REFRESH_MS, so the server pushes them. Once inactive it stops, and the marks lapse.
+ */
+export function useWatchEventPoints(event: string, topics: string[], active: boolean) {
+  const { mutate } = trpc.event.watchPoints.useMutation();
+  // A stable dependency for the effect: the same topics in any order are the same watch, so a
+  // re-ranked list does not mark again (marks share one per-caller rate limit).
+  const key = active && topics.length ? [...topics].sort().join(',') : '';
+  useEffect(() => {
+    if (!key) return;
+    const all = key.split(',');
+    const mark = () => {
+      for (let i = 0; i < all.length; i += WATCH_BATCH)
+        mutate({ event, topics: all.slice(i, i + WATCH_BATCH) });
+    };
+    mark();
+    const id = setInterval(mark, WATCH_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [event, key, mutate]);
+}
+
+function HatTopic({ topic }: { topic: ReturnType<typeof hatTopic> }) {
+  useSignalTopic(topic);
+  return null;
+}
+
+/** While `active`: subscribed to each hat's topic and watching it. Renders nothing visible. */
+function WatchedHatTopics({
+  event,
+  topicIds,
+  active,
+}: {
+  event: string;
+  topicIds: string[];
+  active: boolean;
+}) {
+  useWatchEventPoints(event, topicIds, active);
+  if (!active) return null;
+  return (
+    <>
+      {topicIds.map((id) => (
+        <HatTopic key={id} topic={hatTopic(event, id)} />
+      ))}
+    </>
+  );
+}
+
 /**
  * Mounted only while a worn-hat popover is open, so a feed of hatted cards registers nothing:
  * follows that hat's total live. Renders nothing.
@@ -73,7 +137,6 @@ export function WornHatLivePoints({
   topicId: string;
 }) {
   const utils = trpc.useUtils();
-  useSignalTopic(hatTopic(event, topicId));
   const onPush = useCallback(
     (raw: unknown) => {
       const push = readHatPush(raw, event);
@@ -86,11 +149,19 @@ export function WornHatLivePoints({
     [utils, event, entityType, entityId, topicId]
   );
   useSignalConnection(SignalMessages.EventPointsHat, onPush);
-  return null;
+  return <WatchedHatTopics event={event} topicIds={[topicId]} active />;
 }
 
-/** While "Your hats" is on screen: each hat's total, live. Renders nothing. */
-export function MyHatsLivePoints({ event, topicIds }: { event: string; topicIds: string[] }) {
+/** While "Your hats" is in view: each hat's total, live. Renders nothing visible. */
+export function MyHatsLivePoints({
+  event,
+  topicIds,
+  inView,
+}: {
+  event: string;
+  topicIds: string[];
+  inView: boolean;
+}) {
   const utils = trpc.useUtils();
   const onPush = useCallback(
     (raw: unknown) => {
@@ -103,31 +174,46 @@ export function MyHatsLivePoints({ event, topicIds }: { event: string; topicIds:
     [utils, event]
   );
   useSignalConnection(SignalMessages.EventPointsHat, onPush);
-  return (
-    <>
-      {topicIds.map((id) => (
-        <HatTopic key={id} topic={hatTopic(event, id)} />
-      ))}
-    </>
-  );
+  return <WatchedHatTopics event={event} topicIds={topicIds} active={inView} />;
 }
 
-function HatTopic({ topic }: { topic: ReturnType<typeof hatTopic> }) {
-  useSignalTopic(topic);
-  return null;
-}
-
-/** While the event page is open and the event running: the team totals, live. */
-export function useEventTeamsLivePoints(event: string, enabled: boolean) {
+/** While the top hats are in view: their totals, live. Renders nothing visible. */
+export function TopHatsLivePoints({
+  event,
+  topicIds,
+  inView,
+}: {
+  event: string;
+  topicIds: string[];
+  inView: boolean;
+}) {
   const utils = trpc.useUtils();
-  useSignalTopic(enabled ? teamsTopic(event) : undefined);
   const onPush = useCallback(
     (raw: unknown) => {
-      const totals = enabled ? readTeamsPush(raw, event) : null;
+      const push = readHatPush(raw, event);
+      if (!push) return;
+      utils.event.getStandings.setData({ event }, (s) =>
+        applyTopHatPoints(s, push.topicId, push.points)
+      );
+    },
+    [utils, event]
+  );
+  useSignalConnection(SignalMessages.EventPointsHat, onPush);
+  return <WatchedHatTopics event={event} topicIds={topicIds} active={inView} />;
+}
+
+/** While the team totals are in view and the event running: the team totals, live. */
+export function useEventTeamsLivePoints(event: string, active: boolean) {
+  const utils = trpc.useUtils();
+  useSignalTopic(active ? teamsTopic(event) : undefined);
+  useWatchEventPoints(event, [TEAMS_WATCH], active);
+  const onPush = useCallback(
+    (raw: unknown) => {
+      const totals = active ? readTeamsPush(raw, event) : null;
       if (!totals) return;
       utils.event.getStandings.setData({ event }, (s) => applyTeamPoints(s, totals));
     },
-    [utils, event, enabled]
+    [utils, event, active]
   );
   useSignalConnection(SignalMessages.EventPointsTeams, onPush);
 }

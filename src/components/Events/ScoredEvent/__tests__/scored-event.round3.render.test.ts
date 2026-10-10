@@ -60,8 +60,17 @@ vi.mock('~/components/Countdown/Countdown', () => ({ Countdown: () => null }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
 }));
+// Formats as the real one does, without its digit columns, so the text reads as on screen.
 vi.mock('~/components/Metrics/AnimatedCount', () => ({
-  AnimatedCount: ({ value }: { value: number }) => React.createElement('span', null, value),
+  AnimatedCount: ({ value, abbreviate = true }: { value: number; abbreviate?: boolean }) =>
+    React.createElement(
+      'span',
+      null,
+      new Intl.NumberFormat(
+        'en-US',
+        abbreviate ? { notation: 'compact', maximumFractionDigits: 1 } : {}
+      ).format(value)
+    ),
 }));
 
 const { MyEventHats } = await import('~/components/Events/ScoredEvent/MyEventHats');
@@ -127,7 +136,8 @@ describe('Your hats cards', () => {
     const card = cards([hat({ placedOn: placed })]).querySelector('[data-testid="my-hat"]')!;
     const stats = card.querySelector('[data-testid="hat-stats"]')!;
     const points = stats.querySelector<HTMLElement>('[data-testid="hat-stat-points"]')!;
-    expect(points.textContent).toBe('1.5kpoints');
+    // Formatted by AnimatedCount, as reaction counts and the hero's figures are.
+    expect(points.textContent).toBe('1.5Kpoints');
     expect((points.firstElementChild as HTMLElement).style.color).toBe('#339af0');
     expect(
       [...stats.querySelectorAll<HTMLElement>('[data-way]')].map((w) => [

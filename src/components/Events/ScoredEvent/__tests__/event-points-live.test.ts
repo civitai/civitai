@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as live from '~/components/Events/ScoredEvent/event-points-live';
 import {
   applyHatPoints,
   applyTeamPoints,
@@ -10,10 +11,18 @@ import {
 import { SignalMessages } from '~/server/common/enums';
 import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from '~/server/events/points/keys';
 import { createEventPointsPusher } from '~/server/events/points/push';
+import * as serverWatch from '~/server/events/points/watch';
 
 describe('topics', () => {
   // The client builds its topics without the server module (it pulls in Redis); the pusher sends
   // to the server's. A mismatch subscribes every screen to a topic nothing is sent to.
+  it("watch the server's interest-set member and refresh inside its TTL", () => {
+    expect(live.TEAMS_WATCH).toBe(serverWatch.TEAMS_WATCH);
+    expect(live.WATCH_REFRESH_MS).toBe(serverWatch.WATCH_REFRESH_MS);
+    // Two refreshes can be missed before a mark lapses.
+    expect(serverWatch.WATCH_TTL_MS).toBeGreaterThanOrEqual(3 * live.WATCH_REFRESH_MS);
+  });
+
   it("match the server's, so the client subscribes where the pusher sends", () => {
     expect(hatTopic('birthday2026', 'a1b2c3d4e5f60718')).toBe(
       eventHatTopic('birthday2026', 'a1b2c3d4e5f60718')
@@ -30,8 +39,7 @@ describe('what the pusher sends, the client reads', () => {
     const hat = { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' };
     const sent: { target: string; data: Record<string, unknown> }[] = [];
     const pusher = createEventPointsPusher({
-      selectWatchedHats: async (_e, hats) => hats,
-      selectWatchedTeams: async () => true,
+      selectWatched: async (_e, hats, teams) => ({ hats, teams }),
       getHatPoints: async () => ({ [hatField(hat)]: 64 }),
       getTeamPoints: async () => ({ Blue: 900 }),
       topicSend: async (args) => void sent.push(args),
@@ -100,6 +108,34 @@ describe('applyHatPoints', () => {
     expect(applyHatPoints(rows, 'zzz', 99)).toBe(rows);
     expect(applyHatPoints(rows, 'a', 10)).toBe(rows);
     expect(applyHatPoints(undefined, 'a', 10)).toBeUndefined();
+  });
+});
+
+describe('applyTopHatPoints', () => {
+  const standings = {
+    updatedAt: 1,
+    topCosmetics: [
+      { topicId: 'a', points: 30 },
+      { topicId: 'b', points: 20 },
+      { topicId: 'c', points: 10 },
+    ],
+  };
+
+  it('puts the pushed total on its row and re-sorts by points', () => {
+    expect(live.applyTopHatPoints(standings, 'c', 25)).toEqual({
+      updatedAt: 1,
+      topCosmetics: [
+        { topicId: 'a', points: 30 },
+        { topicId: 'c', points: 25 },
+        { topicId: 'b', points: 20 },
+      ],
+    });
+  });
+
+  it('returns the same object for a hat not in the list, or an unchanged total', () => {
+    expect(live.applyTopHatPoints(standings, 'zz', 99)).toBe(standings);
+    expect(live.applyTopHatPoints(standings, 'b', 20)).toBe(standings);
+    expect(live.applyTopHatPoints(undefined, 'a', 1)).toBeUndefined();
   });
 });
 
