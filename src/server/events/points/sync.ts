@@ -289,7 +289,7 @@ async function runOwnerHatSync(ownerId: number, touched: string[], now = new Dat
 
 const entityKeysOf = (pending: string[]) => pending.filter((key) => key !== PENDING_ALL);
 
-async function popPending(key: string) {
+async function popPending(key: ReturnType<typeof hatSyncKeys>['pending']) {
   const members = await sysRedis.sPop(key, 10_000);
   return (Array.isArray(members) ? members : members ? [members] : []).filter(
     (member): member is string => typeof member === 'string'
