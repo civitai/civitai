@@ -129,6 +129,13 @@ describe('profile tier card', () => {
 
   // A signed-in visitor's session carries their own score, never the owner's; showing it here
   // would read as the owner's number.
+  it('says a tier granted at launch was earned before launch', () => {
+    const card = mount(
+      React.createElement(ProfileTierCard, { tier: { ...tier, achievedAt: null }, userId: OWNER })
+    );
+    expect(card.textContent).toContain('Earned before launch');
+  });
+
   it('shows a visitor the tier and no score line', () => {
     mocks.viewer = { id: OWNER + 1, meta: { scores: { total: OWN_SCORE } } };
     const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
@@ -237,14 +244,61 @@ describe('achievements tab', () => {
           [...card.querySelectorAll('*')].some((node) => node.textContent === name)
         ) ?? ''
     );
-    expect(names).toEqual(['Nova', 'Blaze', 'Spark']);
+    // Dated first, then launch grants highest first.
+    expect(names).toEqual(['Blaze', 'Nova', 'Spark']);
     // A floor, not the creator's score (lead's call, 2026-10-09).
     expect(cardOf(el, 'Blaze')?.textContent).toContain('10,000+Creator Score');
     expect(cardOf(el, 'Blaze')?.textContent).toContain('Earned Sep 28, 2026');
     expect(cardOf(el, 'Spark')?.textContent).toContain('100+Creator Score');
-    // A backfilled tier has no observed date: plain "Earned", like the journey page.
-    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned$/);
+    // A backfilled tier has no observed date, like the journey page.
+    expect(cardOf(el, 'Spark')?.textContent).toMatch(/Earned before launch$/);
     expect(cardOf(el, 'Nova')?.textContent).not.toMatch(/\d/);
+  });
+
+  it('orders each track dated first, then launch grants by metal', () => {
+    const achievement = (key: string, name: string, achievedAt: Date | null) => ({
+      key,
+      track: 'create',
+      name,
+      description: null,
+      badgeUrl: null,
+      achievedAt,
+    });
+    const el = mount(
+      React.createElement(ProfileAchievementsList, {
+        data: {
+          tiers: [],
+          achievements: [
+            achievement('create:models-1', 'First Model', null),
+            achievement('create:models-500', '500 Models', null),
+            achievement('create:articles-1', 'First Article', EARNED),
+          ],
+        },
+        userId: OWNER,
+      })
+    );
+    const names = [...grids(el)[0].children].map(
+      (card) =>
+        ['First Model', '500 Models', 'First Article'].find((name) =>
+          [...card.querySelectorAll('*')].some((node) => node.textContent === name)
+        ) ?? ''
+    );
+    expect(names).toEqual(['First Article', '500 Models', 'First Model']);
+  });
+
+  it('points the owner, and only the owner, at their journey', () => {
+    const journeyLinks = (el: HTMLElement) =>
+      [...el.querySelectorAll('a')].filter((a) => a.getAttribute('href') === '/creators/journey');
+    mocks.viewer = { id: OWNER, meta: { scores: { total: 1 } } };
+    const own = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(journeyLinks(own).map((a) => a.textContent)).toContain(
+      'See your progress on your Creator Journey'
+    );
+    act(() => root?.unmount());
+    container?.remove();
+    mocks.viewer = { id: OWNER + 1, meta: { scores: { total: 1 } } };
+    const visitor = mount(React.createElement(ProfileAchievementsList, { data, userId: OWNER }));
+    expect(journeyLinks(visitor)).toEqual([]);
   });
 
   it('shows the owner their own score on the hero', () => {

@@ -189,3 +189,28 @@ export function isMilestoneAnnounced(
   const definition = registry[milestoneKey];
   return !!definition && !definition.silent && achievedAt >= definition.launchedAt;
 }
+
+/** Each activity ladder's thresholds, low to high, keyed by the key less its `-<threshold>`. */
+const activityLadders = (() => {
+  const ladders = new Map<string, number[]>();
+  for (const [key, entry] of Object.entries(creatorMilestoneRegistry)) {
+    if (entry.detector === 'scoreSnapshot') continue;
+    const split = key.lastIndexOf('-');
+    const ladder = ladders.get(key.slice(0, split)) ?? [];
+    ladder.push(Number(key.slice(split + 1)));
+    ladders.set(key.slice(0, split), ladder);
+  }
+  for (const ladder of ladders.values()) ladder.sort((a, b) => a - b);
+  return ladders;
+})();
+
+/**
+ * An activity milestone's rung on its own ladder, 0 (wood) up to 4 (diamond), so badges from
+ * different tracks compare by metal. Null for score tiers and keys the registry does not know.
+ */
+export function milestoneRung(key: string) {
+  const split = key.lastIndexOf('-');
+  if (split < 0) return null;
+  const index = activityLadders.get(key.slice(0, split))?.indexOf(Number(key.slice(split + 1)));
+  return index === undefined || index < 0 ? null : index;
+}

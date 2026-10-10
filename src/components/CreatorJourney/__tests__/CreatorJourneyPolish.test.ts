@@ -165,4 +165,16 @@ describe('journey page polish', () => {
     expect(earned.querySelectorAll('[data-state="earned"]')).toHaveLength(2);
     expect(earned.querySelector('[data-state="earned"] .scale-x-110')).toBeNull();
   });
+
+  // Tester (2026-10-10): "Helping moderation" is in the total and the explainer, but the score panel
+  // never showed it. The creator's own page shows both report lines, zeros included.
+  it('shows the creator their moderation points and removals in the score panel', () => {
+    const page = mount({
+      ...journey(),
+      scores: { total: 40, breakdown: { models: 10, reportsActioned: 30, reportsAgainst: 0 } },
+    } as Journey);
+    const text = page.textContent ?? '';
+    expect(text).toContain('30 pts');
+    expect(text).toContain('Removed content');
+  });
 });

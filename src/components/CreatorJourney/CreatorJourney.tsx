@@ -6,6 +6,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { CreatorScoreExplainer } from '~/components/Account/CreatorScoreExplainer';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
+import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
 import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
 import { LinkedText, rewardLinks, unlockLinksFor } from '~/components/CreatorJourney/journey-links';
@@ -78,7 +79,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
   // A badge is earned when it is granted, not when the score crosses its threshold: granting runs in
   // a job, and a hidden tier stays masked until then.
   const earnedKeys = new Set(journey.earned.map((badge) => badge.key));
-  const shelf = journey.earned.filter(isShelfBadge);
+  const shelf = sortEarnedBadges(journey.earned.filter(isShelfBadge));
   const shareable = new Set<string>(journey.shareableTiers);
   const accent = accentOf(currentTier);
 
@@ -178,7 +179,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
         <Title order={2} size="h3">
           Where Your Score Comes From
         </Title>
-        <UserScoreDisplay scores={journey.scores?.breakdown} abbreviate={false} />
+        <UserScoreDisplay scores={journey.scores?.breakdown} abbreviate={false} showReports owner />
         <ScoreExplainerToggle />
       </Stack>
 

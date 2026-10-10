@@ -84,7 +84,8 @@ const accentOf = (measure: Measure) =>
     ?.accent ?? achievementTracks[0].accent;
 
 export function earnedLabel(achievedAt: Date | null) {
-  return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned';
+  // Undated means granted at launch to someone already past the bar: no real date was observed.
+  return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned before launch';
 }
 
 export function CreatorAchievements({
