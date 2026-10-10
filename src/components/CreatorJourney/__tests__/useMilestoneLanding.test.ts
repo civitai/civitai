@@ -43,13 +43,22 @@ function Probe({ user }: { user: { id: number } | null }) {
   return null;
 }
 
-function visit({
-  query = { username: 'JustMaier', milestone: 'supernova' },
-  // `null`, not `undefined`: an undefined argument would take this default.
-  user = OWNER as { id: number } | null,
-  shareable = true as boolean | undefined,
-  journeyOn = true,
-} = {}) {
+type Visit = {
+  query: Record<string, string>;
+  user: { id: number } | null;
+  shareable: boolean | undefined;
+  journeyOn: boolean;
+};
+
+// Spread, not destructuring defaults: a default would replace an explicit `shareable: undefined`.
+function visit(over: Partial<Visit> = {}) {
+  const { query, user, shareable, journeyOn }: Visit = {
+    query: { username: 'JustMaier', milestone: 'supernova' },
+    user: OWNER,
+    shareable: true,
+    journeyOn: true,
+    ...over,
+  };
   mocks.query = query;
   mocks.shareable = shareable;
   mocks.features = journeyOn ? { creatorJourney: true } : {};
@@ -91,6 +100,18 @@ describe('a shared tier link opened on the profile', () => {
   ])('stays on the profile when %s', (_, over) => {
     visit(over);
     expect(mocks.replace).not.toHaveBeenCalled();
+  });
+
+  // The server render normally answers at once; when it did not, the redirect waits for the answer.
+  it('moves on once the answer arrives, and only once', () => {
+    visit({ shareable: undefined });
+    expect(mocks.replace).not.toHaveBeenCalled();
+    mocks.shareable = true;
+    act(() => root?.render(React.createElement(Probe, { user: OWNER })));
+    act(() => root?.render(React.createElement(Probe, { user: OWNER })));
+    expect(mocks.replace.mock.calls).toEqual([
+      ['/user/JustMaier/achievements?milestone=supernova'],
+    ]);
   });
 
   it('does not ask the server before the profile has loaded or without a tier', () => {
