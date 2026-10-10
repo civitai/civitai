@@ -36,17 +36,23 @@ vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
   EdgeVideo: (props: Record<string, unknown>) =>
     React.createElement('video', {
       'data-src': props.src,
+      'data-options': JSON.stringify(props.options),
       'data-autoplay': String(props.autoPlay),
       'data-muted': String(props.muted),
-      'data-controls': String(props.controls && props.html5Controls),
+      'data-controls': String(props.controls),
+      'data-html5-controls': String(props.html5Controls),
+      'data-hover-play': String(props.hoverPlay),
     }),
 }));
 vi.mock('~/components/Countdown/Countdown', () => ({ Countdown: () => null }));
+// Marks what it wraps, so a test can see that an action asks a signed-out viewer to sign in.
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
-  LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
+  LoginRedirect: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('span', { 'data-login-redirect': '' }, children),
 }));
 
 const { ScoredEventHero } = await import('~/components/Events/ScoredEvent/ScoredEventHero');
+const { HERO_VIDEO_OPTIONS } = await import('~/components/Events/ScoredEvent/scored-event.utils');
 const { default: EventVideoModal } = await import(
   '~/components/Events/ScoredEvent/EventVideoModal'
 );
@@ -100,25 +106,49 @@ describe('hero play button', () => {
 
   it('is absent without a film', () => {
     const page = hero({}, { heroVideo: undefined });
-    expect(page.querySelector('[data-testid=hero-video]')).toBeNull();
+    expect(watchButton(page)).toBeNull();
   });
 
-  it("adds the film's length once its metadata reads", () => {
+  // The detached element the hero reads the film's length from.
+  const probeVideo = () => {
     const create = document.createElement.bind(document);
-    let probe: HTMLVideoElement | undefined;
+    const probe: { video?: HTMLVideoElement } = {};
     vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
       const el = create(tag);
-      if (tag === 'video') probe = el as HTMLVideoElement;
+      if (tag === 'video') probe.video = el as HTMLVideoElement;
       return el;
     }) as typeof document.createElement);
-    const page = hero();
-    expect(probe?.preload).toBe('metadata');
-    expect(probe?.getAttribute('src')).toContain(VIDEO.id);
-    Object.defineProperty(probe, 'duration', { value: 84.352 });
+    return probe;
+  };
+  const readMetadata = (video: HTMLVideoElement, duration: number) => {
+    Object.defineProperty(video, 'duration', { value: duration });
     act(() => {
-      probe!.dispatchEvent(new Event('loadedmetadata'));
+      video.dispatchEvent(new Event('loadedmetadata'));
     });
-    expect(watchButton(page)?.textContent).toBe('Watch · 1:24');
+  };
+
+  it("adds the film's length once its metadata reads, to the nearest second", () => {
+    const probe = probeVideo();
+    const page = hero();
+    expect(probe.video?.preload).toBe('metadata');
+    expect(probe.video?.getAttribute('src')).toContain(VIDEO.id);
+    readMetadata(probe.video!, 84.6);
+    expect(watchButton(page)?.textContent).toBe('Watch · 1:25');
+  });
+
+  it.each([Infinity, 0])('keeps plain Watch for a length of %s', (duration) => {
+    const probe = probeVideo();
+    const page = hero();
+    readMetadata(probe.video!, duration);
+    expect(watchButton(page)?.textContent).toBe('Watch');
+  });
+
+  it('stops reading the film when the hero goes', () => {
+    const probe = probeVideo();
+    hero();
+    expect(probe.video?.hasAttribute('src')).toBe(true);
+    act(() => root?.unmount());
+    expect(probe.video?.hasAttribute('src')).toBe(false);
   });
 
   it('opens the player with Join for a viewer who has not joined', () => {
@@ -150,26 +180,33 @@ describe('EventVideoModal', () => {
       (b) => b.textContent === 'Join and get your free hat'
     );
 
-  it('plays the film with sound and the browser controls', () => {
+  it('plays the film the hero measured, with sound and the browser controls', () => {
     const video = modal().querySelector('video');
-    expect(video?.dataset).toMatchObject({
+    expect({ ...video?.dataset }).toEqual({
       src: VIDEO.id,
+      options: JSON.stringify(HERO_VIDEO_OPTIONS),
       autoplay: 'true',
       muted: 'false',
       controls: 'true',
+      html5Controls: 'true',
+      hoverPlay: 'false',
     });
   });
 
-  it('offers Join and closes once joined', async () => {
+  it('offers Join behind sign-in, and closes once joined', async () => {
     let finish!: () => void;
     const onJoin = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
     const page = modal(onJoin);
-    act(() => joinButton(page)!.click());
+    const button = joinButton(page)!;
+    expect(button.closest('[data-login-redirect]')).not.toBeNull();
+    act(() => button.click());
     expect(onJoin).toHaveBeenCalledTimes(1);
-    // Still joining: the player stays open.
+    // Still joining: the player stays open and the button shows it is working.
     expect(onClose).not.toHaveBeenCalled();
+    expect(button.hasAttribute('data-loading')).toBe(true);
     await act(async () => finish());
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(button.hasAttribute('data-loading')).toBe(false);
   });
 
   it('has no Join without a handler', () => {

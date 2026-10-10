@@ -1,10 +1,9 @@
-import { Button, Modal, Stack } from '@mantine/core';
-import { IconConfetti } from '@tabler/icons-react';
+import { Modal, Stack } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { JoinEventButton } from '~/components/Events/ScoredEvent/JoinEventButton';
 import { HERO_VIDEO_OPTIONS } from '~/components/Events/ScoredEvent/scored-event.utils';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 /** The event's film, opened from the hero. Plays with sound: the click that opened it allows that. */
 export default function EventVideoModal({
@@ -46,19 +45,7 @@ export default function EventVideoModal({
           className="w-full rounded-md"
           wrapperProps={{ className: 'w-full' }}
         />
-        {onJoin && (
-          <LoginRedirect reason="perform-action">
-            <Button
-              size="lg"
-              radius="xl"
-              onClick={join}
-              loading={joining}
-              leftSection={<IconConfetti size={20} />}
-            >
-              Join and get your free hat
-            </Button>
-          </LoginRedirect>
-        )}
+        {onJoin && <JoinEventButton onClick={join} loading={joining} />}
       </Stack>
     </Modal>
   );

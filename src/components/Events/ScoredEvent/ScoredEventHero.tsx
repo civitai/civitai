@@ -1,11 +1,5 @@
-import { Badge, Button, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
-import {
-  IconCalendarEvent,
-  IconConfetti,
-  IconEye,
-  IconPlayerPlayFilled,
-  IconTrophy,
-} from '@tabler/icons-react';
+import { Badge, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
+import { IconCalendarEvent, IconEye, IconPlayerPlayFilled, IconTrophy } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -14,8 +8,8 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
 import { HeroBulbs } from '~/components/Events/ScoredEvent/HeroBulbs';
+import { JoinEventButton } from '~/components/Events/ScoredEvent/JoinEventButton';
 import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useTeamColor } from '~/components/Events/events.utils';
@@ -261,17 +255,7 @@ export function ScoredEventHero({
         ) : (
           !ended && (
             <Group gap="sm">
-              <LoginRedirect reason="perform-action">
-                <Button
-                  size="lg"
-                  radius="xl"
-                  onClick={onJoin}
-                  loading={joining}
-                  leftSection={<IconConfetti size={20} />}
-                >
-                  Join and get your free hat
-                </Button>
-              </LoginRedirect>
+              <JoinEventButton onClick={onJoin} loading={joining} />
               <Text size="sm" c="dimmed">
                 You get a random team. Teams are final.
               </Text>
