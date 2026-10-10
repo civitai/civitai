@@ -60,6 +60,7 @@ export async function selectWatched(event: PushEvent, hats: Hat[], teams: boolea
 // Every server that granted points has the team totals dirty, and they are the same totals, read
 // from Redis. A lease for one push window lets one server send them; the others keep them dirty and
 // try the next window, so a later grant is still sent. Fails closed, like selectWatched.
+let leaseErrorLogged = false;
 export async function claimTeamsPush(event: PushEvent) {
   try {
     const leased = await sysRedis.set(eventPointKeys(event.name).teamsPushLease, '1', {
@@ -67,12 +68,16 @@ export async function claimTeamsPush(event: PushEvent) {
       PX: PUSH_WINDOW_MS,
     });
     // Null when another server holds it.
+    leaseErrorLogged = false;
     return !!leased;
   } catch (error) {
-    logPush('error', event.name, {
-      message: 'team push lease failed',
-      error: (error as Error).message,
-    });
+    // Logged once until the lease works again: every granting server retries it every window.
+    if (!leaseErrorLogged)
+      logPush('error', event.name, {
+        message: 'team push lease failed',
+        error: (error as Error).message,
+      });
+    leaseErrorLogged = true;
     return false;
   }
 }
@@ -90,7 +95,8 @@ export type PushDeps = {
 type Send = Parameters<PushDeps['topicSend']>[0];
 // A send, and how to mark its topic dirty again if it is not started.
 type Queued = { send: Send; putBack: () => void };
-type Dirty = { event: PushEvent; hats: Map<string, Hat>; teams: boolean };
+// `teamsLostAt`: when this server first lost the team push lease since its last mark.
+type Dirty = { event: PushEvent; hats: Map<string, Hat>; teams: boolean; teamsLostAt?: number };
 
 // Pushes live totals over signals as they change: an award marks its hat and team dirty, and one
 // flush per window reads their totals and sends them. In memory and per server; a push that fails or
@@ -140,6 +146,7 @@ export function createEventPointsPusher(deps: PushDeps) {
     }
     entry.hats.set(field, hat);
     entry.teams = true;
+    entry.teamsLostAt = undefined;
     schedule();
     return true;
   }
@@ -154,7 +161,9 @@ export function createEventPointsPusher(deps: PushDeps) {
       // Once the event has ended the page names a winner from the settled standings; live team
       // totals must not reach it.
       const teams = entry.teams && event.endDate > now;
+      const { teamsLostAt } = entry;
       entry.teams = false;
+      entry.teamsLostAt = undefined;
       const room = budget - queue.length - (teams ? 1 : 0);
       const taken: Hat[] = [];
       for (const [field, hat] of entry.hats) {
@@ -169,7 +178,20 @@ export function createEventPointsPusher(deps: PushDeps) {
             ? await deps.selectWatched(event, taken, teams)
             : { hats: [] as Hat[], teams: false };
         const pushTeams = watchedTeams && (await deps.claimTeamsPush(event));
-        if (watchedTeams && !pushTeams) entryFor(event).teams = true;
+        if (watchedTeams && !pushTeams) {
+          // Lost to another server. Try once more in a later window: by then this lease has lapsed,
+          // so a second loss means its holder claimed after this server's last mark, and it reads
+          // and sends the totals this server would. Without that, every server that granted in a
+          // burst sends the same totals in turn, one a second.
+          const at = Date.now();
+          const secondLoss = teamsLostAt !== undefined && at - teamsLostAt >= PUSH_WINDOW_MS;
+          // A mark during this flush is newer than both leases, so it keeps its own try.
+          const entryNow = secondLoss ? undefined : entryFor(event);
+          if (entryNow && !entryNow.teams) {
+            entryNow.teams = true;
+            entryNow.teamsLostAt = teamsLostAt ?? at;
+          }
+        }
         const [points, totals] = await Promise.all([
           watchedHats.length
             ? deps.getHatPoints(event, watchedHats, now)
@@ -268,8 +290,12 @@ export function createEventPointsPusher(deps: PushDeps) {
     return flushing;
   }
 
+  // Team totals waiting on another server's lease are not counted: that server is sending them.
   const pending = () =>
-    [...dirty.values()].reduce((n, d) => n + d.hats.size + (d.teams ? 1 : 0), 0);
+    [...dirty.values()].reduce(
+      (n, d) => n + d.hats.size + (d.teams && d.teamsLostAt === undefined ? 1 : 0),
+      0
+    );
 
   // Flushes now, and again until nothing is dirty or `maxMs` has passed, for a job that must get its
   // pushes out before it ends. No send starts after `maxMs`, including in a flush the timer had

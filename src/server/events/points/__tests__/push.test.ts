@@ -96,6 +96,54 @@ describe('event points pusher', () => {
     expect(teamSends()).toBe(2);
   });
 
+  // Each loser tries once more; a second loss means the holder read after its grant.
+  it('sends the totals of a burst across many servers about once, not once per server', async () => {
+    const claimTeamsPush = sharedLease();
+    const servers = [1, 2, 3, 4, 5].map(() => setup({ claimTeamsPush }));
+    servers.forEach((s, i) => s.pusher.markDirty(event, hat(20 + i), NOW));
+    await vi.advanceTimersByTimeAsync(10 * PUSH_WINDOW_MS);
+    const teamSends = servers
+      .flatMap((s) => s.sent)
+      .filter((s) => s.target === 'event-points:teams');
+    expect(teamSends).toHaveLength(2);
+    expect(servers.every((s) => s.pusher.dirtyCount() === 0)).toBe(true);
+  });
+
+  it('keeps the teams after a loss inside the same window, and drops them after a later one', async () => {
+    const { pusher, sent } = setup({ claimTeamsPush: vi.fn(async () => false) });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await pusher.flush();
+    // Both losses were to the same lease, which may predate this server's grant.
+    expect(pusher.dirtyCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(pusher.dirtyCount()).toBe(0);
+    expect(sent.filter((s) => s.target === 'event-points:teams')).toEqual([]);
+  });
+
+  it('a new grant after a loss gets its own tries', async () => {
+    const claimTeamsPush = vi.fn(async () => false);
+    const { pusher } = setup({ claimTeamsPush });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS / 2);
+    pusher.markDirty(event, HAT, new Date());
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    // The second loss came after a fresh mark, so it counts as that mark's first.
+    expect(pusher.dirtyCount()).toBe(1);
+  });
+
+  it('claims no lease when nobody watches the team totals', async () => {
+    const claimTeamsPush = vi.fn(async () => true);
+    const { pusher } = setup({
+      claimTeamsPush,
+      selectWatched: vi.fn(async (_e, hats) => ({ hats, teams: false })),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(claimTeamsPush).not.toHaveBeenCalled();
+  });
+
   it('reads no team totals for a window it did not lease', async () => {
     const { pusher, sent, deps } = setup({ claimTeamsPush: vi.fn(async () => false) });
     pusher.markDirty(event, HAT, NOW);

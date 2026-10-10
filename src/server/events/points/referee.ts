@@ -348,7 +348,8 @@ export async function runEventPointsReferee(
     window.cut,
     refereeTotals([...final, ...rows])
   );
-  // This runs in a job: its corrections go out before it returns, not on a later window. Preview
+  // This runs in a job: its corrections go out before it returns, not on a later window, except the
+  // team totals while another server holds their push lease, which that server sends. Preview
   // corrections are never pushed; `unpushed` counts live ones the pusher refused (paused or off).
   // What the drain leaves unsent it logs itself.
   let unpushed = 0;
