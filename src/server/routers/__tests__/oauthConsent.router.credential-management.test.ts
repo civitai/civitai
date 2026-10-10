@@ -23,14 +23,33 @@ function ctx(credential: Record<string, unknown> = {}) {
   } as never;
 }
 
-// The tRPC context carries no key type, so User and System keys reach the gate identically.
-const bearers: [string, Record<string, unknown>][] = [
-  ['a full-scope User key', { apiKeyId: 1, subject: { type: 'apiKey', id: 1 } }],
-  ['a full-scope System key', { apiKeyId: 2, subject: { type: 'apiKey', id: 2 } }],
+// Keeps UserWrite, so a refusal here can only come from the credential check.
+const REDUCED = TokenScope.Full & ~TokenScope.UserRead;
+const key = (apiKeyType: string | undefined, tokenScope = TokenScope.Full) => ({
+  apiKeyId: 1,
+  ...(apiKeyType ? { apiKeyType } : {}),
+  subject: { type: 'apiKey', id: 1 },
+  tokenScope,
+});
+
+const allowed: [string, Record<string, unknown>][] = [
+  ['a browser session', {}],
+  ['a full-scope personal API key', key('User')],
+];
+
+const refused: [string, Record<string, unknown>][] = [
+  ['a full-scope System key', key('System')],
   [
-    'an OAuth access token for a different client',
-    { apiKeyId: 3, subject: { type: 'oauth', id: 'other-client' } },
+    'a full-scope OAuth access token for a different client',
+    {
+      apiKeyId: 3,
+      apiKeyType: 'Access',
+      subject: { type: 'oauth', id: 'other-client' },
+      tokenScope: TokenScope.Full,
+    },
   ],
+  ['a reduced-scope personal API key', key('User', REDUCED)],
+  ['a key whose type was not recorded', key(undefined)],
 ];
 
 const procedures = [
@@ -50,20 +69,20 @@ beforeEach(() => {
   dbMock.dbWrite.oauthConsent.findUnique.mockResolvedValue(null);
 });
 
-describe.each(procedures)('oauthConsent.$name requires a browser session', (procedure) => {
+describe.each(procedures)('oauthConsent.$name credential requirements', (procedure) => {
   // A missing consent answers NOT_FOUND, which can only come from inside the handler.
-  it('reaches the handler for a browser session', async () => {
-    await expect(procedure.call(createCaller(ctx()))).rejects.toThrow(
+  it.each(allowed)('reaches the handler for %s', async (_label, credential) => {
+    await expect(procedure.call(createCaller(ctx(credential)))).rejects.toThrow(
       expect.objectContaining({ code: 'NOT_FOUND' })
     );
     expect(dbMock.dbWrite.oauthConsent.findUnique).toHaveBeenCalledTimes(1);
   });
 
-  it.each(bearers)('refuses %s', async (_label, credential) => {
+  it.each(refused)('refuses %s', async (_label, credential) => {
     await expect(procedure.call(createCaller(ctx(credential)))).rejects.toThrow(
       expect.objectContaining({
         code: 'FORBIDDEN',
-        message: 'This action cannot be performed via API key or OAuth token.',
+        message: 'This action requires a signed-in session or a full-access personal API key.',
       })
     );
     expect(dbMock.dbWrite.oauthConsent.findUnique).not.toHaveBeenCalled();

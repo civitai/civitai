@@ -78,6 +78,15 @@ export async function setBuzzLimitHandler({
 }) {
   const { user } = ctx;
 
+  // A key must not raise or clear its own limit; the credential gate alone allows it.
+  const { subject } = ctx;
+  if (subject && subject.type === 'apiKey' && subject.id === input.id) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'A token cannot modify its own spend limit. Use a different key or session auth.',
+    });
+  }
+
   // Verify the key belongs to the requesting user before mutating.
   const existing = await dbRead.apiKey.findFirst({
     where: { id: input.id, userId: user.id, type: 'User' },

@@ -76,11 +76,15 @@ export interface TRPCMeta {
    * When true, this procedure cannot be invoked via API key or OAuth token,
    * regardless of scope — only session auth (browser cookie) is allowed.
    * Used for Civitai-side buzz-spending operations (tips, bounty creation,
-   * cosmetic purchases, etc.), for API-key add/limit/delete, and for OAuth
-   * connected-app limit/revoke mutations.
-   * Buzz spend through tokens is delegated entirely to the orchestrator.
+   * cosmetic purchases, etc.). Buzz spend through tokens is delegated entirely
+   * to the orchestrator.
    */
   blockApiKeys?: boolean;
+  /**
+   * When true, a token-based request must be a full-scope personal API key
+   * (`isFullScopeUserKey`); session auth is unaffected.
+   */
+  requireFullUserCredential?: boolean;
 }
 
 const t = initTRPC
@@ -237,6 +241,8 @@ const applyDomainFeature = t.middleware(async (options) => {
  *   pass through (subject to the blockApiKeys gate below).
  * - blockApiKeys: when set, the procedure is forbidden for any API-key/OAuth-token
  *   request regardless of scope (session auth only).
+ * - requireFullUserCredential: when set, a token-based request must be a full-scope
+ *   personal API key; OAuth tokens and other key types are forbidden.
  */
 // `enforceTokenScope`'s body lives in a light standalone module so the OAuth
 // scope-verification + unified scope-usage audit wiring is unit-testable without

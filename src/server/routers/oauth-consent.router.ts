@@ -47,7 +47,7 @@ export const oauthConsentRouter = router({
   // the consent so it persists across access-token rotations — refresh-issued
   // tokens for the same consent inherit it automatically.
   setBuzzLimit: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite, blockApiKeys: true })
+    .meta({ requiredScope: TokenScope.UserWrite, requireFullUserCredential: true })
     .input(
       z.object({
         clientId: z.string(),
@@ -100,7 +100,7 @@ export const oauthConsentRouter = router({
 
   // Revoke access for a connected app (delete all tokens + consent)
   revokeApp: protectedProcedure
-    .meta({ requiredScope: TokenScope.UserWrite, blockApiKeys: true })
+    .meta({ requiredScope: TokenScope.UserWrite, requireFullUserCredential: true })
     .input(z.object({ clientId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const consent = await dbWrite.oauthConsent.findUnique({
