@@ -297,6 +297,11 @@ describe('end-of-event cleanup', () => {
       where: { cosmeticId: { in: [11, 12, 13, 14] } },
       data: { equippedAt: null },
     });
+    // An unscored event's cleanup still flags its own winner: Yellow, first of four tied at zero.
+    const flagged = dbMock.dbWrite.$executeRaw.mock.calls.filter(([sql]) =>
+      (sql as TemplateStringsArray).join('?').includes('{winner}')
+    );
+    expect(flagged.map(([, id]) => id)).toEqual([11]);
   });
 
   const firstReset = new Date(BIRTHDAY_2026_ENDS_AT.getTime() + 16 * HOUR);
@@ -369,6 +374,17 @@ describe('end-of-event cleanup', () => {
     await eventEngine.updateLeaderboard(new Date(close + 3 * HOUR));
     await eventEngine.updateLeaderboard(new Date(close + 4 * HOUR));
     expect(mockReferee.runEventPointsReferee).toHaveBeenCalledTimes(3);
+    expect(winnerUpdates()).toHaveLength(1);
+  });
+
+  it('names no winner when the final run cannot compute its standings, and the next run does', async () => {
+    mockScoring.refreshStandings.mockRejectedValueOnce(new Error('db down'));
+    finalRun();
+    await expect(eventEngine.updateLeaderboard(new Date(close + HOUR))).rejects.toThrow('db down');
+    expect(winnerUpdates()).toHaveLength(0);
+    expect(sysStore[winnerMarker]).toBeUndefined();
+    finalRun();
+    await eventEngine.updateLeaderboard(new Date(close + 2 * HOUR));
     expect(winnerUpdates()).toHaveLength(1);
   });
 
