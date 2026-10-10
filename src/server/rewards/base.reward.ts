@@ -15,13 +15,12 @@ import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.con
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
-
-// Loaded on first use: buzz.service reaches back into the image/user/model service cycle, and every
-// reward imports this file, so a static import pulled that cycle into each one.
-const buzzService = () => import('~/server/services/buzz.service');
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const buzzService = () => import('~/server/services/buzz.service');
 
 // Retry budget for the batch `process` (cron) path — can afford to block.
 const BATCH_RETRY_COUNT = 5;

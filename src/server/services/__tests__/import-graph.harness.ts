@@ -5,6 +5,8 @@ import ts from 'typescript';
 /**
  * A static, regex-level reading of the repo's import graph, shared by the guards that need one.
  * It follows dynamic `import()` and skips type-only imports, as the bundler and vite do.
+ * scripts/test-perf/graph.mjs keeps a second, simpler resolver; a resolution fix here may belong
+ * there too.
  */
 
 export const REPO_ROOT = path.resolve(__dirname, '../../../..');
