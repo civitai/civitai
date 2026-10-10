@@ -191,6 +191,10 @@ it('event.getWornHat asks the service about this content, for this viewer', asyn
 describe.each([
   ['getWornHat', 'getWornEventHat', 60],
   ['getStandings', 'getEventStandings', 180],
+  // Settled from the same sysRedis snapshot: zeros from a missing or unreachable one are not cached.
+  ['getTeamScores', 'getTeamScores', 60],
+  ['getTeamScoreHistory', 'getTeamScoreHistory', 60],
+  ['getCosmeticScores', 'getEventCosmeticScores', 180],
 ] as const)('event.%s live points caching', (name, serviceFn, ttl) => {
   beforeEach(() => Object.assign(access, { viewer: 'open', signedOut: 'open' }));
 

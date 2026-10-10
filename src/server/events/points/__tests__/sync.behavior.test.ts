@@ -554,6 +554,12 @@ describe('syncEventHats -> engine', () => {
       );
       // What it took from the last arrival goes back for whoever runs next.
       expect([...(sets.get(lock.pending) ?? [])]).toEqual(['*']);
+      // ...and expires like any other content left there, in case nobody runs next.
+      const sys = redisMock.sysRedis;
+      expect(sys.pExpire.mock.calls).toEqual([[lock.pending, 60_000]]);
+      expect(sys.pExpire.mock.invocationCallOrder[0]).toBeGreaterThan(
+        sys.sAdd.mock.invocationCallOrder.at(-1)!
+      );
     });
 
     it('runs its pass anyway when it never gets the lock and the holder keeps letting go', async () => {

@@ -54,6 +54,7 @@ describe('what the pusher sends, the client reads', () => {
     const sent: { target: string; data: Record<string, unknown> }[] = [];
     const pusher = createEventPointsPusher({
       selectWatched: async (_e, hats, teams) => ({ hats, teams }),
+      claimTeamsPush: async () => true,
       getHatPoints: async () => ({ [hatField(hat)]: 64 }),
       getTeamPoints: async () => ({ Blue: 900 }),
       topicSend: async (args) => void sent.push(args),

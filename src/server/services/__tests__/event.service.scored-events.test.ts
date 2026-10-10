@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DecorationConstants from '~/shared/constants/event-decoration.constants';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { hatTopicId, previewTopicId } from '~/server/events/points/keys';
+import { encodeHat, eventPointKeys, hatTopicId, previewTopicId } from '~/server/events/points/keys';
+import type { EventHat } from '~/server/events/points/types';
 
 /**
  * The service layer is where the scored-event routes meet the engine. These pin that every scored
@@ -33,6 +34,9 @@ const { engine, scoring } = vi.hoisted(() => ({
   },
 }));
 
+// The decoration on the content and whether the content is public, both cached.
+const caches = vi.hoisted(() => ({ worn: { fetch: vi.fn() }, visible: { fetch: vi.fn() } }));
+
 // Live totals from the points engine. Default: up, with nothing earned yet.
 const live = vi.hoisted(() => ({
   getHatPoints: vi.fn(),
@@ -48,6 +52,8 @@ vi.mock('~/server/events/scoring/cosmetic-placement.service', async (importOrigi
 }));
 vi.mock('~/server/redis/caches', () => ({
   cosmeticCache: { fetch: vi.fn(async () => ({ 21: { name: 'Party Cap - Yellow' } })) },
+  eventDecorationEntityCaches: new Proxy({}, { get: () => caches.worn }),
+  publicContentCaches: { Image: caches.visible, Model: caches.visible, Article: caches.visible },
   profilePictureCache: { fetch: vi.fn(async () => ({})) },
   refreshOwnedStickerCache: vi.fn(),
   userBasicCache: { fetch: vi.fn(async () => ({})) },
@@ -105,6 +111,8 @@ beforeEach(() => {
   scoring.getCosmeticScores.mockResolvedValue({});
   live.getHatPoints.mockResolvedValue({});
   live.getTeamPoints.mockResolvedValue({});
+  caches.worn.fetch.mockResolvedValue({});
+  caches.visible.fetch.mockResolvedValue({});
   covers.mockResolvedValue([]);
   engine.assertReadable.mockReset();
   decorations.getEventDecorationDefinition.mockImplementation(decorations.real);
@@ -238,10 +246,14 @@ describe('the other event reads are gated on the viewer too', () => {
 
   it('reads team scores and history as the window the viewer is in', async () => {
     engine.assertReadable.mockResolvedValue('preview');
-    await service.getTeamScores({ event: 'birthday2026', viewer });
-    await service.getTeamScoreHistory({ event: 'birthday2026', viewer });
-    expect(engine.getTeamScores).toHaveBeenCalledWith('birthday2026', 'preview');
-    expect(engine.getTeamScoreHistory).toHaveBeenCalledWith({ event: 'birthday2026' }, 'preview');
+    // Both routes are edge-cached: a read that fell back to zeros must be able to say so.
+    const onDegraded = vi.fn();
+    await service.getTeamScores({ event: 'birthday2026', viewer, onDegraded });
+    await service.getTeamScoreHistory({ event: 'birthday2026', viewer, onDegraded });
+    expect(engine.getTeamScores).toHaveBeenCalledWith('birthday2026', 'preview', { onDegraded });
+    expect(engine.getTeamScoreHistory).toHaveBeenCalledWith({ event: 'birthday2026' }, 'preview', {
+      onDegraded,
+    });
   });
 });
 
@@ -514,6 +526,20 @@ describe('getEventStandings decoration', () => {
     expect(onDegraded).not.toHaveBeenCalled();
   });
 
+  it('hands the hat scores read the degraded callback', async () => {
+    const onDegraded = vi.fn();
+    const cosmetics = [{ userId: 9, cosmeticId: 31, claimKey: 'claimed' }];
+    await service.getEventCosmeticScores({ event: 'birthday2026', cosmetics, viewer, onDegraded });
+    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, cosmetics, onDegraded);
+  });
+
+  // The settled snapshot is on sysRedis too: an unreachable one must not be edge-cached as zeros.
+  it('hands the settled read the same degraded callback', async () => {
+    const onDegraded = vi.fn();
+    await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
+    expect(scoring.getEventStandings).toHaveBeenCalledWith(scored, { onDegraded });
+  });
+
   it('keeps the snapshot team totals when the live totals are unreachable', async () => {
     const teams = [{ team: 'Yellow', score: 900, rank: 1 }];
     scoring.getEventStandings.mockResolvedValue({ teams, topCosmetics: [], topUsers: {} });
@@ -688,48 +714,143 @@ describe('getEventHatCatalog', () => {
 
 describe('getWornEventHat', () => {
   const viewer = { id: 1 };
-  const read = () =>
-    service.getWornEventHat({ event: 'birthday2026', entityType: 'Image', entityId: 5, viewer });
-  const row = {
+  const read = (onDegraded?: () => void) =>
+    service.getWornEventHat({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 5,
+      viewer,
+      onDegraded,
+    });
+  const decoration = {
+    id: 31,
+    name: 'Party Cap - Blue',
+    type: 'ContentDecoration',
+    source: 'Purchase',
+    data: { type: 'hat', event: 'birthday2026', url: 'blue.png', team: 'Blue' },
+    equippedToId: 5,
+    equippedToType: 'Image',
+    userId: 9,
+  };
+  const wearing = (worn: Record<string, unknown> = decoration) =>
+    caches.worn.fetch.mockResolvedValue({ 5: worn });
+  const inHatMap = (claimKey: string, hat: Partial<EventHat> = {}) =>
+    redisMock.sysRedis.hGet.mockImplementation(async (key: string, field: string) =>
+      key === eventPointKeys('birthday2026').hats && field === 'Image:5'
+        ? encodeHat({ ownerId: 9, cosmeticId: 31, claimKey, team: 'Blue', ...hat })
+        : null
+    );
+  const settled = (claimKey: string, points: number, extra: Record<string, number> = {}) => ({
     userId: 9,
     cosmeticId: 31,
-    claimKey: 'claimed',
-    name: 'Party Cap - Blue',
-    data: { type: 'hat', event: 'birthday2026', url: 'blue.png', team: 'Blue' },
-  };
+    claimKey,
+    team: 'Blue',
+    points,
+    impressions: 0,
+    anonImpressions: 0,
+    reactions: 0,
+    comments: 0,
+    stickers: 0,
+    remixes: 0,
+    modelLikes: 0,
+    ...extra,
+  });
   const userBasic = async () =>
     vi.mocked((await import('~/server/redis/caches')).userBasicCache.fetch);
   const profilePictures = async () =>
     vi.mocked((await import('~/server/redis/caches')).profilePictureCache.fetch);
 
+  // Every case runs with Postgres throwing, and ends by asserting none of it was called (the live and
+  // degraded fallbacks catch, so a throw alone could be swallowed): the only proof the popover never
+  // reads it. Reset after, so the refusal does not leak into later blocks.
+  let forbidden: ReturnType<typeof vi.fn>[] = [];
+  beforeEach(() => {
+    const refuse = (async () => {
+      throw new Error('Postgres on the request path');
+    }) as never;
+    forbidden = [dbMock.dbRead, dbMock.dbWrite].flatMap((client) => [
+      ...['$queryRaw', '$executeRaw', '$queryRawUnsafe', '$executeRawUnsafe', '$transaction'].map(
+        (m) => client[m]
+      ),
+      ...['userCosmetic', 'cosmetic', 'image', 'model', 'article', 'post'].flatMap((model) =>
+        ['findMany', 'findFirst', 'findUnique'].map((m) => client[model][m])
+      ),
+    ]);
+    for (const method of forbidden) method.mockReset().mockImplementation(refuse);
+    caches.worn.fetch.mockResolvedValue({});
+    caches.visible.fetch.mockResolvedValue({ 5: { id: 5 } });
+    redisMock.sysRedis.hGet.mockResolvedValue(null);
+    at(LIVE_NOW);
+  });
+
+  it('in the preview, gives the worn hat its keyed id, never its live one', async () => {
+    wearing();
+    inHatMap('claimed');
+    at(PREVIEW_NOW);
+    expect((await read())?.topicId).toBe(previewTopicId('birthday2026', '9:31:claimed'));
+    expect(engine.getReadableScoredEvent).toHaveBeenCalledWith('birthday2026', viewer);
+  });
+
+  afterEach(() => {
+    const called = forbidden.filter((method) => method.mock.calls.length).length;
+    for (const method of forbidden) method.mockReset();
+    expect(called, 'Postgres was called by the popover').toBe(0);
+  });
+
   it('refuses an event the viewer may not read, and reads nothing', async () => {
     engine.getReadableScoredEvent.mockImplementation(notStarted);
     await expect(read()).rejects.toThrow("That event doesn't exist");
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(caches.worn.fetch).not.toHaveBeenCalled();
+    expect(caches.visible.fetch).not.toHaveBeenCalled();
   });
 
   it('is null when no hat of the event is on that content', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
     expect(await read()).toBeNull();
+    expect(caches.worn.fetch).toHaveBeenCalledWith([5]);
+    // Content with no hat never costs a visibility lookup.
+    expect(caches.visible.fetch).not.toHaveBeenCalled();
     expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
   });
 
-  it('names the hat without its team, its wearer, and what it has earned', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+  it('is null while the content is not public, and for a type that is never public', async () => {
+    wearing();
+    caches.visible.fetch.mockResolvedValue({});
+    expect(await read()).toBeNull();
+    expect(caches.visible.fetch).toHaveBeenCalledWith([5]);
+    expect(
+      await service.getWornEventHat({
+        event: 'birthday2026',
+        entityType: 'Post',
+        entityId: 5,
+        viewer,
+      })
+    ).toBeNull();
+    // Positive control: the same hat on public content is found.
+    caches.visible.fetch.mockResolvedValue({ 5: { id: 5 } });
+    expect(await read()).toMatchObject({ cosmeticId: 31 });
+  });
+
+  it("is null for another event's hat", async () => {
+    wearing({ ...decoration, data: { ...decoration.data, event: 'holiday2026' } });
+    expect(await read()).toBeNull();
+  });
+
+  it('names the hat without its team, its wearer, and what it has earned, by the hat map', async () => {
+    wearing();
+    inHatMap('claimed');
     (await userBasic()).mockResolvedValueOnce({
       9: { id: 9, username: 'civ', image: 'a.png', deletedAt: null },
     } as never);
     (await profilePictures()).mockResolvedValueOnce({ 9: { id: 70, url: 'p.png' } } as never);
     scoring.getCosmeticScores.mockResolvedValue({
-      '9:31:claimed': {
-        points: 12,
+      '9:31:claimed': settled('claimed', 12, {
         impressions: 300,
         anonImpressions: 40,
         reactions: 7,
         comments: 5,
         stickers: 4,
         remixes: 3,
-      },
+      }),
     });
     live.getHatPoints.mockResolvedValue({ '9:31:claimed': 64 });
     at(LIVE_NOW);
@@ -751,104 +872,124 @@ describe('getWornEventHat', () => {
     expect(live.getHatPoints).toHaveBeenCalledWith(season, [
       { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' },
     ]);
-    expect(scoring.getCosmeticScores).toHaveBeenCalledWith(scored, [
-      { userId: 9, cosmeticId: 31, claimKey: 'claimed' },
+    expect(scoring.getCosmeticScores.mock.calls[0].slice(0, 2)).toEqual([
+      scored,
+      [{ userId: 9, cosmeticId: 31, claimKey: 'claimed' }],
     ]);
+    expect(scoring.getUserCosmeticScores).not.toHaveBeenCalled();
     // The wearer, not the viewer (id 1).
     expect(await userBasic()).toHaveBeenCalledWith([9]);
     expect(await profilePictures()).toHaveBeenCalledWith([9]);
   });
 
-  it('in the preview, gives the worn hat its keyed id, never its live one', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
-    at(PREVIEW_NOW);
-    expect((await read())?.topicId).toBe(previewTopicId('birthday2026', '9:31:claimed'));
-    expect(engine.getReadableScoredEvent).toHaveBeenCalledWith('birthday2026', viewer);
+  // After the event the hat map is no longer kept, but the hat stays on the content.
+  it("finds a hat missing from the hat map by its owner's only settled copy of the design", async () => {
+    wearing();
+    scoring.getUserCosmeticScores.mockResolvedValue([
+      settled('txn-1', 40),
+      { ...settled('claimed', 90), cosmeticId: 77 },
+    ]);
+    scoring.getCosmeticScores.mockResolvedValue({ '9:31:txn-1': settled('txn-1', 40) });
+    live.getHatPoints.mockResolvedValue(null as never);
+    expect(await read()).toMatchObject({
+      topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'txn-1' }),
+    });
+    expect(scoring.getUserCosmeticScores.mock.calls[0].slice(0, 2)).toEqual([scored, 9]);
+  });
+
+  // A stale map entry: another owner's hat, or this owner's other design, once on this content.
+  it.each([
+    ['someone else', { ownerId: 12 }],
+    ['another design of the same owner', { cosmeticId: 77 }],
+  ])("ignores a hat map entry for %s's hat, and falls back to the settled copy", async (_, hat) => {
+    wearing();
+    inHatMap('other', hat);
+    scoring.getUserCosmeticScores.mockResolvedValue([settled('txn-1', 40)]);
+    expect(await read()).toMatchObject({
+      topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'txn-1' }),
+    });
+  });
+
+  it('shows the hat and its owner without points when two copies of the design leave it ambiguous', async () => {
+    wearing();
+    (await userBasic()).mockResolvedValueOnce({
+      9: { id: 9, username: 'civ', image: null, deletedAt: null },
+    } as never);
+    scoring.getUserCosmeticScores.mockResolvedValue([settled('claimed', 5), settled('txn-1', 40)]);
+    expect(await read()).toEqual({
+      cosmeticId: 31,
+      name: 'Party Cap',
+      team: 'Blue',
+      url: 'blue.png',
+      owner: { id: 9, username: 'civ', image: null, profilePicture: null },
+      topicId: null,
+      points: 0,
+      impressions: 0,
+      reactions: 0,
+      comments: 0,
+      stickers: 0,
+      remixes: 0,
+    });
+    expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
+    expect(live.getHatPoints).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the settled copy and reports it degraded when the hat map is unreachable', async () => {
+    wearing();
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('sysredis down'));
+    scoring.getUserCosmeticScores.mockResolvedValue([settled('txn-1', 40)]);
+    const onDegraded = vi.fn();
+    expect(await read(onDegraded)).toMatchObject({
+      topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'txn-1' }),
+    });
+    expect(onDegraded).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to the snapshot points when the live totals are unreachable', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
-    scoring.getCosmeticScores.mockResolvedValue({
-      '9:31:claimed': { points: 12, impressions: 0, anonImpressions: 0, reactions: 0 },
-    });
+    wearing();
+    inHatMap('claimed');
+    scoring.getCosmeticScores.mockResolvedValue({ '9:31:claimed': settled('claimed', 12) });
     live.getHatPoints.mockRejectedValue(new Error('sysredis down'));
     const onDegraded = vi.fn();
-    expect(
-      await service.getWornEventHat({
-        event: 'birthday2026',
-        entityType: 'Image',
-        entityId: 5,
-        viewer,
-        onDegraded,
-      })
-    ).toMatchObject({ points: 12 });
+    expect(await read(onDegraded)).toMatchObject({ points: 12 });
     // The route skips the edge cache for this answer.
     expect(onDegraded).toHaveBeenCalledTimes(1);
   });
 
-  it('does not report a live answer as degraded', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+  it('does not report a live answer as degraded, and hands the settled read the same callback', async () => {
+    wearing();
+    inHatMap('claimed');
     const onDegraded = vi.fn();
-    await service.getWornEventHat({
-      event: 'birthday2026',
-      entityType: 'Image',
-      entityId: 5,
-      viewer,
-      onDegraded,
-    });
+    await read(onDegraded);
     expect(onDegraded).not.toHaveBeenCalled();
+    expect(scoring.getCosmeticScores.mock.calls[0][2]).toBe(onDegraded);
   });
 
   // The popover is public and edge-cached: the claim key (a purchase's transaction id) stays home.
   it('never returns the claim key', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ ...row, claimKey: 'txn-secret-42' }]);
+    wearing();
+    inHatMap('txn-secret-42');
     expect(JSON.stringify(await read())).not.toContain('txn-secret-42');
   });
 
-  it('is null for a decoration whose data is not an event hat', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([{ ...row, data: {} }]);
-    expect(await read()).toBeNull();
-    expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
-  });
-
   it('keeps the whole name of a hat with no team', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([
-      { ...row, name: 'Party Cap - Blue', data: { type: 'hat', event: 'birthday2026', url: 'u' } },
-    ]);
+    wearing({ ...decoration, data: { type: 'hat', event: 'birthday2026', url: 'u' } });
     expect(await read()).toMatchObject({ name: 'Party Cap - Blue', team: null });
   });
 
   it('hides a deleted wearer and reads an unscored hat as zero', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([row]);
+    wearing();
+    inHatMap('claimed');
     (await userBasic()).mockResolvedValueOnce({
       9: { id: 9, username: 'civ', image: null, deletedAt: new Date() },
     } as never);
-    expect(await read()).toMatchObject({ owner: null, points: 0, impressions: 0, reactions: 0 });
-  });
-
-  // The rows are the mock's, so pin the whole query: this content, this event's decorations, and
-  // only while the content is public, since the answer is edge-cached for everyone.
-  it('queries the hat on this content of this event, only while the content is public', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
-    await read();
-    const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
-    expect(strings.join('?').replace(/\s+/g, ' ').trim()).toBe(
-      `SELECT uc."userId", uc."cosmeticId", uc."claimKey", c.name, c.data ` +
-        `FROM "UserCosmetic" uc JOIN "Cosmetic" c ON c.id = uc."cosmeticId" ` +
-        `WHERE uc."equippedToType" = ?::"CosmeticEntity" AND uc."equippedToId" = ? ` +
-        `AND c.type = 'ContentDecoration' AND c.data->>'event' = ? ` +
-        `AND CASE uc."equippedToType" ` +
-        `WHEN 'Image' THEN EXISTS ( SELECT 1 FROM "Image" i JOIN "Post" p ON p.id = i."postId" ` +
-        `WHERE i.id = uc."equippedToId" AND p."publishedAt" <= now() ` +
-        `AND p.availability <> 'Private' AND NOT p."tosViolation" ` +
-        `AND i.ingestion = 'Scanned' AND i."needsReview" IS NULL AND NOT i."tosViolation" ) ` +
-        `WHEN 'Model' THEN EXISTS ( SELECT 1 FROM "Model" m WHERE m.id = uc."equippedToId" AND m.status = 'Published' ` +
-        `AND m.availability <> 'Private' AND NOT m."tosViolation" ) ` +
-        `WHEN 'Article' THEN EXISTS ( SELECT 1 FROM "Article" a WHERE a.id = uc."equippedToId" AND a.status = 'Published' ` +
-        `AND a.ingestion = 'Scanned' AND a.availability <> 'Private' AND NOT a."tosViolation" ) ` +
-        `ELSE false END ORDER BY uc."equippedAt" DESC NULLS LAST LIMIT 1`
-    );
-    expect(values).toEqual(['Image', 5, 'birthday2026']);
+    expect(await read()).toMatchObject({
+      owner: null,
+      topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'claimed' }),
+      points: 0,
+      impressions: 0,
+      reactions: 0,
+    });
   });
 });
 

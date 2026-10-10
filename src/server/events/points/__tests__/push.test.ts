@@ -30,6 +30,7 @@ function setup(overrides: Partial<PushDeps> = {}) {
   const sent: Sent[] = [];
   const deps: PushDeps = {
     selectWatched: vi.fn(async (_e, hats, teams) => ({ hats, teams })),
+    claimTeamsPush: vi.fn(async () => true),
     // Each hat's total is its owner id, so a payload shows which hat it carries.
     getHatPoints: vi.fn(async (_e, hats) =>
       Object.fromEntries(hats.map((h) => [hatField(h), h.ownerId]))
@@ -64,6 +65,149 @@ afterEach(() => {
 });
 
 describe('event points pusher', () => {
+  // One lease shared by every server, as sysRedis holds it: free once its window has passed.
+  function sharedLease() {
+    let heldUntil = 0;
+    return vi.fn(async () => {
+      if (Date.now() < heldUntil) return false;
+      heldUntil = Date.now() + PUSH_WINDOW_MS;
+      return true;
+    });
+  }
+
+  it('sends the team totals from one server per window, and the others try again', async () => {
+    const claimTeamsPush = sharedLease();
+    const a = setup({ claimTeamsPush });
+    const b = setup({ claimTeamsPush });
+    a.pusher.markDirty(event, HAT, NOW);
+    b.pusher.markDirty(event, hat(11), NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    const teamSends = () =>
+      [...a.sent, ...b.sent].filter((s) => s.target === 'event-points:teams').length;
+    expect(teamSends()).toBe(1);
+    // Hats are each server's own and always go.
+    expect(a.sent).toContainEqual(hatSend(HAT, 10));
+    expect(b.sent).toContainEqual(hatSend(hat(11), 11));
+
+    // The server that lost kept its teams dirty and sends them in the next window.
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(teamSends()).toBe(2);
+    await vi.advanceTimersByTimeAsync(5 * PUSH_WINDOW_MS);
+    expect(teamSends()).toBe(2);
+  });
+
+  // Each loser tries once more; a second loss means the holder read after its grant.
+  it('sends the totals of a burst across many servers about once, not once per server', async () => {
+    const claimTeamsPush = sharedLease();
+    const servers = [1, 2, 3, 4, 5].map(() => setup({ claimTeamsPush }));
+    servers.forEach((s, i) => s.pusher.markDirty(event, hat(20 + i), NOW));
+    await vi.advanceTimersByTimeAsync(10 * PUSH_WINDOW_MS);
+    const teamSends = servers
+      .flatMap((s) => s.sent)
+      .filter((s) => s.target === 'event-points:teams');
+    expect(teamSends).toHaveLength(2);
+    expect(servers.every((s) => s.pusher.dirtyCount() === 0)).toBe(true);
+  });
+
+  it('keeps the teams after a loss inside the same window, and drops them after a later one', async () => {
+    const { pusher, sent } = setup({ claimTeamsPush: vi.fn(async () => false) });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await pusher.flush();
+    // Both losses were to the same lease, which may predate this server's grant.
+    expect(pusher.dirtyCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(pusher.dirtyCount()).toBe(0);
+    expect(sent.filter((s) => s.target === 'event-points:teams')).toEqual([]);
+  });
+
+  // A slow claim must not stretch one window into two: the second claim here is sent before the
+  // first lease could have lapsed.
+  it('does not count a loss as the second because the claims were slow', async () => {
+    const claimTeamsPush = vi.fn(async () => {
+      vi.setSystemTime(Date.now() + 1_500);
+      return false;
+    });
+    const { pusher } = setup({ claimTeamsPush });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await pusher.flush();
+    expect(pusher.dirtyCount()).toBe(1);
+  });
+
+  // The whole case for dropping rests on the lease it lost to having lapsed: a full window.
+  it('counts a loss as the second only a full window after the first', async () => {
+    const { pusher } = setup({ claimTeamsPush: vi.fn(async () => false) });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    vi.setSystemTime(NOW.getTime() + PUSH_WINDOW_MS - 1);
+    await pusher.flush();
+    expect(pusher.dirtyCount()).toBe(1);
+    vi.setSystemTime(NOW.getTime() + PUSH_WINDOW_MS);
+    await pusher.flush();
+    expect(pusher.dirtyCount()).toBe(0);
+  });
+
+  it('a grant marked while a losing flush runs gets its own tries', async () => {
+    let calls = 0;
+    const { pusher } = setup({
+      claimTeamsPush: vi.fn(async () => {
+        if (calls++ === 0) pusher.markDirty(event, HAT, new Date());
+        return false;
+      }),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    // The next loss is that grant's first, so its teams are kept for one more try.
+    expect(pusher.dirtyCount()).toBe(1);
+  });
+
+  it('a new grant after a loss gets its own tries', async () => {
+    const claimTeamsPush = vi.fn(async () => false);
+    const { pusher } = setup({ claimTeamsPush });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS / 2);
+    pusher.markDirty(event, HAT, new Date());
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    // The second loss came after a fresh mark, so it counts as that mark's first.
+    expect(pusher.dirtyCount()).toBe(1);
+    expect(claimTeamsPush).toHaveBeenCalledTimes(2);
+  });
+
+  it('claims no lease when nobody watches the team totals', async () => {
+    const claimTeamsPush = vi.fn(async () => true);
+    const { pusher } = setup({
+      claimTeamsPush,
+      selectWatched: vi.fn(async (_e, hats) => ({ hats, teams: false })),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(claimTeamsPush).not.toHaveBeenCalled();
+  });
+
+  it('reads the team totals as of after the claim, not the start of the flush', async () => {
+    const { pusher, deps } = setup({
+      claimTeamsPush: vi.fn(async () => {
+        vi.setSystemTime(Date.now() + 5);
+        return true;
+      }),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await pusher.flush();
+    const [, at] = vi.mocked(deps.getTeamPoints).mock.calls[0];
+    expect(at.getTime()).toBe(NOW.getTime() + 5);
+  });
+
+  it('reads no team totals for a window it did not lease', async () => {
+    const { pusher, sent, deps } = setup({ claimTeamsPush: vi.fn(async () => false) });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(deps.getTeamPoints).not.toHaveBeenCalled();
+    expect(sent).toEqual([hatSend(HAT, 10)]);
+  });
+
   it('pushes the dirty hat and its team once the window closes, with exact payloads', async () => {
     const { pusher, sent } = setup();
     pusher.markDirty(event, HAT, NOW);
@@ -310,6 +454,25 @@ describe('event points pusher', () => {
   describe('in the preview', () => {
     const PREVIEW_NOW = new Date('2026-10-25T12:00:00.000Z');
     const previewEvent = { ...event, previewFrom: new Date('2026-10-20T00:00:00.000Z') };
+
+    // One lease per event and window, whichever season's teams topic it sends: only one season is
+    // current at a time, so the preview's team totals go out from one server a window like the live.
+    it("takes the event's team push lease for the preview's team totals too", async () => {
+      vi.setSystemTime(PREVIEW_NOW);
+      const claimTeamsPush = vi.fn(async () => false);
+      const { pusher, sent } = setup({ claimTeamsPush });
+      pusher.markDirty(previewEvent, HAT, PREVIEW_NOW);
+      await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+      expect(claimTeamsPush).toHaveBeenCalledWith(previewEvent);
+      expect(sent.map((s) => s.target)).toEqual(['event-points:hat']);
+      // The control: holding the lease, the keyed teams topic goes out.
+      claimTeamsPush.mockResolvedValue(true);
+      pusher.markDirty(previewEvent, HAT, new Date());
+      await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS * 3);
+      expect(sent.map((s) => s.topic)).toContain(
+        `event-points:birthday2026:teams:${previewTopicId('birthday2026', 'teams')}`
+      );
+    });
 
     it('marks from the preview start, and pushes to the keyed topics', async () => {
       vi.setSystemTime(PREVIEW_NOW);
