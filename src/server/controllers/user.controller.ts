@@ -157,6 +157,7 @@ import {
 } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 
 export const getAllUsersHandler = async ({
   input,
@@ -672,7 +673,7 @@ export const updateUserHandler = async ({
               create: {
                 ...newPicture,
                 metadata: {
-                  ...newPicture.metadata,
+                  ...stripBlockProvenanceMetadata(newPicture.metadata),
                   profilePicture: true,
                   userId: id,
                   username,

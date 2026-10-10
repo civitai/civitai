@@ -237,6 +237,10 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import {
+  stripBlockProvenanceMetadata,
+  type BlockProvenanceMetadataKey,
+} from '~/shared/utils/block-provenance-metadata';
 import type {
   CollectionItemRejectionReason,
   DomainColor,
@@ -6489,6 +6493,7 @@ export async function createImage({
   techniqueIds,
   skipIngestion,
   verifiedSourceImageIds,
+  blockProvenance,
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6499,7 +6504,15 @@ export async function createImage({
    * here, so a new image path can't grant itself provenance by accident.
    */
   verifiedSourceImageIds?: number[] | null;
+  /**
+   * The App Blocks app that produced this image, verified by the caller. The only way a
+   * row gets a `BLOCK_PROVENANCE_METADATA_KEYS` entry: any copy in `metadata` is dropped.
+   */
+  blockProvenance?: { key: BlockProvenanceMetadataKey; appId: string } | null;
 }) {
+  if (blockProvenance && !blockProvenance.appId) {
+    throw new Error('createImage: blockProvenance requires an appId');
+  }
   /**
    * 🔴 THE ROW MUST NOT OUTLIVE ITS MEDIA — so ask the store before writing it.
    *
@@ -6665,9 +6678,13 @@ export async function createImage({
     image.meta as Record<string, unknown> | null | undefined,
     verifiedSourceImageIds
   );
+  const metadata = stripBlockProvenanceMetadata(image.metadata);
   const result = await dbWrite.image.create({
     data: {
       ...image,
+      metadata: blockProvenance
+        ? { ...metadata, [blockProvenance.key]: blockProvenance.appId }
+        : metadata,
       meta: (meta as Prisma.JsonObject) ?? Prisma.JsonNull,
       generationProcess: meta ? getImageGenerationProcess(meta as ImageMetaProps) : null,
       tools: !!toolIds?.length
@@ -6771,6 +6788,7 @@ export const createEntityImages = async ({
         (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
           | Prisma.JsonObject
           | undefined) ?? Prisma.JsonNull,
+      metadata: stripBlockProvenanceMetadata(image.metadata),
       userId,
       resources: undefined,
     })),
@@ -7160,6 +7178,7 @@ export const updateEntityImages = async ({
           (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
             | Prisma.JsonObject
             | undefined) ?? Prisma.JsonNull,
+        metadata: stripBlockProvenanceMetadata(image.metadata),
         userId,
         resources: undefined,
       })),
