@@ -565,7 +565,13 @@ describe('syncEventHats -> engine', () => {
 
     it('still writes when renewing the lock fails, and says so', async () => {
       await place(OWNER, 100);
-      redisMock.sysRedis.eval.mockRejectedValueOnce(new Error('redis blip'));
+      // Every renewal fails; releases still work.
+      const sys = redisMock.sysRedis;
+      const real = sys.eval.getMockImplementation()!;
+      sys.eval.mockImplementation(async (script: string, opts: never) => {
+        if (script.includes("'PEXPIRE'")) throw new Error('redis blip');
+        return real(script, opts);
+      });
       await syncOwnerEventHats(OWNER, [image(100)], LIVE);
       expect(log).toEqual([{ k: 'Image:100', v: ownerHat() }]);
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
