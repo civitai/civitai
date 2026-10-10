@@ -5334,6 +5334,10 @@ export const blocksRouter = router({
    * charge, BEFORE the persist, so a refusal creates no Image row and starts no scan. The bytes
    * are already in the store by then; a refused upload leaves that object unreferenced, as a
    * picked upload refused at `blockImageUpload.persist` does.
+   *
+   * ⚠️ The 60/h `rateLimit` below does NOT bind every caller: the middleware skips moderators
+   * (the current flag audience) and non-prod envs. For them the binding server bound is the
+   * publish bucket (60 per 300 s per install), plus the host's 3-per-60-s window per page.
    */
   persistAppUploadImage: protectedProcedure
     .meta({ blockApiKeys: true })

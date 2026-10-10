@@ -46,6 +46,10 @@ const OTHER_USER = 7;
 const BROWSING = 1;
 /** R — outside a PG-only ceiling. */
 const MATURE = 4;
+/** PG-13 — inside the SFW ceiling, but NOT inside the PG-only `BROWSING` ceiling. */
+const PG13 = 2;
+/** PG | PG-13 | R — a viewer whose own ceiling admits R. */
+const R_ALLOWED = 1 | 2 | 4;
 
 const PUBLISHED_OWN = 101; // viewer's, published by APP
 const UPLOADED_OWN = 102; // viewer's, uploaded by APP
@@ -54,6 +58,8 @@ const UPLOADED_OTHER_APP = 104; // viewer's, uploaded by OTHER_APP
 const UPLOADED_POSTED = 105; // viewer's, uploaded by APP, already in a post
 const UPLOADED_MATURE = 106; // viewer's, uploaded by APP, above the ceiling
 const PUBLISHED_OTHER_USER = 107; // ANOTHER viewer's, published by APP
+const PUBLISHED_MATURE = 108; // viewer's, published by APP, R
+const UPLOADED_PG13 = 109; // viewer's, uploaded by APP, PG-13
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -107,12 +113,17 @@ beforeEach(async () => {
         row(UPLOADED_POSTED, VIEWER, { blockUploadedAppId: APP }, { postId: 9 }),
         row(UPLOADED_MATURE, VIEWER, { blockUploadedAppId: APP }, { nsfwLevel: MATURE }),
         row(PUBLISHED_OTHER_USER, OTHER_USER, { blockPublishedAppId: APP }),
+        row(PUBLISHED_MATURE, VIEWER, { blockPublishedAppId: APP }, { nsfwLevel: MATURE }),
+        row(UPLOADED_PG13, VIEWER, { blockUploadedAppId: APP }, { nsfwLevel: PG13 }),
       ].join(',\n')};
   `);
 });
 
 const postable = (imageIds: number[]) =>
   resolveAppPublishedImages({ imageIds, userId: VIEWER, appId: APP, browsingLevel: BROWSING });
+
+const postableAtR = (imageIds: number[]) =>
+  resolveAppPublishedImages({ imageIds, userId: VIEWER, appId: APP, browsingLevel: R_ALLOWED });
 
 const gatedRead = (imageIds: number[]) =>
   getBlockGatedImagesByIds({ imageIds, browsingLevel: BROWSING, appId: APP, userId: VIEWER });
@@ -144,6 +155,33 @@ describe('post-from-app `published` source: accepts either provenance key, all o
     ['an upload above the viewer’s maturity ceiling', UPLOADED_MATURE],
   ])('refuses %s', async (_label, id) => {
     await expectNotPostable(id);
+  });
+});
+
+describe('uploaded rows are SFW-only on the post path; published rows keep the viewer clamp', () => {
+  it('🔴 refuses an R-level UPLOADED row even for a viewer whose ceiling admits R', async () => {
+    const p = postableAtR([UPLOADED_MATURE]);
+    await expect(p).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'an image is not available to post',
+    });
+  });
+
+  it('still accepts SFW uploaded rows (PG and PG-13) for that viewer', async () => {
+    const out = await postableAtR([UPLOADED_OWN, UPLOADED_PG13]);
+    expect(out.map((i) => [i.imageId, i.nsfwLevel])).toEqual([
+      [UPLOADED_OWN, BROWSING],
+      [UPLOADED_PG13, PG13],
+    ]);
+  });
+
+  it('still accepts an R-level PUBLISHED row for a viewer whose ceiling admits R (unchanged)', async () => {
+    const out = await postableAtR([PUBLISHED_MATURE]);
+    expect(out.map((i) => [i.imageId, i.nsfwLevel])).toEqual([[PUBLISHED_MATURE, MATURE]]);
+  });
+
+  it('the viewer clamp still applies to that PUBLISHED row for a PG-only viewer', async () => {
+    await expectNotPostable(PUBLISHED_MATURE);
   });
 });
 

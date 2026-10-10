@@ -346,6 +346,84 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD { bytes }', () => {
     }
   });
 
+  test('CROSS-FRAME: an in-flight requestId re-sent with an INVALID payload gets no reply, and the original still settles with its real result', async () => {
+    // Past the bridge's 5 s replay dedup, so the re-send really reaches the host handler.
+    let offset = 0;
+    const realNow = Date.now.bind(Date);
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    // Hold the original in flight: persist does not settle until the re-send has been handled.
+    let releasePersist: (v: { imageId: number }) => void = () => undefined;
+    h.persist.mockImplementation(
+      () => new Promise<{ imageId: number }>((resolve) => (releasePersist = resolve))
+    );
+    renderWithProviders(<PageBlockHost {...baseProps} trustTier="unverified" />);
+    await vi.waitFor(() => {
+      if (!iframe().contentWindow) throw new Error('not mounted yet');
+    });
+    const el = iframe();
+    const cw = el.contentWindow;
+    const echoes: Array<{ origin: string; data: { type?: string; payload?: unknown } }> = [];
+    const onEcho = (e: MessageEvent) => {
+      const d = e.data as { __xfEcho?: { type?: string; payload?: unknown } } | null;
+      if (e.source === cw && d && d.__xfEcho) echoes.push({ origin: e.origin, data: d.__xfEcho });
+    };
+    window.addEventListener('message', onEcho);
+    try {
+      el.srcdoc =
+        `<script>
+        var sent = false;
+        var png = new Uint8Array([${PNG.join(',')}]);
+        function go() {
+          if (sent) return;
+          sent = true;
+          parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: png.buffer.slice(0) } }, '*');
+        }
+        window.addEventListener('message', function (e) {
+          if (e.source !== parent) return;
+          if (e.data && e.data.__resend) {
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_reuse', bytes: new Uint8Array(png) } }, '*');
+            // Sentinel: same invalid payload on a FRESH id, sent after the re-send. Its reply
+            // proves the re-send was delivered and handled before we assert it got none.
+            parent.postMessage({ type: 'OPEN_IMAGE_UPLOAD', payload: { requestId: 'rq_xf_sentinel', bytes: new Uint8Array(png) } }, '*');
+            return;
+          }
+          parent.postMessage({ __xfEcho: e.data }, '*');
+          if (e.data && e.data.type === 'BLOCK_INIT') go();
+        });
+        parent.postMessage({ type: 'BLOCK_READY', payload: {} }, '*');
+        setTimeout(go, 300);
+      </` + `script>`;
+
+      const repliesTo = (id: string) =>
+        echoes
+          .filter((m) => m.data.type === 'IMAGE_UPLOAD_RESULT')
+          .map((m) => m.data.payload)
+          .filter((p) => (p as { requestId?: string }).requestId === id);
+
+      await vi.waitFor(() => expect(h.persist).toHaveBeenCalledTimes(1));
+      offset = 6_000;
+      el.contentWindow?.postMessage({ __resend: true }, '*');
+      await vi.waitFor(() =>
+        expect(repliesTo('rq_xf_sentinel')).toEqual([
+          { requestId: 'rq_xf_sentinel', error: 'invalid image-upload request' },
+        ])
+      );
+      await settle();
+      // The re-send got nothing: any reply would settle the ORIGINAL request in the SDK.
+      expect(repliesTo('rq_xf_reuse')).toEqual([]);
+
+      releasePersist({ imageId: PERSISTED_ID });
+      await vi.waitFor(() => expect(repliesTo('rq_xf_reuse')).toHaveLength(1));
+      await settle();
+      expect(repliesTo('rq_xf_reuse')).toEqual([{ requestId: 'rq_xf_reuse', selected: SELECTED }]);
+      expect(h.uploadToCF).toHaveBeenCalledTimes(1);
+      expect(new Set(echoes.map((m) => m.origin))).toEqual(new Set(['null']));
+    } finally {
+      window.removeEventListener('message', onEcho);
+      nowSpy.mockRestore();
+    }
+  });
+
   test('once answered, a requestId is free again (the in-flight set is cleared on error and on a verdict)', async () => {
     let offset = 0;
     const realNow = Date.now.bind(Date);

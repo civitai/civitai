@@ -4015,6 +4015,10 @@ export function PageBlockHost({
       // never came from a promise anybody is awaiting.)
       if (!req) return;
       const { requestId, purpose, asyncScan } = req;
+      // A requestId whose `bytes` upload is still in flight gets NO reply, whatever this
+      // payload is (invalid, no token, a picker request): the SDK settles by requestId, so
+      // any reply here would settle the ORIGINAL request with this one's result.
+      if (uploadBytesInFlightRef.current.has(requestId)) return;
 
       const bytesReq = resolveImageUploadBytes(raw);
       if (bytesReq.kind !== 'none') {
@@ -4027,7 +4031,6 @@ export function PageBlockHost({
           send('IMAGE_UPLOAD_RESULT', { requestId, error: UPLOAD_BYTES_NO_TOKEN_ERROR });
           return;
         }
-        if (uploadBytesInFlightRef.current.has(requestId)) return;
         const { result, recent } = processUploadBytes(
           bytesReq,
           uploadBytesWindowRef.current,
