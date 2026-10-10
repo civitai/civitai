@@ -22,7 +22,7 @@ import {
   type ApprovedEventDeclarations,
 } from '~/server/services/blocks/known-app-blocks.service';
 import { isPrivateRunImpression } from '~/server/services/blocks/private-run-impression.service';
-import { getTrustedClientIp } from '~/server/utils/client-ip';
+import { getEdgeAttestedClientIp } from '~/server/utils/client-ip';
 
 export const APP_BLOCK_EVENTS_TABLE = 'appBlockEvents';
 
@@ -50,10 +50,16 @@ export type AppBlockEventRow = {
 };
 
 /**
- * The only shape a block instance id is stored in: a platform-minted prefix and an id. Anything
- * else is stored empty, so the column cannot carry text a caller chose freely.
+ * A block instance id is stored only when it is shaped like a platform id; anything else is
+ * stored empty. A page instance id must be exactly the page id of the row's own app. The other
+ * kinds are shape-checked only, so within that shape the value is still the caller's.
  */
-const BLOCK_INSTANCE_ID_RE = /^(?:page|mbi|bki|bus_pub|bus_view|pdb)_[A-Za-z0-9_]{1,100}$/;
+const BLOCK_INSTANCE_ID_RE = /^(?:mbi|bki|bus_pub|bus_view|pdb)_[A-Za-z0-9_]{1,100}$/;
+
+function isStorableInstanceId(blockInstanceId: string, appBlockId: string): boolean {
+  if (blockInstanceId.startsWith('page_')) return blockInstanceId === `page_${appBlockId}`;
+  return BLOCK_INSTANCE_ID_RE.test(blockInstanceId);
+}
 
 /** A write still unanswered after this long is abandoned. */
 export const BLOCK_EVENT_INSERT_TIMEOUT_MS = 5_000;
@@ -198,10 +204,12 @@ export async function ingestBlockEvents(args: {
 }): Promise<{ written: Promise<void> }> {
   const { events, req, res, nowMs = Date.now() } = args;
   const done = { written: Promise.resolve() };
-  // The address is a control here (a budget and a unique-viewer key), so it is the edge-attested
-  // or transport-peer address, never a header the caller can set on a direct request. `null`
-  // when neither resolves: those callers share one budget and their signed-out rows are dropped.
-  const clientIp = normalizeViewerIp(getTrustedClientIp(req));
+  // The address keys a budget and a unique-viewer key, so only the address the edge attested is
+  // used: the transport peer behind a reverse proxy is the proxy, which would fold every such
+  // viewer into one key. Requests without that attestation share one budget and their
+  // signed-out rows are dropped. The attestation is a pair of headers, so this holds only while
+  // the origin is not reachable except through the edge.
+  const clientIp = normalizeViewerIp(getEdgeAttestedClientIp(req));
   const budgetKey = clientIp ? rateLimitAddressKey(clientIp) : 'unknown';
 
   // Cheapest gates first, and both before the session is resolved: once the approved set is
@@ -281,7 +289,7 @@ export async function ingestBlockEvents(args: {
       else counts.undeclared += 1;
       if (classified.undeclaredProp) counts.undeclaredProp += 1;
       if (classified.invalidValue) counts.invalidValue += 1;
-      const instanceIdOk = BLOCK_INSTANCE_ID_RE.test(event.blockInstanceId);
+      const instanceIdOk = isStorableInstanceId(event.blockInstanceId, appBlockId);
       if (!instanceIdOk) counts.badInstance += 1;
       rows.push(
         buildAppBlockEventRow({
@@ -312,13 +320,15 @@ export async function ingestBlockEvents(args: {
   }
 
   inflightInserts += 1;
+  const deadline = new AbortController();
+  const deadlineTimer = setTimeout(() => deadline.abort(), BLOCK_EVENT_INSERT_TIMEOUT_MS);
   const written = Promise.resolve()
     .then(() =>
       client.insert({
         table: APP_BLOCK_EVENTS_TABLE,
         values: rows,
         format: 'JSONEachRow',
-        abort_signal: AbortSignal.timeout(BLOCK_EVENT_INSERT_TIMEOUT_MS),
+        abort_signal: deadline.signal,
       })
     )
     .then(
@@ -343,6 +353,7 @@ export async function ingestBlockEvents(args: {
     // Nothing awaits `written` on the request path, so it must never reject.
     .catch(() => undefined)
     .finally(() => {
+      clearTimeout(deadlineTimer);
       inflightInserts -= 1;
     });
   return { written };

@@ -157,12 +157,16 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     expect(callersOf('isPrivateRunImpression')).toEqual(GATE_CALLERS);
   });
 
-  it('EXACTLY the ledgered file writes the custom-events table', () => {
-    // A second writer of that table would have to consult the gate too; this is what makes
-    // adding one a red test here.
-    expect(FILES.filter((f) => CODE.get(f)!.includes('APP_BLOCK_EVENTS_TABLE')).sort()).toEqual(
-      OTHER_GATED_WRITERS
-    );
+  it('EXACTLY the ledgered file inserts into the custom-events table', () => {
+    // A second writer would have to consult the gate too. This sees one that names the table
+    // through its exported constant and calls `.insert(`; a writer spelling the table as a
+    // string literal is invisible here, as string literals are stripped from the scan.
+    expect(
+      FILES.filter((f) => {
+        const code = CODE.get(f)!;
+        return code.includes('APP_BLOCK_EVENTS_TABLE') && /\.insert\s*\(/.test(code);
+      }).sort()
+    ).toEqual(OTHER_GATED_WRITERS);
   });
 
   it('🔴 the three populations are THE SAME SET', () => {

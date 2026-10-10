@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type * as CivitaiRedis from '@civitai/redis';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * The custom-events ingest and the REAL private-run predicate together.
@@ -27,6 +29,11 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: () => Promise.resolve(sessionStore.session),
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { insert: mockInsert } }));
+// Pinned empty so an ambient cache namespace cannot turn every case into a skipped write.
+vi.mock('@civitai/redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof CivitaiRedis>()),
+  CACHE_KEY_NAMESPACE: '',
+}));
 vi.mock('~/server/services/app-blocks-flag', () => mockFlag);
 vi.mock('~/server/services/blocks/private-run-access.service', () => mockAccess);
 
@@ -59,7 +66,12 @@ async function post(): Promise<number> {
   await handler(
     {
       method: 'POST',
-      headers: { host: 'civitai.com', origin: 'https://civitai.com' },
+      headers: {
+        host: 'civitai.com',
+        origin: 'https://civitai.com',
+        'cf-connecting-ip': '198.51.100.23',
+        'cf-ray': 'test-ray',
+      },
       body: JSON.stringify({
         events: [
           { appBlockId: APP, blockInstanceId: 'page_apb_just_delisted', eventName: 'opened' },
@@ -105,12 +117,12 @@ describe('custom events and the real private-run predicate', () => {
     expect(mockAccess.resolvePrivateRunAccess).not.toHaveBeenCalled();
   });
 
-  it('writes the row for a signed-out viewer, who can never be on a private run', async () => {
+  it('writes the row for a signed-out viewer without doing the predicate work', async () => {
     world('stale');
     sessionStore.session = null;
-    // No trusted address is sent, so a signed-out row is dropped before the write for that
-    // reason; the claim here is only that the predicate did no work.
-    await post();
+    redisMock.sysRedis.get.mockResolvedValue('a-shared-salt');
+    expect(await post()).toBe(1);
+    expect(mockFlag.isAppBlocksPrivateRunEnabled).not.toHaveBeenCalled();
     expect(mockAccess.resolvePrivateRunAccess).not.toHaveBeenCalled();
   });
 });

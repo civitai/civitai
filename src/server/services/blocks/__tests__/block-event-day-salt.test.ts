@@ -163,6 +163,8 @@ describe('the shared daily salt', () => {
 });
 
 describe('the cached salt is re-checked against the store', () => {
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
   it('🔴 processes converge on the store again after it loses the key mid-day', async () => {
     const longLived = await newProcess();
     const original = await longLived.getBlockEventDaySalt(DAY_1_NOON);
@@ -174,19 +176,36 @@ describe('the cached salt is re-checked against the store', () => {
     expect(replacement).toEqual(expect.any(String));
     expect(replacement).not.toBe(original);
 
-    // Inside the re-check interval the long-lived process still holds the old value...
+    // Inside the re-check interval the long-lived process is not asking the store.
+    const before = redisMock.sysRedis.get.mock.calls.length;
     expect(await longLived.getBlockEventDaySalt(DAY_1_NOON + 59_000)).toBe(original);
-    // ...and after it, it has adopted the store's.
-    expect(await longLived.getBlockEventDaySalt(DAY_1_NOON + 61_000)).toBe(replacement);
+    expect(redisMock.sysRedis.get.mock.calls.length).toBe(before);
+    // Past it, the call that triggers the re-check is still served the value in hand...
+    expect(await longLived.getBlockEventDaySalt(DAY_1_NOON + 61_000)).toBe(original);
+    await settle();
+    // ...and the next one has the store's.
+    expect(await longLived.getBlockEventDaySalt(DAY_1_NOON + 62_000)).toBe(replacement);
   });
 
-  it('keeps the last known shared value while the store cannot be asked', async () => {
+  it('a re-check never makes a caller wait on the store', async () => {
+    const proc = await newProcess();
+    const original = await proc.getBlockEventDaySalt(DAY_1_NOON);
+    // The store now never answers.
+    redisMock.sysRedis.set.mockImplementation(() => new Promise(() => undefined));
+    const answered = await Promise.race([
+      proc.getBlockEventDaySalt(DAY_1_NOON + 61_000),
+      settle().then(() => 'still waiting'),
+    ]);
+    expect(answered).toBe(original);
+  });
+
+  it('keeps the value read today while the store cannot be asked, but never across days', async () => {
     const proc = await newProcess();
     const original = await proc.getBlockEventDaySalt(DAY_1_NOON);
     storeDown = true;
     expect(await proc.getBlockEventDaySalt(DAY_1_NOON + 61_000)).toBe(original);
-    expect(await proc.getBlockEventDaySalt(DAY_1_NOON + 62_000)).toBe(original);
-    // But not across the day boundary: yesterday's value is never used for today.
+    await settle();
+    expect(await proc.getBlockEventDaySalt(DAY_1_NOON + 70_000)).toBe(original);
     storeNowMs = DAY_2_NOON;
     expect(await proc.getBlockEventDaySalt(DAY_2_NOON)).toBeNull();
   });

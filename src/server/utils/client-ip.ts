@@ -562,6 +562,20 @@ export function parseUserBlocklist(value: unknown): string[] {
 }
 
 /**
+ * The edge-attested half of {@link getTrustedClientIp}, alone: the address the edge stamped, or
+ * `null` when the request carries no edge attestation. For a surface that keys something PER
+ * CLIENT and must not fall back to the transport peer, which behind a reverse proxy is the
+ * proxy and would fold every such caller into one key.
+ */
+export function getEdgeAttestedClientIp(req: IpSourceRequest): string | null {
+  const headers = req.headers ?? {};
+  // cf-connecting-ip is meaningful only alongside cf-ray.
+  if (!headerValue(headers['cf-ray'])) return null;
+  const cfIp = headerValue(headers['cf-connecting-ip']);
+  return isIpAddress(cfIp) ? normalizeIp(cfIp) : null;
+}
+
+/**
  * Resolve the client IP for a security control.
  *
  * Returns `null` when neither source yields a valid address — callers must
@@ -570,14 +584,8 @@ export function parseUserBlocklist(value: unknown): string[] {
  * looked like an address.
  */
 export function getTrustedClientIp(req: IpSourceRequest): string | null {
-  const headers = req.headers ?? {};
-
-  // Edge-attested: cf-connecting-ip is meaningful only alongside cf-ray.
-  const cfRay = headerValue(headers['cf-ray']);
-  if (cfRay) {
-    const cfIp = headerValue(headers['cf-connecting-ip']);
-    if (isIpAddress(cfIp)) return normalizeIp(cfIp);
-  }
+  const edgeIp = getEdgeAttestedClientIp(req);
+  if (edgeIp) return edgeIp;
 
   // Transport peer.
   const socketIp = req.socket?.remoteAddress?.trim();

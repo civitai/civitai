@@ -41,9 +41,9 @@
 --   - `daySalt` is RANDOM, and ONE value shared by every ingest instance for the UTC day. A
 --     per-process salt is not acceptable: N instances would give one signed-out viewer N keys a
 --     day, and every restart would mint another.
---   - It lives in a shared store, created atomically (set-if-absent) with an expiry at the UTC day
---     boundary. The store must not keep it past that day in any form (no backup, snapshot or
---     write-log retention of the salt beyond its day).
+--   - It lives in a shared store, created atomically (set-if-absent) with an expiry a few minutes
+--     after the UTC day boundary (the margin covers clock skew between instances). The store must
+--     not keep it past that in any form (no backup, snapshot or write-log retention of the salt).
 --   - It is NEVER derived from a long-lived secret (no HMAC(secret, date)): IPv4 is only 2^32
 --     addresses, so anyone holding a derivable salt can reverse every signed-out row for the full
 --     400-day retention.

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 
 import {
   boundAppBlockIdLabel,
@@ -163,9 +163,10 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
 
   it('reads approved rows only, once per cache lifetime, with its own query', async () => {
     mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
+    // Cold and concurrent first: the callers must share one read.
+    await Promise.all([1, 2, 3].map(() => getApprovedAppBlockAnalytics('apb_declares')));
     await getApprovedAppBlockAnalytics('apb_declares');
     await getApprovedAppBlockAnalytics('apb_someone_else');
-    await Promise.all([1, 2, 3].map(() => getApprovedAppBlockAnalytics('apb_declares')));
     expect(mockFindMany).toHaveBeenCalledTimes(1);
     expect(mockFindMany).toHaveBeenCalledWith({
       where: { status: 'approved' },
@@ -193,5 +194,39 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
   it('answers null for every id while the lookup is failing', async () => {
     mockFindMany.mockRejectedValue(new Error('engine down'));
     expect(await getApprovedAppBlockAnalytics('apb_declares')).toBeNull();
+  });
+
+  describe('cache lifetimes', () => {
+    const T0 = Date.UTC(2031, 2, 14, 12, 0, 0);
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(T0);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('re-reads after five minutes, not before', async () => {
+      mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
+      await getApprovedAppBlockAnalytics('apb_declares');
+      vi.setSystemTime(T0 + 299_000);
+      await getApprovedAppBlockAnalytics('apb_declares');
+      expect(mockFindMany).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(T0 + 301_000);
+      await getApprovedAppBlockAnalytics('apb_declares');
+      expect(mockFindMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('caches a FAILED read for 15 seconds only, then recovers', async () => {
+      mockFindMany.mockRejectedValueOnce(new Error('engine down'));
+      mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
+      expect(await getApprovedAppBlockAnalytics('apb_declares')).toBeNull();
+      vi.setSystemTime(T0 + 14_000);
+      expect(await getApprovedAppBlockAnalytics('apb_declares')).toBeNull();
+      expect(mockFindMany).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(T0 + 16_000);
+      expect((await getApprovedAppBlockAnalytics('apb_declares'))?.ownerUserId).toBe(6611);
+      expect(mockFindMany).toHaveBeenCalledTimes(2);
+    });
   });
 });

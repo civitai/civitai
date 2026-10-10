@@ -178,6 +178,8 @@ type PostOptions = {
   handler?: Handler;
   /** Send the address header WITHOUT the edge's request id, as a direct-to-origin caller would. */
   noEdge?: boolean;
+  /** The transport peer, as a reverse proxy in front of the app would present itself. */
+  socketIp?: string;
 };
 
 async function post(body: unknown, opts: PostOptions = {}) {
@@ -192,6 +194,7 @@ async function post(body: unknown, opts: PostOptions = {}) {
       // Edge-attested: the address header counts only alongside the edge's own request id.
       ...(ip ? { 'cf-connecting-ip': ip, ...(opts.noEdge ? {} : { 'cf-ray': 'test-ray' }) } : {}),
     },
+    ...(opts.socketIp ? { socket: { remoteAddress: opts.socketIp } } : {}),
     body: opts.rawBody ?? (opts.objectBody ? body : JSON.stringify(body)),
   } as unknown as NextApiRequest;
   const res = makeRes();
@@ -201,12 +204,16 @@ async function post(body: unknown, opts: PostOptions = {}) {
   return res;
 }
 
-const event = (over: Record<string, unknown> = {}) => ({
-  appBlockId: APP,
-  blockInstanceId: 'page_apb_arcade',
-  eventName: 'menu_opened',
-  ...over,
-});
+/** A page instance id is the app's own page id, so the default follows the row's app. */
+const event = (over: Record<string, unknown> = {}) => {
+  const appBlockId = typeof over.appBlockId === 'string' ? over.appBlockId.trim() : APP;
+  return {
+    appBlockId: APP,
+    blockInstanceId: `page_${appBlockId}`,
+    eventName: 'menu_opened',
+    ...over,
+  };
+};
 
 type Row = {
   time: string;
@@ -827,7 +834,7 @@ describe('POST /api/track/block-event — the rate limit', () => {
     // A partly admitted batch keeps its FIRST rows.
     vi.setSystemTime(DAY_1_NOON + 2_000);
     const numbered = {
-      events: Array.from({ length: 50 }, (_, i) => event({ blockInstanceId: `page_row_${i}` })),
+      events: Array.from({ length: 50 }, (_, i) => event({ blockInstanceId: `bki_row_${i}` })),
     };
     const later = await outcomeDelta(() => post(numbered, { handler }));
     expect(insertedRows()).toHaveLength(120);
@@ -835,7 +842,7 @@ describe('POST /api/track/block-event — the rate limit', () => {
       insertedRows()
         .slice(100)
         .map((r) => r.blockInstanceId)
-    ).toEqual(Array.from({ length: 20 }, (_, i) => `page_row_${i}`));
+    ).toEqual(Array.from({ length: 20 }, (_, i) => `bki_row_${i}`));
     expect(later).toEqual({ accepted: 20, rate_limited: 30 });
   });
 
@@ -904,7 +911,9 @@ describe('POST /api/track/block-event — the block instance id', () => {
     ['an email', 'someone@example.com'],
     ['an unknown prefix', 'note_01HZX3'],
     ['a prefix with nothing after it', 'page_'],
-    ['a known prefix followed by punctuation', 'page_hello world!'],
+    ['a known prefix followed by punctuation', 'bki_hello world!'],
+    ["another app's page id", 'page_apb_shop'],
+    ['a page id the caller made up', 'page_anything_i_like'],
   ])('🔴 stores %s as empty and flags the row', async (_label, blockInstanceId) => {
     const delta = await outcomeDelta(() => post({ events: [event({ blockInstanceId })] }));
     expect(insertedRows()).toEqual([
@@ -915,7 +924,7 @@ describe('POST /api/track/block-event — the block instance id', () => {
   });
 
   it('bounds both ids at 256 characters and trims them', async () => {
-    const at = (n: number) => `page_${'a'.repeat(n - 5)}`;
+    const at = (n: number) => `bki_${'a'.repeat(n - 4)}`;
     expect(
       (await post({ events: [event({ blockInstanceId: at(257) })] })).status
     ).toHaveBeenCalledWith(400);
@@ -934,13 +943,13 @@ describe('POST /api/track/block-event — the block instance id', () => {
       (await post({ events: [event({ blockInstanceId: at(256) })] })).status
     ).toHaveBeenCalledWith(200);
     expect(
-      (await post({ events: [event({ appBlockId: `  ${APP} `, blockInstanceId: ' page_x ' })] }))
+      (await post({ events: [event({ appBlockId: `  ${APP} `, blockInstanceId: ' bki_x ' })] }))
         .status
     ).toHaveBeenCalledWith(200);
     // 256 passes the schema but is past the stored grammar's length, so it is stored empty.
     expect(insertedRows().map((r) => [r.appBlockId, r.blockInstanceId])).toEqual([
       ['apb_arcade', ''],
-      ['apb_arcade', 'page_x'],
+      ['apb_arcade', 'bki_x'],
     ]);
   });
 });
@@ -951,6 +960,18 @@ describe('POST /api/track/block-event — which address is trusted', () => {
     const delta = await outcomeDelta(() => post({ events: [event()] }, { noEdge: true }));
     expect(mockInsert).not.toHaveBeenCalled();
     expect(delta).toEqual({ no_client_ip: 1 });
+  });
+
+  it('🔴 does not fall back to the transport peer, which behind a proxy is the proxy', async () => {
+    store.set(DAY_1_SALT_KEY, { value: 'fixed-salt-one', expiresAtSec: Number.POSITIVE_INFINITY });
+    const delta = await outcomeDelta(() =>
+      post({ events: [event()] }, { noEdge: true, socketIp: '10.20.30.40' })
+    );
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(delta).toEqual({ no_client_ip: 1 });
+    // Positive control: the same request with the edge's attestation is written.
+    await post({ events: [event()] }, { socketIp: '10.20.30.40' });
+    expect(insertedRows().map((r) => r.viewerKey)).toEqual(['3198637992741954959']);
   });
 
   it('gives callers with no trusted address ONE shared budget, whatever header they send', async () => {
@@ -1048,11 +1069,27 @@ describe('POST /api/track/block-event — failures stay inside', () => {
     expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('Cannot parse');
   });
 
-  it('gives each write a deadline', async () => {
+  it('aborts a write that is still unanswered after 5 seconds, and not before', async () => {
+    sessionStore.session = { user: { id: OTHER_VIEWER } };
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(DAY_1_NOON);
+    mockInsert.mockImplementation(() => new Promise<void>(() => undefined));
     await post({ events: [event()] });
     const signal = (mockInsert.mock.calls[0][0] as { abort_signal?: AbortSignal }).abort_signal;
     expect(signal).toBeInstanceOf(AbortSignal);
+    vi.advanceTimersByTime(4_999);
     expect(signal!.aborted).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(signal!.aborted).toBe(true);
+  });
+
+  it('does not leave the deadline timer armed after a write that answered', async () => {
+    sessionStore.session = { user: { id: OTHER_VIEWER } };
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(DAY_1_NOON);
+    await post({ events: [event()] });
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('🔴 sheds new batches once 32 writes are in flight, and recovers when they settle', async () => {

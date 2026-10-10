@@ -182,11 +182,17 @@ function projectDeclaredEvents(manifest: unknown): ApprovedEventDeclarations {
   return projected;
 }
 
+/**
+ * How long a FAILED analytics read is cached. Far shorter than a good one: while it lasts every
+ * custom event is dropped, where a failed id-set read only costs a label.
+ */
+const ANALYTICS_FAILURE_TTL_MS = 15_000;
+
 type AnalyticsMap = Map<string, ApprovedAppBlockAnalytics>;
 let _analyticsCache: { byId: AnalyticsMap; expiresAt: number } | null = null;
 let _analyticsInflight: Promise<AnalyticsMap> | null = null;
 
-async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap> {
+async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap | null> {
   const byId: AnalyticsMap = new Map();
   try {
     const { dbRead } = await import('~/server/db/client');
@@ -208,7 +214,7 @@ async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap> {
         err instanceof Error ? err.message : String(err)
       }`
     );
-    return new Map();
+    return null;
   }
   return byId;
 }
@@ -218,10 +224,10 @@ async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap> {
  *
  * A SEPARATE cached read from the approved-id set above, on purpose: it is loaded only when the
  * custom-events ingest asks, and a failure of this wider query cannot empty the id set the other
- * beacons clamp their labels with. Same TTL, same single-flight, same fail-safe: while the lookup
- * is failing every id answers `null`, which for an ingest means dropping events rather than
- * storing ones nobody could check. The two reads refresh on their own clocks, so for up to one
- * TTL they can disagree about an app whose status just changed.
+ * beacons clamp their labels with. Same TTL and single-flight; while the lookup is failing every
+ * id answers `null`, which for an ingest means dropping events rather than storing ones nobody
+ * could check. The two reads refresh on their own clocks, so for up to one TTL they can disagree
+ * about an app whose status just changed.
  */
 export async function getApprovedAppBlockAnalytics(
   appBlockId: string
@@ -229,8 +235,10 @@ export async function getApprovedAppBlockAnalytics(
   const cached = _analyticsCache;
   if (cached && cached.expiresAt > Date.now()) return cached.byId.get(appBlockId) ?? null;
   _analyticsInflight ??= loadApprovedAppBlockAnalytics()
-    .then((byId) => {
-      _analyticsCache = { byId, expiresAt: Date.now() + KNOWN_APP_BLOCKS_TTL_MS };
+    .then((loaded) => {
+      const byId: AnalyticsMap = loaded ?? new Map();
+      const ttl = loaded ? KNOWN_APP_BLOCKS_TTL_MS : ANALYTICS_FAILURE_TTL_MS;
+      _analyticsCache = { byId, expiresAt: Date.now() + ttl };
       return byId;
     })
     .finally(() => {

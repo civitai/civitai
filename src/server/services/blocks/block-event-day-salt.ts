@@ -4,7 +4,8 @@ import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/cl
 /**
  * The day's salt for signed-out viewer keys in `appBlockEvents`.
  *
- * 🔴 THE CONTRACT (the migration header states it; "the raw IP is not stored" holds only under it):
+ * 🔴 THE CONTRACT ("the raw IP is not stored" holds only under it; the table's migration header
+ * states the same rules):
  *   - ONE random value per UTC day, shared by every process that writes the table. The shared
  *     store is the only source: a value generated here is only ever a set-if-absent candidate,
  *     and what is used is what the store returns. The copy held here is a cache of that for the
@@ -14,7 +15,9 @@ import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/cl
  *     day; a process drops its cached copy on its first call of the next day.
  *   - Never derived from a secret, a date or anything else that outlives the day. IPv4 is only
  *     2^32 addresses, so whoever can recompute a salt can reverse every signed-out row.
- *   - If the store cannot answer, there is NO fallback: the caller drops signed-out rows.
+ *   - There is NO fallback for a process that has not read today's value: the caller drops
+ *     signed-out rows. A process that has read it keeps using it for that day while the store
+ *     cannot be asked, because it is still the shared value.
  *
  * 🔴 WHAT THIS REQUIRES OF THE STORE, which no code here can check: once the key expires the
  * value must be gone. A store that keeps expired values in a snapshot, an append-only log or a
@@ -31,7 +34,7 @@ import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/cl
  */
 export const BLOCK_EVENT_SALT_EXPIRY_MARGIN_SECONDS = 600;
 
-/** After a failed read, how long to answer "unavailable" without asking the store again. */
+/** After a failed read, how long before the store is asked again. */
 const UNAVAILABLE_RETRY_MS = 5_000;
 
 /** How long a cached salt is used before it is checked against the store again. */
@@ -66,29 +69,31 @@ async function readSharedSalt(day: string): Promise<string | null> {
   }
 }
 
-/** The salt for the UTC day containing `nowMs`, or `null` when the shared store cannot supply it. */
+/**
+ * The salt for the UTC day containing `nowMs`, or `null` when this process has not read today's
+ * value and the shared store cannot supply it.
+ */
 export async function getBlockEventDaySalt(nowMs: number = Date.now()): Promise<string | null> {
   const day = utcDay(nowMs);
   if (cached && cached.day !== day) cached = null;
   if (cached && nowMs - cached.checkedAtMs < REVALIDATE_MS) return cached.salt;
-  // The cached value was the store's a minute ago; if the store cannot be asked now, it is still
-  // the best statement of the shared value, so keep it rather than drop a day's signed-out rows.
-  const lastKnown = cached?.salt ?? null;
-  if (nowMs < unavailableUntilMs) return lastKnown;
-  if (inflight?.day === day) return inflight.promise;
 
-  const promise = readSharedSalt(day)
-    .then((salt) => {
-      if (salt) {
-        cached = { day, salt, checkedAtMs: nowMs };
+  let refresh = inflight?.day === day ? inflight.promise : null;
+  if (!refresh && nowMs >= unavailableUntilMs) {
+    const promise = readSharedSalt(day)
+      .then((salt) => {
+        if (salt) cached = { day, salt, checkedAtMs: nowMs };
+        else unavailableUntilMs = nowMs + UNAVAILABLE_RETRY_MS;
         return salt;
-      }
-      unavailableUntilMs = nowMs + UNAVAILABLE_RETRY_MS;
-      return lastKnown;
-    })
-    .finally(() => {
-      if (inflight?.promise === promise) inflight = null;
-    });
-  inflight = { day, promise };
-  return promise;
+      })
+      .finally(() => {
+        if (inflight?.promise === promise) inflight = null;
+      });
+    inflight = { day, promise };
+    refresh = promise;
+  }
+  // A value already read today is served while the re-check runs behind it: no request waits on
+  // the store for a salt this process holds.
+  if (cached) return cached.salt;
+  return refresh ?? null;
 }

@@ -429,14 +429,16 @@ hand before the route deploys). **Nothing calls it yet**: neither host forwards
   id, the event name and its properties, and nothing else is read from it. The
   viewer comes from the session, the time from the server clock, and `isOwner`
   from comparing the viewer with the app's owner. A block instance id that is
-  not shaped like a platform id is stored empty.
+  not shaped like a platform id (for a page, not that app's own page id) is
+  stored empty.
 - **Unique viewers without storing an address.** Each row carries a `viewerKey`
   hash. For a signed-in viewer it is derived from the user id. For a signed-out
   viewer it is derived from the client address and a random salt that every
   server process shares for one UTC day and that expires from the shared store
   shortly after it, so the address itself is never written and a signed-out
-  viewer's key changes daily. If the salt cannot be read, signed-out rows are
-  dropped rather than stored under a weaker key.
+  viewer's key changes daily. A process that cannot obtain the day's salt drops
+  signed-out rows rather than storing them under a weaker key, and so does a
+  request that carries no edge-attested client address.
 - **Private runs are excluded.** A private run is of an app that is not
   approved, and those rows are dropped. The impression writers' server-derived
   predicate is also consulted, for an app that has just left the approved set.
