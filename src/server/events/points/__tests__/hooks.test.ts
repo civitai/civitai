@@ -68,7 +68,13 @@ describe('views', () => {
       [{ entityType: 'Image', entityId: 1 }]
     );
     expect(awardEventPoints).toHaveBeenCalledWith([
-      { type: 'view', actorId: ACTOR, entityType: 'Image', entityId: 1 },
+      {
+        type: 'view',
+        actorId: ACTOR,
+        actor: { createdAt: undefined, bannedAt: undefined },
+        entityType: 'Image',
+        entityId: 1,
+      },
     ]);
   });
 

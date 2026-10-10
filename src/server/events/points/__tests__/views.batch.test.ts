@@ -32,7 +32,8 @@ vi.mock('~/server/events/points/award', async (importOriginal) => ({
 
 import handler from '~/pages/api/track/batch';
 
-const SIGNED_IN = { user: { id: 5 } };
+const CREATED = new Date('2026-01-02T00:00:00Z');
+const SIGNED_IN = { user: { id: 5, createdAt: CREATED, bannedAt: undefined } };
 
 function post(entities: { entityType: string; entityId: number }[]) {
   const res = {
@@ -73,7 +74,14 @@ describe('POST /api/track/batch event points', () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(awardEventPoints).toHaveBeenCalledWith([
-      { type: 'view', actorId: 5, entityType: 'Image', entityId: 11 },
+      {
+        type: 'view',
+        actorId: 5,
+        // The account, so the engine can skip new and banned accounts live.
+        actor: { createdAt: CREATED, bannedAt: undefined },
+        entityType: 'Image',
+        entityId: 11,
+      },
     ]);
   });
 

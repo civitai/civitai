@@ -71,6 +71,8 @@ export async function awardViewPoints(
       entities.map(({ entityType, entityId }) => ({
         type: 'view',
         actorId: user.id,
+        // Lets the live total skip new and banned accounts at once, not only at the hourly referee.
+        actor: { createdAt: user.createdAt, bannedAt: user.bannedAt },
         entityType,
         entityId,
       }))
