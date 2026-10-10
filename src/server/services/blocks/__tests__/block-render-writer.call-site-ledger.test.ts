@@ -21,7 +21,8 @@ import { scanSource } from '../../../../../test/source-scan';
  *
  *   1. who calls `.blockRender(` on a tracker — i.e. who writes the table at all;
  *   2. who builds the row through `blockRenderTrackerPayload` — the payload allowlist;
- *   3. who consults `isPrivateRunImpression` — the private-run gate.
+ *   3. who consults `isPrivateRunImpression` — the private-run gate (after setting aside
+ *      the one ledgered caller that writes a different table).
  *
  * Equality in all three directions is what makes a NEW writer fail here: adding one
  * lands it in (1) and, unless it also does (2) and (3), the sets diverge. Deleting a
@@ -154,6 +155,14 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
 
   it('🔴 EXACTLY these files consult the private-run gate', () => {
     expect(callersOf('isPrivateRunImpression')).toEqual(GATE_CALLERS);
+  });
+
+  it('EXACTLY the ledgered file writes the custom-events table', () => {
+    // A second writer of that table would have to consult the gate too; this is what makes
+    // adding one a red test here.
+    expect(FILES.filter((f) => CODE.get(f)!.includes('APP_BLOCK_EVENTS_TABLE')).sort()).toEqual(
+      OTHER_GATED_WRITERS
+    );
   });
 
   it('🔴 the three populations are THE SAME SET', () => {

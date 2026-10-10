@@ -428,23 +428,25 @@ hand before the route deploys). **Nothing calls it yet**: neither host forwards
 - **Identity is the server's.** The body carries the app id, the block instance
   id, the event name and its properties, and nothing else is read from it. The
   viewer comes from the session, the time from the server clock, and `isOwner`
-  from comparing the viewer with the app's owner.
+  from comparing the viewer with the app's owner. A block instance id that is
+  not shaped like a platform id is stored empty.
 - **Unique viewers without storing an address.** Each row carries a `viewerKey`
   hash. For a signed-in viewer it is derived from the user id. For a signed-out
   viewer it is derived from the client address and a random salt that every
-  server process shares for one UTC day and that is discarded afterwards, so the
-  address itself is never written and a signed-out viewer's key changes daily.
-  If the salt cannot be read, signed-out rows are dropped rather than stored
-  under a weaker key.
-- **Private runs are excluded**, by the same server-derived predicate the
-  impression writers use.
+  server process shares for one UTC day and that expires from the shared store
+  shortly after it, so the address itself is never written and a signed-out
+  viewer's key changes daily. If the salt cannot be read, signed-out rows are
+  dropped rather than stored under a weaker key.
+- **Private runs are excluded.** A private run is of an app that is not
+  approved, and those rows are dropped. The impression writers' server-derived
+  predicate is also consulted, for an app that has just left the approved set.
 - **A public beacon.** Like the impression beacon it is same-origin but
-  unauthenticated, so anyone on the site can post events for an approved app.
-  The declared-only filter bounds what can be stored, and a per-process budget
-  per client address and app bounds how much; unique-viewer counts move far less
-  than raw counts under that kind of inflation.
-- **Only the production deployment writes.** Any other deployment runs the same
-  validation and then skips the insert.
+  unauthenticated, so anyone can post events for an approved app. The
+  declared-only filter bounds what can be stored, and a per-process budget per
+  client address and app bounds how much each process accepts.
+- **Deployments that identify as non-production do not write.** They run the
+  same validation and skip the insert; a deployment carrying neither
+  non-production signal is treated as production.
 - **Counts**: `civitai_app_block_custom_events_total{outcome}` (no per-app
   label; the per-app breakdown is the table).
 

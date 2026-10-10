@@ -1,3 +1,5 @@
+import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
+
 // Known-approved AppBlock id set — a cheap, in-memory, TTL-cached lookup used to
 // BOUND the `app_block_id` prom label on the PUBLIC, unauthenticated
 // /api/track/block-render beacon (see src/pages/api/track/block-render.ts).
@@ -14,54 +16,7 @@
 // block-scope.middleware.ts: at most one DB query per TTL window per pod, never a
 // per-request hit. Fails SAFE — on a cold cache or DB error the set is treated as
 // empty, so every id buckets to 'other' (bounded) rather than passing through.
-import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
-
 const KNOWN_APP_BLOCKS_TTL_MS = 5 * 60_000; // 5min — approved set changes rarely
-
-/** One declared custom-event property, with enum values as a set for the per-event lookup. */
-export type ApprovedEventProperty =
-  | { type: 'enum'; values: ReadonlySet<string> }
-  | { type: 'number' }
-  | { type: 'boolean' };
-
-/** Event name → property name → declaration. Maps, for the reason `DeclaredEvents` gives. */
-export type ApprovedEventDeclarations = ReadonlyMap<
-  string,
-  ReadonlyMap<string, ApprovedEventProperty>
->;
-
-/**
- * What the custom-events ingest needs to know about one approved app: who owns it and which
- * events its APPROVED manifest declares. A projection, so the cache never holds a whole manifest.
- */
-export type ApprovedAppBlockAnalytics = {
-  /** `null` when the row carried no owner; then nobody is the owner. */
-  ownerUserId: number | null;
-  events: ApprovedEventDeclarations;
-};
-
-const NO_EVENTS: ApprovedEventDeclarations = new Map();
-
-function projectDeclaredEvents(manifest: unknown): ApprovedEventDeclarations {
-  // All-or-nothing: `parseManifestAnalytics` returns no events when anything in the declaration
-  // is invalid, so a half-valid manifest declares nothing here either.
-  const { events } = parseManifestAnalytics(manifest);
-  if (events.size === 0) return NO_EVENTS;
-  const projected = new Map<string, ReadonlyMap<string, ApprovedEventProperty>>();
-  for (const [eventName, event] of events) {
-    const properties = new Map<string, ApprovedEventProperty>();
-    for (const [propertyName, property] of event.properties) {
-      properties.set(
-        propertyName,
-        property.type === 'enum'
-          ? { type: 'enum', values: new Set(property.values) }
-          : { type: property.type }
-      );
-    }
-    projected.set(eventName, properties);
-  }
-  return projected;
-}
 
 /**
  * A resolved view of the approved-id set.
@@ -74,18 +29,13 @@ function projectDeclaredEvents(manifest: unknown): ApprovedEventDeclarations {
  * the app is reading a database outage as a universal claim. Consumers that care
  * must ask for `isConfirmedNonApprovedAppBlockId`, which answers `false` here.
  */
-type ApprovedSet = {
-  ids: Set<string>;
-  trusted: boolean;
-  analytics: Map<string, ApprovedAppBlockAnalytics>;
-};
+type ApprovedSet = { ids: Set<string>; trusted: boolean };
 type CacheEntry = ApprovedSet & { expiresAt: number };
 let _cache: CacheEntry | null = null;
 let _inflight: Promise<ApprovedSet> | null = null;
 
 async function loadKnownAppBlockIds(): Promise<ApprovedSet> {
   const ids = new Set<string>();
-  const analytics = new Map<string, ApprovedAppBlockAnalytics>();
   try {
     // Dynamic import so this module doesn't eager-load the Prisma client into
     // the lightweight beacon route's import graph (mirrors the middleware's
@@ -93,16 +43,9 @@ async function loadKnownAppBlockIds(): Promise<ApprovedSet> {
     const { dbRead } = await import('~/server/db/client');
     const rows = (await dbRead.appBlock.findMany({
       where: { status: 'approved' },
-      select: { id: true, manifest: true, app: { select: { userId: true } } },
-    })) as Array<{ id: string; manifest?: unknown; app?: { userId?: unknown } | null }>;
-    for (const row of rows) {
-      ids.add(row.id);
-      const ownerUserId = row.app?.userId;
-      analytics.set(row.id, {
-        ownerUserId: typeof ownerUserId === 'number' ? ownerUserId : null,
-        events: projectDeclaredEvents(row.manifest),
-      });
-    }
+      select: { id: true },
+    })) as Array<{ id: string }>;
+    for (const row of rows) ids.add(row.id);
   } catch (err) {
     // DB unreachable → return whatever we have (empty). Everything then buckets
     // to 'other' — bounded and safe. Log once per refresh so ops can see it.
@@ -114,9 +57,9 @@ async function loadKnownAppBlockIds(): Promise<ApprovedSet> {
     );
     // NOT trusted: the set is empty because we could not ask, not because there
     // are no approved apps.
-    return { ids: new Set(), trusted: false, analytics: new Map() };
+    return { ids, trusted: false };
   }
-  return { ids, trusted: true, analytics };
+  return { ids, trusted: true };
 }
 
 async function getKnownAppBlockIds(): Promise<ApprovedSet> {
@@ -186,19 +129,6 @@ export async function isConfirmedNonApprovedAppBlockId(appBlockId: string): Prom
 }
 
 /**
- * The owner and declared custom events of an approved app, from the same cached read as the
- * approved-id set; `null` when the id is not in it. Like `isKnownAppBlockId` this answers "not
- * approved" for every id while the lookup is failing, which for an ingest means dropping events
- * rather than storing ones nobody could check.
- */
-export async function getApprovedAppBlockAnalytics(
-  appBlockId: string
-): Promise<ApprovedAppBlockAnalytics | null> {
-  const { analytics } = await getKnownAppBlockIds();
-  return analytics.get(appBlockId) ?? null;
-}
-
-/**
  * Clamp a client-supplied appBlockId to a bounded prom label: the id itself when
  * it's an approved app, else 'other'. Keeps the `app_block_id` cardinality
  * bounded to the real approved set regardless of client input.
@@ -207,10 +137,114 @@ export async function boundAppBlockIdLabel(appBlockId: string): Promise<string> 
   return (await isKnownAppBlockId(appBlockId)) ? appBlockId : 'other';
 }
 
+/** One declared custom-event property, with enum values as a set for the per-event lookup. */
+export type ApprovedEventProperty =
+  | { type: 'enum'; values: ReadonlySet<string> }
+  | { type: 'number' }
+  | { type: 'boolean' };
+
+/** Event name → property name → declaration. Maps, for the reason `DeclaredEvents` gives. */
+export type ApprovedEventDeclarations = ReadonlyMap<
+  string,
+  ReadonlyMap<string, ApprovedEventProperty>
+>;
+
+/**
+ * What the custom-events ingest needs to know about one approved app: who owns it and which
+ * events its APPROVED manifest declares. A projection, so the cache never holds a whole manifest.
+ */
+export type ApprovedAppBlockAnalytics = {
+  /** `null` when the row carried no owner; then nobody is the owner. */
+  ownerUserId: number | null;
+  events: ApprovedEventDeclarations;
+};
+
+const NO_EVENTS: ApprovedEventDeclarations = new Map();
+
+function projectDeclaredEvents(manifest: unknown): ApprovedEventDeclarations {
+  // All-or-nothing: `parseManifestAnalytics` returns no events when anything in the declaration
+  // is invalid, so a half-valid manifest declares nothing here either.
+  const { events } = parseManifestAnalytics(manifest);
+  if (events.size === 0) return NO_EVENTS;
+  const projected = new Map<string, ReadonlyMap<string, ApprovedEventProperty>>();
+  for (const [eventName, event] of events) {
+    const properties = new Map<string, ApprovedEventProperty>();
+    for (const [propertyName, property] of event.properties) {
+      properties.set(
+        propertyName,
+        property.type === 'enum'
+          ? { type: 'enum', values: new Set(property.values) }
+          : { type: property.type }
+      );
+    }
+    projected.set(eventName, properties);
+  }
+  return projected;
+}
+
+type AnalyticsMap = Map<string, ApprovedAppBlockAnalytics>;
+let _analyticsCache: { byId: AnalyticsMap; expiresAt: number } | null = null;
+let _analyticsInflight: Promise<AnalyticsMap> | null = null;
+
+async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap> {
+  const byId: AnalyticsMap = new Map();
+  try {
+    const { dbRead } = await import('~/server/db/client');
+    const rows = (await dbRead.appBlock.findMany({
+      where: { status: 'approved' },
+      select: { id: true, manifest: true, app: { select: { userId: true } } },
+    })) as Array<{ id: string; manifest?: unknown; app?: { userId?: unknown } | null }>;
+    for (const row of rows) {
+      const ownerUserId = row.app?.userId;
+      byId.set(row.id, {
+        ownerUserId: typeof ownerUserId === 'number' ? ownerUserId : null,
+        events: projectDeclaredEvents(row.manifest),
+      });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[known-app-blocks] approved AppBlock analytics lookup failed; treating every app as unknown: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return new Map();
+  }
+  return byId;
+}
+
+/**
+ * The owner and declared custom events of an approved app; `null` when the id is not approved.
+ *
+ * A SEPARATE cached read from the approved-id set above, on purpose: it is loaded only when the
+ * custom-events ingest asks, and a failure of this wider query cannot empty the id set the other
+ * beacons clamp their labels with. Same TTL, same single-flight, same fail-safe: while the lookup
+ * is failing every id answers `null`, which for an ingest means dropping events rather than
+ * storing ones nobody could check. The two reads refresh on their own clocks, so for up to one
+ * TTL they can disagree about an app whose status just changed.
+ */
+export async function getApprovedAppBlockAnalytics(
+  appBlockId: string
+): Promise<ApprovedAppBlockAnalytics | null> {
+  const cached = _analyticsCache;
+  if (cached && cached.expiresAt > Date.now()) return cached.byId.get(appBlockId) ?? null;
+  _analyticsInflight ??= loadApprovedAppBlockAnalytics()
+    .then((byId) => {
+      _analyticsCache = { byId, expiresAt: Date.now() + KNOWN_APP_BLOCKS_TTL_MS };
+      return byId;
+    })
+    .finally(() => {
+      _analyticsInflight = null;
+    });
+  return (await _analyticsInflight).get(appBlockId) ?? null;
+}
+
 /** Test-only: clear the in-memory cache so a unit test can swap the DB mock. */
 export const _internalsForTests = {
   reset(): void {
     _cache = null;
     _inflight = null;
+    _analyticsCache = null;
+    _analyticsInflight = null;
   },
 };

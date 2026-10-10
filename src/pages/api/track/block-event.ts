@@ -4,12 +4,12 @@ import { ingestBlockEvents } from '~/server/services/blocks/block-event-ingest.s
 import { isSameOriginBeacon } from '~/server/utils/beacon-same-origin';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
-// App Blocks custom-events beacon: rows from a block's `track()` calls, batched by the host.
+// App Blocks custom-events beacon: one row per `track()` call a block makes.
 //
-// Public and unauthenticated like its sibling beacons, so anyone on the site can post events for
-// any approved app. What bounds that is in `ingestBlockEvents`: only events and properties the
-// app's approved manifest declares are stored, identity is taken from the session and the
-// connection, and each client address has a per-app budget.
+// Public and unauthenticated like its sibling beacons, so anyone can post events for any approved
+// app. What bounds that is in `ingestBlockEvents`: only events and properties the app's approved
+// manifest declares are stored, identity is taken from the session and the trusted client
+// address, and each client address has a per-app budget.
 //
 // Always answers 200 once the body is well-formed: a beacon has no reader, and a write failure
 // must not surface to the page.
@@ -19,7 +19,7 @@ export default PublicEndpoint(
 
     if (!isSameOriginBeacon(req)) return res.status(400).send('invalid request');
 
-    // An `application/json` body arrives parsed; a Content-Type-less one arrives as a string.
+    // An `application/json` body arrives parsed; any other content type arrives as a string.
     let parsed: unknown;
     try {
       parsed = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
@@ -40,3 +40,6 @@ export default PublicEndpoint(
   },
   ['POST']
 );
+
+// A full batch is tens of kilobytes. The default limit is 1 MB, parsed before any check here runs.
+export const config = { api: { bodyParser: { sizeLimit: '64kb' } } };

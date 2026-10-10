@@ -28,7 +28,7 @@ describe('known-app-blocks.service', () => {
     await isKnownAppBlockId('apb_known_1');
     expect(mockFindMany).toHaveBeenCalledWith({
       where: { status: 'approved' },
-      select: { id: true, manifest: true, app: { select: { userId: true } } },
+      select: { id: true },
     });
   });
 
@@ -161,12 +161,33 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
     });
   });
 
-  it('shares the one cached read with the approved-id set', async () => {
+  it('reads approved rows only, once per cache lifetime, with its own query', async () => {
     mockFindMany.mockResolvedValue([{ id: 'apb_declares', manifest, app: { userId: 6611 } }]);
     await getApprovedAppBlockAnalytics('apb_declares');
-    expect(await isKnownAppBlockId('apb_declares')).toBe(true);
-    await getApprovedAppBlockAnalytics('apb_declares');
+    await getApprovedAppBlockAnalytics('apb_someone_else');
+    await Promise.all([1, 2, 3].map(() => getApprovedAppBlockAnalytics('apb_declares')));
     expect(mockFindMany).toHaveBeenCalledTimes(1);
+    expect(mockFindMany).toHaveBeenCalledWith({
+      where: { status: 'approved' },
+      select: { id: true, manifest: true, app: { select: { userId: true } } },
+    });
+  });
+
+  it('the approved-id set does not load it, and survives its failure', async () => {
+    // The id set is what the other beacons clamp their labels with; the wider read must not be
+    // able to empty it.
+    const isWide = (args: { select?: { manifest?: boolean } }) => args?.select?.manifest === true;
+    mockFindMany.mockImplementation(async (args) => {
+      if (isWide(args)) throw new Error('wide read failed');
+      return [{ id: 'apb_known_1' }];
+    });
+    expect(await isKnownAppBlockId('apb_known_1')).toBe(true);
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
+    expect(isWide(mockFindMany.mock.calls[0][0])).toBe(false);
+
+    expect(await getApprovedAppBlockAnalytics('apb_known_1')).toBeNull();
+    expect(await isKnownAppBlockId('apb_known_1')).toBe(true);
+    expect(await isConfirmedNonApprovedAppBlockId('apb_known_1')).toBe(false);
   });
 
   it('answers null for every id while the lookup is failing', async () => {

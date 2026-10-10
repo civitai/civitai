@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeViewerIp,
+  rateLimitAddressKey,
   signedInViewerKey,
   signedOutViewerKey,
 } from '../block-event-viewer-key';
 
 // Every expected key below was computed OUTSIDE this codebase (python hashlib: the first 8 bytes
-// of sha256, big-endian), so the table pins the derivation rather than restating it. The first
-// vector is the one the table's migration header and its SQL equivalent were checked against.
+// of sha256, big-endian), so the table pins the derivation rather than restating it.
 describe('viewer keys', () => {
   it.each([
     [42, '6590179527920541835'],
@@ -68,5 +68,26 @@ describe('normalizeViewerIp', () => {
     const spellings = ['203.0.113.7', '::ffff:203.0.113.7', '::FFFF:CB00:7107'];
     const keys = spellings.map((ip) => signedOutViewerKey('salt-A', normalizeViewerIp(ip)!));
     expect(new Set(keys)).toEqual(new Set(['830607531308821364']));
+  });
+});
+
+describe('rateLimitAddressKey', () => {
+  it.each([
+    ['203.0.113.7', '203.0.113.7'],
+    ['2001:db8:aa:bb::1', '2001:db8:aa:bb::/64'],
+    ['2001:db8:aa:bb:1234:5678:9abc:def0', '2001:db8:aa:bb::/64'],
+    // Zero groups inside the prefix are restored before it is cut.
+    ['2001:db8::1', '2001:db8:0:0::/64'],
+    ['2001:db8::7:0:0:0:1', '2001:db8:0:7::/64'],
+    ['::1', '0:0:0:0::/64'],
+    ['fe80::', 'fe80:0:0:0::/64'],
+  ])('%s -> %s', (ip, expected) => {
+    expect(rateLimitAddressKey(ip)).toBe(expected);
+  });
+
+  it('separates neighbouring /64s', () => {
+    expect(rateLimitAddressKey('2001:db8:aa:bb::1')).not.toBe(
+      rateLimitAddressKey('2001:db8:aa:bc::1')
+    );
   });
 });

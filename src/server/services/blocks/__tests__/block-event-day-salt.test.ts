@@ -161,3 +161,33 @@ describe('the shared daily salt', () => {
     expect(store.get(DAY_1_KEY)?.value).toBe(salt);
   });
 });
+
+describe('the cached salt is re-checked against the store', () => {
+  it('🔴 processes converge on the store again after it loses the key mid-day', async () => {
+    const longLived = await newProcess();
+    const original = await longLived.getBlockEventDaySalt(DAY_1_NOON);
+
+    // The store loses the key; a process that starts afterwards creates a new value.
+    store.clear();
+    const fresh = await newProcess();
+    const replacement = await fresh.getBlockEventDaySalt(DAY_1_NOON + 1_000);
+    expect(replacement).toEqual(expect.any(String));
+    expect(replacement).not.toBe(original);
+
+    // Inside the re-check interval the long-lived process still holds the old value...
+    expect(await longLived.getBlockEventDaySalt(DAY_1_NOON + 59_000)).toBe(original);
+    // ...and after it, it has adopted the store's.
+    expect(await longLived.getBlockEventDaySalt(DAY_1_NOON + 61_000)).toBe(replacement);
+  });
+
+  it('keeps the last known shared value while the store cannot be asked', async () => {
+    const proc = await newProcess();
+    const original = await proc.getBlockEventDaySalt(DAY_1_NOON);
+    storeDown = true;
+    expect(await proc.getBlockEventDaySalt(DAY_1_NOON + 61_000)).toBe(original);
+    expect(await proc.getBlockEventDaySalt(DAY_1_NOON + 62_000)).toBe(original);
+    // But not across the day boundary: yesterday's value is never used for today.
+    storeNowMs = DAY_2_NOON;
+    expect(await proc.getBlockEventDaySalt(DAY_2_NOON)).toBeNull();
+  });
+});

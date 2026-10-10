@@ -176,9 +176,9 @@ export const INVENTORY = {
     request: false,
     reply: '',
     // N/A (both real hosts): TRACK_EVENT is fire-and-forget analytics and is
-    // currently NOT bridged by EITHER host (no host-side analytics sink wired).
-    // Unhandled ⇒ silently dropped, never a hang. If a sink is added, flip the
-    // relevant host(s) to 'required' here so coverage is enforced.
+    // NOT forwarded by EITHER host yet (the server ingest exists:
+    // /api/track/block-event). Unhandled ⇒ silently dropped, never a hang. Flip
+    // a host to 'required' here when it starts forwarding.
     IframeHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
     PageBlockHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
     InlineHost: INLINE_STUB,

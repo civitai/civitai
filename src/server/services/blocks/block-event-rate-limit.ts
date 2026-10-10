@@ -7,7 +7,7 @@
  * session is resolved.
  *
  * The numbers follow the batch contract rather than a guess at human behaviour: one batch carries
- * at most `BLOCK_EVENT_BATCH_MAX` (50) rows, so a burst smaller than that would drop part of a
+ * at most `BLOCK_EVENT_BATCH_MAX` rows, so a burst smaller than that would drop part of a
  * well-formed batch. Viewers behind one shared address share a bucket.
  */
 /** Bucket capacity: two full batches. */
@@ -17,7 +17,7 @@ export const BLOCK_EVENT_RATE_PER_SECOND = 10;
 /**
  * Most buckets held at once. Reaching it evicts the least recently used bucket, which hands that
  * key a full bucket again on its next event, so the cap trades a little accuracy under a key
- * flood for a hard memory bound (about 100 bytes a bucket).
+ * flood for a hard memory bound.
  */
 export const BLOCK_EVENT_RATE_MAX_KEYS = 20_000;
 
@@ -44,12 +44,11 @@ export function createBlockEventRateLimiter(
       const existing = buckets.get(key);
       let bucket: Bucket;
       if (existing) {
-        // A clock that steps backwards must not mint tokens, hence the clamp at zero.
-        const elapsedSeconds = Math.max(0, nowMs - existing.at) / 1000;
-        bucket = {
-          tokens: Math.min(burst, existing.tokens + elapsedSeconds * perSecond),
-          at: nowMs,
-        };
+        // A clock that steps backwards must not mint tokens: no refill for negative time, and
+        // the bucket keeps its later timestamp so the step forward again is not counted either.
+        const at = Math.max(existing.at, nowMs);
+        const elapsedSeconds = (at - existing.at) / 1000;
+        bucket = { tokens: Math.min(burst, existing.tokens + elapsedSeconds * perSecond), at };
         buckets.delete(key);
       } else {
         bucket = { tokens: burst, at: nowMs };
@@ -73,9 +72,3 @@ let shared: BlockEventRateLimiter | undefined;
 export function blockEventRateLimiter(): BlockEventRateLimiter {
   return (shared ??= createBlockEventRateLimiter());
 }
-
-export const _internalsForTests = {
-  reset(): void {
-    shared = undefined;
-  },
-};

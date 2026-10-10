@@ -1068,9 +1068,8 @@ export const blockMessageBatchSchema = z.object({
 //
 // `eventName` and `properties` are deliberately NOT bounded or shaped here. A zod array rejects
 // wholesale, and one batch can carry rows from several apps on a page, so a strict rule would
-// let one app's malformed event discard its neighbours'. Neither is ever stored as sent: the
-// name is only looked up in the app's declared events, and each property is checked against its
-// declaration. The body parser bounds their size.
+// let one app's malformed event discard its neighbours'. Neither is stored unless it equals
+// something the app's manifest declares. The route's body-size limit bounds them.
 export const BLOCK_EVENT_BATCH_MAX = 50;
 export type BlockEventBatchInput = z.infer<typeof blockEventBatchSchema>;
 export const blockEventBatchSchema = z.object({

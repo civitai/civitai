@@ -3,6 +3,7 @@ import client from 'prom-client';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as CivitaiRedis from '@civitai/redis';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as RateLimitModule from '~/server/services/blocks/block-event-rate-limit';
 
@@ -175,6 +176,8 @@ type PostOptions = {
   rawBody?: string;
   objectBody?: boolean;
   handler?: Handler;
+  /** Send the address header WITHOUT the edge's request id, as a direct-to-origin caller would. */
+  noEdge?: boolean;
 };
 
 async function post(body: unknown, opts: PostOptions = {}) {
@@ -186,7 +189,8 @@ async function post(body: unknown, opts: PostOptions = {}) {
     headers: {
       host: 'civitai.com',
       ...(origin ? { origin } : {}),
-      ...(ip ? { 'cf-connecting-ip': ip } : {}),
+      // Edge-attested: the address header counts only alongside the edge's own request id.
+      ...(ip ? { 'cf-connecting-ip': ip, ...(opts.noEdge ? {} : { 'cf-ray': 'test-ray' }) } : {}),
     },
     body: opts.rawBody ?? (opts.objectBody ? body : JSON.stringify(body)),
   } as unknown as NextApiRequest;
@@ -261,8 +265,11 @@ beforeEach(() => {
   store.clear();
   storeDown = false;
   installStore();
+  mockGetSession.mockReset();
+  mockInsert.mockReset();
   mockInsert.mockImplementation(async () => undefined);
   mockPrivateRun.mockImplementation(async () => false);
+  loggingMock.logToAxiom.mockImplementation(async () => undefined);
   dbMock.dbRead.appBlock.findMany.mockResolvedValue(APPROVED_ROWS);
 });
 
@@ -349,11 +356,17 @@ describe('POST /api/track/block-event — what is stored', () => {
 
   it('drops an unknown app, counts it, and does no further work for it', async () => {
     const delta = await outcomeDelta(() =>
-      post({ events: [event({ appBlockId: 'apb_never_approved' }), event({ appBlockId: 'x' })] })
+      post({
+        events: [
+          event({ appBlockId: 'apb_never_approved' }),
+          event({ appBlockId: 'apb_never_approved' }),
+          event({ appBlockId: 'x' }),
+        ],
+      })
     );
     expect(mockInsert).not.toHaveBeenCalled();
     expect(mockGetSession).not.toHaveBeenCalled();
-    expect(delta).toEqual({ unknown_app: 2 });
+    expect(delta).toEqual({ unknown_app: 3 });
   });
 
   it('keeps the approved rows of a batch that also carries an unknown app', async () => {
@@ -766,7 +779,7 @@ describe('POST /api/track/block-event — what is withheld', () => {
   it.each([
     ['a preview deployment', { isPreview: true, cacheKeyNamespace: 'preview' }],
     ['IS_PREVIEW alone', { isPreview: true, cacheKeyNamespace: '' }],
-    ['a cache namespace alone', { isPreview: false, cacheKeyNamespace: 'next-stage' }],
+    ['a cache namespace alone', { isPreview: false, cacheKeyNamespace: 'next' }],
   ])('🔴 %s validates but does not insert', async (_label, signals) => {
     Object.assign(envStore, signals);
     const delta = await outcomeDelta(async () => {
@@ -811,10 +824,18 @@ describe('POST /api/track/block-event — the rate limit', () => {
     expect(insertedRows()).toHaveLength(100);
     expect(delta).toEqual({ accepted: 100, rate_limited: 50 });
 
-    // A partly admitted batch keeps its first rows.
+    // A partly admitted batch keeps its FIRST rows.
     vi.setSystemTime(DAY_1_NOON + 2_000);
-    const later = await outcomeDelta(() => post(batch(50), { handler }));
+    const numbered = {
+      events: Array.from({ length: 50 }, (_, i) => event({ blockInstanceId: `page_row_${i}` })),
+    };
+    const later = await outcomeDelta(() => post(numbered, { handler }));
     expect(insertedRows()).toHaveLength(120);
+    expect(
+      insertedRows()
+        .slice(100)
+        .map((r) => r.blockInstanceId)
+    ).toEqual(Array.from({ length: 20 }, (_, i) => `page_row_${i}`));
     expect(later).toEqual({ accepted: 20, rate_limited: 30 });
   });
 
@@ -859,5 +880,198 @@ describe('POST /api/track/block-event — the rate limit', () => {
     // Positive control: the same reader sees a bucket once an approved app is used.
     await post(batch(1), { handler });
     expect(limiter.blockEventRateLimiter().size()).toBe(1);
+  });
+});
+
+// ── review-driven cases ──────────────────────────────────────────────────────
+
+describe('POST /api/track/block-event — the block instance id', () => {
+  it.each([
+    ['page_apb_arcade'],
+    ['mbi_01HZX3'],
+    ['bki_01HZX3'],
+    ['bus_pub_01HZX3'],
+    ['bus_view_01HZX3'],
+    ['pdb_01HZX3'],
+  ])('stores the platform-shaped id %s', async (blockInstanceId) => {
+    const delta = await outcomeDelta(() => post({ events: [event({ blockInstanceId })] }));
+    expect(insertedRows()[0].blockInstanceId).toBe(blockInstanceId);
+    expect(delta).toEqual({ accepted: 1 });
+  });
+
+  it.each([
+    ['free text', 'my diary entry for today'],
+    ['an email', 'someone@example.com'],
+    ['an unknown prefix', 'note_01HZX3'],
+    ['a prefix with nothing after it', 'page_'],
+    ['a known prefix followed by punctuation', 'page_hello world!'],
+  ])('🔴 stores %s as empty and flags the row', async (_label, blockInstanceId) => {
+    const delta = await outcomeDelta(() => post({ events: [event({ blockInstanceId })] }));
+    expect(insertedRows()).toEqual([
+      expect.objectContaining({ blockInstanceId: '', eventName: 'menu_opened' }),
+    ]);
+    expect(JSON.stringify(mockInsert.mock.calls)).not.toContain(blockInstanceId);
+    expect(delta).toEqual({ accepted: 1, invalid_instance_id: 1 });
+  });
+
+  it('bounds both ids at 256 characters and trims them', async () => {
+    const at = (n: number) => `page_${'a'.repeat(n - 5)}`;
+    expect(
+      (await post({ events: [event({ blockInstanceId: at(257) })] })).status
+    ).toHaveBeenCalledWith(400);
+    expect(
+      (await post({ events: [event({ appBlockId: 'a'.repeat(257) })] })).status
+    ).toHaveBeenCalledWith(400);
+    expect(
+      (await post({ events: [event({ blockInstanceId: '   ' })] })).status
+    ).toHaveBeenCalledWith(400);
+    expect((await post({ events: [event({ appBlockId: '   ' })] })).status).toHaveBeenCalledWith(
+      400
+    );
+    expect(mockInsert).not.toHaveBeenCalled();
+
+    expect(
+      (await post({ events: [event({ blockInstanceId: at(256) })] })).status
+    ).toHaveBeenCalledWith(200);
+    expect(
+      (await post({ events: [event({ appBlockId: `  ${APP} `, blockInstanceId: ' page_x ' })] }))
+        .status
+    ).toHaveBeenCalledWith(200);
+    // 256 passes the schema but is past the stored grammar's length, so it is stored empty.
+    expect(insertedRows().map((r) => [r.appBlockId, r.blockInstanceId])).toEqual([
+      ['apb_arcade', ''],
+      ['apb_arcade', 'page_x'],
+    ]);
+  });
+});
+
+describe('POST /api/track/block-event — which address is trusted', () => {
+  it('🔴 ignores an address header that the edge did not attest', async () => {
+    store.set(DAY_1_SALT_KEY, { value: 'fixed-salt-one', expiresAtSec: Number.POSITIVE_INFINITY });
+    const delta = await outcomeDelta(() => post({ events: [event()] }, { noEdge: true }));
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(delta).toEqual({ no_client_ip: 1 });
+  });
+
+  it('gives callers with no trusted address ONE shared budget, whatever header they send', async () => {
+    sessionStore.session = { user: { id: OTHER_VIEWER } };
+    const handler = await loadHandler();
+    const batch = { events: Array.from({ length: 50 }, () => event()) };
+    await post(batch, { handler, noEdge: true, ip: '192.0.2.1' });
+    await post(batch, { handler, noEdge: true, ip: '192.0.2.2' });
+    await post(batch, { handler, noEdge: true, ip: '192.0.2.3' });
+    expect(insertedRows()).toHaveLength(100);
+  });
+
+  it('budgets an IPv6 /64 as one caller, and a different /64 separately', async () => {
+    sessionStore.session = { user: { id: OTHER_VIEWER } };
+    const handler = await loadHandler();
+    const batch = { events: Array.from({ length: 50 }, () => event()) };
+    await post(batch, { handler, ip: '2001:db8:aa:bb::1' });
+    await post(batch, { handler, ip: '2001:db8:aa:bb:1234:5678:9abc:def0' });
+    await post(batch, { handler, ip: '2001:db8:aa:bb:ffff::2' });
+    expect(insertedRows()).toHaveLength(100);
+    await post(batch, { handler, ip: '2001:db8:aa:bc::1' });
+    expect(insertedRows()).toHaveLength(150);
+  });
+
+  it('still keys a signed-out viewer on the whole IPv6 address', async () => {
+    store.set(DAY_1_SALT_KEY, { value: 'salt-A', expiresAtSec: Number.POSITIVE_INFINITY });
+    await post({ events: [event()] }, { ip: '2001:DB8:0:0:0:0:0:1' });
+    await post({ events: [event()] }, { ip: '2001:db8::2' });
+    const [first, second] = insertedRows().map((r) => r.viewerKey);
+    // sha256('a:salt-A:2001:db8::1'), computed outside this codebase.
+    expect(first).toBe('13312981865497890023');
+    expect(second).not.toBe(first);
+  });
+});
+
+describe('POST /api/track/block-event — failures stay inside', () => {
+  it('a session that cannot be resolved drops the rows, counts them and answers 200', async () => {
+    mockGetSession.mockImplementation(() => {
+      throw new Error('session store down');
+    });
+    const delta = await outcomeDelta(async () => {
+      expect((await post({ events: [event(), event()] })).status).toHaveBeenCalledWith(200);
+    });
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(delta).toEqual({ session_failed: 2 });
+  });
+
+  it('an unexpected throw on the request path still answers 200', async () => {
+    // The real predicate never rejects; this stands in for any defect below the handler.
+    mockPrivateRun.mockImplementation(async () => {
+      throw new Error('unexpected');
+    });
+    const res = await post({ events: [event()] });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.status).toHaveBeenCalledTimes(1);
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['rejects', () => Promise.reject(new Error('log sink down'))],
+    [
+      'throws synchronously',
+      () => {
+        throw new Error('log sink broken');
+      },
+    ],
+  ])('🔴 the detached write never rejects, even when the failure log %s', async (_label, impl) => {
+    mockInsert.mockImplementation(async () => {
+      throw new Error('clickhouse down');
+    });
+    loggingMock.logToAxiom.mockImplementation(impl);
+    const { ingestBlockEvents } = await import(
+      '~/server/services/blocks/block-event-ingest.service'
+    );
+    const { written } = await ingestBlockEvents({
+      events: [event()],
+      req: {
+        headers: { 'cf-connecting-ip': VIEWER_IP, 'cf-ray': 'test-ray' },
+      } as unknown as NextApiRequest,
+      res: makeRes(),
+    });
+    await expect(written).resolves.toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs the NAME of a write error, never its message', async () => {
+    mockInsert.mockImplementation(async () => {
+      throw new TypeError('Cannot parse row: {"eventName":"menu_opened"}');
+    });
+    await post({ events: [event()] });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      { name: 'app-block-events-insert-failed', type: 'error', rows: 1, error: 'TypeError' },
+      'clickhouse'
+    );
+    expect(JSON.stringify(loggingMock.logToAxiom.mock.calls)).not.toContain('Cannot parse');
+  });
+
+  it('gives each write a deadline', async () => {
+    await post({ events: [event()] });
+    const signal = (mockInsert.mock.calls[0][0] as { abort_signal?: AbortSignal }).abort_signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal!.aborted).toBe(false);
+  });
+
+  it('🔴 sheds new batches once 32 writes are in flight, and recovers when they settle', async () => {
+    sessionStore.session = { user: { id: OTHER_VIEWER } };
+    const release: Array<() => void> = [];
+    mockInsert.mockImplementation(() => new Promise<void>((resolve) => release.push(resolve)));
+    const handler = await loadHandler();
+    // Distinct addresses, so the per-address budget is not what stops them.
+    const delta = await outcomeDelta(async () => {
+      for (let i = 0; i < 35; i += 1) {
+        await post({ events: [event()] }, { handler, ip: `203.0.113.${i + 1}` });
+      }
+    });
+    expect(mockInsert).toHaveBeenCalledTimes(32);
+    expect(delta).toEqual({ insert_failed: 3 });
+
+    release.forEach((resolve) => resolve());
+    await new Promise((resolve) => setImmediate(resolve));
+    await post({ events: [event()] }, { handler, ip: '203.0.113.99' });
+    expect(mockInsert).toHaveBeenCalledTimes(33);
   });
 });

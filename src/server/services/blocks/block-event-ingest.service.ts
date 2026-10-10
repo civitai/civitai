@@ -7,10 +7,12 @@ import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { logToAxiom } from '~/server/logging/client';
 import { recordBlockCustomEvents } from '~/server/metrics/app-block-runtime.metrics';
 import type { BlockEventBatchInput } from '~/server/schema/track.schema';
+import type { SessionUser } from '~/types/session';
 import { getBlockEventDaySalt } from '~/server/services/blocks/block-event-day-salt';
 import { blockEventRateLimiter } from '~/server/services/blocks/block-event-rate-limit';
 import {
   normalizeViewerIp,
+  rateLimitAddressKey,
   signedInViewerKey,
   signedOutViewerKey,
 } from '~/server/services/blocks/block-event-viewer-key';
@@ -20,7 +22,7 @@ import {
   type ApprovedEventDeclarations,
 } from '~/server/services/blocks/known-app-blocks.service';
 import { isPrivateRunImpression } from '~/server/services/blocks/private-run-impression.service';
-import { resolveClientIp } from '~/server/utils/client-ip';
+import { getTrustedClientIp } from '~/server/utils/client-ip';
 
 export const APP_BLOCK_EVENTS_TABLE = 'appBlockEvents';
 
@@ -48,13 +50,27 @@ export type AppBlockEventRow = {
 };
 
 /**
- * Whether this process is the production deployment, which is the only one allowed to write.
- * Non-production deployments can be configured with the production ClickHouse, and a row written
- * from one is indistinguishable from a real one.
+ * The only shape a block instance id is stored in: a platform-minted prefix and an id. Anything
+ * else is stored empty, so the column cannot carry text a caller chose freely.
+ */
+const BLOCK_INSTANCE_ID_RE = /^(?:page|mbi|bki|bus_pub|bus_view|pdb)_[A-Za-z0-9_]{1,100}$/;
+
+/** A write still unanswered after this long is abandoned. */
+export const BLOCK_EVENT_INSERT_TIMEOUT_MS = 5_000;
+/**
+ * Most writes in flight per process; past it new batches are dropped (`insert_failed`). With the
+ * timeout above this bounds the sockets and rows a stalled ClickHouse can pin in a web process.
+ */
+export const BLOCK_EVENT_MAX_INFLIGHT_INSERTS = 32;
+let inflightInserts = 0;
+
+/**
+ * Whether this process may write. Non-production deployments can be configured with the
+ * production ClickHouse, and a row written from one is indistinguishable from a real one.
  *
- * Neither existing signal is enough alone, so both must agree: `IS_PREVIEW` is not set on every
- * non-production deployment, and the cache-key namespace is empty only on production by that
- * module's own contract. A deployment that sets neither is taken for production.
+ * Both signals must be clear, because each misses deployments the other catches: `IS_PREVIEW` is
+ * not set on every non-production deployment, and a non-production deployment can be missing its
+ * cache-key namespace. A deployment that sets neither is taken for production.
  */
 export function isProductionDeployment(
   signals: { isPreview: boolean; cacheKeyNamespace: string } = {
@@ -168,11 +184,11 @@ type IncomingEvent = BlockEventBatchInput['events'][number];
 
 /**
  * Validate a batch and write what survives. Resolves once validation is done; `written` settles
- * when the insert does, and nothing awaits it on the request path.
+ * when the insert does, never rejects, and is not awaited on the request path.
  *
  * `time` is the server's clock. A client timestamp is not accepted at all: the table partitions
  * and expires on `time`, so a caller-chosen value could place a row in any partition or past the
- * retention window, and a batch is at most a few seconds old when it arrives.
+ * retention window.
  */
 export async function ingestBlockEvents(args: {
   events: IncomingEvent[];
@@ -182,11 +198,16 @@ export async function ingestBlockEvents(args: {
 }): Promise<{ written: Promise<void> }> {
   const { events, req, res, nowMs = Date.now() } = args;
   const done = { written: Promise.resolve() };
-  const clientIp = resolveClientIp(req);
+  // The address is a control here (a budget and a unique-viewer key), so it is the edge-attested
+  // or transport-peer address, never a header the caller can set on a direct request. `null`
+  // when neither resolves: those callers share one budget and their signed-out rows are dropped.
+  const clientIp = normalizeViewerIp(getTrustedClientIp(req));
+  const budgetKey = clientIp ? rateLimitAddressKey(clientIp) : 'unknown';
 
-  // Cheapest gates first, and both before the session is resolved: an unknown app costs a Map
-  // lookup and an over-budget caller costs arithmetic. The limiter is keyed only on apps that
-  // passed the approved check, so a caller cannot grow it by inventing app ids.
+  // Cheapest gates first, and both before the session is resolved: once the approved set is
+  // cached an unknown app costs a Map lookup, and an over-budget caller costs arithmetic. The
+  // limiter is keyed only on apps that passed the approved check, so a caller cannot grow it by
+  // inventing app ids.
   const byApp = new Map<string, IncomingEvent[]>();
   for (const event of events) {
     const group = byApp.get(event.appBlockId);
@@ -195,76 +216,89 @@ export async function ingestBlockEvents(args: {
   }
   const limiter = blockEventRateLimiter();
   const admitted: Array<{ analytics: ApprovedAppBlockAnalytics; events: IncomingEvent[] }> = [];
+  let admittedRows = 0;
   for (const [appBlockId, group] of byApp) {
     const analytics = await getApprovedAppBlockAnalytics(appBlockId);
     if (!analytics) {
       recordBlockCustomEvents('unknown_app', group.length);
       continue;
     }
-    const granted = limiter.take(`${clientIp} ${appBlockId}`, group.length, nowMs);
+    const granted = limiter.take(`${budgetKey} ${appBlockId}`, group.length, nowMs);
     recordBlockCustomEvents('rate_limited', group.length - granted);
-    if (granted > 0) admitted.push({ analytics, events: group.slice(0, granted) });
+    if (granted > 0) {
+      admitted.push({ analytics, events: group.slice(0, granted) });
+      admittedRows += granted;
+    }
   }
   if (admitted.length === 0) return done;
 
-  // Identity comes from the session and the connection, never from the body.
-  const session = await getServerAuthSession({ req, res });
-  const viewer = session?.user;
+  // Identity comes from the session and the trusted client address, never from the body.
+  let viewer: SessionUser | undefined;
+  try {
+    viewer = (await getServerAuthSession({ req, res }))?.user;
+  } catch {
+    // Not written as signed-out: that would file a signed-in viewer's events under another key.
+    recordBlockCustomEvents('session_failed', admittedRows);
+    return done;
+  }
   const signedIn = !!viewer && typeof viewer.id === 'number';
 
   let viewerKey: string;
-  if (signedIn) {
+  if (viewer && signedIn) {
     viewerKey = signedInViewerKey(viewer.id);
   } else {
-    const remaining = admitted.reduce((sum, group) => sum + group.events.length, 0);
-    const ip = normalizeViewerIp(clientIp);
-    if (!ip) {
-      recordBlockCustomEvents('no_client_ip', remaining);
+    if (!clientIp) {
+      recordBlockCustomEvents('no_client_ip', admittedRows);
       return done;
     }
     const salt = await getBlockEventDaySalt(nowMs);
     if (!salt) {
       // Dropped, not stored under a placeholder key: the salt contract forbids a local fallback,
       // and a shared placeholder would read as one very active viewer.
-      recordBlockCustomEvents('salt_unavailable', remaining);
+      recordBlockCustomEvents('salt_unavailable', admittedRows);
       return done;
     }
-    viewerKey = signedOutViewerKey(salt, ip);
+    viewerKey = signedOutViewerKey(salt, clientIp);
   }
 
   const rows: AppBlockEventRow[] = [];
-  let acceptedRows = 0;
-  let undeclaredRows = 0;
+  const counts = { accepted: 0, undeclared: 0, undeclaredProp: 0, invalidValue: 0, badInstance: 0 };
   for (const { analytics, events: group } of admitted) {
     const appBlockId = group[0].appBlockId;
-    // The same server-derived predicate the impression writers use, so a private run of an app
-    // stays out of every owner-visible table. Only reachable for an app this process still
-    // believes is approved, so it costs a cached lookup and nothing a caller can amplify.
+    // The predicate the impression writers use. A private run is of an app that is not approved,
+    // and those rows were already dropped above; this covers an app that left the approved set
+    // while the ingest's cached copy of that set still lists it. For an app both caches agree is
+    // approved it is a cached lookup, so a caller cannot use it to cause database work.
     if (await isPrivateRunImpression({ appBlockId, viewer })) {
       recordBlockCustomEvents('private_run', group.length);
       continue;
     }
     const isOwner =
-      signedIn && analytics.ownerUserId !== null && viewer.id === analytics.ownerUserId;
+      !!viewer && signedIn && analytics.ownerUserId !== null && viewer.id === analytics.ownerUserId;
     for (const event of group) {
       const classified = classifyBlockEvent(analytics.events, event.eventName, event.properties);
-      if (classified.declared) acceptedRows += 1;
-      else undeclaredRows += 1;
-      if (classified.undeclaredProp) recordBlockCustomEvents('undeclared_prop');
-      if (classified.invalidValue) recordBlockCustomEvents('invalid_value');
+      if (classified.declared) counts.accepted += 1;
+      else counts.undeclared += 1;
+      if (classified.undeclaredProp) counts.undeclaredProp += 1;
+      if (classified.invalidValue) counts.invalidValue += 1;
+      const instanceIdOk = BLOCK_INSTANCE_ID_RE.test(event.blockInstanceId);
+      if (!instanceIdOk) counts.badInstance += 1;
       rows.push(
         buildAppBlockEventRow({
           nowMs,
           appBlockId,
-          blockInstanceId: event.blockInstanceId,
+          blockInstanceId: instanceIdOk ? event.blockInstanceId : '',
           classified,
-          userId: signedIn ? viewer.id : null,
+          userId: viewer && signedIn ? viewer.id : null,
           viewerKey,
           isOwner,
         })
       );
     }
   }
+  recordBlockCustomEvents('undeclared_prop', counts.undeclaredProp);
+  recordBlockCustomEvents('invalid_value', counts.invalidValue);
+  recordBlockCustomEvents('invalid_instance_id', counts.badInstance);
   if (rows.length === 0) return done;
 
   if (!isProductionDeployment()) {
@@ -272,19 +306,25 @@ export async function ingestBlockEvents(args: {
     return done;
   }
   const client = clickhouse;
-  if (!client) {
+  if (!client || inflightInserts >= BLOCK_EVENT_MAX_INFLIGHT_INSERTS) {
     recordBlockCustomEvents('insert_failed', rows.length);
     return done;
   }
 
+  inflightInserts += 1;
   const written = Promise.resolve()
     .then(() =>
-      client.insert({ table: APP_BLOCK_EVENTS_TABLE, values: rows, format: 'JSONEachRow' })
+      client.insert({
+        table: APP_BLOCK_EVENTS_TABLE,
+        values: rows,
+        format: 'JSONEachRow',
+        abort_signal: AbortSignal.timeout(BLOCK_EVENT_INSERT_TIMEOUT_MS),
+      })
     )
     .then(
       () => {
-        recordBlockCustomEvents('accepted', acceptedRows);
-        recordBlockCustomEvents('undeclared_event', undeclaredRows);
+        recordBlockCustomEvents('accepted', counts.accepted);
+        recordBlockCustomEvents('undeclared_event', counts.undeclared);
       },
       (error: unknown) => {
         recordBlockCustomEvents('insert_failed', rows.length);
@@ -301,6 +341,9 @@ export async function ingestBlockEvents(args: {
       }
     )
     // Nothing awaits `written` on the request path, so it must never reject.
-    .catch(() => undefined);
+    .catch(() => undefined)
+    .finally(() => {
+      inflightInserts -= 1;
+    });
   return { written };
 }

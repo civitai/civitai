@@ -37,6 +37,9 @@ describe('block-event rate limiter', () => {
     const limiter = createBlockEventRateLimiter({ burst: 4, perSecond: 1 });
     expect(limiter.take('k', 4, T0)).toBe(4);
     expect(limiter.take('k', 4, T0 - 60_000)).toBe(0);
+    // Nor when it steps forward again to where it was: no real time has passed.
+    expect(limiter.take('k', 4, T0)).toBe(0);
+    expect(limiter.take('k', 4, T0 + 2_000)).toBe(2);
   });
 
   it('never holds more than maxKeys buckets under a key flood', () => {
