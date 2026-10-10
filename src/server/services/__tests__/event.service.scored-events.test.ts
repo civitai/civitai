@@ -481,9 +481,12 @@ describe('getEventStandings decoration', () => {
     });
     scoring.getEventStandings.mockResolvedValue({ teams, topCosmetics: [], topUsers: {} });
     live.getTeamPoints.mockResolvedValue({ Yellow: 950, Blue: 1000 });
-    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    const onDegraded = vi.fn();
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
     expect(res.teams).toEqual(teams);
     expect(live.getTeamPoints).not.toHaveBeenCalled();
+    // Settled by design, not a fallback: the answer stays edge-cacheable.
+    expect(onDegraded).not.toHaveBeenCalled();
   });
 
   it('keeps the snapshot team totals when the live totals are unreachable', async () => {

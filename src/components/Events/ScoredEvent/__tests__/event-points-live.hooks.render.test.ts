@@ -96,6 +96,8 @@ describe('WornHatLivePoints', () => {
       entityId: 5,
     });
     expect(applied(cache.wornHat.setData, hat)).toEqual({ ...hat, points: 64 });
+    // Nothing loaded yet: a push must not invent a partial hat.
+    expect(applied(cache.wornHat.setData, undefined)).toBeUndefined();
   });
 
   it("ignores another hat's push and another event's", () => {
@@ -127,6 +129,7 @@ describe('MyHatsLivePoints', () => {
       { topicId: 'a', points: 1 },
       { topicId: 'b', points: 7 },
     ]);
+    expect(applied(cache.myHats.setData, undefined)).toBeUndefined();
   });
 });
 
@@ -154,6 +157,7 @@ describe('useEventTeamsLivePoints', () => {
         { team: 'Blue', score: 900, rank: 2 },
       ],
     });
+    expect(applied(cache.standings.setData, undefined)).toBeUndefined();
   });
 
   // After the end the page names the settled winner; a live push must not re-rank it.

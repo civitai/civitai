@@ -57,11 +57,16 @@ type Send = Parameters<TickDeps['topicSend']>[0];
 // One tick for one event: push the team totals, then the new total of every hat that moved. A
 // failed or skipped send is dropped, never re-queued, so a signals outage cannot grow the changed
 // set; the next move of that hat, or the screen's next read, catches it up. A failed read loses the
-// drained hats the same way.
+// drained hats the same way. Nothing new starts after `deadline`, the end of the run's window, so a
+// slow tick cannot carry the run past its lock: what was not sent by then is dropped too.
 export async function tickEventPoints(
   event: TickerEvent,
   deps: TickDeps = defaultDeps,
-  now = new Date()
+  {
+    now = new Date(),
+    deadline = Infinity,
+    clock = Date.now,
+  }: { now?: Date; deadline?: number; clock?: () => number } = {}
 ) {
   const drained = await deps.drainChangedHats(event, MAX_HAT_SENDS_PER_TICK);
   if (!drained.length) return { drained: 0, sent: 0, failed: 0, dropped: 0, stopped: false };
@@ -97,7 +102,7 @@ export async function tickEventPoints(
   let sent = 0;
   let failed = 0;
   const worker = async () => {
-    while (failed < FAILURES_TO_STOP && next < queue.length) {
+    while (failed < FAILURES_TO_STOP && next < queue.length && clock() < deadline) {
       const send = queue[next++];
       try {
         await deps.topicSend(send);
@@ -126,7 +131,8 @@ type TickerRunDeps = {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   isCanceled: () => boolean;
-  tick: (event: TickerEvent) => Promise<{ stopped?: boolean } | void>;
+  /** `deadline`: the end of the run's window; the tick starts nothing after it. */
+  tick: (event: TickerEvent, deadline: number) => Promise<{ stopped?: boolean } | void>;
 };
 
 // One scheduler run: a tick every TICK_MS until TICK_WINDOW_MS has passed. A tick that runs long
@@ -137,13 +143,16 @@ export async function runEventPointsTicker(
   { now, sleep, isCanceled, tick }: TickerRunDeps
 ) {
   const start = now();
+  const deadline = start + TICK_WINDOW_MS;
   let ticks = 0;
   let stopped = false;
   while (!isCanceled() && !stopped) {
     const tickStart = now();
     for (const event of await getEvents()) {
+      // A slow earlier event used up the window: the rest wait for the next run.
+      if (now() >= deadline) break;
       try {
-        if ((await tick(event))?.stopped) {
+        if ((await tick(event, deadline))?.stopped) {
           stopped = true;
           break;
         }

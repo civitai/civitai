@@ -41,7 +41,7 @@ export const eventPointsTicker = createJob(
       now: Date.now,
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       isCanceled: () => ctx.status === 'canceled',
-      tick: (event) => tickEventPoints(event),
+      tick: (event, deadline) => tickEventPoints(event, undefined, { deadline }),
     });
   },
   { lockExpiration: 90 }

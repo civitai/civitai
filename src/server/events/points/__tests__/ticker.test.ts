@@ -187,9 +187,30 @@ describe('tickEventPoints', () => {
   // After the end the page names the settled winner; a live team push must not reach it.
   it('stops pushing team totals once the event has ended, and still pushes hats', async () => {
     const { deps, sent } = fakeDeps([hat(1)]);
-    await tickEventPoints(event, deps, new Date('2999-01-01'));
+    await tickEventPoints(event, deps, { now: new Date('2999-01-01') });
     expect(sent.map((s) => s.target)).toEqual([SignalMessages.EventPointsHat]);
     expect(deps.getTeamPoints).not.toHaveBeenCalled();
+  });
+
+  // The run's lock outlives its window by 35s; a slow tick must not carry the run past it.
+  it('starts no send after the deadline, and drops what is left', async () => {
+    const late = fakeDeps([hat(1), hat(2)]);
+    expect(
+      await tickEventPoints(event, late.deps, { deadline: 1_000, clock: () => 1_000 })
+    ).toEqual({ drained: 2, sent: 0, failed: 0, dropped: 3, stopped: false });
+    expect(late.sent).toEqual([]);
+
+    // Each send takes 1s; the window closes 5s in, so sends stop being started there.
+    const slow = fakeDeps(Array.from({ length: 30 }, (_, i) => hat(i + 1)));
+    let t = 0;
+    slow.deps.topicSend = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      t += 1_000;
+    });
+    const result = await tickEventPoints(event, slow.deps, { deadline: 5_000, clock: () => t });
+    expect(result.sent).toBeGreaterThan(0);
+    expect(result.sent).toBeLessThan(5 + SEND_CONCURRENCY);
+    expect(result.dropped).toBe(31 - result.sent);
   });
 
   it('rejects the tick, sending nothing, when a live read fails', async () => {
@@ -264,6 +285,38 @@ describe('runEventPointsTicker', () => {
     expect(ticks).toBe(2);
   });
 
+  it("hands every tick the end of the run's window", async () => {
+    const deadlines: number[] = [];
+    const h = harness(async () => undefined);
+    await runEventPointsTicker(() => [event], {
+      ...h.deps,
+      tick: async (_e, deadline) => void deadlines.push(deadline),
+    });
+    expect(new Set(deadlines)).toEqual(new Set([1_000_000 + TICK_WINDOW_MS]));
+  });
+
+  it('leaves the remaining events for the next run once a slow one used up the window', async () => {
+    const seen: string[] = [];
+    let t = 1_000_000;
+    const { ticks } = await runEventPointsTicker(
+      () => [
+        { ...event, name: 'a' },
+        { ...event, name: 'b' },
+      ],
+      {
+        now: () => t,
+        sleep: async (ms) => void (t += ms),
+        isCanceled: () => seen.length >= 50,
+        tick: async (e) => {
+          seen.push(e.name);
+          t += 60_000;
+        },
+      }
+    );
+    expect(seen).toEqual(['a']);
+    expect(ticks).toBe(1);
+  });
+
   it('ends the run when a tick stopped on signals failures', async () => {
     const seen: string[] = [];
     const h = harness(async () => undefined);
@@ -336,10 +389,11 @@ describe('getTickerEvents', () => {
     expect(at('2026-12-03T00:00:01Z')).toEqual([]);
   });
 
-  it('passes the real start date: the season is derived from it', () => {
-    expect(getTickerEvents([base], new Date('2026-11-05T00:00:00Z'))[0].startDate).toEqual(
-      base.startDate
-    );
+  // The season comes from startDate, and the ticker's end-of-event freeze from endDate.
+  it('passes the real start and end dates through', () => {
+    expect(getTickerEvents([base], new Date('2026-11-05T00:00:00Z'))).toEqual([
+      { name: 'e', startDate: base.startDate, endDate: base.endDate, teams: ['Blue'] },
+    ]);
   });
 
   it('skips events without scoring', () => {
