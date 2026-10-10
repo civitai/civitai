@@ -2685,7 +2685,7 @@ const getAllImagesUncaptured = async (
         availability?: Availability;
         nsfwLevel: NsfwLevel;
         cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
-        eventDecoration?: WithClaimKey<EventDecorationCosmetic> | null;
+        eventDecoration?: EventDecorationCosmetic | null;
         metadata: ImageMetadata | VideoMetadata | null;
         onSite: boolean;
         modelVersionIds?: number[];

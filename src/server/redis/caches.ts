@@ -341,13 +341,12 @@ export const cosmeticEntityCaches = Object.fromEntries(
 type EntityEventDecorationLookupRaw = {
   equippedToId: number;
   cosmeticId: number;
-  claimKey: string;
 };
 /** The event decoration each entity wears, cached apart from its frame so neither displaces the other. */
 export const eventDecorationEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
-    createCachedObject<WithClaimKey<EventDecorationCosmetic>>({
+    createCachedObject<EventDecorationCosmetic>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:event:${entity}`,
       idKey: 'equippedToId',
       // Read on every image feed page while an event runs, and almost no entity wears one, so
@@ -356,7 +355,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
       staleWhileRevalidate: false,
       lookupFn: async (ids) => {
         const rows = await dbWrite.$queryRaw<EntityEventDecorationLookupRaw[]>`
-          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey"
+          SELECT uc."cosmeticId", uc."equippedToId"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
@@ -364,7 +363,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
             AND jsonb_typeof(c.data->'event') = 'string';
         `;
         const cosmetics = await cosmeticCache.fetch([...new Set(rows.map((x) => x.cosmeticId))]);
-        const result: Record<number, WithClaimKey<EventDecorationCosmetic>> = {};
+        const result: Record<number, EventDecorationCosmetic> = {};
         for (const row of rows) {
           const cosmetic = cosmetics[row.cosmeticId];
           if (!cosmetic || !isEventDecorationData(cosmetic.data)) continue;
@@ -374,7 +373,6 @@ export const eventDecorationEntityCaches = Object.fromEntries(
             type: cosmetic.type,
             source: cosmetic.source,
             data: cosmetic.data,
-            claimKey: row.claimKey,
             equippedToId: row.equippedToId,
             equippedToType: entity as CosmeticEntity,
           };
@@ -384,7 +382,7 @@ export const eventDecorationEntityCaches = Object.fromEntries(
       ttl: CacheTTL.day,
     }),
   ])
-) as Record<CosmeticEntity, CachedObject<WithClaimKey<EventDecorationCosmetic>>>;
+) as Record<CosmeticEntity, CachedObject<EventDecorationCosmetic>>;
 
 type CachedUserMultiplier = UserMultipliers;
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({

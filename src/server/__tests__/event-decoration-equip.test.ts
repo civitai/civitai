@@ -46,6 +46,9 @@ const {
   revokeCosmeticsFromUsers,
   unequipCosmetic,
 } = await import('~/server/services/cosmetic.service');
+const { equipCosmeticSchema, unequipCosmeticSchema } = await import(
+  '~/server/schema/cosmetic.schema'
+);
 
 const OWNER = 7;
 const IMAGE = 501;
@@ -369,12 +372,75 @@ describe('taking a decoration off refreshes the event decoration cache too', () 
   });
 });
 
+// Feeds do not carry a hat's claimKey, so the owner's "Remove" menu item sends none.
+describe('unequip without a claim key', () => {
+  it('takes off only what this owner wears on that entity', async () => {
+    await unequipCosmetic({
+      userId: OWNER,
+      cosmeticId: 1,
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+    expect(db.userCosmetic.updateMany).toHaveBeenCalledWith({
+      where: { cosmeticId: 1, equippedToId: IMAGE, equippedToType: 'Image', userId: OWNER },
+      data: { equippedToId: null, equippedToType: null, equippedAt: null },
+    });
+  });
+
+  it('still narrows to the claim key when one is sent', async () => {
+    await unequipCosmetic({
+      userId: OWNER,
+      cosmeticId: 1,
+      claimKey: 'tx-1',
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    });
+    expect(db.userCosmetic.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          cosmeticId: 1,
+          equippedToId: IMAGE,
+          equippedToType: 'Image',
+          userId: OWNER,
+          claimKey: 'tx-1',
+        },
+      })
+    );
+  });
+
+  it('is accepted by the unequip input and still refused by equip', () => {
+    const input = { cosmeticId: 1, equippedToId: IMAGE, equippedToType: 'Image' };
+    expect(unequipCosmeticSchema.safeParse(input).success).toBe(true);
+    expect(equipCosmeticSchema.safeParse(input).success).toBe(false);
+  });
+});
+
 describe('getEventDecorationsForEntity', () => {
   it('reads the cache while an event lets that type wear one', async () => {
     caches.event.Image.fetch.mockResolvedValue({ [IMAGE]: { id: 1, data: HAT } });
     await expect(getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' })).resolves.toEqual({
       [IMAGE]: { id: 1, data: HAT },
     });
+  });
+
+  // Feed responses attach these objects as they are, so the claimKey must not survive even when
+  // an entry cached before it was dropped still carries one.
+  it('returns what a card renders and never the claim key', async () => {
+    const rendered = {
+      id: 1,
+      name: 'Party Hat',
+      type: 'ContentDecoration',
+      source: 'Event',
+      data: HAT,
+      equippedToId: IMAGE,
+      equippedToType: 'Image',
+    };
+    caches.event.Image.fetch.mockResolvedValue({
+      [IMAGE]: { ...rendered, claimKey: 'tx-claim-8841' },
+    });
+    const result = await getEventDecorationsForEntity({ ids: [IMAGE], entity: 'Image' });
+    expect(JSON.stringify(result)).not.toContain('tx-claim-8841');
+    expect(result).toStrictEqual({ [IMAGE]: rendered });
   });
 
   it('passes the write-back choice through to the cache', async () => {
