@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Module-scope allowlists and the router tree; none of them derive the credential fields.
 vi.mock('~/server/utils/origin-helpers', () => ({
@@ -35,7 +36,7 @@ function req(context?: Record<string, unknown>) {
 }
 const res = () => ({ once: vi.fn(), writableEnded: false } as unknown as NextApiResponse);
 
-describe('createContext apiKeyType', () => {
+describe('createContext credential fields', () => {
   it.each(['User', 'System'])('carries the recorded %s key type', async (apiKeyType) => {
     const ctx = await createContext({
       req: req({ apiKeyId: 5, apiKeyType, subject: { type: 'apiKey', id: 5 } }),
@@ -44,8 +45,22 @@ describe('createContext apiKeyType', () => {
     expect(ctx.apiKeyType).toBe(apiKeyType);
   });
 
-  it('is undefined for a session', async () => {
+  it('carries the recorded scope, key id and subject', async () => {
+    const credential = {
+      tokenScope: TokenScope.UserRead,
+      apiKeyId: 5,
+      apiKeyType: 'User',
+      subject: { type: 'oauth', id: 'client-abc' },
+    };
+    const ctx = await createContext({ req: req(credential), res: res() });
+    expect(ctx).toMatchObject(credential);
+  });
+
+  it('gives a session the full scope and no key fields', async () => {
     const ctx = await createContext({ req: req(), res: res() });
+    expect(ctx.tokenScope).toBe(TokenScope.Full);
+    expect(ctx.apiKeyId).toBeUndefined();
     expect(ctx.apiKeyType).toBeUndefined();
+    expect(ctx.subject).toBeUndefined();
   });
 });

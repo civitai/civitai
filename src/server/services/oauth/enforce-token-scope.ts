@@ -20,7 +20,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { maybeRecordOauthScopeUsage } from '~/server/services/oauth/oauth-scope-audit';
-import { isFullScopeUserKey } from '~/server/auth/full-user-credential';
+import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -42,6 +42,24 @@ export function auditStatusFromError(error: unknown): number {
     /* fall through */
   }
   return 500;
+}
+
+/**
+ * Throws FORBIDDEN unless the request came from a session or carries a bearer credential
+ * `isFullScopeUserKey` accepts.
+ */
+export function assertSessionOrFullUserKey(
+  ctx: BearerCredential & { apiKeyId?: number | null }
+): void {
+  // Unlike req.context, createContext defaults tokenScope to Full for sessions,
+  // so it is not a bearer marker.
+  const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
+  if (presentedBearer && !isFullScopeUserKey(ctx)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'This action requires a signed-in session or a full-access personal API key.',
+    });
+  }
 }
 
 /**
@@ -76,15 +94,7 @@ export function runEnforceTokenScope<T>(opts: {
     });
   }
 
-  // Unlike req.context, createContext defaults tokenScope to Full for sessions,
-  // so it is not a bearer marker.
-  const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
-  if (meta?.requireFullUserCredential && presentedBearer && !isFullScopeUserKey(ctx)) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'This action requires a signed-in session or a full-access personal API key.',
-    });
-  }
+  if (meta?.requireFullUserCredential) assertSessionOrFullUserKey(ctx);
 
   // The scope this call exercises — the declared requiredScope, or Full for an
   // unannotated endpoint (which implicitly requires Full). Also the value the
