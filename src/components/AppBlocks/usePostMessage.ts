@@ -64,11 +64,9 @@ interface UsePostMessageOptions {
    * Which host owns this bridge. Drives the `host` label on
    * `civitai_app_block_bridge_messages_total` and is REQUIRED so a new host
    * cannot be wired up without deciding what it reports as — an unlabelled host
-   * would silently merge into another host's series. It also decides the outcome
-   * of an unhandled message: a type the parity INVENTORY declares N/A for this
-   * host (a page-only request on the model slot, RESIZE_IFRAME on the page host)
-   * reports `not_applicable`; a type declared `'required'` here, or absent from
-   * the INVENTORY, reports `no_handler` — the missing-bridge signal.
+   * would silently merge into another host's series. It also selects
+   * `no_handler` vs `not_applicable` for an unhandled type (see
+   * `unhandledOutcomeFor`).
    */
   host: BridgeHost;
   /**
@@ -385,7 +383,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // 🔴 EXACTLY ONE INCREMENT, AND NOT `handled` — returning here keeps the report
       // out of the denominator, or one rejection moves two series by one and every
       // ratio read against `handled` goes quietly wrong. ABOVE the limiter and the
-      // dedup map, for the same reason the `no_handler` branch is: a flood of junk
+      // dedup map, for the same reason the unhandled-type branch is: a flood of junk
       // must not burn the budget legitimate BLOCK_ERROR reporting needs. Dedup would
       // also be wrong — these carry no `requestId`, and two rejections are two facts.
       if (data.type === BLOCK_MESSAGE_REJECTED) {
@@ -402,10 +400,8 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       // lock out legitimate BLOCK_ERROR reporting.
       const subscribers = handlersRef.current.get(data.type);
       if (!subscribers || subscribers.size === 0) {
-        // `not_applicable` when the parity INVENTORY declares this type N/A for
-        // this host (e.g. RESIZE_IFRAME on the full-viewport page host), else
-        // `no_handler` (declared `'required'` here, or not in the INVENTORY). The
-        // label is the ONLY thing that differs — the NACK below runs for both.
+        // Only the label differs: a `not_applicable` request must still reach the
+        // NACK below, or it hangs to its SDK timeout.
         report(data.type, unhandledOutcomeFor(data.type, host));
         // NACK: a REQUEST-style message with no handler is the expensive silence
         // — the block awaits a reply that will never come and hangs to its SDK

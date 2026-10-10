@@ -31,14 +31,10 @@
  *                  either it is `'required'` here (a missing bridge) or the type
  *                  is not in the INVENTORY at all. This is the GAP signal.
  *   not_applicable
- *                — no handler was registered, and that is the DECLARED design:
- *                  `hostHandlerParity`'s INVENTORY marks the type N/A (a rationale
- *                  string, not `'required'`) for this host — e.g. `RESIZE_IFRAME`
- *                  on the full-viewport page host, or a page-only request on the
- *                  model slot. Split out of `no_handler` so a by-design drop
- *                  cannot bury a real missing handler. The block-facing behaviour
- *                  is IDENTICAL to `no_handler`: a request-style N/A type is still
- *                  NACKed (see `usePostMessage`), so this label means "refused as
+ *                — no handler was registered, and the INVENTORY declares the type
+ *                  N/A for this host. Split out of `no_handler` so a by-design
+ *                  drop cannot bury a missing one. It takes the same NACK path in
+ *                  `usePostMessage` as `no_handler`, so it means "refused as
  *                  declared", not "silently ignored". Decided by
  *                  `unhandledOutcomeFor` in `bridgeTelemetry.ts`.
  *   rate_limited — the 30 msg/sec inbound budget was exhausted.
@@ -121,13 +117,9 @@
  * allocated heap: nothing pre-initialises the label space, so the sixth value costs
  * zero series until a rejection actually occurs.
  *
- * ⚠️ `not_applicable` IS A SEVENTH VALUE BUT NOT A NEW SERIES SOURCE: it is a SPLIT
- * of what was `no_handler`, so every message it counts was already minting a
- * `no_handler` series before. The worst-case product still moves with the axis —
- * re-derived with the INVENTORY at 49 keys: (50+1) x (49+1) x 2 x 7 = 35,700 at 50
- * approved apps. The reachable set is far smaller: a type is `not_applicable` on a
- * host only where the INVENTORY declares it N/A, and there it can never also be
- * `no_handler`, so the two values partition one slot rather than doubling it.
+ * ⚠️ `not_applicable` is a seventh value but not a new series source: it splits
+ * what was `no_handler`, and a (type, host) pair is one or the other, never both.
+ * The worst-case product is re-derived in `app-block-runtime.metrics.ts`.
  */
 export const BRIDGE_MESSAGE_OUTCOMES = [
   'handled',
@@ -143,9 +135,10 @@ export type BridgeMessageOutcome = (typeof BRIDGE_MESSAGE_OUTCOMES)[number];
 /**
  * Which host registered the bridge. Deliberately the `hostHandlerParity` FILE
  * names rather than a prettier short form: the parity inventory's per-host
- * requirement columns are keyed on exactly these strings, so a `no_handler` series
- * can be read straight against `INVENTORY[type][host]` with no mapping table in
- * between. (`InlineHost` is absent because the v1 stub wires no bridge.)
+ * requirement columns are keyed on exactly these strings, and `unhandledOutcomeFor`
+ * indexes `INVENTORY[type][host]` with them at runtime to choose between
+ * `no_handler` and `not_applicable`. (`InlineHost` is absent because the v1 stub
+ * wires no bridge.)
  */
 export const BRIDGE_HOSTS = ['IframeHost', 'PageBlockHost'] as const;
 export type BridgeHost = (typeof BRIDGE_HOSTS)[number];

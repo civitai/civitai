@@ -39,11 +39,11 @@ type Recorded = { type: string; outcome: BridgeMessageOutcome; appBlockId: strin
 function Harness({
   onOutcome,
   registered: initiallyRegistered,
-  host = 'IframeHost',
+  host,
 }: {
   onOutcome: (e: Recorded) => void;
   registered: boolean;
-  host?: BridgeHost;
+  host: BridgeHost;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [handledPayloads, setHandledPayloads] = useState(0);
@@ -115,7 +115,7 @@ function listenOnBlock() {
 async function mount(props: {
   onOutcome: (e: Recorded) => void;
   registered: boolean;
-  host?: BridgeHost;
+  host: BridgeHost;
 }) {
   const utils = renderWithProviders(<Harness {...props} />);
   await vi.waitFor(() => {
@@ -167,7 +167,7 @@ describe('usePostMessage bridge outcome counter', () => {
 
   test('every outcome carries the app and host labels the beacon needs', async () => {
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'IframeHost' });
     postFromBlock('GET_VIEWER', { requestId: 'rq_labels' });
     await vi.waitFor(() => {
       if (recorded.length === 0) throw new Error('nothing recorded');
@@ -182,7 +182,7 @@ describe('usePostMessage bridge outcome counter', () => {
 
   test('a repeat requestId inside the dedup window reports `deduped`', async () => {
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'IframeHost' });
     postFromBlock('GET_VIEWER', { requestId: 'rq_same' });
     postFromBlock('GET_VIEWER', { requestId: 'rq_same' });
     await vi.waitFor(() => {
@@ -195,7 +195,7 @@ describe('usePostMessage bridge outcome counter', () => {
   test('exceeding the 30/sec inbound budget reports `rate_limited`', async () => {
     const recorded: Recorded[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'IframeHost' });
     // 31 messages with NO requestId, so the dedup path cannot absorb any of them:
     // the 31st must be the one the limiter drops.
     for (let i = 0; i < 31; i++) postFromBlock('GET_VIEWER', {});
@@ -209,7 +209,9 @@ describe('usePostMessage bridge outcome counter', () => {
 
   test('an unhandled REQUEST-style message gets an error reply, not silence', async () => {
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: false });
+    // PageBlockHost: GET_VIEWER is `'required'` there, so this is the no_handler
+    // NACK; the declared-N/A NACK is pinned separately below.
+    await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'PageBlockHost' });
     const replies = listenOnBlock();
     postFromBlock('GET_VIEWER', { requestId: 'rq_nack' });
     await vi.waitFor(() => {
@@ -348,7 +350,7 @@ describe('usePostMessage bridge outcome counter', () => {
 
   test('BLOCK_MESSAGE_REJECTED reports validator_rejected against the HANGING REQUEST, exactly once', async () => {
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'IframeHost' });
 
     postFromBlock('BLOCK_MESSAGE_REJECTED', { type: 'GET_IMAGES_BY_IDS' });
     await vi.waitFor(() => {
@@ -375,7 +377,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // The arm that makes the test above a measurement rather than a claim: the
     // same harness, a normal handled message, and the new series stays at zero.
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'IframeHost' });
     postFromBlock('GET_VIEWER', { requestId: 'rq_healthy' });
     await vi.waitFor(() => {
       if (countOf(recorded, 'handled') !== 1) throw new Error('no handled yet');
@@ -406,7 +408,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // because `onOutcome` is a seam and a value pulled from an untrusted payload
     // must not be bounded only by the default sink.
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'IframeHost' });
     postFromBlock('BLOCK_MESSAGE_REJECTED', payload);
     await vi.waitFor(() => {
       if (recorded.length === 0) throw new Error('nothing recorded');
@@ -425,7 +427,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // and two rejections of one type are two facts — and nothing goes back on the
     // wire, because there is nothing to answer.
     const recorded: Recorded[] = [];
-    await mount({ onOutcome: (e) => recorded.push(e), registered: true });
+    await mount({ onOutcome: (e) => recorded.push(e), registered: true, host: 'IframeHost' });
     const replies = listenOnBlock();
     for (let i = 0; i < 45; i++) postFromBlock('BLOCK_MESSAGE_REJECTED', { type: 'GET_VIEWER' });
     await vi.waitFor(() => {
@@ -449,6 +451,7 @@ describe('usePostMessage bridge outcome counter', () => {
         throw new Error('sink exploded');
       },
       registered: true,
+      host: 'IframeHost',
     });
     postFromBlock('GET_VIEWER', { requestId: 'rq_throw' });
     await vi.waitFor(() => {

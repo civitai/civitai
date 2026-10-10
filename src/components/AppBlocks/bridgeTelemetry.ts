@@ -1,4 +1,4 @@
-import { INVENTORY } from './hostHandlerParity';
+import { INVENTORY, type MessageSpec } from './hostHandlerParity';
 import type { BridgeHost, BridgeMessageOutcome } from './bridgeLabels';
 
 /**
@@ -78,16 +78,13 @@ export function boundBridgeMessageType(type: string): string {
  * prototype key (`'toString'`, `'constructor'`) would otherwise resolve to a
  * function whose `[host]` is `undefined` — not `'required'` — and be filed as a
  * declared N/A.
- *
- * Only the label is decided here. Whether the block gets a NACK is the dispatcher's
- * separate question and does not depend on this result.
  */
 export function unhandledOutcomeFor(
   type: string,
   host: BridgeHost
 ): Extract<BridgeMessageOutcome, 'no_handler' | 'not_applicable'> {
   if (!Object.prototype.hasOwnProperty.call(INVENTORY, type)) return 'no_handler';
-  const spec = (INVENTORY as Record<string, Record<BridgeHost, string>>)[type];
+  const spec = (INVENTORY as Record<string, MessageSpec>)[type];
   return spec[host] === 'required' ? 'no_handler' : 'not_applicable';
 }
 
