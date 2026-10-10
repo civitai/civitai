@@ -69,7 +69,8 @@ export function eventSeasonKeys(event: string, season: EventPointSeason) {
     cut: `${root}:cut` as const,
   } as const;
 }
-export type TotalScope = 'hat' | 'team' | 'owner';
+// 'count': per hat and type (countField), the actions that were granted points, as the referee counts.
+export type TotalScope = 'hat' | 'team' | 'owner' | 'count';
 
 export const hatField = ({ ownerId, cosmeticId, claimKey }: Omit<EventHat, 'team'>) =>
   `${ownerId}:${cosmeticId}:${claimKey}`;
@@ -79,6 +80,14 @@ export function parseHatField(field: string): Omit<EventHat, 'team'> | undefined
   if (!claim.length || !Number(ownerId) || !Number(cosmeticId)) return undefined;
   return { ownerId: Number(ownerId), cosmeticId: Number(cosmeticId), claimKey: claim.join(':') };
 }
+
+// The type goes first: the hat field ends in a claim key that may hold colons.
+export const countField = (type: EventPointType, hat: Omit<EventHat, 'team'>) =>
+  `${type}:${hatField(hat)}`;
+// Set in every count base the referee writes. Until one exists (before the first settle after the
+// counts went live, or for an event settled before that) the live counts are incomplete, so readers
+// fall back to the snapshot's. No colon, so no countField can equal it.
+export const COUNT_BASE_MARK = 'settled';
 
 export const entityKey = (entityType: EventPointEntityType, entityId: number) =>
   `${entityType}:${entityId}`;

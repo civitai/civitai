@@ -7,6 +7,8 @@ import {
   eventPointKeys,
   eventPointSeason,
   eventPointsWindow,
+  COUNT_BASE_MARK,
+  countField,
   eventSeasonKeys,
   hatField,
   LIVE_BUCKET_MS,
@@ -19,6 +21,7 @@ import {
   eventPointsRefereeUsersSql,
 } from '~/server/events/points/referee.sql';
 import { drainEventPointsPush, markEventPointsDirty } from '~/server/events/points/push';
+import type { EventPointType } from '~/server/events/points/types';
 import { sysRedis } from '~/server/redis/client';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -82,25 +85,41 @@ export function refereeWindow(event: RefereeEvent, season: EventPointSeason, now
 }
 
 // Totals per hat, team and owner: the final days from the snapshot plus the recomputed rows.
+// A row's per-type counts, keyed by the ledger's type names.
+const ROW_COUNTS = {
+  view: 'views',
+  reaction: 'reactions',
+  comment: 'comments',
+  sticker: 'stickers',
+  remix: 'remixes',
+  modelLike: 'modelLikes',
+} as const satisfies Record<EventPointType, keyof RefereeRow>;
+
 export function refereeTotals(
-  rows: Pick<RefereeRow, 'userId' | 'cosmeticId' | 'claimKey' | 'team' | 'points'>[]
+  rows: Pick<
+    RefereeRow,
+    'userId' | 'cosmeticId' | 'claimKey' | 'team' | 'points' | (typeof ROW_COUNTS)[EventPointType]
+  >[]
 ) {
   const totals: Record<TotalScope, Map<string, number>> = {
     hat: new Map(),
     team: new Map(),
     owner: new Map(),
+    count: new Map(),
   };
   const add = (scope: TotalScope, key: string, points: number) =>
     totals[scope].set(key, (totals[scope].get(key) ?? 0) + points);
   for (const r of rows) {
     if (!r.points) continue;
-    add(
-      'hat',
-      hatField({ ownerId: r.userId, cosmeticId: r.cosmeticId, claimKey: r.claimKey }),
-      r.points
-    );
+    const hat = { ownerId: r.userId, cosmeticId: r.cosmeticId, claimKey: r.claimKey };
+    add('hat', hatField(hat), r.points);
     add('team', r.team, r.points);
     add('owner', String(r.userId), r.points);
+    for (const [type, column] of Object.entries(ROW_COUNTS) as [
+      EventPointType,
+      (typeof ROW_COUNTS)[EventPointType]
+    ][])
+      if (r[column]) add('count', countField(type, hat), r[column]);
   }
   return totals;
 }
@@ -272,9 +291,24 @@ async function writeDailySnapshot(event: RefereeEvent, window: Window, rows: Ref
 async function finalDayTotals(event: RefereeEvent, window: Window) {
   if (window.recomputeFrom <= window.start) return [];
   return dbWrite.$queryRaw<
-    { userId: number; cosmeticId: number; claimKey: string; team: string; points: number }[]
+    {
+      userId: number;
+      cosmeticId: number;
+      claimKey: string;
+      team: string;
+      points: number;
+      views: number;
+      reactions: number;
+      comments: number;
+      stickers: number;
+      remixes: number;
+      modelLikes: number;
+    }[]
   >`
-    SELECT "userId", "cosmeticId", "claimKey", min(team) AS team, sum(points)::int AS points
+    SELECT "userId", "cosmeticId", "claimKey", min(team) AS team, sum(points)::int AS points,
+      sum(impressions)::int AS views, sum(reactions)::int AS reactions,
+      sum(comments)::int AS comments, sum(stickers)::int AS stickers,
+      sum(remixes)::int AS remixes, sum("modelLikes")::int AS "modelLikes"
     FROM "EventCosmeticScoreDaily"
     WHERE event = ${event.name}
       AND day >= ${isoDay(window.start)}::date AND day < ${isoDay(window.recomputeFrom)}::date
@@ -312,17 +346,18 @@ export async function resetLiveBase(
     ? changedHats(oldHatBase, settled, totals.hat)
     : [...totals.hat.keys()];
 
-  const scopes: TotalScope[] = ['hat', 'team', 'owner'];
+  const scopes: TotalScope[] = ['hat', 'team', 'owner', 'count'];
+  const bases = { ...totals, count: new Map([...totals.count, [COUNT_BASE_MARK, 1]]) };
   for (const scope of scopes) {
     const tmp = `${keys.base(scope)}${TMP_SUFFIX}` as const;
     await redis.del(tmp);
-    for (const part of chunk([...totals[scope].entries()], 1000))
+    for (const part of chunk([...bases[scope].entries()], 1000))
       await redis.hSet(tmp, Object.fromEntries(part.map(([k, v]) => [k, String(v)])));
   }
   const multi = redis.multi();
   for (const scope of scopes) {
     const tmp = `${keys.base(scope)}${TMP_SUFFIX}`;
-    if (totals[scope].size) multi.rename(tmp, keys.base(scope));
+    if (bases[scope].size) multi.rename(tmp, keys.base(scope));
     else multi.del(keys.base(scope));
   }
   multi.set(keys.cut, String(newCutBucket));

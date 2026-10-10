@@ -43,14 +43,11 @@ export function HatStats({
   stats,
   color,
   compact,
-  settling = true,
 }: {
   stats: HatStatCounts;
   color?: string;
   /** A hat card's width rather than the popover's. */
   compact?: boolean;
-  /** False once the counts are final, so they no longer "update hourly". */
-  settling?: boolean;
 }) {
   const content = (
     <div
@@ -98,18 +95,6 @@ export function HatStats({
         <WayStat way="comments" value={stats.comments} compact={compact} />
         <WayStat way="remixes" value={stats.remixes} compact={compact} />
       </div>
-      {/* The points total is live; the counts come from the hourly settle, so they can trail it. */}
-      {settling && (
-        <Text
-          size="xs"
-          c="dimmed"
-          className={clsx(compact ? 'text-[10px] @[13rem]:col-span-2' : 'col-span-2')}
-          lh={1.2}
-          data-testid="hat-stats-counts-note"
-        >
-          Counts update hourly
-        </Text>
-      )}
     </div>
   );
   // The card is the container the stacking reads.

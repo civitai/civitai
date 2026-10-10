@@ -32,9 +32,10 @@ function setup(overrides: Partial<PushDeps> = {}) {
     selectWatched: vi.fn(async (_e, hats, teams) => ({ hats, teams })),
     claimTeamsPush: vi.fn(async () => true),
     // Each hat's total is its owner id, so a payload shows which hat it carries.
-    getHatPoints: vi.fn(async (_e, hats) =>
-      Object.fromEntries(hats.map((h) => [hatField(h), h.ownerId]))
-    ),
+    getHatTotals: vi.fn(async (_e, hats) => ({
+      points: Object.fromEntries(hats.map((h) => [hatField(h), h.ownerId])),
+      counts: Object.fromEntries(hats.map((h) => [hatField(h), countsOf(h)])),
+    })),
     getTeamPoints: vi.fn(async () => ({ Blue: 900, Pink: 40 })),
     topicSend: vi.fn(async (args: Sent) => void sent.push(args)),
     isEnabled: () => true,
@@ -48,12 +49,20 @@ const teamsSend = (teams = { Blue: 900, Pink: 40 }) => ({
   target: 'event-points:teams',
   data: { event: 'birthday2026', teams },
 });
-const hatSend = (h: typeof HAT, points: number) => {
+// Each hat's counts are told apart by its owner id too, one per type.
+const countsOf = (h: typeof HAT) => ({
+  impressions: h.ownerId + 1,
+  reactions: h.ownerId + 2,
+  comments: h.ownerId + 3,
+  stickers: h.ownerId + 4,
+  remixes: h.ownerId + 5,
+});
+const hatSend = (h: typeof HAT, points: number, withCounts = true) => {
   const topicId = hatTopicId(h);
   return {
     topic: `event-points:birthday2026:hat:${topicId}`,
     target: 'event-points:hat',
-    data: { event: 'birthday2026', topicId, points },
+    data: { event: 'birthday2026', topicId, points, counts: withCounts ? countsOf(h) : undefined },
   };
 };
 
@@ -224,7 +233,7 @@ describe('event points pusher', () => {
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
     expect(sent).toEqual([teamsSend(), hatSend(HAT, 10), hatSend(hat(11), 11)]);
     // One batched read per scope.
-    expect(deps.getHatPoints).toHaveBeenCalledTimes(1);
+    expect(deps.getHatTotals).toHaveBeenCalledTimes(1);
     expect(deps.getTeamPoints).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS * 5);
     expect(sent).toHaveLength(3);
@@ -372,11 +381,23 @@ describe('event points pusher', () => {
     expect(pusher.pending()).toBe(MAX_DIRTY_HATS + 1);
   });
 
-  it('sends 0 for a hat the read has no total for', async () => {
-    const { pusher, sent } = setup({ getHatPoints: vi.fn(async () => ({})) });
+  it('sends 0, and no counts, for a hat the read has no total for', async () => {
+    const { pusher, sent } = setup({
+      getHatTotals: vi.fn(async () => ({ points: {}, counts: {} })),
+    });
     pusher.markDirty(event, HAT, NOW);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
-    expect(sent).toEqual([teamsSend(), hatSend(HAT, 0)]);
+    expect(sent).toEqual([teamsSend(), hatSend(HAT, 0, false)]);
+  });
+
+  // No count base yet: the screens keep the counts they read rather than take zeros.
+  it('sends no counts before the referee has written a count base', async () => {
+    const { pusher, sent } = setup({
+      getHatTotals: vi.fn(async () => ({ points: { [hatField(HAT)]: 4 }, counts: null })),
+    });
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(sent).toEqual([teamsSend(), hatSend(HAT, 4, false)]);
   });
 
   it('reads nothing for a scope nobody is watching', async () => {
@@ -386,7 +407,7 @@ describe('event points pusher', () => {
     pusher.markDirty(event, HAT, NOW);
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
     expect(deps.selectWatched).toHaveBeenCalledTimes(1);
-    expect(deps.getHatPoints).not.toHaveBeenCalled();
+    expect(deps.getHatTotals).not.toHaveBeenCalled();
     expect(deps.getTeamPoints).not.toHaveBeenCalled();
     expect(sent).toEqual([]);
   });
@@ -412,7 +433,7 @@ describe('event points pusher', () => {
     on = false;
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
     expect(sent).toEqual([]);
-    expect(deps.getHatPoints).not.toHaveBeenCalled();
+    expect(deps.getHatTotals).not.toHaveBeenCalled();
     expect(pusher.dirtyCount()).toBe(0);
 
     // The control: switched back on, the same mark goes out.
@@ -492,12 +513,12 @@ describe('event points pusher', () => {
         {
           topic: `event-points:birthday2026:hat:${keyed}`,
           target: 'event-points:hat',
-          data: { event: 'birthday2026', topicId: keyed, points: 10 },
+          data: { event: 'birthday2026', topicId: keyed, points: 10, counts: countsOf(HAT) },
         },
       ]);
       expect(deps.selectWatched).toHaveBeenCalledWith(previewEvent, [HAT], true, 'preview');
       // The totals are read at the flush's time, which is what makes them the preview season's.
-      expect(vi.mocked(deps.getHatPoints).mock.calls[0][2]).toEqual(
+      expect(vi.mocked(deps.getHatTotals).mock.calls[0][2]).toEqual(
         new Date(PREVIEW_NOW.getTime() + PUSH_WINDOW_MS)
       );
       expect(JSON.stringify(sent)).not.toContain(hatTopicId(HAT));

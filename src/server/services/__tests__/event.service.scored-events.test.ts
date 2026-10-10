@@ -39,7 +39,7 @@ const caches = vi.hoisted(() => ({ worn: { fetch: vi.fn() }, visible: { fetch: v
 
 // Live totals from the points engine. Default: up, with nothing earned yet.
 const live = vi.hoisted(() => ({
-  getHatPoints: vi.fn(),
+  getHatTotals: vi.fn(),
   getTeamPoints: vi.fn(),
 }));
 vi.mock('~/server/events/points/read', () => live);
@@ -112,7 +112,7 @@ beforeEach(() => {
   scoring.getEventStandings.mockResolvedValue({ teams: [], topCosmetics: [], topUsers: {} });
   scoring.getUserCosmeticScores.mockResolvedValue([]);
   scoring.getCosmeticScores.mockResolvedValue({});
-  live.getHatPoints.mockResolvedValue({});
+  live.getHatTotals.mockResolvedValue({ points: {}, counts: {} });
   live.getTeamPoints.mockResolvedValue({});
   engineSwitch.isEventPointsEnabled.mockResolvedValue(true);
   caches.worn.fetch.mockResolvedValue({});
@@ -298,7 +298,12 @@ describe('getMyEventHats', () => {
         remixes: 1,
       },
     });
-    live.getHatPoints.mockResolvedValue({ '9:31:claimed': 175 });
+    live.getHatTotals.mockResolvedValue({
+      points: { '9:31:claimed': 175 },
+      counts: {
+        '9:31:claimed': { impressions: 50, reactions: 6, comments: 5, stickers: 8, remixes: 2 },
+      },
+    });
     covers.mockResolvedValue([{ entityType: 'Image', entityId: 500, id: 77, url: 'img' }]);
   });
 
@@ -319,13 +324,14 @@ describe('getMyEventHats', () => {
       [31, 'claimed'],
       [32, 'txn-9'],
     ]);
+    // Points and counts live; the signed-out views (10) only the snapshot has.
     expect(hats[0]).toMatchObject({
       points: 175,
-      impressions: 100,
-      reactions: 4,
-      comments: 3,
-      stickers: 2,
-      remixes: 1,
+      impressions: 60,
+      reactions: 6,
+      comments: 5,
+      stickers: 8,
+      remixes: 2,
       topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'claimed' }),
       placedOn: { entityType: 'Image', entityId: 500, image: { id: 77 } },
     });
@@ -351,24 +357,44 @@ describe('getMyEventHats', () => {
   // A live read that answers is the total, even where it has nothing: the snapshot is only for when
   // the live store is unreachable.
   it('reads a hat missing from an answering live read as 0, not its snapshot', async () => {
-    live.getHatPoints.mockResolvedValue({});
+    live.getHatTotals.mockResolvedValue({ points: {}, counts: {} });
     const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
-    expect(placed.points).toBe(0);
+    expect(placed).toMatchObject({ points: 0, impressions: 10, reactions: 0, remixes: 0 });
   });
 
-  // Points are the live total; the per-type counts are the hourly snapshot's.
-  it("reads points live for every hat, keyed by the event's real start", async () => {
+  it("reads points and counts live for every hat, keyed by the event's real start", async () => {
     await service.getMyEventHats({ event: 'birthday2026', user });
-    expect(live.getHatPoints).toHaveBeenCalledWith(season, [
+    expect(live.getHatTotals).toHaveBeenCalledWith(season, [
       { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' },
       { ownerId: 9, cosmeticId: 32, claimKey: 'txn-9' },
     ]);
   });
 
-  it('falls back to the snapshot when the live totals are unreachable', async () => {
-    live.getHatPoints.mockRejectedValue(new Error('sysredis down'));
+  // Before the referee has written a live count base, the live buckets hold only part of the counts.
+  it('reads points live and counts from the snapshot until there is a live count base', async () => {
+    live.getHatTotals.mockResolvedValue({ points: { '9:31:claimed': 175 }, counts: null });
     const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
-    expect(placed.points).toBe(140);
+    expect(placed).toMatchObject({
+      points: 175,
+      impressions: 100,
+      reactions: 4,
+      comments: 3,
+      stickers: 2,
+      remixes: 1,
+    });
+  });
+
+  it('falls back to the snapshot for points and counts when the live totals are unreachable', async () => {
+    live.getHatTotals.mockRejectedValue(new Error('sysredis down'));
+    const [placed] = await service.getMyEventHats({ event: 'birthday2026', user });
+    expect(placed).toMatchObject({
+      points: 140,
+      impressions: 100,
+      reactions: 4,
+      comments: 3,
+      stickers: 2,
+      remixes: 1,
+    });
   });
 
   it('says when a placed hat may move again, from the event decoration cooldown', async () => {
@@ -869,7 +895,12 @@ describe('getWornEventHat', () => {
         remixes: 3,
       }),
     });
-    live.getHatPoints.mockResolvedValue({ '9:31:claimed': 64 });
+    live.getHatTotals.mockResolvedValue({
+      points: { '9:31:claimed': 64 },
+      counts: {
+        '9:31:claimed': { impressions: 20, reactions: 9, comments: 1, stickers: 6, remixes: 2 },
+      },
+    });
     at(LIVE_NOW);
     expect(await read()).toEqual({
       cosmeticId: 31,
@@ -878,15 +909,15 @@ describe('getWornEventHat', () => {
       url: 'blue.png',
       owner: { id: 9, username: 'civ', image: 'a.png', profilePicture: { id: 70, url: 'p.png' } },
       topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'claimed' }),
-      // Live, not the snapshot's 12.
+      // Live, not the snapshot's 12 and its counts; signed-out views (40) only the snapshot has.
       points: 64,
-      impressions: 340,
-      reactions: 7,
-      comments: 5,
-      stickers: 4,
-      remixes: 3,
+      impressions: 60,
+      reactions: 9,
+      comments: 1,
+      stickers: 6,
+      remixes: 2,
     });
-    expect(live.getHatPoints).toHaveBeenCalledWith(season, [
+    expect(live.getHatTotals).toHaveBeenCalledWith(season, [
       { ownerId: 9, cosmeticId: 31, claimKey: 'claimed' },
     ]);
     expect(scoring.getCosmeticScores.mock.calls[0].slice(0, 2)).toEqual([
@@ -907,7 +938,7 @@ describe('getWornEventHat', () => {
       { ...settled('claimed', 90), cosmeticId: 77 },
     ]);
     scoring.getCosmeticScores.mockResolvedValue({ '9:31:txn-1': settled('txn-1', 40) });
-    live.getHatPoints.mockResolvedValue(null as never);
+    live.getHatTotals.mockResolvedValue(null as never);
     expect(await read()).toMatchObject({
       topicId: hatTopicId({ ownerId: 9, cosmeticId: 31, claimKey: 'txn-1' }),
     });
@@ -948,7 +979,7 @@ describe('getWornEventHat', () => {
       remixes: 0,
     });
     expect(scoring.getCosmeticScores).not.toHaveBeenCalled();
-    expect(live.getHatPoints).not.toHaveBeenCalled();
+    expect(live.getHatTotals).not.toHaveBeenCalled();
   });
 
   it('falls back to the settled copy and reports it degraded when the hat map is unreachable', async () => {
@@ -965,10 +996,19 @@ describe('getWornEventHat', () => {
   it('falls back to the snapshot points when the live totals are unreachable', async () => {
     wearing();
     inHatMap('claimed');
-    scoring.getCosmeticScores.mockResolvedValue({ '9:31:claimed': settled('claimed', 12) });
-    live.getHatPoints.mockRejectedValue(new Error('sysredis down'));
+    scoring.getCosmeticScores.mockResolvedValue({
+      '9:31:claimed': settled('claimed', 12, { impressions: 6, reactions: 5, remixes: 2 }),
+    });
+    live.getHatTotals.mockRejectedValue(new Error('sysredis down'));
     const onDegraded = vi.fn();
-    expect(await read(onDegraded)).toMatchObject({ points: 12 });
+    expect(await read(onDegraded)).toMatchObject({
+      points: 12,
+      impressions: 6,
+      reactions: 5,
+      comments: 0,
+      stickers: 0,
+      remixes: 2,
+    });
     // The route skips the edge cache for this answer.
     expect(onDegraded).toHaveBeenCalledTimes(1);
   });

@@ -606,6 +606,27 @@ describe('referee snapshot', () => {
     expect(hashes.get(keys.base('team'))).toEqual({ Yellow: '18' });
   });
 
+  // finalDayTotals reads the final days' counts from the snapshot, in Postgres, beside the points.
+  it('bases the live counts on the final days and the recomputed ones, each type apart', async () => {
+    await db.pg.query(
+      `INSERT INTO "EventCosmeticScoreDaily"
+         (event, day, "userId", "cosmeticId", "claimKey", team, points, impressions, reactions,
+          comments, stickers, remixes, "modelLikes")
+       VALUES ($1, '2026-11-02', 1, 21, 'claimed', 'Yellow', 40, 10, 2, 3, 4, 5, 6)`,
+      [event.name]
+    );
+    await runEventPointsReferee(scored, 'live', HOURLY);
+    expect(hashes.get(keys.base('count'))).toEqual({
+      'view:1:21:claimed': '18',
+      'reaction:1:21:claimed': '2',
+      'comment:1:21:claimed': '3',
+      'sticker:1:21:claimed': '4',
+      'remix:1:21:claimed': '5',
+      'modelLike:1:21:claimed': '6',
+      settled: '1',
+    });
+  });
+
   // The engine names the winner on the first final run, so final must reach the result.
   it('reports a run final only once it settles the whole finalize window', async () => {
     expect((await runEventPointsReferee(scored, 'live', HOURLY)).final).toBe(false);
@@ -669,7 +690,12 @@ describe('referee snapshot', () => {
           {
             topic: `event-points:scoretest:hat:${topicId}`,
             target: 'event-points:hat',
-            data: { event: 'scoretest', topicId, points: 8 },
+            data: {
+              event: 'scoretest',
+              topicId,
+              points: 8,
+              counts: { impressions: 8, reactions: 0, comments: 0, stickers: 0, remixes: 0 },
+            },
           },
         ],
       ]);

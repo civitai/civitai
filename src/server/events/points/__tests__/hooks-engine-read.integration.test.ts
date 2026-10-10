@@ -35,8 +35,9 @@ const push = vi.hoisted(() => ({ markEventPointsDirty: vi.fn() }));
 vi.mock('~/server/events/points/push', () => push);
 
 const hooks = await import('~/server/events/points/hooks');
-const { getHatPoints, getTeamPoints, getOwnerPoints } = await import('~/server/events/points/read');
-const { encodeHat, eventPointKeys, hatField } = await import('~/server/events/points/keys');
+const { getHatTotals, getTeamPoints, getOwnerPoints } = await import('~/server/events/points/read');
+const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventPointSeason, eventSeasonKeys, hatField } =
+  await import('~/server/events/points/keys');
 const { birthday2026 } = await import('~/server/events/birthday2026.event');
 
 const NOW = new Date('2026-11-05T12:00:00.000Z');
@@ -193,7 +194,17 @@ describe('hook -> engine -> ledger -> read, on the registered birthday2026 confi
       weights.view!.weight;
     expect(expected).toBe(51);
     const event = { name: birthday2026.name, startDate: birthday2026.startDate };
-    expect(await getHatPoints(event, [HAT], NOW)).toEqual({ [hatField(HAT)]: expected });
+    // No count base yet: the points are live, the counts are left to the snapshot.
+    expect((await getHatTotals(event, [HAT], NOW)).counts).toBeNull();
+    const seasonKeys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, NOW));
+    await redisMock.sysRedis.hIncrBy(seasonKeys.base('count'), COUNT_BASE_MARK, 1);
+    // One of each way earned, counted live beside the points (modelLike is not a shown count).
+    expect(await getHatTotals(event, [HAT], NOW)).toEqual({
+      points: { [hatField(HAT)]: expected },
+      counts: {
+        [hatField(HAT)]: { impressions: 1, reactions: 1, comments: 1, stickers: 1, remixes: 1 },
+      },
+    });
     expect((await getTeamPoints({ ...event, teams: birthday2026.teams }, NOW)).Blue).toBe(expected);
     expect(await getOwnerPoints(event, [OWNER], NOW)).toEqual({ [String(OWNER)]: expected });
     // Every grant marks the hat for a live push, with the event's teams for the team push, and its

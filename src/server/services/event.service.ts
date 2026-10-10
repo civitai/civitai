@@ -49,7 +49,7 @@ import {
   type EventPointSeason,
 } from '~/server/events/points/keys';
 import { isEventPointsEnabled } from '~/server/events/points/enabled';
-import { getHatPoints, getTeamPoints } from '~/server/events/points/read';
+import { getHatTotals, getTeamPoints } from '~/server/events/points/read';
 import type { EventHat, EventPointEntityType } from '~/server/events/points/types';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
@@ -64,40 +64,45 @@ type SeasonEvent = { name: string; startDate: Date; teams: readonly string[] };
 // one sysRedis blip must not be served to everyone for minutes.
 type OnDegraded = { onDegraded?: () => void };
 
-// Live hat totals from the points engine. Null when sysRedis is unreachable, so the caller falls
-// back to the hourly snapshot rather than showing zero.
-async function liveHatPoints(
+type LiveHatTotals = Awaited<ReturnType<typeof getHatTotals>>;
+
+// Live hat points and counts from the points engine. Null when sysRedis is unreachable, so the
+// caller falls back to the hourly snapshot rather than showing zero.
+async function liveHatTotals(
   event: SeasonEvent,
   hats: Omit<EventHat, 'team'>[],
   onDegraded?: () => void
-) {
-  if (!hats.length) return {};
+): Promise<LiveHatTotals | null> {
+  if (!hats.length) return { points: {}, counts: null };
   try {
-    return await getHatPoints({ name: event.name, startDate: event.startDate }, hats);
+    return await getHatTotals({ name: event.name, startDate: event.startDate }, hats);
   } catch (error) {
-    logSysRedisFailOpen('read-degraded', 'liveHatPoints', error, { event: event.name });
+    logSysRedisFailOpen('read-degraded', 'liveHatTotals', error, { event: event.name });
     onDegraded?.();
     return null;
   }
 }
 
-// Per-type counts come from the hourly snapshot; the total comes live. The topic id is the current
-// season's: in the preview, a keyed one only a read the preview allows hands out (points/keys.ts).
+// Points and counts come live, or from the hourly snapshot when the live read failed (counts also
+// until the referee has written a live count base). The topic id is the current season's: in the
+// preview, a keyed one only a read the preview allows hands out (points/keys.ts).
 function hatScore(
   event: SeasonEvent,
   season: EventPointSeason,
   hat: Omit<EventHat, 'team'>,
   score: CosmeticScore | undefined,
-  live: Record<string, number> | null
+  live: LiveHatTotals | null
 ) {
+  const field = hatField(hat);
+  const counts = live?.counts ? live.counts[field] : score;
   return {
     topicId: seasonHatTopicId(event.name, hat, season),
-    points: live ? live[hatField(hat)] ?? 0 : score?.points ?? 0,
-    impressions: (score?.impressions ?? 0) + (score?.anonImpressions ?? 0),
-    reactions: score?.reactions ?? 0,
-    comments: score?.comments ?? 0,
-    stickers: score?.stickers ?? 0,
-    remixes: score?.remixes ?? 0,
+    points: live ? live.points[field] ?? 0 : score?.points ?? 0,
+    impressions: (counts?.impressions ?? 0) + (score?.anonImpressions ?? 0),
+    reactions: counts?.reactions ?? 0,
+    comments: counts?.comments ?? 0,
+    stickers: counts?.stickers ?? 0,
+    remixes: counts?.remixes ?? 0,
   };
 }
 
@@ -565,7 +570,7 @@ export async function getMyEventHats({
     const [scores, entities, live] = await Promise.all([
       getCosmeticScores(scored, keys),
       getPlaceableEntities(placed),
-      liveHatPoints(scored, hats),
+      liveHatTotals(scored, hats),
     ]);
 
     const now = Date.now();
@@ -764,7 +769,7 @@ export async function getWornEventHat({
       userBasicCache.fetch([ownerId]),
       profilePictureCache.fetch([ownerId]),
       key ? getCosmeticScores(scored, [key], onDegraded) : undefined,
-      hat ? liveHatPoints(scored, [hat], onDegraded) : null,
+      hat ? liveHatTotals(scored, [hat], onDegraded) : null,
     ]);
     const owner = users[ownerId];
     const team = decoration.data.team ?? null;

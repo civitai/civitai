@@ -13,7 +13,7 @@ import {
   seasonTeamsTopicId,
   type EventPointSeason,
 } from './keys';
-import { getHatPoints, getTeamPoints } from './read';
+import { getHatTotals, getTeamPoints } from './read';
 import { readWatched } from './watch';
 import type { EventHat } from './types';
 
@@ -102,7 +102,7 @@ export async function claimTeamsPush(event: PushEvent) {
 export type PushDeps = {
   selectWatched: typeof selectWatched;
   claimTeamsPush: typeof claimTeamsPush;
-  getHatPoints: typeof getHatPoints;
+  getHatTotals: typeof getHatTotals;
   getTeamPoints: typeof getTeamPoints;
   topicSend: typeof signalClient.topicSend;
   // The engine's kill switch: off, nothing is marked and nothing dirty is sent.
@@ -215,10 +215,8 @@ export function createEventPointsPusher(deps: PushDeps) {
             entryNow.teamsLostAt = teamsLostAt ?? Date.now();
           }
         }
-        const [points, totals] = await Promise.all([
-          watchedHats.length
-            ? deps.getHatPoints(event, watchedHats, now)
-            : ({} as Record<string, number>),
+        const [hatTotals, totals] = await Promise.all([
+          watchedHats.length ? deps.getHatTotals(event, watchedHats, now) : null,
           // Read as of now, after the claim: the losers drop their teams trusting this read is
           // later than their grants.
           pushTeams ? deps.getTeamPoints(event, new Date()) : null,
@@ -234,11 +232,17 @@ export function createEventPointsPusher(deps: PushDeps) {
           });
         for (const hat of watchedHats) {
           const topicId = seasonHatTopicId(name, hat, season);
+          const field = hatField(hat);
           queue.push({
             send: {
               topic: eventHatTopic(name, topicId),
               target: SignalMessages.EventPointsHat,
-              data: { event: name, topicId, points: points[hatField(hat)] ?? 0 },
+              data: {
+                event: name,
+                topicId,
+                points: hatTotals?.points[field] ?? 0,
+                counts: hatTotals?.counts?.[field],
+              },
             },
             putBack: () => void entryFor(event).hats.set(hatField(hat), hat),
           });
@@ -359,7 +363,7 @@ function getPusher() {
   pusher ??= createEventPointsPusher({
     selectWatched,
     claimTeamsPush,
-    getHatPoints,
+    getHatTotals,
     getTeamPoints,
     topicSend: (args) => signalClient.topicSend(args),
     isEnabled: isEventPointsEnabledSync,

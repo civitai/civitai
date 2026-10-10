@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import type { HatCounts } from '~/server/events/points/read';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
@@ -27,11 +28,25 @@ const WATCH_BATCH = 50;
 
 const isPoints = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
-/** A hat push for this event, or null for anything else. */
+// The counts a hat push carries, named as the getMyHats / getWornHat rows name them. Every key of the
+// server's HatCounts, so a count added there fails to compile here until it is read.
+const HAT_COUNT_KEYS = Object.keys({
+  impressions: true,
+  reactions: true,
+  comments: true,
+  stickers: true,
+  remixes: true,
+} satisfies Record<keyof HatCounts, true>) as (keyof HatCounts)[];
+export type HatPushCounts = Partial<HatCounts>;
+
+/** A hat push for this event, or null for anything else. Counts keep only numeric known fields. */
 export function readHatPush(push: unknown, event: string) {
-  const { event: e, topicId, points } = (push ?? {}) as Record<string, unknown>;
+  const { event: e, topicId, points, counts } = (push ?? {}) as Record<string, unknown>;
   if (e !== event || typeof topicId !== 'string' || !isPoints(points)) return null;
-  return { topicId, points };
+  const raw = (counts && typeof counts === 'object' ? counts : {}) as Record<string, unknown>;
+  const read: HatPushCounts = {};
+  for (const key of HAT_COUNT_KEYS) if (isPoints(raw[key])) read[key] = raw[key];
+  return { topicId, points, counts: read };
 }
 
 /** A team totals push for this event, keeping only numeric totals, or null for anything else. */
@@ -44,14 +59,21 @@ export function readTeamsPush(push: unknown, event: string) {
   >;
 }
 
-/** The rows with the pushed total on the matching hat; the same array when nothing changed. */
+/**
+ * The rows with the pushed total, and any pushed counts, on the matching hat; the same array when
+ * nothing changed.
+ */
 export function applyHatPoints<T extends { topicId: string | null; points: number }>(
   rows: T[] | undefined,
   topicId: string,
-  points: number
+  points: number,
+  counts: HatPushCounts = {}
 ) {
-  if (!rows?.some((r) => r.topicId === topicId && r.points !== points)) return rows;
-  return rows.map((r) => (r.topicId === topicId ? { ...r, points } : r));
+  const next = { points, ...counts };
+  const differs = (r: T) =>
+    Object.entries(next).some(([key, value]) => (r as Record<string, unknown>)[key] !== value);
+  if (!rows?.some((r) => r.topicId === topicId && differs(r))) return rows;
+  return rows.map((r) => (r.topicId === topicId ? { ...r, ...next } : r));
 }
 
 /** Standings with the pushed team totals, re-ranked; the same object when nothing changed. */
@@ -147,7 +169,7 @@ export function WornHatLivePoints({
       if (!push || push.topicId !== topicId) return;
       // The popover's own query input: { event, ...wornOn }.
       utils.event.getWornHat.setData({ event, entityType, entityId }, (hat) =>
-        hat ? applyHatPoints([hat], push.topicId, push.points)?.[0] : hat
+        hat ? applyHatPoints([hat], push.topicId, push.points, push.counts)?.[0] : hat
       );
     },
     [utils, event, entityType, entityId, topicId]
@@ -172,7 +194,7 @@ export function MyHatsLivePoints({
       const push = readHatPush(raw, event);
       if (!push) return;
       utils.event.getMyHats.setData({ event }, (rows) =>
-        applyHatPoints(rows, push.topicId, push.points)
+        applyHatPoints(rows, push.topicId, push.points, push.counts)
       );
     },
     [utils, event]

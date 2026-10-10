@@ -24,8 +24,25 @@ vi.mock('~/server/events/points/enabled', () => ({
 
 const { logToAxiom } = await import('~/server/logging/client');
 const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');
-const { eventPointKeys, eventPointSeason, eventSeasonKeys, hatField, hatTopicId, previewTopicId } =
-  await import('~/server/events/points/keys');
+const {
+  COUNT_BASE_MARK,
+  countField,
+  eventPointKeys,
+  eventPointSeason,
+  eventSeasonKeys,
+  hatField,
+  hatTopicId,
+  previewTopicId,
+} = await import('~/server/events/points/keys');
+
+// HMGET over a table, by key and field: a read of the wrong key, scope or field reads nothing.
+const serveHashes = (table: Record<string, Record<string, string>>) => {
+  const sys = redisMock.sysRedis;
+  sys.get.mockResolvedValue(null);
+  sys.hmGet.mockImplementation(async (key: string, fields: string[]) =>
+    fields.map((f) => table[key]?.[f] ?? null)
+  );
+};
 
 const event = {
   name: 'birthday2026',
@@ -57,15 +74,16 @@ beforeEach(() => {
 
 const totals = () => {
   const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
-  const sys = redisMock.sysRedis;
-  sys.get.mockResolvedValue(null);
-  sys.hmGet.mockImplementation(async (key: string, fields: string[]) =>
-    key === keys.base('hat')
-      ? ['30']
-      : key === keys.base('team')
-      ? ['100', '50']
-      : fields.map(() => null)
-  );
+  serveHashes({
+    [keys.base('hat')]: { [hatField(HAT)]: '30' },
+    [keys.base('team')]: { Blue: '100', Pink: '50' },
+    [keys.base('count')]: {
+      [COUNT_BASE_MARK]: '1',
+      [countField('view', HAT)]: '12',
+      [countField('reaction', HAT)]: '3',
+      [countField('remix', HAT)]: '1',
+    },
+  });
 };
 
 describe('the pusher with its default deps', () => {
@@ -192,7 +210,12 @@ describe('the pusher with its default deps', () => {
         {
           topic: `event-points:birthday2026:hat:${topicId}`,
           target: 'event-points:hat',
-          data: { event: 'birthday2026', topicId, points: 30 },
+          data: {
+            event: 'birthday2026',
+            topicId,
+            points: 30,
+            counts: { impressions: 12, reactions: 3, comments: 0, stickers: 0, remixes: 1 },
+          },
         },
       ],
     ]);
@@ -212,15 +235,14 @@ describe('the pusher in the preview', () => {
   const keyedTeams = previewTopicId(preview.name, 'teams');
   const previewTotals = () => {
     const keys = eventSeasonKeys(preview.name, 'preview');
-    const sys = redisMock.sysRedis;
-    sys.get.mockResolvedValue(null);
-    sys.hmGet.mockImplementation(async (key: string, fields: string[]) =>
-      key === keys.base('hat')
-        ? ['7']
-        : key === keys.base('team')
-        ? ['3', '4']
-        : fields.map(() => null)
-    );
+    const live = eventSeasonKeys(preview.name, 'live');
+    serveHashes({
+      [keys.base('hat')]: { [hatField(HAT)]: '7' },
+      [keys.base('team')]: { Blue: '3', Pink: '4' },
+      [keys.base('count')]: { [COUNT_BASE_MARK]: '1', [countField('comment', HAT)]: '2' },
+      // The live season's counts, which a preview push must not read.
+      [live.base('count')]: { [COUNT_BASE_MARK]: '1', [countField('comment', HAT)]: '99' },
+    });
   };
 
   it("pushes the preview season's totals to the keyed topics that are watched", async () => {
@@ -244,7 +266,12 @@ describe('the pusher in the preview', () => {
         {
           topic: `event-points:birthday2026:hat:${keyedHat}`,
           target: 'event-points:hat',
-          data: { event: 'birthday2026', topicId: keyedHat, points: 7 },
+          data: {
+            event: 'birthday2026',
+            topicId: keyedHat,
+            points: 7,
+            counts: { impressions: 0, reactions: 0, comments: 2, stickers: 0, remixes: 0 },
+          },
         },
       ],
     ]);

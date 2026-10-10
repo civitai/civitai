@@ -12,6 +12,7 @@ const { cappedGrant, createEventPointsEngine, streamIdBefore } = await import(
   '~/server/events/points/award'
 );
 const {
+  countField,
   encodeHat,
   eventPointKeys,
   eventSeasonKeys,
@@ -156,7 +157,7 @@ function build(overrides: Partial<EventPointsDeps> = {}) {
 }
 
 // Total live points granted to a scope in the current season, across all buckets.
-function livePoints(scope: 'hat' | 'team' | 'owner', field: string) {
+function livePoints(scope: 'hat' | 'team' | 'owner' | 'count', field: string) {
   const keys = eventSeasonKeys(EVENT.name, now < START ? 'preview' : 'live');
   const bucket = liveBucket(now);
   let total = 0;
@@ -223,6 +224,68 @@ describe('awardEventPoints', () => {
     expect(livePoints('team', 'Yellow')).toBe(50);
     // Every first is still a fact in the ledger; the referee decides what scores.
     expect(ledger).toHaveLength(47);
+    // Counted like the referee counts (granted > 0): the remix got 5 of its 25, the reaction nothing.
+    expect(livePoints('count', countField('view', HAT))).toBe(45);
+    expect(livePoints('count', countField('remix', HAT))).toBe(1);
+    expect(livePoints('count', countField('reaction', HAT))).toBe(0);
+  });
+
+  // The count is display only. Failing, it must not cost the points their push or their TTLs, and
+  // its key must not be marked as given a TTL it never got.
+  it('keeps the points, their push and their TTLs when the count increment fails', async () => {
+    const hIncrBy = fake.redis.hIncrBy;
+    const errors: string[] = [];
+    let countDown = true;
+    build({
+      redis: {
+        ...fake.redis,
+        hIncrBy: (async (key: string, field: string, by: number) => {
+          if (countDown && key.endsWith(':count')) throw new Error('count shard down');
+          return hIncrBy(key, field, by);
+        }) as typeof hIncrBy,
+      },
+      logError: (kind, fn) => void errors.push(`${kind}:${fn}`),
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(errors).toEqual(['redis:eventPoints.liveCount']);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+    expect(granted).toHaveLength(1);
+    const keys = eventSeasonKeys(EVENT.name, 'live');
+    const bucket = liveBucket(now);
+    const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
+    for (const scope of ['hat', 'team', 'owner'] as const)
+      expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
+    expect(fake.ttls.has(keys.live(bucket, 'count'))).toBe(false);
+    // The next grant in the bucket that does count gives the count key its TTL.
+    countDown = false;
+    await engine.awardEventPoints([reaction(2)]);
+    expect(livePoints('count', countField('reaction', HAT))).toBe(1);
+    expect(fake.ttls.get(keys.live(bucket, 'count'))).toBe(ttl);
+  });
+
+  it('counts a granted action on its hat, at one HINCRBY more than the points', async () => {
+    const hIncrBy = fake.redis.hIncrBy;
+    const calls: string[] = [];
+    build({
+      redis: {
+        ...fake.redis,
+        hIncrBy: (async (key: string, field: string, by: number) => {
+          calls.push(`${key.split(':').slice(-1)[0]} ${field} ${by}`);
+          return hIncrBy(key, field, by);
+        }) as typeof hIncrBy,
+      },
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    // The cap, then one per live scope; only the count goes up by one rather than the grant.
+    expect(calls.sort()).toEqual(
+      [
+        `${OWNER} 1 5`,
+        `count ${countField('reaction', HAT)} 1`,
+        `hat ${HAT_FIELD} 5`,
+        `owner ${OWNER} 5`,
+        'team Yellow 5',
+      ].sort()
+    );
   });
 
   it('counts a view once per person per post per UTC day', async () => {
@@ -357,7 +420,7 @@ describe('awardEventPoints', () => {
     const keys = eventSeasonKeys(EVENT.name, 'live');
     const bucket = liveBucket(now);
     const ttl = Math.floor(now.getTime() / 1000) + 3 * 60 * 60;
-    for (const scope of ['hat', 'team', 'owner'] as const)
+    for (const scope of ['hat', 'team', 'owner', 'count'] as const)
       expect(fake.ttls.get(keys.live(bucket, scope))).toBe(ttl);
   });
 
@@ -379,7 +442,7 @@ describe('awardEventPoints', () => {
     });
     await engine.awardEventPoints([reaction(1)]);
     // The award got as far as the live increments (past the cap), and they failed.
-    expect(failedKeys.length).toBe(3);
+    expect(failedKeys.length).toBe(4);
     expect(ledger).toHaveLength(1);
     expect(granted).toEqual([]);
   });
