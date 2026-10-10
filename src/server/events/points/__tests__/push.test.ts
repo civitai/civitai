@@ -375,6 +375,28 @@ describe('event points pusher', () => {
     expect(sent).toHaveLength(251);
   });
 
+  it('drain waits for a timer flush that took everything, to its deadline', async () => {
+    const { pusher, sent } = setup({
+      topicSend: vi.fn(async (args: Sent) => {
+        await new Promise((r) => setTimeout(r, 100));
+        sent.push(args);
+      }),
+    });
+    // Fits one flush: once it starts, nothing is left dirty for the drain's own loop.
+    for (let owner = 1; owner <= 150; owner++) pusher.markDirty(event, hat(owner), NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(pusher.pending()).toBe(0);
+    let done = false;
+    const drained = pusher.drain(500).then((r) => ((done = true), r));
+    await vi.advanceTimersByTimeAsync(499);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done).toBe(true);
+    expect(sent).toHaveLength(15);
+    // What the deadline stopped is dirty again, and reported.
+    expect((await drained).left).toBe(151 - 15);
+  });
+
   it('a send that fails after the breaker opened does not open it again', async () => {
     let call = 0;
     const { pusher } = setup({
