@@ -1,6 +1,7 @@
 import { SignalMessages } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import { signalClient } from '~/utils/signal-client';
+import { isEventPointsEnabledSync } from './enabled';
 import { eventHatTopic, eventTeamsTopic, hatField, hatTopicId } from './keys';
 import { getHatPoints, getTeamPoints } from './read';
 import type { EventHat } from './types';
@@ -44,6 +45,8 @@ export type PushDeps = {
   getHatPoints: typeof getHatPoints;
   getTeamPoints: typeof getTeamPoints;
   topicSend: typeof signalClient.topicSend;
+  // The engine's kill switch: off, nothing is marked and nothing dirty is sent.
+  isEnabled: () => boolean;
 };
 
 type Send = Parameters<PushDeps['topicSend']>[0];
@@ -70,7 +73,7 @@ export function createEventPointsPusher(deps: PushDeps) {
   // Marks a hat, and its team, whose total just moved. Preview totals are never pushed: topics are
   // named by the public event name, and anyone can subscribe to them.
   function markDirty(event: PushEvent, hat: Hat, time: Date) {
-    if (time < event.startDate || isOpen()) return;
+    if (time < event.startDate || isOpen() || !deps.isEnabled()) return;
     let entry = dirty.get(event.name);
     if (!entry) {
       entry = { event, hats: new Map(), teams: false };
@@ -144,7 +147,7 @@ export function createEventPointsPusher(deps: PushDeps) {
 
   async function flushOnce() {
     clearTimer();
-    if (isOpen()) return dirty.clear();
+    if (isOpen() || !deps.isEnabled()) return dirty.clear();
     const queue = await collect(MAX_SENDS_PER_FLUSH);
     let next = 0;
     let sent = 0;
@@ -209,6 +212,7 @@ function getPusher() {
     getHatPoints,
     getTeamPoints,
     topicSend: (args) => signalClient.topicSend(args),
+    isEnabled: isEventPointsEnabledSync,
   });
   return pusher;
 }

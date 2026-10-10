@@ -18,6 +18,10 @@ const ch = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { query: ch.query } }));
 const signals = vi.hoisted(() => ({ topicSend: vi.fn(async (..._a: unknown[]) => undefined) }));
 vi.mock('~/utils/signal-client', () => ({ signalClient: signals }));
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => true,
+  isEventPointsEnabledSync: () => true,
+}));
 
 const {
   getCosmeticScores,

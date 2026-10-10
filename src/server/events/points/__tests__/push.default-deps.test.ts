@@ -4,7 +4,8 @@ import type * as SignalClient from '~/utils/signal-client';
 
 /**
  * The pusher with its default deps: the real reads over sysRedis and the real topicSend wiring. Only
- * the signals client is faked. The pusher's other tests inject every dep.
+ * the signals client and the kill switch's reading are faked. The pusher's other tests inject every
+ * dep.
  */
 
 const { topicSend } = vi.hoisted(() => ({
@@ -13,6 +14,12 @@ const { topicSend } = vi.hoisted(() => ({
 vi.mock('~/utils/signal-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SignalClient>()),
   signalClient: { topicSend },
+}));
+
+const engine = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => engine.on,
+  isEventPointsEnabledSync: () => engine.on,
 }));
 
 const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');
@@ -29,6 +36,17 @@ const event = {
 const HAT = { ownerId: 10, cosmeticId: 7, claimKey: 'claimed' };
 
 describe('the pusher with its default deps', () => {
+  it('reads the kill switch: off, an award marks and sends nothing', async () => {
+    engine.on = false;
+    try {
+      markEventPointsDirty(event, HAT, new Date());
+      expect(await drainEventPointsPush()).toEqual({ left: 0 });
+      expect(topicSend).not.toHaveBeenCalled();
+    } finally {
+      engine.on = true;
+    }
+  });
+
   it('reads the totals and sends them through the signals client', async () => {
     const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
     const sys = redisMock.sysRedis;

@@ -35,6 +35,7 @@ describe('what the pusher sends, the client reads', () => {
       getHatPoints: async () => ({ [hatField(hat)]: 64 }),
       getTeamPoints: async () => ({ Blue: 900 }),
       topicSend: async (args) => void sent.push(args),
+      isEnabled: () => true,
     });
     const event = {
       name: 'birthday2026',

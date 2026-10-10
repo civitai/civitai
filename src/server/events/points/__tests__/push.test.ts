@@ -37,6 +37,7 @@ function setup(overrides: Partial<PushDeps> = {}) {
     ),
     getTeamPoints: vi.fn(async () => ({ Blue: 900, Pink: 40 })),
     topicSend: vi.fn(async (args: Sent) => void sent.push(args)),
+    isEnabled: () => true,
     ...overrides,
   };
   return { pusher: createEventPointsPusher(deps), deps, sent };
@@ -174,6 +175,28 @@ describe('event points pusher', () => {
     await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
     expect(sent).toEqual([hatSend(HAT, 10)]);
     expect(deps.getTeamPoints).not.toHaveBeenCalled();
+  });
+
+  it('with the kill switch off, marks nothing, and drops what was marked before it went off', async () => {
+    let on = false;
+    const { pusher, sent, deps } = setup({ isEnabled: () => on });
+    pusher.markDirty(event, HAT, NOW);
+    expect(pusher.dirtyCount()).toBe(0);
+
+    on = true;
+    pusher.markDirty(event, HAT, NOW);
+    expect(pusher.dirtyCount()).toBe(1);
+    on = false;
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(sent).toEqual([]);
+    expect(deps.getHatPoints).not.toHaveBeenCalled();
+    expect(pusher.dirtyCount()).toBe(0);
+
+    // The control: switched back on, the same mark goes out.
+    on = true;
+    pusher.markDirty(event, HAT, NOW);
+    await vi.advanceTimersByTimeAsync(PUSH_WINDOW_MS);
+    expect(sent).toEqual([teamsSend(), hatSend(HAT, 10)]);
   });
 
   it('never marks a preview award', async () => {
