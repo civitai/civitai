@@ -150,3 +150,25 @@ describe('/api/v1/models refactor — public maturity contract preserved', () =>
     expect(mockRunModelSearch).not.toHaveBeenCalled();
   });
 });
+
+describe('/api/v1/models — an explicit sort reaches the Meili pre-step, the schema default does not', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockGetRegion.mockReturnValue('US');
+    mockIsRegionRestricted.mockReturnValue(false);
+  });
+
+  it('?query=&sort= forwards the named sort', async () => {
+    await invoke({ query: 'anime', sort: 'Most Downloaded' });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].sort).toBe('Most Downloaded');
+  });
+
+  it('?query= alone forwards no sort, even though the parsed input carries the default', async () => {
+    await invoke({ query: 'anime' });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].sort).toBeUndefined();
+    const [input] = mockRunModelSearch.mock.calls[0];
+    expect(input.sort).toBe('Highest Rated');
+  });
+});
