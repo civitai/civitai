@@ -150,14 +150,31 @@ export type ApprovedEventDeclarations = ReadonlyMap<
 >;
 
 /**
- * What the custom-events ingest needs to know about one approved app: who owns it and which
- * events its APPROVED manifest declares. A projection, so the cache never holds a whole manifest.
+ * What the custom-events ingest needs to know about one approved app: who owns it, who else is on
+ * its team, and which events its APPROVED manifest declares. A projection, so the cache never holds a whole manifest.
  */
 export type ApprovedAppBlockAnalytics = {
   /** `null` when the row carried no owner; then nobody is the owner. */
   ownerUserId: number | null;
+  /**
+   * The app's ACCEPTED collaborators (not the owner), read by `listApprovedAppBlockSeatHolders`
+   * with the same seat conditions that decide who may see the app's analytics panel. Empty while
+   * that read is failing; see `loadCollaboratorsByApp`.
+   */
+  collaboratorUserIds: ReadonlySet<number>;
   events: ApprovedEventDeclarations;
 };
+
+/**
+ * Is `userId` on the app's team: its owner or one of its accepted collaborators? The ingest
+ * stores this as `isOwner`, so the owner panel's "Include team activity" toggle hides both.
+ */
+export function isAppTeamMember(analytics: ApprovedAppBlockAnalytics, userId: number): boolean {
+  return (
+    (analytics.ownerUserId !== null && userId === analytics.ownerUserId) ||
+    analytics.collaboratorUserIds.has(userId)
+  );
+}
 
 const NO_EVENTS: ApprovedEventDeclarations = new Map();
 
@@ -192,21 +209,70 @@ type AnalyticsMap = Map<string, ApprovedAppBlockAnalytics>;
 let _analyticsCache: { byId: AnalyticsMap; expiresAt: number } | null = null;
 let _analyticsInflight: Promise<AnalyticsMap> | null = null;
 
-async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap | null> {
+const NO_COLLABORATORS: ReadonlySet<number> = new Set();
+
+/**
+ * Accepted collaborators per approved app, or `null` when the read failed.
+ *
+ * A failure here is NOT a failure of the analytics read: events are still accepted and the owner
+ * is still recognised, but nobody else counts as team, so a collaborator's rows are written as
+ * ordinary activity until a read succeeds. That is the smaller harm. Failing the whole read would
+ * drop every custom event of every app for a lookup that only decides one flag.
+ */
+async function loadCollaboratorsByApp(): Promise<Map<string, Set<number>> | null> {
+  try {
+    const { listApprovedAppBlockSeatHolders } = await import(
+      '~/server/services/blocks/app-access.service'
+    );
+    const byApp = new Map<string, Set<number>>();
+    for (const { appBlockId, userId } of await listApprovedAppBlockSeatHolders()) {
+      const set = byApp.get(appBlockId);
+      if (set) set.add(userId);
+      else byApp.set(appBlockId, new Set([userId]));
+    }
+    return byApp;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[known-app-blocks] collaborator lookup failed; counting only owners as team: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+    return null;
+  }
+}
+
+/**
+ * `degraded` is true when the collaborator read failed, so the entry is cached for the failure TTL
+ * rather than five minutes and the team set recovers quickly.
+ */
+async function loadApprovedAppBlockAnalytics(): Promise<{
+  byId: AnalyticsMap;
+  degraded: boolean;
+} | null> {
   const byId: AnalyticsMap = new Map();
   try {
     const { dbRead } = await import('~/server/db/client');
-    const rows = (await dbRead.appBlock.findMany({
-      where: { status: 'approved' },
-      select: { id: true, manifest: true, app: { select: { userId: true } } },
-    })) as Array<{ id: string; manifest?: unknown; app?: { userId?: unknown } | null }>;
+    // Both reads run together, once per refresh; `loadCollaboratorsByApp` never rejects. It starts
+    // only after the client import above has settled: its own module imports the same client, and
+    // two concurrent first imports of it are where the shared test mock has been seen to hand out
+    // the real client instead.
+    const [rows, collaborators] = await Promise.all([
+      dbRead.appBlock.findMany({
+        where: { status: 'approved' },
+        select: { id: true, manifest: true, app: { select: { userId: true } } },
+      }) as Promise<Array<{ id: string; manifest?: unknown; app?: { userId?: unknown } | null }>>,
+      loadCollaboratorsByApp(),
+    ]);
     for (const row of rows) {
       const ownerUserId = row.app?.userId;
       byId.set(row.id, {
         ownerUserId: typeof ownerUserId === 'number' ? ownerUserId : null,
+        collaboratorUserIds: collaborators?.get(row.id) ?? NO_COLLABORATORS,
         events: projectDeclaredEvents(row.manifest),
       });
     }
+    return { byId, degraded: collaborators === null };
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(
@@ -216,11 +282,15 @@ async function loadApprovedAppBlockAnalytics(): Promise<AnalyticsMap | null> {
     );
     return null;
   }
-  return byId;
 }
 
 /**
- * The owner and declared custom events of an approved app; `null` when the id is not approved.
+ * The owner, accepted collaborators and declared custom events of an approved app; `null` when
+ * the id is not approved.
+ *
+ * ⚠️ Cached for five minutes per process, with no invalidation: a collaborator who is added,
+ * accepts, or is removed is reflected in `isAppTeamMember` up to five minutes later (on each
+ * process separately), and their events in that window keep the old team flag.
  *
  * A SEPARATE cached read from the approved-id set above, on purpose: it is loaded only when the
  * custom-events ingest asks, and a failure of this wider query cannot empty the id set the other
@@ -236,8 +306,8 @@ export async function getApprovedAppBlockAnalytics(
   if (cached && cached.expiresAt > Date.now()) return cached.byId.get(appBlockId) ?? null;
   _analyticsInflight ??= loadApprovedAppBlockAnalytics()
     .then((loaded) => {
-      const byId: AnalyticsMap = loaded ?? new Map();
-      const ttl = loaded ? KNOWN_APP_BLOCKS_TTL_MS : ANALYTICS_FAILURE_TTL_MS;
+      const byId: AnalyticsMap = loaded?.byId ?? new Map();
+      const ttl = loaded && !loaded.degraded ? KNOWN_APP_BLOCKS_TTL_MS : ANALYTICS_FAILURE_TTL_MS;
       _analyticsCache = { byId, expiresAt: Date.now() + ttl };
       return byId;
     })

@@ -445,7 +445,11 @@ hand before the route deploys).
 - **Identity is the server's.** The body carries the app id, the block instance
   id, the event name and its properties, and nothing else is read from it. The
   viewer comes from the session, the time from the server clock, and `isOwner`
-  from comparing the viewer with the app's owner. A block instance id that is
+  from whether the viewer is on the app's team: its owner or an accepted
+  collaborator (the same seats that can open the app's analytics panel). The
+  team is cached for up to five minutes per process, so a collaborator who was
+  just added or removed is reflected after that; rows already written keep the
+  flag they were written with. A block instance id that is
   not shaped like a platform id (for a page, not that app's own page id) is
   stored empty.
 - **Unique viewers are signed-in viewers only.** Each row carries a `viewerKey`:
@@ -485,9 +489,9 @@ aggregates only, never rows:
 - a banner when events arrived under names the approved manifest does not
   declare (`__undeclared__` rows).
 
-The owner's own activity (rows with `isOwner`, including dev-tunnel testing) is
-excluded by default, from the drop count too; an "Include owner activity" toggle
-adds it. Collaborators' activity is always counted. Counts are exact (there is no
+The team's own activity (rows with `isOwner`: the owner or an accepted
+collaborator was signed in, including dev-tunnel testing) is excluded by
+default, from the drop count too; an "Include team activity" toggle adds it. Counts are exact (there is no
 small-count suppression) and are lower bounds, since client-side drops are never
 recorded. A ClickHouse failure shows "couldn't load", never a zero.
 

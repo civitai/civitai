@@ -648,6 +648,63 @@ export async function assertAppEditAccess(args: {
   if (!seated) deny();
 }
 
+/**
+ * Which listings a seat must be on for it to reach an AppBlock: `kind: 'onsite'` and a backing
+ * block. Why both conditions are needed is explained on {@link resolveAccessibleAppBlockIds}.
+ *
+ * Shared by the two reads that answer "who is an accepted collaborator on this AppBlock":
+ * {@link resolveAccessibleAppBlockIds} (who may see an app's analytics panel) and
+ * {@link listApprovedAppBlockSeatHolders} (whose custom events the ingest counts as the app's
+ * team). Both read it from here, so the people who can see the panel and the people whose own
+ * activity it treats as team stay the same set. `app-block-team.seam.test.ts` checks that.
+ */
+export const APP_BLOCK_SEAT_LISTING_WHERE = {
+  kind: 'onsite',
+  appBlockId: { not: null },
+} as const;
+
+/**
+ * Every ACCEPTED collaborator of every APPROVED AppBlock, as `(appBlockId, userId)` pairs. The
+ * custom-events ingest loads this to mark a collaborator's own rows as team activity
+ * (`known-app-blocks.service.ts`).
+ *
+ * Applies the conditions {@link resolveAccessibleAppBlockIds} applies to one user's seats, to
+ * every seat at once: `status: ACCEPTED` on the seat and {@link APP_BLOCK_SEAT_LISTING_WHERE}
+ * on its listing. The owner is not listed here; the caller already knows the owner.
+ *
+ * Two reads: the qualifying listings, then the accepted seats on them. Bounded by the invite cap (`constants.appCollaborators.maxCollaborators` pending plus
+ * accepted seats per app) times the number of approved apps, and returns two scalars per seat.
+ * Like every collaborator read it degrades to empty only when the table is missing; any other
+ * failure propagates, and the caller decides what that means.
+ */
+export async function listApprovedAppBlockSeatHolders(): Promise<
+  Array<{ appBlockId: string; userId: number }>
+> {
+  const listings = (await dbRead.appListing.findMany({
+    where: { ...APP_BLOCK_SEAT_LISTING_WHERE, appBlock: { status: 'approved' } },
+    select: { id: true, appBlockId: true },
+  })) as Array<{ id: string; appBlockId: string | null }>;
+  const blockByListing = new Map<string, string>();
+  for (const listing of listings) {
+    if (listing.appBlockId) blockByListing.set(listing.id, listing.appBlockId);
+  }
+  if (blockByListing.size === 0) return [];
+  const seats = await safeCollaboratorQuery(
+    () =>
+      dbRead.appCollaborator.findMany({
+        where: { appListingId: { in: [...blockByListing.keys()] }, status: ACCEPTED },
+        select: { appListingId: true, userId: true },
+      }),
+    [] as Array<{ appListingId: string; userId: number }>
+  );
+  const pairs: Array<{ appBlockId: string; userId: number }> = [];
+  for (const seat of seats) {
+    const appBlockId = blockByListing.get(seat.appListingId);
+    if (appBlockId) pairs.push({ appBlockId, userId: seat.userId });
+  }
+  return pairs;
+}
+
 export type AccessibleAppBlocks = {
   /** AppBlock ids the caller OWNS (via `OauthClient.userId`). */
   ownedIds: string[];
@@ -709,6 +766,9 @@ export type AccessibleAppBlocks = {
  * no rows, no user-visible difference (see 1), and no capability actually withheld.
  */
 export async function resolveAccessibleAppBlockIds(userId: number): Promise<AccessibleAppBlocks> {
+  // Seats come from the `{ userId, status: ACCEPTED }` read below, then their listings are
+  // narrowed by `APP_BLOCK_SEAT_LISTING_WHERE`. `listApprovedAppBlockSeatHolders` applies the
+  // same two conditions from the other direction (by app instead of by user).
   const [owned, seats] = await Promise.all([
     dbRead.appBlock.findMany({ where: { app: { userId } }, select: { id: true } }),
     safeCollaboratorQuery(
@@ -730,7 +790,7 @@ export async function resolveAccessibleAppBlockIds(userId: number): Promise<Acce
   const seatListingIds = seats.map((s: { appListingId: string }) => s.appListingId);
   const seatBlocks = seatListingIds.length
     ? await dbRead.appListing.findMany({
-        where: { id: { in: seatListingIds }, kind: 'onsite', appBlockId: { not: null } },
+        where: { id: { in: seatListingIds }, ...APP_BLOCK_SEAT_LISTING_WHERE },
         select: { appBlockId: true },
       })
     : [];

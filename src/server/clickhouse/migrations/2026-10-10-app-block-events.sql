@@ -36,6 +36,10 @@
 -- For a signed-out viewer it is 0, meaning "unknown viewer": nothing derived from a client
 -- address is stored for signed-out viewers.
 --
+-- `isOwner` is 1 when the signed-in viewer is on the app's TEAM: its owner or an accepted
+-- collaborator (the column keeps its original name). The owner panel hides these rows by default.
+-- Rows written before collaborators were counted (2026-10) carry 1 for the owner only.
+--
 -- READ PATH: unique viewers are signed-in viewers only, counted as
 --   uniqExactIf(viewerKey, viewerKey != 0)
 -- Signed-out activity is reported as event counts (countIf(viewerKey = 0)), never as unique viewers:

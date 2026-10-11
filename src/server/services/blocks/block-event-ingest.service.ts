@@ -20,6 +20,7 @@ import {
 } from '~/server/services/blocks/block-event-viewer-key';
 import {
   getApprovedAppBlockAnalytics,
+  isAppTeamMember,
   type ApprovedAppBlockAnalytics,
   type ApprovedEventDeclarations,
 } from '~/server/services/blocks/known-app-blocks.service';
@@ -36,6 +37,7 @@ export type AppBlockEventRow = {
   /** UInt64 as a decimal string; `'0'` for a signed-out viewer. See `block-event-viewer-key.ts`. */
   viewerKey: string;
   isAnon: 0 | 1;
+  /** 1 when the signed-in viewer is the app's owner or an accepted collaborator (its team). */
   isOwner: 0 | 1;
   enumProps: Record<string, string>;
   numProps: Record<string, number>;
@@ -175,6 +177,7 @@ export function buildAppBlockEventRow(args: {
   /** `null` for a signed-out viewer. */
   userId: number | null;
   viewerKey: string;
+  /** The viewer is on the app's team (owner or accepted collaborator); stored as `isOwner`. */
   isOwner: boolean;
 }): AppBlockEventRow {
   return {
@@ -272,8 +275,9 @@ export async function ingestBlockEvents(args: {
       recordBlockCustomEvents('private_run', group.length);
       continue;
     }
-    const isOwner =
-      !!viewer && signedIn && analytics.ownerUserId !== null && viewer.id === analytics.ownerUserId;
+    // Team = owner or accepted collaborator, from the cached analytics entry (up to five minutes
+    // stale for a seat that just changed). The column keeps its original name, `isOwner`.
+    const isTeam = !!viewer && signedIn && isAppTeamMember(analytics, viewer.id);
     for (const event of group) {
       const classified = classifyBlockEvent(analytics.events, event.eventName, event.properties);
       if (classified.declared) counts.accepted += 1;
@@ -290,7 +294,7 @@ export async function ingestBlockEvents(args: {
           classified,
           userId: viewer && signedIn ? viewer.id : null,
           viewerKey,
-          isOwner,
+          isOwner: isTeam,
         })
       );
     }
