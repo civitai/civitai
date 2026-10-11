@@ -34,6 +34,8 @@ type ImagesContextProps = {
    * viewer's own setting alone everywhere else.
    */
   revealStickers?: boolean;
+  /** For a feed whose every image has the same creator, such as a profile tab. */
+  hideCreator?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -45,6 +47,7 @@ export type ImagesContextState = {
   hideReactions?: boolean;
   hideStickerBadge?: boolean;
   revealStickers?: boolean;
+  hideCreator?: boolean;
   collectionId?: number;
   judgeInfo?: JudgeInfo;
   judgingCategories?: JudgingCategory[] | null;
@@ -64,6 +67,7 @@ export function ImagesProvider({
   hideReactions,
   hideStickerBadge,
   revealStickers,
+  hideCreator,
   collectionId,
   judgeInfo,
   judgingCategories,
@@ -78,6 +82,7 @@ export function ImagesProvider({
       hideReactions,
       hideStickerBadge,
       revealStickers,
+      hideCreator,
       collectionId,
       judgeInfo,
       judgingCategories,
@@ -88,6 +93,7 @@ export function ImagesProvider({
       hideReactions,
       hideStickerBadge,
       revealStickers,
+      hideCreator,
       collectionId,
       judgeInfo,
       judgingCategories,
