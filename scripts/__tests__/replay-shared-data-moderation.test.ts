@@ -1,8 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createCluster, RESP_TYPES } from 'redis';
-import ts from 'typescript';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BlockedContentHit } from '~/server/services/blocklist.service';
@@ -48,9 +46,13 @@ import {
 } from '../shared-data-replay/replay';
 import {
   assertNoSinks,
+  defaultReplayDir,
+  ensureReplayDir,
   parseArgs,
+  REPLAY_DIR_NAME,
   resolveOutPath,
-  suppressCacheWrites,
+  retentionNotice,
+  sweepExpiredCsvs,
   withCsvFile,
   withReadOnlyTransaction,
 } from '../replay-shared-data-moderation';
@@ -143,7 +145,7 @@ describe('replayApp — the scan path (positive control)', () => {
     ]);
     expect(new Set(rows.map((r) => `${r.surface}|${r.rowKey}|${r.leafPath}`)).size).toBe(3);
     expect(rows.map((r) => r.leaf)).toEqual([MINOR, MINOR, POI, POI, MINOR, MINOR]);
-    expect(rows.every((r) => r.blocksUnderEnforce && r.blocksUnderEnforceWithPatterns)).toBe(true);
+    expect(rows.every((r) => r.blocksUnderEnforce)).toBe(true);
     expect(tally).toMatchObject({
       app: 'demo',
       rows: 3,
@@ -151,7 +153,7 @@ describe('replayApp — the scan path (positive control)', () => {
       counterKeys: 2,
       counterKeysUserChosen: 1,
       blocked: { data: 2, counter: 1 },
-      userChosenCounters: { blocked: 1, blockedWithPatterns: 1 },
+      userChosenCounters: { blocked: 1 },
     });
     expect(tally.hits.data).toEqual({
       minor: 1,
@@ -199,25 +201,27 @@ describe('replayApp — the scan path (positive control)', () => {
     expect(tally.userChosenCounters).toEqual({
       hits: { minor: 0, poi: 0, link: 0, pattern: 0, audit_regex: 0, overflow: 0 },
       blocked: 0,
-      blockedWithPatterns: 0,
     });
   });
 
-  it('a pattern-only hit blocks only once patterns are enforced', async () => {
+  it('a pattern-only hit is reported but does NOT block (user-content-pattern-enforce is absent), on data and on a user-chosen counter', async () => {
     mockFindBlocked.mockImplementation(async (values) =>
       (values as string[]).flatMap((v, index) =>
         v === 'zz-pattern-zz' ? [{ kind: 'pattern' as const, index, matched: 'pattern' }] : []
       )
     );
-    const { rows, tally } = await run([{ key: 'r1', data: { a: 'zz-pattern-zz' } }], []);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      category: 'pattern',
-      blocksUnderEnforce: false,
-      blocksUnderEnforceWithPatterns: true,
-    });
-    expect(tally.blocked.data).toBe(0);
-    expect(tally.blockedWithPatterns.data).toBe(1);
+    const { rows, tally } = await run(
+      [{ key: 'r1', data: { a: 'zz-pattern-zz' } }],
+      [{ key: 'zz-pattern-zz', anchor: true }]
+    );
+    expect(rows.map((r) => [r.surface, r.category, r.blocksUnderEnforce])).toEqual([
+      ['data', 'pattern', false],
+      ['counter', 'pattern', false],
+    ]);
+    expect(tally.hits.data.pattern).toBe(1);
+    expect(tally.hits.counter.pattern).toBe(1);
+    expect(tally.blocked).toEqual({ data: 0, counter: 0 });
+    expect(tally.userChosenCounters.blocked).toBe(0);
   });
 
   it('pages by key from a NULL cursor, reads every row, stops on a short page, and sends only SELECTs', async () => {
@@ -370,19 +374,20 @@ describe('replayCsvRows / CSV', () => {
     leaf: 'x',
     userChosenCounter: null,
     blocksUnderEnforce: true,
-    blocksUnderEnforceWithPatterns: false,
     ...over,
   });
 
   it('a row line has one cell per header column, CRLF-terminated', () => {
     expect(csvHeader()).toBe(
       'app,surface,rowKey,hidden,leafPath,leafKind,category,matched,leafLength,leaf,' +
-        'userChosenCounter,blocksUnderEnforce,blocksUnderEnforceWithPatterns\r\n'
+        'userChosenCounter,blocksUnderEnforce\r\n'
     );
     expect(csvRowLine(row({ leaf: 'x,y', userChosenCounter: true }))).toBe(
-      'a,data,k,false,p,value,minor,minor,3,"x,y",true,true,false\r\n'
+      'a,data,k,false,p,value,minor,minor,3,"x,y",true,true\r\n'
     );
-    expect(csvRowLine(row({}))).toBe('a,data,k,false,p,value,minor,minor,3,x,,true,false\r\n');
+    expect(csvRowLine(row({ blocksUnderEnforce: false }))).toBe(
+      'a,data,k,false,p,value,minor,minor,3,x,,false\r\n'
+    );
   });
 
   it.each([
@@ -395,7 +400,7 @@ describe('replayCsvRows / CSV', () => {
     ['say "hi"\nbye', '"say ""hi""\nbye"'],
   ])('escapes a user-text cell %j as %j', (leaf, cell) => {
     expect(csvRowLine(row({ leaf }))).toBe(
-      `a,data,k,false,p,value,minor,minor,3,${cell},,true,false\r\n`
+      `a,data,k,false,p,value,minor,minor,3,${cell},,true\r\n`
     );
   });
 });
@@ -414,8 +419,7 @@ describe('summary', () => {
       counterKeys: 1,
       counterKeysUserChosen: 1,
       blocked: { data: 1, counter: 1 },
-      blockedWithPatterns: { data: 1, counter: 1 },
-      userChosenCounters: { blocked: 1, blockedWithPatterns: 1 },
+      userChosenCounters: { blocked: 1 },
     });
     expect(total.hits.data.minor).toBe(1);
     expect(total.hits.counter.minor).toBe(1);
@@ -431,14 +435,14 @@ describe('summary', () => {
         '  data hits:    minor=1 poi=0 link=0 pattern=0 audit_regex=1 overflow=0',
         '  counter hits: minor=0 poi=0 link=0 pattern=0 audit_regex=0 overflow=0',
         '  user-chosen counter hits: minor=0 poi=0 link=0 pattern=0 audit_regex=0 overflow=0',
-        '  would block under enforce: data=1 counter=0 | with patterns enforced: data=1 counter=0',
-        '  user-chosen counters that would block: 0 | with patterns enforced: 0',
+        '  would block under enforce (pattern hits do not block): data=1 counter=0',
+        '  user-chosen counters that would block: 0',
         'TOTAL: rows=1 rowsWithData=1 dataLeaves=2 counterKeys=1 (userChosen=1)',
         '  data hits:    minor=1 poi=0 link=0 pattern=0 audit_regex=1 overflow=0',
         '  counter hits: minor=0 poi=0 link=0 pattern=0 audit_regex=0 overflow=0',
         '  user-chosen counter hits: minor=0 poi=0 link=0 pattern=0 audit_regex=0 overflow=0',
-        '  would block under enforce: data=1 counter=0 | with patterns enforced: data=1 counter=0',
-        '  user-chosen counters that would block: 0 | with patterns enforced: 0',
+        '  would block under enforce (pattern hits do not block): data=1 counter=0',
+        '  user-chosen counters that would block: 0',
       ].join('\n')
     );
   });
@@ -551,10 +555,14 @@ describe('entry-script guards', () => {
     });
   });
 
-  it('parses arguments and defaults the CSV to the OS temp dir', () => {
+  it('parses arguments and defaults the CSV to the dedicated directory under the OS temp dir', () => {
     const args = parseArgs([], new Date('2026-01-02T03:04:05.006Z'));
     expect(args.out).toBe(
-      path.join(os.tmpdir(), 'shared-data-replay-2026-01-02T03-04-05-006Z.csv')
+      path.join(
+        os.tmpdir(),
+        'civitai-shared-data-replay',
+        'shared-data-replay-2026-01-02T03-04-05-006Z.csv'
+      )
     );
     expect(args.pageSize).toBe(500);
     expect(parseArgs(['--out', '/x/y.csv', '--page-size', '7'])).toEqual({
@@ -568,59 +576,91 @@ describe('entry-script guards', () => {
     expect(() => parseArgs(['--write'])).toThrow(/unknown/);
   });
 
-  describe('suppressCacheWrites', () => {
-    it('set never reaches the original; get serves what was set, and forwards everything else', async () => {
-      const originalSet = vi.fn<(key: string, value: string) => Promise<string>>(async () => 'OK');
-      const originalGet = vi.fn(async (key: string) => `redis:${key}`);
-      const client = { set: originalSet, get: originalGet };
-      const guard = suppressCacheWrites(client);
-      await expect(client.set('k1', 'v1')).resolves.toBeNull();
-      await expect(client.set('k1', 'v2')).resolves.toBeNull();
-      await expect(client.get('k1')).resolves.toBe('v2');
-      await expect(client.get('other')).resolves.toBe('redis:other');
-      expect(originalSet).not.toHaveBeenCalled();
-      expect(originalGet).toHaveBeenCalledTimes(1);
-      expect(originalGet).toHaveBeenCalledWith('other');
-      expect(guard.memoisedKeys()).toBe(1);
+  describe('CSV retention', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const NOW = new Date('2026-03-01T12:00:00.000Z');
+    let root: string;
+    beforeEach(() => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), 'replay-retention-test-'));
+      return () => fs.rmSync(root, { recursive: true, force: true });
     });
+    const plant = (file: string, ageDays: number) => {
+      fs.writeFileSync(file, 'user text');
+      const t = new Date(NOW.getTime() - ageDays * DAY);
+      fs.utimesSync(file, t, t);
+      return file;
+    };
 
-    it('a client DERIVED by prototype keeps its own get (its own `this`), and never sees the memo', async () => {
-      class Client {
-        constructor(public tag: string) {}
-        async get(key: string) {
-          return `${this.tag}:${key}`;
-        }
-        async set() {
-          return 'OK';
-        }
+    it('the sweep deletes an expired CSV in the dedicated dir and nothing else', () => {
+      const dir = ensureReplayDir(defaultReplayDir(root));
+      const old = plant(path.join(dir, 'old.csv'), 31);
+      const fresh = plant(path.join(dir, 'fresh.csv'), 29);
+      const oldText = plant(path.join(dir, 'old.txt'), 90);
+      const outside = plant(path.join(root, 'outside.csv'), 90);
+      fs.mkdirSync(path.join(dir, 'sub.csv'));
+      const nested = plant(path.join(dir, 'sub.csv', 'nested.csv'), 90);
+      const target = plant(path.join(root, 'target.csv'), 90);
+      fs.symlinkSync(target, path.join(dir, 'link.csv'));
+      // The directory and the link are themselves "expired", so only the regular-file check keeps them.
+      const longAgo = new Date(NOW.getTime() - 90 * DAY);
+      fs.utimesSync(path.join(dir, 'sub.csv'), longAgo, longAgo);
+      fs.lutimesSync(path.join(dir, 'link.csv'), longAgo, longAgo);
+      const log = vi.fn();
+
+      expect(sweepExpiredCsvs(dir, NOW, log)).toEqual([old]);
+
+      expect(fs.existsSync(old)).toBe(false);
+      for (const kept of [fresh, oldText, outside, nested, target, path.join(dir, 'link.csv')]) {
+        expect(fs.existsSync(kept)).toBe(true);
       }
-      const base = new Client('base');
-      const derived = Object.create(base) as Client;
-      derived.tag = 'derived';
-      suppressCacheWrites(base);
-      await base.set();
-      await (base.set as (k: string, v: string) => Promise<unknown>)('k', 'memo');
-      await expect(base.get('k')).resolves.toBe('memo');
-      await expect(derived.get('k')).resolves.toBe('derived:k');
-      await expect(derived.get('x')).resolves.toBe('derived:x');
-      // `set` is intercepted for every caller, derived ones included: no path through it writes.
-      await expect(derived.set()).resolves.toBeNull();
+      expect(log.mock.calls).toEqual([
+        [`retention: deleted expired CSV (older than 30 days): ${old}`],
+      ]);
     });
 
-    it('on a real node-redis cluster client (never connected): set and get are served locally, while a derived reader still goes to Redis', async () => {
-      // Control: unguarded, a never-connected client refuses the write.
-      const control = createCluster({ rootNodes: [{ url: 'redis://127.0.0.1:1' }] });
-      await expect(control.set('k', 'v')).rejects.toThrow();
+    it('the sweep says so when there is nothing to delete', () => {
+      const dir = ensureReplayDir(defaultReplayDir(root));
+      plant(path.join(dir, 'fresh.csv'), 1);
+      const log = vi.fn();
+      expect(sweepExpiredCsvs(dir, NOW, log)).toEqual([]);
+      expect(log.mock.calls).toEqual([[`retention: no CSV older than 30 days in ${dir}`]]);
+    });
 
-      const client = createCluster({ rootNodes: [{ url: 'redis://127.0.0.1:1' }] });
-      const derived = client.withTypeMapping({ [RESP_TYPES.BLOB_STRING]: Buffer });
-      suppressCacheWrites(client);
-      await expect(client.set('k', 'v')).resolves.toBeNull();
-      await expect(client.get('k')).resolves.toBe('v');
-      // The Buffer-mapped reader is NOT handed the memo's string: it runs the real command, which
-      // rejects here because nothing is connected.
-      await expect(derived.get('k')).rejects.toThrow();
-      expect(client.isOpen).toBe(false);
+    it('the dedicated dir is created 0700, an existing one is tightened to 0700, and a symlink is refused', () => {
+      const dir = defaultReplayDir(root);
+      expect(path.basename(dir)).toBe(REPLAY_DIR_NAME);
+      expect(ensureReplayDir(dir)).toBe(fs.realpathSync(dir));
+      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+      fs.chmodSync(dir, 0o755);
+      ensureReplayDir(dir);
+      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+
+      const elsewhere = fs.mkdtempSync(path.join(root, 'elsewhere-'));
+      const link = path.join(root, 'linked');
+      fs.symlinkSync(elsewhere, link);
+      expect(() => ensureReplayDir(link)).toThrow(/not a plain directory/);
+    });
+
+    it('the notice for a CSV in the dedicated dir: path, UTC expiry, rm command — and no warning', () => {
+      const dir = '/var/tmp/civitai-shared-data-replay';
+      expect(retentionNotice(`${dir}/a b.csv`, dir, NOW)).toEqual([
+        `CSV: ${dir}/a b.csv`,
+        'expires: 2026-03-31 (UTC, 30 days)',
+        `delete it sooner: rm -- '${dir}/a b.csv'`,
+      ]);
+    });
+
+    it('the notice for a CSV OUTSIDE the dedicated dir carries the loud by-hand line', () => {
+      const dir = '/var/tmp/civitai-shared-data-replay';
+      expect(retentionNotice("/home/op/it's.csv", dir, NOW)).toEqual([
+        "CSV: /home/op/it's.csv",
+        'expires: 2026-03-31 (UTC, 30 days)',
+        "delete it sooner: rm -- '/home/op/it'\\''s.csv'",
+        `WARNING: this file is NOT in ${dir} and is NOT covered by the automatic 30-day sweep. ` +
+          'Delete it by hand by 2026-03-31.',
+      ]);
+      // A subdirectory of the dedicated dir is not swept either (the sweep does not recurse).
+      expect(retentionNotice(`${dir}/sub/x.csv`, dir, NOW)).toHaveLength(4);
     });
   });
 
@@ -745,151 +785,6 @@ describe('entry-script guards', () => {
         { sql: 'SELECT 2' },
       ]);
       expect(release).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('STRUCTURAL: nothing that could build a client loads before the sink check', () => {
-    // The sink check must run after `.env` loads and BEFORE any module that constructs a ClickHouse,
-    // Axiom or Redis client, and the cache guard must be installed before any blocklist read. Read
-    // from the entry script's AST, so the spelling of an import (quotes, side-effect form, require,
-    // re-export) cannot walk past it.
-    const ALLOWED_STATIC = [
-      'node:fs',
-      'node:os',
-      'node:path',
-      './decision-eval/safety',
-      './lib/run-as-script',
-    ];
-
-    function violations(source: string): string[] {
-      const file = ts.createSourceFile('entry.ts', source, ts.ScriptTarget.Latest, true);
-      const found: string[] = [];
-      const dynamicImports: Array<{ spec: string; pos: number }> = [];
-      const calls: Record<string, number[]> = {};
-      const visit = (node: ts.Node) => {
-        if (ts.isImportDeclaration(node)) {
-          const spec = (node.moduleSpecifier as ts.StringLiteral).text;
-          if (!node.importClause?.isTypeOnly && !ALLOWED_STATIC.includes(spec)) {
-            found.push(`static import ${spec}`);
-          }
-        } else if (ts.isImportEqualsDeclaration(node)) {
-          found.push('import = require');
-        } else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-          found.push('export … from');
-        } else if (ts.isCallExpression(node)) {
-          const callee = node.expression;
-          if (callee.kind === ts.SyntaxKind.ImportKeyword) {
-            const arg = node.arguments[0];
-            dynamicImports.push({
-              spec: arg && ts.isStringLiteral(arg) ? arg.text : '<computed>',
-              pos: node.getStart(),
-            });
-          } else {
-            const name = ts.isIdentifier(callee)
-              ? callee.text
-              : ts.isPropertyAccessExpression(callee)
-              ? callee.name.text
-              : '';
-            if (name === 'require') found.push('require()');
-            (calls[name] ??= []).push(node.getStart());
-            const withArgs = `${name}(${node.arguments.map((a) => a.getText()).join(', ')})`;
-            (calls[withArgs] ??= []).push(node.getStart());
-          }
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(file);
-
-      // Only the REAL calls count: a decoy `assertNoSinks({})` or `suppressCacheWrites(other)`
-      // placed early must not stand in for them.
-      const sinkCheck = calls['assertNoSinks(process.env)']?.[0] ?? -1;
-      const guard = calls['suppressCacheWrites(redis)']?.[0] ?? -1;
-      if (!dynamicImports.some((d) => d.spec === '~/env/server'))
-        found.push('no ~/env/server import');
-      if (sinkCheck < 0) found.push('no assertNoSinks(process.env) call');
-      if (guard < 0) found.push('no suppressCacheWrites(redis) call');
-      for (const { spec, pos } of dynamicImports) {
-        if (spec === '~/env/server' ? pos > sinkCheck : pos < sinkCheck) {
-          found.push(`import(${spec}) on the wrong side of assertNoSinks`);
-        }
-      }
-      for (const name of ['getBlocklistData', 'blocklistSelfCheck', 'replayApp']) {
-        for (const pos of calls[name] ?? []) {
-          if (pos < guard) found.push(`${name} before suppressCacheWrites`);
-        }
-      }
-      return found;
-    }
-
-    const entry = fs.readFileSync(
-      path.join(__dirname, '..', 'replay-shared-data-moderation.ts'),
-      'utf8'
-    );
-
-    it('the entry script has no violation', () => {
-      expect(violations(entry)).toEqual([]);
-    });
-
-    it.each([
-      ['a side-effect import', `import '~/server/redis/client';\n${entry}`, 'static import'],
-      [
-        'a double-quoted import',
-        `import { x } from "~/server/db/client";\n${entry}`,
-        'static import',
-      ],
-      ['a re-export', `export * from '~/server/db/client';\n${entry}`, 'export … from'],
-      ['import = require', `import x = require('y');\n${entry}`, 'import = require'],
-      ['a bare require', `${entry}\nconst z = require('w');`, 'require()'],
-      [
-        'a server import hoisted above the check',
-        entry.replace(
-          '  assertNoSinks(process.env);',
-          "  await import('./shared-data-replay/replay');\n  assertNoSinks(process.env);"
-        ),
-        'wrong side of assertNoSinks',
-      ],
-      [
-        'a blocklist read before the cache guard',
-        entry.replace(
-          '  const cacheGuard = suppressCacheWrites(redis);',
-          "  getBlocklistData('x');\n  const cacheGuard = suppressCacheWrites(redis);"
-        ),
-        'getBlocklistData before suppressCacheWrites',
-      ],
-      [
-        'a decoy sink check ahead of a hoisted import',
-        entry.replace(
-          "  await import('~/env/server');",
-          "  assertNoSinks({});\n  await import('./shared-data-replay/replay');\n  await import('~/env/server');"
-        ),
-        'wrong side of assertNoSinks',
-      ],
-      [
-        'a decoy cache guard ahead of an early blocklist read',
-        entry.replace(
-          '  const cacheGuard = suppressCacheWrites(redis);',
-          "  suppressCacheWrites({});\n  getBlocklistData('x');\n  const cacheGuard = suppressCacheWrites(redis);"
-        ),
-        'getBlocklistData before suppressCacheWrites',
-      ],
-      [
-        'the env import moved after the check',
-        entry
-          .replace("  await import('~/env/server');\n", '')
-          .replace(
-            '  assertNoSinks(process.env);',
-            "  assertNoSinks(process.env);\n  await import('~/env/server');"
-          ),
-        'import(~/env/server) on the wrong side',
-      ],
-      [
-        'no env import at all',
-        entry.replace("  await import('~/env/server');\n", ''),
-        'no ~/env/server import',
-      ],
-    ])('negative control: catches %s', (_, source, expected) => {
-      expect(source).not.toBe(entry);
-      expect(violations(source).join('\n')).toContain(expected);
     });
   });
 });

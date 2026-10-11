@@ -6,23 +6,26 @@
  * appended or updated, a counter key only on the increment that creates it. Content stored before
  * either flag was on is never re-checked. This script runs every stored `data` blob and every
  * counter key through the same classification, with SHADOW semantics: it records what WOULD be
- * blocked, into a local CSV, and does nothing else. Its output is the measured false-positive
- * rate over existing content that the enforce flip depends on.
+ * blocked, into a local CSV. That covers the content the live scans never recheck, which is the
+ * coverage precondition for the enforce flag. It is not a false-positive-rate measurement: the
+ * stored corpus is too small for that.
  *
  * Usage:
  *   CLICKHOUSE_HOST= AXIOM_TOKEN= pnpm run tsscript scripts/replay-shared-data-moderation.ts [options]
  *
  * Options:
- *   --out <path>       CSV to write. Default: <os tmpdir>/shared-data-replay-<timestamp>.csv.
- *                      Refused inside any git work tree (this repository or another clone of
- *                      it) and when the file already exists. Written 0600: it holds user-written
- *                      text. Deleted again if the run fails part-way.
+ *   --out <path>       CSV to write. Default: <os tmpdir>/civitai-shared-data-replay/
+ *                      shared-data-replay-<timestamp>.csv. Refused inside any git work tree (this
+ *                      repository or another clone of it) and when the file already exists.
+ *                      Written 0600: it holds user-written text. Deleted again if the run fails
+ *                      part-way.
  *   --page-size <n>    Rows per keyset page (default 500).
  *
  * Environment (the app's server env, loaded the usual `tsscript` way):
  *   APPS_DATABASE_URL  The App Blocks storage database. Required; read inside a READ ONLY
  *                      transaction, so the database refuses any write.
- *   REDIS_URL (+ the rest of the app's Redis env)  The cache the blocklists are read from.
+ *   REDIS_URL (+ the rest of the app's Redis env)  The cache the blocklists are read from (and,
+ *                      on a miss, written back to — see below).
  *   DATABASE_URL       The main database: a blocklist read falls back to it when its cache key is
  *                      cold (one SELECT on the Blocklist table).
  *   CLICKHOUSE_HOST, AXIOM_TOKEN  Must be EMPTY. The script refuses to start otherwise, so neither
@@ -33,11 +36,22 @@
  *   - write to the storage database (READ ONLY transaction, SELECT only);
  *   - insert into ClickHouse, emit to Axiom, file a Report, alert, or count toward a mute — it never
  *     calls the recording half of `shared-data-moderation.ts` (`recordSharedDataScan`,
- *     `scheduleSharedDataShadow`), and the two sink clients are absent by the env check above;
- *   - write to Redis. The one Redis write reachable from the scan path is the blocklist cache
- *     populate on a cache miss (`setCache` in `blocklist.service.ts`, via `redis.set`). That
- *     method is redirected to a run-local memo that `get` reads first (`suppressCacheWrites`), so a
- *     cold list costs one main-DB read for the whole run and nothing is written to Redis.
+ *     `scheduleSharedDataShadow`), and the two sink clients are absent by the env check above.
+ *
+ * What it CAN write:
+ *   - a blocklist's cache key in Redis, on a cache miss (one key per list read: link domains,
+ *     message patterns, benign phrases). Reading a cold list runs the ordinary cache-aside populate
+ *     in `blocklist.service.ts` (`setCache`, 5-minute TTL), exactly as every production pod does on
+ *     a miss. That populate is the one Redis write the scan path reaches.
+ *   - the CSV, and deletions of expired CSVs in the dedicated directory (retention, below).
+ *
+ * Retention: the CSV holds production user text, which expires 30 days after it is written (the
+ * same window as the live hit table). Every run first deletes any `*.csv` older than 30 days (by
+ * mtime) in the dedicated directory `<os tmpdir>/civitai-shared-data-replay/` and prints what it
+ * deleted; it touches nothing outside that directory. So an expired CSV there is deleted by the NEXT
+ * run, not on the day it expires: each run prints the expiry date and the `rm` command to use if no
+ * further run is coming. A CSV written elsewhere with `--out` is never swept, and the script says so
+ * and by when to delete it by hand.
  *
  * Detectors that need I/O: only the blocklist-backed two (link domains, message patterns) and the
  * benign-phrase list the audit strips first. Every other detector is code bundled in the app. Before
@@ -53,6 +67,72 @@ import { runScriptAndExit } from './lib/run-as-script';
 
 const SCRIPT_BASENAME = 'replay-shared-data-moderation.ts';
 
+/** Where the default CSV goes, and the only directory the retention sweep ever touches. */
+export const REPLAY_DIR_NAME = 'civitai-shared-data-replay';
+export const RETENTION_DAYS = 30;
+const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+export const defaultReplayDir = (tmp: string = os.tmpdir()) => path.join(tmp, REPLAY_DIR_NAME);
+
+/**
+ * Create the dedicated directory 0700 (or tighten an existing one to 0700) and return its real path.
+ * A symlink or a non-directory in its place is refused: the sweep deletes files in whatever this
+ * resolves to.
+ */
+export function ensureReplayDir(dir: string): string {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stat = fs.lstatSync(dir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`refusing to use ${dir}: not a plain directory`);
+  }
+  fs.chmodSync(dir, 0o700);
+  return fs.realpathSync(dir);
+}
+
+/**
+ * Delete every regular `*.csv` file directly in `dir` whose mtime is more than `RETENTION_DAYS`
+ * before `now`, logging each, and return what was deleted. Never recurses, never follows a symlink,
+ * never touches another extension or anything outside `dir`.
+ */
+export function sweepExpiredCsvs(
+  dir: string,
+  now: Date,
+  log: (message: string) => void = console.log
+): string[] {
+  const deleted: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.csv')) continue;
+    const file = path.join(dir, entry.name);
+    if (now.getTime() - fs.lstatSync(file).mtimeMs <= RETENTION_MS) continue;
+    fs.rmSync(file);
+    deleted.push(file);
+    log(`retention: deleted expired CSV (older than ${RETENTION_DAYS} days): ${file}`);
+  }
+  if (!deleted.length) log(`retention: no CSV older than ${RETENTION_DAYS} days in ${dir}`);
+  return deleted;
+}
+
+/**
+ * What the operator is told once a CSV exists: where it is, when it expires, how to delete it
+ * sooner, and — when it lies outside the swept directory — that nothing will delete it for them.
+ */
+export function retentionNotice(out: string, replayDir: string, now: Date): string[] {
+  const expires = new Date(now.getTime() + RETENTION_MS).toISOString().slice(0, 10);
+  const quoted = `'${out.replace(/'/g, `'\\''`)}'`;
+  const lines = [
+    `CSV: ${out}`,
+    `expires: ${expires} (UTC, ${RETENTION_DAYS} days)`,
+    `delete it sooner: rm -- ${quoted}`,
+  ];
+  if (path.dirname(out) !== replayDir) {
+    lines.push(
+      `WARNING: this file is NOT in ${replayDir} and is NOT covered by the automatic ` +
+        `${RETENTION_DAYS}-day sweep. Delete it by hand by ${expires}.`
+    );
+  }
+  return lines;
+}
+
 export interface ReplayArgs {
   out: string;
   pageSize: number;
@@ -61,7 +141,7 @@ export interface ReplayArgs {
 export function parseArgs(argv: string[], now: Date = new Date()): ReplayArgs {
   const args: ReplayArgs = {
     out: path.join(
-      os.tmpdir(),
+      defaultReplayDir(),
       `shared-data-replay-${now.toISOString().replace(/[:.]/g, '-')}.csv`
     ),
     pageSize: 500,
@@ -119,39 +199,6 @@ export function assertNoSinks(env: Record<string, string | undefined>): void {
       `${set.join(' and ')} must be empty for a replay (set to the empty string, not unset)`
     );
   }
-}
-
-/**
- * Turn the cache client's `set` into a write to a RUN-LOCAL memo, and make the client's own `get`
- * read that memo first. See the header: `set` is the one Redis write the scan path can reach.
- *
- * Why a memo rather than a plain no-op: a no-op leaves a cold blocklist key cold, so every later
- * scan would miss again and re-read the main database. With the memo, a key that missed once is
- * served from this process for the rest of the run — one main-DB read per list, no Redis write.
- *
- * 🔴 The overrides sit on the client object, and node-redis derives clients from it by prototype
- * (`withTypeMapping` returns `Object.create(client)` — the Buffer-returning reader behind
- * `redis.packed` is one). So `get` serves the memo ONLY when called on this exact object, and
- * otherwise runs the original method with the caller's own `this`, keeping a derived client's type
- * mapping. A bound original would hand a derived reader strings, and its corrupt-entry eviction would
- * then DELETE live keys. `set` is intercepted for every caller: no path through it may write.
- */
-export function suppressCacheWrites(client: object): { memoisedKeys: () => number } {
-  const memo = new Map<unknown, unknown>();
-  // `object`, not the client's own type: its `get` is a wide overload set no narrower signature
-  // matches, and only the call shape `blocklist.service.ts` uses (`get(key)`) matters here.
-  const originalGet = (client as { get: (...args: unknown[]) => unknown }).get;
-  const define = (name: 'get' | 'set', value: (this: unknown, ...args: unknown[]) => unknown) =>
-    Object.defineProperty(client, name, { configurable: true, writable: true, value });
-  define('set', async (key, value) => {
-    memo.set(key, value);
-    return null;
-  });
-  define('get', function (this: unknown, key, ...rest) {
-    if (this === client && memo.has(key)) return Promise.resolve(memo.get(key));
-    return originalGet.call(this, key, ...rest);
-  });
-  return { memoisedKeys: () => memo.size };
 }
 
 interface ReadOnlyPool {
@@ -228,16 +275,17 @@ export async function withCsvFile<T>(
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  const now = new Date();
+  const args = parseArgs(process.argv.slice(2), now);
+  const replayDir = ensureReplayDir(defaultReplayDir());
+  sweepExpiredCsvs(replayDir, now);
   const out = resolveOutPath(args.out);
 
-  // Loads `.env` (under tsscript's NODE_ENV=development) and validates it. Nothing that opens a
-  // client is imported until the sink check has passed.
+  // Loads `.env` (under tsscript's NODE_ENV=development) and validates it. ORDER MATTERS: the sink
+  // check reads the loaded env, and the modules imported below reach the ClickHouse/Axiom clients.
   await import('~/env/server');
   assertNoSinks(process.env);
 
-  const { redis } = await import('~/server/redis/client');
-  const cacheGuard = suppressCacheWrites(redis);
   const { getBlocklistData } = await import('~/server/services/blocklist.service');
   const { BlocklistType } = await import('~/server/common/enums');
   const { requireAppsDb } = await import('~/server/db/appsDb');
@@ -257,6 +305,7 @@ async function main() {
 
   let hitRows = 0;
   const tallies = await withCsvFile(out, async (write) => {
+    for (const line of retentionNotice(out, replayDir, now)) console.log(line);
     write(replay.csvHeader());
     return withReadOnlyTransaction(requireAppsDb(), async (query) => {
       const selection = replay.selectAppSchemas(
@@ -287,10 +336,8 @@ async function main() {
     });
   });
   console.log(replay.formatSummary(tallies));
-  console.log(
-    `blocklist keys that were cold and are held in the run-local memo: ${cacheGuard.memoisedKeys()}`
-  );
   console.log(`wrote ${hitRows} hit row(s) to ${out}`);
+  for (const line of retentionNotice(out, replayDir, now)) console.log(line);
 }
 
 if (process.argv[1]?.endsWith(SCRIPT_BASENAME)) {

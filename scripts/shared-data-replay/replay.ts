@@ -181,10 +181,11 @@ export interface ReplayCsvRow {
   leaf: string;
   /** Counter rows: whether the key is user-chosen (see `countersPageSql`). Data rows: null. */
   userChosenCounter: boolean | null;
-  /** `blockingHit` would reject this row/counter under enforce, with the pattern list recorded only. */
+  /**
+   * `blockingHit` would reject this row/counter under enforce. A `pattern` hit does NOT block: live
+   * enforce counts one only while `user-content-pattern-enforce` is on, and that flag is absent.
+   */
   blocksUnderEnforce: boolean;
-  /** The same, once `user-content-pattern-enforce` is on too. */
-  blocksUnderEnforceWithPatterns: boolean;
 }
 
 export const CSV_COLUMNS: ReadonlyArray<keyof ReplayCsvRow> = [
@@ -200,7 +201,6 @@ export const CSV_COLUMNS: ReadonlyArray<keyof ReplayCsvRow> = [
   'leaf',
   'userChosenCounter',
   'blocksUnderEnforce',
-  'blocksUnderEnforceWithPatterns',
 ];
 
 /**
@@ -220,7 +220,6 @@ export function replayCsvRows(
 ): ReplayCsvRow[] {
   if (!scan.hits.length) return [];
   const blocksUnderEnforce = blockingHit(scan, { enforcePatterns: false }) !== null;
-  const blocksUnderEnforceWithPatterns = blockingHit(scan, { enforcePatterns: true }) !== null;
   return sharedDataHitRows(scan, {
     appBlockId: ctx.app,
     rowKey: ctx.rowKey,
@@ -240,7 +239,6 @@ export function replayCsvRows(
     leaf: row.leafText,
     userChosenCounter: ctx.userChosenCounter ?? null,
     blocksUnderEnforce,
-    blocksUnderEnforceWithPatterns,
   }));
 }
 
@@ -267,12 +265,10 @@ export interface AppTally {
   /** …of which are user-chosen (the anchor row is `{}`), i.e. the ones a live increment scans. */
   counterKeysUserChosen: number;
   hits: { data: CategoryCounts; counter: CategoryCounts };
-  /** Rows / counter keys `blockingHit` would reject under enforce (patterns recorded only). */
+  /** Rows / counter keys `blockingHit` would reject under enforce (a `pattern` hit does not block). */
   blocked: { data: number; counter: number };
-  /** The same with the pattern list enforced too. */
-  blockedWithPatterns: { data: number; counter: number };
   /** The counter figures again, for user-chosen keys only — the ones a live increment scans. */
-  userChosenCounters: { hits: CategoryCounts; blocked: number; blockedWithPatterns: number };
+  userChosenCounters: { hits: CategoryCounts; blocked: number };
 }
 
 export function emptyTally(app: string): AppTally {
@@ -285,8 +281,7 @@ export function emptyTally(app: string): AppTally {
     counterKeysUserChosen: 0,
     hits: { data: zeroCounts(), counter: zeroCounts() },
     blocked: { data: 0, counter: 0 },
-    blockedWithPatterns: { data: 0, counter: 0 },
-    userChosenCounters: { hits: zeroCounts(), blocked: 0, blockedWithPatterns: 0 },
+    userChosenCounters: { hits: zeroCounts(), blocked: 0 },
   };
 }
 
@@ -297,15 +292,12 @@ function countScan(
   userChosenCounter = false
 ) {
   const blocks = blockingHit(scan, { enforcePatterns: false }) !== null;
-  const blocksWithPatterns = blockingHit(scan, { enforcePatterns: true }) !== null;
   for (const hit of scan.hits) tally.hits[surface][hit.category] += 1;
   if (blocks) tally.blocked[surface] += 1;
-  if (blocksWithPatterns) tally.blockedWithPatterns[surface] += 1;
   if (!userChosenCounter) return;
   const own = tally.userChosenCounters;
   for (const hit of scan.hits) own.hits[hit.category] += 1;
   if (blocks) own.blocked += 1;
-  if (blocksWithPatterns) own.blockedWithPatterns += 1;
 }
 
 async function* pages<R extends { key: string }>(query: Query, sql: string, pageSize: number) {
@@ -400,13 +392,11 @@ export function totalTally(tallies: AppTally[]): AppTally {
         total.hits[surface][category] += t.hits[surface][category];
       }
       total.blocked[surface] += t.blocked[surface];
-      total.blockedWithPatterns[surface] += t.blockedWithPatterns[surface];
     }
     for (const category of Object.keys(t.userChosenCounters.hits) as SharedDataHitCategory[]) {
       total.userChosenCounters.hits[category] += t.userChosenCounters.hits[category];
     }
     total.userChosenCounters.blocked += t.userChosenCounters.blocked;
-    total.userChosenCounters.blockedWithPatterns += t.userChosenCounters.blockedWithPatterns;
   }
   return total;
 }
@@ -426,10 +416,8 @@ export function formatSummary(tallies: AppTally[]): string {
       `  data hits:    ${countsText(t.hits.data)}`,
       `  counter hits: ${countsText(t.hits.counter)}`,
       `  user-chosen counter hits: ${countsText(t.userChosenCounters.hits)}`,
-      `  would block under enforce: data=${t.blocked.data} counter=${t.blocked.counter}` +
-        ` | with patterns enforced: data=${t.blockedWithPatterns.data} counter=${t.blockedWithPatterns.counter}`,
-      `  user-chosen counters that would block: ${t.userChosenCounters.blocked}` +
-        ` | with patterns enforced: ${t.userChosenCounters.blockedWithPatterns}`
+      `  would block under enforce (pattern hits do not block): data=${t.blocked.data} counter=${t.blocked.counter}`,
+      `  user-chosen counters that would block: ${t.userChosenCounters.blocked}`
     );
   };
   for (const t of tallies) if (t.rows || t.counterKeys) block(t);
