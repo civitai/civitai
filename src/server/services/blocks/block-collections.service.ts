@@ -188,7 +188,9 @@ export function isPublicCollectionImage(
  * `isPublicCollectionImage`: the media (url,type,nsfwLevel) of each collection's
  * most-recent ACCEPTED item that passes the same rule, written here in SQL —
  * scanned, rated within the token's clamped `browsingLevel`, and carrying none of
- * the moderation flags. The nsfwLevel test is the maturity clamp the discovery
+ * the moderation flags — and whose post is published and not private, as
+ * `getAllImages` requires of the items the detail endpoint serves. The nsfwLevel
+ * test is the maturity clamp the discovery
  * cover MUST apply — a
  * MIXED-bucket collection (nsfwLevel 29) intersects a SFW ceiling and passes the
  * collection-level discovery gate, but its newest item can be R/X; surfacing that
@@ -223,6 +225,7 @@ export async function getFallbackCoverImages(
       i."nsfwLevel" as "nsfwLevel"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i."id" = ci."imageId"
+    JOIN "Post" p ON p."id" = i."postId"
     WHERE ci."collectionId" IN (${Prisma.join(collectionIds)})
       AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
       AND (i."nsfwLevel" & ${browsingLevel}) != 0
@@ -233,6 +236,8 @@ export async function getFallbackCoverImages(
       AND i."acceptableMinor" != TRUE
       AND i."tosViolation" != TRUE
       AND i."blockedFor" IS NULL
+      AND p."publishedAt" < now()
+      AND p."availability" != 'Private'
     ORDER BY ci."collectionId", ci."createdAt" DESC
   `;
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();

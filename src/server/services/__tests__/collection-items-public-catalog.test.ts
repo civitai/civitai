@@ -50,6 +50,8 @@ describe('getCollectionItemsByCollectionId image read', () => {
     expect(args.user).toBeUndefined();
     expect(args.disablePoi).toBe(true);
     expect(args.disableMinor).toBe(true);
+    // getAllImages refuses acceptableMinor only when no collectionId is passed.
+    expect(args).not.toHaveProperty('collectionId');
   });
 
   it("keeps the viewer's own read without the option", async () => {

@@ -42,20 +42,40 @@ const REFUSED = {
   tosViolation: { tosViolation: true },
   blockedFor: { blockedFor: 'moderated' },
   unscanned: { ingestion: 'Pending' },
+  scanBlocked: { ingestion: 'Blocked' },
+  scanNotFound: { ingestion: 'NotFound' },
+  rescanning: { ingestion: 'Rescan' },
   unrated: { nsfwLevel: 0 },
   aboveCeiling: { nsfwLevel: 8 },
+  unpublishedPost: { post: { publishedAt: null } },
+  scheduledPost: { post: { publishedAt: '2999-01-01' } },
+  privatePost: { post: { availability: 'Private' } },
+  noPost: { post: null },
 } as const;
 
 type Row = typeof CLEAN | Record<string, unknown>;
 const lit = (v: unknown) =>
   v === null ? 'NULL' : typeof v === 'string' ? `'${v}'` : String(v as number | boolean);
 
+/** Each image gets its own published public post unless `post` overrides it (null: no post). */
 async function insertImage(id: number, row: Row) {
-  const r = { ...CLEAN, ...row } as Record<string, unknown>;
+  const { post, ...image } = row as Record<string, unknown> & {
+    post?: Record<string, unknown> | null;
+  };
+  const r = { ...CLEAN, ...image } as Record<string, unknown>;
+  if (post !== null) {
+    const p = { publishedAt: '2026-01-01', availability: 'Public', ...post };
+    await holder.db.exec(`
+      INSERT INTO "Post" (id, "publishedAt", availability)
+      VALUES (${id}, ${lit(p.publishedAt)}, ${lit(p.availability)});
+    `);
+  }
   await holder.db.exec(`
-    INSERT INTO "Image" (id, url, type, "nsfwLevel", ingestion, "needsReview", poi, minor,
+    INSERT INTO "Image" (id, url, type, "postId", "nsfwLevel", ingestion, "needsReview", poi, minor,
       "acceptableMinor", "tosViolation", "blockedFor")
-    VALUES (${id}, 'img-${id}', 'image', ${lit(r.nsfwLevel)}, ${lit(r.ingestion)},
+    VALUES (${id}, 'img-${id}', 'image', ${post === null ? 'NULL' : id}, ${lit(r.nsfwLevel)}, ${lit(
+    r.ingestion
+  )},
       ${lit(r.needsReview)}, ${lit(r.poi)}, ${lit(r.minor)}, ${lit(r.acceptableMinor)},
       ${lit(r.tosViolation)}, ${lit(r.blockedFor)});
   `);
@@ -79,10 +99,17 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
     CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
+    CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
+    CREATE TABLE "Post" (
+      id int PRIMARY KEY,
+      "publishedAt" timestamp(3),
+      availability "Availability" NOT NULL DEFAULT 'Public'
+    );
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
       url text NOT NULL,
       type "MediaType" NOT NULL DEFAULT 'image',
+      "postId" int,
       "nsfwLevel" int NOT NULL DEFAULT 0,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
       "needsReview" text,
@@ -110,7 +137,7 @@ beforeEach(async () => {
     const sql = Prisma.sql(strings, ...(values as never[]));
     return (await holder.db.query(sql.text, sql.values as unknown[])).rows;
   }) as never);
-  await holder.db.exec(`TRUNCATE "Image", "CollectionItem";`);
+  await holder.db.exec(`TRUNCATE "Image", "CollectionItem", "Post";`);
 });
 
 describe('getFallbackCoverImages against Postgres', () => {

@@ -298,7 +298,8 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
       minor: { minor: true },
       needsReview: { needsReview: 'poi' },
       acceptableMinor: { acceptableMinor: true },
-      tosViolation: { tosViolation: true },
+      // No `tosViolation` case: `getAllImages` items do not carry the field, and
+      // /api/v1/blocks/images does not filter on it either.
       blockedFor: { blockedFor: 'moderated' },
       unscanned: { ingestion: 'Pending' },
       unrated: { nsfwLevel: 0 },
