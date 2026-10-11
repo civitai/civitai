@@ -16,8 +16,10 @@ import {
   normalizeSshPublicKey,
 } from '~/server/services/blocks/dev-tunnel-session';
 import {
+  recordDevTunnelDnsGc,
   recordDevTunnelMint,
   recordDevTunnelTeardown,
+  type DevTunnelDnsGcOutcome,
   type DevTunnelTeardownReason,
 } from '~/server/prom/dev-tunnel.metrics';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
@@ -243,8 +245,9 @@ export function buildDevTunnelIngressRoute(opts: DevTunnelManifestOpts) {
   // routes (`<slug>.civit.ai`). Without them the host is NXDOMAIN and the browser can't
   // load the tunnel. Gated on ingressTarget (the Traefik LB IP, from env) so the origin
   // IP is not committed here; unset ⇒ no annotations ⇒ no record.
-  // ⚠️ NOT auto-cleaned: the civit.ai external-dns is `policy: upsert-only`, so deleting
-  // the route does NOT remove the record (orphan-DNS GC is a tracked follow-up).
+  // ⚠️ external-dns is `policy: upsert-only`, so deleting the route does NOT remove the
+  // record — teardown/reap remove it themselves via `deleteDevTunnelDns` (called from
+  // `deleteDevTunnelRoute`; outcome counted in `civitai_app_dev_tunnel_dns_gc_total`).
   const externalDnsAnnotations = opts.ingressTarget
     ? {
         'external-dns.alpha.kubernetes.io/hostname': opts.host,
@@ -602,22 +605,24 @@ async function resolveCfZoneId(
   return null;
 }
 
-/** List the CF record ids (any type) whose name is exactly `name`. */
+/** List the CF record ids (any type) whose name is exactly `name`. Returns null
+ *  when the LIST itself failed — distinct from `[]` (listed fine, nothing there),
+ *  so a broken lookup is not counted as "already gone". */
 async function listCfRecordIds(
   zoneId: string,
   name: string,
   token: string,
   fetchImpl: typeof fetch
-): Promise<string[]> {
+): Promise<string[] | null> {
   const res = await cfFetch(
     `/zones/${zoneId}/dns_records?name=${encodeURIComponent(name)}`,
     token,
     { method: 'GET' },
     fetchImpl
   );
-  if (!res.ok) return [];
+  if (!res.ok) return null;
   const body = (await res.json()) as CfEnvelope<Array<{ id?: string }>>;
-  if (!body?.success || !Array.isArray(body.result)) return [];
+  if (!body?.success || !Array.isArray(body.result)) return null;
   return body.result
     .map((r) => r?.id)
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
@@ -631,29 +636,53 @@ async function listCfRecordIds(
  * deleting both names covers the A record + both TXT formats). No-op when
  * unconfigured; refuses any host that isn't a well-formed `dev-<16hex>.…`; NEVER
  * throws. `fetchImpl` is injected for testing (defaults to global fetch).
+ *
+ * Every call records exactly ONE `civitai_app_dev_tunnel_dns_gc_total{outcome}`:
+ * `skipped` (unconfigured / zone unresolvable), `refused` (host failed the guard),
+ * `deleted` (≥1 record, every DELETE ok), `none_found` (zone resolved, both LISTs
+ * succeeded and matched nothing), `failed` (a LIST or DELETE failed, or a throw).
  */
 export async function deleteDevTunnelDns(
   host: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<void> {
+  let outcome: DevTunnelDnsGcOutcome = 'failed';
   try {
     const token = env.APPS_DEV_TUNNEL_CF_API_TOKEN;
-    if (!token) return; // feature off — records linger as before
+    if (!token) {
+      outcome = 'skipped'; // feature off — records linger as before
+      return;
+    }
     if (!host || typeof host !== 'string' || !DEV_HOST_PREFIX_REGEX.test(host)) {
       // SAFETY: never touch a name that isn't a well-formed ephemeral dev host.
+      outcome = 'refused';
       // eslint-disable-next-line no-console
       console.warn(JSON.stringify({ event: 'app-blocks.dev-tunnel.dns-gc.refused', host }));
       return;
     }
     const zoneId = await resolveCfZoneId(registrableDomain(host), token, fetchImpl);
-    if (!zoneId) return;
+    if (!zoneId) {
+      outcome = 'skipped';
+      return;
+    }
     // The A record and BOTH external-dns TXT-registry name forms.
     const ids = new Set<string>();
+    let allOk = true;
     for (const name of [host, `a-${host}`]) {
-      for (const id of await listCfRecordIds(zoneId, name, token, fetchImpl)) ids.add(id);
+      const found = await listCfRecordIds(zoneId, name, token, fetchImpl);
+      if (found === null) {
+        allOk = false;
+        continue;
+      }
+      for (const id of found) ids.add(id);
     }
     for (const id of ids) {
-      await cfFetch(`/zones/${zoneId}/dns_records/${id}`, token, { method: 'DELETE' }, fetchImpl)
+      const ok = await cfFetch(
+        `/zones/${zoneId}/dns_records/${id}`,
+        token,
+        { method: 'DELETE' },
+        fetchImpl
+      )
         .then((r) => {
           if (!r.ok) {
             // eslint-disable-next-line no-console
@@ -666,13 +695,15 @@ export async function deleteDevTunnelDns(
               })
             );
           }
+          return r.ok;
         })
-        .catch(() => {
-          /* best-effort per-record delete */
-        });
+        .catch(() => false /* best-effort per-record delete */);
+      if (!ok) allOk = false;
     }
+    outcome = !allOk ? 'failed' : ids.size > 0 ? 'deleted' : 'none_found';
   } catch (e) {
     // Best-effort — a CF hiccup must NEVER break teardown/reap.
+    outcome = 'failed';
     // eslint-disable-next-line no-console
     console.warn(
       JSON.stringify({
@@ -681,6 +712,14 @@ export async function deleteDevTunnelDns(
         error: (e as Error)?.message,
       })
     );
+  } finally {
+    // Guarded here as well as inside the recorder: a throw from `finally` would
+    // replace the return and break this function's never-throws contract.
+    try {
+      recordDevTunnelDnsGc(outcome);
+    } catch {
+      /* never throw from telemetry */
+    }
   }
 }
 
