@@ -1738,10 +1738,17 @@ export const AI_REVIEW_SYSTEM_USER_ID = -1;
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
+  imagesAsPublicCatalog = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
+  /**
+   * Read image items the way the public image catalog (`runImageSearch`) does: with no
+   * viewer, so no owner or moderator carve-outs, and with the poi/minor exclusion. The
+   * collection permission check above still uses `user`.
+   */
+  imagesAsPublicCatalog?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2063,7 +2070,8 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ImageSort.Newest,
           ...userPreferencesInput,
           browsingLevel: input.browsingLevel,
-          user,
+          user: imagesAsPublicCatalog ? undefined : user,
+          ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,

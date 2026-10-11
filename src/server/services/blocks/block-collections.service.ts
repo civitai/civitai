@@ -26,7 +26,9 @@ import { dbRead } from '~/server/db/client';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 
 /**
  * Resolve the FULL server-side SessionUser for a verified block-token subject
@@ -151,18 +153,70 @@ export function toCoverFields(
 }
 
 /**
- * Fallback cover source for collections whose own cover is null OR is not usable
- * (over the ceiling, or flagged poi/minor): the media (url,type,nsfwLevel) of each
- * collection's most-recent ACCEPTED item WHOSE OWN `Image.nsfwLevel` is PERMITTED
- * by the token's clamped `browsingLevel` and that carries neither the poi nor the
- * minor flag (the exclusion the public image endpoints apply). The nsfwLevel test
- * is the maturity clamp the discovery cover MUST apply — a
+ * The cover fields the blocks collections endpoint selects for `isPublicCollectionImage`.
+ * Every moderation field is required, so a select that omits one fails to compile
+ * instead of reading `undefined` as "not flagged".
+ */
+export type PublicCollectionImageFields = {
+  ingestion: string;
+  nsfwLevel: number;
+  needsReview: string | null;
+  poi: boolean;
+  minor: boolean;
+  acceptableMinor: boolean;
+  tosViolation: boolean;
+  blockedFor: string | null;
+};
+
+/**
+ * Whether a collection image (a cover or an item) may be served to a block at the
+ * token's `browsingLevel`: scanned, rated within the ceiling, and carrying none of
+ * the moderation flags. `getFallbackCoverImages` applies the same rule in SQL.
+ * A field the caller leaves out reads as "not flagged", so a caller must either
+ * select every field (`PublicCollectionImageFields`) or have its query already
+ * refuse the missing ones, as `getAllImages` does for `acceptableMinor`.
+ */
+export function isPublicCollectionImage(
+  image: Parameters<typeof classifyGatedImageForViewer>[0],
+  browsingLevel: number
+): boolean {
+  if (classifyGatedImageForViewer(image, browsingLevel).status !== 'visible') return false;
+  return true;
+}
+
+/**
+ * Of `imageIds`, the ones `getAllImages` refuses on its restricted base model condition:
+ * a mature level on an image linked to a license-restricted base model. The column is
+ * written by raw SQL only and is not in the Prisma schema, so a cover select cannot read
+ * it. `getFallbackCoverImages` applies the same condition in its own WHERE.
+ */
+export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Set<number>> {
+  if (imageIds.length === 0) return new Set();
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT i."id" as "id"
+    FROM "Image" i
+    WHERE i."id" IN (${Prisma.join(imageIds)})
+      -- The exact complement of getAllImages' condition, so a NULL refuses as it does there.
+      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted") IS NOT TRUE
+  `;
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Fallback cover source for collections whose own cover is null OR fails
+ * `isPublicCollectionImage`: the media (url,type,nsfwLevel) of each collection's
+ * most-recent ACCEPTED item that passes the same rule, written here in SQL —
+ * scanned, rated within the token's clamped `browsingLevel`, and carrying none of
+ * the moderation flags — and whose post is published and not private, as
+ * `getAllImages` requires of the items the detail endpoint serves. The nsfwLevel
+ * test is the maturity clamp the discovery
+ * cover MUST apply — a
  * MIXED-bucket collection (nsfwLevel 29) intersects a SFW ceiling and passes the
  * collection-level discovery gate, but its newest item can be R/X; surfacing that
  * thumbnail on a SFW-domain / region-restricted token would leak mature media.
  *
- * The nsfw test is BITWISE (`nsfwLevel & browsingLevel != 0`, plus unrated 0 —
- * the identical authority the detail path + images service use), applied IN the
+ * The nsfw test is BITWISE (`nsfwLevel & browsingLevel != 0`, which also refuses
+ * an unrated 0, as `getAllImages` does for a non-owner), applied IN the
  * WHERE so `DISTINCT ON (collectionId)` picks the newest *permitted* item per
  * collection (filtering after `distinct` would drop the cover entirely). Returns
  * a Map keyed by collectionId; a collection with no permitted item is absent
@@ -190,11 +244,21 @@ export async function getFallbackCoverImages(
       i."nsfwLevel" as "nsfwLevel"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i."id" = ci."imageId"
+    JOIN "Post" p ON p."id" = i."postId"
     WHERE ci."collectionId" IN (${Prisma.join(collectionIds)})
       AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
-      AND ((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)
+      AND (i."nsfwLevel" & ${browsingLevel}) != 0
+      AND i."ingestion" = 'Scanned'
+      AND i."needsReview" IS NULL
       AND i."poi" != TRUE
       AND i."minor" != TRUE
+      AND i."acceptableMinor" != TRUE
+      AND i."tosViolation" != TRUE
+      AND i."blockedFor" IS NULL
+      AND p."publishedAt" < now()
+      AND p."availability" != 'Private'
+      -- Same restricted-base-model condition getAllImages applies to every row.
+      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
     ORDER BY ci."collectionId", ci."createdAt" DESC
   `;
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();

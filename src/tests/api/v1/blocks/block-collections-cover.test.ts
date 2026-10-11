@@ -19,6 +19,7 @@ vi.mock('~/server/auth/session-client', () => ({ sessionClient: {} }));
 
 import {
   getFallbackCoverImages,
+  isPublicCollectionImage,
   toCoverFields,
   toCoverImageUrl,
 } from '~/server/services/blocks/block-collections.service';
@@ -153,26 +154,6 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
     expect(values).toContain(3);
   });
 
-  it('excludes poi and minor items from the fallback cover', async () => {
-    mockQueryRaw.mockResolvedValueOnce([]);
-    await getFallbackCoverImages([10], 3);
-    const [strings] = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
-    // Whole-line equality, so a clause appended to either line fails the test; both
-    // lines must sit in the WHERE, after the maturity clause and before ORDER BY.
-    const lines = strings
-      .join(' ? ')
-      .split('\n')
-      .map((l) => l.trim());
-    const at = (line: string) => lines.indexOf(line);
-    const maturity = lines.findIndex((l) => l.startsWith('AND ((i."nsfwLevel" &'));
-    const orderBy = lines.findIndex((l) => l.startsWith('ORDER BY'));
-    expect(maturity).toBeGreaterThan(-1);
-    for (const clause of ['AND i."poi" != TRUE', 'AND i."minor" != TRUE']) {
-      expect(at(clause)).toBeGreaterThan(maturity);
-      expect(at(clause)).toBeLessThan(orderBy);
-    }
-  });
-
   it('🔴 SELECTS the item nsfwLevel, so a fallback cover can publish ITS OWN level', async () => {
     // The level is not merely a filter predicate here: the endpoint publishes the
     // level of the cover it serves, and for a fallback cover THIS row is that
@@ -221,5 +202,37 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
       ...unknown[]
     ];
     expect(values).toContain(1);
+  });
+});
+
+describe('isPublicCollectionImage', () => {
+  // The fallback query applies the same rule in SQL: block-collections-fallback-cover.behavior.test.ts.
+  const clean = {
+    ingestion: 'Scanned',
+    nsfwLevel: 1,
+    needsReview: null,
+    poi: false,
+    minor: false,
+    acceptableMinor: false,
+    tosViolation: false,
+    blockedFor: null,
+  };
+
+  it('serves a clean scanned image within the ceiling', () => {
+    expect(isPublicCollectionImage(clean, 3)).toBe(true);
+  });
+
+  it.each([
+    ['poi', { poi: true }],
+    ['minor', { minor: true }],
+    ['needsReview', { needsReview: 'poi' }],
+    ['acceptableMinor', { acceptableMinor: true }],
+    ['tosViolation', { tosViolation: true }],
+    ['blockedFor', { blockedFor: 'moderated' }],
+    ['unscanned', { ingestion: 'Pending' }],
+    ['unrated', { nsfwLevel: 0 }],
+    ['above the ceiling', { nsfwLevel: 8 }],
+  ])('refuses an image that is %s', (_state, over) => {
+    expect(isPublicCollectionImage({ ...clean, ...over }, 3)).toBe(false);
   });
 });
