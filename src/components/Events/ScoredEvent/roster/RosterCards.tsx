@@ -50,6 +50,9 @@ const MEDALS: Record<number, { background: string; color: string }> = {
   3: { background: 'linear-gradient(135deg, #f4a261, #b5651d)', color: '#2a1300' },
 };
 
+// The podium hero: wider than tall, so the three cards stay a card's height, not a poster's.
+const HERO = '!aspect-[5/4]';
+
 // The podium's foil: the shop's top-tier tile border (EventHatTile tierStyle), team colour and gold.
 function foilStyle(color: string): CSSProperties {
   return {
@@ -418,11 +421,11 @@ export function RosterPodiumCard({
     >
       <div className="relative">
         {hero ? (
-          <HatArt url={hero.url} color={ctx.glow} width={256} />
+          <HatArt url={hero.url} color={ctx.glow} width={256} className={HERO} />
         ) : teamHatUrl ? (
-          <HatArt url={teamHatUrl} className="opacity-30 grayscale" width={256} />
+          <HatArt url={teamHatUrl} className={clsx(HERO, 'opacity-30 grayscale')} width={256} />
         ) : (
-          <div className="aspect-square w-full rounded-md bg-gray-1 dark:bg-dark-7" />
+          <div className={clsx(HERO, 'w-full rounded-md bg-gray-1 dark:bg-dark-7')} />
         )}
         <RankChip rank={rank} className="absolute left-2 top-2 shadow-md" />
         {isNew && <NewBadge className="absolute right-2 top-2 rotate-6 px-2 py-0.5 text-xs" />}
@@ -430,8 +433,7 @@ export function RosterPodiumCard({
           size="xs"
           fw={700}
           truncate
-          className="absolute inset-x-2 bottom-2 text-center"
-          c={hero?.worn ? ctx.color : 'dimmed'}
+          className="absolute bottom-2 left-1/2 max-w-[calc(100%-16px)] -translate-x-1/2 rounded-full bg-black/60 px-3 py-0.5 text-white"
           data-testid="roster-hero-label"
         >
           {label === 'wearing'
@@ -441,6 +443,11 @@ export function RosterPodiumCard({
             : 'No hat yet'}
         </Text>
       </div>
+      <div className="flex items-center gap-2">
+        <UserAvatar user={item.user} avatarSize={36} withDecorations={false} linkToProfile />
+        <Username item={item} ctx={ctx} />
+      </div>
+      <Stats item={item} ctx={ctx} />
       {rest.length > 0 && (
         <HatRow
           hats={rest}
@@ -456,11 +463,6 @@ export function RosterPodiumCard({
           onMore={() => openHats(item, ctx)}
         />
       )}
-      <div className="flex items-center gap-2">
-        <UserAvatar user={item.user} avatarSize={36} withDecorations={false} linkToProfile />
-        <Username item={item} ctx={ctx} />
-      </div>
-      <Stats item={item} ctx={ctx} />
     </div>
   );
 }
