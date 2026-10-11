@@ -21,12 +21,16 @@ const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let placeable: unknown[] = [];
+let placeableLoading = false;
 const { equip } = vi.hoisted(() => ({ equip: vi.fn() }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
     'event.getPlaceableContent': {
-      useQuery: () => ({ data: placeable, isLoading: false }),
+      useQuery: () => ({
+        data: placeableLoading ? undefined : placeable,
+        isLoading: placeableLoading,
+      }),
     },
   }),
 }));
@@ -129,6 +133,34 @@ const hat = (over: Partial<MyHat> = {}) =>
     reactions: 0,
     ...over,
   } as MyHat);
+
+describe('PlaceHatModal older posts', () => {
+  const modal = () =>
+    render(
+      React.createElement(PlaceHatModal, { event: 'birthday2026', hat: hat(), myHats: [hat()] })
+    );
+  afterEach(() => {
+    placeableLoading = false;
+  });
+
+  // Only the newest posts are listed: say where an older one takes a hat, in the menu's own words.
+  it('points to the menu item on each post for older posts', () => {
+    placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }];
+    expect(modal().querySelector('[data-testid="older-posts-hint"]')?.textContent).toBe(
+      'Looking for an older post? Find it on your profile and use Add Party Hat from the ⋮ menu on its card.'
+    );
+  });
+
+  it('says it with nothing listed too', () => {
+    placeable = [];
+    expect(modal().querySelector('[data-testid="older-posts-hint"]')).not.toBeNull();
+  });
+
+  it('waits until the list has loaded', () => {
+    placeableLoading = true;
+    expect(modal().querySelector('[data-testid="older-posts-hint"]')).toBeNull();
+  });
+});
 
 describe('PlaceHatModal tiles', () => {
   // No id or type line: an untitled image is its picture alone, a titled model shows its title.
