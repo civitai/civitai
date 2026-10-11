@@ -146,10 +146,8 @@ const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m
 export const activityValuesSql = `SELECT
     (SELECT count(*) FROM (${publishedSources.model}) s WHERE s."userId" = $1)::int AS models,
     (SELECT count(*) FROM (${publishedSources.article}) s WHERE s."userId" = $1)::int AS articles,
-    -- GROUP BY keeps the planner off the max() rewrite, which walks the whole downloads index for a
-    -- heavy uploader with no public model (1.5s on prod).
-    coalesce((SELECT max(s."downloadCount") FROM (${modelDownloadsSource}) s
-      WHERE s."userId" = $1 GROUP BY s."userId"), 0)::int AS downloads,
+    least(coalesce((SELECT sum(s."downloadCount") FROM (${modelDownloadsSource}) s
+      WHERE s."userId" = $1), 0), 2147483647)::int AS downloads,
     coalesce((SELECT s."followerCount" FROM (${userMetricSource}) s
       WHERE s."userId" = $1), 0)::int AS followers,
     coalesce((SELECT s."reactionCount" FROM (${userMetricSource}) s
@@ -183,12 +181,12 @@ function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
       return ({ keys, users }) => `
         SELECT d."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt"
         FROM (
-          SELECT s."userId", max(s."downloadCount") AS top
+          SELECT s."userId", sum(s."downloadCount") AS total
           FROM (${modelDownloadsSource}) s
           WHERE (${users}::int[] IS NULL OR s."userId" = ANY(${users}::int[]))
           GROUP BY s."userId"
         ) d
-        JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[]) AND d.top >= m.threshold
+        JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[]) AND d.total >= m.threshold
         WHERE ${notHeld('d."userId"')}`;
     case 'userMetric':
       return ({ keys, users }) => `
