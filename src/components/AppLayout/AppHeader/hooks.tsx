@@ -62,9 +62,7 @@ export type UserMenuItem = {
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
   newUntil?: Date;
-  // NEW until the viewer follows the link once; `onNavigate` records that.
   isNew?: boolean;
-  onNavigate?: () => void;
   /**
    * A count rendered as a filled badge after the label. Zero and undefined both
    * render nothing — a badge that says "0" reads as a broken badge, not as an

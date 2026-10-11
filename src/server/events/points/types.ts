@@ -32,6 +32,10 @@ export type EventPointsConfig = {
   types: Partial<Record<EventPointType, EventPointTypeRule>>;
 };
 
+export function pointTypesFor(config: EventPointsConfig, entity: EventPointEntityType) {
+  return EVENT_POINT_TYPES.filter((type) => config.types[type]?.entities.includes(entity));
+}
+
 // One event cosmetic instance: a UserCosmetic is keyed by (userId, cosmeticId, claimKey), and the
 // claim key tells apart copies of the same cosmetic one person owns.
 export type EventHat = { ownerId: number; cosmeticId: number; claimKey: string; team: string };

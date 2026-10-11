@@ -265,7 +265,7 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
             </>
           );
           const linkOrButton = item.href ? (
-            <MenuItemLink href={item.href} rel={item.rel} as={item.as} onNavigate={item.onNavigate}>
+            <MenuItemLink href={item.href} rel={item.rel} as={item.as}>
               {content}
             </MenuItemLink>
           ) : (
@@ -468,14 +468,8 @@ function MenuItemButton({
 function MenuItemLink({
   children,
   className,
-  onNavigate,
   ...props
-}: LinkProps & {
-  children: React.ReactNode;
-  className?: string;
-  rel?: string;
-  onNavigate?: () => void;
-}) {
+}: LinkProps & { children: React.ReactNode; className?: string; rel?: string }) {
   const { handleClose } = useUserMenuContext();
   return (
     <NextLink
@@ -483,10 +477,7 @@ function MenuItemLink({
         'flex items-center gap-2.5 px-4 py-3 hover:bg-gray-1 @md:px-3 @md:py-2.5 hover:dark:bg-dark-4',
         className
       )}
-      onClick={() => {
-        onNavigate?.();
-        handleClose();
-      }}
+      onClick={handleClose}
       {...props}
     >
       {children}

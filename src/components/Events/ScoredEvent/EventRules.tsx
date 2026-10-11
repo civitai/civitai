@@ -17,12 +17,21 @@ import { useTeamColor } from '~/components/Events/events.utils';
 import { EventSectionHeading } from '~/components/Events/ScoredEvent/EventSectionHeading';
 import { SCORE_WAYS } from '~/components/Events/ScoredEvent/HatStats';
 import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
-import { describeEntityTypes } from '~/components/Events/ScoredEvent/scored-event.utils';
+import {
+  describeEntityTypes,
+  joinWithAnd,
+} from '~/components/Events/ScoredEvent/scored-event.utils';
+import type { EventPointType } from '~/server/events/points/types';
 import type { RouterOutput } from '~/types/router';
 
 type EventData = RouterOutput['event']['getData'];
 
 const STEP_ICONS = [IconUsersGroup, IconHanger, IconConfetti];
+const ARTICLE_SCORE_WORDS: Partial<Record<EventPointType, string>> = {
+  view: 'views',
+  reaction: 'reactions',
+  comment: 'comments',
+};
 // The hero's surface, so the section reads as part of the same page. Nothing here is clickable,
 // so no card takes a hover state.
 const CARD =
@@ -33,6 +42,9 @@ export function EventRules({ data }: { data: EventData }) {
   const { page, rules, decoration } = data;
   if (!page) return null;
   const wearsOn = decoration ? describeEntityTypes(decoration.entityTypes) : 'your posts';
+  const articleScores = decoration?.entityTypes.includes('Article')
+    ? joinWithAnd((rules?.articleScores ?? []).flatMap((t) => ARTICLE_SCORE_WORDS[t] ?? []))
+    : '';
   const cooldownMin = decoration ? Math.round(decoration.moveCooldownMs / 60_000) : 0;
   // Each step takes the next team's colour, as the hero's headline does.
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
@@ -85,7 +97,7 @@ export function EventRules({ data }: { data: EventData }) {
               ))}
             </div>
             <Text size="xs" c="dimmed">
-              Hats go on your own {wearsOn}.{' '}
+              Hats go on your own {wearsOn}. {articleScores && `Articles score ${articleScores}. `}
               {rules.modelLikeWeight === undefined
                 ? "Models score views only: reactions aren't counted for models."
                 : 'Models score views and thumbs-up reviews.'}

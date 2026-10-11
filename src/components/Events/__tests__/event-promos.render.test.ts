@@ -15,7 +15,6 @@ const act = (React as unknown as { act: typeof actType }).act;
 // `banners` stands in for the gated server answer this viewer was seeded with.
 const h = vi.hoisted(() => ({
   banners: [] as NavBanner[],
-  asPath: '/',
   showInfoNotification: vi.fn(),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -26,7 +25,6 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
   ...(await importOriginal<typeof Notifications>()),
   showInfoNotification: h.showInfoNotification,
 }));
-vi.mock('next/router', () => ({ useRouter: () => ({ asPath: h.asPath }) }));
 vi.mock('cookies-next', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   setCookie: vi.fn(),
@@ -37,7 +35,9 @@ vi.mock('~/providers/AppProvider', async (importOriginal) => ({
 }));
 vi.mock('~/components/EdgeMedia/EdgeImage', () => ({ EdgeImage: () => null }));
 
-const { useEventMenuItems } = await import('~/components/AppLayout/AppHeader/useEventMenuItems');
+const { useEventMenuItems, useMarkEventVisited } = await import(
+  '~/components/AppLayout/AppHeader/useEventMenuItems'
+);
 const { TeamRostersButton } = await import('~/components/Cosmetics/EventDecoration/WornHatPopover');
 const { EventNavBanners } = await import(
   '~/components/AppLayout/NavAnnouncementSlot/NavAnnouncementSlot'
@@ -65,7 +65,6 @@ afterEach(() => {
 });
 beforeEach(() => {
   h.banners = [];
-  h.asPath = '/';
   h.showInfoNotification.mockClear();
   localStorage.clear();
 });
@@ -78,36 +77,50 @@ function render(node: React.ReactElement) {
   return host;
 }
 
-function mountMenuItems() {
+function mountMenuItems(visiting?: string) {
   const result: { current: ReturnType<typeof useEventMenuItems> } = { current: [] };
   function Probe() {
     result.current = useEventMenuItems();
     return null;
   }
-  render(React.createElement(Probe));
+  function Visit({ event }: { event: string }) {
+    useMarkEventVisited(event);
+    return null;
+  }
+  render(
+    React.createElement(
+      React.Fragment,
+      null,
+      visiting && React.createElement(Visit, { event: visiting }),
+      React.createElement(Probe)
+    )
+  );
   return result;
 }
 
 describe('user-menu event entry', () => {
   it('is absent when the gated answer has no promo for this viewer', () => {
+    expect(mountMenuItems().current).toEqual([]);
+    act(() => root?.unmount());
     h.banners = [{ ...BIRTHDAY, promo: undefined }];
     expect(mountMenuItems().current).toEqual([]);
   });
 
-  it('links a playable event, NEW until followed', () => {
+  it('links a playable event, NEW until its page is visited', () => {
     h.banners = [BIRTHDAY];
-    const items = mountMenuItems();
-    expect(items.current.map((i) => [i.label, i.href, i.isNew])).toEqual([
+    expect(mountMenuItems().current.map((i) => [i.label, i.href, i.isNew])).toEqual([
       ["Civitai's 4th Birthday", '/events/birthday2026', true],
     ]);
-    act(() => items.current[0].onNavigate?.());
-    expect(items.current[0].isNew).toBe(false);
+    act(() => root?.unmount());
+    expect(mountMenuItems('birthday2026').current[0].isNew).toBe(false);
+    act(() => root?.unmount());
+    // Remembered on the next page, where nothing marks it.
+    expect(mountMenuItems().current[0].isNew).toBe(false);
   });
 
-  it('stops being NEW once the viewer reaches the event by any route', () => {
+  it("stays NEW after another event's page is visited", () => {
     h.banners = [BIRTHDAY];
-    h.asPath = '/events/birthday2026/team?sort=points';
-    expect(mountMenuItems().current[0].isNew).toBe(false);
+    expect(mountMenuItems('other').current[0].isNew).toBe(true);
   });
 });
 
