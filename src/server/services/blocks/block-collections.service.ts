@@ -196,8 +196,8 @@ export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Se
     SELECT i."id" as "id"
     FROM "Image" i
     WHERE i."id" IN (${Prisma.join(imageIds)})
-      AND (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) != 0
-      AND i."modelRestricted"
+      -- The exact complement of getAllImages' condition, so a NULL refuses as it does there.
+      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted") IS NOT TRUE
   `;
   return new Set(rows.map((r) => r.id));
 }

@@ -256,8 +256,8 @@ type PrimaryCoverImage = { id: number; url: string | null } & PublicCollectionIm
 /**
  * The ids of the collections whose own cover image can be served: it has a url, passes
  * `isPublicCollectionImage`, and is not refused by `getAllImages`' restricted base model
- * condition. That condition only refuses mature levels, so it is looked up only when the
- * token's ceiling admits them. Every other collection falls back to
+ * condition. That condition only refuses an image whose own level has a mature bit, so
+ * only those candidates are looked up. Every other collection falls back to
  * `getFallbackCoverImages`, which applies the same rule in SQL.
  */
 async function getUsablePrimaryCovers(
@@ -267,8 +267,11 @@ async function getUsablePrimaryCovers(
   const candidates = collections.filter(
     (c) => !!c.image?.url && isPublicCollectionImage(c.image, browsingLevel)
   );
-  const restricted = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag)
-    ? await getModelRestrictedImageIds(candidates.map((c) => c.image!.id))
+  const matureIds = candidates
+    .filter((c) => Flags.intersects(c.image!.nsfwLevel, nsfwBrowsingLevelsFlag))
+    .map((c) => c.image!.id);
+  const restricted = matureIds.length
+    ? await getModelRestrictedImageIds(matureIds)
     : new Set<number>();
   return new Set(candidates.filter((c) => !restricted.has(c.image!.id)).map((c) => c.id));
 }

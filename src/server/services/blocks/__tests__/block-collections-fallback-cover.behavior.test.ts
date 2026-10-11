@@ -83,7 +83,9 @@ async function insertImage(id: number, row: Row) {
     r.ingestion
   )},
       ${lit(r.needsReview)}, ${lit(r.poi)}, ${lit(r.minor)}, ${lit(r.acceptableMinor)},
-      ${lit(r.tosViolation)}, ${lit(r.blockedFor)}, ${lit(r.modelRestricted ?? false)});
+      ${lit(r.tosViolation)}, ${lit(r.blockedFor)}, ${lit(
+    r.modelRestricted === undefined ? false : r.modelRestricted
+  )});
   `);
 }
 
@@ -213,6 +215,12 @@ describe('getModelRestrictedImageIds against Postgres', () => {
     await insertImage(3, { nsfwLevel: 1, modelRestricted: true });
     await insertImage(4, { nsfwLevel: 2, modelRestricted: true });
     expect([...(await getModelRestrictedImageIds([1, 2, 3, 4, 99]))]).toEqual([1]);
+  });
+
+  it('treats a NULL modelRestricted on a mature image as refused, as getAllImages does', async () => {
+    await insertImage(1, { nsfwLevel: 4, modelRestricted: null });
+    await insertImage(2, { nsfwLevel: 1, modelRestricted: null });
+    expect([...(await getModelRestrictedImageIds([1, 2]))]).toEqual([1]);
   });
 
   it('runs no query for no ids', async () => {

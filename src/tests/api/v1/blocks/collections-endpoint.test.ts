@@ -1452,7 +1452,32 @@ describe('cover moderation and scan gate', () => {
       const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
       await handler(req as never, res as never);
       expect(mockRestricted).toHaveBeenCalledWith([120]);
+      expect(mockFallbackCovers).toHaveBeenCalledWith([20], MATURE);
       expect((res._json() as any).items[0].coverImageUrl).toBeNull();
+    });
+
+    it('mode=public: only the restricted collection falls back on a mixed page', async () => {
+      const row = (id: number, nsfwLevel: number) => ({
+        ...publicRow({ id: 100 + id, url: `primary-${id}`, nsfwLevel }),
+        id,
+      });
+      mockGetAll.mockResolvedValueOnce([row(10, 4), row(9, 4), row(8, 1)]);
+      mockRestricted.mockResolvedValueOnce(new Set([109]));
+      mockFallbackCovers.mockResolvedValueOnce(
+        new Map([[9, { url: 'fallback-9', type: 'image', nsfwLevel: 1 }]])
+      );
+      const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+      await handler(req as never, res as never);
+      // Only the mature candidates are looked up, in one call.
+      expect(mockRestricted).toHaveBeenCalledTimes(1);
+      expect(mockRestricted).toHaveBeenCalledWith([110, 109]);
+      expect(mockFallbackCovers).toHaveBeenCalledWith([9], MATURE);
+      const covers = (res._json() as any).items.map((i: any) => [i.id, i.coverImageUrl]);
+      expect(covers).toEqual([
+        [10, 'edge:primary-10'],
+        [9, 'edge:fallback-9'],
+        [8, 'edge:primary-8'],
+      ]);
     });
 
     it('keeps an unrestricted mature primary cover', async () => {
@@ -1463,7 +1488,7 @@ describe('cover moderation and scan gate', () => {
     });
   });
 
-  it('skips the restricted lookup when the ceiling admits no mature level', async () => {
+  it('skips the restricted lookup when no candidate cover is mature', async () => {
     mockGetAll.mockResolvedValueOnce([publicRow({})]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
