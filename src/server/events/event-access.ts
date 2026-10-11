@@ -50,7 +50,7 @@ function fliptKeyOf(event: GatedEvent) {
 }
 
 // A signed-out viewer is in no segment, so only a public flag lets them in.
-function isFlagOnFor(fliptKey: string, viewer: EventViewer) {
+export function isFlagOnFor(fliptKey: string, viewer: EventViewer) {
   return viewer?.id || viewer?.isModerator
     ? isFliptOnForTesters(fliptKey, viewer)
     : isFliptPublic(fliptKey);
