@@ -20,6 +20,9 @@ const h = vi.hoisted(() => ({
   hats: [] as unknown[],
   eventData: undefined as unknown,
   dismissed: [] as string[],
+  inView: true,
+  cosmeticLoading: false,
+  getDataEnabled: [] as unknown[],
   join: vi.fn(async () => undefined),
   trigger: vi.fn(),
 }));
@@ -29,7 +32,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'event.getNavBanners': { useQuery: () => ({ data: h.banners }) },
     'event.getCosmetic': {
       useQuery: (_i: unknown, o?: { enabled?: boolean }) => ({
-        data: o?.enabled ? h.cosmetic : undefined,
+        data: o?.enabled && !h.cosmeticLoading ? h.cosmetic : undefined,
+        isInitialLoading: !!o?.enabled && h.cosmeticLoading,
       }),
     },
     'event.getStandings': { useQuery: () => ({ data: h.standings }) },
@@ -39,9 +43,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       }),
     },
     'event.getData': {
-      useQuery: (_i: unknown, o?: { enabled?: boolean }) => ({
-        data: o?.enabled ? h.eventData : undefined,
-      }),
+      useQuery: (_i: unknown, o?: { enabled?: boolean }) => {
+        h.getDataEnabled.push(o?.enabled);
+        return { data: o?.enabled ? h.eventData : undefined };
+      },
     },
     'event.activateCosmetic': {
       useMutation: () => ({ mutateAsync: h.join, isPending: false }),
@@ -75,7 +80,9 @@ vi.mock('~/components/HomeBlocks/HomeBlockWrapper', () => ({
   HomeBlockWrapper: ({ children }: { children: React.ReactNode }) =>
     React.createElement('div', null, children),
 }));
-vi.mock('~/hooks/useInView', () => ({ useInView: () => ({ ref: () => undefined, inView: true }) }));
+vi.mock('~/hooks/useInView', () => ({
+  useInView: () => ({ ref: () => undefined, inView: h.inView }),
+}));
 vi.mock('~/providers/AppProvider', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useMaybeAppContext: () => ({ navBannersDismissed: h.dismissed }),
@@ -85,6 +92,7 @@ vi.mock('cookies-next', async (importOriginal) => ({
   setCookie: vi.fn(),
 }));
 
+const { setCookie } = await import('cookies-next');
 const { ScoredEventHomeBlock } = await import('~/components/HomeBlocks/ScoredEventHomeBlock');
 const { EventHomeBlock } = await import('~/components/HomeBlocks/EventHomeBlock');
 const PlaceHatModal = (await import('~/components/Events/ScoredEvent/PlaceHatModal')).default;
@@ -159,6 +167,10 @@ beforeEach(() => {
   h.hats = [];
   h.eventData = data;
   h.dismissed = [];
+  h.inView = true;
+  h.cosmeticLoading = false;
+  h.getDataEnabled = [];
+  vi.mocked(setCookie).mockClear();
   h.join.mockClear();
   h.trigger.mockClear();
   onClose.mockClear();
@@ -251,6 +263,8 @@ describe('joined', () => {
     const el = block();
     expect(el.querySelectorAll('[data-testid="event-home-block-hat"]')).toHaveLength(3);
     expect(text(el)).toContain('+1 more');
+    const more = [...el.querySelectorAll('a')].find((a) => text(a) === '+1 more');
+    expect(more?.getAttribute('href')).toBe('/events/birthday2026');
     expect(text(el)).toContain('16 points');
     expect(el.querySelector('[data-testid="event-home-block-get-hat"]')).toBeNull();
 
@@ -260,6 +274,23 @@ describe('joined', () => {
     ];
     expect(arg.component).toBe(PlaceHatModal);
     expect(arg.props.hat.cosmeticId).toBe(2);
+  });
+
+  it('a cosmetic that is not obtained is not a team', () => {
+    h.user = { id: 1 };
+    h.cosmetic = { obtained: false, cosmetic: { data: { team: 'Pink' } } };
+    const el = block();
+    expect(button(el, 'Join and get your free hat')).toBeDefined();
+    expect(el.querySelector('[data-testid="event-home-block-standings"]')).toBeNull();
+  });
+
+  it('shows no Join to a signed-in viewer while their team is loading', () => {
+    joinAs('Pink');
+    h.cosmeticLoading = true;
+    const el = block();
+    expect(button(el, 'Join')).toBeUndefined();
+    expect(el.querySelector('[data-testid="event-home-block"]')).toBeNull();
+    expect(el.querySelector('[aria-busy]')).not.toBeNull();
   });
 
   it('the film offers no join once you are on a team', () => {
@@ -288,6 +319,29 @@ describe('ended', () => {
   });
 });
 
+describe('ended, still settling', () => {
+  it('names no winner and shows no prize until the final standings are in', () => {
+    vi.setSystemTime(new Date('2026-12-01T12:00:00Z'));
+    h.banners = [];
+    h.standings = { ...STANDINGS, updatedAt: new Date('2026-12-01T06:00:00Z') };
+    const el = block();
+    expect(text(el)).toContain('Final scores are being tallied.');
+    expect(text(el)).not.toContain('wins.');
+    expect(text(el)).not.toContain('Champion badge');
+    expect(srcs(el)).not.toContain('blue-anim');
+    expect(el.querySelector('[data-testid="event-home-block-standings"] [data-mine]')).toBeNull();
+  });
+
+  it('the collapsed bar names the settled winner', () => {
+    vi.setSystemTime(new Date('2026-12-05T00:00:00Z'));
+    h.standings = { ...STANDINGS, updatedAt: new Date('2026-12-04T00:00:00Z') };
+    const el = block(true);
+    expect(text(el.querySelector('[data-testid="event-home-block-collapsed"]'))).toContain(
+      'Team Blue won'
+    );
+  });
+});
+
 describe('collapsed', () => {
   it('is one line with Show and a close', () => {
     joinAs('Pink');
@@ -310,6 +364,33 @@ describe('the Event home block row', () => {
   const full = (el: HTMLElement) => el.querySelector('[data-testid="event-home-block"]');
   const bar = (el: HTMLElement) => el.querySelector('[data-testid="event-home-block-collapsed"]');
 
+  const rerender = () =>
+    act(() =>
+      root!.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(EventHomeBlock, { metadata: { event: 'birthday2026' } })
+        )
+      )
+    );
+
+  it('fetches nothing until it first scrolls into view, then stays', () => {
+    h.inView = false;
+    const el = row();
+    expect(h.getDataEnabled.length).toBeGreaterThan(0);
+    expect(h.getDataEnabled.every((e) => !e)).toBe(true);
+    expect(full(el)).toBeNull();
+    h.inView = true;
+    rerender();
+    expect(h.getDataEnabled.at(-1)).toBe(true);
+    expect(full(el)).not.toBeNull();
+    h.inView = false;
+    rerender();
+    expect(h.getDataEnabled.at(-1)).toBe(true);
+    expect(full(el)).not.toBeNull();
+  });
+
   it('reads its state from the dismiss cookie, apart from the strip', () => {
     h.dismissed = ['event:birthday2026'];
     let el = row();
@@ -327,17 +408,28 @@ describe('the Event home block row', () => {
 
   // Must stay last: the dismissed store it writes is module scope.
   it('the first close collapses it, Show brings it back, and the bar close hides it', () => {
+    h.dismissed = ['event:birthday2026', 'home:event:other'];
+    const saved = () => JSON.parse(vi.mocked(setCookie).mock.calls.at(-1)![1] as string);
     const el = row();
     const collapse = () =>
       el.querySelector<HTMLButtonElement>('button[aria-label="Collapse this event"]')!.click();
     act(collapse);
     expect(full(el)).toBeNull();
     expect(bar(el)).not.toBeNull();
+    expect(saved()).toEqual([
+      'event:birthday2026',
+      'home:event:other',
+      'home:event:birthday2026:collapsed',
+    ]);
     act(() => button(el, 'Show')!.click());
     expect(full(el)).not.toBeNull();
+    expect(saved()).toEqual(['event:birthday2026', 'home:event:other']);
     act(collapse);
     act(() => el.querySelector<HTMLButtonElement>('button[aria-label="Hide this event"]')!.click());
     expect(full(el)).toBeNull();
     expect(bar(el)).toBeNull();
+    // The hide replaces the collapse entry: one item holds one of the cookie's capped slots.
+    expect(saved()).toEqual(['event:birthday2026', 'home:event:other', 'home:event:birthday2026']);
+    expect(vi.mocked(setCookie).mock.calls.at(-1)![0]).toBe('nav-banners-dismissed');
   });
 });

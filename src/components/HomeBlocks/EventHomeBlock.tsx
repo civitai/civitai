@@ -35,7 +35,9 @@ export function EventHomeBlock({ showAds, ...props }: Props) {
         metadata={props.metadata}
         collapsed={collapsed}
         onClose={() =>
-          dismiss(collapsed ? eventHomeBlockDismissId(event) : eventHomeBlockCollapseId(event))
+          collapsed
+            ? dismiss(eventHomeBlockDismissId(event), eventHomeBlockCollapseId(event))
+            : dismiss(eventHomeBlockCollapseId(event))
         }
         onExpand={() => restore(eventHomeBlockCollapseId(event))}
       />
@@ -63,7 +65,8 @@ function EventHomeBlockBody({
   const { data } = trpc.event.getData.useQuery({ event }, { enabled: seen });
 
   return (
-    <div ref={ref} className={data ? undefined : 'min-h-14'}>
+    // Held at the size it will take, so the block does not push the page when it arrives.
+    <div ref={ref} className={data ? undefined : controls.collapsed ? 'min-h-14' : 'min-h-[212px]'}>
       {data?.scored ? (
         <ScoredEventHomeBlock event={event} data={data} {...controls} />
       ) : data ? (

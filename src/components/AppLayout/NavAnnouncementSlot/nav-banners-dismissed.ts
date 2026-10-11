@@ -39,7 +39,14 @@ export function useNavBannersDismissed() {
     });
   };
   const current = () => useDismissedStore.getState().dismissed ?? dismissed;
-  const dismiss = (id: string) => save(addNavBannerDismissed(current(), id));
+  // `replaces` drops an entry this one supersedes, so one item never holds two of the capped slots.
+  const dismiss = (id: string, replaces?: string) =>
+    save(
+      addNavBannerDismissed(
+        current().filter((x) => x !== replaces),
+        id
+      )
+    );
   const restore = (id: string) => save(current().filter((x) => x !== id));
 
   return { dismissed, dismiss, restore };

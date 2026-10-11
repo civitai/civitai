@@ -74,7 +74,7 @@ export function ScoredEventHomeBlock({
   const utils = trpc.useUtils();
   const promo = useEventPromos().find((p) => p.event === event);
 
-  const { data: eventCosmetic } = trpc.event.getCosmetic.useQuery(
+  const { data: eventCosmetic, isInitialLoading: loadingTeam } = trpc.event.getCosmetic.useQuery(
     { event },
     { enabled: !!currentUser }
   );
@@ -99,6 +99,9 @@ export function ScoredEventHomeBlock({
       showErrorNotification({ title: 'Unable to join', error: e as Error });
     }
   };
+
+  // A member would otherwise see the join layout, and its Join button, until their team arrives.
+  if (loadingTeam) return <div className={collapsed ? 'min-h-14' : 'min-h-[212px]'} aria-busy />;
 
   if (collapsed)
     return (
@@ -335,7 +338,7 @@ export function ScoredEventHomeBlock({
         {data.page?.heroImage && (
           <EdgeMedia
             src={data.page.heroImage}
-            width={800}
+            width={640}
             className="absolute inset-0 size-full object-cover object-[78%_45%]"
             alt=""
           />
@@ -357,7 +360,9 @@ export function ScoredEventHomeBlock({
               <IconPlayerPlayFilled size={22} />
             </span>
             <span className="rounded-full bg-dark-9/70 px-2.5 py-0.5 text-xs font-bold text-white">
-              {video.duration ? `Watch · ${filmLength(video.duration)}` : 'Watch'}
+              {Number.isFinite(video.duration) && Math.round(video.duration ?? 0) > 0
+                ? `Watch · ${filmLength(video.duration ?? 0)}`
+                : 'Watch'}
             </span>
           </UnstyledButton>
         )}
