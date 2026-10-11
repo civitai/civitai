@@ -10,6 +10,7 @@ import {
   LISTED_SEPARATOR,
   RANK_PENDING,
   RANK_READY,
+  RANK_SETTLE_MS,
   ROSTER_SORTS,
   TOMBSTONE_PREFIX,
   type RosterHat,
@@ -512,12 +513,18 @@ export async function rebuildEventRoster(
 
 // A complete pass has written every listed member's rank scores. The first after a deploy can run
 // while pods on the previous release still serve, and they list members and add grants without
-// writing rank scores; so pages switch to the rank sets (roster.ts) only after a second complete
-// pass, an hour on.
+// writing rank scores; so pages switch to the rank sets (roster.ts) only after a complete pass
+// RANK_SETTLE_MS or more after the first.
 async function markRankPass(event: RosterEvent, deps: RosterSyncDeps) {
   const key = eventRosterKeys(event.name).rankReady;
   const previous = await deps.redis.get(key);
-  await deps.redis.set(key, previous ? RANK_READY : RANK_PENDING);
+  if (previous === RANK_READY) return;
+  const now = deps.now().getTime();
+  const since = previous?.startsWith(`${RANK_PENDING}:`)
+    ? Number(previous.slice(RANK_PENDING.length + 1))
+    : NaN;
+  if (!Number.isFinite(since)) await deps.redis.set(key, `${RANK_PENDING}:${now}`);
+  else if (now - since >= RANK_SETTLE_MS) await deps.redis.set(key, RANK_READY);
 }
 
 function logRoster(type: 'warning' | 'error', fn: string, extra: object) {

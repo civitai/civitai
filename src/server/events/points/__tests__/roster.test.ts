@@ -27,6 +27,7 @@ const { MAX_POINTS, packStanding, POINT_STEP, WRITE_STANDING } = await import(
   '~/server/events/points/roster-score'
 );
 const { rosterComparator } = await import('~/shared/utils/roster-order');
+const { RANK_SETTLE_MS } = await import('~/server/events/points/roster');
 const { logToAxiom } = await import('~/server/logging/client');
 
 // A small Redis with real sorted-set and hash semantics, including ZADD's NX / XX conditions: the
@@ -1169,13 +1170,14 @@ describe('team roster rank scores', () => {
     ]);
     // One complete pass is not enough: pods on the previous release may still be serving.
     await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT]);
-    expect(s.strings.get(keys.rankReady)).toBe('pending');
+    expect(s.strings.get(keys.rankReady)).toBe(`pending:${PREVIEW_NOW.getTime()}`);
     expect((await s.read('points')).rows.map((r) => [r.userId, r.points])).toEqual([
       [2, 9],
       [1, 5],
     ]);
     s.zsets.get(keys.rank('Blue', 'points', 'preview'))?.set('1', 2 ** 52);
-    await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT]);
+    const later = { ...s.deps, now: () => new Date(PREVIEW_NOW.getTime() + RANK_SETTLE_MS) };
+    await reconcileEventRosters({ ...later, gate: gateOf(s) }, [EVENT]);
     expect(s.strings.get(keys.rankReady)).toBe('ready');
     // The second pass rewrote the planted score, and pages now come from the rank sets.
     s.zsets.get(keys.points('Blue', 'preview'))?.set('1', 1_000);
@@ -1193,13 +1195,26 @@ describe('team roster rank scores', () => {
     });
     expect(result.complete).toBe(false);
     expect(s.strings.has(keys.rankReady)).toBe(false);
+    // Nor does a stopped pass advance a pending marker.
+    s.strings.set(keys.rankReady, 'pending:0');
+    await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT], { deadline: 0 });
+    expect(s.strings.get(keys.rankReady)).toBe('pending:0');
   });
 
-  it('counts a rebuild as a complete pass', async () => {
+  it('counts a rebuild as a pass, but a second pass soon after does not make the sets ready', async () => {
     const s = setup([member(1)], PREVIEW_NOW, {}, { rankReady: false });
-    await rebuildEventRoster(EVENT, { ...s.deps, optedInUserIds: async () => [1] });
-    expect(s.strings.get(keys.rankReady)).toBe('pending');
-    await rebuildEventRoster(EVENT, { ...s.deps, optedInUserIds: async () => [1] });
+    const at = (ms: number) => ({
+      ...s.deps,
+      now: () => new Date(PREVIEW_NOW.getTime() + ms),
+      optedInUserIds: async () => [1],
+    });
+    await rebuildEventRoster(EVENT, at(0));
+    const pending = `pending:${PREVIEW_NOW.getTime()}`;
+    expect(s.strings.get(keys.rankReady)).toBe(pending);
+    await rebuildEventRoster(EVENT, at(RANK_SETTLE_MS - 1));
+    await reconcileEventRosters({ ...at(RANK_SETTLE_MS - 1), gate: gateOf(s) }, [EVENT]);
+    expect(s.strings.get(keys.rankReady)).toBe(pending);
+    await reconcileEventRosters({ ...at(RANK_SETTLE_MS), gate: gateOf(s) }, [EVENT]);
     expect(s.strings.get(keys.rankReady)).toBe('ready');
   });
 

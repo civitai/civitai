@@ -34,14 +34,16 @@ export function eventRosterKeys(event: string) {
     // per team, sort and season: userId scored by the sort's whole key, packed (roster-score.ts)
     rank: (team: string, sort: RosterSort, season: EventPointSeason) =>
       `${root}:${team}:rank:${sort}:${season}` as const,
-    // RANK_PENDING after one complete reconcile or rebuild, RANK_READY after the next (roster-sync.ts
-    // markRankPass). Pages read the rank sets only once it is RANK_READY.
+    // `pending:<ms>` after a complete reconcile or rebuild, RANK_READY after one at least
+    // RANK_SETTLE_MS later (roster-sync.ts markRankPass). Pages read the rank sets only once ready.
     rankReady: `${root}:rank-ready` as const,
   } as const;
 }
 
 export const RANK_PENDING = 'pending';
 export const RANK_READY = 'ready';
+// Longer than a rollout, so no pod on the previous release still serves once pages switch.
+export const RANK_SETTLE_MS = 30 * 60 * 1000;
 
 export type RosterRedis = Pick<
   typeof sysRedis,

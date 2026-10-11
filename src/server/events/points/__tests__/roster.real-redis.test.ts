@@ -11,6 +11,9 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 //   ROSTER_REDIS_URL=redis://localhost:6379/15 pnpm exec vitest run --project 'unit*' <this file>
 // Every key it writes is under a fresh event name, deleted afterwards.
 const url = process.env.ROSTER_REDIS_URL;
+// CI must run these, not skip them: a lost variable or service would otherwise read as green.
+if (process.env.CI && !url)
+  throw new Error('ROSTER_REDIS_URL is not set: CI runs a Redis for this');
 
 const { addRosterPoints, eventRosterKeys, RANK_READY, readRosterPage } = await import(
   '~/server/events/points/roster'
@@ -211,8 +214,7 @@ describe.skipIf(!url)('team roster rank scores on a real Redis', () => {
     points[2] = 0;
     const gate = async () => redis.hGetAll(keys.members);
     await reconcileEventRosters({ ...d, gate }, [EVENT]);
-    await reconcileEventRosters({ ...d, gate }, [EVENT]);
-    expect(await redis.get(keys.rankReady)).toBe(RANK_READY);
+    await redis.set(keys.rankReady, RANK_READY);
     for (const season of ['preview', 'live'] as const) {
       const rows = (await page('hats', season)).rows;
       expect(rows.map((r) => [r.userId, r.hatCount, r.points])).toEqual([[1, 1, 0]]);
