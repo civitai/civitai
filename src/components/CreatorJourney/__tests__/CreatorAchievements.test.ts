@@ -123,10 +123,67 @@ describe('Achievements section', () => {
   });
 
   // Reached but not granted yet (the job runs nightly): neither earned nor the next target.
-  it('does not show an ungranted milestone as earned', () => {
+  it('shows an ungranted milestone the creator has passed as pending, not earned or locked', () => {
     const el = render(new Map(), 150);
-    expect(tile(el, '100 Followers')?.dataset.state).toBe('locked');
+    expect(tile(el, '100 Followers')?.dataset.state).toBe('pending');
     expect(tile(el, '1k Followers')?.dataset.state).toBe('progress');
+  });
+
+  // Testers read a passed rung at 60% opacity with no counter as a bug ("10k locked at 47k").
+  it('tells a pending tile when it unlocks, in local time, at full opacity', () => {
+    const el = render(new Map(), 150);
+    const pending = tile(el, '100 Followers');
+    expect(pending?.textContent).toMatch(/Unlocks at the next update, \d{1,2}:\d{2} (AM|PM)$/);
+    // Class-level only: component tests load no stylesheet, so nothing here measures opacity.
+    expect(pending?.className.split(' ')).not.toContain('opacity-60');
+    expect(tile(el, '1k Followers')?.textContent).not.toContain('Unlocks');
+  });
+
+  it('shows a counter on every locked rung, not only the next one', () => {
+    const el = render(new Map(), 87, 3, 0, 0, 0, undefined, 1200);
+    expect(tile(el, '25 Models')?.dataset.state).toBe('locked');
+    expect(tile(el, '25 Models')?.textContent).toContain('3 / 25');
+    expect(tile(el, '100k Downloads')?.dataset.state).toBe('locked');
+    expect(tile(el, '100k Downloads')?.textContent).toContain('1,200 / 100,000');
+  });
+
+  it('calls out a pending milestone when every unearned rung is passed', () => {
+    const el = render(new Map(), 1000, 25, 500000, 5000, 10, undefined, 100000);
+    expect(el.querySelectorAll('[data-state="pending"]')).toHaveLength(definitions.length);
+    expect(el.textContent).toContain('Closest next');
+    expect(el.textContent).toMatch(/First Model: Unlocks at the next update/);
+  });
+
+  it('never marks a hidden milestone pending', () => {
+    const hidden = { ...definition('create:models-1', 1, 'Secret First'), hidden: true };
+    const activity = {
+      ...buildActivityProgress([hidden], new Map(), {
+        models: 3,
+        articles: 0,
+        downloads: 0,
+        followers: 0,
+        reactions: 0,
+        revenue: 0,
+        votes: 0,
+        wins: 0,
+      }),
+      winBreakdown: { challenges: 0, crucibles: 0 },
+    };
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(CreatorAchievements, { activity })
+        )
+      )
+    );
+    expect(tile(container, '???')?.dataset.state).toBe('locked');
+    expect(container.textContent).not.toContain('Unlocks');
+    expect(container.textContent).not.toContain('Closest next');
   });
 });
 
@@ -143,7 +200,7 @@ describe('Shop track', () => {
     expect(tile(el, '100k Sales')?.dataset.state).toBe('earned');
     expect(tile(el, '250k Sales')?.dataset.state).toBe('progress');
     expect(tile(el, '250k Sales')?.textContent).toContain('120,000 / 250,000');
-    expect(tile(el, '500k Sales')?.textContent).toContain('500,000 Buzz in shop sales');
+    expect(tile(el, '500k Sales')?.textContent).toContain('120,000 / 500,000');
   });
 });
 
@@ -154,7 +211,7 @@ describe('Downloads', () => {
     expect(tile(el, '1k Downloads')?.dataset.state).toBe('earned');
     expect(tile(el, '10k Downloads')?.dataset.state).toBe('progress');
     expect(tile(el, '10k Downloads')?.textContent).toContain('1,200 / 10,000');
-    expect(tile(el, '100k Downloads')?.textContent).toContain('100,000 downloads');
+    expect(tile(el, '100k Downloads')?.textContent).toContain('1,200 / 100,000');
   });
 });
 
@@ -170,7 +227,7 @@ describe('Community track', () => {
     expect(tile(el, '500 Votes')?.dataset.state).toBe('earned');
     expect(tile(el, '1k Votes')?.dataset.state).toBe('progress');
     expect(tile(el, '1k Votes')?.textContent).toContain('640 / 1,000');
-    expect(tile(el, '5k Votes')?.textContent).toContain('5,000 votes');
+    expect(tile(el, '5k Votes')?.textContent).toContain('640 / 5,000');
   });
 });
 
@@ -190,7 +247,7 @@ describe('Compete track', () => {
     expect(tile(el, 'First Win')?.dataset.state).toBe('earned');
     expect(tile(el, '5 Wins')?.dataset.state).toBe('progress');
     expect(tile(el, '5 Wins')?.textContent).toContain('3 / 5');
-    expect(tile(el, '10 Wins')?.textContent).toContain('10 wins');
+    expect(tile(el, '10 Wins')?.textContent).toContain('3 / 10');
     expect(measureHref('wins')).toBe('/challenges');
   });
 });

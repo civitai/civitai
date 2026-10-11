@@ -7,6 +7,19 @@ export const HIDDEN_ACHIEVEMENT_PLACEHOLDER = '697cac26-7f27-4205-8a3c-886d31e17
 /** The account score card, where the "how Creator Score is earned" explainer lives. */
 export const CREATOR_SCORE_EXPLAINER_HREF = '/user/account#creator-score';
 
+/** When the nightly job grants activity milestones (UTC); the journey page shows its next run. */
+export const CREATOR_MILESTONE_GRANT_CRON = '20 1 * * *';
+
+/** The next run of a daily `M H * * *` UTC cron strictly after `now`. */
+export function nextDailyCronRun(cron: string, now: Date) {
+  const match = /^(\d{1,2}) (\d{1,2}) \* \* \*$/.exec(cron);
+  if (!match) throw new Error(`Not a daily cron: ${cron}`);
+  const next = new Date(now);
+  next.setUTCHours(Number(match[2]), Number(match[1]), 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  return next;
+}
+
 /** How long after a creator's first publish its one-time card is still offered. */
 export const FIRST_PUBLISH_CARD_DAYS = 14;
 

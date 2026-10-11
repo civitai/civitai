@@ -19,6 +19,7 @@ import {
   creatorJourneyAudienceAmong,
 } from '~/server/services/creator-journey-flag.service';
 import { logToAxiom } from '~/server/logging/client';
+import { CREATOR_MILESTONE_GRANT_CRON } from '~/shared/constants/creator-journey.constants';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 
@@ -113,7 +114,7 @@ async function storedGroups(): Promise<MilestoneDetectorGroup[]> {
 // Activity milestones. Score tiers are granted inside update-user-score, the only place scores change.
 export const grantCreatorMilestones = createJob(
   'grant-creator-milestones',
-  '20 1 * * *',
+  CREATOR_MILESTONE_GRANT_CRON,
   async (jobContext) => {
     const gated = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG;
     const results: Record<string, unknown> = {};
