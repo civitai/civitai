@@ -74,6 +74,8 @@ const toCamel = (row: Record<string, unknown>) =>
 
 function whereSql(where: Record<string, unknown>, values: unknown[]): string {
   const parts = Object.entries(where).flatMap(([key, v]): string[] => {
+    // Prisma treats an undefined field as no filter, not as `= NULL`.
+    if (v === undefined) return [];
     if (key === 'parentListingId_itemKey') return [whereSql(v as Record<string, unknown>, values)];
     if (key === 'parentListing') {
       return [

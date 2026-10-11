@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as SubListingService from '~/server/services/blocks/app-sub-listing.service';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -53,6 +54,7 @@ beforeEach(() => {
   withdrawMock.mockReset();
   withdrawMock.mockResolvedValue(4);
   invalidateMock.mockClear();
+  loggingMock.logToAxiom.mockClear();
   dbMock.dbWrite.oauthClient.findFirst.mockReset();
   dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({ id: CLIENT_ID, userId: OWNER_ID });
   dbMock.dbWrite.oauthClient.delete.mockReset();
@@ -83,6 +85,20 @@ describe('oauthClient.delete', () => {
     await expect(caller.delete({ id: CLIENT_ID })).resolves.toEqual({ success: true });
     expect(dbMock.dbWrite.oauthClient.delete).toHaveBeenCalledTimes(1);
     expect(invalidateMock).toHaveBeenCalledWith({ userId: 7170 });
+  });
+
+  // After the delete the parents no longer carry the client id, so the log line is the only
+  // record of which listings still need their items withdrawn by hand.
+  it('logs the parent ids when the withdraw fails', async () => {
+    withdrawMock.mockRejectedValueOnce(new Error('store down'));
+    await caller.delete({ id: CLIENT_ID });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'oauth.withdraw-catalog-items.failed',
+        clientId: CLIENT_ID,
+        parentListingIds: PARENT_IDS,
+      })
+    );
   });
 
   // Once the delete unlinks the parents nothing can find them, so a failed lookup must fail the
