@@ -12165,10 +12165,12 @@ describe('blocks.estimateWorkflowBatch', () => {
       singles.push((await caller().estimateWorkflow({ blockToken: 'tok', body })).snapshot);
     }
     expect(batch.snapshots).toEqual(singles);
+    // textToImage and registered-step cells itemise the author fee (0 here: the fee is
+    // dark); comfy prices no fee, so its cost stays `{ total }` — as on the single estimate.
     expect(batch.snapshots.map((s) => s.cost)).toEqual([
-      { total: 31 },
+      { total: 31, authorFee: 0 },
       { total: 150 },
-      { total: 7 },
+      { total: 7, authorFee: 0 },
     ]);
   });
 
@@ -12182,8 +12184,8 @@ describe('blocks.estimateWorkflowBatch', () => {
         txt('cell-c'),
       ],
     });
-    expect(result.snapshots[0].cost).toEqual({ total: 12 });
-    expect(result.snapshots[2].cost).toEqual({ total: 31 });
+    expect(result.snapshots[0].cost).toEqual({ total: 12, authorFee: 0 });
+    expect(result.snapshots[2].cost).toEqual({ total: 31, authorFee: 0 });
     expect(result.snapshots[1]).toMatchObject({ workflowId: 'failed', status: 'failed' });
     expect(result.snapshots[1].cost).toBeUndefined();
     // The schema's own issue list, naming the missing field.
@@ -12213,7 +12215,7 @@ describe('blocks.estimateWorkflowBatch', () => {
         }),
       ],
     });
-    expect(result.snapshots[0].cost).toEqual({ total: 31 });
+    expect(result.snapshots[0].cost).toEqual({ total: 31, authorFee: 0 });
     expect(result.snapshots[1]).toEqual({
       workflowId: 'failed',
       status: 'failed',
@@ -12307,7 +12309,7 @@ describe('blocks.estimateWorkflowBatch', () => {
       status: 'failed',
       error: 'a training estimate cannot be part of a batch — estimate it on its own',
     });
-    expect(result.snapshots[1].cost).toEqual({ total: 31 });
+    expect(result.snapshots[1].cost).toEqual({ total: 31, authorFee: 0 });
     expect(result.aggregate).toEqual({ total: 31, pricedCells: 1, cellCount: 2 });
   });
 
