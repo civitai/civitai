@@ -505,7 +505,7 @@ describe('achievement share cards', () => {
       name: '10k Downloads',
       eyebrow: 'Reach Achievement',
       accent: '#f59f00',
-      line: 'One model reached 10,000 downloads',
+      line: 'Reached 10,000 downloads in total',
       reachedVerb: 'Earned',
       reached: 'November 2026',
     });
