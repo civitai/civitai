@@ -1324,12 +1324,14 @@ describe('cover poi/minor exclusion', () => {
     async (_flag, flags) => {
       mockGetAll.mockResolvedValueOnce([publicRow(flags)]);
       mockFallbackCovers.mockResolvedValueOnce(
-        new Map([[10, { url: 'fallback-10', type: 'image', nsfwLevel: 1 }]])
+        new Map([[10, { url: 'fallback-10', type: 'image', nsfwLevel: 2 }]])
       );
       const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
       await handler(req as never, res as never);
       expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
-      expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-10');
+      const item = (res._json() as any).items[0];
+      expect(item.coverImageUrl).toBe('edge:fallback-10');
+      expect(item.coverNsfwLevel).toBe(2);
     }
   );
 
@@ -1359,12 +1361,14 @@ describe('cover poi/minor exclusion', () => {
     async (_flag, flags) => {
       mockUserCollections.mockResolvedValueOnce([mineRow(flags)]);
       mockFallbackCovers.mockResolvedValueOnce(
-        new Map([[20, { url: 'fallback-20', type: 'image', nsfwLevel: 1 }]])
+        new Map([[20, { url: 'fallback-20', type: 'image', nsfwLevel: 2 }]])
       );
       const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
       await handler(req as never, res as never);
       expect(mockFallbackCovers).toHaveBeenCalledWith([20], 3);
-      expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-20');
+      const item = (res._json() as any).items[0];
+      expect(item.coverImageUrl).toBe('edge:fallback-20');
+      expect(item.coverNsfwLevel).toBe(2);
     }
   );
 
@@ -1377,6 +1381,7 @@ describe('cover poi/minor exclusion', () => {
       const item = (res._json() as any).items[0];
       expect(item.id).toBe(20);
       expect(item.coverImageUrl).toBeNull();
+      expect('coverNsfwLevel' in item).toBe(false);
     }
   );
 });

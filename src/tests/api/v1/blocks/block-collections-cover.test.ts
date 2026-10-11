@@ -157,13 +157,20 @@ describe('getFallbackCoverImages (maturity clamp)', () => {
     mockQueryRaw.mockResolvedValueOnce([]);
     await getFallbackCoverImages([10], 3);
     const [strings] = mockQueryRaw.mock.calls[0] as unknown as [TemplateStringsArray, ...unknown[]];
-    // Whole-line equality, so a clause appended to either line fails the test.
+    // Whole-line equality, so a clause appended to either line fails the test; both
+    // lines must sit in the WHERE, after the maturity clause and before ORDER BY.
     const lines = strings
       .join(' ? ')
       .split('\n')
       .map((l) => l.trim());
-    expect(lines).toContain('AND i."poi" != TRUE');
-    expect(lines).toContain('AND i."minor" != TRUE');
+    const at = (line: string) => lines.indexOf(line);
+    const maturity = lines.findIndex((l) => l.startsWith('AND ((i."nsfwLevel" &'));
+    const orderBy = lines.findIndex((l) => l.startsWith('ORDER BY'));
+    expect(maturity).toBeGreaterThan(-1);
+    for (const clause of ['AND i."poi" != TRUE', 'AND i."minor" != TRUE']) {
+      expect(at(clause)).toBeGreaterThan(maturity);
+      expect(at(clause)).toBeLessThan(orderBy);
+    }
   });
 
   it('🔴 SELECTS the item nsfwLevel, so a fallback cover can publish ITS OWN level', async () => {
