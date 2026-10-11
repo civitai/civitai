@@ -69,15 +69,19 @@ function sizeOf(width: unknown, height: unknown) {
  * `object-cover` crops it. The CDN keeps the source's shape, so a source wider than the card comes
  * back too short at the card's width and is stretched to fill the height: ask for that much more
  * width. The size is the image row's own, else its metadata's; with neither, the old fixed 320.
+ * A video is transcoded at the width asked for, so it is not stretched: the extra width would cost
+ * far more there than on a still.
  */
 export function coverRequestWidth(
   image: {
+    type?: unknown;
     width?: unknown;
     height?: unknown;
     metadata?: { width?: unknown; height?: unknown } | null;
   },
   boxWidth: number
 ) {
+  if (image.type === MediaType.video) return boxWidth;
   const size =
     sizeOf(image.width, image.height) ?? sizeOf(image.metadata?.width, image.metadata?.height);
   if (!size) return COVER_FALLBACK_WIDTH;

@@ -122,6 +122,11 @@ describe('coverRequestWidth', () => {
     expect(coverRequestWidth({ width: null, height: null, ...meta(2000, 1000) }, 450)).toBe(1125);
   });
 
+  it('does not stretch a video, which is transcoded at the width asked for', () => {
+    expect(coverRequestWidth({ type: 'video', ...meta(1920, 1080) }, 450)).toBe(450);
+    expect(coverRequestWidth({ type: 'image', ...meta(1920, 1080) }, 450)).toBe(1000);
+  });
+
   it('falls back to the old fixed width without a usable size', () => {
     expect(coverRequestWidth({ metadata: null }, 450)).toBe(320);
     expect(coverRequestWidth({}, 450)).toBe(320);
