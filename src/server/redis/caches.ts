@@ -48,6 +48,7 @@ import {
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
@@ -103,14 +104,7 @@ export const tagIdsForImagesCache = createCachedObject<{
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
 
-    const imageTags = await db.tagsOnImageDetails.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
-      select: {
-        imageId: true,
-        source: true,
-        tagId: true,
-      },
-    });
+    const imageTags = await getImageTagRows(db, imageIds);
 
     const tagIds = imageTags.map((t) => t.tagId);
     const tags = await tagCache.fetch(tagIds);
