@@ -338,6 +338,20 @@ describe('closed node clients', () => {
     expect(inner).toHaveBeenCalledTimes(1);
   });
 
+  it('a command refused during the cooldown reports the node (to ask for a rediscover)', async () => {
+    let now = 0;
+    const onDeferred = vi.fn();
+    const { slots } = fakeSlots();
+    installLazyNodeClientReopen(slots, () => now, onDeferred);
+    const closed = node({ isOpen: false });
+    await expect(slots.nodeClient(closed)).rejects.toThrow('reconnect deferred');
+    await expect(slots.nodeClient(closed)).rejects.toThrow('reconnect deferred');
+    expect(onDeferred.mock.calls).toEqual([[closed], [closed]]);
+    now = NODE_REOPEN_COOLDOWN_MS;
+    slots.nodeClient(closed);
+    expect(onDeferred).toHaveBeenCalledTimes(2); // not on the reopen
+  });
+
   it('a node with no client and no cooldown (never connected) opens at once', () => {
     const { slots, inner } = fakeSlots();
     installLazyNodeClientReopen(slots, () => 0);

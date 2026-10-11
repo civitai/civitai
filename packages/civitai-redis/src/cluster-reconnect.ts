@@ -132,7 +132,7 @@ export function createClusterReconnectStrategy(opts: ClusterReconnectStrategyOpt
 export function createThrottle(
   minIntervalMs: number,
   fn: (reason: string) => void,
-  now: () => number = Date.now
+  now: () => number = () => Date.now()
 ): (reason: string) => boolean {
   let lastRunAt: number | null = null;
   return (reason: string) => {
@@ -201,7 +201,7 @@ type ReopenMarked = SlotNodeLike & { __reopenNotBefore?: number };
  */
 export function dropClosedNodeClients(
   slots: ClusterSlotsLike | undefined,
-  now: () => number = Date.now
+  now: () => number = () => Date.now()
 ): number {
   let dropped = 0;
   for (const node of slots?.nodeByAddress?.values() ?? []) {
@@ -221,7 +221,13 @@ export function dropClosedNodeClients(
  */
 export function installLazyNodeClientReopen(
   slots: ClusterSlotsLike | undefined,
-  now: () => number = Date.now
+  now: () => number = () => Date.now(),
+  /**
+   * Called when a command is refused during a cooldown. The refused node produces no reconnect
+   * attempts (and so no strategy calls) while it has no client, so this is how a node that moved
+   * keeps asking for a slot-map re-read during its cooldown. Throttling is the callee's.
+   */
+  onDeferred?: (node: SlotNodeLike) => void
 ): void {
   if (!slots || typeof slots.nodeClient !== 'function') return;
   const marked = slots as ClusterSlotsLike & { __lazyReopenInstalled?: boolean };
@@ -233,6 +239,11 @@ export function installLazyNodeClientReopen(
     const notBefore = (node as ReopenMarked | undefined)?.__reopenNotBefore;
     if (node && !node.client && notBefore != null) {
       if (t < notBefore) {
+        try {
+          onDeferred?.(node);
+        } catch {
+          // a rediscover request must never break routing
+        }
         return Promise.reject(
           new Error(`Redis cluster node ${node.address ?? '?'} unreachable; reconnect deferred`)
         );

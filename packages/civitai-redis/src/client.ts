@@ -589,6 +589,9 @@ function startClusterSelfHeal(
   return watchdog;
 }
 
+/** Sys clients whose reconnect is waiting on a teardown that outlived the step timeout. */
+const lateSysReconnects = new WeakSet<object>();
+
 /**
  * Force a FULL reconnect of the sysRedis client(s) — the mirror of forceClusterReconnect for
  * the OTHER node-redis client (incident 2026-07-03). A sentinel flap orphaned in-flight commands
@@ -638,6 +641,12 @@ export async function forceSysReconnect(
   // connect timeouts along the way, while the master is unreachable.
   for (const client of sysClients) {
     if (!client) continue;
+    if (lateSysReconnects.has(client)) {
+      // An earlier heal's teardown of this client has not finished; its reconnect is already
+      // chained onto it. A second destroy()+connect() would only queue another one behind it.
+      log('Sys self-heal: skipping a client whose previous teardown is still running');
+      continue;
+    }
     // The awaitable teardown, if the client has one, and whether it has settled.
     let teardown: Promise<unknown> | undefined;
     let teardownSettled = false;
@@ -681,9 +690,11 @@ export async function forceSysReconnect(
       // for good — every sys command failing at once, too fast for the sys watchdog's inflight
       // trigger to ever see. Reconnect when the teardown finishes instead, in the background.
       const pending = teardown;
+      lateSysReconnects.add(client);
       void pending
         .catch(() => undefined)
         .then(() => client.connect())
+        .finally(() => lateSysReconnects.delete(client))
         .then(
           () => log('Sys self-heal: reconnected after a late teardown'),
           (err: unknown) =>
@@ -1398,7 +1409,11 @@ function getBaseClient(type: 'cache' | 'system') {
     // throttled to one rediscover a second, and the flag-gated listeners it replaces were inert.
     clusterForRediscover = baseClient;
     // Reopen node clients the reconnect strategy closed, if the node returns on the same address.
-    installLazyNodeClientReopen((baseClient as any)._slots);
+    // A command refused during a node's reopen cooldown still asks for a (throttled) slot-map
+    // re-read, so a node that moved is picked up at the throttle's pace, not the cooldown's.
+    installLazyNodeClientReopen((baseClient as any)._slots, undefined, (node) =>
+      errorRediscover?.(`node in reopen cooldown: ${node.address ?? '?'}`)
+    );
 
     // Set up periodic topology refresh after client is ready and feature flag is checked
     // This ensures we don't rely solely on MOVED/ASK errors for discovery

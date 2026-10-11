@@ -138,6 +138,31 @@ describe('forceSysReconnect — bounded (F4)', () => {
     expect(next.connect).toHaveBeenCalledTimes(1);
   });
 
+  it('a second heal while a late teardown is still running does not stack another reconnect', async () => {
+    let finishDestroy!: () => void;
+    const client = {
+      destroy: vi.fn(() => new Promise<void>((resolve) => (finishDestroy = resolve))),
+      connect: vi.fn(async () => undefined),
+    };
+    const first = track(forceSysReconnect([client], 50));
+    await vi.advanceTimersByTimeAsync(50);
+    const second = track(forceSysReconnect([client], 50));
+    await vi.advanceTimersByTimeAsync(50);
+    expect([first.state, second.state]).toEqual(['resolved', 'resolved']);
+    expect(client.destroy).toHaveBeenCalledTimes(1);
+    finishDestroy();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.connect).toHaveBeenCalledTimes(1);
+
+    // Once that reconnect has finished, a later heal runs normally again.
+    client.destroy.mockImplementation(async () => undefined);
+    const third = track(forceSysReconnect([client], 50));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(third.state).toBe('resolved');
+    expect(client.destroy).toHaveBeenCalledTimes(2);
+    expect(client.connect).toHaveBeenCalledTimes(2);
+  });
+
   it('a destroy() that REJECTS still reconnects at once', async () => {
     const client = {
       destroy: vi.fn(async () => {

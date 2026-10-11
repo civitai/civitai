@@ -87,7 +87,8 @@ describe('cluster client wiring', () => {
   });
 
   it('installs the lazy node-client reopen on THIS client', () => {
-    expect(fake._slots.__lazyReopenInstalled).toBe(true);
+    // The fake's own nodeClient is a vi.fn; the installed wrapper is not.
+    expect(vi.isMockFunction(fake._slots.nodeClient)).toBe(false);
   });
 
   it('a node connect error rediscovers on this client from a seed, throttled to one a second', () => {
@@ -105,6 +106,35 @@ describe('cluster client wiring', () => {
     expect(strategy(3, new ConnectionTimeoutError())).toBe(300);
     expect(strategy(4, new ConnectionTimeoutError())).toBeInstanceOf(Error);
     await vi.waitFor(() => expect(closed.client).toBeUndefined());
+  });
+
+  describe('with the clock under test control', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('the throttle is ~1s: a connect error just after it re-arms rediscovers again', () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const before = fake._slots.rediscover.mock.calls.length;
+      vi.setSystemTime(Date.now() + 999);
+      strategy(0, new ConnectionTimeoutError());
+      // Either still inside the window (no call) or just past it; 2s later it must fire.
+      vi.setSystemTime(Date.now() + 2000);
+      strategy(0, new ConnectionTimeoutError());
+      expect(fake._slots.rediscover.mock.calls.length).toBeGreaterThan(before);
+      const afterFire = fake._slots.rediscover.mock.calls.length;
+      strategy(0, new ConnectionTimeoutError());
+      expect(fake._slots.rediscover.mock.calls.length).toBe(afterFire); // and throttles again
+    });
+
+    it('a command routed to a node in its reopen cooldown fails fast and asks for a rediscover', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 5000); // clear of the throttle window
+      const closed = { address: 'moved:6379', client: { isOpen: false } };
+      const before = fake._slots.rediscover.mock.calls.length;
+      await expect(fake._slots.nodeClient(closed)).rejects.toThrow(
+        'moved:6379 unreachable; reconnect deferred'
+      );
+      expect(fake._slots.rediscover.mock.calls.length).toBe(before + 1);
+    });
   });
 });
 
