@@ -39,6 +39,7 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -2906,7 +2907,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
             }),
           },
         });
-        if (transitioned.count === 0) {
+        if (transitioned.count > 0) {
+          await recordListingRatingChangeAfterCommit({
+            appListingId: draftListing.id,
+            slug: request.slug,
+            before: abForTransition.contentRating,
+            after: flooredRating,
+            actorUserId: params.reviewerUserId,
+          });
+        } else {
           // eslint-disable-next-line no-console
           console.warn(
             `[approveRequest] draft→approved transition matched 0 rows (slug=${request.slug}, appBlockId=${appBlockId}); ` +
@@ -3180,6 +3189,15 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
         where: { id: appBlockId, status: 'suspended' },
         data: { status: 'approved' },
       });
+      if (resetListing) {
+        await recordListingRatingChangeAfterCommit({
+          appListingId: resetListing.id,
+          slug: request.slug,
+          before: resetListing.contentRating,
+          after: flooredRating,
+          actorUserId: params.reviewerUserId,
+        });
+      }
     }
   } catch (err) {
     // eslint-disable-next-line no-console

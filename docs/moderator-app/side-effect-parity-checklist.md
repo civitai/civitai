@@ -25,6 +25,7 @@ Closed/clean items are in the buckets below; this table is only what's still **o
 | 6 | `postId` images deleted without post-nsfw recompute | article delete | COSMETIC (~0.2%) | ✅ **DONE** — `deleteImagesByIds` now recomputes each affected post (`update_post_nsfw_levels` + `bustPostGalleryCaches`); postMetrics self-heals |
 | 7 | Model3D thumbnail nsfwLevel rollup dropped | `setLevel` (ratings/downleveled) | COSMETIC (rare `postId==null` edge) | ✅ **DONE** — folded into `updateImageNsfwLevel` (#5) |
 | 8 | Restore **dispute auto-resolve** dropped | article restore | COSMETIC (narrow race) | ⏳ Deferred for review — unblocked (no Flipt), but auto-**lowers** nsfwLevel; port under supervision |
+| 9 | App Store **listing rating re-derive** not mirrored (re-rating an image used as a live listing's icon, cover or screenshot) | `setLevel` (ratings/downleveled) | DEGRADED | ⏳ Open — main runs `reDeriveListingRatingsForModeratedImage` after the image-level write; the spoke leaves the listing rating and its `rating-change` history untouched. Needs a call: delegate to main (like KoNO finalize) or port |
 
 Details for each are in the buckets below (search the gap name).
 

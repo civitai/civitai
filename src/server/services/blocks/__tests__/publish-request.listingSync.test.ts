@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
 /**
  * `approveRequest` (3b) — onsite AppListing CREATE vs manifest-governed COPY RE-SYNC.
@@ -80,6 +81,16 @@ vi.mock('~/server/services/blocks/app-block-notify', () => ({
   notifyAppBlockSubmitter: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/db/client', () => ({ dbRead: db.read, dbWrite: db.write }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/env/server', () => ({
   env: {
     FORGEJO_BASE_URL: 'https://forgejo.example',
@@ -628,6 +639,27 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     const data = (transitionCall![0] as { data: Record<string, unknown> }).data;
     // 🔴 The RAISED rating is what goes live — NOT the declared 'pg'.
     expect(data.contentRating).toBe('r');
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_draft',
+      slug: 'cool-app',
+      before: 'pg',
+      after: 'r',
+      actorUserId: 9,
+    });
+  });
+
+  it('a transition that matched no row hands the history nothing', async () => {
+    const assets = await import('~/server/services/blocks/app-listing-assets.service');
+    vi.mocked(assets.resolveListingRatingFloorInTx).mockResolvedValueOnce('r');
+    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+    db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+
+    expect(recordRatingChange).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   // -------------------------------------------------------------------------

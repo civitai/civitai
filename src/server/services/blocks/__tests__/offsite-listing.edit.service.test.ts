@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 
 import {
@@ -97,6 +98,16 @@ const { mockRead, mockWrite, seq } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_new_${++seq.n}`,
   newAppListingPublishRequestId: () => `alpr_new_${++seq.n}`,
@@ -684,6 +695,7 @@ describe('approveExternalRequest (revision apply)', () => {
           slug: 'cool-app',
           status: 'approved',
           kind: 'offsite',
+          contentRating: 'pg13',
         } as Row,
       })
     );
@@ -791,6 +803,15 @@ describe('approveExternalRequest (revision apply)', () => {
     // The shadow is retired (guarded to a revision row).
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
       where: { id: 'apl_shadow', revisionOfId: { not: null } },
+    });
+    // The live PARENT's rating is the "before", not the shadow's declared 'pg'.
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_parent',
+      slug: 'cool-app',
+      before: 'pg13',
+      after: 'r',
+      actorUserId: MOD,
     });
   });
 
