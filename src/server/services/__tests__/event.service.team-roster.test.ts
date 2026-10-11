@@ -114,6 +114,7 @@ describe('getTeamRoster', () => {
         team: 'Pink',
         sort: 'points',
         season: 'preview',
+        startDate: EVENT.startDate,
         offset: 24,
         limit: 24,
       });
