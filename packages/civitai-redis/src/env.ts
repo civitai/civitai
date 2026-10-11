@@ -14,6 +14,13 @@ export const redisEnvSchema = z
     REDIS_CLUSTER_NODES: z.string().optional(),
     // Topology refresh interval in ms (default 30s)
     REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000),
+    // Re-read the cluster slot map when a node's connection fails (throttled to 1/s per process),
+    // so the client follows a node that changed address. ON by default; only the literal string
+    // 'false' disables it, which restores the plain reconnect backoff (no rediscover).
+    REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED: z.preprocess(
+      (x) => x !== 'false',
+      z.boolean().default(true)
+    ),
     // sysRedis HA (Phase 1): when REDIS_SYS_SENTINELS is set the system client is built
     // via Sentinel discovery instead of the single REDIS_SYS_URL connection. Comma-separated
     // host:port list, e.g. "<sentinel-service>.<namespace>.svc.cluster.local:26379".
@@ -219,6 +226,7 @@ function buildEnv() {
     cluster: parsed.data.REDIS_CLUSTER,
     clusterNodes: parsed.data.REDIS_CLUSTER_NODES,
     clusterRefreshInterval: parsed.data.REDIS_CLUSTER_REFRESH_INTERVAL,
+    clusterErrorRediscoverEnabled: parsed.data.REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED,
     sysSentinels: parsed.data.REDIS_SYS_SENTINELS,
     sysSentinelName: parsed.data.REDIS_SYS_SENTINEL_NAME,
     sysSentinelPassword: parsed.data.REDIS_SYS_SENTINEL_PASSWORD,

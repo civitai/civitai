@@ -59,29 +59,6 @@ describe('forceClusterReconnect — bounded (F4)', () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(s.state).toBe('resolved');
   });
-
-  it('drops node clients node-redis already closed before destroy() (which throws on them)', async () => {
-    const closedNode = { client: { isOpen: false } as { isOpen: boolean } | undefined };
-    const openNode = { client: { isOpen: true } };
-    const nodeByAddress = new Map<string, any>([
-      ['a', closedNode],
-      ['b', openNode],
-    ]);
-    const cluster = {
-      _slots: { nodeByAddress },
-      // Mirrors RedisClusterSlots.destroy(): RedisClient.destroy() throws ClientClosedError on a
-      // closed client, and the loop has no try/catch.
-      destroy: vi.fn(() => {
-        for (const n of nodeByAddress.values()) {
-          if (n.client && !n.client.isOpen) throw new Error('The client is closed');
-        }
-      }),
-      connect: vi.fn(async () => undefined),
-    };
-    await forceClusterReconnect(cluster, undefined, 50);
-    expect(closedNode.client).toBeUndefined();
-    expect(cluster.destroy).toHaveReturned();
-  });
 });
 
 describe('forceSysReconnect — bounded (F4)', () => {

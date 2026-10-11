@@ -8,8 +8,6 @@ import { loadRedisEnv, type RedisConfig } from './env';
 import { withCommandDeadline, withTimeout } from './deadline';
 import {
   createClusterReconnectStrategy,
-  dropClosedNodeClients,
-  installLazyNodeClientReopen,
   pickRediscoverStartNode,
   reconnectDelayMs,
   createThrottle,
@@ -304,10 +302,6 @@ export function triggerTopologyRediscovery(clusterClient: any, reason: string) {
       return;
     }
 
-    // A node client node-redis has closed would make the stale-node cleanup inside the discovery
-    // throw (RedisClient.destroy() on a closed client throws ClientClosedError), failing it.
-    dropClosedNodeClients(slots);
-
     // node-redis's rediscover(startWith) reads `startWith.options` unconditionally — calling it
     // with no argument threw "Cannot read properties of undefined (reading 'options')" on every
     // call whenever no master client existed. Always hand it a real start node: a READY master,
@@ -334,12 +328,6 @@ export function triggerTopologyRediscovery(clusterClient: any, reason: string) {
 // Rotates the seed node a rediscover starts from when no master client is ready.
 let rediscoverSeedCursor = 0;
 
-/**
- * Failed attempts in one reconnect loop (the last a connect error) before the cluster reconnect
- * strategy gives up on a node address (see ./cluster-reconnect). With the 0/100/200/300ms backoff
- * between them that is 0.6s of backoff plus the attempts themselves (each up to REDIS_TIMEOUT).
- */
-const CLUSTER_NODE_MAX_CONNECT_FAILURES = 5;
 /** Throttle for error-driven rediscovers: at most one per this many ms, per cluster client. */
 const CLUSTER_ERROR_REDISCOVER_MIN_INTERVAL_MS = 1000;
 /**
@@ -464,11 +452,6 @@ export async function forceClusterReconnect(
 
 /** The destroy → connect half of forceClusterReconnect. Rejects if connect() fails or times out. */
 async function reconnectClusterBounded(clusterClient: any, stepTimeoutMs: number): Promise<void> {
-  // node-redis's slots destroy() calls RedisClient.destroy() on every node client without a
-  // try/catch, and that throws on a client it has already closed — which aborts the loop and
-  // leaves the other node sockets open. Drop closed ones first.
-  dropClosedNodeClients((clusterClient?._self ?? clusterClient)?._slots);
-
   try {
     if (typeof clusterClient.destroy === 'function') {
       // destroy() rejects in-flight commands immediately (flushAll(DisconnectsClientError))
@@ -1230,32 +1213,29 @@ function getBaseClient(type: 'cache' | 'system') {
 
   // Cluster only: recover from a node changing address (see ./cluster-reconnect). Late-bound to
   // the cluster client, which is created below with this strategy in its node defaults.
+  // REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED=false is the off switch: the strategy is then just the
+  // backoff, exactly as before.
   let clusterForRediscover: any;
-  const errorRediscover = isCluster
-    ? createThrottle(CLUSTER_ERROR_REDISCOVER_MIN_INTERVAL_MS, (reason) => {
-        if (clusterForRediscover) triggerTopologyRediscovery(clusterForRediscover, reason);
-      })
-    : undefined;
+  const errorRediscover =
+    isCluster && config.clusterErrorRediscoverEnabled
+      ? createThrottle(CLUSTER_ERROR_REDISCOVER_MIN_INTERVAL_MS, (reason) => {
+          if (clusterForRediscover) triggerTopologyRediscovery(clusterForRediscover, reason);
+        })
+      : undefined;
 
   // Shared configuration
   const socketConfig = {
-    reconnectStrategy: errorRediscover
+    reconnectStrategy: isCluster
       ? createClusterReconnectStrategy({
-          maxConnectFailures: CLUSTER_NODE_MAX_CONNECT_FAILURES,
-          onTopologyChangeSignal: (cause) =>
-            errorRediscover(
-              `node connection error: ${
-                (cause as { code?: string })?.code ??
-                (cause instanceof Error ? cause.message : String(cause))
-              }`
-            ),
-          // Drop the closed client as soon as node-redis has closed it (next macrotask: after the
-          // strategy returns and its connectPromise has cleared), so node-redis's own MOVED/ASK
-          // rediscovers — which bypass triggerTopologyRediscovery — never meet it in their cleanup.
-          onGiveUp: () => {
-            const timer = setTimeout(() => dropClosedNodeClients(clusterForRediscover?._slots), 0);
-            timer.unref?.();
-          },
+          onTopologyChangeSignal: errorRediscover
+            ? (cause) =>
+                errorRediscover(
+                  `node connection error: ${
+                    (cause as { code?: string })?.code ??
+                    (cause instanceof Error ? cause.message : String(cause))
+                  }`
+                )
+            : undefined,
           log,
         })
       : (retries: number) => {
@@ -1415,13 +1395,8 @@ function getBaseClient(type: 'cache' | 'system') {
     // per-node reconnect strategy in socketConfig above, which needs the client to rediscover on.
     // NOT gated on the enhanced-failover flag: it only acts on node connection failures, is
     // throttled to one rediscover a second, and the flag-gated listeners it replaces were inert.
+    // It has its own off switch, REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED.
     clusterForRediscover = baseClient;
-    // Reopen node clients the reconnect strategy closed, if the node returns on the same address.
-    // A command refused during a node's reopen cooldown still asks for a (throttled) slot-map
-    // re-read, so a node that moved is picked up at the throttle's pace, not the cooldown's.
-    installLazyNodeClientReopen((baseClient as any)._slots, undefined, (node) =>
-      errorRediscover?.(`node in reopen cooldown: ${node.address ?? '?'}`)
-    );
 
     // Set up periodic topology refresh after client is ready and feature flag is checked
     // This ensures we don't rely solely on MOVED/ASK errors for discovery
@@ -1504,17 +1479,8 @@ function getBaseClient(type: 'cache' | 'system') {
     log(`Calling connect() for ${type} (cluster) client...`);
     baseClient
       .connect()
-      .then(
-        () => log(`${type} cluster client connected`),
-        // Not fatal for the client: a discovery fills the slot map BEFORE awaiting the node
-        // connections, so commands to the reachable nodes still route, and a node the reconnect
-        // strategy gave up on is reopened lazily. Since that strategy now gives up on an
-        // unreachable node instead of retrying it forever, connect() can reject when one node is
-        // down at boot (it used to hang until the node came back) — so the setup below runs
-        // either way rather than only on success.
-        (err) => log(`Redis connection failed (${type})`, err)
-      )
       .then(async () => {
+        log(`${type} cluster client connected`);
         await setupEnhancedFailover();
         // FIX #1: start the inflight-leak self-heal watchdog ONCE per process for the cache
         // cluster client. Guarded so a self-heal forced reconnect doesn't stack a second
@@ -1527,7 +1493,7 @@ function getBaseClient(type: 'cache' | 'system') {
         }
       })
       .catch((err) => {
-        log(`Redis cluster post-connect setup failed (${type})`, err);
+        log(`Redis connection failed (${type})`, err);
       });
 
     return baseClient;

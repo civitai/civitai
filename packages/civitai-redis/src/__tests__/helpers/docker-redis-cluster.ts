@@ -13,9 +13,20 @@ const PORT = 6379;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Every docker call is synchronous AND bounded: a sync call blocks the test worker's event loop,
+ * so an unbounded one against a slow daemon (seen: `docker rm -f` stalling for minutes) leaves
+ * vitest hung after it has printed its results, with no hook timeout able to fire.
+ */
+const DOCKER_CALL_TIMEOUT_MS = 60_000;
+
 function docker(args: string[], opts: { allowFail?: boolean } = {}): string {
   try {
-    return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return execFileSync('docker', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: DOCKER_CALL_TIMEOUT_MS,
+    });
   } catch (err) {
     if (opts.allowFail) return '';
     throw err;

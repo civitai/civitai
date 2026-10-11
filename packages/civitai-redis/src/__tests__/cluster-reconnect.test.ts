@@ -3,11 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createClusterReconnectStrategy,
   createThrottle,
-  dropClosedNodeClients,
-  installLazyNodeClientReopen,
   isNodeConnectError,
   isTopologyChangeSignal,
-  NODE_REOPEN_COOLDOWN_MS,
   pickRediscoverStartNode,
 } from '../cluster-reconnect';
 import { triggerTopologyRediscovery } from '../client';
@@ -48,71 +45,41 @@ describe('isNodeConnectError / isTopologyChangeSignal', () => {
   });
 });
 
-describe('createClusterReconnectStrategy — give-up counter', () => {
-  const make = (maxConnectFailures = 5) => {
+describe('createClusterReconnectStrategy', () => {
+  const make = () => {
     const onTopologyChangeSignal = vi.fn();
     const strategy = createClusterReconnectStrategy({
-      maxConnectFailures,
       onTopologyChangeSignal,
       log: () => undefined,
     });
     return { strategy, onTopologyChangeSignal };
   };
 
-  it('retries the first 4 consecutive connect failures, gives up on the 5th', () => {
-    const { strategy } = make(5);
+  it('keeps the existing backoff and never gives up (literal values, 3s cap)', () => {
+    const { strategy } = make();
     const cause = sysErr('EHOSTUNREACH');
-    // node-redis passes a 0-based retry count per connect loop. Literal backoff values.
-    expect([0, 1, 2, 3].map((r) => strategy(r, cause))).toEqual([0, 100, 200, 300]);
-    const fifth = strategy(4, cause);
-    expect(fifth).toBeInstanceOf(Error);
-    expect((fifth as Error).message).toContain('unreachable after 5 attempts');
-    expect((fifth as Error).message).toContain('EHOSTUNREACH');
-  });
-
-  it('calls onGiveUp exactly when it gives up', () => {
-    const onGiveUp = vi.fn();
-    const strategy = createClusterReconnectStrategy({
-      maxConnectFailures: 5,
-      onTopologyChangeSignal: () => undefined,
-      onGiveUp,
-      log: () => undefined,
-    });
-    for (const r of [0, 1, 2, 3]) strategy(r, sysErr('ECONNREFUSED'));
-    expect(onGiveUp).not.toHaveBeenCalled();
-    strategy(4, sysErr('ECONNREFUSED'));
-    expect(onGiveUp).toHaveBeenCalledTimes(1);
-  });
-
-  it('honours a different limit (not a hard-coded 5)', () => {
-    const { strategy } = make(3);
-    const cause = new ConnectionTimeoutError();
-    expect(strategy(1, cause)).toBe(100);
-    expect(strategy(2, cause)).toBeInstanceOf(Error);
-  });
-
-  it('never gives up on a non-connect failure, and keeps the 3s backoff cap', () => {
-    const { strategy } = make(5);
-    expect(strategy(40, new SocketTimeoutError(10_000))).toBe(3000);
-    expect(strategy(40, new SocketClosedUnexpectedlyError())).toBe(3000);
-  });
-
-  it('maxConnectFailures <= 0 disables giving up', () => {
-    const { strategy } = make(0);
-    expect(strategy(99, sysErr('ECONNREFUSED'))).toBe(3000);
+    expect([0, 1, 2, 7, 40, 99].map((r) => strategy(r, cause))).toEqual([
+      0, 100, 200, 700, 3000, 3000,
+    ]);
   });
 
   it('asks for a rediscovery on topology signals only', () => {
-    const { strategy, onTopologyChangeSignal } = make(5);
+    const { strategy, onTopologyChangeSignal } = make();
     strategy(0, new SocketClosedUnexpectedlyError());
     strategy(1, sysErr('ECONNREFUSED'));
-    strategy(2, new Error('WRONGPASS'));
-    expect(onTopologyChangeSignal).toHaveBeenCalledTimes(2);
+    strategy(2, new ConnectionTimeoutError());
+    strategy(3, new Error('WRONGPASS'));
+    strategy(4, new SocketTimeoutError(10_000));
+    expect(onTopologyChangeSignal).toHaveBeenCalledTimes(3);
+  });
+
+  it('with no onTopologyChangeSignal (the off switch) it is the plain backoff', () => {
+    const strategy = createClusterReconnectStrategy({ log: () => undefined });
+    expect(strategy(2, sysErr('ECONNREFUSED'))).toBe(200);
   });
 
   it('a throwing rediscovery request does not break the strategy', () => {
     const strategy = createClusterReconnectStrategy({
-      maxConnectFailures: 5,
       onTopologyChangeSignal: () => {
         throw new Error('boom');
       },
@@ -241,121 +208,5 @@ describe('triggerTopologyRediscovery — always passes a start node with options
     );
     triggerTopologyRediscovery(client, 'test');
     expect(rediscover.mock.calls).toEqual([[ready]]);
-  });
-
-  it('drops closed node clients BEFORE rediscovering (node-redis cleanup throws on them)', () => {
-    const closed = { address: 'gone:6379', client: { isOpen: false } as any };
-    const rediscover = vi.fn((_startWith: unknown) => {
-      // Mirrors the stale-node cleanup in node-redis's discovery: destroy() on a closed client throws.
-      if (closed.client && !closed.client.isOpen) throw new Error('The client is closed');
-      return Promise.resolve();
-    });
-    const client = {
-      _options: { rootNodes: [{ url: 'redis://seed-a:6379' }] },
-      _slots: { masters: [], rediscover, nodeByAddress: new Map([['gone:6379', closed]]) },
-    };
-    triggerTopologyRediscovery(client, 'test');
-    expect(rediscover).toHaveBeenCalledTimes(1);
-    expect(rediscover).toHaveReturned();
-    expect(closed.client).toBeUndefined();
-  });
-});
-
-describe('closed node clients', () => {
-  const node = (client: unknown, connectPromise?: unknown) =>
-    ({ address: 'n:6379', client, connectPromise } as any);
-
-  it('dropClosedNodeClients clears only closed, idle clients', () => {
-    const closed = node({ isOpen: false });
-    const open = node({ isOpen: true });
-    const closedButConnecting = node({ isOpen: false }, Promise.resolve());
-    const empty = node(undefined);
-    const slots = {
-      nodeByAddress: new Map([
-        ['a', closed],
-        ['b', open],
-        ['c', closedButConnecting],
-        ['d', empty],
-      ]),
-    };
-    expect(dropClosedNodeClients(slots)).toBe(1);
-    expect(closed.client).toBeUndefined();
-    expect(open.client).toEqual({ isOpen: true });
-    expect(closedButConnecting.client).toEqual({ isOpen: false });
-  });
-
-  const fakeSlots = () => {
-    const inner = vi.fn((n: any) => n.client ?? 'fresh-client');
-    const slots: any = { nodeClient: inner };
-    return { slots, inner };
-  };
-
-  it('installLazyNodeClientReopen is idempotent: a second install does not re-wrap', () => {
-    const { slots } = fakeSlots();
-    installLazyNodeClientReopen(slots);
-    const wrapped = slots.nodeClient;
-    installLazyNodeClientReopen(slots);
-    expect(slots.nodeClient).toBe(wrapped);
-  });
-
-  it('an open client is passed straight through', () => {
-    const { slots, inner } = fakeSlots();
-    installLazyNodeClientReopen(slots, () => 0);
-    const open = node({ isOpen: true });
-    expect(slots.nodeClient(open)).toBe(open.client);
-    expect(inner).toHaveBeenCalledTimes(1);
-  });
-
-  it('a closed client is dropped; commands fail fast for the cooldown, then a fresh client opens', async () => {
-    let now = 10_000;
-    const { slots, inner } = fakeSlots();
-    installLazyNodeClientReopen(slots, () => now);
-    const closed = node({ isOpen: false });
-
-    await expect(slots.nodeClient(closed)).rejects.toThrow(
-      'n:6379 unreachable; reconnect deferred'
-    );
-    expect(closed.client).toBeUndefined();
-    now += NODE_REOPEN_COOLDOWN_MS - 1;
-    await expect(slots.nodeClient(closed)).rejects.toThrow('reconnect deferred');
-    expect(inner).not.toHaveBeenCalled();
-
-    now += 1;
-    expect(slots.nodeClient(closed)).toBe('fresh-client');
-    expect(inner).toHaveBeenCalledTimes(1);
-  });
-
-  it('a node dropped by dropClosedNodeClients gets the same cooldown', async () => {
-    let now = 0;
-    const closed = node({ isOpen: false });
-    const { slots, inner } = fakeSlots();
-    slots.nodeByAddress = new Map([['n', closed]]);
-    installLazyNodeClientReopen(slots, () => now);
-    dropClosedNodeClients(slots, () => now);
-    await expect(slots.nodeClient(closed)).rejects.toThrow('reconnect deferred');
-    now = NODE_REOPEN_COOLDOWN_MS;
-    expect(slots.nodeClient(closed)).toBe('fresh-client');
-    expect(inner).toHaveBeenCalledTimes(1);
-  });
-
-  it('a command refused during the cooldown reports the node (to ask for a rediscover)', async () => {
-    let now = 0;
-    const onDeferred = vi.fn();
-    const { slots } = fakeSlots();
-    installLazyNodeClientReopen(slots, () => now, onDeferred);
-    const closed = node({ isOpen: false });
-    await expect(slots.nodeClient(closed)).rejects.toThrow('reconnect deferred');
-    await expect(slots.nodeClient(closed)).rejects.toThrow('reconnect deferred');
-    expect(onDeferred.mock.calls).toEqual([[closed], [closed]]);
-    now = NODE_REOPEN_COOLDOWN_MS;
-    slots.nodeClient(closed);
-    expect(onDeferred).toHaveBeenCalledTimes(2); // not on the reopen
-  });
-
-  it('a node with no client and no cooldown (never connected) opens at once', () => {
-    const { slots, inner } = fakeSlots();
-    installLazyNodeClientReopen(slots, () => 0);
-    expect(slots.nodeClient(node(undefined))).toBe('fresh-client');
-    expect(inner).toHaveBeenCalledTimes(1);
   });
 });

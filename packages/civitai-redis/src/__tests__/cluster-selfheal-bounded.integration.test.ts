@@ -89,7 +89,9 @@ describe.skipIf(!ENABLED)('cluster self-heal reconnect with a master down', () =
       // already closed
     }
     cluster.teardown();
-  });
+    // Teardown is several synchronous docker calls (each bounded at 60s): a slow daemon outlasts
+    // vitest's 10s default hook timeout, which failed otherwise-green runs.
+  }, 300_000);
 
   it('the forced reconnect settles and `reconnecting` returns to false within ~12s', async () => {
     const watchdog = __getClusterSelfHealWatchdog();

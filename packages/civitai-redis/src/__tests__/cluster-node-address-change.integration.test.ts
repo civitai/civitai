@@ -88,7 +88,9 @@ describe.skipIf(!ENABLED)('cluster client survives a master changing address', (
     }
     vi.restoreAllMocks();
     cluster.teardown();
-  });
+    // Teardown is several synchronous docker calls (each bounded at 60s): a slow daemon outlasts
+    // vitest's 10s default hook timeout, which failed otherwise-green runs.
+  }, 300_000);
 
   it.each([
     { label: 'back at once', newIp: `${SUBNET}.22`, downMs: 0 },

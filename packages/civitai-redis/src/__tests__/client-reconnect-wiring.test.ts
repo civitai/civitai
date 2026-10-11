@@ -3,9 +3,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 /**
  * Wiring of the node-address-change fixes inside getBaseClient/getClient — the parts the pure
  * unit tests (cluster-reconnect.test.ts, selfheal-reconnect-bounds.test.ts) cannot see: that the
- * cluster node defaults really carry the throttled, give-up-capable strategy bound to THIS client,
- * that the lazy reopen is installed, that a rejected initial connect() still starts the watchdog,
- * and that the sys bounds come from config with no explicit options.
+ * cluster node defaults really carry the throttled rediscover-on-error strategy bound to THIS
+ * client, that REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED=false really removes it, and that the sys
+ * bounds (and their off switch) come from config with no explicit options.
  *
  * `redis` is mocked so no socket is ever opened; everything else in the package is real.
  */
@@ -54,7 +54,7 @@ vi.mock('redis', async (importOriginal) => {
 });
 
 import { ConnectionTimeoutError } from 'redis';
-import { __getClusterSelfHealWatchdog, createCacheRedis, createSysRedis } from '../client';
+import { createCacheRedis, createSysRedis } from '../client';
 import { resetSysInflight } from '../sys-inflight';
 
 const SEEDS = ['redis://seed-a:6379', 'redis://seed-b:6379'];
@@ -64,77 +64,52 @@ beforeAll(() => {
   process.env.REDIS_SYS_URL ??= 'redis://127.0.0.1:6380';
 });
 
-describe('cluster client wiring', () => {
-  let fake: any;
-  let strategy: (retries: number, cause: unknown) => number | Error;
+const connErr = () => Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
 
-  beforeAll(() => {
-    // The initial connect() REJECTS — what the give-up makes possible when a node is down at boot.
-    h.clusterConnect = () => Promise.reject(new Error('RootNodesUnavailableError'));
+describe('cluster client wiring', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('a node connect error rediscovers on THIS client from a seed, throttled to ~1s', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
     createCacheRedis({
       url: SEEDS[0],
       cluster: true,
       clusterNodes: SEEDS.join(','),
-      clusterSelfHealEnabled: true,
+      clusterSelfHealEnabled: false,
       log: () => undefined,
     });
-    fake = h.clusters[0];
-    strategy = h.clusterOpts[0].defaults.socket.reconnectStrategy;
-  });
+    const fake = h.clusters.at(-1);
+    const strategy = h.clusterOpts.at(-1).defaults.socket.reconnectStrategy;
 
-  it('a rejected initial connect() still starts the self-heal watchdog', async () => {
-    await vi.waitFor(() => expect(__getClusterSelfHealWatchdog()).toBeDefined());
-  });
-
-  it('installs the lazy node-client reopen on THIS client', () => {
-    // The fake's own nodeClient is a vi.fn; the installed wrapper is not.
-    expect(vi.isMockFunction(fake._slots.nodeClient)).toBe(false);
-  });
-
-  it('a node connect error rediscovers on this client from a seed, throttled to one a second', () => {
-    expect(strategy(0, Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))).toBe(0);
+    expect(strategy(0, connErr())).toBe(0);
     expect(fake._slots.rediscover).toHaveBeenCalledTimes(1);
-    const startWith = fake._slots.rediscover.mock.calls[0][0];
-    expect(SEEDS).toContain(startWith.options.url);
-    strategy(1, new ConnectionTimeoutError());
-    expect(fake._slots.rediscover).toHaveBeenCalledTimes(1); // inside the 1s throttle
+    expect(SEEDS).toContain(fake._slots.rediscover.mock.calls[0][0].options.url);
+
+    vi.setSystemTime(Date.now() + 999);
+    expect(strategy(1, new ConnectionTimeoutError())).toBe(100);
+    expect(fake._slots.rediscover).toHaveBeenCalledTimes(1); // inside the throttle
+    vi.setSystemTime(Date.now() + 1);
+    strategy(2, new ConnectionTimeoutError());
+    expect(fake._slots.rediscover).toHaveBeenCalledTimes(2); // 1000ms later: through again
   });
 
-  it('gives up on the 5th failed attempt and then drops the closed client', async () => {
-    const closed = { address: 'gone:6379', client: { isOpen: false } };
-    fake._slots.nodeByAddress.set('gone:6379', closed);
-    expect(strategy(3, new ConnectionTimeoutError())).toBe(300);
-    expect(strategy(4, new ConnectionTimeoutError())).toBeInstanceOf(Error);
-    await vi.waitFor(() => expect(closed.client).toBeUndefined());
-  });
-
-  describe('with the clock under test control', () => {
-    afterEach(() => vi.useRealTimers());
-
-    it('the throttle is ~1s: a connect error just after it re-arms rediscovers again', () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      const before = fake._slots.rediscover.mock.calls.length;
-      vi.setSystemTime(Date.now() + 999);
-      strategy(0, new ConnectionTimeoutError());
-      // Either still inside the window (no call) or just past it; 2s later it must fire.
-      vi.setSystemTime(Date.now() + 2000);
-      strategy(0, new ConnectionTimeoutError());
-      expect(fake._slots.rediscover.mock.calls.length).toBeGreaterThan(before);
-      const afterFire = fake._slots.rediscover.mock.calls.length;
-      strategy(0, new ConnectionTimeoutError());
-      expect(fake._slots.rediscover.mock.calls.length).toBe(afterFire); // and throttles again
+  it('REDIS_CLUSTER_ERROR_REDISCOVER_ENABLED=false: the hook never rediscovers', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    createCacheRedis({
+      url: SEEDS[0],
+      cluster: true,
+      clusterNodes: SEEDS.join(','),
+      clusterSelfHealEnabled: false,
+      clusterErrorRediscoverEnabled: false,
+      log: () => undefined,
     });
-
-    it('a command routed to a node in its reopen cooldown fails fast and asks for a rediscover', async () => {
-      vi.useFakeTimers({ toFake: ['Date'] });
-      vi.setSystemTime(Date.now() + 5000); // clear of the throttle window
-      const closed = { address: 'moved:6379', client: { isOpen: false } };
-      const before = fake._slots.rediscover.mock.calls.length;
-      await expect(fake._slots.nodeClient(closed)).rejects.toThrow(
-        'moved:6379 unreachable; reconnect deferred'
-      );
-      expect(fake._slots.rediscover.mock.calls.length).toBe(before + 1);
-    });
+    const fake = h.clusters.at(-1);
+    const strategy = h.clusterOpts.at(-1).defaults.socket.reconnectStrategy;
+    for (let i = 0; i < 5; i++) {
+      vi.setSystemTime(Date.now() + 5000); // well clear of any throttle window
+      expect(strategy(i, i % 2 ? new ConnectionTimeoutError() : connErr())).toBe(i * 100);
+    }
+    expect(fake._slots.rediscover).not.toHaveBeenCalled();
   });
 });
 
@@ -168,5 +143,25 @@ describe('sys client bounds come from config', () => {
       'sysRedis command timed out after 30000ms',
       'sysRedis command timed out after 30000ms',
     ]);
+  });
+
+  it('REDIS_SYS_COMMAND_TIMEOUT_MS=0 disables the backstop: a parked command is never timed out', async () => {
+    vi.useFakeTimers();
+    resetSysInflight();
+    const sys: any = createSysRedis({
+      sysSentinels: '127.0.0.1:26379',
+      sysSentinelName: 'sysmaster',
+      sysCommandTimeoutMs: 0,
+      log: () => undefined,
+    });
+    const outcomes: string[] = [];
+    sys
+      ._execute(false, () => undefined)
+      .then(
+        () => outcomes.push('ok'),
+        (e: Error) => outcomes.push(e.message)
+      );
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(outcomes).toEqual([]); // still waiting on the (never-settling) fake after 10 minutes
   });
 });
