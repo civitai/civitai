@@ -4,6 +4,7 @@ import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EventContentThumb } from '~/components/Events/ScoredEvent/EventContentThumb';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -113,6 +114,13 @@ export default function PlaceHatModal({
               );
             })}
           </SimpleGrid>
+        )}
+        {/* Only the newest posts of each type are listed; an older one takes a hat from its own menu. */}
+        {!isLoading && (
+          <Text size="xs" c="dimmed" ta="center" data-testid="older-posts-hint">
+            Looking for an older post? Open it and use Add{' '}
+            {getEventDecorationDefinition(event)?.label ?? 'Party Hat'} from its ⋮ menu.
+          </Text>
         )}
       </Stack>
     </Modal>
