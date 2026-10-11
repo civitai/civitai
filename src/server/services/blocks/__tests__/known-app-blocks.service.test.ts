@@ -310,7 +310,7 @@ describe('getApprovedAppBlockAnalytics — the app team (owner and accepted coll
     expect(isAppTeamMember(ownerless, STRANGER)).toBe(false);
   });
 
-  it('loads the collaborator set once per refresh, alongside the owner read', async () => {
+  it('loads the collaborator set once per refresh', async () => {
     await Promise.all([1, 2, 3].map(() => getApprovedAppBlockAnalytics('apb_team')));
     await getApprovedAppBlockAnalytics('apb_solo');
     expect(mockFindMany).toHaveBeenCalledTimes(1);

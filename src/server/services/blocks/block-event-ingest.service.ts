@@ -177,8 +177,8 @@ export function buildAppBlockEventRow(args: {
   /** `null` for a signed-out viewer. */
   userId: number | null;
   viewerKey: string;
-  /** The viewer is on the app's team (owner or accepted collaborator); stored as `isOwner`. */
-  isOwner: boolean;
+  /** The viewer is the app's owner or an accepted collaborator; stored as `isOwner`. */
+  isTeam: boolean;
 }): AppBlockEventRow {
   return {
     time: formatClickhouseDateTime64(args.nowMs),
@@ -188,7 +188,7 @@ export function buildAppBlockEventRow(args: {
     userId: args.userId ?? 0,
     viewerKey: args.viewerKey,
     isAnon: args.userId === null ? 1 : 0,
-    isOwner: args.isOwner ? 1 : 0,
+    isOwner: args.isTeam ? 1 : 0,
     enumProps: args.classified.enumProps,
     numProps: args.classified.numProps,
     boolProps: args.classified.boolProps,
@@ -275,8 +275,6 @@ export async function ingestBlockEvents(args: {
       recordBlockCustomEvents('private_run', group.length);
       continue;
     }
-    // Team = owner or accepted collaborator, from the cached analytics entry (up to five minutes
-    // stale for a seat that just changed). The column keeps its original name, `isOwner`.
     const isTeam = !!viewer && signedIn && isAppTeamMember(analytics, viewer.id);
     for (const event of group) {
       const classified = classifyBlockEvent(analytics.events, event.eventName, event.properties);
@@ -294,7 +292,7 @@ export async function ingestBlockEvents(args: {
           classified,
           userId: viewer && signedIn ? viewer.id : null,
           viewerKey,
-          isOwner: isTeam,
+          isTeam,
         })
       );
     }

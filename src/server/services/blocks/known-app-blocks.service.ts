@@ -151,23 +151,23 @@ export type ApprovedEventDeclarations = ReadonlyMap<
 
 /**
  * What the custom-events ingest needs to know about one approved app: who owns it, who else is on
- * its team, and which events its APPROVED manifest declares. A projection, so the cache never holds a whole manifest.
+ * its team, and which events its APPROVED manifest declares. A projection, so the cache never
+ * holds a whole manifest.
  */
 export type ApprovedAppBlockAnalytics = {
   /** `null` when the row carried no owner; then nobody is the owner. */
   ownerUserId: number | null;
   /**
-   * The app's ACCEPTED collaborators (not the owner), read by `listApprovedAppBlockSeatHolders`
-   * with the same seat conditions that decide who may see the app's analytics panel. Empty while
-   * that read is failing; see `loadCollaboratorsByApp`.
+   * Accepted collaborators, owner excluded. Empty while the collaborator read is failing (see
+   * `loadCollaboratorsByApp`).
    */
   collaboratorUserIds: ReadonlySet<number>;
   events: ApprovedEventDeclarations;
 };
 
 /**
- * Is `userId` on the app's team: its owner or one of its accepted collaborators? The ingest
- * stores this as `isOwner`, so the owner panel's "Include team activity" toggle hides both.
+ * Is `userId` on the app's team: its owner or an accepted collaborator? Stored as the `isOwner`
+ * column, whose name predates collaborators.
  */
 export function isAppTeamMember(analytics: ApprovedAppBlockAnalytics, userId: number): boolean {
   return (
@@ -200,8 +200,9 @@ function projectDeclaredEvents(manifest: unknown): ApprovedEventDeclarations {
 }
 
 /**
- * How long a FAILED analytics read is cached. Far shorter than a good one: while it lasts every
- * custom event is dropped, where a failed id-set read only costs a label.
+ * How long a failed or degraded analytics read is cached. Far shorter than a good one: after a
+ * failed read every custom event is dropped; after a failed collaborator read nobody but the
+ * owner counts as team.
  */
 const ANALYTICS_FAILURE_TTL_MS = 15_000;
 
@@ -212,12 +213,9 @@ let _analyticsInflight: Promise<AnalyticsMap> | null = null;
 const NO_COLLABORATORS: ReadonlySet<number> = new Set();
 
 /**
- * Accepted collaborators per approved app, or `null` when the read failed.
- *
- * A failure here is NOT a failure of the analytics read: events are still accepted and the owner
- * is still recognised, but nobody else counts as team, so a collaborator's rows are written as
- * ordinary activity until a read succeeds. That is the smaller harm. Failing the whole read would
- * drop every custom event of every app for a lookup that only decides one flag.
+ * Accepted collaborators per approved app, or `null` when the read failed. Must not fail the
+ * analytics read: that would drop every app's custom events over one flag. Until a read
+ * succeeds, only owners count as team.
  */
 async function loadCollaboratorsByApp(): Promise<Map<string, Set<number>> | null> {
   try {
@@ -244,7 +242,7 @@ async function loadCollaboratorsByApp(): Promise<Map<string, Set<number>> | null
 
 /**
  * `degraded` is true when the collaborator read failed, so the entry is cached for the failure TTL
- * rather than five minutes and the team set recovers quickly.
+ * rather than the full TTL and the team set recovers quickly.
  */
 async function loadApprovedAppBlockAnalytics(): Promise<{
   byId: AnalyticsMap;
@@ -253,10 +251,9 @@ async function loadApprovedAppBlockAnalytics(): Promise<{
   const byId: AnalyticsMap = new Map();
   try {
     const { dbRead } = await import('~/server/db/client');
-    // Both reads run together, once per refresh; `loadCollaboratorsByApp` never rejects. It starts
-    // only after the client import above has settled: its own module imports the same client, and
-    // two concurrent first imports of it are where the shared test mock has been seen to hand out
-    // the real client instead.
+    // `loadCollaboratorsByApp` never rejects, and must start only after this import settles: its
+    // module imports the same client, and two concurrent first imports make the shared test db
+    // mock hand out the real client. Nothing tests this ordering.
     const [rows, collaborators] = await Promise.all([
       dbRead.appBlock.findMany({
         where: { status: 'approved' },
@@ -288,15 +285,15 @@ async function loadApprovedAppBlockAnalytics(): Promise<{
  * The owner, accepted collaborators and declared custom events of an approved app; `null` when
  * the id is not approved.
  *
- * ⚠️ Cached for five minutes per process, with no invalidation: a collaborator who is added,
- * accepts, or is removed is reflected in `isAppTeamMember` up to five minutes later (on each
- * process separately), and their events in that window keep the old team flag.
+ * ⚠️ Cached per process for `KNOWN_APP_BLOCKS_TTL_MS`, with no invalidation: a collaborator added,
+ * accepted or removed is reflected that much later, and their events in between keep the old
+ * flag.
  *
  * A SEPARATE cached read from the approved-id set above, on purpose: it is loaded only when the
  * custom-events ingest asks, and a failure of this wider query cannot empty the id set the other
- * beacons clamp their labels with. Same TTL and single-flight; while the lookup is failing every
+ * beacons clamp their labels with. Same TTL and single-flight; while the app read is failing every
  * id answers `null`, which for an ingest means dropping events rather than storing ones nobody
- * could check. The two reads refresh on their own clocks, so for up to one TTL they can disagree
+ * could check (a failed collaborator read only shortens the TTL; see `loadCollaboratorsByApp`). The two reads refresh on their own clocks, so for up to one TTL they can disagree
  * about an app whose status just changed.
  */
 export async function getApprovedAppBlockAnalytics(

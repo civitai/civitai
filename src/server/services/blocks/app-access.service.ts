@@ -649,14 +649,9 @@ export async function assertAppEditAccess(args: {
 }
 
 /**
- * Which listings a seat must be on for it to reach an AppBlock: `kind: 'onsite'` and a backing
- * block. Why both conditions are needed is explained on {@link resolveAccessibleAppBlockIds}.
- *
- * Shared by the two reads that answer "who is an accepted collaborator on this AppBlock":
- * {@link resolveAccessibleAppBlockIds} (who may see an app's analytics panel) and
- * {@link listApprovedAppBlockSeatHolders} (whose custom events the ingest counts as the app's
- * team). Both read it from here, so the people who can see the panel and the people whose own
- * activity it treats as team stay the same set. `app-block-team.seam.test.ts` checks that.
+ * The listing half of "this seat reaches an AppBlock" (why both conditions:
+ * {@link resolveAccessibleAppBlockIds}). Shared with {@link listApprovedAppBlockSeatHolders} so
+ * panel access and the ingest's team stay one set; `app-block-team.seam.test.ts` pins that.
  */
 export const APP_BLOCK_SEAT_LISTING_WHERE = {
   kind: 'onsite',
@@ -664,18 +659,9 @@ export const APP_BLOCK_SEAT_LISTING_WHERE = {
 } as const;
 
 /**
- * Every ACCEPTED collaborator of every APPROVED AppBlock, as `(appBlockId, userId)` pairs. The
- * custom-events ingest loads this to mark a collaborator's own rows as team activity
- * (`known-app-blocks.service.ts`).
- *
- * Applies the conditions {@link resolveAccessibleAppBlockIds} applies to one user's seats, to
- * every seat at once: `status: ACCEPTED` on the seat and {@link APP_BLOCK_SEAT_LISTING_WHERE}
- * on its listing. The owner is not listed here; the caller already knows the owner.
- *
- * Two reads: the qualifying listings, then the accepted seats on them. Bounded by the invite cap (`constants.appCollaborators.maxCollaborators` pending plus
- * accepted seats per app) times the number of approved apps, and returns two scalars per seat.
- * Like every collaborator read it degrades to empty only when the table is missing; any other
- * failure propagates, and the caller decides what that means.
+ * Every ACCEPTED collaborator of every APPROVED AppBlock, as `(appBlockId, userId)` pairs, under
+ * the same seat conditions as {@link resolveAccessibleAppBlockIds}. The owner is not included.
+ * Degrades to empty only when the table is missing; any other failure propagates.
  */
 export async function listApprovedAppBlockSeatHolders(): Promise<
   Array<{ appBlockId: string; userId: number }>
@@ -766,9 +752,8 @@ export type AccessibleAppBlocks = {
  * no rows, no user-visible difference (see 1), and no capability actually withheld.
  */
 export async function resolveAccessibleAppBlockIds(userId: number): Promise<AccessibleAppBlocks> {
-  // Seats come from the `{ userId, status: ACCEPTED }` read below, then their listings are
-  // narrowed by `APP_BLOCK_SEAT_LISTING_WHERE`. `listApprovedAppBlockSeatHolders` applies the
-  // same two conditions from the other direction (by app instead of by user).
+  // `status: ACCEPTED` is repeated in `listApprovedAppBlockSeatHolders`: change both
+  // (`app-block-team.seam.test.ts`).
   const [owned, seats] = await Promise.all([
     dbRead.appBlock.findMany({ where: { app: { userId } }, select: { id: true } }),
     safeCollaboratorQuery(

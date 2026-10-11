@@ -812,7 +812,6 @@ describe('AppAnalyticsPanel — custom events', () => {
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
     const toggle = page.getByRole('switch', { name: 'Include team activity' });
     await expect.element(toggle).not.toBeChecked();
-    // The rows it adds are the owner's AND accepted collaborators' (the ingest marks both).
     await expect
       .element(
         page.getByText(

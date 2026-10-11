@@ -81,7 +81,7 @@ function fullRow() {
     classified,
     userId: 7301,
     viewerKey: '7552154172047254112',
-    isOwner: true,
+    isTeam: true,
   });
 }
 
@@ -146,7 +146,7 @@ describe('appBlockEvents row ↔ DDL parity', () => {
       classified: classifyBlockEvent(declarations, 'level_cleared', {}),
       userId: null,
       viewerKey: '830607531308821364',
-      isOwner: false,
+      isTeam: false,
     });
     expect(row).toMatchObject({ userId: 0, isAnon: 1, isOwner: 0 });
     expect(row).toMatchObject({ enumProps: {}, numProps: {}, boolProps: {} });
