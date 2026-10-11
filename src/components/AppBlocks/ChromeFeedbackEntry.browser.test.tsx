@@ -356,7 +356,7 @@ describe('the bar button', () => {
     expect(feedbackButton().elements()).toHaveLength(0);
   });
 
-  test('hidden when the server says not eligible (owner/editor, flag off, …)', async () => {
+  test('hidden when the server says not eligible (muted, flag off, …)', async () => {
     mocks.eligibility = { eligible: false };
     renderChrome(PAGE_PROPS, { slug: SLUG });
     await expect.element(page.getByTestId('eligibility-probe-resolved')).toBeInTheDocument();
@@ -485,10 +485,10 @@ describe('submitting', () => {
       "This app isn't accepting feedback from you right now.",
     ],
     [
-      'own app',
+      'muted account',
       'FORBIDDEN',
-      'You cannot send feedback to your own app',
-      'You cannot send feedback to your own app',
+      'Your account cannot send feedback right now',
+      'Your account cannot send feedback right now',
     ],
   ];
 

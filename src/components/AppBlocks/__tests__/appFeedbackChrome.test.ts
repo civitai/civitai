@@ -227,13 +227,13 @@ describe('appFeedbackSubmitErrorMessage — every server refusal reads as a sent
     );
   });
 
-  it('self / muted / collection off (FORBIDDEN): the server text', () => {
+  it('muted / collection off (FORBIDDEN): the server text', () => {
     expect(
       appFeedbackSubmitErrorMessage({
-        message: 'You cannot send feedback to your own app',
+        message: 'Your account cannot send feedback right now',
         data: { code: 'FORBIDDEN' },
       })
-    ).toBe('You cannot send feedback to your own app');
+    ).toBe('Your account cannot send feedback right now');
   });
 
   it('not eligible (NOT_FOUND): one neutral sentence, not "App not found"', () => {
