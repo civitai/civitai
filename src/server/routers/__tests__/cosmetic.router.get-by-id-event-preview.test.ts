@@ -35,7 +35,7 @@ const hat = {
 };
 const badge = { id: 1, name: 'Badge', type: 'Badge', data: { url: 'b.png' } };
 
-const callerFor = (user: { id: number; isModerator?: boolean }) =>
+const callerFor = (user: { id: number; isModerator?: boolean }, bearer: object = {}) =>
   createCallerFactory(cosmeticRouter)({
     user: {
       onboarding: OnboardingSteps.Buzz,
@@ -52,6 +52,7 @@ const callerFor = (user: { id: number; isModerator?: boolean }) =>
     cache: {},
     req: undefined,
     res: undefined,
+    ...bearer,
   } as never);
 
 const stored = (cosmetic: object | null) =>
@@ -87,6 +88,21 @@ describe('cosmetic.getById', () => {
     expect(await callerFor({ id: 99, isModerator: true }).getById({ id: hat.id })).toEqual(hat);
     testerFlag.reset({ readable: false });
     expect(await callerFor({ id: 99, isModerator: true }).getById({ id: hat.id })).toEqual(hat);
+  });
+
+  it("does not extend the moderator bypass to a moderator's scoped token", async () => {
+    stored(hat);
+    testerFlag.reset({ public: true }); // armed
+    const key = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
+    const moderator = { id: 99, isModerator: true };
+    expect(
+      await callerFor(moderator, { ...key, tokenScope: TokenScope.CollectionsRead }).getById({
+        id: hat.id,
+      })
+    ).toBeNull();
+    expect(
+      await callerFor(moderator, { ...key, tokenScope: TokenScope.Full }).getById({ id: hat.id })
+    ).toEqual(hat);
   });
 
   it('returns it to everyone once the event is open', async () => {
