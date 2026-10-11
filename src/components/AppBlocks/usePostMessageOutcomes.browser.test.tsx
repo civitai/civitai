@@ -229,7 +229,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // with no listener — noise on the wire that fixes nothing. The counter is the
     // whole remedy for this class.
     // NAVIGATE on PageBlockHost: fire-and-forget AND `'required'` there, so this
-    // is the no_handler arm of the class (TRACK_EVENT is N/A on both hosts).
+    // is the no_handler arm of the class.
     const recorded: Recorded[] = [];
     await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'PageBlockHost' });
     const replies = listenOnBlock();
