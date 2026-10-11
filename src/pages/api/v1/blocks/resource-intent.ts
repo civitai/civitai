@@ -41,7 +41,9 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * parallel). Flag: `resourceIntentJev` (Flipt
  * `resource-intent-jev`, default-deny when absent) is checked BEFORE the
  * response cache so a dark flag never reads, never spends. Behind it,
- * `resourceIntentPoolMerge` picks the co-occurrence POOL_MERGE list over HYBRID_10.
+ * `resourceIntentPoolMerge` picks the co-occurrence POOL_MERGE list over HYBRID_10, and
+ * `resourceIntentCheckpoint` admits `kind: 'checkpoint'` (400 while it is off). Checkpoint mode
+ * makes no vendor call but still spends from the same LLM bucket: kept, not split, while it is dark.
  *
  * Any failure inside the primitive returns 200 with `degraded: true` and empty
  * suggestions — never a stack trace, never fabricated suggestions. ⚠️ ONE
@@ -84,6 +86,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   const parsed = resourceIntentInputSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error });
+    return;
+  }
+  // Refused rather than answered as add-ons: a caller that asked for checkpoints must not get a
+  // list of a different kind. An absent `kind` (or 'addon') is unaffected by this flag.
+  if (parsed.data.kind === 'checkpoint' && !features.resourceIntentCheckpoint) {
+    res.status(400).json({ error: "kind 'checkpoint' is not enabled" });
     return;
   }
 

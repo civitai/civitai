@@ -1,7 +1,8 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 
-import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocCounts, type CoocCounts } from './build';
+import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocPayload, type CoocCounts } from './build';
+import { decodeCheckpointAttachSection, type CheckpointAttachSection } from './checkpoint-attach';
 
 /**
  * `ResourceIntentCoocSnapshot` storage: the build lifecycle (begin → ready | failed | duplicate),
@@ -233,12 +234,19 @@ function isAllocationFailure(e: unknown): boolean {
  * kind than the caller asked for, a payload that does not decode (`CoocSnapshotCorruptError`), and
  * a study snapshot whose pin has passed (even if retention has not yet run). An allocation failure
  * while decoding is rethrown as it is, not as `CoocSnapshotCorruptError`.
+ *
+ * `checkpoints` is the payload's checkpoint-attachment section, or `null` for a snapshot built
+ * before it existed. A section that is present but malformed fails the whole load as corrupt.
  */
 export async function loadCoocSnapshot(
   sql: CoocSql,
   contentHash: string,
   opts: { kind: CoocSnapshotKind; now: Date }
-): Promise<{ meta: CoocSnapshotMeta; counts: CoocCounts }> {
+): Promise<{
+  meta: CoocSnapshotMeta;
+  counts: CoocCounts;
+  checkpoints: CheckpointAttachSection | null;
+}> {
   const now = opts.now;
   const [row] = await sql.query<CoocSnapshotMeta & { payload: Uint8Array }>(Prisma.sql`
     SELECT ${META_COLUMNS}, "payload" FROM ${T}
@@ -257,8 +265,14 @@ export async function loadCoocSnapshot(
   if (meta.kind === 'study' && (!meta.pinnedUntil || meta.pinnedUntil.getTime() <= now.getTime()))
     throw new CoocSnapshotExpiredError(`cooc study snapshot ${contentHash}: pin has passed`);
   let counts: CoocCounts;
+  let checkpoints: CheckpointAttachSection | null;
   try {
-    counts = await deserializeCoocCounts(payload);
+    const decoded = await deserializeCoocPayload(payload);
+    counts = decoded.counts;
+    checkpoints =
+      decoded.checkpointSection === undefined
+        ? null
+        : decodeCheckpointAttachSection(decoded.checkpointSection);
   } catch (e) {
     // Out of memory, not bad bytes: a later read of the same row can pass, so not unservable.
     if (isAllocationFailure(e)) throw e;
@@ -266,7 +280,7 @@ export async function loadCoocSnapshot(
       `cooc snapshot ${contentHash}: ${e instanceof Error ? e.message : String(e)}`
     );
   }
-  return { meta, counts };
+  return { meta, counts, checkpoints };
 }
 
 /**

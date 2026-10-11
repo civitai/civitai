@@ -19,14 +19,22 @@ import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { askJev, JEV_TIMEOUT_MS, JevError } from '~/server/services/ai/jev';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import {
+  CHECKPOINT_LIST_MODELS,
+  RESOURCE_INTENT_CHECKPOINT_SPEC_HASH,
+  type CheckpointArm,
+} from '~/server/services/resource-intent-checkpoint';
+import {
+  findCheckpointCandidates,
   findPoolMergeCandidates,
   findResourceIntentCandidates,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
+import { CHECKPOINT_ATTACH_BUILD_HASH } from '~/server/services/resource-intent-cooc/checkpoint-attach';
 import {
   coocSnapshotHolder,
   coocStudySnapshots,
+  type CoocFallbackReason,
   type CoocServing,
   type ServedCooc,
 } from '~/server/services/resource-intent-cooc/holder';
@@ -299,16 +307,23 @@ type ShadowEvent = {
   noneProbability: number;
   stage1NoneProbability: number | null;
   stage3NoneProbability: number | null;
-} & Partial<PoolMergeShadow>;
+} & Partial<PoolMergeShadow> &
+  Partial<CheckpointShadow>;
 
-/** Sent on POOL_MERGE rows only; a HYBRID_10 row reads the columns' defaults. */
+/** Sent on POOL_MERGE and checkpoint rows only; a HYBRID_10 row reads the columns' defaults. */
 type PoolMergeShadow = {
-  arm: ResourceIntentArm;
+  arm: ResourceIntentArm | CheckpointArm;
   coocSnapshotHash: string;
   coocSpecHash: string;
   poolMergeSpecHash: string;
   coocFallback: 0 | 1;
   coocFallbackReason: string;
+};
+
+/** Sent on checkpoint rows only (`2026-10-11-resource-intent-shadow-checkpoint.sql`). */
+type CheckpointShadow = {
+  kind: 'checkpoint';
+  checkpointSpecHash: string;
 };
 
 async function writeShadowEvent(event: ShadowEvent): Promise<void> {
@@ -337,7 +352,7 @@ async function writeShadowEvent(event: ShadowEvent): Promise<void> {
 
 function degradedResponse(
   insightFallback: boolean,
-  armFields: { coocFallback?: boolean }
+  armFields: Pick<ResourceIntentResponse, 'coocFallback' | 'kind' | 'checkpointArm'>
 ): ResourceIntentResponse {
   return {
     degraded: true,
@@ -364,23 +379,29 @@ function logDegraded(degradedReason: string, error: unknown, model: string) {
   ).catch(() => undefined);
 }
 
+export type ResourceIntentContext = {
+  browsingLevel: number;
+  /** Overrides the anon coverageAudience lookup (tests; special tRPC callers). */
+  coverage?: ResourceIntentCoverage;
+  /** Clock for the shadow-event timestamp and the study pin check; injectable for tests. */
+  now?: () => Date;
+  /** Serve the co-occurrence POOL_MERGE list (flag `resourceIntentPoolMerge`). Add-on mode only. */
+  poolMerge?: boolean;
+  /**
+   * STUDY MODE: serve POOL_MERGE (add-on mode) or ATTACH_BM (checkpoint mode) from this pinned
+   * study snapshot (its content hash). Fails closed — `degraded: true` — if the snapshot cannot
+   * be served, and never falls back. Ignored on the `base_bm` arm, which reads no snapshot.
+   */
+  coocSnapshotId?: string;
+  /** Checkpoint mode's arm; `attach_bm` (the served arm) when absent. The study sets `base_bm`. */
+  checkpointArm?: CheckpointArm;
+};
+
 export async function getResourceIntent(
   input: ResourceIntentInput,
-  ctx: {
-    browsingLevel: number;
-    /** Overrides the anon coverageAudience lookup (tests; special tRPC callers). */
-    coverage?: ResourceIntentCoverage;
-    /** Clock for the shadow-event timestamp and the study pin check; injectable for tests. */
-    now?: () => Date;
-    /** Serve the co-occurrence POOL_MERGE list (flag `resourceIntentPoolMerge`). */
-    poolMerge?: boolean;
-    /**
-     * STUDY MODE: serve POOL_MERGE from this pinned study snapshot (its content hash). Fails
-     * closed — `degraded: true` — if the snapshot cannot be served, and never falls back.
-     */
-    coocSnapshotId?: string;
-  }
+  ctx: ResourceIntentContext
 ): Promise<ResourceIntentResponse> {
+  if (input.kind === 'checkpoint') return getCheckpointIntent(input, ctx);
   const startedAt = Date.now();
   // Resolved BEFORE the cache read: `cap` is part of the cache key, so it cannot
   // be computed on the miss path only.
@@ -655,4 +676,232 @@ export async function getResourceIntent(
   })();
 
   return response;
+}
+
+/** The `model` of an undegraded checkpoint-mode response: no vendor model produced it. */
+export const CHECKPOINT_MODEL = 'none';
+
+/**
+ * Checkpoint mode's cache key. The prompt is NOT a term: neither arm reads it, so keying on it
+ * would only split identical lists. Coverage IS a term (the add-on key leaves it out): it is
+ * resolved before the cache read here, and with no prompt in the key one entry serves every
+ * request for an ecosystem, so a coverage change must not wait out the TTL. The width is the
+ * served one, `min(cap, 50)`. The last term is always `RESOURCE_INTENT_CHECKPOINT_SPEC_HASH`, so no
+ * add-on key (whose last term is a stage spec hash) can equal one of these.
+ */
+export function checkpointIntentCacheKey(input: {
+  arm: CheckpointArm;
+  baseModel: string;
+  browsingLevel: number;
+  width: number;
+  coverage: ResourceIntentCoverage;
+  /** `attach_bm` only: the snapshot's content hash, or `COOC_FALLBACK_SNAPSHOT_KEY`. */
+  snapshot?: string;
+}) {
+  const terms = [
+    'checkpoint',
+    input.arm,
+    input.baseModel,
+    String(input.browsingLevel),
+    String(input.width),
+    `next:${input.coverage.next}`,
+    `member:${input.coverage.member}`,
+  ];
+  if (input.arm === 'attach_bm') {
+    terms.push(
+      input.snapshot ?? COOC_FALLBACK_SNAPSHOT_KEY,
+      RESOURCE_INTENT_COOC_SPEC_HASH,
+      CHECKPOINT_ATTACH_BUILD_HASH
+    );
+  }
+  terms.push(RESOURCE_INTENT_CHECKPOINT_SPEC_HASH);
+  const hash = createHash('sha256').update(terms.join('|')).digest('hex');
+  return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
+}
+
+/**
+ * `kind: 'checkpoint'`: no stage 1, no stage 3, no vendor call. The list is the arm's
+ * (`findCheckpointCandidates`), hydrated and re-gated like every other list.
+ *
+ * - `attach_bm` with no servable snapshot section serves BASE_BM's list instead, flagged
+ *   `coocFallback` with the holder's reason, for 60 s — the POOL_MERGE fallback contract. A
+ *   snapshot built before the checkpoint section existed (or under another section build hash)
+ *   reports `spec_mismatch`.
+ * - Study mode (`ctx.coocSnapshotId`, `attach_bm`) fails closed, uncached, like POOL_MERGE's.
+ * - A search or hydration failure degrades (`degraded: true`, `model: 'jev-unavailable'`, the
+ *   contract every degraded response keeps, although no vendor is involved here).
+ */
+async function getCheckpointIntent(
+  input: ResourceIntentInput,
+  ctx: ResourceIntentContext
+): Promise<ResourceIntentResponse> {
+  const startedAt = Date.now();
+  const baseModel = input.baseModel;
+  // The input schema requires it; this guards a caller that skipped the schema.
+  if (!baseModel) throw new Error("baseModel is required when kind is 'checkpoint'");
+  const cap = resolveSuggestionLimit(input.limit);
+  const width = Math.min(cap, CHECKPOINT_LIST_MODELS);
+  const arm: CheckpointArm = ctx.checkpointArm ?? 'attach_bm';
+  const study = arm === 'attach_bm' && ctx.coocSnapshotId !== undefined;
+  const now = ctx.now ?? (() => new Date());
+
+  let served: ServedCooc | null = null;
+  let fallbackReason: CoocFallbackReason | null = null;
+  let studyFailure: { error: unknown } | null = null;
+  if (study) {
+    try {
+      served = await coocStudySnapshots().get(ctx.coocSnapshotId!, now());
+      if (!served.checkpoints)
+        throw new Error(`study snapshot ${ctx.coocSnapshotId} has no servable checkpoint section`);
+    } catch (error) {
+      studyFailure = { error };
+    }
+  } else if (arm === 'attach_bm') {
+    const serving: CoocServing = await coocSnapshotHolder().resolve();
+    served = serving.snapshot;
+    if (!served) fallbackReason = serving.fallbackReason;
+    else if (!served.checkpoints) fallbackReason = 'spec_mismatch';
+  }
+  const attach = served?.checkpoints ?? null;
+  const coocFallback = arm === 'attach_bm' && !study && !attach;
+  const snapshotHash = study ? ctx.coocSnapshotId! : attach ? served!.contentHash : '';
+  const armFields = {
+    kind: 'checkpoint' as const,
+    checkpointArm: arm,
+    ...(arm === 'attach_bm' && { coocFallback }),
+  };
+
+  let degradedReason: string | null = null;
+  let response: ResourceIntentResponse | undefined;
+  let cachedHit = false;
+  let shortlistCount = 0;
+  let cacheKey: ReturnType<typeof checkpointIntentCacheKey> | null = null;
+
+  if (studyFailure) {
+    // Fails closed without the cache, as POOL_MERGE's study mode does.
+    degradedReason = 'cooc_study_snapshot';
+    response = degradedResponse(false, armFields);
+    logDegraded(degradedReason, studyFailure.error, DEGRADED_MODEL);
+  } else {
+    try {
+      // Before the cache read: it is part of this mode's key.
+      const coverage = ctx.coverage ?? (await coverageAudience(undefined));
+      cacheKey = checkpointIntentCacheKey({
+        arm,
+        baseModel,
+        browsingLevel: ctx.browsingLevel,
+        width,
+        coverage,
+        ...(arm === 'attach_bm' && {
+          snapshot: attach ? snapshotHash : COOC_FALLBACK_SNAPSHOT_KEY,
+        }),
+      });
+      try {
+        const cached = await redis.packed.get<unknown>(cacheKey);
+        if (cached != null) {
+          const parsed = resourceIntentResponseSchema.safeParse(cached);
+          if (parsed.success) {
+            response = parsed.data;
+            cachedHit = true;
+          }
+        }
+      } catch {
+        // A cache read failure is a miss, never an error.
+      }
+      if (!response) {
+        const entries = await findCheckpointCandidates({
+          arm,
+          baseModel,
+          attachCandidates: attach ? attach.candidates.get(baseModel) ?? [] : null,
+          browsingLevel: ctx.browsingLevel,
+          coverage,
+          cap,
+        });
+        shortlistCount = entries.length;
+        response = {
+          degraded: false,
+          insightFallback: false,
+          ...armFields,
+          intent: null,
+          criteria: null,
+          suggestions: await hydrateSuggestions(entries, ctx.browsingLevel),
+          noneProbability: null,
+          model: CHECKPOINT_MODEL,
+          criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
+        };
+      }
+    } catch (error) {
+      degradedReason = 'checkpoint_error';
+      response = degradedResponse(false, armFields);
+      logDegraded(degradedReason, error, DEGRADED_MODEL);
+    }
+    if (coocFallback && !cachedHit) {
+      logToAxiom(
+        { type: 'resource-intent-cooc-fallback', reason: fallbackReason ?? '', kind: 'checkpoint' },
+        'temp-search'
+      ).catch(() => undefined);
+    }
+  }
+
+  // The served list is already at most `width` wide; this holds the contract for a cached entry.
+  if (response.suggestions.length > cap) {
+    response = { ...response, suggestions: response.suggestions.slice(0, cap) };
+  }
+
+  if (cacheKey && !cachedHit) {
+    try {
+      await redis.packed.set(cacheKey, response, {
+        EX: response.degraded
+          ? DEGRADED_CACHE_TTL_SECONDS
+          : response.coocFallback
+          ? COOC_FALLBACK_CACHE_TTL_SECONDS
+          : CACHE_TTL_SECONDS,
+      });
+    } catch {
+      // A cache write failure never fails the request.
+    }
+  } else if (cachedHit) {
+    shortlistCount = response.suggestions.length;
+    if (response.degraded) degradedReason = 'cached_degrade';
+  }
+
+  const final = response;
+  void writeShadowEvent({
+    time: clickhouseDateTime64(now()),
+    promptHash: createHash('sha256').update(input.prompt).digest('hex'),
+    promptLength: input.prompt.length,
+    baseModel,
+    browsingLevel: ctx.browsingLevel,
+    // No question spec ran: blank, and specVersion 0 keeps these rows out of the spec-pinned
+    // role-mix query.
+    specHash: '',
+    stage3SpecHash: '',
+    specVersion: 0,
+    criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
+    model: final.model,
+    degraded: final.degraded ? 1 : 0,
+    degradedReason: degradedReason ?? '',
+    latencyMs: Date.now() - startedAt,
+    role: '',
+    styleFamily: '',
+    contentType: '',
+    specificity: 0,
+    needsResource: 0,
+    injectionPresent: 0,
+    shortlistCount,
+    suggestionIds: final.suggestions.map((suggestion) => suggestion.versionId),
+    noneProbability: 0,
+    stage1NoneProbability: null,
+    stage3NoneProbability: null,
+    arm,
+    coocSnapshotHash: snapshotHash,
+    coocSpecHash: arm === 'attach_bm' ? RESOURCE_INTENT_COOC_SPEC_HASH : '',
+    poolMergeSpecHash: '',
+    coocFallback: coocFallback ? 1 : 0,
+    coocFallbackReason: fallbackReason ?? '',
+    kind: 'checkpoint',
+    checkpointSpecHash: RESOURCE_INTENT_CHECKPOINT_SPEC_HASH,
+  });
+
+  return final;
 }

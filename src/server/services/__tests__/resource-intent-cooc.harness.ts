@@ -170,6 +170,10 @@ export function fakeImageDb(opts: {
         modelName: id === 9900 ? 'Base Checkpoint' : `Model ${id}`,
       }));
     }
+    if (text.includes('SELECT id, "baseModel" FROM "ModelVersion"')) {
+      // Checkpoint mode's attachment section: every image's checkpoint is version 9900.
+      return (s.values[0] as number[]).map((id) => ({ id, baseModel: 'SynthBase' }));
+    }
     throw new Error(`unexpected query: ${text.slice(0, 80)}`);
   };
   return { query, queries, createdAt, returned };

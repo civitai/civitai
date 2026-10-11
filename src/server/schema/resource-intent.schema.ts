@@ -6,6 +6,7 @@ import * as z from 'zod';
 // site. A second copy here would let `STAGE3_MAX_RANKED` derive from a stale
 // value the day the vendor's limit moves.
 import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
+import { CHECKPOINT_ARMS } from '~/server/services/resource-intent-checkpoint';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -186,11 +187,30 @@ const contentTypeSchema = z.enum(contentTypeOptions);
 
 const distributionShape = z.record(z.string(), z.number().min(0).max(1));
 
-export const resourceIntentInputSchema = z.object({
-  prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
-  baseModel: z.string().min(1).optional(),
-  limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
-});
+/**
+ * `kind`: `'addon'` (the default, and what an absent `kind` means) asks for add-on resources;
+ * `'checkpoint'` asks for checkpoints, needs `baseModel` (the caller's ecosystem), makes no vendor
+ * call and does not read the prompt for ranking (`resource-intent-checkpoint.ts`). The block route
+ * accepts `'checkpoint'` only behind `resourceIntentCheckpoint`.
+ */
+export const RESOURCE_INTENT_KINDS = ['addon', 'checkpoint'] as const;
+
+export const resourceIntentInputSchema = z
+  .object({
+    prompt: z.string().min(1).max(RESOURCE_INTENT_MAX_PROMPT_LENGTH),
+    baseModel: z.string().min(1).optional(),
+    limit: z.number().int().min(1).max(RESOURCE_INTENT_MAX_SHORTLIST).optional(),
+    kind: z.enum(RESOURCE_INTENT_KINDS).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.kind === 'checkpoint' && !input.baseModel) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: "baseModel is required when kind is 'checkpoint'",
+      });
+    }
+  });
 
 export type ResourceIntentInput = z.infer<typeof resourceIntentInputSchema>;
 
@@ -299,6 +319,13 @@ export const resourceIntentResponseSchema = z.strictObject({
    * for the reason `insightFallback` is not.
    */
   coocFallback: z.boolean().optional(),
+  /**
+   * Checkpoint mode only (absent on add-on responses): `kind: 'checkpoint'` and the arm that
+   * produced the list. There is no stage 1 in this mode, so `intent`, `criteria` and
+   * `noneProbability` are `null`; `coocFallback` rides on the `attach_bm` arm only.
+   */
+  kind: z.literal('checkpoint').optional(),
+  checkpointArm: z.enum(CHECKPOINT_ARMS).optional(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),

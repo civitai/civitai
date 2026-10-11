@@ -17,6 +17,10 @@ import {
   type ResourceIntentStyleFamily,
 } from '~/server/schema/resource-intent.schema';
 import {
+  CHECKPOINT_LIST_MODELS,
+  type CheckpointArm,
+} from '~/server/services/resource-intent-checkpoint';
+import {
   POOL_MERGE_BASE_MODELS,
   poolMergeModelIds,
   POOL_MERGE_COOC_LIST_MODELS,
@@ -524,11 +528,59 @@ export async function findResourceIntentCandidates(
 }
 
 /**
+ * Ranked candidate models through the seed's gates, as both screens gated them: the seed's filter
+ * AND `id IN candidates`, one page as wide as the candidate list and unsorted, re-sorted by
+ * candidate rank, one version per model. No candidates ⇒ no query.
+ */
+async function gateRankedCandidates(
+  cands: readonly number[],
+  seed: Pick<ResourceIntentSeed, 'filter' | 'baseModels'>,
+  coverage: ResourceIntentCoverage
+): Promise<ResourceIntentShortlistEntry[]> {
+  if (!cands.length) return [];
+  const hits = await searchModelIndex({
+    filter: and(seed.filter, inArray('id', cands)) ?? undefined,
+    limit: cands.length,
+  });
+  const candRank = new Map(cands.map((id, i) => [id, i]));
+  const docs = [...hits].sort((x, y) => (candRank.get(x.id) ?? 1e9) - (candRank.get(y.id) ?? 1e9));
+  return expandOneVersionPerModel(docs, {
+    baseModels: seed.baseModels,
+    coverage,
+    cap: cands.length,
+  });
+}
+
+/**
+ * Checkpoint mode's list for one arm (see `resource-intent-checkpoint.ts`), `min(cap, 50)` models
+ * under the checkpoint gate for `baseModel`:
+ * - `attach_bm`: `attachCandidates` (the snapshot's ranked attachment counts) through
+ *   `gateRankedCandidates`;
+ * - `base_bm`, and `attach_bm` with no snapshot (`attachCandidates: null`): `seedBasePool`'s
+ *   popularity page.
+ */
+export async function findCheckpointCandidates(opts: {
+  arm: CheckpointArm;
+  baseModel: string;
+  attachCandidates: readonly number[] | null;
+  browsingLevel: number;
+  coverage: ResourceIntentCoverage;
+  cap: number;
+}): Promise<ResourceIntentShortlistEntry[]> {
+  const width = Math.min(clampResourceIntentCap(opts.cap), CHECKPOINT_LIST_MODELS);
+  const seed = seedFilter({ modelTypes: ['Checkpoint'], baseModel: opts.baseModel }, opts);
+  if (opts.arm === 'attach_bm' && opts.attachCandidates) {
+    const gated = await gateRankedCandidates(opts.attachCandidates, seed, opts.coverage);
+    return gated.slice(0, width);
+  }
+  return seedBasePool(seed, opts.coverage, width);
+}
+
+/**
  * The POOL_MERGE arm's list, exactly as the co-occurrence screen gated and merged it.
  *
- * Co-occurrence: the candidates (best first) under the seed's filter AND `id IN candidates`, one
- * page as wide as the candidate list and unsorted, re-sorted by candidate rank, one version per
- * model. BASE: `seedBasePool`'s page, one version per model, `POOL_MERGE_BASE_MODELS` wide.
+ * Co-occurrence: the candidates (best first) through `gateRankedCandidates`. BASE: `seedBasePool`'s
+ * page, one version per model, `POOL_MERGE_BASE_MODELS` wide.
  */
 export async function findPoolMergeCandidates(
   criteria: ResourceIntentCriteria,
@@ -541,23 +593,11 @@ export async function findPoolMergeCandidates(
 ): Promise<{ entries: ResourceIntentShortlistEntry[]; coocGated: number }> {
   if (criteria.role === 'none') return { entries: [], coocGated: 0 };
   const cap = clampResourceIntentCap(opts.cap);
-  const cands = opts.coocCandidates;
   const seed = seedFilter(criteria, opts);
-  const { filter, baseModels } = seed;
-  const [basePool, hits] = await Promise.all([
+  const [basePool, gated] = await Promise.all([
     seedBasePool(seed, opts.coverage, POOL_MERGE_BASE_MODELS),
-    cands.length
-      ? searchModelIndex({
-          filter: and(filter, inArray('id', cands)) ?? undefined,
-          limit: cands.length,
-        })
-      : Promise.resolve([]),
+    gateRankedCandidates(opts.coocCandidates, seed, opts.coverage),
   ]);
-  const candRank = new Map(cands.map((id, i) => [id, i]));
-  const docs = [...hits].sort((x, y) => (candRank.get(x.id) ?? 1e9) - (candRank.get(y.id) ?? 1e9));
-  const gated = cands.length
-    ? expandOneVersionPerModel(docs, { baseModels, coverage: opts.coverage, cap: cands.length })
-    : [];
   const coocList = gated.slice(0, POOL_MERGE_COOC_LIST_MODELS);
   // A model on both lists expands from the same document through the same gates: same version.
   const byModel = new Map([...basePool, ...coocList].map((e) => [e.modelId, e]));
