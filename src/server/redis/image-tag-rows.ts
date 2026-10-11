@@ -1,5 +1,4 @@
 import type { PrismaClient } from '@prisma/client';
-import { Prisma } from '@prisma/client';
 import type { TagSource } from '~/shared/utils/prisma/enums';
 
 export type ImageTagRow = { imageId: number; source: TagSource; tagId: number };
@@ -14,9 +13,9 @@ export async function getImageTagRows(
   imageIds: number[]
 ): Promise<ImageTagRow[]> {
   if (!imageIds.length) return [];
-  return db.$queryRaw<ImageTagRow[]>(Prisma.sql`
+  return db.$queryRaw<ImageTagRow[]>`
     SELECT "imageId", "source", "tagId"
     FROM "TagsOnImageDetails"
     WHERE "imageId" = ANY(${imageIds}::int[]) AND "disabled" = false
-  `);
+  `;
 }

@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ImageTagRow } from '~/server/redis/image-tag-rows';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
@@ -9,12 +9,12 @@ const queryRaw = vi.fn();
 const db = { $queryRaw: queryRaw } as unknown as Parameters<typeof getImageTagRows>[0];
 
 const normalise = (s: string) => s.replace(/\s+/g, ' ').trim();
-function lastQuery(): Prisma.Sql {
+// Builds the statement with Prisma's own `Prisma.sql`, which is what tagged `$queryRaw` does, so
+// `.text`/`.values` are the SQL and bindings Prisma sends rather than a hand-joined template.
+function lastQuery() {
   expect(queryRaw).toHaveBeenCalledTimes(1);
-  const arg = queryRaw.mock.calls[0][0] as Prisma.Sql;
-  expect(typeof arg.text).toBe('string');
-  expect(Array.isArray(arg.values)).toBe(true);
-  return arg;
+  const [strings, ...values] = queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+  return Prisma.sql(strings, ...values);
 }
 
 beforeEach(() => {
