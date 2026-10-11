@@ -11,6 +11,7 @@ import { PrizeBadge } from '~/components/Events/ScoredEvent/PrizeBadge';
 import { AnimatedCount } from '~/components/Metrics/AnimatedCount';
 import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useTeamColor } from '~/components/Events/events.utils';
+import { filmLength } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 
@@ -310,12 +311,6 @@ function HeroVideoButton({
       </span>
     </UnstyledButton>
   );
-}
-
-// "0:42", "1:24". The shared formatDuration pads a minute-less length to "00:42".
-function filmLength(seconds: number) {
-  const whole = Math.round(seconds);
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
 // Label over value, as "You're on" sits over the team name, so both rows share baselines.

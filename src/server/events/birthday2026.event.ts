@@ -96,7 +96,11 @@ export const birthday2026 = createEvent(name, {
   promo: {
     postEditor: {
       body: 'Put a party hat on an image in this post. Its views and reactions score for your team.',
-      draftNote: 'Scores as people see it, so publish to start earning.',
+      draftNote: 'Scores once people can see it.',
+    },
+    homeBlock: {
+      eyebrow: "Civitai's 4th Birthday",
+      cta: 'See the event',
     },
   },
   // Copies: consumers must never be able to mutate the shared constants.
