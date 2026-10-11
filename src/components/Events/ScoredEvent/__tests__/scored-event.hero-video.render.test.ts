@@ -205,3 +205,33 @@ describe('EventVideoModal', () => {
     expect(joinButton(modal())).toBeUndefined();
   });
 });
+
+describe('hero roster choice', () => {
+  const box = (page: HTMLElement) =>
+    page.querySelector<HTMLInputElement>(
+      '[data-testid="roster-opt-in-on-join"] input, input[data-testid="roster-opt-in-on-join"]'
+    );
+
+  it('offers the choice under the join button, as given, and reports a tick', () => {
+    const onChange = vi.fn();
+    const page = hero({ rosterOnJoin: { checked: false, onChange } });
+    expect(box(page)!.checked).toBe(false);
+    act(() => box(page)!.click());
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it('offers no choice when the event has no roster', () => {
+    expect(box(hero())).toBeNull();
+  });
+
+  it("puts a joined member's switch in their team panel, with no join choice", () => {
+    const page = hero({
+      team: 'Pink',
+      rosterOnJoin: { checked: false, onChange: vi.fn() },
+      rosterSwitch: React.createElement('i', { 'data-testid': 'switch' }),
+    });
+    const panel = page.querySelector('[data-testid="hero-team"]')!;
+    expect(panel.querySelector('[data-testid="switch"]')).not.toBeNull();
+    expect(box(page)).toBeNull();
+  });
+});

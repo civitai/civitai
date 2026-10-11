@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   daysOnTeam,
+  orderRoster,
   hatTier,
   isNewMember,
   podiumHero,
@@ -118,5 +119,27 @@ describe('podiumHero', () => {
   it('has no hero for a member with no hats, nor one whose hats have no art', () => {
     expect(podiumHero([]).label).toBe('none');
     expect(podiumHero([hat(4, true, null)]).hero).toBeUndefined();
+  });
+});
+
+describe('orderRoster', () => {
+  const m = (id: number, points: number, hatCount = 0) => ({
+    user: { id },
+    ...member(hatCount, points),
+  });
+
+  it('re-sorts by the active sort when cached totals moved', () => {
+    const ids = orderRoster([m(1, 10), m(2, 8), m(3, 50)], 'points').map((x) => x.user.id);
+    expect(ids).toEqual([3, 1, 2]);
+  });
+
+  it('keeps the server order among tied members', () => {
+    const ids = orderRoster([m(5, 8), m(2, 8), m(9, 8)], 'points').map((x) => x.user.id);
+    expect(ids).toEqual([5, 2, 9]);
+  });
+
+  it('keeps one card per member when a later page repeats one', () => {
+    const ids = orderRoster([m(1, 10), m(2, 8), m(2, 8), m(3, 5)], 'points').map((x) => x.user.id);
+    expect(ids).toEqual([1, 2, 3]);
   });
 });

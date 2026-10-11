@@ -51,6 +51,11 @@ const member = (
 
 const state = vi.hoisted(() => ({
   items: [] as unknown[],
+  // When set, the roster arrives as these pages instead of one page of `items`.
+  pages: undefined as unknown[][] | undefined,
+  inView: false,
+  liveTopics: [] as string[],
+  trigger: undefined as undefined | ((arg: unknown) => void),
   status: undefined as { optedIn: boolean; listedTeam: string | null } | undefined,
   user: undefined as { id: number } | undefined,
 }));
@@ -59,7 +64,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: makeTrpcProxy({
     'event.getTeamRoster': {
       useInfiniteQuery: () => ({
-        data: { pages: [{ items: state.items, total: state.items.length, nextCursor: undefined }] },
+        data: {
+          pages: (state.pages ?? [state.items]).map((items) => ({
+            items,
+            total: items.length,
+            nextCursor: undefined,
+          })),
+        },
         isLoading: false,
         hasNextPage: false,
         isFetchingNextPage: false,
@@ -77,11 +88,28 @@ vi.mock('~/components/Events/events.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof EventsUtils>()),
   useTeamColor: () => () => 'pink',
 }));
+// Each card's own in-view state, as the real hook keeps it; `setAllInView` scrolls them all.
+const views = vi.hoisted(() => new Set<(inView: boolean) => void>());
 vi.mock('~/hooks/useInView', () => ({
-  useInView: () => ({ ref: { current: null }, inView: false }),
+  useInView: () => {
+    const [inView, setInView] = React.useState(state.inView);
+    React.useEffect(() => {
+      views.add(setInView);
+      return () => void views.delete(setInView);
+    }, []);
+    return { ref: { current: null }, inView };
+  },
 }));
+const setAllInView = (inView: boolean) => act(() => views.forEach((set) => set(inView)));
+// Records which cards' totals the page follows live.
 vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
-  RosterLivePoints: () => null,
+  RosterLivePoints: ({ topicIds }: { topicIds: string[] }) => {
+    state.liveTopics = topicIds;
+    return null;
+  },
+}));
+vi.mock('~/components/Dialog/dialogStore', () => ({
+  dialogStore: { trigger: (arg: unknown) => state.trigger?.(arg) },
 }));
 vi.mock('~/components/Events/ScoredEvent/roster/RosterOptIn', () => ({ RosterOptIn: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({ UserAvatar: () => null }));
@@ -93,7 +121,8 @@ vi.mock('~/components/Events/ScoredEvent/HatArt', () => ({
     React.createElement('div', { 'data-hat': url, className }),
 }));
 vi.mock('~/components/Metrics/AnimatedCount', () => ({
-  AnimatedCount: ({ value }: { value: number }) => React.createElement('span', null, value),
+  AnimatedCount: ({ value, animate }: { value: number; animate?: boolean }) =>
+    React.createElement('span', { 'data-animate': String(animate) }, value),
 }));
 
 const { TeamRoster } = await import('~/components/Events/ScoredEvent/TeamRoster');
@@ -104,6 +133,10 @@ beforeEach(() => {
   vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
   state.status = undefined;
   state.user = undefined;
+  state.pages = undefined;
+  state.inView = false;
+  state.liveTopics = [];
+  state.trigger = undefined;
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -111,7 +144,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function render(items: unknown[]) {
+function render(items: unknown[] = []) {
   state.items = items;
   host = document.createElement('div');
   document.body.appendChild(host);
@@ -132,6 +165,9 @@ function render(items: unknown[]) {
   return host;
 }
 
+// Three members ahead of everyone on any sort, so the member under test lands on the grid.
+const podiumOf = (hatCount: number) =>
+  [1, 2, 3].map((id) => member(id, { hatCount, points: 1_000_000, joinedAgoMs: -id }));
 const all = (el: Element, id: string) => [...el.querySelectorAll(`[data-testid="${id}"]`)];
 const ranksIn = (el: Element | null) =>
   all(el!, 'roster-rank').map((r) => r.textContent?.replace('#', ''));
@@ -183,9 +219,104 @@ describe('TeamRoster cards', () => {
     expect(el.textContent).toContain('user4');
   });
 
+  // Hidden only once the viewer's own uncached status says they are not listed.
+  it.each([
+    ['listed', { id: 1 }, { optedIn: true, listedTeam: 'Pink' }],
+    ['signed out', undefined, undefined],
+    ['status still loading', { id: 1 }, undefined],
+  ] as const)("keeps the viewer's own card while %s", (_, user, status) => {
+    state.user = user;
+    state.status = status;
+    const el = render([member(1, { hatCount: 9 }), member(2, { hatCount: 8 })]);
+    expect(el.textContent).toContain('user1');
+  });
+
+  // Pages are read by offset from an edge cache: a member can arrive on two pages, and the 25th can
+  // tie the 24th.
+  it('ranks across pages, shares a tie at the page boundary, and shows a repeated member once', () => {
+    const first = Array.from({ length: 24 }, (_, i) => member(i + 1, { hatCount: 100 - i }));
+    const tied = member(25, { hatCount: 100 - 23 });
+    state.pages = [first, [first[23], tied]];
+    const el = render();
+    const cards = all(grid(el)!, 'roster-card');
+    expect(cards).toHaveLength(22);
+    expect(ranksIn(grid(el)).slice(-2)).toEqual(['24', '24']);
+    expect(el.textContent?.split('user24').length).toBe(2);
+  });
+
+  // Live points move totals in the cache without re-sorting it.
+  it('re-sorts a points roster whose cached totals moved, so ranks and the podium follow', () => {
+    const el = render([
+      member(1, { points: 10 }),
+      member(2, { points: 8 }),
+      member(3, { points: 8 }),
+      member(4, { points: 50 }),
+    ]);
+    act(() => el.querySelector<HTMLInputElement>('input[value="points"]')!.click());
+    const names = all(podium(el)!, 'roster-podium-card').map((c) => c.textContent);
+    expect(names[0]).toContain('user4');
+    expect(ranksIn(podium(el))).toEqual(['1', '2', '3']);
+    expect(ranksIn(grid(el))).toEqual(['3']);
+  });
+
+  it('follows a card live only while it is on screen, and rolls its counts only then', () => {
+    let el = render([member(1), member(2)]);
+    expect(state.liveTopics).toEqual([]);
+    expect(el.querySelector('[data-animate="true"]')).toBeNull();
+    act(() => root?.unmount());
+    host?.remove();
+    state.inView = true;
+    el = render([member(1), member(2)]);
+    expect([...state.liveTopics].sort()).toEqual(['topic-1', 'topic-2']);
+    expect(el.querySelectorAll('[data-animate="true"]')).toHaveLength(4);
+    // Scrolled away: both cards drop out of the live set.
+    setAllInView(false);
+    expect(state.liveTopics).toEqual([]);
+    expect(el.querySelector('[data-animate="true"]')).toBeNull();
+  });
+
+  it('opens every hat in the modal from a card’s "+N"', () => {
+    const triggered: { component: unknown; props: { username: string; hats: unknown[] } }[] = [];
+    state.trigger = (arg) => triggered.push(arg as (typeof triggered)[number]);
+    const hats = Array.from({ length: 12 }, (_, i) => hat(100 + i, { worn: i === 0 }));
+    const el = render([...podiumOf(30), member(4, { hats })]);
+    act(() =>
+      all(all(grid(el)!, 'roster-card')[0], 'roster-more')[0].dispatchEvent(
+        new MouseEvent('click', { bubbles: true })
+      )
+    );
+    expect(triggered).toHaveLength(1);
+    expect(triggered[0].props.username).toBe('user4');
+    expect(triggered[0].props.hats).toHaveLength(12);
+    expect(triggered[0].props.hats[0]).toMatchObject({ cosmeticId: 100, worn: true });
+  });
+
+  it('fits a podium card\'s mini row of 9 hats as 3 + "+6" narrow and 5 + "+4" wide', () => {
+    const hats = Array.from({ length: 10 }, (_, i) => hat(100 + i, { worn: i === 0 }));
+    const el = render([member(1, { hats })]);
+    const card = all(podium(el)!, 'roster-podium-card')[0];
+    const tiles = all(card, 'roster-hat');
+    expect(tiles).toHaveLength(5);
+    expect(tiles.filter((t) => t.hasAttribute('data-narrow'))).toHaveLength(3);
+    expect(all(card, 'roster-more').map((m) => m.textContent)).toEqual(['+6', '+4']);
+    expect(all(card, 'roster-more')[1].className).toContain('@[220px]:grid');
+  });
+
+  // The container queries match only under an @container ancestor.
+  it('puts every container-query user under an @container', () => {
+    const hats = Array.from({ length: 12 }, (_, i) => hat(100 + i));
+    const el = render([member(1, { hats }), ...[2, 3, 4].map((id) => member(id, { hats }))]);
+    const users = [
+      ...el.querySelectorAll('[class*="@sm:"], [class*="@[220px]:"], [class*="@[300px]:"]'),
+    ];
+    expect(users.length).toBeGreaterThan(0);
+    for (const node of users)
+      expect(node.parentElement?.closest('[class~="@container"]')).not.toBeNull();
+  });
+
   it('fits a shelf of 12 hats as 7 + "+5" on a narrow card and 9 + "+3" on a wide one', () => {
     const hats = Array.from({ length: 12 }, (_, i) => hat(100 + i));
-    const el = render([member(1), member(2), member(3), member(4, { hats })]);
+    const el = render([...podiumOf(30), member(4, { hats })]);
     const card = all(grid(el)!, 'roster-card')[0];
     const tiles = all(card, 'roster-hat');
     expect(tiles).toHaveLength(9);
@@ -201,7 +332,7 @@ describe('TeamRoster cards', () => {
 
   it('shows every hat and no "+N" when they fit the narrow shelf', () => {
     const hats = Array.from({ length: 8 }, (_, i) => hat(100 + i));
-    const el = render([member(1), member(2), member(3), member(4, { hats })]);
+    const el = render([...podiumOf(30), member(4, { hats })]);
     const card = all(grid(el)!, 'roster-card')[0];
     expect(all(card, 'roster-hat').filter((t) => t.hasAttribute('data-narrow'))).toHaveLength(8);
     expect(all(card, 'roster-more')).toHaveLength(0);
@@ -268,6 +399,13 @@ describe('TeamRoster cards', () => {
     const active = [...card.querySelectorAll('[data-active]')];
     expect(active).toHaveLength(1);
     expect(active[0].textContent).toContain(label);
+    // The underline itself, in the team colour, on the active stat's number only.
+    const numbers = [...card.querySelectorAll<HTMLElement>('.tabular-nums.leading-5')];
+    expect(numbers).toHaveLength(3);
+    const lined = numbers.filter((n) => n.style.boxShadow);
+    expect(lined).toHaveLength(1);
+    expect(lined[0].style.boxShadow).toContain('pink');
+    expect(active[0].contains(lined[0])).toBe(true);
   });
 
   it('puts the gold dot only on the dearest tier', () => {
@@ -277,7 +415,7 @@ describe('TeamRoster cards', () => {
       hat(3, { price: 500 }),
       hat(4, { price: null }),
     ];
-    const el = render([member(1), member(2), member(3), member(4, { hats })]);
+    const el = render([...podiumOf(30), member(4, { hats })]);
     const tiles = all(all(grid(el)!, 'roster-card')[0], 'roster-hat');
     expect(tiles.map((t) => t.getAttribute('data-tier'))).toEqual(['3', '2', '1', '0']);
     expect(tiles.map((t) => !!t.querySelector('[aria-hidden]'))).toEqual([

@@ -13,6 +13,20 @@ function sortValue(item: Rankable, sort: RosterSort) {
 }
 
 /**
+ * The loaded members in the sort's order, each once. Live points move totals in the cache without
+ * re-sorting it, and pages are read by offset from an edge cache, so a later page can repeat a
+ * member an earlier one held. The sort is stable: members the server ordered as tied keep its order.
+ */
+export function orderRoster<T extends Rankable & { user: { id: number } }>(
+  items: T[],
+  sort: RosterSort
+) {
+  const seen = new Set<number>();
+  const once = items.filter((item) => !seen.has(item.user.id) && !!seen.add(item.user.id));
+  return once.sort((a, b) => sortValue(b, sort) - sortValue(a, sort));
+}
+
+/**
  * Each member's rank in a list already in the sort's order. Ties share the better rank, as the team
  * positions do (`teamPositionsOverTime`), so two members on 4 hats behind one on 5 are both #2.
  */

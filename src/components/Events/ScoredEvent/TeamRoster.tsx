@@ -10,6 +10,7 @@ import {
 } from '~/components/Events/ScoredEvent/roster/RosterCards';
 import type { RosterSort } from '~/components/Events/ScoredEvent/roster/roster-cards.utils';
 import {
+  orderRoster,
   rosterPricePoints,
   rosterRanks,
 } from '~/components/Events/ScoredEvent/roster/roster-cards.utils';
@@ -66,10 +67,13 @@ export function TeamRoster({
   const hideSelf = !!currentUser && !!status && !status.listedTeam;
   const items = useMemo(
     () =>
-      (data?.pages.flatMap((p) => p.items) ?? []).filter(
-        (i) => !(hideSelf && i.user.id === currentUser?.id)
+      orderRoster(
+        (data?.pages.flatMap((p) => p.items) ?? []).filter(
+          (i) => !(hideSelf && i.user.id === currentUser?.id)
+        ),
+        sort
       ),
-    [data, hideSelf, currentUser?.id]
+    [data, hideSelf, currentUser?.id, sort]
   );
   // Ranked after the viewer's own card is dropped, so a hidden card leaves no gap.
   const ranks = useMemo(() => rosterRanks(items, sort), [items, sort]);
@@ -87,15 +91,20 @@ export function TeamRoster({
   }, []);
 
   const [now] = useState(() => new Date());
-  const ctx: RosterCardContext = {
-    team,
-    color: teamColor(team),
-    glow: `var(--mantine-color-${team.toLowerCase()}-5)`,
-    sort,
-    prices,
-    now,
-    onVisible,
-  };
+  const color = teamColor(team);
+  // Stable between renders, so a card scrolling in or out re-renders only the cards that changed.
+  const ctx = useMemo<RosterCardContext>(
+    () => ({
+      team,
+      color,
+      glow: `var(--mantine-color-${team.toLowerCase()}-5)`,
+      sort,
+      prices,
+      now,
+      onVisible,
+    }),
+    [team, color, sort, prices, now, onVisible]
+  );
   const teamHatUrl = standings?.teamHats?.find((h) => h.team === team)?.url;
   const podium = items.slice(0, PODIUM_SIZE);
   const grid = items.slice(PODIUM_SIZE);
@@ -166,7 +175,12 @@ export function TeamRoster({
           )}
         </>
       ) : (
-        <Alert color="gray">No one on Team {team} has joined the roster yet.</Alert>
+        <Alert color="gray">
+          No one on Team {team} has joined the roster yet.
+          {team === initialTeam && status && !status.optedIn && (
+            <> Turn on &ldquo;Show me on my team&apos;s roster&rdquo; above to be the first.</>
+          )}
+        </Alert>
       )}
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>

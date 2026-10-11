@@ -2,7 +2,7 @@ import { Paper, Text, UnstyledButton } from '@mantine/core';
 import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties, ReactNode } from 'react';
-import { useEffect } from 'react';
+import { memo, useEffect } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
@@ -85,7 +85,7 @@ function useLiveWhileVisible(topicId: string, onVisible: RosterCardContext['onVi
     onVisible(topicId, inView);
     return () => onVisible(topicId, false);
   }, [topicId, inView, onVisible]);
-  return ref;
+  return { ref, inView };
 }
 
 export function RankChip({ rank, className }: { rank: number; className?: string }) {
@@ -143,6 +143,7 @@ function WearingAvatar({
           src={hatUrl}
           width={Math.round(size * 1.6)}
           alt=""
+          loading="lazy"
           className="pointer-events-none absolute drop-shadow-[0_3px_4px_rgba(0,0,0,0.45)]"
           style={{ width: '78%', top: '-52%', right: '-26%', transform: 'rotate(14deg)' }}
         />
@@ -169,7 +170,7 @@ function Stat({
     >
       <span
         className="text-base font-extrabold tabular-nums leading-5"
-        style={active ? { boxShadow: `inset 0 -2px 0 ${color}` } : undefined}
+        style={active ? { boxShadow: `inset 0 -2px 0 ${color ?? 'currentColor'}` } : undefined}
       >
         {children}
       </span>
@@ -180,7 +181,16 @@ function Stat({
   );
 }
 
-function Stats({ item, ctx }: { item: RosterItem; ctx: RosterCardContext }) {
+function Stats({
+  item,
+  ctx,
+  inView,
+}: {
+  item: RosterItem;
+  ctx: RosterCardContext;
+  /** Counts roll only on screen (AnimatedCount's cost is per element). */
+  inView: boolean;
+}) {
   const days = daysOnTeam(item.joinedAt, ctx.now);
   return (
     <div className="grid grid-cols-3 rounded-md bg-gray-1 dark:bg-dark-8">
@@ -189,10 +199,20 @@ function Stats({ item, ctx }: { item: RosterItem; ctx: RosterCardContext }) {
         active={ctx.sort === 'hats'}
         color={ctx.color}
       >
-        <AnimatedCount value={item.hatCount} abbreviate={false} resetKey={item.user.id} />
+        <AnimatedCount
+          value={item.hatCount}
+          abbreviate={false}
+          resetKey={item.user.id}
+          animate={inView}
+        />
       </Stat>
       <Stat label="points" active={ctx.sort === 'points'} color={ctx.color}>
-        <AnimatedCount value={item.points} abbreviate={false} resetKey={item.user.id} />
+        <AnimatedCount
+          value={item.points}
+          abbreviate={false}
+          resetKey={item.user.id}
+          animate={inView}
+        />
       </Stat>
       <Stat
         label={days === 1 ? 'day on team' : 'days on team'}
@@ -266,7 +286,7 @@ function HatRow({
             data-narrow={i < narrow.shown || undefined}
             data-tier={tier}
           >
-            <HatArt url={hat.url} color={ctx.glow} width={128} />
+            <HatArt url={hat.url} color={ctx.glow} width={96} />
             {tier >= GOLD_TIER && (
               <span
                 className="absolute right-1 top-1 size-1.5 rounded-full bg-[#fcc419] shadow-[0_0_4px_#fcc419]"
@@ -324,7 +344,7 @@ function Username({
 }
 
 /** Direction A: a member's card in the grid, their hats on a two-row shelf. */
-export function RosterShelfCard({
+export const RosterShelfCard = memo(function RosterShelfCard({
   item,
   rank,
   ctx,
@@ -333,7 +353,7 @@ export function RosterShelfCard({
   rank: number;
   ctx: RosterCardContext;
 }) {
-  const ref = useLiveWhileVisible(item.topicId, ctx.onVisible);
+  const { ref, inView } = useLiveWhileVisible(item.topicId, ctx.onVisible);
   const hats = cardHats(item);
   const worn = hats.find((h) => h.worn);
   const isNew = isNewMember(item.joinedAt, ctx.now);
@@ -344,6 +364,7 @@ export function RosterShelfCard({
       withBorder
       radius="md"
       className={clsx('relative overflow-hidden @container', EVENT_CARD_SURFACE)}
+      style={{ borderColor: ctx.color }}
       data-testid="roster-card"
     >
       <div
@@ -384,14 +405,14 @@ export function RosterShelfCard({
             </Text>
           </div>
         )}
-        <Stats item={item} ctx={ctx} />
+        <Stats item={item} ctx={ctx} inView={inView} />
       </div>
     </Paper>
   );
-}
+});
 
 /** Direction C: a top-three member as a trading card, their worn hat as the hero. */
-export function RosterPodiumCard({
+export const RosterPodiumCard = memo(function RosterPodiumCard({
   item,
   rank,
   ctx,
@@ -405,7 +426,7 @@ export function RosterPodiumCard({
   teamHatUrl?: string | null;
   className?: string;
 }) {
-  const ref = useLiveWhileVisible(item.topicId, ctx.onVisible);
+  const { ref, inView } = useLiveWhileVisible(item.topicId, ctx.onVisible);
   const { hero, label, rest } = podiumHero(cardHats(item));
   const isNew = isNewMember(item.joinedAt, ctx.now);
 
@@ -447,7 +468,7 @@ export function RosterPodiumCard({
         <UserAvatar user={item.user} avatarSize={36} withDecorations={false} linkToProfile />
         <Username item={item} ctx={ctx} />
       </div>
-      <Stats item={item} ctx={ctx} />
+      <Stats item={item} ctx={ctx} inView={inView} />
       {rest.length > 0 && (
         <HatRow
           hats={rest}
@@ -465,4 +486,4 @@ export function RosterPodiumCard({
       )}
     </div>
   );
-}
+});

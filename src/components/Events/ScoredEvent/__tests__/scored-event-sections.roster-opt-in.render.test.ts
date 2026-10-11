@@ -150,7 +150,7 @@ describe('ScoredEventSections: roster choice at join', () => {
     expect(el.querySelector('[data-testid="roster-switch"]')).toBeNull();
   });
 
-  it("puts the compact switch in a joined member's team panel", () => {
+  it('hands the hero the compact roster switch on an event with a roster', () => {
     const el = render(true);
     expect(el.querySelector('[data-testid="roster-switch"]')?.getAttribute('data-compact')).toBe(
       'true'
