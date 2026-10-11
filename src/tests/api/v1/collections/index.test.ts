@@ -4,6 +4,7 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const {
   mockGetAllCollections,
@@ -13,7 +14,6 @@ const {
   mockRateLimit,
   mockGetRegion,
   mockIsRegionRestricted,
-  mockImageFindUnique,
 } = vi.hoisted(() => ({
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
@@ -22,12 +22,9 @@ const {
   mockRateLimit: vi.fn(),
   mockGetRegion: vi.fn(),
   mockIsRegionRestricted: vi.fn(),
-  mockImageFindUnique: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { image: { findUnique: mockImageFindUnique } },
-}));
+const mockImageFindUnique = dbMock.dbRead.image.findUnique;
 
 vi.mock('~/server/services/collection.service', () => ({
   getAllCollections: mockGetAllCollections,
@@ -360,6 +357,7 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     // R does NOT intersect the PG-only public flag → cover URL nulled. Under the
     // old `allBrowsingLevels` clamp this R cover would have leaked.
     expect(res._getJSONData().coverImageUrl).toBeNull();
+    expect(mockImageFindUnique).not.toHaveBeenCalled();
   });
 
   it('MATURITY/CACHEABILITY: the clamp reads NO per-user data — an authed (mod) caller gets byte-identical clamped output to an anon caller', async () => {
