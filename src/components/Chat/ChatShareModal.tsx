@@ -33,6 +33,7 @@ import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import chatClasses from './Chat.module.scss';
 import classes from './ChatList.module.css';
 import { clsx } from 'clsx';
 import { stripStickerTokens } from '~/shared/utils/sticker-token';
@@ -133,8 +134,18 @@ export default function ChatShareModal(props: { message: string }) {
   };
 
   return (
-    <Modal {...dialog} title="Send Chat" size="sm">
-      <Stack gap={0} h="100%">
+    // The content is capped at the viewport; flexing the body down into it keeps the
+    // list the only scroller, so Message and Send stay on screen at short heights.
+    <Modal
+      {...dialog}
+      title="Send Chat"
+      size="sm"
+      classNames={{
+        content: clsx(chatClasses.tokens, 'flex flex-col'),
+        body: 'flex min-h-0 flex-1 flex-col',
+      }}
+    >
+      <Stack gap={0} className="min-h-0 flex-1">
         <Box p="sm" pt={0}>
           <TextInput
             leftSection={<IconSearch size={16} />}
@@ -154,7 +165,7 @@ export default function ChatShareModal(props: { message: string }) {
           />
         </Box>
         <Divider />
-        <Box h="100%" mah={500} style={{ overflowY: 'auto' }}>
+        <Box mah={500} className="min-h-0 flex-auto overflow-y-auto">
           {isLoading ? (
             <Center h="100%">
               <Loader />
