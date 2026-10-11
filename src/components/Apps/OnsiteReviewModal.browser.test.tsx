@@ -551,6 +551,148 @@ describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
   });
 });
 
+describe('OnsiteReviewModal — declared analytics events are shown to the mod', () => {
+  /**
+   * Approval is what lets an app record custom events: ingest accepts only the names
+   * and enum values the approved manifest declares. So the moderator must see the
+   * declaration on the review screen, and see clearly when it does not validate.
+   * Every name and value below is distinct from every other and from the card's
+   * own copy, so each assertion can only be satisfied by the field it names.
+   */
+  const VALID_ANALYTICS = {
+    events: {
+      level_complete: {
+        description: 'A viewer finished a level',
+        properties: {
+          difficulty: { type: 'enum', values: ['casual_tier', 'brutal_tier'] },
+          score: { type: 'number' },
+          used_hint: { type: 'boolean' },
+        },
+      },
+      share_clicked: {},
+    },
+  };
+
+  function renderWithAnalytics(analytics: unknown) {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: { ...ONSITE_PENDING, manifest: { ...ONSITE_PENDING.manifest, analytics } },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+  }
+
+  /** The text of each part (name, type badge, enum values) of one property row. */
+  function propertyRowParts(name: string): string[] {
+    const rows = page.getByTestId('apps-review-analytics-property').elements();
+    const row = rows.find((el) => el.querySelector('code')?.textContent === name);
+    if (!row) throw new Error(`no property row for ${name}`);
+    return [...row.children].map((child) => child.textContent ?? '');
+  }
+
+  test('a valid declaration lists every event, property type and enum value, inline', async () => {
+    renderWithAnalytics(VALID_ANALYTICS);
+    await expect.element(page.getByText('Analytics events')).toBeInTheDocument();
+    await expect.element(page.getByText(/^2 events declared\./)).toBeInTheDocument();
+
+    const eventNames = page
+      .getByTestId('apps-review-analytics-event')
+      .elements()
+      .map((el) => el.querySelector('code')?.textContent);
+    expect(eventNames).toEqual(['level_complete', 'share_clicked']);
+    await expect.element(page.getByText('A viewer finished a level')).toBeInTheDocument();
+    await expect.element(page.getByText('No properties')).toBeInTheDocument();
+
+    expect(propertyRowParts('difficulty')).toEqual([
+      'difficulty',
+      'enum',
+      'casual_tier',
+      'brutal_tier',
+    ]);
+    expect(propertyRowParts('score')).toEqual(['score', 'number']);
+    expect(propertyRowParts('used_hint')).toEqual(['used_hint', 'boolean']);
+
+    // INLINE, not inside the collapsed disclosure. Mantine keeps a collapsed panel
+    // mounted under `aria-hidden`, so presence alone cannot tell the two apart (see the
+    // goods suite above for the same check and its positive control).
+    const card = page.getByTestId('apps-review-analytics').element();
+    expect(card.closest('[aria-hidden="true"]')).toBeNull();
+    // Positive control for that discriminator: the raw-JSON disclosure's own content
+    // (the fixture's novel key) IS reported hidden.
+    expect(
+      page
+        .getByText(/novel-payload/)
+        .element()
+        .closest('[aria-hidden="true"]')
+    ).not.toBeNull();
+  });
+
+  test('`analytics` is not repeated in the raw "Other manifest fields" disclosure', async () => {
+    renderWithAnalytics(VALID_ANALYTICS);
+    await expect.element(page.getByTestId('apps-review-analytics')).toBeInTheDocument();
+    // The raw dump is mounted while collapsed, so a leaked key would be found here.
+    expect(page.getByText(/"analytics"/).elements()).toHaveLength(0);
+    await expect
+      .element(page.getByRole('button', { name: 'Other manifest fields (1)' }))
+      .toBeInTheDocument();
+  });
+
+  test('a malformed declaration shows its errors and NO event list', async () => {
+    // `level_complete` is valid on its own; `asked_prompt` declares a free-text
+    // property. The parser is all-or-nothing, so the card must not list either event.
+    renderWithAnalytics({
+      events: {
+        level_complete: VALID_ANALYTICS.events.level_complete,
+        asked_prompt: { properties: { prompt: { type: 'string' } } },
+      },
+    });
+    await expect
+      .element(page.getByText('Analytics declaration does not validate (1)'))
+      .toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(/^analytics\.events\.asked_prompt\.properties\.prompt\.type must be one of/)
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByText(/declaring nothing/)).toBeInTheDocument();
+    expect(page.getByTestId('apps-review-analytics-event').elements()).toHaveLength(0);
+    expect(page.getByText(/events declared/).elements()).toHaveLength(0);
+    expect(page.getByText('Declares analytics but no events.').elements()).toHaveLength(0);
+  });
+
+  test('`analytics: null` is an error, not an absent key', async () => {
+    // The parser rejects null, so ingest records nothing for it. Hiding the card here
+    // would make a broken declaration look like no declaration.
+    renderWithAnalytics(null);
+    await expect
+      .element(page.getByText('Analytics declaration does not validate (1)'))
+      .toBeInTheDocument();
+    await expect.element(page.getByText('analytics must be an object')).toBeInTheDocument();
+  });
+
+  test('a valid declaration with no events says so', async () => {
+    renderWithAnalytics({ events: {} });
+    await expect.element(page.getByText('Declares analytics but no events.')).toBeInTheDocument();
+    expect(page.getByTestId('apps-review-analytics-event').elements()).toHaveLength(0);
+    expect(page.getByText(/does not validate/).elements()).toHaveLength(0);
+  });
+
+  test('a manifest with NO analytics key renders no card', async () => {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    // Positive control: the modal rendered, so the zero below means "absent".
+    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    expect(page.getByTestId('apps-review-analytics').elements()).toHaveLength(0);
+  });
+});
+
 describe('OnsiteReviewModal — per-scope justifications shown to the mod', () => {
   test('renders each declared permission with its dev-supplied justification, and a "No justification provided" fallback when absent', async () => {
     const withJustifications = {

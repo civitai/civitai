@@ -21,6 +21,7 @@ import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
+  IconChartBar,
   IconCheck,
   IconCoin,
   IconExternalLink,
@@ -51,6 +52,10 @@ import {
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  parseManifestAnalytics,
+  type DeclaredEventProperty,
+} from '~/shared/constants/block-analytics.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
@@ -1220,6 +1225,10 @@ const HANDLED_MANIFEST_KEYS = new Set([
   'targets',
   'iframe',
   'settings',
+  // Rendered in full by `ManifestAnalytics`. Unlike `goods` (whose opaque payload that
+  // card omits), a valid declaration holds nothing the card leaves out — the parser
+  // rejects any other key. If the contract gains a field, render it there or drop this.
+  'analytics',
 ]);
 
 export function ManifestView({
@@ -1264,6 +1273,7 @@ export function ManifestView({
           nothing at all when the manifest declares no `goods`, which is every app
           approved to date. */}
       <ManifestGoods manifest={manifest} />
+      <ManifestAnalytics manifest={manifest} />
       {includeScopes && <ManifestScopes manifest={manifest} />}
       <ManifestTargets manifest={manifest} />
       <ManifestSettings manifest={manifest} />
@@ -1765,6 +1775,124 @@ function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
         )}
       </Stack>
     </Card>
+  );
+}
+
+/**
+ * The manifest's `analytics.events` declaration. Ingest records only what the APPROVED
+ * manifest declares, so approving a version is what lets the app record these events.
+ *
+ * Read only through `parseManifestAnalytics`, the parser the submit validator and the
+ * ingest cache use, so the card cannot list an event ingest would refuse. It is
+ * all-or-nothing: on any error it returns no events and the card shows the errors.
+ */
+function ManifestAnalytics({ manifest }: { manifest: Record<string, unknown> }) {
+  // `undefined` only: the parser rejects `analytics: null`, so it must show as an error.
+  if (manifest.analytics === undefined) return null;
+  const { events, errors } = parseManifestAnalytics(manifest);
+  const entries = [...events.entries()];
+
+  return (
+    <Card withBorder p="sm" data-testid="apps-review-analytics">
+      <Stack gap="xs">
+        <Group gap={6}>
+          <IconChartBar size={14} />
+          <Text size="sm" fw={600}>
+            Analytics events
+          </Text>
+          <Tooltip
+            multiline
+            w={280}
+            label="Custom events the app may send about how viewers use it. Only the event names, properties and enum values declared here are recorded; anything else is dropped. A change needs a new version and another review."
+          >
+            <ThemeIcon size="xs" variant="subtle" color="gray">
+              <IconInfoCircle size={13} />
+            </ThemeIcon>
+          </Tooltip>
+        </Group>
+
+        {errors.length > 0 ? (
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="orange"
+            variant="light"
+            title={`Analytics declaration does not validate (${errors.length})`}
+          >
+            <Stack gap={2}>
+              <Text size="xs">
+                Ingest treats a declaration with any error as declaring nothing, so none of this
+                app&apos;s custom events would be recorded.
+              </Text>
+              {errors.map((error) => (
+                <Text key={error} size="xs" c="orange" style={{ whiteSpace: 'pre-wrap' }}>
+                  {error}
+                </Text>
+              ))}
+            </Stack>
+          </Alert>
+        ) : entries.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            Declares analytics but no events.
+          </Text>
+        ) : (
+          <>
+            <Text size="xs" c="dimmed">
+              {entries.length === 1 ? '1 event declared' : `${entries.length} events declared`}. The
+              app can record only these names and enum values — no free text — but number properties
+              are unbounded.
+            </Text>
+            <Stack gap={8}>
+              {entries.map(([name, event]) => (
+                <Stack key={name} gap={2} data-testid="apps-review-analytics-event">
+                  <Code fw={600} style={{ alignSelf: 'flex-start' }}>
+                    {name}
+                  </Code>
+                  {event.description && (
+                    <Text size="xs" c="dimmed">
+                      {event.description}
+                    </Text>
+                  )}
+                  {event.properties.size === 0 ? (
+                    <Text size="xs" c="dimmed" fs="italic">
+                      No properties
+                    </Text>
+                  ) : (
+                    <Stack gap={2} pl="sm">
+                      {[...event.properties.entries()].map(([propName, prop]) => (
+                        <AnalyticsPropertyRow key={propName} name={propName} property={prop} />
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              ))}
+            </Stack>
+          </>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function AnalyticsPropertyRow({
+  name,
+  property,
+}: {
+  name: string;
+  property: DeclaredEventProperty;
+}) {
+  return (
+    <Group gap={6} wrap="wrap" align="center" data-testid="apps-review-analytics-property">
+      <Code>{name}</Code>
+      <Badge size="xs" variant="light" color="gray">
+        {property.type}
+      </Badge>
+      {property.type === 'enum' &&
+        property.values.map((value) => (
+          <Badge key={value} size="xs" variant="outline" color="blue" tt="none">
+            {value}
+          </Badge>
+        ))}
+    </Group>
   );
 }
 
