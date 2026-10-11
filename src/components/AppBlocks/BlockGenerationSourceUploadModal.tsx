@@ -13,11 +13,21 @@ import {
 import { IconAlertTriangle, IconBolt, IconCheck, IconUpload } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
 import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
+import { maxOrchestratorImageFileSize } from '~/server/common/constants';
+import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import {
+  IMAGE_PREP_ERROR,
+  ImagePrepError,
+  imageToJpegBlob,
+  prepStage,
+  resizeImage,
+} from '~/shared/utils/canvas-utils';
 import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import { getImageDimensions } from '~/utils/image-utils';
-import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
-import { DIM_MAX, DIM_MIN } from '~/server/schema/blocks/workflow.schema';
+import { reportUnreadablePick, snapshotPick } from '~/utils/unreadable-pick';
 
 /**
  * App Blocks — the host modal behind PageBlockHost's `OPEN_IMAGE_UPLOAD` bridge
@@ -54,6 +64,7 @@ export default function BlockGenerationSourceUploadModal({
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [unreadablePick, setUnreadablePick] = useState(false);
   const { requireSignIn } = useSignInToUpload();
 
   // Guard against a resolved upload landing after the modal unmounts / a new
@@ -66,14 +77,31 @@ export default function BlockGenerationSourceUploadModal({
     };
   }, []);
 
-  async function handleFile(file: File | null) {
-    if (!file || requireSignIn()) return;
-    const epoch = ++epochRef.current;
+  function showPreview(file: File | null) {
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-    const localPreview = URL.createObjectURL(file);
-    objectUrlRef.current = localPreview;
-    setPreviewUrl(localPreview);
+    objectUrlRef.current = file ? URL.createObjectURL(file) : null;
+    setPreviewUrl(objectUrlRef.current);
+  }
+
+  async function handleFile(picked: File | null) {
+    if (!picked || requireSignIn()) return;
+    const epoch = ++epochRef.current;
     setMessage(null);
+    setUnreadablePick(false);
+    setStatus('uploading');
+
+    // A photo-picker File can be unreadable, or turn unreadable after its first read (#5746), so
+    // every stage, the preview included, reads an in-memory copy taken now.
+    const { file, error } = await snapshotPick(picked, { maxBytes: maxOrchestratorImageFileSize });
+    if (epoch !== epochRef.current) return;
+    if (error) {
+      reportUnreadablePick(picked, 'app-block-upload');
+      showPreview(null);
+      setStatus('idle');
+      setUnreadablePick(true);
+      return;
+    }
+    showPreview(file);
 
     // Images only — matches the FileInput `accept` and the img2img source
     // contract. uploadConsumerBlob would also accept video/mp4|webm, but a video
@@ -85,7 +113,6 @@ export default function BlockGenerationSourceUploadModal({
       return;
     }
 
-    setStatus('uploading');
     try {
       // Mirror the generator's SourceImageUpload pre-upload step (handleDropCapture):
       // downscale to fit the block source-image max dimension + re-encode to JPEG
@@ -105,20 +132,22 @@ export default function BlockGenerationSourceUploadModal({
       // The SAME util the generator uses: a presigned PUT to the orchestrator
       // consumer-blob store (it enforces its own 64MB cap on the uploaded blob).
       // NO createImage, NO scan, NO gate.
-      const blob = await uploadConsumerBlob(jpegBlob);
+      const { url } = await uploadConsumerBlob(jpegBlob);
       if (epoch !== epochRef.current) return;
-      if (!blob.url) throw new Error('Upload did not return a URL');
+      if (!url) throw new Error('Upload did not return a URL');
       // Real dimensions from the uploaded (resized) blob (mirrors SourceImageUpload).
-      const { width, height } = await getImageDimensions(blob.url);
+      const { width, height } = await prepStage('dims', () =>
+        getImageDimensions(url, { loadRetries: 2 })
+      );
       if (epoch !== epochRef.current) return;
       setStatus('ready');
       setMessage(null);
-      onResolved({ url: blob.url, width, height });
+      onResolved({ url, width, height });
       dialog.onClose();
     } catch (err) {
       if (epoch !== epochRef.current) return;
       setStatus('error');
-      setMessage((err as Error).message);
+      setMessage(err instanceof ImagePrepError ? IMAGE_PREP_ERROR : (err as Error).message);
     }
   }
 
@@ -152,7 +181,7 @@ export default function BlockGenerationSourceUploadModal({
         <FileInput
           label="Source image"
           placeholder="Select an image"
-          accept="image/png,image/jpeg,image/webp"
+          accept={IMAGE_MIME_TYPE.join(',')}
           clearable
           disabled={busy}
           leftSection={<IconUpload size={16} />}
@@ -160,6 +189,15 @@ export default function BlockGenerationSourceUploadModal({
           onChange={(f: File | null) => void handleFile(f)}
           data-testid="block-generation-source-file-input"
         />
+
+        {unreadablePick && (
+          <UnreadablePickAlert
+            accept={IMAGE_MIME_TYPE}
+            maxSize={maxOrchestratorImageFileSize}
+            disabled={busy}
+            onFiles={([file]) => void handleFile(file)}
+          />
+        )}
 
         {message && (
           <Text size="xs" c={status === 'error' ? 'red' : 'dimmed'}>

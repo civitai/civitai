@@ -13,18 +13,7 @@ import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 import { isAndroidDevice } from '~/utils/device-helpers';
-import { reportApplicationError } from '~/utils/application-error';
-import { boundedFileFields, markInMemory, splitUnreadablePicks } from '~/utils/unreadable-pick';
-
-/** Bounded fields only: the picked file's type (from a short list), size bucket, and platform. */
-function reportUnreadablePick(file: File) {
-  const { type, size } = boundedFileFields(file);
-  void reportApplicationError(new Error('media pick failed: pick-unreadable'), {
-    name: 'media-pick',
-    message: `picked-file ${type} ${size} NotReadableError android:${isAndroidDevice()}`,
-    resolveStack: false,
-  });
-}
+import { markInMemory, reportUnreadablePick, splitUnreadablePicks } from '~/utils/unreadable-pick';
 
 export function MediaDropzone({
   label,
@@ -92,7 +81,7 @@ export function MediaDropzone({
     const { readable, unreadable } = await splitUnreadablePicks(files, {
       maxBytes: constants.mediaUpload.maxImageFileSize,
     });
-    for (const { file } of unreadable) reportUnreadablePick(file);
+    for (const { file } of unreadable) reportUnreadablePick(file, 'media');
     setUnreadableCount(unreadable.length);
     if (readable.length) onDrop(readable.map((file) => ({ file })));
   }

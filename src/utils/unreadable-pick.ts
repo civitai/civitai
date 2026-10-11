@@ -1,3 +1,6 @@
+import { reportApplicationError } from '~/utils/application-error';
+import { isAndroidDevice } from '~/utils/device-helpers';
+
 /** How long a pick's read at pick time may take before the pick is treated as readable. */
 export const UNREADABLE_PROBE_TIMEOUT_MS = 3_000;
 /**
@@ -274,4 +277,17 @@ export function boundedFileFields(file: { type: string; size: number }) {
     type: REPORTED_TYPES.includes(file.type) ? file.type : 'other',
     size: file.size < 5 * MB ? '<5MB' : file.size <= 20 * MB ? '5-20MB' : '>20MB',
   };
+}
+
+/**
+ * Reports a pick the picker made unreadable, with bounded fields only: the picked file's type (from a
+ * short list), size bucket, and platform. `source` names the surface it was picked in.
+ */
+export function reportUnreadablePick(file: File, source: string) {
+  const { type, size } = boundedFileFields(file);
+  void reportApplicationError(new Error(`${source} pick failed: pick-unreadable`), {
+    name: `${source}-pick`,
+    message: `picked-file ${type} ${size} NotReadableError android:${isAndroidDevice()}`,
+    resolveStack: false,
+  });
 }

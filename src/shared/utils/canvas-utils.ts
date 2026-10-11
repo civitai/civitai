@@ -29,6 +29,10 @@ export class ImagePrepError extends Error {
   }
 }
 
+/** Shown for an ImagePrepError in place of the browser's own text ("failed to load image blob", …). */
+export const IMAGE_PREP_ERROR =
+  "Couldn't read this image on your device. Try a different file or a screenshot.";
+
 /**
  * Runs one preparation stage. A failure becomes an ImagePrepError for that stage (an inner stage's
  * tag is kept), and with `timeoutMs` a stage that never settles fails as timed out instead of
