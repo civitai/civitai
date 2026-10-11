@@ -12,6 +12,7 @@ import {
   Paper,
   UnstyledButton,
   useMantineTheme,
+  useMatches,
 } from '@mantine/core';
 import { useState } from 'react';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
@@ -142,6 +143,8 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   // See CosmeticShopItemPurchaseCompleteModal: packs have their own modal.
   const cosmetic = shopItem.cosmetic as NonNullable<CosmeticShopItemGetById['cosmetic']>;
   const { purchaseShopItem, purchasingShopItem } = useMutateCosmeticShop();
+  // Same breakpoint as the Grid below: the columns sit side by side from `md`.
+  const isTwoColumn = useMatches({ base: false, md: true });
   const { data: userCosmetics, isLoading } = useQueryUserCosmetics();
   const { equip, isLoading: isEquipping } = useEquipProfileDecoration();
   const hasCosmetic = Object.values(userCosmetics ?? {})
@@ -229,14 +232,15 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
-            {/* A tall preview image makes the modal taller than the viewport, and
-                the modal scrolls: pinning this block to its bottom edge keeps the
-                price and Purchase button on screen without scrolling to them. */}
+            {/* Side by side, a tall preview image makes the modal taller than the
+                viewport: pinning this block to the modal's bottom edge keeps the price
+                and Purchase button on screen. Stacked, it already sits above the preview,
+                and pinned it would cover the header's close button on a short screen. */}
             <Stack
               gap="lg"
               mt="auto"
               pb="lg"
-              className="sticky bottom-0 z-10"
+              className={isTwoColumn ? 'sticky bottom-0 z-10' : undefined}
               bg="var(--mantine-color-body)"
             >
               <Text className="text-black dark:text-white" fw="bold" size="lg">

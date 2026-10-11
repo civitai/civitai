@@ -934,7 +934,7 @@ jobs:
           // the whole point of it — and leave MIN_TESTS alone, which is what "a fraction of
           // current" below means. (An earlier pairing of these comments told you to raise
           // both, which contradicted that.)
-          const MIN_FILES = 13;
+          const MIN_FILES = 14;
           // It was 10 — which had ZERO headroom when it was written (the tier was 10 tests
           // then, the same configuration this comment praises the FILE floor for), and became
           // unfailable as the tier grew past it. The GATE was not that weak — it is
