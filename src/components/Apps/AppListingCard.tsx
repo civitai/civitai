@@ -490,16 +490,37 @@ export function AppListingCard({
                 {card.name}
               </TruncatedText>
             </Anchor>
-            {/* 🔴 ONE HORIZONTAL, WRAPPING ROW FOR EVERY CONDITIONAL BADGE — not a stacked
-                row each. They used to be separate Stack children, so each one present added
-                a line to the meta block; with a third badge that would push the tagline (the
-                row the title reservation aligns, measured by the geometry guard in
-                `AppListingCard.browser.test.tsx`) down a further line per badge. In one
-                `Group` they share a line and wrap only when the card is too narrow for all
-                of them. Rendered only when at least one badge is, so a badge-less card's meta
+            {/* 🔴 ONE NON-WRAPPING ROW FOR EVERY CONDITIONAL BADGE, WHOSE LONG BADGES
+                TRUNCATE — it never grows a second line. Each badge used to be its own Stack
+                row, so every badge present pushed the tagline (the row the title reservation
+                aligns, measured in `AppListingCard.browser.test.tsx`) down a line.
+
+                ⚠️ A WRAPPING row was tried first and FAILED in CI: it only moves the extra
+                line to narrow cards. At xs, "Beta" is ~39px and the eye-off "Moderators only"
+                ~117px, ~160px with the gap; a card squeezed to ~191px wide leaves this column
+                ~109px (minus 32px card padding, the 40px icon and its 10px gap), so the row
+                wrapped and the tagline dropped by exactly one badge line + row gap (16 + 4 =
+                20px). Real cards hit the same thing with three badges: at the 280px four-column
+                card the column is ~198px, and an owner's Beta + Incomplete + restricted badge
+                needs ~240px.
+
+                So the row is `nowrap` and the LONG badges shrink: Mantine's badge label is
+                already `nowrap` + `text-overflow: ellipsis`, and an `overflow: hidden` flex
+                item may shrink below its content, so `flexShrink: 1` + `minWidth: 0` is all it
+                takes. "Beta" never shrinks (it is short, and it is the whole signal). A
+                truncated label loses nothing: its Tooltip carries the full explanation, and
+                the full text stays in the DOM for assistive tech. Reserving a second line on
+                every card was rejected (it costs every card a line to serve a few), and
+                icon-only at narrow widths needs a container query this card deliberately
+                dropped. Rendered only when at least one badge is, so a badge-less card's meta
                 block is unchanged. */}
             {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
-              <Group gap={4} wrap="wrap" data-testid="apps-listing-card-badges">
+              <Group
+                gap={4}
+                wrap="nowrap"
+                style={{ minWidth: 0 }}
+                data-testid="apps-listing-card-badges"
+              >
                 {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape, with
                     two deliberate differences: it is PUBLIC (that one is owner-only —
                     `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
@@ -511,6 +532,7 @@ export function AppListingCard({
                     color="violet"
                     variant="light"
                     size="xs"
+                    style={{ flexShrink: 0 }}
                     data-testid="apps-listing-card-beta"
                   >
                     Beta
@@ -527,7 +549,7 @@ export function AppListingCard({
                       variant="light"
                       size="xs"
                       leftSection={<IconEyeOff size={10} aria-hidden />}
-                      style={{ cursor: 'help' }}
+                      style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
                       data-testid="apps-listing-card-visibility"
                     >
                       {visibilityBadge.label}
@@ -547,7 +569,7 @@ export function AppListingCard({
                       color="yellow"
                       variant="light"
                       size="xs"
-                      style={{ cursor: 'help' }}
+                      style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
                       data-testid="apps-listing-owner-incomplete"
                     >
                       Incomplete
