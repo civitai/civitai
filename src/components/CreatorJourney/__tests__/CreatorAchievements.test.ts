@@ -4,6 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import { renderToString } from 'react-dom/server';
 import { CreatorAchievements, measureHref } from '~/components/CreatorJourney/CreatorAchievements';
 import { buildActivityProgress } from '~/server/services/creator-journey.service';
 
@@ -137,8 +138,7 @@ describe('Achievements section', () => {
   // Testers read a passed rung at 60% opacity with no counter as a bug ("10k locked at 47k").
   it('tells a pending tile when it unlocks, in local time, at full opacity', () => {
     // Not UTC, so a label in UTC (or a run computed in local time) reads differently.
-    const tz = process.env.TZ;
-    process.env.TZ = 'America/Denver';
+    vi.stubEnv('TZ', 'America/Denver');
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
       expect(new Date('2026-10-11T01:20:00Z').getHours()).toBe(19);
@@ -152,8 +152,34 @@ describe('Achievements section', () => {
       expect(tile(el, '1k Followers')?.textContent).not.toContain('Unlocks');
     } finally {
       vi.useRealTimers();
-      process.env.TZ = tz;
+      vi.unstubAllEnvs();
     }
+  });
+
+  // The time is the viewer's, so the server leaves it out rather than render its own zone's.
+  it('server-renders the pending label without a time', () => {
+    const activity = {
+      ...buildActivityProgress(definitions, new Map(), {
+        models: 3,
+        articles: 0,
+        downloads: 0,
+        followers: 150,
+        reactions: 0,
+        revenue: 0,
+        votes: 0,
+        wins: 0,
+      }),
+      winBreakdown: { challenges: 0, crucibles: 0 },
+    };
+    const html = renderToString(
+      React.createElement(
+        MantineProvider,
+        null,
+        React.createElement(CreatorAchievements, { activity })
+      )
+    );
+    expect(html).toContain('Unlocks at the next update');
+    expect(html).not.toContain('Unlocks at the next update,');
   });
 
   it('shows a counter on every locked rung, not only the next one', () => {

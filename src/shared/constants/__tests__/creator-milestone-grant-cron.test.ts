@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   CREATOR_MILESTONE_GRANT_CRON,
   nextDailyCronRun,
@@ -7,12 +7,11 @@ import {
 
 describe('nextDailyCronRun', () => {
   // Not UTC, so a run computed in local time lands somewhere else.
-  const tz = process.env.TZ;
   beforeAll(() => {
-    process.env.TZ = 'America/Denver';
+    vi.stubEnv('TZ', 'America/Denver');
   });
   afterAll(() => {
-    process.env.TZ = tz;
+    vi.unstubAllEnvs();
   });
 
   it('is later today before the run, tomorrow at or after it, in UTC', () => {
