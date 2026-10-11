@@ -1,5 +1,6 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
+import { useEffect, useState } from 'react';
 import { LinkedText } from '~/components/CreatorJourney/journey-links';
 import {
   accentVar,
@@ -11,7 +12,12 @@ import {
   SpotlightBorderCard,
   SpotlightDivider,
 } from '~/components/SpotlightCard/SpotlightBorderCard';
-import { ACHIEVEMENT_TRACK_STYLES } from '~/shared/constants/creator-journey.constants';
+import {
+  ACHIEVEMENT_TRACK_STYLES,
+  CREATOR_MILESTONE_GRANT_CRON,
+  HIDDEN_MILESTONE_KEY_PREFIX,
+  nextDailyCronRun,
+} from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -96,7 +102,8 @@ export function CreatorAchievements({
   username?: string;
 }) {
   if (activity.milestones.length === 0) return null;
-  const { closestNext } = activity;
+  // With every unearned rung passed there is no next target, so the card shows one waiting instead.
+  const closestNext = activity.closestNext ?? activity.milestones.find(isPending);
 
   return (
     <Stack gap="sm">
@@ -130,10 +137,33 @@ function nextOf(milestones: Milestone[], measure: Measure) {
   return milestones.find((m) => m.measure === measure && !m.earned && m.current < m.threshold);
 }
 
+/** A masked hidden rung, which never shows progress, so it cannot say it was passed. */
+const isMasked = (milestone: Milestone) => milestone.key.startsWith(HIDDEN_MILESTONE_KEY_PREFIX);
+
+/** Passed but not granted until the nightly job runs. */
+function isPending(milestone: Milestone) {
+  return !milestone.earned && milestone.current >= milestone.threshold && !isMasked(milestone);
+}
+
+/** The next nightly grant in the viewer's time zone, set after mount so SSR and hydration agree. */
+function useNextGrantTime() {
+  const [time, setTime] = useState<string>();
+  useEffect(() => {
+    setTime(formatDate(nextDailyCronRun(CREATOR_MILESTONE_GRANT_CRON, new Date()), 'h:mm A'));
+  }, []);
+  return time;
+}
+
+function PendingLabel() {
+  const time = useNextGrantTime();
+  return <>{time ? `Unlocks at the next update, ${time}` : 'Unlocks at the next update'}</>;
+}
+
 function ClosestNext({ milestone }: { milestone: Milestone }) {
   const accent = accentOf(milestone.measure);
   const copy = measureCopy[milestone.measure];
   const remaining = milestone.threshold - milestone.current;
+  const pending = isPending(milestone);
 
   return (
     <SpotlightBorderCard
@@ -141,7 +171,7 @@ function ClosestNext({ milestone }: { milestone: Milestone }) {
       style={accentVar(accent)}
       faceClassName="flex items-center gap-4 p-4"
     >
-      <MilestoneBadge milestone={milestone} state="progress" size={72} />
+      <MilestoneBadge milestone={milestone} state={pending ? 'pending' : 'progress'} size={72} />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <Text size="xs" tt="uppercase" fw={700} className="tracking-wider text-[var(--cj-accent)]">
           Closest next
@@ -154,7 +184,15 @@ function ClosestNext({ milestone }: { milestone: Milestone }) {
         </Text>
         <ProgressBar current={milestone.current} threshold={milestone.threshold} />
         <Text size="sm" c="dimmed">
-          {numberWithCommas(remaining)} more for <b>{milestone.name}</b>.
+          {pending ? (
+            <>
+              <b>{milestone.name}</b>: <PendingLabel />
+            </>
+          ) : (
+            <>
+              {numberWithCommas(remaining)} more for <b>{milestone.name}</b>.
+            </>
+          )}
         </Text>
       </div>
     </SpotlightBorderCard>
@@ -193,7 +231,15 @@ function MeasureRow({
           <MilestoneTile
             key={milestone.key}
             milestone={milestone}
-            state={milestone.earned ? 'earned' : milestone === next ? 'progress' : 'locked'}
+            state={
+              milestone.earned
+                ? 'earned'
+                : isPending(milestone)
+                ? 'pending'
+                : milestone === next
+                ? 'progress'
+                : 'locked'
+            }
           />
         ))}
       </div>
@@ -207,7 +253,7 @@ export function describeWins({ challenges, crucibles }: WinBreakdown) {
   return `${plural(challenges, 'challenge win')} · ${plural(crucibles, 'Crucible win')}`;
 }
 
-type TileState = 'earned' | 'progress' | 'locked';
+type TileState = 'earned' | 'progress' | 'pending' | 'locked';
 
 function MilestoneTile({ milestone, state }: { milestone: Milestone; state: TileState }) {
   const copy = measureCopy[milestone.measure];
@@ -229,11 +275,15 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
           {milestone.name}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
-          {state === 'earned'
-            ? earnedLabel(milestone.achievedAt)
-            : state === 'progress'
-            ? `${numberWithCommas(milestone.current)} / ${numberWithCommas(milestone.threshold)}`
-            : `${numberWithCommas(milestone.threshold)} ${copy.unit}`}
+          {state === 'earned' ? (
+            earnedLabel(milestone.achievedAt)
+          ) : state === 'pending' ? (
+            <PendingLabel />
+          ) : !isMasked(milestone) ? (
+            `${numberWithCommas(milestone.current)} / ${numberWithCommas(milestone.threshold)}`
+          ) : (
+            `${numberWithCommas(milestone.threshold)} ${copy.unit}`
+          )}
         </Text>
         {state === 'progress' && (
           <ProgressBar current={milestone.current} threshold={milestone.threshold} thin />
@@ -270,7 +320,8 @@ export function Hexagon({ label, state, size }: { label: string; state: TileStat
       aria-hidden
       className={clsx(
         'flex shrink-0 items-center justify-center font-extrabold',
-        state === 'locked' && 'bg-gray-3 text-gray-6 dark:bg-dark-4 dark:text-dark-2'
+        (state === 'locked' || state === 'pending') &&
+          'bg-gray-3 text-gray-6 dark:bg-dark-4 dark:text-dark-2'
       )}
       style={{
         // A regular pointy-top hexagon is √3/2 as wide as it is tall, like the badge art.
