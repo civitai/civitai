@@ -121,6 +121,7 @@ describe('block CORS exposes Retry-After', () => {
 
   it('INVARIANT GUARD: not on an unrecognised origin, which gets no block CORS', async () => {
     const res = await call('https://not-listed.example');
+    expect(res.statusCode).toBe(429);
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
     expect(res.headers['access-control-expose-headers']).toBeUndefined();
   });

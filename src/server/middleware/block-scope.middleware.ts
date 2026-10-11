@@ -692,22 +692,22 @@ function rememberWarnedOrigin(origin: string) {
   return true;
 }
 
+// `Retry-After` is not a CORS-safelisted response header; a cross-origin block can't read a
+// 429's wait unless it is exposed.
+const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After';
+
 /**
  * Sets block-CORS headers when the origin is in the allowlist (union of
  * `BLOCK_ALLOWED_ORIGINS` env CSV + every approved OauthClient's
  * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30).
  *
- * Returns true ONLY when we've fully handled the request (block-origin preflight).
+ * Returns `'handled'` ONLY when we've fully handled the request (block-origin preflight).
  * In every other case — including OPTIONS from origins we don't recognize —
- * returns false so the caller falls through to the wrapped handler's own
+ * returns `'fallthrough'` so the caller falls through to the wrapped handler's own
  * CORS path. This preserves the pre-PR behavior of routes like
  * /api/v1/models/[id] (which set ACAO: * in PublicEndpoint) for browser
  * integrations doing CORS preflight from origins outside our allowlist.
  */
-// A cross-origin block can read only CORS-safelisted response headers unless they are exposed;
-// `Retry-After` is not safelisted, and a 429 needs it readable to show the wait.
-const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After';
-
 async function setBlockCors(
   req: NextApiRequest,
   res: NextApiResponse,

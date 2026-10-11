@@ -7,6 +7,10 @@ import {
   checkSharedReportRateLimit,
   checkSharedVoteRateLimit,
   checkSharedWithdrawRateLimit,
+  SHARED_APPEND_RATE_LIMIT_WINDOW_SECONDS,
+  SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS,
+  SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS,
+  SHARED_WITHDRAW_RATE_LIMIT_WINDOW_SECONDS,
 } from '~/server/utils/shared-storage-rate-limit';
 
 /** The refusal's retry metadata, and the fail-open contract, across the four shared buckets. */
@@ -17,10 +21,22 @@ const TTL_SECONDS = 17;
 const OVER_ANY_CAP = 9_999;
 
 const CHECKS = [
-  { name: 'append', check: checkSharedAppendRateLimit },
-  { name: 'vote', check: checkSharedVoteRateLimit },
-  { name: 'withdraw', check: checkSharedWithdrawRateLimit },
-  { name: 'report', check: checkSharedReportRateLimit },
+  {
+    name: 'append',
+    check: checkSharedAppendRateLimit,
+    window: SHARED_APPEND_RATE_LIMIT_WINDOW_SECONDS,
+  },
+  { name: 'vote', check: checkSharedVoteRateLimit, window: SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS },
+  {
+    name: 'withdraw',
+    check: checkSharedWithdrawRateLimit,
+    window: SHARED_WITHDRAW_RATE_LIMIT_WINDOW_SECONDS,
+  },
+  {
+    name: 'report',
+    check: checkSharedReportRateLimit,
+    window: SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS,
+  },
 ];
 
 beforeEach(() => {
@@ -44,6 +60,20 @@ describe('shared-storage rate-limit refusal', () => {
       retryAt: '2030-02-03T04:05:23.000Z',
     });
   });
+
+  it.each(CHECKS)(
+    '$name: a lost TTL falls back to the window, and retryAt follows it',
+    async ({ check, window }) => {
+      redisMock.redis.incrBy.mockResolvedValue(OVER_ANY_CAP);
+      redisMock.redis.ttl.mockResolvedValue(-1);
+
+      await expect(check(7, 'apb_fixture')).resolves.toEqual({
+        allowed: false,
+        retryAfterSeconds: window,
+        retryAt: new Date(NOW + window * 1000).toISOString(),
+      });
+    }
+  );
 });
 
 describe('INVARIANT GUARD (not regression coverage): the limiter still fails open', () => {

@@ -5,7 +5,7 @@ import type { BlockTokenClaims } from '~/server/middleware/block-scope.middlewar
 /**
  * REST 429s on the shared-storage write routes carry the refusal's retry metadata as
  * `Retry-After` + `body.rateLimit` + `body.code` (civitai/civitai-app-starters#597), through
- * the REAL `handleEndpointError` (append, vote) and increment's own catch. The router is
+ * the REAL `handleEndpointError` (six routes) and increment's own catch. The router is
  * mocked to throw the refusal shape `throwSharedRateLimited` produces, spelled out literally
  * here so a drift in that shape fails this file too.
  */
@@ -64,48 +64,91 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: Handler) => h }));
 
-const { mockAppend, mockVote, mockIncrement } = vi.hoisted(() => ({
-  mockAppend: vi.fn(),
-  mockVote: vi.fn(),
-  mockIncrement: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  append: vi.fn(),
+  update: vi.fn(),
+  vote: vi.fn(),
+  unvote: vi.fn(),
+  withdraw: vi.fn(),
+  report: vi.fn(),
+  increment: vi.fn(),
 }));
 vi.mock('~/server/routers/apps-shared.router', async () => {
   const zod = await import('zod');
   return {
-    appendSharedRow: mockAppend,
-    voteSharedRow: mockVote,
-    incrementSharedCounter: mockIncrement,
+    appendSharedRow: mocks.append,
+    updateSharedRow: mocks.update,
+    voteSharedRow: mocks.vote,
+    unvoteSharedRow: mocks.unvote,
+    withdrawSharedRow: mocks.withdraw,
+    reportSharedRow: mocks.report,
+    incrementSharedCounter: mocks.increment,
     assertValidCounterKey: (k: string) => k,
     SHARED_KEY_MAX: 64,
+    SHARED_REASON_MAX: 500,
     sharedValueInput: zod.object({ title: zod.string().min(1) }),
   };
 });
 
 import appendHandler from '~/pages/api/v1/blocks/shared-storage/append';
+import updateHandler from '~/pages/api/v1/blocks/shared-storage/update';
 import voteHandler from '~/pages/api/v1/blocks/shared-storage/vote';
+import unvoteHandler from '~/pages/api/v1/blocks/shared-storage/unvote';
+import withdrawHandler from '~/pages/api/v1/blocks/shared-storage/withdraw';
+import reportHandler from '~/pages/api/v1/blocks/shared-storage/report';
 import incrementHandler from '~/pages/api/v1/blocks/shared-storage/increment';
 
+// The prose carries a different number from `rateLimit.retryAfterSeconds` (17), so a layer that
+// parsed the wait out of the message instead of forwarding the metadata fails.
 const ROUTES = [
   {
     name: 'append',
     handler: appendHandler,
     body: { value: { title: 'rl 433' } },
-    mock: mockAppend,
-    message: 'Too many submissions — retry in 17s',
+    mock: mocks.append,
+    message: 'Too many submissions — retry in 1849s',
+  },
+  {
+    name: 'update',
+    handler: updateHandler,
+    body: { key: 'k-rl-417', value: { title: 'rl 433' } },
+    mock: mocks.update,
+    message: 'Too many submissions — retry in 1849s',
   },
   {
     name: 'vote',
     handler: voteHandler,
     body: { key: 'k-rl-417' },
-    mock: mockVote,
-    message: 'Too many votes — retry in 17s',
+    mock: mocks.vote,
+    message: 'Too many votes — retry in 1849s',
+  },
+  {
+    name: 'unvote',
+    handler: unvoteHandler,
+    body: { key: 'k-rl-417' },
+    mock: mocks.unvote,
+    message: 'Too many votes — retry in 1849s',
+  },
+  {
+    name: 'withdraw',
+    handler: withdrawHandler,
+    body: { key: 'k-rl-417' },
+    mock: mocks.withdraw,
+    message: 'Too many withdrawals — retry in 1849s',
+  },
+  {
+    name: 'report',
+    handler: reportHandler,
+    body: { key: 'k-rl-417', reason: 'spam' },
+    mock: mocks.report,
+    message: 'Too many reports — retry in 1849s',
   },
   {
     name: 'increment',
     handler: incrementHandler,
     body: { key: 'playcount:417' },
-    mock: mockIncrement,
-    message: 'Too many increments — retry in 17s',
+    mock: mocks.increment,
+    message: 'Too many increments — retry in 1849s',
   },
 ];
 

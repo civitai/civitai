@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetSharedMocks } from '~/__tests__/mocks';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -23,6 +23,10 @@ beforeEach(() => {
   redisMock.redis.ttl.mockResolvedValue(42);
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 const keys = () => [...counts.keys()];
 
 describe('checkSubListingSyncRateLimit', () => {
@@ -41,13 +45,15 @@ describe('checkSubListingSyncRateLimit', () => {
   });
 
   it('allows the 600th write in an hour and refuses the 601st', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.parse('2030-02-03T04:05:06.000Z'));
     const hourly = (await checkSubListingSyncRateLimit('apl_A'), keys()[0]);
     counts.set(hourly, 599);
     await expect(checkSubListingSyncRateLimit('apl_A')).resolves.toEqual({ allowed: true });
     await expect(checkSubListingSyncRateLimit('apl_A')).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 42,
-      retryAt: expect.any(String),
+      retryAt: '2030-02-03T04:05:48.000Z',
     });
     // Another parent keeps its own budget.
     await expect(checkSubListingSyncRateLimit('apl_B')).resolves.toEqual({ allowed: true });
