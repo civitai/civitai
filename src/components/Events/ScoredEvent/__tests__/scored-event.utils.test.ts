@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coverRequestWidth,
   describeEntityTypes,
   minutesUntilMovable,
   teamPositionsOverTime,
@@ -89,5 +90,30 @@ describe('minutesUntilMovable', () => {
   // A browser clock that jumps backwards after the fetch must not add to the server's count.
   it('never shows more than the server reported', () => {
     expect(minutesUntilMovable(10 * MINUTE, -5 * MINUTE)).toBe(10);
+  });
+});
+
+describe('coverRequestWidth', () => {
+  it('asks for the box width when the picture is no wider than the 4:5 box', () => {
+    expect(coverRequestWidth({ width: 800, height: 1000 })).toBe(450);
+    expect(coverRequestWidth({ width: 600, height: 1200 })).toBe(450);
+  });
+
+  // A 2:1 cover at 450 wide comes back 225 tall and is stretched to fill a 562px-tall box.
+  it('asks for enough width that a wide cover still fills the height', () => {
+    expect(coverRequestWidth({ width: 1000, height: 1000 })).toBe(563);
+    expect(coverRequestWidth({ width: 1600, height: 1000 })).toBe(900);
+  });
+
+  it('stops at the cap however wide the picture', () => {
+    expect(coverRequestWidth({ width: 2000, height: 1000 })).toBe(1125);
+    expect(coverRequestWidth({ width: 4000, height: 1000 })).toBe(1200);
+  });
+
+  it('falls back to the old fixed width without a usable size', () => {
+    expect(coverRequestWidth(null)).toBe(320);
+    expect(coverRequestWidth({})).toBe(320);
+    expect(coverRequestWidth({ width: 2000, height: 0 })).toBe(320);
+    expect(coverRequestWidth({ width: '2000', height: 1000 })).toBe(320);
   });
 });

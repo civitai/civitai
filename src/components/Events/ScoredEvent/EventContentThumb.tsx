@@ -4,6 +4,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import { coverRequestWidth } from '~/components/Events/ScoredEvent/scored-event.utils';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
@@ -53,7 +54,7 @@ export function EventContentThumb({
                 alt=""
                 type={image.type}
                 metadata={image.metadata}
-                width={320}
+                width={coverRequestWidth(image.metadata)}
                 className="size-full object-cover"
               />
             ) : (

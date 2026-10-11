@@ -17,6 +17,8 @@ let autoplay = true;
 vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useAutoplayGifs: () => autoplay,
+  useBrowsingSettings: (select: (s: { autoplayGifs: boolean }) => unknown) =>
+    select({ autoplayGifs: autoplay }),
 }));
 const overlay = vi.fn();
 vi.mock('~/components/Cosmetics/EventDecoration/EventDecorationOverlay', () => ({
@@ -24,6 +26,11 @@ vi.mock('~/components/Cosmetics/EventDecoration/EventDecorationOverlay', () => (
     overlay(props);
     return React.createElement('button', { 'data-testid': 'hat' });
   },
+}));
+
+// The browsing-level guard needs the app's providers; these pictures are all safe to show.
+vi.mock('~/components/ImageGuard/ImageGuard2', () => ({
+  ImageGuard2: ({ children }: { children: (safe: boolean) => React.ReactNode }) => children(true),
 }));
 
 const { PrizeBadge } = await import('~/components/Events/ScoredEvent/PrizeBadge');
@@ -121,5 +128,35 @@ describe('EventContentThumb wears its hat as a feed card does', () => {
     expect(card.dataset.eventDecoration).toBeUndefined();
     expect(card.className).toContain('overflow-hidden');
     expect(overlay).not.toHaveBeenCalled();
+  });
+});
+
+describe('EventContentThumb asks for a picture that fills its card', () => {
+  const image = (metadata: Record<string, unknown> | null) =>
+    ({
+      id: 5,
+      url: 'aa5ee01e-dfee-458a-9431-16c5e8656754',
+      name: 'cover',
+      type: 'image',
+      metadata,
+      entityId: 5,
+      entityType: 'Article',
+    } as unknown as React.ComponentProps<typeof EventContentThumb>['image']);
+  const srcFor = (metadata: Record<string, unknown> | null) =>
+    render(
+      React.createElement(EventContentThumb, { entityType: 'Article', image: image(metadata) })
+    ).querySelector('img')!.src;
+
+  // A 2:1 article cover cropped into the 4:5 card: 320 wide came back 160 tall and blurred.
+  it('asks for a wide cover at the width that fills the card height', () => {
+    expect(srcFor({ width: 2000, height: 1000 })).toContain('width=1200');
+  });
+
+  it('asks for a portrait at the card width', () => {
+    expect(srcFor({ width: 800, height: 1000 })).toContain('width=450');
+  });
+
+  it('keeps the old width when the picture has no size', () => {
+    expect(srcFor(null)).toContain('width=320');
   });
 });

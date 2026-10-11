@@ -54,6 +54,23 @@ export function minutesUntilMovable(cooldownLeftMs: number, elapsedMs: number) {
   return Math.max(0, Math.ceil((cooldownLeftMs - Math.max(0, elapsedMs)) / 60_000));
 }
 
+/**
+ * The width to ask the image CDN for so a picture still fills a `boxAspect` (width / height) box
+ * `boxWidth` px wide after `object-cover` crops it. The CDN keeps the source's shape, so a source
+ * wider than the box comes back too short at the box's width and is stretched to fill the height:
+ * ask for that much more width. Without the source's size, `fallback`.
+ */
+export function coverRequestWidth(
+  metadata: { width?: unknown; height?: unknown } | null | undefined,
+  { boxWidth = 450, boxAspect = 4 / 5, max = 1200, fallback = 320 } = {}
+) {
+  const { width, height } = metadata ?? {};
+  if (typeof width !== 'number' || typeof height !== 'number' || !(width > 0) || !(height > 0))
+    return fallback;
+  const stretch = Math.max(1, width / height / boxAspect);
+  return Math.min(max, Math.round(boxWidth * stretch));
+}
+
 /** The page's card surface (shop tiles, hat cards, standings rows): a step lighter than the page. */
 export const EVENT_CARD_SURFACE = 'bg-white dark:bg-dark-6';
 
