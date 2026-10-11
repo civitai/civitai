@@ -139,6 +139,17 @@ export const oauthConsentRouter = router({
       // stop authenticating immediately instead of lingering until TTL.
       await invalidateCivitaiUser({ userId: ctx.user.id });
 
+      // Last, after the tokens, consent and auth cache are gone, so neither a slow nor a failed
+      // withdraw delays or blocks revoking access. `null` = it failed; the client tells the user
+      // to withdraw the items from account settings instead.
+      const catalogItemsWithdrawn = await import(
+        '~/server/services/blocks/oauth-consent-sync.service'
+      )
+        .then(({ withdrawCatalogItemsOnConsentRevoke }) =>
+          withdrawCatalogItemsOnConsentRevoke({ userId: ctx.user.id, clientId: input.clientId })
+        )
+        .catch(() => null);
+
       logOAuthEvent({
         type: 'authorization.denied',
         userId: ctx.user.id,
@@ -146,7 +157,7 @@ export const oauthConsentRouter = router({
         metadata: { action: 'revoked_by_user' },
       });
 
-      return { success: true };
+      return { success: true, catalogItemsWithdrawn };
     }),
 
   // (the limit-set audit fire is added on `setBuzzLimit` below)

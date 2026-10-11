@@ -64,6 +64,7 @@ import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-mess
 import {
   listSubListingQueueSchema,
   moderateSubListingSchema,
+  withdrawMyCatalogSubListingSchema,
 } from '~/server/schema/blocks/app-sub-listing.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
@@ -1840,6 +1841,36 @@ export const appListingsRouter = router({
     );
     return { count: await countSubListingQueue() };
   }),
+
+  /**
+   * The signed-in user's own catalog items: what off-site platforms listed under their name
+   * (account settings). Not behind the `app-store-sub-listings` flag, which gates only the store
+   * grid; the platforms sync and moderators review without it.
+   */
+  listMyCatalogSubListings: protectedProcedure.query(async ({ ctx }) => {
+    const { listMyCatalogSubListings } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    try {
+      return await listMyCatalogSubListings(ctx.user.id);
+    } catch (err) {
+      throw mapSubListingError(err);
+    }
+  }),
+
+  /** Withdraw one of the caller's own catalog items. Someone else's item is NOT_FOUND. */
+  withdrawMyCatalogSubListing: protectedProcedure
+    .input(withdrawMyCatalogSubListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { withdrawMyCatalogSubListing } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await withdrawMyCatalogSubListing({ userId: ctx.user.id, id: input.id });
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
 
   /** MOD: approve / hide / restore / approve-edit / reject-edit. Stamps `moderated_by_id`. */
   moderateSubListing: moderatorProcedure

@@ -23,6 +23,7 @@ import {
   checkSubListingWriteRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import {
+  APP_SUB_LISTING_ACTIVE_STATUSES,
   APP_SUB_LISTING_CONTENT_RATINGS,
   APP_SUB_LISTING_ITEM_KEY_MAX,
   APP_SUB_LISTING_TAGLINE_MAX,
@@ -45,8 +46,9 @@ import type {
  *
  * Writers: the app (through the `upsert` and `withdraw` block-token endpoints, as the item's
  * author), an off-site parent's platform (through the `/api/v1/catalog/items` endpoints), the
- * in-app withdraw / moderator hide of the matching shared row, and moderators on
- * `/apps/review`. A write busts the store catalog cache when it changes what the cached id
+ * creator of a catalog item (withdrawing it from account settings, or revoking their consent to
+ * the platform's client), the in-app withdraw / moderator hide of the matching shared row, and
+ * moderators on `/apps/review`. A write busts the store catalog cache when it changes what the cached id
  * page can contain.
  *
  * The tables and the `link_template` column are manual-apply. While they are absent every
@@ -885,21 +887,45 @@ export async function withdrawCatalogSubListing(args: {
   externalId: string;
 }): Promise<{ ok: true; withdrawn: boolean }> {
   assertExternalId(args.externalId);
-  const where = { parentListingId: args.parentListingId, itemKey: args.externalId };
+  return withdrawCatalogItem({
+    parentListingId: args.parentListingId,
+    itemKey: args.externalId,
+    checkRate: () => checkSubListingSyncRateLimit(args.parentListingId),
+  });
+}
+
+/**
+ * The catalog withdraw, shared by the platform's DELETE and the creator's own withdraw. With
+ * `authorUserId` only that author's row is read or written.
+ */
+async function withdrawCatalogItem(args: {
+  parentListingId: string;
+  itemKey: string;
+  authorUserId?: number;
+  checkRate: () => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
+}): Promise<{ ok: true; withdrawn: boolean }> {
+  const key = { parentListingId: args.parentListingId, itemKey: args.itemKey };
+  const where: Prisma.AppSubListingWhereInput =
+    args.authorUserId == null ? key : { ...key, authorUserId: args.authorUserId };
   let charged = false;
   try {
     // Each write is filtered on the status it was chosen from; one that a moderator action beat
     // changes nothing, so the row is read and dispatched again.
     for (let attempt = 1; ; attempt++) {
       const row = await dbWrite.appSubListing.findUnique({
-        where: { parentListingId_itemKey: where },
-        select: { status: true, approvedAt: true },
+        where: { parentListingId_itemKey: key },
+        select: { status: true, approvedAt: true, authorUserId: true },
       });
-      if (!row || row.status === 'withdrawn' || (row.status === 'hidden' && !row.approvedAt)) {
+      if (
+        !row ||
+        (args.authorUserId != null && row.authorUserId !== args.authorUserId) ||
+        row.status === 'withdrawn' ||
+        (row.status === 'hidden' && !row.approvedAt)
+      ) {
         return { ok: true, withdrawn: false };
       }
       if (!charged) {
-        const rate = await checkSubListingSyncRateLimit(args.parentListingId);
+        const rate = await args.checkRate();
         if (!rate.allowed) {
           throw new SubListingError(
             429,
@@ -930,6 +956,158 @@ export async function withdrawCatalogSubListing(args: {
     }
   } catch (err) {
     rethrowUnavailable(err);
+  }
+}
+
+/** Off-site parents, i.e. the listings whose items a platform syncs (Catalog sync). */
+const CATALOG_PARENT_KIND = 'offsite';
+
+export const MY_CATALOG_SUB_LISTINGS_LIMIT = 200;
+
+export type MyCatalogSubListing = {
+  id: string;
+  externalId: string;
+  title: string;
+  status: AppSubListingStatus;
+  pendingEdit: boolean;
+  statusReason: string | null;
+  updatedAt: Date;
+  /** Where the item opens on its platform; null while the parent has no valid link template. */
+  href: string | null;
+  /** `isYours`: the caller owns the parent listing, so revoking the client leaves the item. */
+  parent: { id: string; slug: string; name: string; clientId: string | null; isYours: boolean };
+};
+
+/**
+ * The items off-site platforms have listed under `userId`'s name, withdrawn and hidden ones
+ * included: pending and approved first (so the cap never hides one the user can withdraw), each
+ * group newest first. Only the caller's own rows: the author filter is the whole access rule.
+ */
+export async function listMyCatalogSubListings(
+  userId: number
+): Promise<{ items: MyCatalogSubListing[] }> {
+  try {
+    const rows = await dbRead.$queryRaw<
+      {
+        id: string;
+        item_key: string;
+        title: string;
+        status: string;
+        pending_submitted_at: Date | null;
+        status_reason: string | null;
+        updated_at: Date;
+        parent_id: string;
+        parent_slug: string;
+        parent_name: string;
+        client_id: string | null;
+        parent_is_yours: boolean;
+        link_template: string | null;
+      }[]
+    >(Prisma.sql`
+      SELECT s.id, s.item_key, s.title, s.status, s.pending_submitted_at, s.status_reason,
+             s.updated_at, al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
+             al.connect_client_id AS client_id, al.user_id = ${userId} AS parent_is_yours,
+             ${PARENT_LINK_TEMPLATE_SQL} AS link_template
+      FROM app_sub_listings s
+      JOIN app_listings al ON al.id = s.parent_listing_id
+      LEFT JOIN app_sub_listing_parents sp ON sp.parent_listing_id = al.id
+      WHERE s.author_user_id = ${userId} AND al.kind = ${CATALOG_PARENT_KIND}
+      ORDER BY s.status IN (${Prisma.join([...APP_SUB_LISTING_ACTIVE_STATUSES])}) DESC,
+               s.created_at DESC, s.id DESC
+      LIMIT ${MY_CATALOG_SUB_LISTINGS_LIMIT}
+    `);
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        externalId: r.item_key,
+        title: r.title,
+        status: r.status as AppSubListingStatus,
+        pendingEdit: r.pending_submitted_at != null,
+        statusReason: r.status_reason,
+        updatedAt: r.updated_at,
+        href: subListingExternalHref(r.link_template, r.item_key),
+        parent: {
+          id: r.parent_id,
+          slug: r.parent_slug,
+          name: r.parent_name,
+          clientId: r.client_id,
+          isYours: r.parent_is_yours === true,
+        },
+      })),
+    };
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+}
+
+/**
+ * The creator's own withdraw of one item a platform listed under their name: the platform's
+ * DELETE, restricted to the caller's row. Someone else's item, or an on-site parent's, is 404.
+ * A later sync of the item by the platform sends it back to review.
+ */
+export async function withdrawMyCatalogSubListing(args: {
+  userId: number;
+  id: string;
+}): Promise<{ ok: true; withdrawn: boolean }> {
+  let row: { parentListingId: string; itemKey: string } | null;
+  try {
+    row = await dbWrite.appSubListing.findFirst({
+      where: {
+        id: args.id,
+        authorUserId: args.userId,
+        parentListing: { kind: CATALOG_PARENT_KIND },
+      },
+      select: { parentListingId: true, itemKey: true },
+    });
+  } catch (err) {
+    rethrowUnavailable(err);
+  }
+  if (!row) throw new SubListingError(404, 'not_found', 'Store item not found');
+  const { parentListingId, itemKey } = row;
+  return withdrawCatalogItem({
+    parentListingId,
+    itemKey,
+    authorUserId: args.userId,
+    checkRate: () => checkSubListingWriteRateLimit(args.userId, parentListingId),
+  });
+}
+
+/**
+ * When `userId` revokes their consent to `clientId`, withdraw what that client's platform listed
+ * under their name. Pending and approved items are withdrawn. A hidden item stays hidden but
+ * loses its approval, so a restore sends it back to review, as the platform's DELETE does. Not
+ * touched: other authors' items, items under listings linked to other clients, and items under a
+ * listing `userId` owns (the owner's own items never needed the consent). Returns the number
+ * withdrawn; 0 while the tables are absent.
+ *
+ * Callers run it after the consent is deleted, so a sync that starts afterwards is refused; a
+ * sync that read the consent just before can still land, as a `pending` item for review.
+ */
+export async function withdrawCatalogSubListingsForRevokedConsent(args: {
+  userId: number;
+  clientId: string;
+}): Promise<number> {
+  const where = {
+    authorUserId: args.userId,
+    parentListing: {
+      connectClientId: args.clientId,
+      kind: CATALOG_PARENT_KIND,
+      userId: { not: args.userId },
+    },
+  } satisfies Prisma.AppSubListingWhereInput;
+  try {
+    const withdrawn = await transitionActive({
+      where,
+      data: { status: 'withdrawn', ...CLEAR_PENDING },
+    });
+    await dbWrite.appSubListing.updateMany({
+      where: { ...where, status: 'hidden', approvedAt: { not: null } },
+      data: { approvedAt: null, updatedAt: new Date() },
+    });
+    return withdrawn;
+  } catch (err) {
+    if (isMissingTableError(err)) return 0;
+    throw err;
   }
 }
 
