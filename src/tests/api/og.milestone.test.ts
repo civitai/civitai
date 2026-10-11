@@ -123,7 +123,7 @@ describe('/api/og?type=milestone', () => {
 
     const bare = await png(achievement);
     expect(Buffer.compare(await png(achievement), bare)).toBe(0);
-    const lined = await png({ ...achievement, line: 'One model reached 10,000 downloads' });
+    const lined = await png({ ...achievement, line: 'Reached 10,000 downloads in total' });
     const tier = await png({ ...achievement, eyebrow: 'Creator Score Tier' });
 
     const earned = await png({ ...achievement, reachedVerb: 'Earned' });

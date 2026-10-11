@@ -53,7 +53,8 @@ const published = (entity: (typeof PUBLISHED_ENTITIES)[number]): MilestoneRegist
   launchedAt: ACTIVITY_LAUNCHED_AT,
 });
 
-// The per-model download notification already marks these moments, so the badge arrives quietly.
+// Quiet at launch by product decision. Announcing it later starts a new watermark, so that first run
+// grants silently instead of notifying everyone already past a tier.
 const downloads = (): MilestoneRegistryEntry => ({
   detector: 'modelDownloads',
   params: {},

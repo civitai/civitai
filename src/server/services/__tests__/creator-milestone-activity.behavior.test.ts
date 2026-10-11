@@ -171,7 +171,7 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, "createdById" int);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int);
     CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "addedById" int);
     CREATE TABLE "UserCosmeticShopPurchases" (
       "buzzTransactionId" text PRIMARY KEY, "cosmeticId" int, "shopItemId" int NOT NULL,
@@ -290,7 +290,7 @@ describe('published-count detector', () => {
 });
 
 describe('download and user-metric detectors', () => {
-  it('takes the best published, non-private model, and grants every threshold it passes', async () => {
+  it('totals published, non-private models, and grants every threshold the total passes', async () => {
     await q(
       `INSERT INTO "ModelMetric" ("modelId", "userId", status, availability, "downloadCount") VALUES
         (1, $1, 'Published', 'Public', 600),
@@ -300,8 +300,11 @@ describe('download and user-metric detectors', () => {
       [CREATOR, QUIET]
     );
     await run(DOWNLOADS);
-    // 600 + 500 would pass 1,000: the definition is one model's downloads, not the creator's total.
-    expect((await held(CREATOR)).map((r) => r.key)).toEqual(['reach:downloads-100']);
+    // Neither model reaches the second tier alone; together they do.
+    expect((await held(CREATOR)).map((r) => r.key)).toEqual([
+      'reach:downloads-100',
+      'reach:downloads-1000',
+    ]);
     expect(await held(QUIET)).toEqual([]);
   });
 
@@ -701,9 +704,9 @@ describe('watermark definitions', () => {
 });
 
 /**
- * 🔴 Downloads stay silent by product decision: the per-model download notification already marks
- * the moment. Every other group is announced now that the journey page shows them. A group must be
- * wholly silent or wholly announced, since its tiers share one watermark row.
+ * 🔴 Downloads stay silent at launch by product decision. Every other group is announced now that
+ * the journey page shows them. A group must be wholly silent or wholly announced, since its tiers
+ * share one watermark row.
  */
 describe('which activity groups announce', () => {
   it('announces every activity group except downloads', () => {
@@ -788,7 +791,7 @@ describe('journey progress values', () => {
     expect(values).toEqual({
       models: 5,
       articles: 1,
-      downloads: 600,
+      downloads: 1200,
       followers: 120,
       reactions: 1000,
       revenue: 110000,
@@ -808,6 +811,16 @@ describe('journey progress values', () => {
       .sort();
     expect(granted).toEqual(reached);
     expect(granted.length).toBeGreaterThan(4);
+  });
+
+  it('clamp a download total past int range instead of failing the page', async () => {
+    await q(
+      `INSERT INTO "ModelMetric" ("modelId", "userId", status, "downloadCount") VALUES
+        (1, $1, 'Published', 2000000000), (2, $1, 'Published', 2000000000)`,
+      [CREATOR]
+    );
+    const [values] = await q<Record<ActivityMeasure, number>>(activityValuesSql, [CREATOR]);
+    expect(values.downloads).toBe(2147483647);
   });
 
   it('read zero for a creator with nothing', async () => {

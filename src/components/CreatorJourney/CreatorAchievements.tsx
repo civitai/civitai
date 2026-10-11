@@ -50,8 +50,8 @@ const measureCopy: Record<
   },
   downloads: {
     label: 'Downloads',
-    current: (n) => `top model ${numberWithCommas(n)}`,
-    unit: 'downloads on one model',
+    current: (n) => `${numberWithCommas(n)} total`,
+    unit: 'downloads',
   },
   followers: { label: 'Followers', current: (n) => numberWithCommas(n), unit: 'followers' },
   reactions: { label: 'Reactions', current: (n) => numberWithCommas(n), unit: 'reactions' },

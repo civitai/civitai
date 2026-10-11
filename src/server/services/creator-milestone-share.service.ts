@@ -170,7 +170,7 @@ const n = numberWithCommas;
 const measureLines: Record<ActivityMeasure, (threshold: number) => string> = {
   models: (t) => (t === 1 ? 'Published a first model' : `Published ${n(t)} models`),
   articles: (t) => (t === 1 ? 'Published a first article' : `Published ${n(t)} articles`),
-  downloads: (t) => `One model reached ${n(t)} downloads`,
+  downloads: (t) => `Reached ${n(t)} downloads in total`,
   followers: (t) => `Reached ${n(t)} followers`,
   reactions: (t) => `Reached ${n(t)} reactions`,
   revenue: (t) => `${n(t)} Buzz in shop sales`,
