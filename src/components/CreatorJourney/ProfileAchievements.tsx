@@ -1,4 +1,5 @@
 import { Anchor, Stack, Text, Title } from '@mantine/core';
+import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
@@ -100,11 +101,9 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
       <Text fw={800} size="xl">
         {tier.name}
       </Text>
-      {tier.achievedAt && (
-        <Text size="sm" c="dimmed">
-          {earnedLabel(tier.achievedAt)}
-        </Text>
-      )}
+      <Text size="sm" c="dimmed">
+        {earnedLabel(tier.achievedAt)}
+      </Text>
       {ownScore !== undefined && (
         <Text
           size="sm"
@@ -205,18 +204,25 @@ export function ProfileAchievementsList({
   }, [spotlit, spotlight]);
   const thresholds = new Map(ladder?.tiers.map((tier) => [tier.key, tier.threshold]));
   const highest = data.tiers.at(-1);
+  const tiers = sortEarnedBadges(data.tiers.map((tier) => ({ ...tier, track: 'score' })));
+  const achievements = sortEarnedBadges(data.achievements);
 
   const known = new Set(achievementGroups.map((group) => group.key));
   const groups = [
     ...achievementGroups.map((group) => ({
       ...group,
-      items: data.achievements.filter((a) => a.track === group.key),
+      items: achievements.filter((a) => a.track === group.key),
     })),
-    { key: 'other', title: 'More', items: data.achievements.filter((a) => !known.has(a.track)) },
+    { key: 'other', title: 'More', items: achievements.filter((a) => !known.has(a.track)) },
   ].filter((group) => group.items.length > 0);
 
   return (
     <Stack gap="xl">
+      {isOwner && (
+        <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} size="sm" className="self-start">
+          See your progress on your Creator Journey
+        </Anchor>
+      )}
       {highest && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(220px,280px)_1fr]">
           <div className="md:self-start">
@@ -225,7 +231,7 @@ export function ProfileAchievementsList({
           <Stack gap="sm" className="min-w-0">
             <GroupTitle title="Creator Score" count={data.tiers.length} />
             <div className={BADGE_CARD_GRID}>
-              {[...data.tiers].reverse().map((tier) => (
+              {tiers.map((tier) => (
                 <Spotlit key={tier.key} milestoneKey={tier.key} spotlight={spotlight}>
                   <TierCard tier={tier} threshold={thresholds.get(tier.key)} />
                 </Spotlit>

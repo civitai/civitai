@@ -57,6 +57,7 @@ const journey = ({
     })),
     activity: { milestones: [], closestNext: null },
     secrets: [],
+    share: { shareable: [], hiddenOnProfile: [] },
   } as unknown as Journey);
 
 let root: Root | undefined;
