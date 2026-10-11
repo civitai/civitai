@@ -5,6 +5,7 @@ import { page, userEvent } from 'vitest/browser';
 // the `typeof import('...')` form, which is why this is a named namespace.
 import type * as TrpcUtils from '~/utils/trpc';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 
 // =============================================================================
 // Gallery lazy per-post carousel (`galleryLazyPostImages`).
@@ -191,7 +192,8 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
     return <a>{children}</a>;
   },
 }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ imageGeneration: false }),
 }));
 vi.mock('~/components/TrackView/track.utils', () => ({

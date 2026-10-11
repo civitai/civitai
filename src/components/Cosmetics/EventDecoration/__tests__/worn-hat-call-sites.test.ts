@@ -42,7 +42,7 @@ const CALL_SITES: [file: string, expected: string][] = [
   ],
   [
     'src/components/Image/AsPosts/ImagesAsPostsCard.tsx',
-    "eventDecorationOn={hatted && { entityType: 'Image', entityId: hatted.id }}",
+    "wornOn={{ entityType: 'Image', entityId: image.id }}",
   ],
   [
     'src/components/Model/ModelCarousel/ModelCarousel.tsx',
@@ -112,12 +112,5 @@ describe('worn hat call sites', () => {
     expect(read('src/server/events/birthday2026.event.ts').replace(/\r\n/g, '\n')).toContain(
       `createEvent(name, {\n  title: ${JSON.stringify(title)},`
     );
-  });
-
-  // The post card wears the hat of the first image that has one; the content must be that image.
-  it('ImagesAsPostsCard names the image whose hat it draws', () => {
-    const source = read('src/components/Image/AsPosts/ImagesAsPostsCard.tsx');
-    expect(source).toContain('data.images.find((i) => isDefined(i.eventDecoration))');
-    expect(source).toContain('const eventDecoration = hatted?.eventDecoration?.data;');
   });
 });
