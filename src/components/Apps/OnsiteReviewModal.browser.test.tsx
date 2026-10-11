@@ -606,6 +606,9 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
       '"casual_tier"',
       '"brutal_tier"',
     ]);
+    // Enum values keep their whitespace on screen (CSS would otherwise collapse runs).
+    const valueEl = page.getByText('"casual_tier"', { exact: true }).element();
+    expect(getComputedStyle(valueEl).whiteSpace).toBe('pre-wrap');
     expect(propertyRowParts('score')).toEqual(['score', 'number']);
     expect(propertyRowParts('used_hint')).toEqual(['used_hint', 'boolean']);
 

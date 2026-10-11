@@ -1885,8 +1885,9 @@ function AnalyticsPropertyRow({
       </Badge>
       {property.type === 'enum' &&
         property.values.map((value) => (
-          // Quoted, so leading/trailing whitespace is visible ("a" vs "a " are distinct values).
-          <Code key={value} c="blue" style={{ wordBreak: 'break-all' }}>
+          // Quoted and `pre-wrap`, so whitespace is visible: "a", "a " and "a  b" are
+          // distinct declared values.
+          <Code key={value} c="blue" style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
             {JSON.stringify(value)}
           </Code>
         ))}
