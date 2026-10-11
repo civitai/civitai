@@ -1,5 +1,6 @@
 import type { EventViewer, GatedEvent } from '~/server/events/event-access';
 import { canReadEvent, getEventAccess, isFlagOnFor } from '~/server/events/event-access';
+import { loadEvents } from '~/server/events/load-events';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { featureFlagKeys, getFeatureFliptKey } from '~/server/services/feature-flags.service';
@@ -47,8 +48,7 @@ export async function canViewHomeBlock(
       if (!fliptKey || !(await isFlagOnFor(fliptKey, viewer))) return false;
     }
     if (homeBlock.type === HomeBlockType.Event) {
-      // Lazy: the event registry's import graph is heavy and most viewers have no Event row.
-      const defs = eventDefs ?? (await import('~/server/events')).events;
+      const defs = eventDefs ?? (await loadEvents());
       const event = defs.find((e) => e.name === meta.event);
       if (!event || !canReadEvent(await getEventAccess(event, viewer, now))) return false;
     }

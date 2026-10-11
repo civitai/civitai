@@ -64,7 +64,7 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
 const { getHomeBlocksHandler, getSystemHomeBlocksHandler, getHomeBlocksByIdHandler } = await import(
   '~/server/controllers/home-block.controller'
 );
-const { createHomeBlockAdmin, upsertHomeBlock } = await import(
+const { createHomeBlockAdmin, updateHomeBlockAdmin, upsertHomeBlock } = await import(
   '~/server/services/home-block.service'
 );
 const { getHomeBlockCached } = await import('~/server/services/home-block-cache.service');
@@ -144,6 +144,9 @@ function seed(...table: Row[]) {
   rows = table;
   dbMock.dbRead.homeBlock.findMany.mockImplementation(async (args: any) =>
     rows.filter((r) => matches(r, args?.where)).sort((a, b) => a.index - b.index)
+  );
+  dbMock.dbRead.homeBlock.findUnique.mockImplementation(
+    async (args: any) => rows.find((r) => r.id === args?.where?.id) ?? null
   );
   dbMock.dbRead.homeBlock.findFirst.mockImplementation(
     async (args: any) => rows.find((r) => matches(r, args?.where)) ?? null
@@ -275,9 +278,11 @@ describe('T4: a guessed id', () => {
       getHomeBlocksByIdHandler({ ctx: ctxFor(STRANGER), input: { id: 100 } })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(getHomeBlockCached).not.toHaveBeenCalled();
-    // control: its owner, who is flagged, is served it
-    const block = await getHomeBlocksByIdHandler({ ctx: ctxFor(TESTER), input: { id: 100 } });
+    // control: its owner, who is flagged, is served it, and off the edge: the gate is the source's
+    const ctx = ctxFor(TESTER);
+    const block = await getHomeBlocksByIdHandler({ ctx, input: { id: 100 } });
     expect(block.id).toBe(100);
+    expect(ctx.cache.skip).toBe(true);
   });
 
   it('control: an ungated row by id stays edge-cacheable for anyone', async () => {
@@ -381,6 +386,21 @@ describe('T8: an Event row follows the event, not only the flag', () => {
     expect(await listIds(ANON)).toEqual([OPEN.id, EVENT.id]);
   });
 
+  it('a flagless Event row of an ended, unflagged event stays visible to everyone', async () => {
+    // The ~700 existing user-owned holiday2024 rows: 'ended' is readable, so nothing changes.
+    seed(OPEN, sys({ id: 8, type: HomeBlockType.Event, metadata: { event: 'holiday2024' } }));
+    expect(await listIds(ANON)).toEqual([OPEN.id, 8]);
+    expect(await listIds(STRANGER)).toEqual([OPEN.id, 8]);
+  });
+
+  it('a flagless Event row of a flagged event still follows the event', async () => {
+    seed(OPEN, sys({ id: 9, type: HomeBlockType.Event, metadata: { event: 'birthday2026' } }));
+    at(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 60 * 60 * 1000));
+    expect(await listIds(ANON)).toEqual([OPEN.id]);
+    expect(await listIds(STRANGER)).toEqual([OPEN.id]);
+    expect(await listIds(TESTER)).toEqual([OPEN.id, 9]);
+  });
+
   it('an Event row naming no known event is hidden from everyone', async () => {
     seed(OPEN, sys({ id: 7, type: HomeBlockType.Event, metadata: { event: 'nope' } }));
     expect(await listIds(MOD)).toEqual([OPEN.id]);
@@ -389,7 +409,11 @@ describe('T8: an Event row follows the event, not only the flag', () => {
 
 describe('T9: an unknown flag fails closed', () => {
   it('hides the row from everyone, moderators included', async () => {
-    seed(OPEN, UNKNOWN_FLAG);
+    seed(
+      OPEN,
+      UNKNOWN_FLAG,
+      sys({ id: 10, metadata: { collection: { id: 100 }, featureFlag: null } })
+    );
     setFlag({ public: true });
     for (const viewer of [ANON, STRANGER, TESTER, MOD]) {
       expect(await listIds(viewer)).toEqual([OPEN.id]);
@@ -411,6 +435,21 @@ describe('T9: an unknown flag fails closed', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbWrite.homeBlock.create).not.toHaveBeenCalled();
   });
+
+  it('is refused when a moderator updates a row to an unknown key', async () => {
+    seed(OPEN);
+    await expect(
+      updateHomeBlockAdmin({ id: OPEN.id, metadata: { featureFlag: 'not-a-key' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.homeBlock.update).not.toHaveBeenCalled();
+  });
+
+  it('control: a moderator update with a real key goes through', async () => {
+    seed(OPEN);
+    dbMock.dbWrite.homeBlock.update.mockResolvedValue({ ...OPEN });
+    await updateHomeBlockAdmin({ id: OPEN.id, metadata: { featureFlag: 'birthday2026' } });
+    expect(dbMock.dbWrite.homeBlock.update).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('user writes cannot set the flag', () => {
@@ -425,5 +464,19 @@ describe('user writes cannot set the flag', () => {
     });
     const [arg] = dbMock.dbWrite.homeBlock.create.mock.calls.at(-1) as [any];
     expect(arg.data.metadata).toEqual({ collection: { id: 1, limit: 8, rows: 2 } });
+  });
+
+  it('control: a moderator upsert keeps it', async () => {
+    seed(OPEN, clone(100, MOD.id, OPEN));
+    await upsertHomeBlock({
+      input: {
+        type: HomeBlockType.Collection,
+        metadata: { collection: { id: 1, limit: 8, rows: 2 }, featureFlag: 'birthday2026' },
+        userId: MOD.id,
+        isModerator: true,
+      },
+    });
+    const [arg] = dbMock.dbWrite.homeBlock.create.mock.calls.at(-1) as [any];
+    expect(arg.data.metadata.featureFlag).toBe('birthday2026');
   });
 });
