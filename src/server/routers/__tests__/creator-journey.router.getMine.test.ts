@@ -14,7 +14,7 @@ vi.mock('~/server/services/creator-journey.service', () => ({
 }));
 vi.mock('~/server/services/creator-showcase.service', () => ({ getCreatorShowcase: vi.fn() }));
 vi.mock('~/server/services/creator-milestone-share.service', () => ({
-  getShareableTierSlugs: (...args: unknown[]) => mocks.shareable(...args),
+  getMilestoneShareStates: (...args: unknown[]) => mocks.shareable(...args),
   isMilestoneShareable: vi.fn(),
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -49,9 +49,14 @@ beforeEach(() => {
 });
 
 describe('creatorJourney.getMine', () => {
-  it("adds the owner's shareable tiers to the journey", async () => {
-    mocks.shareable.mockResolvedValue(['spark']);
-    await expect(getMine()).resolves.toEqual({ ...JOURNEY, shareableTiers: ['spark'] });
+  it("adds the owner's share states to the journey", async () => {
+    const share = {
+      shareable: ['score:spark'],
+      hiddenOnProfile: ['create:models-1'],
+      secret: [],
+    };
+    mocks.shareable.mockResolvedValue(share);
+    await expect(getMine()).resolves.toEqual({ ...JOURNEY, share });
     expect(mocks.journey).toHaveBeenCalledWith(OWNER);
     expect(mocks.shareable).toHaveBeenCalledWith(OWNER);
   });
@@ -60,6 +65,9 @@ describe('creatorJourney.getMine', () => {
   // hide them, not take down the whole journey page.
   it('still returns the journey, with no share buttons, when the share read fails', async () => {
     mocks.shareable.mockRejectedValue(new Error('exclusions unavailable'));
-    await expect(getMine()).resolves.toEqual({ ...JOURNEY, shareableTiers: [] });
+    await expect(getMine()).resolves.toEqual({
+      ...JOURNEY,
+      share: { shareable: [], hiddenOnProfile: [], secret: [] },
+    });
   });
 });

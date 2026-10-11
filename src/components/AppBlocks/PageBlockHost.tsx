@@ -54,6 +54,7 @@ import {
   type CreatePostPreview,
 } from './createPostFromAppGate';
 import { CreatePostConsentBody } from './CreatePostConsentBody';
+import { handleEstimateBatch } from './estimateBatchGate';
 import { handlePrepareTrainingDataset } from './prepareTrainingDatasetGate';
 import {
   buildTrainingConsentCopy,
@@ -4751,6 +4752,28 @@ export function PageBlockHost({
     });
     return off;
   }, [onMessage, send, token, readGateStatus, viewer, reviewNack, trpcUtils, reportNoToken]);
+
+  // ── ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT ────────────────────────
+  // The batch twin of ESTIMATE_WORKFLOW, for an app that prices one generation
+  // per grid cell: a list of bodies in, one snapshot per body plus a run total
+  // out. Estimate only — nothing is submitted, and each cell is still submitted
+  // through SUBMIT_WORKFLOW. Decision + reply live in `estimateBatchGate.ts`,
+  // shared with the model-slot host.
+  useEffect(() => {
+    const off = onMessage<unknown>('ESTIMATE_WORKFLOW_BATCH', (raw) => {
+      void handleEstimateBatch({
+        raw,
+        refusal: reviewNack ? REVIEW_NACK_MESSAGE : null,
+        token,
+        estimateBatch: (input) => trpcUtils.client.blocks.estimateWorkflowBatch.mutate(input),
+        send,
+        onNoToken: (requestId) => {
+          nack('ESTIMATE_WORKFLOW_BATCH', requestId);
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send, token, reviewNack, trpcUtils, nack]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from

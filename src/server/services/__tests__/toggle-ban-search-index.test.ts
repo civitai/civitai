@@ -66,6 +66,9 @@ vi.mock('~/server/events/points/sync', async (importOriginal) => ({
   syncOwnerEventHats: hatSync.owner,
 }));
 
+const roster = vi.hoisted(() => ({ member: vi.fn() }));
+vi.mock('~/server/events/points/roster-sync', () => ({ syncEventRosterMember: roster.member }));
+
 const { toggleBan } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
@@ -219,6 +222,20 @@ describe('toggleBan -> live event hats', () => {
     await call();
     expect(hatSync.owner.mock.calls).toEqual([[USER_ID]]);
     expect(hatSync.owner.mock.invocationCallOrder[0]).toBeGreaterThan(
+      userUpdate.mock.invocationCallOrder[0]
+    );
+  });
+
+  // A banned member leaves their team's roster at once; unbanned, the sync lists them again if
+  // they had opted in.
+  it.each([
+    ['banning', null],
+    ['unbanning', ALREADY_BANNED_AT],
+  ])('%s re-derives their roster entry after the write', async (_arm, bannedAt) => {
+    userFindUnique.mockResolvedValue({ bannedAt, meta: {}, username: 'someone', email: null });
+    await call();
+    expect(roster.member.mock.calls).toEqual([[USER_ID]]);
+    expect(roster.member.mock.invocationCallOrder[0]).toBeGreaterThan(
       userUpdate.mock.invocationCallOrder[0]
     );
   });

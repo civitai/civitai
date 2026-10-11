@@ -251,3 +251,74 @@ export function useEventTeamsLivePoints(
   );
   useSignalConnection(SignalMessages.EventPointsTeams, onPush);
 }
+
+// A roster member's total (roster.ts). Pinned to the server's eventOwnerTopic by a test.
+export const ownerTopic = (event: string, topicId: string) =>
+  `${SignalTopic.EventPoints}:${event}:owner:${topicId}` as const;
+
+/** An owner push for this event, or null for anything else. */
+export function readOwnerPush(push: unknown, event: string) {
+  const { event: e, topicId, points } = (push ?? {}) as Record<string, unknown>;
+  if (e !== event || typeof topicId !== 'string' || !isPoints(points)) return null;
+  return { topicId, points };
+}
+
+type RosterPages = { pages: { items: { topicId: string; points: number }[] }[] };
+
+/** Roster pages with the pushed total on the matching card; the same object when nothing changed. */
+export function applyRosterPoints<T extends RosterPages>(
+  data: T | undefined,
+  topicId: string,
+  points: number
+) {
+  if (!data?.pages.some((p) => p.items.some((i) => i.topicId === topicId && i.points !== points)))
+    return data;
+  return {
+    ...data,
+    pages: data.pages.map((p) => ({
+      ...p,
+      items: p.items.map((i) => (i.topicId === topicId ? { ...i, points } : i)),
+    })),
+  };
+}
+
+function OwnerTopic({ topic }: { topic: ReturnType<typeof ownerTopic> }) {
+  useSignalTopic(topic);
+  return null;
+}
+
+/**
+ * While cards are on screen: each listed member's total, live. `topicIds` are the cards in view;
+ * `input` is the roster query's own input, without the cursor. Renders nothing visible. The order
+ * does not change on a push; it refreshes on the next read.
+ */
+export function RosterLivePoints({
+  event,
+  input,
+  topicIds,
+}: {
+  event: string;
+  input: { event: string; team: string; sort: 'hats' | 'points' | 'newest'; limit: number };
+  topicIds: string[];
+}) {
+  const utils = trpc.useUtils();
+  const onPush = useCallback(
+    (raw: unknown) => {
+      const push = readOwnerPush(raw, event);
+      if (!push) return;
+      utils.event.getTeamRoster.setInfiniteData(input, (data) =>
+        applyRosterPoints(data, push.topicId, push.points)
+      );
+    },
+    [utils, event, input]
+  );
+  useSignalConnection(SignalMessages.EventPointsOwner, onPush);
+  useWatchEventPoints(event, topicIds, topicIds.length > 0);
+  return (
+    <>
+      {topicIds.map((id) => (
+        <OwnerTopic key={id} topic={ownerTopic(event, id)} />
+      ))}
+    </>
+  );
+}

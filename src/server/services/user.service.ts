@@ -20,6 +20,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
+import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
 
@@ -1156,6 +1157,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
 
   userUpdateCounter?.inc({ location: 'user.service:deleteUser' });
   void syncOwnerEventHats(user.id);
+  void syncEventRosterMember(user.id);
 
   // The account is deleted from here on. A failing step must not skip a later one (a skipped
   // cancel keeps billing a user who can no longer log in to stop it), and must not surface as
@@ -1206,6 +1208,7 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
   `);
   userUpdateCounter?.inc({ location: 'user.service:setLeaderboardEligibility' });
   void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
 }
 
 /**
@@ -1337,6 +1340,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
 
   userUpdateCounter?.inc({ location: 'user.service:restoreUser' });
   void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
   // deleteUser refreshes userBasicCache (username/deletedAt/image, 1-day TTL) after scrubbing the
   // row; mirror that here so the restored identity is visible immediately instead of serving the
@@ -2121,6 +2125,7 @@ export const toggleBan = async ({
     updateSource: 'toggleBan',
   });
   void syncOwnerEventHats(id);
+  void syncEventRosterMember(id);
 
   await invalidateSession(id, 'ban');
 

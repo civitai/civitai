@@ -7,10 +7,11 @@
  * `/apps/submit`, `My apps` → `/apps/mine`) with one, so the branch that used to be
  * "which tab did they click" is now this function.
  *
- *   A · pitch     — not an author. The recruiting page: what you get, the toolkit, the
- *                   quickstart, and a request-access CTA. The only PUBLIC-facing state.
- *   B · first-app — an author with nothing yet. Short pitch + quickstart + a button into
- *                   the create flow.
+ *   A · pitch     — not an author. The recruiting page: the agent prompt, what you get, the
+ *                   toolkit, a collapsed manual CLI setup, and a request-access CTA. The only
+ *                   PUBLIC-facing state.
+ *   B · first-app — an author with nothing yet. Short pitch + the agent prompt + a collapsed
+ *                   manual CLI setup + a button into the create flow.
  *   C · workbench — an author with apps or submission history. Their app list, a
  *                   `+ New app` button, and the pitch demoted to a resources strip.
  *

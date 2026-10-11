@@ -29,6 +29,8 @@ const HAT_TOPIC_ID: Record<EventPointSeason, RegExp> = {
   live: /^[0-9a-f]{16}$/,
   preview: /^[0-9a-f]{32}$/,
 };
+// What seasonOwnerTopicId produces, in either season.
+const OWNER_TOPIC_ID = /^o[0-9a-f]{31}$/;
 
 export type WatchRedis = Pick<
   typeof sysRedis,
@@ -50,6 +52,8 @@ export type MarkWatchDeps = {
   // The scored event by name, or undefined when there is none.
   getEvent: (name: string) => Promise<WatchEvent | undefined>;
   isKnownHatTopic: (event: string, topicId: string, season: EventPointSeason) => Promise<boolean>;
+  // Which of these owner topic ids name someone listed on the event's roster (roster.ts) now.
+  listedOwnerTopics?: (event: string, topicIds: string[]) => Promise<Set<string>>;
   // Whether this caller may see the event's preview (event-access.ts). Asked only during it.
   canWatchPreview: (event: string) => Promise<boolean>;
   // Called when the cap refuses topics, with how many.
@@ -75,11 +79,19 @@ export async function markWatched(
 
   const teams = seasonTeamsTopicId(name, season);
   const candidates = [...new Set(topics)].slice(0, MAX_TOPICS_PER_MARK);
+  // Owner topics are checked in one read for the whole call.
+  const ownerTopics = candidates.filter((topic) => OWNER_TOPIC_ID.test(topic));
+  const listedOwners = ownerTopics.length
+    ? await (
+        deps.listedOwnerTopics?.(name, ownerTopics) ?? Promise.resolve(new Set<string>())
+      ).catch(() => new Set<string>())
+    : new Set<string>();
   const valid: string[] = [];
   for (const topic of candidates) {
     if (topic === teams) valid.push(topic);
     else if (HAT_TOPIC_ID[season].test(topic) && (await deps.isKnownHatTopic(name, topic, season)))
       valid.push(topic);
+    else if (listedOwners.has(topic)) valid.push(topic);
   }
   if (!valid.length) return 0;
 
@@ -119,7 +131,10 @@ export async function readWatched(
 }
 
 export const defaultMarkWatchDeps = (
-  deps: Pick<MarkWatchDeps, 'getEvent' | 'isKnownHatTopic' | 'canWatchPreview'>
+  deps: Pick<
+    MarkWatchDeps,
+    'getEvent' | 'isKnownHatTopic' | 'listedOwnerTopics' | 'canWatchPreview'
+  >
 ): MarkWatchDeps => ({
   redis: sysRedis,
   now: Date.now,

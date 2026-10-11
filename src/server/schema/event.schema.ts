@@ -37,3 +37,15 @@ export const wornEventHatSchema = eventSchema.extend({
   entityType: z.enum(CosmeticEntity),
   entityId: z.number().int().positive(),
 });
+
+export type TeamRosterInput = z.infer<typeof teamRosterSchema>;
+export const teamRosterSchema = eventSchema.extend({
+  team: z.string().max(32),
+  sort: z.enum(['hats', 'points', 'newest']).default('hats'),
+  // An offset into the sorted roster.
+  cursor: z.number().int().min(0).max(100_000).optional(),
+  limit: z.number().int().min(1).max(48).default(24),
+});
+
+export type RosterOptInInput = z.infer<typeof rosterOptInSchema>;
+export const rosterOptInSchema = eventSchema.extend({ optIn: z.boolean() });

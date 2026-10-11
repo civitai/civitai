@@ -11,6 +11,7 @@ vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 const { cappedGrant, createEventPointsEngine, streamIdBefore } = await import(
   '~/server/events/points/award'
 );
+const { eventRosterKeys } = await import('~/server/events/points/roster');
 const {
   countField,
   encodeHat,
@@ -28,6 +29,7 @@ function fakeRedis() {
   const sets = new Map<string, Set<string>>();
   const hashes = new Map<string, Map<string, string>>();
   const streams = new Map<string, { id: string; message: Record<string, string> }[]>();
+  const zsets = new Map<string, Map<string, number>>();
   // Absolute expiry (unix seconds) per key, as EXPIRE / EXPIREAT left it.
   const ttls = new Map<string, number>();
   let seq = 0;
@@ -50,6 +52,19 @@ function fakeRedis() {
     async expireAt(key: string, at: number) {
       ttls.set(key, at);
       return true;
+    },
+    // ZADD INCR with the XX condition the roster uses: an absent member is left absent.
+    async zAddIncr(
+      key: string,
+      { score, value }: { score: number; value: string },
+      opts?: { condition?: 'NX' | 'XX' }
+    ) {
+      const set = zsets.get(key) ?? new Map<string, number>();
+      if (opts?.condition === 'XX' && !set.has(value)) return null;
+      zsets.set(key, set);
+      const next = (set.get(value) ?? 0) + score;
+      set.set(value, next);
+      return next;
     },
     async hIncrBy(key: string, field: string, by: number) {
       const hash = hashes.get(key) ?? new Map();
@@ -114,6 +129,7 @@ function fakeRedis() {
     redis: redis as unknown as EventPointsRedis,
     sets,
     hashes,
+    zsets,
     ttls,
     setHat,
     setHatUnlogged,
@@ -791,5 +807,71 @@ describe('the time an action carries', () => {
     ]);
     const seen = eventSeasonKeys(EVENT.name, 'preview').seen('reaction', 'Image', 100);
     expect(fake.sets.get(seen)?.has('1')).toBe(false);
+  });
+});
+
+describe('roster points', () => {
+  const rosterPoints = () => eventRosterKeys(EVENT.name).points('Yellow', 'live');
+  const listOwner = () => fake.zsets.set(rosterPoints(), new Map([[String(OWNER), 0]]));
+
+  it("adds each grant to a listed owner's roster points, as granted after the cap", async () => {
+    listOwner();
+    await engine.awardEventPoints([reaction(1), reaction(2)]);
+    expect(fake.zsets.get(rosterPoints())?.get(String(OWNER))).toBe(10);
+    expect(fake.zsets.get(rosterPoints())?.get(String(OWNER))).toBe(livePoints('owner', '10'));
+  });
+
+  it('adds what the cap let through, not the full weight', async () => {
+    listOwner();
+    fake.setHat(EVENT.name, 'Image:101', encodeHat({ ...HAT, claimKey: 'b' }));
+    fake.setHat(EVENT.name, 'Image:102', encodeHat({ ...HAT, claimKey: 'c' }));
+    build();
+    const remix = (entityId: number) => ({
+      type: 'remix' as const,
+      actorId: 1,
+      entityType: 'Image' as const,
+      entityId,
+      sourceId: `remix:${entityId}`,
+    });
+    // 5 + 25 + 25 from one person to one creator in a day: the last remix only gets the 20 left
+    // under the cap of 50, so its grant differs from its weight.
+    await engine.awardEventPoints([reaction(1, 101), remix(100), remix(102)]);
+    expect(livePoints('owner', '10')).toBe(50);
+    expect(fake.zsets.get(rosterPoints())?.get(String(OWNER))).toBe(50);
+  });
+
+  // Points sort by this season: a preview grant goes to the preview's set, not the live one.
+  it("adds a preview grant to the preview season's roster points", async () => {
+    const previewSet = eventRosterKeys(EVENT.name).points('Yellow', 'preview');
+    fake.zsets.set(previewSet, new Map([[String(OWNER), 0]]));
+    listOwner();
+    now = new Date('2026-10-20T12:00:00.000Z');
+    build({
+      loadScoredEvents: async () => [
+        { ...EVENT, previewFrom: new Date('2026-10-10T00:00:00.000Z') },
+      ],
+    });
+    await engine.awardEventPoints([reaction(1)]);
+    expect(fake.zsets.get(previewSet)?.get(String(OWNER))).toBe(5);
+    expect(fake.zsets.get(rosterPoints())?.get(String(OWNER))).toBe(0);
+  });
+
+  it('lists nobody: an owner not on the roster gets no roster entry', async () => {
+    await engine.awardEventPoints([reaction(1)]);
+    expect(livePoints('owner', '10')).toBe(5);
+    expect(fake.zsets.get(rosterPoints())?.has(String(OWNER)) ?? false).toBe(false);
+  });
+
+  it('keeps the points when the roster write fails, and logs it', async () => {
+    const logError = vi.fn();
+    build({ logError });
+    // A synchronous throw, not a rejection: it must not escape into the grant's Promise.all.
+    (fake.redis as { zAddIncr: unknown }).zAddIncr = () => {
+      throw new Error('roster down');
+    };
+    await engine.awardEventPoints([reaction(1)]);
+    expect(livePoints('hat', HAT_FIELD)).toBe(5);
+    expect(granted).toHaveLength(1);
+    expect(logError).toHaveBeenCalledWith('redis', 'eventPoints.rosterPoints', expect.any(Error));
   });
 });

@@ -10,6 +10,7 @@ import {
   SOURCE_IMAGE_URL_MAX,
 } from '~/server/schema/blocks/civitai-image-url';
 import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
+import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
@@ -796,6 +797,52 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockStepMemberSchema,
   blockTrainingBodySchema,
 ]);
+
+export { BLOCK_ESTIMATE_BATCH_MAX_CELLS };
+
+/**
+ * Input of `blocks.estimateWorkflowBatch` — the batch twin of `estimateWorkflow`.
+ *
+ * 🔴 `bodies` IS `unknown[]`, NOT `blockWorkflowBodySchema[]`, AND THAT IS THE
+ * PER-CELL INDEPENDENCE RULE RATHER THAN A LOOSENING. tRPC validates `.input()`
+ * for the whole call, so a typed array would fail EVERY cell when one is
+ * malformed. Each element is parsed against `blockWorkflowBodySchema` inside the
+ * procedure instead — the same schema, applied per cell — and a cell that fails it
+ * becomes that cell's error. What this schema still refuses for the whole call is
+ * what is wrong with the LIST: not an array, empty, or longer than the cap.
+ */
+export const blockEstimateBatchInputSchema = z.object({
+  blockToken: z.string().min(1),
+  bodies: z.array(z.unknown()).min(1).max(BLOCK_ESTIMATE_BATCH_MAX_CELLS),
+});
+
+/**
+ * The run total a batch estimate reports beside its per-cell snapshots.
+ *
+ * `total` is the sum of `cost.total` over the cells that PRICED — a non-failed
+ * snapshot carrying a numeric `cost.total`, the same rule the SDK applies to one
+ * estimate. It is a total for the whole list only when `pricedCells` equals
+ * `cellCount`; otherwise it is a partial sum and must be shown as one.
+ *
+ * It is a quote, exactly as each cell is: nothing reserves it and each cell is
+ * priced again when it is submitted.
+ */
+export type BlockEstimateBatchAggregate = {
+  total: number;
+  pricedCells: number;
+  cellCount: number;
+};
+
+/**
+ * Reply of `blocks.estimateWorkflowBatch`. `snapshots[i]` answers `bodies[i]`:
+ * either the snapshot `estimateWorkflow` would have returned for that body, or
+ * the failure-shape snapshot a host builds when that call throws
+ * (`{ workflowId: 'failed', status: 'failed', error }`).
+ */
+export type BlockEstimateBatchResult = {
+  snapshots: BlockWorkflowSnapshot[];
+  aggregate: BlockEstimateBatchAggregate;
+};
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
 // Keep field names in lockstep — this is the wire contract the iframe consumes.

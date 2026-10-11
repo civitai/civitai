@@ -64,6 +64,7 @@ const {
   mockCheckBlockCatalogRateLimit,
   mockCheckBlockPublishRateLimit,
   mockCheckBlockPollRateLimit,
+  mockCheckBlockEstimateCellsRateLimit,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockListMyBlockWorkflows,
@@ -83,6 +84,7 @@ const {
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   mockCheckBlockPublishRateLimit: vi.fn(async () => ({ allowed: true })),
   mockCheckBlockPollRateLimit: vi.fn(async () => ({ allowed: true })),
+  mockCheckBlockEstimateCellsRateLimit: vi.fn(async () => ({ allowed: true })),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsAppBlocksAuthorEnabled: vi.fn(async () => true),
   mockListMyBlockWorkflows: vi.fn(async () => ({ items: [], nextCursor: null })),
@@ -145,6 +147,10 @@ vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   // over-declares an export is harmless (the importer only binds what it names), and declaring it
   // is what lets the RED half of the matrix above be measured against the same file.
   checkBlockPollRateLimit: (...a: unknown[]) => mockCheckBlockPollRateLimit(...(a as [])),
+  // The per-cell bucket `estimateWorkflowBatch` charges beside the catalog one. Absent at this
+  // file's BASE, like the poll one above was, and declared for the same reason.
+  checkBlockEstimateCellsRateLimit: (...a: unknown[]) =>
+    mockCheckBlockEstimateCellsRateLimit(...(a as [])),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -457,6 +463,57 @@ describe('blocks.estimateWorkflow — above the kind branch', () => {
         body: { kind: 'customComfy', recipe: 'starter-comfy-txt2img', params: {} } as never,
       })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  });
+});
+
+describe('blocks.estimateWorkflowBatch — one catalog token, plus the cells bucket', () => {
+  // A body that really PARSES. Whether it PRICES is a different suite's job (this file stubs too
+  // little of the world for that — `blocks.router.workflow.test.ts` pins the prices); what
+  // matters here is that no cell is reached when a bucket refuses, and that the call RESOLVES
+  // when both allow.
+  const cell = { kind: 'customComfy', recipe: 'starter-comfy-txt2img', params: {} };
+
+  beforeEach(() => {
+    mockCheckBlockEstimateCellsRateLimit.mockReset();
+    mockCheckBlockEstimateCellsRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('REFUSES when the CATALOG bucket refuses, before the cells bucket is charged', async () => {
+    mockCheckBlockCatalogRateLimit.mockResolvedValue(REFUSED);
+
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [cell, cell] })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockCheckBlockEstimateCellsRateLimit).not.toHaveBeenCalled();
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES when the CELLS bucket refuses, with TOO_MANY_REQUESTS and no cell priced', async () => {
+    // 🔴 THE BUCKET THAT MAKES WEIGHT 1 SAFE. The catalog bucket ALLOWS here, so the only thing
+    // that can produce this code is the cells bucket: with it deleted, or its answer dropped,
+    // the call returns a priced reply instead.
+    mockCheckBlockEstimateCellsRateLimit.mockResolvedValue(REFUSED);
+
+    await expect(
+      caller().estimateWorkflowBatch({ blockToken: 'tok', bodies: [cell, cell, cell] })
+    ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('REACHABILITY CONTROL — both buckets allow, and the call resolves with one result per cell', async () => {
+    const result = await caller().estimateWorkflowBatch({
+      blockToken: 'tok',
+      bodies: [cell, cell, cell],
+    });
+    // One token for the call, three cells for the cells bucket (install, count).
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckBlockCatalogRateLimit).toHaveBeenCalledWith(INSTANCE);
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledTimes(1);
+    expect(mockCheckBlockEstimateCellsRateLimit).toHaveBeenCalledWith(INSTANCE, 3);
+    // It RESOLVED — a per-cell failure is a result, never a refusal of the call.
+    expect(result.snapshots).toHaveLength(3);
+    expect(result.aggregate.cellCount).toBe(3);
   });
 });
 

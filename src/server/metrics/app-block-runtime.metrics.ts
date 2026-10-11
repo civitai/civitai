@@ -1689,7 +1689,13 @@ export function recordConsentStrip(
  * there and forgetting it here yields a type error at the call site rather than a silent
  * mislabel.
  */
-export type AppBlockRateLimitBucket = 'catalog' | 'publish' | 'post' | 'post-app' | 'poll';
+export type AppBlockRateLimitBucket =
+  | 'catalog'
+  | 'publish'
+  | 'post'
+  | 'post-app'
+  | 'poll'
+  | 'estimate-cells';
 
 /**
  * Fail-soft emit of ONE bridge rate-limit refusal.

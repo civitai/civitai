@@ -51,8 +51,11 @@ const render = async (id: string) => {
 const CARD = {
   username: 'ellie',
   avatarUrl: null,
-  tierName: 'Supernova',
+  name: 'Supernova',
+  eyebrow: 'Creator Score Tier',
   accent: '#ae3ec9',
+  reachedVerb: 'Reached',
+  line: null,
   badgeUrl: null,
   decoration: null,
   profileBadgeUrl: null,
@@ -70,7 +73,7 @@ describe('/api/og?type=milestone', () => {
     getMilestoneShareCard.mockResolvedValue(null);
     const fallback = await render('42.supernova');
 
-    expect(getMilestoneShareCard).toHaveBeenCalledWith({ userId: 42, slug: 'supernova' });
+    expect(getMilestoneShareCard).toHaveBeenCalledWith({ userId: 42, milestone: 'supernova' });
     expect(card._status).toBe(200);
     expect(card._headers['content-type']).toBe('image/png');
     expect(fallback._headers['content-type']).toBe('image/png');
@@ -98,6 +101,37 @@ describe('/api/og?type=milestone', () => {
     it('is present when the card has a month', async () => {
       expect(Buffer.compare(await png('November 2026'), await png(null))).not.toBe(0);
     });
+  });
+
+  it('reads `<userId>.<achievementKey>` and looks up that achievement', async () => {
+    const res = await render('42.reach:downloads-10000');
+    expect(getMilestoneShareCard).toHaveBeenCalledTimes(1);
+    expect(getMilestoneShareCard).toHaveBeenCalledWith({
+      userId: 42,
+      milestone: 'reach:downloads-10000',
+    });
+    expect(res._headers['content-type']).toBe('image/png');
+  });
+
+  // An achievement's card carries its own small capitals and a line saying what the creator did.
+  it("draws an achievement's eyebrow and line", async () => {
+    const png = async (card: Record<string, unknown>) => {
+      getMilestoneShareCard.mockResolvedValue({ ...CARD, ...card });
+      return (await render('42.supernova'))._body as Buffer;
+    };
+    const achievement = { name: '10k Downloads', eyebrow: 'Reach Achievement' };
+
+    const bare = await png(achievement);
+    expect(Buffer.compare(await png(achievement), bare)).toBe(0);
+    const lined = await png({ ...achievement, line: 'One model reached 10,000 downloads' });
+    const tier = await png({ ...achievement, eyebrow: 'Creator Score Tier' });
+
+    const earned = await png({ ...achievement, reachedVerb: 'Earned' });
+
+    expect(Buffer.compare(lined, bare)).not.toBe(0);
+    expect(Buffer.compare(tier, bare)).not.toBe(0);
+    // CARD says "Reached"; an achievement says "Earned" before its month.
+    expect(Buffer.compare(earned, bare)).not.toBe(0);
   });
 
   // Each piece of art is fetched and drawn: a card that dropped one would render the same bytes as
@@ -152,8 +186,8 @@ describe('/api/og?type=milestone', () => {
     expect(res._headers['cache-control']).toBe('public, max-age=300, s-maxage=300');
   });
 
-  it('serves the fallback for an id that is not a score tier, without a lookup', async () => {
-    for (const id of ['42.score:legend', '42.unknown', '42']) {
+  it('serves the fallback for an id naming no tier or achievement, without a lookup', async () => {
+    for (const id of ['42.score:legend', '42.unknown', '42', '42.other:x', '42.reach:A']) {
       const res = await render(id);
       expect(res._headers['content-type'], id).toBe('image/png');
     }

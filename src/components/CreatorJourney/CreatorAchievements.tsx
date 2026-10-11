@@ -11,6 +11,7 @@ import {
   SpotlightBorderCard,
   SpotlightDivider,
 } from '~/components/SpotlightCard/SpotlightBorderCard';
+import { ACHIEVEMENT_TRACK_STYLES } from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -21,16 +22,15 @@ type Measure = Milestone['measure'];
 type WinBreakdown = Activity['winBreakdown'];
 
 export const achievementTracks = [
-  { key: 'create', title: 'Create', accent: '#12b886', measures: ['models', 'articles'] },
+  { key: 'create', ...ACHIEVEMENT_TRACK_STYLES.create, measures: ['models', 'articles'] },
   {
     key: 'reach',
-    title: 'Reach',
-    accent: '#f59f00',
+    ...ACHIEVEMENT_TRACK_STYLES.reach,
     measures: ['downloads', 'followers', 'reactions'],
   },
-  { key: 'earn', title: 'Earn', accent: '#7950f2', measures: ['revenue'] },
-  { key: 'community', title: 'Community', accent: '#228be6', measures: ['votes'] },
-  { key: 'compete', title: 'Compete', accent: '#fa5252', measures: ['wins'] },
+  { key: 'earn', ...ACHIEVEMENT_TRACK_STYLES.earn, measures: ['revenue'] },
+  { key: 'community', ...ACHIEVEMENT_TRACK_STYLES.community, measures: ['votes'] },
+  { key: 'compete', ...ACHIEVEMENT_TRACK_STYLES.compete, measures: ['wins'] },
 ] as const satisfies ReadonlyArray<{
   key: string;
   title: string;

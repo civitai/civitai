@@ -1,5 +1,5 @@
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
-import { TRPCError } from '@trpc/server';
+import { TRPCError, getTRPCErrorFromUnknown } from '@trpc/server';
 import * as z from 'zod';
 import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
@@ -53,6 +53,7 @@ import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz
 import { recordBlockBridgeRateLimitRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import {
   checkBlockCatalogRateLimit,
+  checkBlockEstimateCellsRateLimit,
   checkBlockPollRateLimit,
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
@@ -112,14 +113,17 @@ import {
 } from '~/server/schema/blocks/publish-request.schema';
 import {
   BLOCK_TRAINING_QUOTE_ID_REGEX,
+  blockEstimateBatchInputSchema,
   blockTrainingDatasetItemsSchema,
   blockWorkflowBodySchema,
 } from '~/server/schema/blocks/workflow.schema';
 import type {
+  BlockEstimateBatchResult,
   BlockTrainingBody,
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
 } from '~/server/schema/blocks/workflow.schema';
+import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import type { Context } from '~/server/createContext';
 import {
   allowMatureContentForCeiling,
@@ -6152,279 +6156,161 @@ export const blocksRouter = router({
           message: 'Rate limit exceeded, please retry shortly.',
         });
       }
-      // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
-      // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
-      // estimate. The textToImage path below stays byte-identical (we only ADD a
-      // branch). Everything customComfy-specific lives in the helper.
-      if (input.body.kind === 'customComfy') {
-        return await estimateCustomComfyWorkflow({ claims, body: input.body });
+      // Everything below the limiter — the `kind` dispatch and the txt2img arm —
+      // lives in `estimateBlockWorkflowCell`, which `estimateWorkflowBatch` calls
+      // once per cell. One function, so a per-cell rule cannot hold here and be
+      // missing there.
+      return await estimateBlockWorkflowCell(ctx, claims, input);
+    }),
+
+  /**
+   * Cost-only preview for a LIST of bodies — the batch twin of `estimateWorkflow`,
+   * for an app that prices one generation per grid cell.
+   *
+   * `snapshots[i]` answers `bodies[i]`, and `aggregate` sums the cells that priced.
+   * Nothing is submitted, reserved or charged, no workflow is created and no id is
+   * issued for the list: each cell is still submitted later through
+   * `submitWorkflow`, with its own budget gate and its own viewer confirmation.
+   *
+   * 🔴 IT CANNOT SUBMIT, BY CONSTRUCTION. The only thing it runs per cell is
+   * `estimateBlockWorkflowCell` — the single estimate's own tail — and nothing in
+   * this resolver names a submit, reserve or charge primitive.
+   *
+   * PER-CELL INDEPENDENCE. A cell that is malformed, refused or unpriceable
+   * becomes that cell's failure snapshot and the others still price. What fails
+   * the WHOLE call is what is wrong with the call: the token, the scope, the
+   * viewer, the rate limits, or the list itself (not an array, empty, over
+   * `BLOCK_ESTIMATE_BATCH_MAX_CELLS` — refused by the input schema).
+   *
+   * 🔴 RATE LIMIT — TWO BUCKETS, AND THE SECOND IS WHY THE FIRST CAN BE WEIGHT 1.
+   *   1. The CATALOG bucket, weight 1, per `blockInstanceId` — exactly what one
+   *      single estimate costs. A 16-cell grid used to take 16 of an allowance a
+   *      page app shares between every viewer and every other read; it now takes 1.
+   *   2. The ESTIMATE-CELLS bucket, weight = cell count, per `blockInstanceId`.
+   *      Each cell is still an orchestrator `whatif`, so weight 1 alone would let
+   *      a caller start `C × N` cost quotes per window for the price of `C`
+   *      requests. Keyed per install like the catalog bucket (not per viewer), so
+   *      the bound below does not grow with the number of viewers.
+   *
+   * Upstream cost quotes per window, per block instance (C = the catalog ceiling,
+   * K = the cell ceiling, N = the cell cap; all in `block-catalog-rate-limit.ts`
+   * and `block-estimate-batch.constants.ts`):
+   *   - before this procedure: C (single estimates only);
+   *   - after: (C - B) single estimates + min(B × N, K) batch cells for B batch
+   *     calls, at most (C - ceil(K / N)) + K, whatever the number of viewers.
+   * With weight 1 alone it would be C × N.
+   *
+   * Both fail open on a Redis incident and both THROW when they refuse, like
+   * `estimateWorkflow` and for its reason: an estimate has no workflow and no money
+   * behind it, so an error is the truthful answer.
+   *
+   * 🔴 `kind: 'training'` IS REFUSED PER CELL. A training estimate stores the quote
+   * record the viewer later confirms, so it is the one arm of the single estimate
+   * that writes state. A batch that created one record per cell would not be
+   * "estimate only". Refusing it here is the conservative direction, and admitting
+   * it later is not a wire change.
+   *
+   * Cells run with bounded concurrency so one call cannot open an unbounded number
+   * of upstream requests at once.
+   *
+   * 🔴 THE CALL HAS A TIME BUDGET (`BLOCK_ESTIMATE_BATCH_BUDGET_MS`). A cell not
+   * priced when it runs out — in flight or never started — is a failure snapshot
+   * with `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`, and the cells that did price are
+   * returned with it. No cell starts after the budget; a late result is discarded.
+   */
+  estimateWorkflowBatch: publicProcedure
+    // Block-JWT-authed, like `estimateWorkflow`.
+    .input(blockEstimateBatchInputSchema)
+    .mutation(async ({ ctx, input }): Promise<BlockEstimateBatchResult> => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
-      // App Blocks TRAINING kind: prices the run and stores the quote the viewer
-      // confirms. Everything training-specific lives in the helper.
-      if (input.body.kind === 'training') {
-        return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('estimateWorkflowBatch', 'catalog');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
       }
-      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
-      // step's cost now comes from a real `whatif` quote, with the declared
-      // billing mode as the FLOOR and the fallback — this used to read "not a
-      // whatIf", which was the defect, not the design. The textToImage path
-      // below stays byte-identical (we only ADD a branch).
-      if (input.body.kind === 'step') {
-        return isPassThroughStepBody(input.body)
-          ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
-          : await estimateStepWorkflow({ ctx, claims, body: input.body });
-      }
-      // Context binding. A MODEL token pins `ctx.modelId`; the body must match
-      // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
-      // lets the viewer pick a model, so the modelId match is SKIPPED and
-      // replaced (below, after the version read) by the pre-spend availability
-      // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
-      // layer over the body version + LoRAs only — it does NOT cover the
-      // resolved/billed checkpoint anchor; early-access + Private-subscription
-      // entitlement (and the resolved anchor) are enforced by the orchestrator
-      // resource belt over the full array. See isPageToken /
-      // assertViewerCanGeneratePageResources.
-      const isPage = isPageToken(claims);
-      if (!isPage) {
-        const ctxModelId = Number(
-          (claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN
-        );
-        if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
-        }
-        // Page-LoRA (Increment 1): additionalResources is a PAGE-ONLY feature.
-        // A MODEL token's checkpoint comes from resolveBlockCheckpoint (install
-        // rows), and the model branch never runs the per-resource entitlement
-        // gate — so accepting additionalResources here would fan un-gated LoRAs
-        // into the resources array. Reject them fail-closed on the model path.
-        if (input.body.additionalResources?.length) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'additionalResources are not supported for model-bound blocks',
-          });
-        }
-        // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
-        // feature. Custom Generators is a page app; model-bound img2img is out
-        // of scope and unvetted for 2a, so reject it fail-closed on the model
-        // path (mirrors the additionalResources guard above).
-        //
-        // BOTH wire shapes are gated identically — the deprecated singular
-        // `sourceImage` AND the array `sourceImages`. Gating only one would
-        // leave a model-bound token a way in through the other.
-        if (input.body.sourceImage || input.body.sourceImages?.length) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'source image (img2img) is not supported for model-bound blocks',
-          });
-        }
-      }
-      const userId = parseSubjectUserId(claims.sub);
-      if (userId == null) {
+      // Every arm of the single estimate refuses an anonymous subject, so a batch
+      // from one is refused whole, before any cell is charged.
+      if (parseSubjectUserId(claims.sub) == null) {
         throw new TRPCError({
           code: 'UNAUTHORIZED',
           message: 'estimate requires authenticated viewer',
         });
       }
-      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
-      await assertAppBlocksEnabledForTokenUser(userId);
-      const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
-      if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
-      }
-      const resolved = await resolveBlockVersionContext(
-        input.body.modelVersionId,
-        input.body.modelId
+      const cellRate = await checkBlockEstimateCellsRateLimit(
+        claims.blockInstanceId,
+        input.bodies.length
       );
-      const user = await getBlockSessionUser(userId);
-      // Resolve the effective checkpoint BEFORE the page gate. This is the
-      // ACTUAL anchor buildTextToImageInput puts at the head of the resources
-      // array — for a non-Checkpoint page body it is NOT resolved.baseModel
-      // (resolveBlockCheckpoint falls through to a viewer/publisher/popular
-      // checkpoint that may belong to a different base-model family). The page
-      // LoRA family-match must anchor on THIS checkpoint, not the body model.
-      // resolveBlockCheckpoint is a pure read (install/override rows + a
-      // fail-open cache populate) with no side effect that must follow the
-      // gate, so it is safe to run before it.
-      const checkpoint = await resolveBlockCheckpoint({
-        blockInstanceId: claims.blockInstanceId,
-        modelId: resolved.modelId,
-        modelVersionId: resolved.modelVersionId,
-        baseModel: resolved.baseModel,
-        modelType: resolved.modelType,
-        userId,
-        slotId: ctxSlotId,
-      });
-      // PAGE branch: pre-spend availability gate over the resources THIS gate
-      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
-      // additional LoRA — as a fail-fast UX layer in place of the skipped
-      // model-binding check. NOTE it does NOT cover the resolved/billed
-      // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
-      // picks a DIFFERENT default checkpoint (validated there only for
-      // Published + base-model family — not early-access/Private/availability).
-      // That anchor's entitlement — and early-access + Private-sub entitlement
-      // for the whole array — is enforced downstream by the orchestrator
-      // resource belt over the FULL resources array; this gate is not the sole
-      // boundary. Keep both belts.
-      // Maturity clamp (authoritative). Derived ONCE from the token's
-      // server-minted ceiling claim, NOT a client body field nor request-time
-      // `ctx.domain`. Drives both the resource-selection gate (`sfwOnly`, so a
-      // SFW-domain block can't even PICK a mature resource — defense in depth)
-      // and the generation-output clamp (`allowMatureContent`). Green AND blue
-      // → sfwOnly true; red → false. Mirrors submitWorkflow below.
-      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-      // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
-      // the domain currency, derived from the SAME authoritative ceiling as the
-      // output clamp. SFW → blue/green; mature → blue/yellow.
-      const currencies = resolveBlockCurrencies(isGreen);
-      // #4159: the resolved `modelVersionId → ModelType` for the LoRA stack.
-      // Declared out here because `buildTextToImageInput` below needs it to emit
-      // graph-valid `resources` entries; on the MODEL path `additionalResources`
-      // is rejected outright, so an empty map is the correct value there.
-      let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
-      if (isPage) {
-        // Resolve + validate the LoRA stack first (LoRA-only + family-match)
-        // so a bad resource fails BEFORE the entitlement gate / any cost.
-        // Family-match anchors on the RESOLVED checkpoint's baseModel.
-        const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
-          additionalResources: input.body.additionalResources,
-          checkpointBaseModel: checkpoint.baseModel,
-        });
-        additionalResourceTypes = resourceTypes;
-        await assertViewerCanGeneratePageResources({
-          gates: [buildGateVersion(resolved.gate), ...loraGates],
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          // SFW-only resource selection unifies with the output clamp: derive
-          // from the authoritative token maturity (green/blue → true), not the
-          // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
-          sfwOnly: allowMatureContent === false,
-          wildcardsEnabled: !!ctx.features.wildcards,
+      if (!cellRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('estimateWorkflowBatch', 'estimate-cells');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
         });
       }
-      const token = await getOrchestratorToken(userId, ctx);
-      const generateInput = buildTextToImageInput(input.body, {
-        ...resolved,
-        checkpointVersionId: checkpoint.versionId,
-        checkpointBaseModel: checkpoint.baseModel,
-        additionalResourceTypes,
-      });
-      // whatIf: no `metadata` on the body — matches the normal path
-      // (`generateFromGraph` builds workflowMetadata only for real submits) and
-      // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
-      const { step, modelSubstitutions } = await createBlockTextToImageStep({
-        input: generateInput,
-        user,
-        whatIf: true,
-      });
-      const whatIfResult = await submitWorkflow({
-        token,
-        body: {
-          steps: [step],
-          tags: buildWorkflowTags(claims, resolved.baseModel),
-          currencies,
-          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
-        },
-        query: { whatif: true },
-      });
-      // ── 🔴 THE ESTIMATE PRICES THE AUTHOR FEE TOO, AND THIS IS A DISCLOSING
-      //    QUOTE, NOT A RESERVING ONE. Nothing here gates, reserves, debits or
-      //    accrues; the returned number is added to the cost the block is shown
-      //    and then discarded. The submit runs its OWN quote (`:5557`) and that
-      //    one is what money is taken against.
-      //
-      // WHY IT HAS TO EXIST. The submit adds the fee to `cost` BEFORE every
-      // guardrail, so with the fee live a viewer shown `N` is debited `N + fee`
-      // — and where the app's token budget sits near the price, the submit is
-      // refused outright with `insufficient buzz budget`, which reads to the
-      // viewer as a broken app rather than as a price. Correcting the TOTAL is
-      // what makes the shown number true for EVERY existing app with no
-      // app-side change; an itemised field ALONE would be inert until each
-      // third-party author wrote a renderer for it. `snapshotFromWorkflow` also
-      // reports the addend as `cost.authorFee`.
-      //
-      // 🔴 THE PAYEE LOOKUP IS ACCEPTED, NOT SKIPPED, ON THIS UNBOUNDED PATH.
-      // `quoteBlockAuthorFee` resolves the payee (one `dbRead.oauthClient
-      // .findUnique` by primary key, two columns) and a disclosure-only variant
-      // that skipped it would be cheaper. It is not used, because the skipped
-      // arm is SELF-DEALING: an author running their own app is not charged,
-      // and a variant that cannot see that would quote them a fee they will
-      // never pay — on the surface whose entire job is to predict the charge,
-      // to the population that exercises it most. Re-creating estimate/submit
-      // divergence one layer down is the defect this change removes, not a
-      // saving. The read is also gated behind the flag AND behind a non-zero
-      // computed fee, so it costs nothing while the fee is dark, and when it is
-      // live it is one indexed row against an orchestrator round-trip this
-      // handler has already paid for.
-      //
-      // 🔴 WHAT THIS NUMBER IS AND IS NOT. It is a QUOTE, not a price lock.
-      // Estimate and submit are two independent whatIfs seconds apart, so the
-      // quoted price can differ from the charged one and NOTHING HERE BOUNDS
-      // THAT.
-      //
-      // ⚠️ THE ONE GUARANTEE, STATED AT THE WIDTH IT ACTUALLY HOLDS. An earlier
-      // revision of this comment said the two sites "agree whenever the base
-      // does". That is a SUFFICIENCY claim and it is false: base agreement is
-      // necessary, not sufficient. FIVE inputs can move between the two quotes —
-      // `cost.base`, `cost.variable` (a cap-priced submit charges nothing while
-      // the estimate showed a fee, or the reverse), the PAYEE (an ownership
-      // transfer in between is exactly what `chargeBlockAuthorFee` re-resolves
-      // for), the FLAG itself, which is read separately at each site and is
-      // operator-flippable, and — the one an earlier revision of this comment
-      // left out — the `generationType`.
-      //
-      // ⚠️ `generationType` IS NOT A PASSENGER, IT IS THE FEE'S LOOKUP KEY. It
-      // selects the `byType` override, so a type that differs between the two
-      // quotes prices a DIFFERENT fee, not merely a differently-derived one, and
-      // `chat-completion`'s 0/0 entry makes the gap total rather than marginal.
-      // On THIS arm it genuinely can differ: `resolveBlockGenerationType` is
-      // handed a body the caller supplies plus `generateInput.workflow`, which is
-      // derived through a cache-backed model-version read — two calls seconds
-      // apart are two reads. The step arm's key is the registered `step.id` and
-      // cannot move. Each site's spelling AND its derivation are pinned per site
-      // in `no-divergent-author-fee-base.test.ts`'s ledger, because a mutation of
-      // this argument on this arm survived the whole battery before it was.
-      //
-      // What IS established, and all that is: `chargeBlockAuthorFee` clamps the
-      // debit to `min(reserved, realized)` where `reserved` is the SUBMIT's own
-      // quote — so the viewer is never billed past what the SUBMIT's budget gate
-      // was measured against. THIS estimate is not that bound and must not be
-      // described as one.
-      //
-      // Degradation is CORRELATED, not guaranteed: when the orchestrator cannot
-      // supply a base the fee is not priced HERE, and the submit — which quotes
-      // the same orchestrator — typically cannot price one either, so both show
-      // and charge no fee together. Typically, not always.
-      //
-      // ⚠️ ONE SHAPE WHERE THE SHOWN NUMBER SITS BELOW THE DEBIT, RECORDED
-      // BECAUSE IT IS NOT CLOSED. If the orchestrator returns `cost.base` but no
-      // `cost.total`, `snapshotFromWorkflow` omits `cost` entirely (there is no
-      // total to correct, and inventing one would report a fee AS the price)
-      // while the submit gates and reserves `0 + fee`. The block is then shown no
-      // price at all rather than a low one, which is the recoverable direction —
-      // but it is a divergence, not an absence of one.
-      const blockGenerationType = resolveBlockGenerationType(input.body, {
-        imageWorkflowType: generateInput.workflow,
-      });
-      const authorFeeQuote = await quoteBlockAuthorFee({
-        baseGenerationBuzz: whatIfResult.cost?.base,
-        priceIsCap: whatIfResult.cost?.variable,
-        generationType: blockGenerationType,
-        appId: claims.appId,
-        viewerUserId: userId,
-        workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
-        privateRun: claims.privateRun === true,
-        // Unbounded surface — see the flag's own note. The skip lines it silences
-        // are re-derived at the submit, once per real generation.
-        suppressQuoteLogs: true,
-      });
-      // #3520: the ESTIMATE reports the substitution too — a block that quotes a
-      // cost for model A and is silently priced for model B has the same
-      // detectability problem as the submit, one step earlier.
-      return {
-        snapshot: snapshotFromWorkflow(whatIfResult, {
-          modelSubstitutions,
-          additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
-        }),
+
+      // 🔴 THE CALL HAS A BUDGET (`BLOCK_ESTIMATE_BATCH_BUDGET_MS`). When it runs out:
+      //   - the reply is built from the cells that finished, and every other cell is
+      //     `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`;
+      //   - no further cell is started: a worker only ever waits INSIDE a cell, so the
+      //     one `expired` check after that wait is what stops every worker;
+      //   - a cell still in flight is not cancelled, but its result is DISCARDED: the
+      //     worker drops it, and the reply is a copy taken at expiry anyway. Letting it
+      //     finish is safe because the per-cell path only quotes — nothing it runs
+      //     reserves, debits, persists a workflow or submits for real (see
+      //     `estimateBlockWorkflowCell`); at most it warms a read cache or bumps a
+      //     metric, exactly as a single estimate would.
+      const finished = new Array<BlockWorkflowSnapshot | undefined>(input.bodies.length);
+      let next = 0;
+      let expired = false;
+      const worker = async () => {
+        while (next < input.bodies.length) {
+          const index = next++;
+          const snapshot = await estimateBatchCell(ctx, claims, input.bodies[index]);
+          if (expired) return;
+          finished[index] = snapshot;
+        }
       };
+      let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+      const budget = new Promise<void>((resolve) => {
+        budgetTimer = setTimeout(() => {
+          expired = true;
+          resolve();
+        }, BLOCK_ESTIMATE_BATCH_BUDGET_MS);
+      });
+      try {
+        await Promise.race([
+          Promise.all(
+            Array.from(
+              { length: Math.min(BLOCK_ESTIMATE_BATCH_CONCURRENCY, input.bodies.length) },
+              worker
+            )
+          ),
+          budget,
+        ]);
+      } finally {
+        expired = true;
+        clearTimeout(budgetTimer);
+      }
+      const snapshots = Array.from(
+        finished,
+        (snapshot) => snapshot ?? failedEstimateCell(BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR)
+      );
+
+      let total = 0;
+      let pricedCells = 0;
+      for (const snapshot of snapshots) {
+        const cellTotal = snapshot.cost?.total;
+        if (snapshot.status === 'failed' || typeof cellTotal !== 'number') continue;
+        total += cellTotal;
+        pricedCells += 1;
+      }
+      return { snapshots, aggregate: { total, pricedCells, cellCount: snapshots.length } };
     }),
 
   /**
@@ -9159,6 +9045,405 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
   // belt's exemption is asserted by the subscription NOT being queried.
   const tier = row.isModerator ? undefined : (await getHighestTierSubscription(userId))?.tier;
   return { ...row, tier: tier ?? 'free' } as unknown as SessionUser;
+}
+
+/**
+ * How many cells of one `estimateWorkflowBatch` call are priced at a time. Each
+ * cell is an orchestrator `whatif` plus its reads, so this is the most upstream
+ * requests one call holds open at once.
+ */
+const BLOCK_ESTIMATE_BATCH_CONCURRENCY = 4;
+
+/**
+ * The total time one `estimateWorkflowBatch` call may spend pricing cells. When it
+ * runs out the call replies with the cells that finished, and every other cell is
+ * a failure snapshot carrying `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`.
+ *
+ * WHY A CALL BUDGET AT ALL. One cell's orchestrator `whatif` is bounded per attempt
+ * (`WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS`, 8 s, in `services/orchestrator/workflows.ts`)
+ * and retried up to 3 attempts with 0.5 s + 1.5 s of backoff, so a single cell can
+ * take ~26 s. Cells run `BLOCK_ESTIMATE_BATCH_CONCURRENCY` (4) at a time, so a
+ * 16-cell call is 4 waves: ~104 s worst case without a budget. That is past the
+ * SDK's default request timeout (120 s for this request, minus the round trip),
+ * so one slow upstream would fail the whole grid client-side while this process
+ * kept working for a reply nobody reads.
+ *
+ * WHY 30 s. It is at least one cell's worst case (~26 s), so a cell that starts at
+ * once still ends on its own terms — priced, or failed with its own error — and
+ * the budget only cuts what an unhealthy upstream has queued behind it. And it is
+ * a quarter of the SDK's 120 s default, so the reply arrives long before a client
+ * using the default gives up, well within typical request timeouts.
+ */
+const BLOCK_ESTIMATE_BATCH_BUDGET_MS = 30_000;
+
+/**
+ * The error a cell carries when the call's budget ran out before it was priced —
+ * whether it was in flight or never started. A stable string: apps may match it to
+ * tell "not priced in time, retry later" apart from a refusal.
+ */
+const BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR = 'estimate timed out';
+
+/**
+ * A failed cell, in the shape a host builds for a failed single estimate
+ * (`failureSnapshot` in `components/AppBlocks/failureSnapshot.ts`). Every way a
+ * cell fails — a throw, or the call's budget running out — goes through this.
+ */
+function failedEstimateCell(error: string): BlockWorkflowSnapshot {
+  return { workflowId: 'failed', status: 'failed', error };
+}
+
+/**
+ * The text a block is shown for a cell whose estimate threw — the same string a
+ * host would have read off the single `estimateWorkflow` call's error.
+ *
+ * A single estimate's throw crosses tRPC before the host sees it: an unrecognised
+ * throw is wrapped by `getTRPCErrorFromUnknown`, and `errorFormatter` replaces a
+ * server fault's message with a generic one carrying a reference. A cell's throw
+ * never leaves this process, so both steps are applied here instead. Without the
+ * second, an internal error message would reach a third-party block through a
+ * batch that a single estimate would have withheld.
+ */
+function estimateBatchCellErrorMessage(err: unknown): string {
+  const trpcError = getTRPCErrorFromUnknown(err);
+  const safe = getClientSafeError(trpcError);
+  if (safe) {
+    logToAxiom({
+      name: 'block-estimate-batch-cell-fault',
+      type: 'error',
+      errorRef: safe.errorRef,
+      code: trpcError.code,
+      message: trpcError.message,
+      stack: trpcError.cause instanceof Error ? trpcError.cause.stack : trpcError.stack,
+    }).catch(() => undefined);
+    return safe.message;
+  }
+  return trpcError.message;
+}
+
+/**
+ * One cell of `estimateWorkflowBatch`: parse the body with the single estimate's
+ * own schema, price it with the single estimate's own function, and turn a throw
+ * into the failure-shape snapshot a host builds for a failed single estimate
+ * (`failureSnapshot` in `components/AppBlocks/failureSnapshot.ts` — the shapes are
+ * pinned equal in `blocks.router.workflow.test.ts`).
+ *
+ * It never throws: a cell's failure is that cell's result.
+ */
+async function estimateBatchCell(
+  ctx: Context,
+  claims: BlockClaims,
+  rawBody: unknown
+): Promise<BlockWorkflowSnapshot> {
+  try {
+    const parsed = blockWorkflowBodySchema.safeParse(rawBody);
+    // The same error tRPC raises when `estimateWorkflow`'s `.input()` rejects a body.
+    if (!parsed.success) throw new TRPCError({ code: 'BAD_REQUEST', cause: parsed.error });
+    if (parsed.data.kind === 'training') {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'a training estimate cannot be part of a batch — estimate it on its own',
+      });
+    }
+    const { snapshot } = await estimateBlockWorkflowCell(ctx, claims, { body: parsed.data });
+    return snapshot;
+  } catch (err) {
+    return failedEstimateCell(estimateBatchCellErrorMessage(err));
+  }
+}
+
+/**
+ * ONE ESTIMATE — the per-cell half of `estimateWorkflow`, and the ONLY thing
+ * `estimateWorkflowBatch` runs per cell.
+ *
+ * It is everything the single estimate does after its token, scope and rate-limit
+ * preamble: the `kind` dispatch, the page-vs-model body restrictions, the viewer
+ * and flag gates, the entitlement and maturity gates, the orchestrator `whatif`
+ * and the author-fee disclosure. It was the tail of the `estimateWorkflow`
+ * resolver, moved here unchanged so a batch can call it; nothing in it was
+ * rewritten.
+ *
+ * 🔴 THE THIRD PARAMETER IS NAMED `input` AND SHAPED `{ body }` ON PURPOSE. The
+ * moved code reads `input.body` throughout, and the author-fee ledger
+ * (`no-divergent-author-fee-base.test.ts`) pins the fee key's derivation by that
+ * spelling. Keeping the name keeps the move a move.
+ *
+ * 🔴 IT QUOTES, IT NEVER SUBMITS. Every orchestrator call it reaches carries
+ * `whatif: true`, and it reserves, debits and accrues nothing. That is what makes
+ * it safe to call N times from the batch procedure.
+ */
+async function estimateBlockWorkflowCell(
+  ctx: Context,
+  claims: BlockClaims,
+  input: { body: BlockWorkflowBody }
+) {
+  // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
+  // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
+  // estimate. The textToImage path below stays byte-identical (we only ADD a
+  // branch). Everything customComfy-specific lives in the helper.
+  if (input.body.kind === 'customComfy') {
+    return await estimateCustomComfyWorkflow({ claims, body: input.body });
+  }
+  // App Blocks TRAINING kind: prices the run and stores the quote the viewer
+  // confirms. Everything training-specific lives in the helper.
+  if (input.body.kind === 'training') {
+    return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
+  }
+  // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
+  // step's cost now comes from a real `whatif` quote, with the declared
+  // billing mode as the FLOOR and the fallback — this used to read "not a
+  // whatIf", which was the defect, not the design. The textToImage path
+  // below stays byte-identical (we only ADD a branch).
+  if (input.body.kind === 'step') {
+    return isPassThroughStepBody(input.body)
+      ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
+      : await estimateStepWorkflow({ ctx, claims, body: input.body });
+  }
+  // Context binding. A MODEL token pins `ctx.modelId`; the body must match
+  // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
+  // lets the viewer pick a model, so the modelId match is SKIPPED and
+  // replaced (below, after the version read) by the pre-spend availability
+  // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
+  // layer over the body version + LoRAs only — it does NOT cover the
+  // resolved/billed checkpoint anchor; early-access + Private-subscription
+  // entitlement (and the resolved anchor) are enforced by the orchestrator
+  // resource belt over the full array. See isPageToken /
+  // assertViewerCanGeneratePageResources.
+  const isPage = isPageToken(claims);
+  if (!isPage) {
+    const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
+    if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+    }
+    // Page-LoRA (Increment 1): additionalResources is a PAGE-ONLY feature.
+    // A MODEL token's checkpoint comes from resolveBlockCheckpoint (install
+    // rows), and the model branch never runs the per-resource entitlement
+    // gate — so accepting additionalResources here would fan un-gated LoRAs
+    // into the resources array. Reject them fail-closed on the model path.
+    if (input.body.additionalResources?.length) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'additionalResources are not supported for model-bound blocks',
+      });
+    }
+    // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
+    // feature. Custom Generators is a page app; model-bound img2img is out
+    // of scope and unvetted for 2a, so reject it fail-closed on the model
+    // path (mirrors the additionalResources guard above).
+    //
+    // BOTH wire shapes are gated identically — the deprecated singular
+    // `sourceImage` AND the array `sourceImages`. Gating only one would
+    // leave a model-bound token a way in through the other.
+    if (input.body.sourceImage || input.body.sourceImages?.length) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'source image (img2img) is not supported for model-bound blocks',
+      });
+    }
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'estimate requires authenticated viewer',
+    });
+  }
+  // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
+  if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
+  }
+  const resolved = await resolveBlockVersionContext(input.body.modelVersionId, input.body.modelId);
+  const user = await getBlockSessionUser(userId);
+  // Resolve the effective checkpoint BEFORE the page gate. This is the
+  // ACTUAL anchor buildTextToImageInput puts at the head of the resources
+  // array — for a non-Checkpoint page body it is NOT resolved.baseModel
+  // (resolveBlockCheckpoint falls through to a viewer/publisher/popular
+  // checkpoint that may belong to a different base-model family). The page
+  // LoRA family-match must anchor on THIS checkpoint, not the body model.
+  // resolveBlockCheckpoint is a pure read (install/override rows + a
+  // fail-open cache populate) with no side effect that must follow the
+  // gate, so it is safe to run before it.
+  const checkpoint = await resolveBlockCheckpoint({
+    blockInstanceId: claims.blockInstanceId,
+    modelId: resolved.modelId,
+    modelVersionId: resolved.modelVersionId,
+    baseModel: resolved.baseModel,
+    modelType: resolved.modelType,
+    userId,
+    slotId: ctxSlotId,
+  });
+  // PAGE branch: pre-spend availability gate over the resources THIS gate
+  // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+  // additional LoRA — as a fail-fast UX layer in place of the skipped
+  // model-binding check. NOTE it does NOT cover the resolved/billed
+  // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
+  // picks a DIFFERENT default checkpoint (validated there only for
+  // Published + base-model family — not early-access/Private/availability).
+  // That anchor's entitlement — and early-access + Private-sub entitlement
+  // for the whole array — is enforced downstream by the orchestrator
+  // resource belt over the FULL resources array; this gate is not the sole
+  // boundary. Keep both belts.
+  // Maturity clamp (authoritative). Derived ONCE from the token's
+  // server-minted ceiling claim, NOT a client body field nor request-time
+  // `ctx.domain`. Drives both the resource-selection gate (`sfwOnly`, so a
+  // SFW-domain block can't even PICK a mature resource — defense in depth)
+  // and the generation-output clamp (`allowMatureContent`). Green AND blue
+  // → sfwOnly true; red → false. Mirrors submitWorkflow below.
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
+  // the domain currency, derived from the SAME authoritative ceiling as the
+  // output clamp. SFW → blue/green; mature → blue/yellow.
+  const currencies = resolveBlockCurrencies(isGreen);
+  // #4159: the resolved `modelVersionId → ModelType` for the LoRA stack.
+  // Declared out here because `buildTextToImageInput` below needs it to emit
+  // graph-valid `resources` entries; on the MODEL path `additionalResources`
+  // is rejected outright, so an empty map is the correct value there.
+  let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
+  if (isPage) {
+    // Resolve + validate the LoRA stack first (LoRA-only + family-match)
+    // so a bad resource fails BEFORE the entitlement gate / any cost.
+    // Family-match anchors on the RESOLVED checkpoint's baseModel.
+    const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
+      additionalResources: input.body.additionalResources,
+      checkpointBaseModel: checkpoint.baseModel,
+    });
+    additionalResourceTypes = resourceTypes;
+    await assertViewerCanGeneratePageResources({
+      gates: [buildGateVersion(resolved.gate), ...loraGates],
+      viewer: { id: userId, isModerator: !!user.isModerator },
+      // SFW-only resource selection unifies with the output clamp: derive
+      // from the authoritative token maturity (green/blue → true), not the
+      // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
+      sfwOnly: allowMatureContent === false,
+      wildcardsEnabled: !!ctx.features.wildcards,
+    });
+  }
+  const token = await getOrchestratorToken(userId, ctx);
+  const generateInput = buildTextToImageInput(input.body, {
+    ...resolved,
+    checkpointVersionId: checkpoint.versionId,
+    checkpointBaseModel: checkpoint.baseModel,
+    additionalResourceTypes,
+  });
+  // whatIf: no `metadata` on the body — matches the normal path
+  // (`generateFromGraph` builds workflowMetadata only for real submits) and
+  // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
+  const { step, modelSubstitutions } = await createBlockTextToImageStep({
+    input: generateInput,
+    user,
+    whatIf: true,
+  });
+  const whatIfResult = await submitWorkflow({
+    token,
+    body: {
+      steps: [step],
+      tags: buildWorkflowTags(claims, resolved.baseModel),
+      currencies,
+      ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+    },
+    query: { whatif: true },
+  });
+  // ── 🔴 THE ESTIMATE PRICES THE AUTHOR FEE TOO, AND THIS IS A DISCLOSING
+  //    QUOTE, NOT A RESERVING ONE. Nothing here gates, reserves, debits or
+  //    accrues; the returned number is added to the cost the block is shown
+  //    and then discarded. The submit runs its OWN quote (`:5557`) and that
+  //    one is what money is taken against.
+  //
+  // WHY IT HAS TO EXIST. The submit adds the fee to `cost` BEFORE every
+  // guardrail, so with the fee live a viewer shown `N` is debited `N + fee`
+  // — and where the app's token budget sits near the price, the submit is
+  // refused outright with `insufficient buzz budget`, which reads to the
+  // viewer as a broken app rather than as a price. Correcting the TOTAL is
+  // what makes the shown number true for EVERY existing app with no
+  // app-side change; an itemised field ALONE would be inert until each
+  // third-party author wrote a renderer for it. `snapshotFromWorkflow` also
+  // reports the addend as `cost.authorFee`.
+  //
+  // 🔴 THE PAYEE LOOKUP IS ACCEPTED, NOT SKIPPED, ON THIS UNBOUNDED PATH.
+  // `quoteBlockAuthorFee` resolves the payee (one `dbRead.oauthClient
+  // .findUnique` by primary key, two columns) and a disclosure-only variant
+  // that skipped it would be cheaper. It is not used, because the skipped
+  // arm is SELF-DEALING: an author running their own app is not charged,
+  // and a variant that cannot see that would quote them a fee they will
+  // never pay — on the surface whose entire job is to predict the charge,
+  // to the population that exercises it most. Re-creating estimate/submit
+  // divergence one layer down is the defect this change removes, not a
+  // saving. The read is also gated behind the flag AND behind a non-zero
+  // computed fee, so it costs nothing while the fee is dark, and when it is
+  // live it is one indexed row against an orchestrator round-trip this
+  // handler has already paid for.
+  //
+  // 🔴 WHAT THIS NUMBER IS AND IS NOT. It is a QUOTE, not a price lock.
+  // Estimate and submit are two independent whatIfs seconds apart, so the
+  // quoted price can differ from the charged one and NOTHING HERE BOUNDS
+  // THAT.
+  //
+  // ⚠️ THE ONE GUARANTEE, STATED AT THE WIDTH IT ACTUALLY HOLDS. An earlier
+  // revision of this comment said the two sites "agree whenever the base
+  // does". That is a SUFFICIENCY claim and it is false: base agreement is
+  // necessary, not sufficient. FIVE inputs can move between the two quotes —
+  // `cost.base`, `cost.variable` (a cap-priced submit charges nothing while
+  // the estimate showed a fee, or the reverse), the PAYEE (an ownership
+  // transfer in between is exactly what `chargeBlockAuthorFee` re-resolves
+  // for), the FLAG itself, which is read separately at each site and is
+  // operator-flippable, and — the one an earlier revision of this comment
+  // left out — the `generationType`.
+  //
+  // ⚠️ `generationType` IS NOT A PASSENGER, IT IS THE FEE'S LOOKUP KEY. It
+  // selects the `byType` override, so a type that differs between the two
+  // quotes prices a DIFFERENT fee, not merely a differently-derived one, and
+  // `chat-completion`'s 0/0 entry makes the gap total rather than marginal.
+  // On THIS arm it genuinely can differ: `resolveBlockGenerationType` is
+  // handed a body the caller supplies plus `generateInput.workflow`, which is
+  // derived through a cache-backed model-version read — two calls seconds
+  // apart are two reads. The step arm's key is the registered `step.id` and
+  // cannot move. Each site's spelling AND its derivation are pinned per site
+  // in `no-divergent-author-fee-base.test.ts`'s ledger, because a mutation of
+  // this argument on this arm survived the whole battery before it was.
+  //
+  // What IS established, and all that is: `chargeBlockAuthorFee` clamps the
+  // debit to `min(reserved, realized)` where `reserved` is the SUBMIT's own
+  // quote — so the viewer is never billed past what the SUBMIT's budget gate
+  // was measured against. THIS estimate is not that bound and must not be
+  // described as one.
+  //
+  // Degradation is CORRELATED, not guaranteed: when the orchestrator cannot
+  // supply a base the fee is not priced HERE, and the submit — which quotes
+  // the same orchestrator — typically cannot price one either, so both show
+  // and charge no fee together. Typically, not always.
+  //
+  // ⚠️ ONE SHAPE WHERE THE SHOWN NUMBER SITS BELOW THE DEBIT, RECORDED
+  // BECAUSE IT IS NOT CLOSED. If the orchestrator returns `cost.base` but no
+  // `cost.total`, `snapshotFromWorkflow` omits `cost` entirely (there is no
+  // total to correct, and inventing one would report a fee AS the price)
+  // while the submit gates and reserves `0 + fee`. The block is then shown no
+  // price at all rather than a low one, which is the recoverable direction —
+  // but it is a divergence, not an absence of one.
+  const blockGenerationType = resolveBlockGenerationType(input.body, {
+    imageWorkflowType: generateInput.workflow,
+  });
+  const authorFeeQuote = await quoteBlockAuthorFee({
+    baseGenerationBuzz: whatIfResult.cost?.base,
+    priceIsCap: whatIfResult.cost?.variable,
+    generationType: blockGenerationType,
+    appId: claims.appId,
+    viewerUserId: userId,
+    workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
+    privateRun: claims.privateRun === true,
+    // Unbounded surface — see the flag's own note. The skip lines it silences
+    // are re-derived at the submit, once per real generation.
+    suppressQuoteLogs: true,
+  });
+  // #3520: the ESTIMATE reports the substitution too — a block that quotes a
+  // cost for model A and is silently priced for model B has the same
+  // detectability problem as the submit, one step earlier.
+  return {
+    snapshot: snapshotFromWorkflow(whatIfResult, {
+      modelSubstitutions,
+      additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
+    }),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

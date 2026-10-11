@@ -274,3 +274,39 @@ describe('readWatched', () => {
     expect([...watched]).toEqual([hatId(1), TEAMS_WATCH]);
   });
 });
+
+describe('markWatched, roster owner topics', () => {
+  const owner = (n: number) => `o${n.toString(16).padStart(31, '0')}`;
+  const LISTED = new Set([owner(1)]);
+  const lookups: string[][] = [];
+  const withRoster = () =>
+    deps({
+      listedOwnerTopics: async (_e, ids) => {
+        lookups.push(ids);
+        return new Set(ids.filter((id) => LISTED.has(id)));
+      },
+    });
+
+  it('marks an owner topic only while that owner is listed on the roster', async () => {
+    lookups.length = 0;
+    expect(await mark([owner(1), owner(2), hatId(1)], withRoster())).toBe(2);
+    expect([...fake.set(KEY).keys()].sort()).toEqual([hatId(1), owner(1)].sort());
+    // One roster read for every owner topic in the call, and none for a hat.
+    expect(lookups).toEqual([[owner(1), owner(2)]]);
+  });
+
+  it('refuses owner topics when nothing can say who is listed, or the lookup fails', async () => {
+    expect(await mark([owner(1)])).toBe(0);
+    expect(
+      await mark(
+        [owner(1)],
+        deps({
+          listedOwnerTopics: async () => {
+            throw new Error('redis down');
+          },
+        })
+      )
+    ).toBe(0);
+    expect(fake.writes).toEqual([]);
+  });
+});

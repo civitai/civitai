@@ -1,6 +1,7 @@
 import { getEventAccess, type EventViewer } from '~/server/events/event-access';
 import { loadEvents } from '~/server/events/load-events';
 import { isKnownHatTopic } from '~/server/events/points/award';
+import { listedOwnerTopics } from '~/server/events/points/roster';
 import { defaultMarkWatchDeps, markWatched } from '~/server/events/points/watch';
 
 // The watch endpoint's wiring, apart from watch.ts so the pusher's import of the interest set read
@@ -29,6 +30,8 @@ export async function markEventPointsWatched(
         };
       },
       isKnownHatTopic,
+      listedOwnerTopics: async (name, topicIds) =>
+        new Set((await listedOwnerTopics(name, topicIds)).keys()),
       canWatchPreview: async (name) => {
         const event = await findScored(name);
         return !!event && (await getEventAccess(event, viewer)) === 'preview';
