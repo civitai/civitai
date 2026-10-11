@@ -14,6 +14,8 @@ import {
 } from '~/server/services/collection.service';
 import {
   collectionWithinCeiling,
+  isPublicCollectionImage,
+  type PublicCollectionImageFields,
   getCollectionPlayableSample,
   getFallbackCoverImages,
   getFollowedCollectionIds,
@@ -247,24 +249,15 @@ const CH_HYDRATE_MAX = 1000;
 const chHydrateWidth = (limit: number) => Math.min(limit * 24 + 1, CH_HYDRATE_MAX);
 
 /**
- * Whether a collection's own cover image can be served: it has a url, it carries
- * neither the poi nor the minor flag (the exclusion the public image endpoints
- * apply), and its level is within the token's ceiling. Otherwise the endpoint
- * falls back to `getFallbackCoverImages`, which applies the same filters.
+ * Whether a collection's own cover image can be served: it has a url and passes
+ * `isPublicCollectionImage`. Otherwise the endpoint falls back to
+ * `getFallbackCoverImages`, which applies the same rule in SQL.
  */
 function primaryCoverUsable(
-  image:
-    | { url: string | null; nsfwLevel: number | null; poi: boolean; minor: boolean }
-    | null
-    | undefined,
+  image: ({ url: string | null } & PublicCollectionImageFields) | null | undefined,
   browsingLevel: number
 ): boolean {
-  return (
-    !!image?.url &&
-    !image.poi &&
-    !image.minor &&
-    collectionWithinCeiling(image.nsfwLevel ?? 0, browsingLevel)
-  );
+  return !!image?.url && isPublicCollectionImage(image, browsingLevel);
 }
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -455,7 +448,20 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           nsfwLevel: true,
           userId: true,
           user: { select: { id: true, username: true } },
-          image: { select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true } },
+          image: {
+            select: {
+              url: true,
+              type: true,
+              nsfwLevel: true,
+              ingestion: true,
+              needsReview: true,
+              poi: true,
+              minor: true,
+              acceptableMinor: true,
+              tosViolation: true,
+              blockedFor: true,
+            },
+          },
         },
       });
 

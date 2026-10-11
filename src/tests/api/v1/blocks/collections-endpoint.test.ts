@@ -90,34 +90,43 @@ vi.mock('~/server/services/collection.service', () => ({
   getCollectionItemCount: mockItemCount,
   getUserCollectionsWithPermissions: mockUserCollections,
 }));
-vi.mock('~/server/services/blocks/block-collections.service', () => ({
-  hydrateBlockSubject: mockHydrate,
-  getFollowedCollectionIds: mockFollowed,
-  getFallbackCoverImages: mockFallbackCovers,
-  getCollectionPlayableSample: mockPlayableSample,
-  // Cover url helper: a video cover yields a poster (`poster:` prefix), a still
-  // image yields `edge:`; null when there is no url — mirrors toCoverImageUrl.
-  toCoverImageUrl: (img: any) =>
-    img?.url ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}` : null,
-  // FAITHFUL PORT of toCoverFields: both fields derived from THE ONE image passed
-  // in, level omitted entirely when there is no url. Written this way on purpose —
-  // it means these tests can only observe WHICH IMAGE the endpoint chose, which is
-  // the endpoint's half of the contract. The projection's own semantics (0 vs
-  // absent, null → 0, the url/level pairing) are exercised against the REAL
-  // function in block-collections-cover.test.ts.
-  toCoverFields: (img: any) => {
-    const coverImageUrl = img?.url
-      ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}`
-      : null;
-    if (coverImageUrl === null) return { coverImageUrl: null };
-    return { coverImageUrl, coverNsfwLevel: img?.nsfwLevel ?? 0 };
-  },
-  // REAL bitwise semantics (Flags.intersects OR unrated 0) — NOT a `<=` — so the
-  // maturity clamp on covers is exercised faithfully: a MIXED bucket (29) still
-  // intersects a SFW ceiling (3), and a mature bucket (28) does NOT (28 & 3 = 0).
-  collectionWithinCeiling: (nsfwLevel: number, level: number) =>
-    !nsfwLevel || (nsfwLevel & level) !== 0,
-}));
+vi.mock('~/server/services/blocks/block-collections.service', async () => {
+  const { classifyGatedImageForViewer } = await vi.importActual<
+    typeof import('~/server/services/blocks/block-gated-images.logic')
+  >('~/server/services/blocks/block-gated-images.logic');
+  return {
+    hydrateBlockSubject: mockHydrate,
+    getFollowedCollectionIds: mockFollowed,
+    getFallbackCoverImages: mockFallbackCovers,
+    getCollectionPlayableSample: mockPlayableSample,
+    // Cover url helper: a video cover yields a poster (`poster:` prefix), a still
+    // image yields `edge:`; null when there is no url — mirrors toCoverImageUrl.
+    toCoverImageUrl: (img: any) =>
+      img?.url ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}` : null,
+    // FAITHFUL PORT of toCoverFields: both fields derived from THE ONE image passed
+    // in, level omitted entirely when there is no url. Written this way on purpose —
+    // it means these tests can only observe WHICH IMAGE the endpoint chose, which is
+    // the endpoint's half of the contract. The projection's own semantics (0 vs
+    // absent, null → 0, the url/level pairing) are exercised against the REAL
+    // function in block-collections-cover.test.ts.
+    toCoverFields: (img: any) => {
+      const coverImageUrl = img?.url
+        ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}`
+        : null;
+      if (coverImageUrl === null) return { coverImageUrl: null };
+      return { coverImageUrl, coverNsfwLevel: img?.nsfwLevel ?? 0 };
+    },
+    // REAL bitwise semantics (Flags.intersects OR unrated 0) — NOT a `<=` — so the
+    // maturity clamp on covers is exercised faithfully: a MIXED bucket (29) still
+    // intersects a SFW ceiling (3), and a mature bucket (28) does NOT (28 & 3 = 0).
+    collectionWithinCeiling: (nsfwLevel: number, level: number) =>
+      !nsfwLevel || (nsfwLevel & level) !== 0,
+    // The REAL shared gate under a one-line wrapper; the wrapper itself is pinned against
+    // the real module in block-collections-cover.test.ts.
+    isPublicCollectionImage: (image: any, level: number) =>
+      classifyGatedImageForViewer(image, level).status === 'visible',
+  };
+});
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: mockRate,
 }));
@@ -133,6 +142,17 @@ import handler, {
   MIN_PLAYABLE_FRACTION,
   meetsPlayableFloor,
 } from '~/pages/api/v1/blocks/collections/index';
+
+/** A scanned image with no moderation flags: what `isPublicCollectionImage` serves. */
+const SCANNED = {
+  ingestion: 'Scanned',
+  needsReview: null,
+  poi: false,
+  minor: false,
+  acceptableMinor: false,
+  tosViolation: false,
+  blockedFor: null,
+} as const;
 
 /**
  * Drive `getCollectionItemCount` from two id→count tables, dispatched on whether
@@ -267,7 +287,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 100,
         user: { id: 100, username: 'alice' },
-        image: { url: 'img10', type: 'image' },
+        image: { ...SCANNED, url: 'img10', type: 'image', nsfwLevel: 1 },
       },
       {
         id: 11,
@@ -287,7 +307,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 8,
         userId: 102,
         user: { id: 102, username: 'carol' },
-        image: { url: 'img12', type: 'image' },
+        image: { ...SCANNED, url: 'img12', type: 'image', nsfwLevel: 1 },
       },
     ]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
@@ -301,8 +321,7 @@ describe('GET /api/v1/blocks/collections', () => {
       name: 'A',
       description: 'desc A',
       coverImageUrl: 'edge:img10',
-      // The primary cover carries no explicit level → unrated, published as a real 0.
-      coverNsfwLevel: 0,
+      coverNsfwLevel: 1,
       itemCount: 5,
       curator: { userId: 100, username: 'alice' },
       isPublic: true,
@@ -478,7 +497,7 @@ describe('GET /api/v1/blocks/collections', () => {
         description: 'meow',
         read: 'Private',
         userId: 42,
-        image: { url: 'c20', type: 'image' },
+        image: { ...SCANNED, url: 'c20', type: 'image', nsfwLevel: 1 },
       },
       { id: 21, name: 'Dogs', description: null, read: 'Public', userId: 42, image: null },
       { id: 22, name: 'More Cats', description: null, read: 'Private', userId: 42, image: null },
@@ -664,7 +683,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'mature-cover', type: 'image', nsfwLevel: 28 },
+        image: { ...SCANNED, url: 'mature-cover', type: 'image', nsfwLevel: 28 },
       },
     ]);
     mockFallbackCovers.mockResolvedValueOnce(new Map([[10, { url: 'sfw-item', type: 'image' }]]));
@@ -717,7 +736,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'sfw-cover', type: 'image', nsfwLevel: 1 },
+        image: { ...SCANNED, url: 'sfw-cover', type: 'image', nsfwLevel: 1 },
       },
     ]);
     mockItemCount.mockResolvedValueOnce([{ id: 10, count: 1 }]);
@@ -944,7 +963,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'mature-cover', type: 'image', nsfwLevel: 28 },
+        image: { ...SCANNED, url: 'mature-cover', type: 'image', nsfwLevel: 28 },
       },
     ]);
     mockFallbackCovers.mockResolvedValueOnce(
@@ -974,7 +993,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'primary-cover', type: 'image', nsfwLevel: 2 },
+        image: { ...SCANNED, url: 'primary-cover', type: 'image', nsfwLevel: 2 },
       },
     ]);
     mockFallbackCovers.mockResolvedValueOnce(
@@ -1021,7 +1040,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'k9', type: 'image', nsfwLevel: 2 },
+        image: { ...SCANNED, url: 'k9', type: 'image', nsfwLevel: 2 },
       },
     ]);
     mockFallbackCovers.mockResolvedValueOnce(new Map());
@@ -1042,10 +1061,9 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(JSON.parse(JSON.stringify(bare))).not.toHaveProperty('coverNsfwLevel');
   });
 
-  it('🔴 mode=public: an UNRATED (0) cover publishes a real 0 — presence is not "truthy"', async () => {
-    // The mirror of the absence case, and the mutation that a `if (level)` guard
-    // would pass: unrated is a level, and the card must be told so rather than
-    // being pushed onto the no-claim path.
+  it('mode=public: an UNRATED (0) primary cover is not served — it goes to the fallback', async () => {
+    // A level of 0 means no rating exists yet. The served-0 projection itself is pinned
+    // against the real `toCoverFields` in block-collections-cover.test.ts.
     mockGetAll.mockResolvedValueOnce([
       {
         id: 10,
@@ -1055,16 +1073,16 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'unrated-cover', type: 'image', nsfwLevel: 0 },
+        image: { ...SCANNED, url: 'unrated-cover', type: 'image', nsfwLevel: 0 },
       },
     ]);
     mockItemCount.mockResolvedValueOnce([{ id: 10, count: 3 }]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     const body = res._json() as any;
-    expect(body.items[0].coverImageUrl).toBe('edge:unrated-cover');
-    expect(body.items[0].coverNsfwLevel).toBe(0);
-    expect('coverNsfwLevel' in body.items[0]).toBe(true);
+    expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
+    expect(body.items[0].coverImageUrl).toBeNull();
+    expect('coverNsfwLevel' in body.items[0]).toBe(false);
   });
 
   it("🔴 mode=public: EVERY item's level matches the image its url came from (mixed page)", async () => {
@@ -1082,7 +1100,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'p10', type: 'image', nsfwLevel: 2 },
+        image: { ...SCANNED, url: 'p10', type: 'image', nsfwLevel: 2 },
       },
       // 11: mature primary (8 & 3 === 0) → clamped out, fallback url + fallback level.
       {
@@ -1093,7 +1111,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 1,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'p11', type: 'image', nsfwLevel: 8 },
+        image: { ...SCANNED, url: 'p11', type: 'image', nsfwLevel: 8 },
       },
       // 12: no primary and no fallback row → no cover at all.
       {
@@ -1151,7 +1169,7 @@ describe('GET /api/v1/blocks/collections', () => {
         description: null,
         read: 'Public',
         userId: 42,
-        image: { url: 'own22', type: 'image', nsfwLevel: 2 },
+        image: { ...SCANNED, url: 'own22', type: 'image', nsfwLevel: 2 },
       },
       // 21: mature primary (8 & 3 === 0) → clamped out onto the fallback.
       {
@@ -1160,7 +1178,7 @@ describe('GET /api/v1/blocks/collections', () => {
         description: null,
         read: 'Private',
         userId: 42,
-        image: { url: 'own21', type: 'image', nsfwLevel: 8 },
+        image: { ...SCANNED, url: 'own21', type: 'image', nsfwLevel: 8 },
       },
       // 20: no cover anywhere.
       { id: 20, name: 'Own bare', description: null, read: 'Public', userId: 42, image: null },
@@ -1201,7 +1219,7 @@ describe('GET /api/v1/blocks/collections', () => {
         nsfwLevel: 29,
         userId: 1,
         user: { id: 1, username: 'a' },
-        image: { url: 'k', type: 'image', nsfwLevel: 1 },
+        image: { ...SCANNED, url: 'k', type: 'image', nsfwLevel: 1 },
       },
     ]);
     mockItemCount.mockResolvedValueOnce([{ id: 10, count: 1 }]);
@@ -1276,10 +1294,17 @@ describe('meetsPlayableFloor', () => {
   });
 });
 
-describe('cover poi/minor exclusion', () => {
+describe('cover moderation and scan gate', () => {
+  // One fixture per refused state, each a clean scanned image with exactly one change.
   const flagged = [
-    ['poi', { poi: true, minor: false }],
-    ['minor', { poi: false, minor: true }],
+    ['poi', { poi: true }],
+    ['minor', { minor: true }],
+    ['needsReview', { needsReview: 'poi' }],
+    ['acceptableMinor', { acceptableMinor: true }],
+    ['tosViolation', { tosViolation: true }],
+    ['blockedFor', { blockedFor: 'moderated' }],
+    ['unscanned', { ingestion: 'Pending' }],
+    ['unrated', { nsfwLevel: 0 }],
   ] as const;
 
   const publicRow = (image: Record<string, unknown>) => ({
@@ -1290,7 +1315,7 @@ describe('cover poi/minor exclusion', () => {
     nsfwLevel: 1,
     userId: 1,
     user: { id: 1, username: 'a' },
-    image: { url: 'primary-10', type: 'image', nsfwLevel: 1, ...image },
+    image: { ...SCANNED, url: 'primary-10', type: 'image', nsfwLevel: 1, ...image },
   });
 
   const mineRow = (image: Record<string, unknown>) => ({
@@ -1299,15 +1324,26 @@ describe('cover poi/minor exclusion', () => {
     description: null,
     read: 'Public',
     userId: 42,
-    image: { url: 'primary-20', type: 'image', nsfwLevel: 1, ...image },
+    image: { ...SCANNED, url: 'primary-20', type: 'image', nsfwLevel: 1, ...image },
   });
 
-  it('mode=public: selects poi and minor on the primary cover', async () => {
+  it('mode=public: selects every field the gate reads on the primary cover', async () => {
     mockGetAll.mockResolvedValueOnce([]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     expect(mockGetAll.mock.calls[0][0].select.image).toEqual({
-      select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true },
+      select: {
+        url: true,
+        type: true,
+        nsfwLevel: true,
+        ingestion: true,
+        needsReview: true,
+        poi: true,
+        minor: true,
+        acceptableMinor: true,
+        tosViolation: true,
+        blockedFor: true,
+      },
     });
   });
 
