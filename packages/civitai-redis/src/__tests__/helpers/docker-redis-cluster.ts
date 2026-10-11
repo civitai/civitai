@@ -5,6 +5,11 @@
  * with the same nodes.conf — which is what a cluster node looks like after a rolling restart.
  *
  * Linux only: the test process connects to the containers' bridge addresses directly.
+ *
+ * Concurrent runs are isolated: container and network names carry a per-run suffix
+ * (REDIS_CLUSTER_IT_RUN_ID, else the process id), and each run claims its own /24 — docker rejects
+ * a network whose subnet overlaps an existing one, so `start()` walks candidate subnets until one
+ * is free. `teardown()` only ever removes this run's own containers and network.
  */
 import { execFileSync } from 'node:child_process';
 
@@ -20,6 +25,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 const DOCKER_CALL_TIMEOUT_MS = 60_000;
 
+/** Per-run suffix for container and network names. */
+const RUN_ID = (process.env.REDIS_CLUSTER_IT_RUN_ID ?? String(process.pid)).replace(
+  /[^a-zA-Z0-9_.-]/g,
+  '-'
+);
+
+/** Candidate /24s: 172.29.0.0/24 .. 172.29.255.0/24, tried from a per-name, per-run offset. */
+const SUBNET_CANDIDATES = 256;
+
 function docker(args: string[], opts: { allowFail?: boolean } = {}): string {
   try {
     return execFileSync('docker', args, {
@@ -34,26 +48,32 @@ function docker(args: string[], opts: { allowFail?: boolean } = {}): string {
 }
 
 export class DockerRedisCluster {
-  /** Current address of each node, by index. */
-  readonly ips: string[];
+  /** Current address of each node, by index (set by `start()`). */
+  readonly ips: string[] = [];
+  private readonly name: string;
   private readonly containers: string[];
+  private subnetPrefix = '';
 
-  /**
-   * @param name unique per test file (network + container name prefix)
-   * @param subnetPrefix first three octets of a /24 nothing else on the host uses, e.g. '172.29.81'
-   */
-  constructor(private readonly name: string, private readonly subnetPrefix: string) {
-    this.ips = [11, 12, 13].map((h) => `${subnetPrefix}.${h}`);
-    this.containers = [1, 2, 3].map((i) => `${name}-${i}`);
+  /** @param name unique per test file; the per-run suffix is appended to it. */
+  constructor(name: string) {
+    this.name = `${name}-${RUN_ID}`;
+    this.containers = [1, 2, 3].map((i) => `${this.name}-${i}`);
   }
 
   url(i: number): string {
     return `redis://${this.ips[i]}:${PORT}`;
   }
 
+  /** An address on this run's subnet, e.g. `addr(22)`; valid after `start()`. */
+  addr(host: number): string {
+    if (!this.subnetPrefix) throw new Error('DockerRedisCluster.addr() before start()');
+    return `${this.subnetPrefix}.${host}`;
+  }
+
   async start(): Promise<void> {
-    this.teardown();
-    docker(['network', 'create', '--subnet', `${this.subnetPrefix}.0/24`, this.name]);
+    this.teardown(); // only this run's names: a leftover from a crashed run with the same id
+    this.subnetPrefix = this.createNetwork();
+    this.ips.splice(0, this.ips.length, ...[11, 12, 13].map((h) => this.addr(h)));
     this.containers.forEach((c, i) =>
       docker([
         'run',
@@ -85,6 +105,29 @@ export class DockerRedisCluster {
     );
     this.cli(0, ['--cluster', 'create', ...this.ips.map((ip) => `${ip}:${PORT}`), '--cluster-yes']);
     await this.waitHealthy();
+  }
+
+  /** Create this run's network on the first free candidate /24; returns its first 3 octets. */
+  private createNetwork(): string {
+    let offset = 0;
+    for (const ch of this.name) offset = (offset * 31 + ch.charCodeAt(0)) % SUBNET_CANDIDATES;
+    let lastErr = '';
+    for (let k = 0; k < SUBNET_CANDIDATES; k++) {
+      const prefix = `172.29.${(offset + k) % SUBNET_CANDIDATES}`;
+      try {
+        docker(['network', 'create', '--subnet', `${prefix}.0/24`, this.name]);
+        return prefix;
+      } catch (err) {
+        lastErr = String((err as { stderr?: unknown }).stderr ?? err);
+        if (!/overlap/i.test(lastErr)) {
+          throw new Error(`docker network create ${this.name} failed: ${lastErr.trim()}`);
+        }
+      }
+    }
+    throw new Error(
+      `no free /24 under 172.29.0.0/16 for ${this.name} (every candidate overlaps an existing ` +
+        `docker network). Last error: ${lastErr.trim()}`
+    );
   }
 
   teardown(): void {
@@ -166,7 +209,7 @@ export class DockerRedisCluster {
 
 export function dockerAvailable(): boolean {
   try {
-    execFileSync('docker', ['info'], { stdio: 'ignore' });
+    execFileSync('docker', ['info'], { stdio: 'ignore', timeout: DOCKER_CALL_TIMEOUT_MS });
     return true;
   } catch {
     return false;

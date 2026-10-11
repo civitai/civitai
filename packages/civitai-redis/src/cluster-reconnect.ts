@@ -21,7 +21,7 @@
  *
  * No prom/app imports; the node-redis types are duck-typed so this stays unit-testable.
  */
-import { ConnectionTimeoutError, SocketClosedUnexpectedlyError } from 'redis';
+import { ConnectionTimeoutError, SocketClosedUnexpectedlyError, SocketTimeoutError } from 'redis';
 
 /** Socket error codes that mean "could not reach this address". */
 const CONNECT_ERROR_CODES = new Set([
@@ -40,12 +40,14 @@ export function isNodeConnectError(cause: unknown): boolean {
 }
 
 /**
- * True for any failure that means the slot map may be stale: a connect failure, or an
- * established connection the node dropped (what a restarting node looks like first).
+ * True for any failure that means the slot map may be stale: a connect failure, an established
+ * connection the node dropped (what a restarting node looks like first), or one that went silent
+ * until `socketTimeout` destroyed it (what a peer that vanished without a FIN/RST looks like).
  */
 export function isTopologyChangeSignal(cause: unknown): boolean {
   if (isNodeConnectError(cause)) return true;
   if (cause instanceof SocketClosedUnexpectedlyError) return true;
+  if (cause instanceof SocketTimeoutError) return true;
   return (cause as { code?: unknown } | null | undefined)?.code === 'ECONNRESET';
 }
 

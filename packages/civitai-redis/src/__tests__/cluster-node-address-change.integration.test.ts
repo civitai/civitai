@@ -29,7 +29,6 @@ if (ENABLED && !dockerAvailable()) {
   throw new Error('REDIS_CLUSTER_IT=1 but `docker info` failed — docker is required for this test');
 }
 
-const SUBNET = '172.29.81';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // REDIS_CLUSTER_IT_LOG=1 prints the client's own log lines (timestamped) for diagnosis.
 const itLog = (msg: string, ...rest: unknown[]) => {
@@ -39,7 +38,7 @@ const itLog = (msg: string, ...rest: unknown[]) => {
 };
 
 describe.skipIf(!ENABLED)('cluster client survives a master changing address', () => {
-  const cluster = new DockerRedisCluster('civitai-redis-it-move', SUBNET);
+  const cluster = new DockerRedisCluster('civitai-redis-it-move');
   const dials: { host: string; port: number; at: number }[] = [];
   const key = 'it:moved-key';
   let owner = -1;
@@ -93,11 +92,11 @@ describe.skipIf(!ENABLED)('cluster client survives a master changing address', (
   }, 300_000);
 
   it.each([
-    { label: 'back at once', newIp: `${SUBNET}.22`, downMs: 0 },
-    { label: 'down ~4s first', newIp: `${SUBNET}.23`, downMs: 4000 },
+    { label: 'back at once', newHost: 22, downMs: 0 },
+    { label: 'down ~4s first', newHost: 23, downMs: 4000 },
   ])(
     '$label: routes to the new address within ~3s, stops dialling the old one within ~10s',
-    async ({ newIp, downMs }) => {
+    async ({ newHost, downMs }) => {
       const oldIp = cluster.ips[owner];
       await client.set(key, 'before');
 
@@ -111,7 +110,7 @@ describe.skipIf(!ENABLED)('cluster client survives a master changing address', (
       })();
 
       const moveStartedAt = Date.now();
-      const movedBackAt = await cluster.move(owner, newIp, downMs);
+      const movedBackAt = await cluster.move(owner, cluster.addr(newHost), downMs);
 
       // (a) First successful command on that master's slots after it is back. A new attempt every
       // 100ms (each bounded by the 1s client deadline); watch for up to 20s so a failure reports

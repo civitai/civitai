@@ -22,7 +22,6 @@ if (ENABLED && !dockerAvailable()) {
   throw new Error('REDIS_CLUSTER_IT=1 but `docker info` failed — docker is required for this test');
 }
 
-const SUBNET = '172.29.82';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // REDIS_CLUSTER_IT_LOG=1 prints the client's own log lines (timestamped) for diagnosis.
 const itLog = (msg: string, ...rest: unknown[]) => {
@@ -35,7 +34,7 @@ const itLog = (msg: string, ...rest: unknown[]) => {
 };
 
 describe.skipIf(!ENABLED)('cluster self-heal reconnect with a master down', () => {
-  const cluster = new DockerRedisCluster('civitai-redis-it-selfheal', SUBNET);
+  const cluster = new DockerRedisCluster('civitai-redis-it-selfheal');
   const key = 'it:down-key';
   let owner = -1;
   let client: any;

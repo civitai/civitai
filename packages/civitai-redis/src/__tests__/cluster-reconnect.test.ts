@@ -31,14 +31,16 @@ describe('isNodeConnectError / isTopologyChangeSignal', () => {
     }
   });
 
+  it('a socket that went silent until socketTimeout destroyed it is a topology signal', () => {
+    // A peer that vanished without a FIN/RST: node-redis destroys the idle socket with
+    // SocketTimeoutError, and that is the first strategy call a client gets for it.
+    const err = new SocketTimeoutError(10_000);
+    expect(isTopologyChangeSignal(err)).toBe(true);
+    expect(isNodeConnectError(err)).toBe(false);
+  });
+
   it('anything else is neither', () => {
-    for (const err of [
-      new SocketTimeoutError(10_000),
-      new Error('WRONGPASS'),
-      sysErr('EPIPE'),
-      undefined,
-      null,
-    ]) {
+    for (const err of [new Error('WRONGPASS'), sysErr('EPIPE'), undefined, null]) {
       expect(isTopologyChangeSignal(err)).toBe(false);
       expect(isNodeConnectError(err)).toBe(false);
     }
@@ -69,7 +71,7 @@ describe('createClusterReconnectStrategy', () => {
     strategy(1, sysErr('ECONNREFUSED'));
     strategy(2, new ConnectionTimeoutError());
     strategy(3, new Error('WRONGPASS'));
-    strategy(4, new SocketTimeoutError(10_000));
+    strategy(4, sysErr('EPIPE'));
     expect(onTopologyChangeSignal).toHaveBeenCalledTimes(3);
   });
 
