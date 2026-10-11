@@ -97,6 +97,14 @@ async function openModal(item: CosmeticShopItemGetById, vp: Viewport, viaShopUse
   expect(['auto', 'scroll']).toContain(getComputedStyle(content).overflowY);
   const warning = findByText<HTMLElement>('p', /This cosmetic is an equippable/);
   if (!warning) throw new Error('equippable warning did not render');
+  if (item === resaleItem) {
+    // The cases using it rely on it being the tallest block.
+    expect(findByText('p', /Reseller earns/), 'resale split did not render').toBeTruthy();
+    expect(
+      document.querySelector('[aria-label="Choose how to pay"]'),
+      'pay-with selector did not render'
+    ).toBeTruthy();
+  }
   return { purchase, content, warning };
 }
 
