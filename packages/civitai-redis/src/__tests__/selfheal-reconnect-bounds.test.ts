@@ -97,12 +97,58 @@ describe('forceSysReconnect — bounded (F4)', () => {
     expect(next.connect).toHaveBeenCalledTimes(1);
   });
 
-  it('a destroy() that never settles is bounded too', async () => {
+  it('a destroy() that settles LATE: connect() runs after it, never before', async () => {
+    // RedisSentinel.destroy() waits for any discovery in progress, then closes the client. A
+    // connect() issued while it waits is refused, and the late destroy() then leaves the client
+    // closed for good — so the reconnect must follow the destroy, not the timeout.
+    let finishDestroy!: () => void;
+    let destroyed = false;
+    const order: string[] = [];
+    const client = {
+      destroy: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            finishDestroy = () => {
+              destroyed = true;
+              order.push('destroyed');
+              resolve();
+            };
+          })
+      ),
+      connect: vi.fn(async () => {
+        order.push(destroyed ? 'connect-after-destroy' : 'connect-before-destroy');
+      }),
+    };
+    const s = track(forceSysReconnect([client], 50));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(s.state).toBe('resolved'); // still bounded
+    expect(client.connect).not.toHaveBeenCalled();
+    finishDestroy();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(['destroyed', 'connect-after-destroy']);
+  });
+
+  it('a destroy() that never settles is bounded too, and the next client is still healed', async () => {
     const stuck = { destroy: vi.fn(never), connect: vi.fn(async () => undefined) };
-    const s = track(forceSysReconnect([stuck], 50));
+    const next = { destroy: vi.fn(async () => undefined), connect: vi.fn(async () => undefined) };
+    const s = track(forceSysReconnect([stuck, next], 50));
     await vi.advanceTimersByTimeAsync(50);
     expect(s.state).toBe('resolved');
-    expect(stuck.connect).toHaveBeenCalledTimes(1);
+    expect(stuck.connect).not.toHaveBeenCalled(); // deferred until its destroy() settles
+    expect(next.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it('a destroy() that REJECTS still reconnects at once', async () => {
+    const client = {
+      destroy: vi.fn(async () => {
+        throw new Error('destroy boom');
+      }),
+      connect: vi.fn(async () => undefined),
+    };
+    const s = track(forceSysReconnect([client], 50));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.state).toBe('resolved');
+    expect(client.connect).toHaveBeenCalledTimes(1);
   });
 });
 

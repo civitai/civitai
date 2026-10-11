@@ -335,9 +335,9 @@ export function triggerTopologyRediscovery(clusterClient: any, reason: string) {
 let rediscoverSeedCursor = 0;
 
 /**
- * Consecutive connect failures to one node address before the cluster reconnect strategy gives
- * up on it (see ./cluster-reconnect). With the 0/100/200/300/400ms backoff that is about one
- * second of backoff plus the connect attempts themselves.
+ * Failed attempts in one reconnect loop (the last a connect error) before the cluster reconnect
+ * strategy gives up on a node address (see ./cluster-reconnect). With the 0/100/200/300ms backoff
+ * between them that is 0.6s of backoff plus the attempts themselves (each up to REDIS_TIMEOUT).
  */
 const CLUSTER_NODE_MAX_CONNECT_FAILURES = 5;
 /** Throttle for error-driven rediscovers: at most one per this many ms, per cluster client. */
@@ -638,21 +638,16 @@ export async function forceSysReconnect(
   // connect timeouts along the way, while the master is unreachable.
   for (const client of sysClients) {
     if (!client) continue;
+    // The awaitable teardown, if the client has one, and whether it has settled.
+    let teardown: Promise<unknown> | undefined;
+    let teardownSettled = false;
     try {
       if (typeof client.destroy === 'function') {
         // RedisSentinel.destroy() returns the async #internal.destroy() promise (rejects in-flight
         // commands + tears sockets down); await it so connect() runs on a fully-destroyed client.
-        await withTimeout(
-          Promise.resolve(client.destroy()),
-          stepTimeoutMs,
-          `destroy() did not settle within ${stepTimeoutMs}ms`
-        );
+        teardown = Promise.resolve(client.destroy());
       } else if (typeof client.disconnect === 'function') {
-        await withTimeout(
-          Promise.resolve(client.disconnect()),
-          stepTimeoutMs,
-          `disconnect() did not settle within ${stepTimeoutMs}ms`
-        );
+        teardown = Promise.resolve(client.disconnect());
       } else if (typeof client.close === 'function') {
         // Last resort only: close() can HANG on the wedged queue (see WHY above). Bound it so a
         // hang can't pin reconnecting=true forever; fall through to connect() regardless.
@@ -661,12 +656,44 @@ export async function forceSysReconnect(
           new Promise<void>((resolve) => setTimeout(resolve, 2000)),
         ]);
       }
+      if (teardown) {
+        teardown.then(
+          () => (teardownSettled = true),
+          () => (teardownSettled = true)
+        );
+        await withTimeout(
+          teardown,
+          stepTimeoutMs,
+          `teardown did not settle within ${stepTimeoutMs}ms`
+        );
+      }
     } catch (err) {
       log(
         `Sys self-heal: teardown threw (continuing to reconnect): ${
           err instanceof Error ? err.message : String(err)
         }`
       );
+    }
+    if (teardown && !teardownSettled) {
+      // The teardown is still running. A sentinel destroy() first waits for any discovery in
+      // progress and only then closes the client, so connect() now would be refused ("already
+      // attempting to open") and the late-finishing destroy() would then leave the client CLOSED
+      // for good — every sys command failing at once, too fast for the sys watchdog's inflight
+      // trigger to ever see. Reconnect when the teardown finishes instead, in the background.
+      const pending = teardown;
+      void pending
+        .catch(() => undefined)
+        .then(() => client.connect())
+        .then(
+          () => log('Sys self-heal: reconnected after a late teardown'),
+          (err: unknown) =>
+            log(
+              `Sys self-heal: reconnect after a late teardown failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            )
+        );
+      continue;
     }
     try {
       await withTimeout(
@@ -1043,7 +1070,11 @@ export function instrumentCommands(
     opts.routingRetryBackoffMaxMs ?? config?.clusterRoutingRetryBackoffMaxMs ?? 0;
   // Sys client bounds. node-redis's own commandsQueueMaxLength never sees the commands that wait
   // INSIDE RedisSentinel (for a master lease or a rediscovery), which is where they piled up
-  // without limit when the sys master moved; this wrapper sees every command.
+  // without limit when the sys master moved; this wrapper sees every command. What the cap counts
+  // is callers still waiting: once the backstop reaps a command its caller is released, but the
+  // command itself may stay parked inside RedisSentinel until it reconnects. So during a long
+  // stall the cap bounds the RATE at which parked work grows (about cap per backstop), and the
+  // sys self-heal reconnect is what clears it.
   const sysDeadlineMs =
     clientLabel === 'sys' ? opts.sysDeadlineMs ?? config?.sysCommandTimeoutMs ?? 0 : 0;
   const sysInflightCap =
@@ -1199,6 +1230,13 @@ function getBaseClient(type: 'cache' | 'system') {
                 (cause instanceof Error ? cause.message : String(cause))
               }`
             ),
+          // Drop the closed client as soon as node-redis has closed it (next macrotask: after the
+          // strategy returns and its connectPromise has cleared), so node-redis's own MOVED/ASK
+          // rediscovers — which bypass triggerTopologyRediscovery — never meet it in their cleanup.
+          onGiveUp: () => {
+            const timer = setTimeout(() => dropClosedNodeClients(clusterForRediscover?._slots), 0);
+            timer.unref?.();
+          },
           log,
         })
       : (retries: number) => {

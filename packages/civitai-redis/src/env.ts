@@ -31,9 +31,10 @@ export const redisEnvSchema = z
     REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
     // System client reply-queue cap: with socketTimeout disabled, bounds heap growth on a
     // silent half-open by fast-failing new commands (fail-open callers catch it). 0 = off.
-    // Also enforced as an IN-FLIGHT cap in the package's own command wrapper, because on the
-    // Sentinel path commands wait inside RedisSentinel (for a master / a rediscovery) before they
-    // ever reach a node client's queue, where node-redis's own cap would see them.
+    // Also enforced as an IN-FLIGHT cap in the package's own command wrapper (callers still
+    // waiting for a reply), because on the Sentinel path commands wait inside RedisSentinel (for a
+    // master / a rediscovery) before they ever reach a node client's queue, where node-redis's own
+    // cap would see them. See instrumentCommands for what it does and does not bound.
     REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: z.coerce.number().default(10000),
     // Sys client per-command wall-clock backstop (a promise race — it never touches the socket,
     // unlike the socketTimeout reverted in #2586). Bounds callers awaiting a sys WRITE or any
