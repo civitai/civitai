@@ -90,18 +90,24 @@ describe('cosmetic.getById', () => {
     expect(await callerFor({ id: 99, isModerator: true }).getById({ id: hat.id })).toEqual(hat);
   });
 
-  it("does not extend the moderator bypass to a moderator's scoped token", async () => {
+  it.each([
+    ['preview', {}],
+    ['armed', { public: true }],
+  ])("gives a moderator's scoped token no moderator access (%s)", async (_state, flag) => {
     stored(hat);
-    testerFlag.reset({ public: true }); // armed
-    const key = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
+    testerFlag.reset({ testers: [TESTER], ...flag });
     const moderator = { id: 99, isModerator: true };
+    const personalKey = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
+    const oauth = { apiKeyId: 2, subject: { type: 'oauth', id: 'client' } };
+    for (const bearer of [
+      { ...personalKey, tokenScope: TokenScope.CollectionsRead },
+      { ...oauth, tokenScope: TokenScope.Full },
+    ])
+      expect(await callerFor(moderator, bearer).getById({ id: hat.id })).toBeNull();
     expect(
-      await callerFor(moderator, { ...key, tokenScope: TokenScope.CollectionsRead }).getById({
+      await callerFor(moderator, { ...personalKey, tokenScope: TokenScope.Full }).getById({
         id: hat.id,
       })
-    ).toBeNull();
-    expect(
-      await callerFor(moderator, { ...key, tokenScope: TokenScope.Full }).getById({ id: hat.id })
     ).toEqual(hat);
   });
 

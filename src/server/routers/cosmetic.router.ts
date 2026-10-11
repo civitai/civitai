@@ -77,11 +77,13 @@ export const cosmeticRouter = router({
     .input(getByIdSchema)
     .query(async ({ input, ctx }) => {
       const cosmetic = await getCosmeticDetail(input);
-      // Moderators edit event decorations in every state, armed launch included; as for
-      // moderatorProcedure, a scoped token does not carry that.
-      if (!cosmetic || (ctx.user.isModerator && isSessionOrFullUserKey(ctx))) return cosmetic;
+      // As for moderatorProcedure, a scoped token does not carry the moderator's access.
+      const isModerator = !!ctx.user.isModerator && isSessionOrFullUserKey(ctx);
+      // Moderators edit event decorations in every state, armed launch included.
+      if (!cosmetic || isModerator) return cosmetic;
       // An event decoration the viewer may not see yet reads as missing, like an unknown id.
-      const [visible] = await withoutHiddenEventDecorations([{ cosmetic }], ctx.user);
+      const viewer = { id: ctx.user.id, isModerator };
+      const [visible] = await withoutHiddenEventDecorations([{ cosmetic }], viewer);
       return visible ? cosmetic : null;
     }),
   getSticker: publicProcedure
