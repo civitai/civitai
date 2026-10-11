@@ -6,7 +6,11 @@ import { assertSharedTextSafe, SharedContentBlockedError } from '../shared-conte
 const throwOnBlockedUserContent = vi.hoisted(() =>
   vi.fn(async (..._a: unknown[]): Promise<void> => undefined)
 );
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedUserContent }));
+const getBlocklistData = vi.hoisted(() => vi.fn(async (..._a: unknown[]): Promise<string[]> => []));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedUserContent,
+  getBlocklistData,
+}));
 vi.mock('~/utils/metadata/audit', () => ({
   includesMinor: () => false,
   includesPoi: () => false,
@@ -31,6 +35,7 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
   beforeEach(() => {
     vi.clearAllMocks();
     throwOnBlockedUserContent.mockResolvedValue(undefined);
+    getBlocklistData.mockResolvedValue([]);
   });
 
   const blockWith = (kind: 'link' | 'pattern') =>
@@ -68,19 +73,48 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
   });
 
   /**
-   * The guard reaches redis and Flipt. An infrastructure failure must not escape as a raw 500 on
-   * user input, so it is still refused — refusing is the safe direction when we cannot tell
-   * whether the text is clean. But the outage is ours: it is escalated to a server fault (which
-   * the shared write budget refunds instead of charging) and says to retry rather than claiming a
-   * blocked link.
+   * Reading the two lists takes no caller input, so a failure there is our outage. It is still
+   * refused — refusing is the safe direction when we cannot tell whether the text is clean — but
+   * escalated to a server fault (which the shared write budget refunds instead of charging) and
+   * says to retry rather than claiming a blocked link. The guard is never reached.
    */
-  it('refuses on an infrastructure failure, escalated as our fault with a retry message', async () => {
-    throwOnBlockedUserContent.mockRejectedValue(new Error('redis unreachable'));
+  it('refuses a failed list read, escalated as our fault with a retry message', async () => {
+    getBlocklistData.mockRejectedValue(new Error('redis unreachable'));
 
     const error = await assertSharedTextSafe(input).catch((e) => e);
 
     expect(error).toBeInstanceOf(SharedContentBlockedError);
     expect(isEscalatedServerFault(error)).toBe(true);
+    expect((error as SharedContentBlockedError).category).toBe('link');
+    expect((error as SharedContentBlockedError).message).toBe(
+      'Content could not be reviewed right now. Please try again.'
+    );
+    expect(throwOnBlockedUserContent).not.toHaveBeenCalled();
+  });
+
+  it('reads exactly the link-domain and message-pattern lists before the guard', async () => {
+    await assertSharedTextSafe(input);
+
+    expect(getBlocklistData.mock.calls.map(([type]) => type).sort()).toEqual([
+      'LinkDomain',
+      'MessagePattern',
+    ]);
+  });
+
+  /**
+   * The guard scans CALLER text. With the lists already proven readable, a non-block throw from it
+   * is either a race or a scan bug a crafted input could trigger, so it must be charged: escalating
+   * it would hand the caller an unbounded run of free moderation calls. Still refused with the
+   * retry message, never a raw 500.
+   */
+  it('refuses a non-block guard throw WITHOUT escalating it, so it is charged', async () => {
+    throwOnBlockedUserContent.mockRejectedValue(new TypeError('Invalid URL'));
+
+    const error = await assertSharedTextSafe(input).catch((e) => e);
+
+    expect(error).toBeInstanceOf(SharedContentBlockedError);
+    expect(isEscalatedServerFault(error)).toBe(false);
+    expect((error as SharedContentBlockedError).category).toBe('link');
     expect((error as SharedContentBlockedError).message).toBe(
       'Content could not be reviewed right now. Please try again.'
     );

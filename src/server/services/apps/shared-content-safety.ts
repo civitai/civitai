@@ -1,6 +1,7 @@
 import { includesMinor, includesPoi } from '~/utils/metadata/audit';
+import { BlocklistType } from '~/server/common/enums';
 import { escalateToServerFault } from '~/server/logging/server-fault-override';
-import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { getBlocklistData, throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
 /**
@@ -121,12 +122,32 @@ export async function assertSharedTextSafe(
   // a Report; neither of these two does today, but they are kept distinct so that stays the
   // router's decision rather than being flattened here.
   //
-  // The outer catch is still load-bearing: the guard reaches redis and Flipt, and an
-  // infrastructure throw from either must not escape as a raw 500 on user input. It is still
-  // refused (the text was never checked), but escalated to a server fault: the outage is ours,
-  // so the shared write budget refunds it rather than charging the caller a rejection. Category
-  // 'link' because it files no Report and no alert; the retry message reaches shared-storage
-  // callers only (sub-listing callers substitute their own refusal).
+  // Two catches, split by whether caller input can reach the throw. Escalating a failure to a
+  // server fault makes the shared write budget refund it instead of charging a rejection, so the
+  // escalation is an allow-list: only a throw that caller text cannot induce may earn it.
+  //
+  // First, the two lists the guard reads (link domains + message patterns), read here BEFORE the
+  // guard with no caller input involved. A throw here is our outage: the text was never checked,
+  // so it is refused, but escalated with a retry message. Category 'link' because it files no
+  // Report and no alert; the retry message reaches shared-storage callers only (sub-listing
+  // callers substitute their own refusal). This read runs even when the guard would skip its own
+  // (both fields empty) — that costs one cached read and keeps the escalation unconditional.
+  const retryMessage = 'Content could not be reviewed right now. Please try again.';
+  try {
+    await Promise.all([
+      getBlocklistData(BlocklistType.LinkDomain),
+      getBlocklistData(BlocklistType.MessagePattern),
+    ]);
+  } catch {
+    throw escalateToServerFault(new SharedContentBlockedError('link', retryMessage));
+  }
+
+  // Then the guard itself, which scans the caller's text. A block is rethrown as-is. Any OTHER
+  // throw is still refused with the retry message rather than escaping as a raw 500, but it is
+  // NOT escalated, so it is charged: the lists were just proven readable (the guard's Flipt read
+  // swallows its own failures), so what is left is a later list read racing an outage (rare, and
+  // bounded by the rejection bucket) or a scan bug that a crafted input could trigger — and that
+  // one must never become a free refund.
   try {
     // `[title, body]`, NOT `combined`: the guard scans values separately so a pattern cannot match
     // across the seam between two independent fields. Handing it the joined string reintroduces
@@ -142,12 +163,7 @@ export async function assertSharedTextSafe(
     });
   } catch (error) {
     if (error instanceof SharedContentBlockedError) throw error;
-    throw escalateToServerFault(
-      new SharedContentBlockedError(
-        'link',
-        'Content could not be reviewed right now. Please try again.'
-      )
-    );
+    throw new SharedContentBlockedError('link', retryMessage);
   }
 
   // C3 — full platform audit (regex + external moderation). isGreen:true forces

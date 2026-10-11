@@ -27,6 +27,7 @@ const {
   mockIsFlipt,
   mockFindBlocked,
   mockThrowOnBlocked,
+  mockGetBlocklistData,
   mockAudit,
 } = vi.hoisted(() => {
   type QueryFn = (
@@ -53,6 +54,8 @@ const {
     mockThrowOnBlocked: vi.fn<
       (content: unknown, options: { onBlocked?: (kind: string) => never }) => Promise<void>
     >(async () => undefined),
+    // The list read the content-safety belt does BEFORE the guard (no caller input).
+    mockGetBlocklistData: vi.fn<(type: string) => Promise<string[]>>(async () => []),
     // The external moderation call — counted to measure how many runs a caller can buy.
     mockAudit: vi.fn<() => Promise<void>>(async () => undefined),
   };
@@ -79,6 +82,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: (content: unknown, options: { onBlocked?: (kind: string) => never }) =>
     mockThrowOnBlocked(content, options),
+  getBlocklistData: (type: string) => mockGetBlocklistData(type),
   findBlockedUserContent: () => mockFindBlocked(),
   stripBenignPhrases: async (text: string) => text,
 }));
@@ -154,6 +158,7 @@ beforeEach(() => {
   mockIsFlipt.mockResolvedValue(false);
   mockFindBlocked.mockResolvedValue([]);
   mockThrowOnBlocked.mockResolvedValue(undefined);
+  mockGetBlocklistData.mockResolvedValue([]);
   mockAudit.mockResolvedValue(undefined);
   mockWritePath({});
 });
@@ -332,7 +337,7 @@ describe('write budget: only landed writes spend it', () => {
   });
 
   it('the title/body blocklist read failing is refunded free, with a retry message', async () => {
-    mockThrowOnBlocked.mockRejectedValue(new Error('redis unreachable'));
+    mockGetBlocklistData.mockRejectedValue(new Error('redis unreachable'));
     await expect(appendSharedRow('tok', CLEAN)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'Content could not be reviewed right now. Please try again.',
@@ -341,6 +346,18 @@ describe('write budget: only landed writes spend it', () => {
       code: 'BAD_REQUEST',
     });
     expect(budget()).toEqual([0, 0, 0]);
+  });
+
+  // The lists read fine, then the guard itself throws on the caller's text — the shape of a scan
+  // bug a crafted input could trigger. Escalating that would make every such write a free
+  // moderation call, so it is refused AND charged, one rejection per write.
+  it('a non-block throw from the title/body scan is refused and charged, not refunded', async () => {
+    mockThrowOnBlocked.mockRejectedValue(new TypeError('Invalid URL'));
+    await expect(appendSharedRow('tok', CLEAN)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Content could not be reviewed right now. Please try again.',
+    });
+    expect(budget()).toEqual([0, 0, REJECT_MS]);
   });
 
   it('a real blocked link in the title is still charged a rejection', async () => {

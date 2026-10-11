@@ -102,6 +102,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
   throwOnBlockedUserContent: vi.fn(),
+  getBlocklistData: async () => [],
   findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
   stripBenignPhrases: async (text: string) => text,
 }));

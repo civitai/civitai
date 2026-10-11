@@ -158,6 +158,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: (content: unknown, options?: unknown) =>
     mockThrowOnBlockedUserContent(content, options),
+  getBlocklistData: async () => [],
   findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
   stripBenignPhrases: async (text: string) => text,
 }));

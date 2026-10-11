@@ -172,6 +172,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
 // only its redis-backed deps, exactly as the fixture suite does.
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: async () => undefined,
+  getBlocklistData: async () => [],
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: async () => undefined,
