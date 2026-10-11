@@ -94,7 +94,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // forwards a raw `pg` message verbatim, and on THIS surface such a message can
     // name the app's schema and the offending row value. Same decision, same
     // helper and same reasoning as the PR-1 read routes — see list.ts. Consequence:
-    // these routes answer with `{ message }`, not `{ error }`.
+    // these routes answer with `{ message }`, not `{ error }` — except a rate-limited 429,
+    // which every shared write route (increment included) answers with the full envelope.
     return handleEndpointError(res, error);
   }
 });

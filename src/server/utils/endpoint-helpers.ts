@@ -29,6 +29,8 @@ import {
   REST_ERROR_CODE,
   restErrorBody,
 } from '~/server/utils/rest-error-envelope';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
 
 /**
  * The normalized route of the request this response belongs to, or `undefined`.
@@ -676,6 +678,22 @@ export function ModEndpoint(
   });
 }
 
+/**
+ * A 429 carrying retry metadata: `Retry-After` plus the envelope with `rateLimit`. `message`
+ * (and the legacy `error`) stay the refusal's own prose, so a consumer that only reads text
+ * sees what it saw before.
+ */
+export function sendRestRateLimited(
+  res: NextApiResponse,
+  message: string,
+  rateLimit: RateLimitMeta
+) {
+  res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+  return noStore(res)
+    .status(429)
+    .json({ ...restErrorBody(REST_ERROR_CODE.TOO_MANY_REQUESTS, message), rateLimit });
+}
+
 export function handleEndpointError(res: NextApiResponse, e: unknown) {
   if (isClientAbortError(e)) {
     // Client disconnected mid-request (closed tab / scrolled the feed past /
@@ -747,6 +765,8 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
       logRestGenericizedClientFault(apiError, res);
       return noStore(res).status(status).json(restErrorBody(generic.code, generic.message));
     }
+    const rateLimit = rateLimitMetaOf(apiError);
+    if (rateLimit) return sendRestRateLimited(res, apiError.message, rateLimit);
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
     // `message`; many newer call sites (incl. `withMeili`'s

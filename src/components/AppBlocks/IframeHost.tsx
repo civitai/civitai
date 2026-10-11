@@ -83,6 +83,10 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
 import {
+  sharedStorageErrorReply,
+  storageErrorMessage,
+} from '~/components/AppBlocks/sharedStorageError';
+import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
   invalidateSharedStorageReads,
@@ -308,19 +312,6 @@ function clampBlockHeight(
 const RECENTLY_RUN_LIMIT = 5;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
-
-// Reduce a thrown tRPC error to a single short string the block can surface.
-// TRPCClientError exposes `.message` which is already the server message
-// (apps.storage.* throws with explicit code + message strings); everything
-// else gets a generic fallback. Keep this conservative — the iframe is
-// untrusted and we don't want to leak server stack traces.
-function storageErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return 'storage request failed';
-}
 
 /**
  * Renders a block inside a sandboxed iframe and drives the postMessage
@@ -2885,7 +2876,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
-          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_APPEND_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2923,7 +2914,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2943,7 +2934,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_VOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2966,7 +2957,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_UNVOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -2989,7 +2980,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
-          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3059,7 +3050,7 @@ export function IframeHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );

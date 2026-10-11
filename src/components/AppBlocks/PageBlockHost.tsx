@@ -131,6 +131,10 @@ import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/base
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { trpc } from '~/utils/trpc';
 import {
+  sharedStorageErrorReply,
+  storageErrorMessage,
+} from '~/components/AppBlocks/sharedStorageError';
+import {
   BLOCK_STORAGE_READ_OPTS,
   invalidatePrivateStorageReads,
   invalidateSharedStorageReads,
@@ -169,20 +173,6 @@ const BlockGenerationSourceUploadModal = dynamic(
 // clicks an action that needs auth/money. Login is now hub-driven (a popup to
 // auth.civitai.com) — see openLoginPopup; the old in-page LoginModal was removed
 // in the auth cutover.
-
-// Normalise a thrown storage error into a string the block can surface. Mirrors
-// IframeHost.storageErrorMessage EXACTLY — the apps.storage.* procs throw
-// TRPCErrors with explicit code+message strings (UNAUTHORIZED, PAYLOAD_TOO_LARGE,
-// quota_exceeded, …); we forward the message and never throw upward, so the
-// block's host-mediated storage request rejects cleanly instead of hanging to
-// the SDK's 30s timeout.
-function storageErrorMessage(err: unknown): string {
-  if (err && typeof err === 'object' && 'message' in err) {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === 'string' && message.length > 0) return message;
-  }
-  return 'storage request failed';
-}
 
 /**
  * W10 — full-page App Block host. Renders a block as a FULL-VIEWPORT surface
@@ -3372,7 +3362,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
-          send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_APPEND_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3431,7 +3421,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_UPDATE_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3463,7 +3453,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_VOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3498,7 +3488,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
-          send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_UNVOTE_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3536,7 +3526,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
-          send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
+          send('SHARED_WITHDRAW_RESULT', { requestId, ...sharedStorageErrorReply(err) });
         }
       }
     );
@@ -3632,7 +3622,7 @@ export function PageBlockHost({
           await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_REPORT_RESULT', { requestId, ok: true });
         } catch (err) {
-          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, ...sharedStorageErrorReply(err) });
         }
       }
     );
