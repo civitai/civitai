@@ -31,6 +31,7 @@ import {
 import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import {
   milestoneOgEndpoint,
+  milestoneKeyOfShareToken,
   milestoneShareToken,
   parseMilestoneShareId,
   parseMilestoneShareToken,
@@ -547,6 +548,45 @@ describe('achievement share cards', () => {
     ]);
   });
 
+  // The other direction: a key that looks secret is not masked unless the column says so.
+  it('does not mask a milestone the hidden column leaves visible, whatever its key', async () => {
+    await addUser(CREATOR);
+    await addMilestone('hidden:vwjxua', 'hidden', 'Number One', null, false);
+    await grantKey(CREATOR, 'hidden:vwjxua');
+
+    expect(await achievementCard('hidden:vwjxua')).toMatchObject({ name: 'Number One' });
+    expect((await getMilestoneShareStates(CREATOR, { pg, now: NOW })).secret).toEqual([]);
+  });
+
+  // A hidden tier is a secret like any other on the profile, so its card is masked as a special's is.
+  it('masks a hidden score tier as a special', async () => {
+    await addUser(CREATOR);
+    await grant(CREATOR, 'supernova');
+    await q(`UPDATE "CreatorMilestone" SET hidden = true WHERE key = 'score:supernova'`);
+    try {
+      expect(await achievementCard('supernova')).toMatchObject({
+        name: 'Unlocked a secret',
+        eyebrow: 'Special Achievement',
+        line: 'What it takes stays hidden. Can you find it?',
+      });
+    } finally {
+      await q(`UPDATE "CreatorMilestone" SET hidden = false WHERE key = 'score:supernova'`);
+    }
+  });
+
+  it('lists a secret hidden on the profile under the hint, not as a shareable secret', async () => {
+    await addUser(CREATOR);
+    const badge = await addBadge('hidden:vwjxua');
+    await grantKey(CREATOR, 'hidden:vwjxua');
+    await setPrivacy(CREATOR, { hiddenBadgeIds: [badge] });
+
+    expect(await getMilestoneShareStates(CREATOR, { pg, now: NOW })).toEqual({
+      shareable: [],
+      hiddenOnProfile: ['hidden:vwjxua'],
+      secret: [],
+    });
+  });
+
   it('falls back for an achievement the creator does not hold, or hides on their profile', async () => {
     const OTHER = 11;
     await addUser(CREATOR);
@@ -666,7 +706,12 @@ describe('achievement share id', () => {
   it('parses every milestone key the code can grant, as its share token', () => {
     const keys = Object.keys(creatorMilestoneRegistry);
     expect(keys.length).toBeGreaterThanOrEqual(49);
-    expect(keys.filter((key) => !parseMilestoneShareToken(milestoneShareToken(key)))).toEqual([]);
+    expect(
+      keys.filter((key) => {
+        const token = milestoneShareToken(key);
+        return parseMilestoneShareToken(token) !== token || milestoneKeyOfShareToken(token) !== key;
+      })
+    ).toEqual([]);
   });
 
   it('reads `<userId>.<achievementKey>`, including a special', () => {

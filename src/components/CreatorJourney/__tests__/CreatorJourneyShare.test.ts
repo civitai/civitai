@@ -128,6 +128,11 @@ describe('share buttons on the journey shelf', () => {
     expect(link.title).toBe('I unlocked a secret achievement on Civitai');
   });
 
+  it('names a milestone the server does not mark secret, whatever its key', () => {
+    const [link] = shareLinks(['hidden:vwjxua'], 'maker', []);
+    expect(link.title).toBe('I earned Number One on Civitai');
+  });
+
   // Order is the shelf's own (badge-order.ts has its tests); this pins one button per shareable badge.
   it('offers one per shareable milestone, tiers and achievements alike', () => {
     expect(
