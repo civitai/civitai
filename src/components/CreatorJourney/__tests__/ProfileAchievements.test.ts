@@ -12,8 +12,10 @@ const mocks = vi.hoisted(() => ({
     username?: string;
     meta: { scores: { total: number } };
   } | null,
-  shareable: undefined as boolean | undefined,
-  shareQueries: [] as { input: unknown; enabled: boolean }[],
+  myShare: undefined as
+    | { shareable: string[]; hiddenOnProfile: string[]; secret: string[] }
+    | undefined,
+  myShareEnabled: [] as boolean[],
   ladderTiers: [] as { key: string; threshold: number }[],
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
@@ -23,12 +25,12 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
-    'creatorJourney.isMilestoneShareable': {
-      useQuery: (input: unknown, { enabled }: { enabled: boolean }) => {
-        mocks.shareQueries.push({ input, enabled });
-        // Regardless of `enabled`: a disabled query still serves a cached answer, and the profile
-        // page prefetches this one for `?milestone=` links.
-        return { data: mocks.shareable };
+    'creatorJourney.getMyShareStates': {
+      useQuery: (_input: unknown, { enabled }: { enabled: boolean }) => {
+        mocks.myShareEnabled.push(enabled);
+        // Regardless of `enabled`: a disabled query can still serve a cached answer, so the card
+        // must gate on ownership itself.
+        return { data: mocks.myShare };
       },
     },
     'creatorJourney.getLadder': {
@@ -73,8 +75,8 @@ afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
   mocks.viewer = null;
-  mocks.shareable = undefined;
-  mocks.shareQueries = [];
+  mocks.myShare = undefined;
+  mocks.myShareEnabled = [];
   mocks.ladderTiers = [];
 });
 
@@ -174,7 +176,7 @@ describe('profile tier card', () => {
 
   it('offers the owner a share link to the tier card when it renders', () => {
     mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
-    mocks.shareable = true;
+    mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: [] };
     const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
     expect(shareLinks(card)).toEqual([
       {
@@ -183,28 +185,33 @@ describe('profile tier card', () => {
         label: 'Share Star',
       },
     ]);
-    expect(mocks.shareQueries.at(-1)).toEqual({
-      input: { userId: OWNER, slug: 'star' },
-      enabled: true,
-    });
+    expect(mocks.myShareEnabled.at(-1)).toBe(true);
   });
 
   it('offers no share link when the card would not render', () => {
     mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
-    mocks.shareable = false;
+    mocks.myShare = { shareable: ['score:nova'], hiddenOnProfile: ['score:star'], secret: [] };
     expect(
       shareLinks(mount(React.createElement(ProfileTierCard, { tier, userId: OWNER })))
     ).toEqual([]);
   });
 
+  // A hidden tier is a secret like any other: the server says so, and the share text keeps it.
+  it('keeps a secret tier secret in the share text', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: OWN_SCORE } } };
+    mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: ['score:star'] };
+    const [link] = shareLinks(mount(React.createElement(ProfileTierCard, { tier, userId: OWNER })));
+    expect(link.title).toBe('I unlocked a secret achievement on Civitai');
+  });
+
   // Sharing someone else's tier is the site's ordinary profile share; this button is the owner's.
   it('never offers a visitor the share link, nor asks the server', () => {
     mocks.viewer = { id: OWNER + 1, username: 'visitor', meta: { scores: { total: 0 } } };
-    mocks.shareable = true;
+    mocks.myShare = { shareable: ['score:star'], hiddenOnProfile: [], secret: [] };
     const card = mount(React.createElement(ProfileTierCard, { tier, userId: OWNER }));
     expect(shareLinks(card)).toEqual([]);
-    expect(mocks.shareQueries.every((query) => !query.enabled)).toBe(true);
-    expect(mocks.shareQueries.length).toBeGreaterThan(0);
+    expect(mocks.myShareEnabled.length).toBeGreaterThan(0);
+    expect(mocks.myShareEnabled.every((enabled) => !enabled)).toBe(true);
   });
 });
 
@@ -353,6 +360,95 @@ describe('achievements tab', () => {
     } finally {
       Element.prototype.scrollIntoView = original;
     }
+  });
+
+  // A shared achievement link names the achievement by its key; that card is the one to look at.
+  it('scrolls to and rings the achievement a shared link named', () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, {
+          data,
+          userId: OWNER,
+          spotlight: 'create:models-25',
+        })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['achievement-create:models-25']);
+      expect(spotlit[0].textContent).toContain('25 Models');
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  const achievementShareLinks = (el: HTMLElement) =>
+    [...el.querySelectorAll('[data-share-url]')].map((link) => ({
+      url: link.getAttribute('data-share-url'),
+      title: link.getAttribute('data-share-title'),
+    }));
+  const twoAchievements = {
+    ...data,
+    tiers: [],
+    achievements: [
+      ...data.achievements,
+      {
+        key: 'reach:followers-100',
+        track: 'reach',
+        name: '100 Followers',
+        description: null,
+        badgeUrl: null,
+        achievedAt: EARNED,
+      },
+    ],
+  };
+
+  it('offers the owner a share link on each achievement whose card renders', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: 1 } } };
+    mocks.myShare = { shareable: ['create:models-25'], hiddenOnProfile: [], secret: [] };
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data: twoAchievements, userId: OWNER })
+    );
+    expect(achievementShareLinks(el)).toEqual([
+      { url: '/user/maker?milestone=create:models-25', title: 'I earned 25 Models on Civitai' },
+    ]);
+    expect(mocks.myShareEnabled.at(-1)).toBe(true);
+  });
+
+  it('keeps a secret achievement secret in its share text', () => {
+    mocks.viewer = { id: OWNER, username: 'maker', meta: { scores: { total: 1 } } };
+    mocks.myShare = {
+      shareable: ['create:models-25', 'reach:followers-100'],
+      hiddenOnProfile: [],
+      secret: ['reach:followers-100'],
+    };
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data: twoAchievements, userId: OWNER })
+    );
+    expect(achievementShareLinks(el).map((link) => link.title)).toEqual([
+      'I earned 25 Models on Civitai',
+      'I unlocked a secret achievement on Civitai',
+    ]);
+  });
+
+  // The owner's share list is theirs: a visitor neither sees the buttons nor asks for it.
+  it('never offers a visitor an achievement share link, nor asks the server', () => {
+    mocks.viewer = { id: OWNER + 1, username: 'visitor', meta: { scores: { total: 0 } } };
+    mocks.myShare = {
+      shareable: ['create:models-25', 'reach:followers-100'],
+      hiddenOnProfile: [],
+      secret: [],
+    };
+    const el = mount(
+      React.createElement(ProfileAchievementsList, { data: twoAchievements, userId: OWNER })
+    );
+    expect(achievementShareLinks(el)).toEqual([]);
+    expect(mocks.myShareEnabled.length).toBeGreaterThan(0);
+    expect(mocks.myShareEnabled.every((enabled) => !enabled)).toBe(true);
   });
 
   it('picks out nothing for a tier the creator does not hold', () => {

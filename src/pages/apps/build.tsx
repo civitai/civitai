@@ -13,7 +13,7 @@ import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
  *
  * Three states behind one route — see `~/components/Apps/appsBuildState`:
  *   A · pitch     (not an author)                   — recruit
- *   B · first-app (author, nothing yet)             — quickstart + create
+ *   B · first-app (author, nothing yet)             — agent card, manual setup collapsed, create
  *   C · workbench (author, has apps or submissions) — the app list + `New app`
  *
  * 🔴 THE GATE IS `canAccessAppsBuild`, WHICH THE SUB-NAV ROW ALSO CALLS. That sharing is

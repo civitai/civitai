@@ -40,13 +40,16 @@ function Harness({
   onOutcome,
   registered: initiallyRegistered,
   host,
+  trackEvents = false,
 }: {
   onOutcome: (e: Recorded) => void;
   registered: boolean;
   host: BridgeHost;
+  trackEvents?: boolean;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [handledPayloads, setHandledPayloads] = useState(0);
+  const [trackedPayloads, setTrackedPayloads] = useState(0);
   // 🔴 REGISTRATION IS TOGGLED IN-PLACE, NOT BY RE-RENDERING THE HARNESS. A
   // `rerender()` remounts the iframe, so `event.source === contentWindow` stops
   // matching and every subsequent message is dropped by the AUTHENTICATING PIN
@@ -68,10 +71,16 @@ function Harness({
     return onMessage('GET_VIEWER', () => setHandledPayloads((n) => n + 1));
   }, [onMessage, registered]);
 
+  useEffect(() => {
+    if (!trackEvents) return;
+    return onMessage('TRACK_EVENT', () => setTrackedPayloads((n) => n + 1));
+  }, [onMessage, trackEvents]);
+
   return (
     <div>
       <iframe ref={iframeRef} data-testid="harness-iframe" src={SAME_ORIGIN_SRC} title="harness" />
       <span data-testid="handled-count">{handledPayloads}</span>
+      <span data-testid="tracked-count">{trackedPayloads}</span>
       <button data-testid="unregister" onClick={() => setRegistered(false)}>
         unregister
       </button>
@@ -116,6 +125,7 @@ async function mount(props: {
   onOutcome: (e: Recorded) => void;
   registered: boolean;
   host: BridgeHost;
+  trackEvents?: boolean;
 }) {
   const utils = renderWithProviders(<Harness {...props} />);
   await vi.waitFor(() => {
@@ -229,7 +239,7 @@ describe('usePostMessage bridge outcome counter', () => {
     // with no listener — noise on the wire that fixes nothing. The counter is the
     // whole remedy for this class.
     // NAVIGATE on PageBlockHost: fire-and-forget AND `'required'` there, so this
-    // is the no_handler arm of the class (TRACK_EVENT is N/A on both hosts).
+    // is the no_handler arm of the class.
     const recorded: Recorded[] = [];
     await mount({ onOutcome: (e) => recorded.push(e), registered: false, host: 'PageBlockHost' });
     const replies = listenOnBlock();
@@ -459,5 +469,54 @@ describe('usePostMessage bridge outcome counter', () => {
       if (handled !== 1) throw new Error('handler did not run');
     });
     expect(handled).toBe(1);
+  });
+});
+
+describe('TRACK_EVENT does not draw from the shared inbound budget', () => {
+  // The probe: 30 events, then a request. Without a TRACK_EVENT handler the events take the
+  // unhandled branch (ahead of the limiter) and the request is handled; this arm pins that premise.
+  test.each([
+    ['without a TRACK_EVENT handler (control)', false],
+    ['with a TRACK_EVENT handler', true],
+  ] as const)('a request after 30 events is handled, %s', async (_label, trackEvents) => {
+    const recorded: Recorded[] = [];
+    await mount({
+      onOutcome: (e) => recorded.push(e),
+      registered: true,
+      host: 'PageBlockHost',
+      trackEvents,
+    });
+    for (let i = 0; i < 30; i++) postFromBlock('TRACK_EVENT', { eventName: `e${i}` });
+    postFromBlock('GET_VIEWER', { requestId: 'rq_after_events' });
+    await vi.waitFor(() => {
+      if (recorded.filter((r) => r.type === 'GET_VIEWER').length !== 1) {
+        throw new Error('request not counted yet');
+      }
+    });
+    expect(countOf(recorded, 'handled')).toBe(1);
+    expect(countOf(recorded, 'rate_limited')).toBe(0);
+    expect(countOf(recorded, trackEvents ? 'handled' : 'no_handler', 'TRACK_EVENT')).toBe(30);
+    if (trackEvents)
+      await expect.element(page.getByTestId('tracked-count')).toHaveTextContent('30');
+  });
+
+  test('a TRACK_EVENT flood leaves the full request budget, and requests are still limited', async () => {
+    const recorded: Recorded[] = [];
+    await mount({
+      onOutcome: (e) => recorded.push(e),
+      registered: true,
+      host: 'PageBlockHost',
+      trackEvents: true,
+    });
+    for (let i = 0; i < 100; i++) postFromBlock('TRACK_EVENT', { eventName: 'flood' });
+    for (let i = 0; i < 31; i++) postFromBlock('GET_VIEWER', { requestId: `rq_budget_${i}` });
+    await vi.waitFor(() => {
+      if (recorded.filter((r) => r.type === 'GET_VIEWER').length !== 31) {
+        throw new Error('requests not all counted yet');
+      }
+    });
+    expect(countOf(recorded, 'handled', 'TRACK_EVENT')).toBe(100);
+    expect(countOf(recorded, 'handled')).toBe(30);
+    expect(countOf(recorded, 'rate_limited')).toBe(1);
   });
 });

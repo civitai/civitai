@@ -856,8 +856,8 @@ function MilestoneAvatar({ card }: { card: MilestoneCardData }) {
 function MilestoneCard({ card }: { card: MilestoneCardData }) {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://civitai.com';
   const accent = card.accent ?? colors.blue;
-  // Sized to the name so a long one ("Supernova") still fits the column beside the badge.
-  const tierFontSize = Math.min(132, Math.floor(640 / (card.tierName.length * 0.68)));
+  // Sized to the name so a long one ("100k Reactions") still fits the column beside the badge.
+  const nameFontSize = Math.min(132, Math.floor(640 / (card.name.length * 0.68)));
 
   return (
     <div
@@ -923,12 +923,12 @@ function MilestoneCard({ card }: { card: MilestoneCardData }) {
               marginBottom: 6,
             }}
           >
-            Creator Score Tier
+            {card.eyebrow}
           </div>
           <div
             style={{
               display: 'flex',
-              fontSize: tierFontSize,
+              fontSize: nameFontSize,
               fontWeight: 700,
               lineHeight: 1.05,
               letterSpacing: -2,
@@ -939,11 +939,16 @@ function MilestoneCard({ card }: { card: MilestoneCardData }) {
               textShadow: `0 0 40px ${accent}88`,
             }}
           >
-            {card.tierName}
+            {card.name}
           </div>
+          {card.line && (
+            <div style={{ display: 'flex', fontSize: 26, color: '#dee2e6', marginTop: 14 }}>
+              {card.line}
+            </div>
+          )}
           {card.reached && (
             <div style={{ display: 'flex', fontSize: 22, color: '#adb5bd', marginTop: 14 }}>
-              {`Reached ${card.reached}`}
+              {`${card.reachedVerb} ${card.reached}`}
             </div>
           )}
         </div>

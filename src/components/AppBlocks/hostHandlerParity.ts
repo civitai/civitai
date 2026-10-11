@@ -175,12 +175,10 @@ export const INVENTORY = {
   TRACK_EVENT: {
     request: false,
     reply: '',
-    // N/A (both real hosts): TRACK_EVENT is fire-and-forget analytics and is
-    // NOT forwarded by EITHER host yet (the server ingest exists:
-    // /api/track/block-event). Unhandled ⇒ silently dropped, never a hang. Flip
-    // a host to 'required' here when it starts forwarding.
-    IframeHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
-    PageBlockHost: 'analytics fire-and-forget; no host-side sink wired (dropped, never hangs)',
+    // Forwarded to /api/track/block-event by `blockEventBeacon.ts`; identity comes from
+    // host props, never the payload.
+    IframeHost: 'required',
+    PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
   // REQUEST_SIGN_IN / REQUEST_CONSENT are AHEAD of the published SDK dist union

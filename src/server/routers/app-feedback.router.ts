@@ -47,7 +47,7 @@ const ownerInboxTokenScope = { requiredScope: TokenScope.AppBlocksSubmit } as co
  * this area, so every `app-block` row is written here, against a listing the server resolved.
  */
 export const appFeedbackRouter = router({
-  // `verifiedProcedure`, not `protectedProcedure`: `create` requires onboarding too, and the item
+  // `verifiedProcedure`, not `protectedProcedure`: `create` requires onboarding too, and the button
   // must not be offered to someone the submit would refuse.
   getEligibility: verifiedProcedure
     .input(getAppFeedbackEligibilitySchema)

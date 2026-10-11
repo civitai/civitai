@@ -13,10 +13,12 @@ function createMocks({
   method = 'GET',
   query = {},
 }: { method?: string; query?: Record<string, unknown> } = {}) {
-  const req = { method, query, headers: {}, socket: { remoteAddress: '203.0.113.7' } } as unknown as Record<
-    string,
-    unknown
-  >;
+  const req = {
+    method,
+    query,
+    headers: {},
+    socket: { remoteAddress: '203.0.113.7' },
+  } as unknown as Record<string, unknown>;
   let statusCode = 200;
   let payload: unknown;
   const headers: Record<string, string> = {};
@@ -104,7 +106,9 @@ vi.mock('~/server/services/blocks/block-collections.service', () => ({
   // absent, null → 0, the url/level pairing) are exercised against the REAL
   // function in block-collections-cover.test.ts.
   toCoverFields: (img: any) => {
-    const coverImageUrl = img?.url ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}` : null;
+    const coverImageUrl = img?.url
+      ? `${img.type === 'video' ? 'poster' : 'edge'}:${img.url}`
+      : null;
     if (coverImageUrl === null) return { coverImageUrl: null };
     return { coverImageUrl, coverNsfwLevel: img?.nsfwLevel ?? 0 };
   },
@@ -114,7 +118,9 @@ vi.mock('~/server/services/blocks/block-collections.service', () => ({
   collectionWithinCeiling: (nsfwLevel: number, level: number) =>
     !nsfwLevel || (nsfwLevel & level) !== 0,
 }));
-vi.mock('~/server/utils/block-catalog-rate-limit', () => ({ checkBlockCatalogRateLimit: mockRate }));
+vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
+  checkBlockCatalogRateLimit: mockRate,
+}));
 vi.mock('~/server/utils/block-catalog-maturity', () => ({
   resolveCatalogBrowsingLevel: mockMaturity,
 }));
@@ -161,9 +167,7 @@ function itemCounts(advertised: Record<number, number>, clamped: Record<number, 
 function playableSample(table: Record<number, { sampled: number; playable: number }>) {
   mockPlayableSample.mockImplementation((collectionIds: number[]) =>
     Promise.resolve(
-      new Map(
-        collectionIds.filter((id) => table[id] != null).map((id) => [id, table[id]] as const)
-      )
+      new Map(collectionIds.filter((id) => table[id] != null).map((id) => [id, table[id]] as const))
     )
   );
 }
@@ -322,8 +326,26 @@ describe('GET /api/v1/blocks/collections', () => {
 
   it('mode=public: nextCursor is the first UNCONSUMED row (clean inclusive resume, no dup)', async () => {
     mockGetAll.mockResolvedValueOnce([
-      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
-      { id: 9, name: 'B', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 0,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+      {
+        id: 9,
+        name: 'B',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 0,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
     ]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '1' } });
     await handler(req as never, res as never);
@@ -344,11 +366,56 @@ describe('GET /api/v1/blocks/collections', () => {
     // later collections stay reachable (the pre-fix bug terminated pagination when
     // the clamp under-filled the sliced page).
     mockGetAll.mockResolvedValueOnce([
-      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
-      { id: 9, name: 'Mature', description: null, read: 'Public', nsfwLevel: 8, userId: 1, user: { id: 1, username: 'a' }, image: null },
-      { id: 8, name: 'B', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
-      { id: 7, name: 'C', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
-      { id: 6, name: 'D', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+      {
+        id: 9,
+        name: 'Mature',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 8,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+      {
+        id: 8,
+        name: 'B',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+      {
+        id: 7,
+        name: 'C',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+      {
+        id: 6,
+        name: 'D',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
     ]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '2' } });
     await handler(req as never, res as never);
@@ -361,9 +428,36 @@ describe('GET /api/v1/blocks/collections', () => {
 
   it('mode=public: exhausted source (fewer than the over-fetch) → no nextCursor', async () => {
     mockGetAll.mockResolvedValueOnce([
-      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
-      { id: 9, name: 'Mature', description: null, read: 'Public', nsfwLevel: 8, userId: 1, user: { id: 1, username: 'a' }, image: null },
-      { id: 8, name: 'B', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+      {
+        id: 9,
+        name: 'Mature',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 8,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
+      {
+        id: 8,
+        name: 'B',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
     ]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '2' } });
     await handler(req as never, res as never);
@@ -378,11 +472,21 @@ describe('GET /api/v1/blocks/collections', () => {
       scopes: ['collections:read:self', 'collections:read:private'],
     });
     mockUserCollections.mockResolvedValueOnce([
-      { id: 20, name: 'My Cats', description: 'meow', read: 'Private', userId: 42, image: { url: 'c20', type: 'image' } },
+      {
+        id: 20,
+        name: 'My Cats',
+        description: 'meow',
+        read: 'Private',
+        userId: 42,
+        image: { url: 'c20', type: 'image' },
+      },
       { id: 21, name: 'Dogs', description: null, read: 'Public', userId: 42, image: null },
       { id: 22, name: 'More Cats', description: null, read: 'Private', userId: 42, image: null },
     ]);
-    mockItemCount.mockResolvedValueOnce([{ id: 22, count: 3 }, { id: 20, count: 1 }]);
+    mockItemCount.mockResolvedValueOnce([
+      { id: 22, count: 3 },
+      { id: 20, count: 1 },
+    ]);
     mockFollowed.mockResolvedValueOnce(new Set<number>());
     const { req, res } = createMocks({ query: { mode: 'mine', query: 'cat', limit: '24' } });
     await handler(req as never, res as never);
@@ -395,11 +499,18 @@ describe('GET /api/v1/blocks/collections', () => {
     );
   });
 
-  it('mode=mine WITHOUT read:private: OMITS the subject\'s non-public collections', async () => {
+  it("mode=mine WITHOUT read:private: OMITS the subject's non-public collections", async () => {
     // Default claims carry only collections:read:self → private/unlisted are hidden.
     mockUserCollections.mockResolvedValueOnce([
       { id: 20, name: 'Secret', description: null, read: 'Private', userId: 42, image: null },
-      { id: 21, name: 'Public Playlist', description: null, read: 'Public', userId: 42, image: null },
+      {
+        id: 21,
+        name: 'Public Playlist',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: null,
+      },
       { id: 22, name: 'Unlisted', description: null, read: 'Unlisted', userId: 42, image: null },
     ]);
     mockItemCount.mockResolvedValueOnce([{ id: 21, count: 1 }]);
@@ -412,13 +523,20 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(body.items.map((i: any) => i.id)).toEqual([21]);
   });
 
-  it('mode=mine WITH read:private: INCLUDES the subject\'s non-public collections', async () => {
+  it("mode=mine WITH read:private: INCLUDES the subject's non-public collections", async () => {
     claimsBox.claims = fakeClaims({
       scopes: ['collections:read:self', 'collections:read:private'],
     });
     mockUserCollections.mockResolvedValueOnce([
       { id: 20, name: 'Secret', description: null, read: 'Private', userId: 42, image: null },
-      { id: 21, name: 'Public Playlist', description: null, read: 'Public', userId: 42, image: null },
+      {
+        id: 21,
+        name: 'Public Playlist',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: null,
+      },
       { id: 22, name: 'Unlisted', description: null, read: 'Unlisted', userId: 42, image: null },
     ]);
     mockItemCount.mockResolvedValueOnce([]);
@@ -486,7 +604,16 @@ describe('GET /api/v1/blocks/collections', () => {
 
   it('mode=public: derives a cover from the first item when the collection cover is null', async () => {
     mockGetAll.mockResolvedValueOnce([
-      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 0,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
     ]);
     // The fallback query returns a still-image cover for collection 10.
     mockFallbackCovers.mockResolvedValueOnce(
@@ -504,11 +631,18 @@ describe('GET /api/v1/blocks/collections', () => {
 
   it('mode=public: a VIDEO first-item cover yields a poster url (not a raw video)', async () => {
     mockGetAll.mockResolvedValueOnce([
-      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 0, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 0,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
     ]);
-    mockFallbackCovers.mockResolvedValueOnce(
-      new Map([[10, { url: 'clip-10', type: 'video' }]])
-    );
+    mockFallbackCovers.mockResolvedValueOnce(new Map([[10, { url: 'clip-10', type: 'video' }]]));
     mockItemCount.mockResolvedValueOnce([{ id: 10, count: 4 }]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
@@ -732,8 +866,22 @@ describe('GET /api/v1/blocks/collections', () => {
       scopes: ['collections:read:self', 'collections:read:private'],
     });
     mockUserCollections.mockResolvedValueOnce([
-      { id: 20, name: 'Mine, mostly mature', description: null, read: 'Private', userId: 42, image: null },
-      { id: 21, name: 'Mine, mostly safe', description: null, read: 'Public', userId: 42, image: null },
+      {
+        id: 20,
+        name: 'Mine, mostly mature',
+        description: null,
+        read: 'Private',
+        userId: 42,
+        image: null,
+      },
+      {
+        id: 21,
+        name: 'Mine, mostly safe',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: null,
+      },
     ]);
     itemCounts({ 20: 2080, 21: 100 }, { 20: 19, 21: 90 }); // 0.9% and 90%
     // Even if the sample said "drop it", this branch must not consult it.
@@ -781,7 +929,7 @@ describe('GET /api/v1/blocks/collections', () => {
   // the projection; the projection's own rules are pinned against the real
   // function in block-collections-cover.test.ts.
 
-  it('🔴 mode=public: a MATURE primary is clamped out → the level is the FALLBACK\'s, not the rejected primary\'s', async () => {
+  it("🔴 mode=public: a MATURE primary is clamped out → the level is the FALLBACK's, not the rejected primary's", async () => {
     // The headline case. Collection passes discovery (1 & 3), its own cover is
     // mature (28 & 3 === 0) so the served cover is the clamped fallback. Publishing
     // 28 beside the SFW fallback url would tell the consumer to blur an image that
@@ -812,7 +960,7 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(body.items[0].coverNsfwLevel).not.toBe(28);
   });
 
-  it('🔴 mode=public: a USABLE primary → the level is the PRIMARY\'s, even when a fallback row exists', async () => {
+  it("🔴 mode=public: a USABLE primary → the level is the PRIMARY's, even when a fallback row exists", async () => {
     // The other direction of the same pairing. The fallback map is deliberately
     // populated for this id with a DIFFERENT level; the endpoint serves the primary
     // url, so it must publish the primary's level. Reading the level off the map
@@ -852,14 +1000,35 @@ describe('GET /api/v1/blocks/collections', () => {
     // cover-bearing sibling in the SAME page proves this response DOES publish
     // levels, so the absence on id 10 is a decision rather than a vacuum.
     mockGetAll.mockResolvedValueOnce([
-      { id: 10, name: 'Bare', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      {
+        id: 10,
+        name: 'Bare',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
       // Level 2 INTERSECTS the ceiling 3, so this primary is served — a level that
       // did not (4 & 3 === 0) would be clamped out onto an empty fallback and leave
       // this collection cover-less too, quietly restoring the vacuum.
-      { id: 9, name: 'Covered', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'k9', type: 'image', nsfwLevel: 2 } },
+      {
+        id: 9,
+        name: 'Covered',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'k9', type: 'image', nsfwLevel: 2 },
+      },
     ]);
     mockFallbackCovers.mockResolvedValueOnce(new Map());
-    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 0 }, { id: 9, count: 1 }]);
+    mockItemCount.mockResolvedValueOnce([
+      { id: 10, count: 0 },
+      { id: 9, count: 1 },
+    ]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     const body = res._json() as any;
@@ -898,25 +1067,56 @@ describe('GET /api/v1/blocks/collections', () => {
     expect('coverNsfwLevel' in body.items[0]).toBe(true);
   });
 
-  it('🔴 mode=public: EVERY item\'s level matches the image its url came from (mixed page)', async () => {
+  it("🔴 mode=public: EVERY item's level matches the image its url came from (mixed page)", async () => {
     // A relationship assertion over a page holding all three shapes at once —
     // primary-served, fallback-served, no-cover. A per-shape test can be satisfied
     // by three separate right answers; this fails if the endpoint ever pairs one
     // item's url with another item's (or another image's) level.
     mockGetAll.mockResolvedValueOnce([
       // 10: usable primary (2 & 3 !== 0) → primary url + primary level.
-      { id: 10, name: 'P', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'p10', type: 'image', nsfwLevel: 2 } },
+      {
+        id: 10,
+        name: 'P',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'p10', type: 'image', nsfwLevel: 2 },
+      },
       // 11: mature primary (8 & 3 === 0) → clamped out, fallback url + fallback level.
-      { id: 11, name: 'F', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'p11', type: 'image', nsfwLevel: 8 } },
+      {
+        id: 11,
+        name: 'F',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'p11', type: 'image', nsfwLevel: 8 },
+      },
       // 12: no primary and no fallback row → no cover at all.
-      { id: 12, name: 'N', description: null, read: 'Public', nsfwLevel: 1, userId: 1, user: { id: 1, username: 'a' }, image: null },
+      {
+        id: 12,
+        name: 'N',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 1,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: null,
+      },
     ]);
     // The levels here are pairwise distinct AND distinct from every primary level
     // above, so no mutant can produce the expected value by coincidence.
     mockFallbackCovers.mockResolvedValueOnce(
       new Map([[11, { url: 'f11', type: 'image', nsfwLevel: 1 }]])
     );
-    mockItemCount.mockResolvedValueOnce([{ id: 10, count: 1 }, { id: 11, count: 1 }, { id: 12, count: 1 }]);
+    mockItemCount.mockResolvedValueOnce([
+      { id: 10, count: 1 },
+      { id: 11, count: 1 },
+      { id: 12, count: 1 },
+    ]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
     await handler(req as never, res as never);
     const body = res._json() as any;
@@ -937,7 +1137,7 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(body.items.map((i: any) => i.coverImageUrl)).toEqual(['edge:p10', 'edge:f11', null]);
   });
 
-  it('🔴 mode=mine: the served cover\'s level is published on the subject\'s OWN collections too', async () => {
+  it("🔴 mode=mine: the served cover's level is published on the subject's OWN collections too", async () => {
     // The `mine` branch is a second, independent mapping site — the pairing has to
     // hold there as well, and it has its own primary/fallback/none mix.
     claimsBox.claims = fakeClaims({
@@ -945,9 +1145,23 @@ describe('GET /api/v1/blocks/collections', () => {
     });
     mockUserCollections.mockResolvedValueOnce([
       // 22: usable primary.
-      { id: 22, name: 'Own primary', description: null, read: 'Public', userId: 42, image: { url: 'own22', type: 'image', nsfwLevel: 2 } },
+      {
+        id: 22,
+        name: 'Own primary',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: { url: 'own22', type: 'image', nsfwLevel: 2 },
+      },
       // 21: mature primary (8 & 3 === 0) → clamped out onto the fallback.
-      { id: 21, name: 'Own mature cover', description: null, read: 'Private', userId: 42, image: { url: 'own21', type: 'image', nsfwLevel: 8 } },
+      {
+        id: 21,
+        name: 'Own mature cover',
+        description: null,
+        read: 'Private',
+        userId: 42,
+        image: { url: 'own21', type: 'image', nsfwLevel: 8 },
+      },
       // 20: no cover anywhere.
       { id: 20, name: 'Own bare', description: null, read: 'Public', userId: 42, image: null },
     ]);
@@ -979,7 +1193,16 @@ describe('GET /api/v1/blocks/collections', () => {
     // 97%-safe collection from a 1%-safe one, so leaking it under that name onto a
     // per-card response would invite a consumer to gate on the wrong quantity.
     mockGetAll.mockResolvedValueOnce([
-      { id: 10, name: 'A', description: null, read: 'Public', nsfwLevel: 29, userId: 1, user: { id: 1, username: 'a' }, image: { url: 'k', type: 'image', nsfwLevel: 1 } },
+      {
+        id: 10,
+        name: 'A',
+        description: null,
+        read: 'Public',
+        nsfwLevel: 29,
+        userId: 1,
+        user: { id: 1, username: 'a' },
+        image: { url: 'k', type: 'image', nsfwLevel: 1 },
+      },
     ]);
     mockItemCount.mockResolvedValueOnce([{ id: 10, count: 1 }]);
     const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
@@ -1051,4 +1274,114 @@ describe('meetsPlayableFloor', () => {
     expect(MIN_PLAYABLE_FRACTION).toBeGreaterThan(0);
     expect(MIN_PLAYABLE_FRACTION).toBeLessThanOrEqual(1);
   });
+});
+
+describe('cover poi/minor exclusion', () => {
+  const flagged = [
+    ['poi', { poi: true, minor: false }],
+    ['minor', { poi: false, minor: true }],
+  ] as const;
+
+  const publicRow = (image: Record<string, unknown>) => ({
+    id: 10,
+    name: 'A',
+    description: null,
+    read: 'Public',
+    nsfwLevel: 1,
+    userId: 1,
+    user: { id: 1, username: 'a' },
+    image: { url: 'primary-10', type: 'image', nsfwLevel: 1, ...image },
+  });
+
+  const mineRow = (image: Record<string, unknown>) => ({
+    id: 20,
+    name: 'Mine',
+    description: null,
+    read: 'Public',
+    userId: 42,
+    image: { url: 'primary-20', type: 'image', nsfwLevel: 1, ...image },
+  });
+
+  it('mode=public: selects poi and minor on the primary cover', async () => {
+    mockGetAll.mockResolvedValueOnce([]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(mockGetAll.mock.calls[0][0].select.image).toEqual({
+      select: { url: true, type: true, nsfwLevel: true, poi: true, minor: true },
+    });
+  });
+
+  it('mode=public: keeps a primary cover with neither flag', async () => {
+    mockGetAll.mockResolvedValueOnce([publicRow({ poi: false, minor: false })]);
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    expect((res._json() as any).items[0].coverImageUrl).toBe('edge:primary-10');
+    expect(mockFallbackCovers).toHaveBeenCalledWith([], 3);
+  });
+
+  it.each(flagged)(
+    'mode=public: a %s primary cover is replaced by the fallback cover',
+    async (_flag, flags) => {
+      mockGetAll.mockResolvedValueOnce([publicRow(flags)]);
+      mockFallbackCovers.mockResolvedValueOnce(
+        new Map([[10, { url: 'fallback-10', type: 'image', nsfwLevel: 2 }]])
+      );
+      const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+      await handler(req as never, res as never);
+      expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
+      const item = (res._json() as any).items[0];
+      expect(item.coverImageUrl).toBe('edge:fallback-10');
+      expect(item.coverNsfwLevel).toBe(2);
+    }
+  );
+
+  it.each(flagged)(
+    'mode=public: a %s primary cover with no fallback yields a null cover',
+    async (_flag, flags) => {
+      mockGetAll.mockResolvedValueOnce([publicRow(flags)]);
+      const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+      await handler(req as never, res as never);
+      const item = (res._json() as any).items[0];
+      expect(item.id).toBe(10);
+      expect(item.coverImageUrl).toBeNull();
+      expect('coverNsfwLevel' in item).toBe(false);
+    }
+  );
+
+  it('mode=mine: keeps a primary cover with neither flag', async () => {
+    mockUserCollections.mockResolvedValueOnce([mineRow({ poi: false, minor: false })]);
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect((res._json() as any).items[0].coverImageUrl).toBe('edge:primary-20');
+    expect(mockFallbackCovers).toHaveBeenCalledWith([], 3);
+  });
+
+  it.each(flagged)(
+    'mode=mine: a %s primary cover is replaced by the fallback cover',
+    async (_flag, flags) => {
+      mockUserCollections.mockResolvedValueOnce([mineRow(flags)]);
+      mockFallbackCovers.mockResolvedValueOnce(
+        new Map([[20, { url: 'fallback-20', type: 'image', nsfwLevel: 2 }]])
+      );
+      const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+      await handler(req as never, res as never);
+      expect(mockFallbackCovers).toHaveBeenCalledWith([20], 3);
+      const item = (res._json() as any).items[0];
+      expect(item.coverImageUrl).toBe('edge:fallback-20');
+      expect(item.coverNsfwLevel).toBe(2);
+    }
+  );
+
+  it.each(flagged)(
+    'mode=mine: a %s primary cover with no fallback yields a null cover',
+    async (_flag, flags) => {
+      mockUserCollections.mockResolvedValueOnce([mineRow(flags)]);
+      const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+      await handler(req as never, res as never);
+      const item = (res._json() as any).items[0];
+      expect(item.id).toBe(20);
+      expect(item.coverImageUrl).toBeNull();
+      expect('coverNsfwLevel' in item).toBe(false);
+    }
+  );
 });
