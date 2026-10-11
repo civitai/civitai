@@ -6,7 +6,6 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
   milestoneShareHref,
   milestoneShareToken,
-  isSpecialMilestoneKey,
   scoreTierSlugFromKey,
   SPECIAL_SHARE_TITLE,
 } from '~/shared/constants/creator-journey.constants';
@@ -16,18 +15,19 @@ export function MilestoneShareButton({
   username,
   milestoneKey,
   name,
+  secret,
 }: {
   username: string;
   milestoneKey: string;
   name: string;
+  /** From the owner's share states. Required, so no caller can leave a secret's name in the text. */
+  secret: boolean;
 }) {
   const verb = scoreTierSlugFromKey(milestoneKey) ? 'reached' : 'earned';
-  // A special keeps its secret in the share text, as its card does.
-  const special = isSpecialMilestoneKey(milestoneKey);
   return (
     <ShareButton
       url={milestoneShareHref(username, milestoneShareToken(milestoneKey))}
-      title={special ? SPECIAL_SHARE_TITLE : `I ${verb} ${name} on Civitai`}
+      title={secret ? SPECIAL_SHARE_TITLE : `I ${verb} ${name} on Civitai`}
     >
       <LegacyActionIcon radius="xl" aria-label={`Share ${name}`}>
         <IconShare3 size={16} />

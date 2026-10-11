@@ -20,7 +20,6 @@ import {
   CREATOR_JOURNEY_HREF,
   milestoneKeyOfShareToken,
   parseScoreTierSlug,
-  scoreTierSlugFromKey,
 } from '~/shared/constants/creator-journey.constants';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -59,17 +58,22 @@ export function AchievementCard({
   );
 }
 
+/** The owner's share states; empty for anyone else, who is never asked about them. */
+function useMyShareStates(isOwner: boolean) {
+  const { data } = trpc.creatorJourney.getMyShareStates.useQuery(undefined, { enabled: isOwner });
+  return {
+    shareable: new Set(isOwner ? data?.shareable : undefined),
+    secret: new Set(isOwner ? data?.secret : undefined),
+  };
+}
+
 /** The highest tier held, never the score: only the owner, who already has it, sees the number. */
 export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }) {
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === userId;
   const ownScore = isOwner ? creatorScoreFromSession(currentUser) : undefined;
   const accent = tierAccents[tier.key] ?? DEFAULT_ACCENT;
-  const slug = scoreTierSlugFromKey(tier.key);
-  const { data: shareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
-    { userId, milestone: slug ?? 'spark' },
-    { enabled: isOwner && !!slug }
-  );
+  const share = useMyShareStates(isOwner);
 
   return (
     <SpotlightBorderCard
@@ -85,12 +89,13 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
           background: 'radial-gradient(60% 100% at 50% 0%, var(--cj-accent) 0%, transparent 100%)',
         }}
       />
-      {isOwner && shareable && slug && currentUser?.username && (
+      {share.shareable.has(tier.key) && currentUser?.username && (
         <div className="absolute right-2 top-2">
           <MilestoneShareButton
             username={currentUser.username}
             milestoneKey={tier.key}
             name={tier.name}
+            secret={share.secret.has(tier.key)}
           />
         </div>
       )}
@@ -188,10 +193,7 @@ export function ProfileAchievementsList({
   const currentUser = useCurrentUser();
   const isOwner = currentUser?.id === userId;
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery();
-  const { data: share } = trpc.creatorJourney.getMyShareStates.useQuery(undefined, {
-    enabled: isOwner,
-  });
-  const shareable = new Set(isOwner ? share?.shareable : undefined);
+  const share = useMyShareStates(isOwner);
   const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
   const spotlit =
     !!spotlightKey &&
@@ -247,12 +249,13 @@ export function ProfileAchievementsList({
             achievements={group.items}
             spotlight={spotlight}
             action={(achievement) =>
-              shareable.has(achievement.key) &&
+              share.shareable.has(achievement.key) &&
               currentUser?.username && (
                 <MilestoneShareButton
                   username={currentUser.username}
                   milestoneKey={achievement.key}
                   name={achievementName(achievement)}
+                  secret={share.secret.has(achievement.key)}
                 />
               )
             }

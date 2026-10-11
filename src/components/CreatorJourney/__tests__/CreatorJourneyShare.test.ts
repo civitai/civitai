@@ -44,10 +44,9 @@ const EARNED = [
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function mountShelf(
-  share: { shareable?: string[]; hiddenOnProfile?: string[] },
-  username?: string
-) {
+type Share = { shareable?: string[]; hiddenOnProfile?: string[]; secret?: string[] };
+
+function mountShelf(share: Share, username?: string) {
   const journey = {
     scores: null,
     unlocks: [],
@@ -55,7 +54,7 @@ function mountShelf(
     earned: EARNED,
     activity: { milestones: [], closestNext: null },
     secrets: [],
-    share: { shareable: [], hiddenOnProfile: [], ...share },
+    share: { shareable: [], hiddenOnProfile: [], secret: [], ...share },
   } as unknown as Journey;
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -72,8 +71,8 @@ function mountShelf(
   return container;
 }
 
-function shareLinks(shareable: string[], username?: string) {
-  const shelf = mountShelf({ shareable }, username);
+function shareLinks(shareable: string[], username?: string, secret: string[] = []) {
+  const shelf = mountShelf({ shareable, secret }, username);
   return [...shelf.querySelectorAll('[data-share-url]')].map((el) => ({
     url: el.getAttribute('data-share-url'),
     title: el.getAttribute('data-share-title'),
@@ -117,17 +116,25 @@ describe('share buttons on the journey shelf', () => {
   // Decided with Justin: a shared special keeps its secret. The share text is posted for strangers,
   // so it must not carry the name the card masks.
   it('keeps a special achievement secret in the share text', () => {
-    const [link] = shareLinks(['hidden:vwjxua'], 'maker');
+    const [link] = shareLinks(['hidden:vwjxua'], 'maker', ['hidden:vwjxua']);
     expect(link.url).toBe('/user/maker?milestone=hidden:vwjxua');
     expect(link.title).toBe('I unlocked a secret achievement on Civitai');
   });
 
+  // Which milestones are secret is the server's answer (the `hidden` column the profile masks by),
+  // not a guess from the key: a secret whose key looks ordinary is masked all the same.
+  it('masks whatever the server marks secret, whatever its key', () => {
+    const [link] = shareLinks(['create:models-1'], 'maker', ['create:models-1']);
+    expect(link.title).toBe('I unlocked a secret achievement on Civitai');
+  });
+
+  // Order is the shelf's own (badge-order.ts has its tests); this pins one button per shareable badge.
   it('offers one per shareable milestone, tiers and achievements alike', () => {
     expect(
-      shareLinks(['score:spark', 'create:models-1', 'score:supernova'], 'maker').map(
-        (link) => link.label
-      )
-    ).toEqual(['Share Spark', 'Share Supernova', 'Share First Model']);
+      shareLinks(['score:spark', 'create:models-1', 'score:supernova'], 'maker')
+        .map((link) => link.label)
+        .sort()
+    ).toEqual(['Share First Model', 'Share Spark', 'Share Supernova']);
   });
 
   it('offers nothing when nothing is shareable, or there is no username to link to', () => {

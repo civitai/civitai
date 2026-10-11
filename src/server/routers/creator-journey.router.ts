@@ -48,6 +48,7 @@ export const creatorJourneyRouter = router({
         getMilestoneShareStates(ctx.user.id).catch(() => ({
           shareable: [] as string[],
           hiddenOnProfile: [] as string[],
+          secret: [] as string[],
         })),
       ]);
       return { ...journey, share };

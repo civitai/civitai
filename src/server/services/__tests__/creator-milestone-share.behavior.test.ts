@@ -33,6 +33,7 @@ import {
   milestoneOgEndpoint,
   milestoneShareToken,
   parseMilestoneShareId,
+  parseMilestoneShareToken,
   SCORE_TIERS,
   scoreTierKey,
   scoreTierSlugFromKey,
@@ -463,11 +464,17 @@ describe('share id', () => {
 });
 
 describe('achievement share cards', () => {
-  const addMilestone = (key: string, track: string, name: string, threshold: number | null) =>
+  const addMilestone = (
+    key: string,
+    track: string,
+    name: string,
+    threshold: number | null,
+    hidden = track === 'hidden'
+  ) =>
     q(
       `INSERT INTO "CreatorMilestone" (key, track, name, threshold, hidden, hint, description)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (key) DO NOTHING`,
-      [key, track, name, threshold, track === 'hidden', 'Top of the board.', 'Only you see this.']
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (key) DO UPDATE SET hidden = EXCLUDED.hidden`,
+      [key, track, name, threshold, hidden, 'Top of the board.', 'Only you see this.']
     );
   const grantKey = (userId: number, key: string) =>
     q(
@@ -504,8 +511,10 @@ describe('achievement share cards', () => {
   });
 
   // Decided with Justin: a shared special stays secret, as a visitor to the profile sees it masked.
-  it('masks a special achievement: no name, hint or description anywhere on the card', async () => {
+  // Its art stays: visitors already see it on the profile, and the mockup Justin chose shows it.
+  it('masks a special achievement: its art, but no name anywhere on the card', async () => {
     await addUser(CREATOR);
+    await addBadge('hidden:vwjxua');
     await grantKey(CREATOR, 'hidden:vwjxua');
 
     const result = await achievementCard('hidden:vwjxua');
@@ -515,9 +524,27 @@ describe('achievement share cards', () => {
       eyebrow: 'Special Achievement',
       line: 'What it takes stays hidden. Can you find it?',
     });
+    expect(result?.badgeUrl?.startsWith('a/anim=false')).toBe(true);
+    // The card read selects no hint or description today; these two are a tripwire for a future one.
     const text = JSON.stringify(result);
     for (const secret of ['Number One', 'Top of the board.', 'Only you see this.'])
       expect(text, secret).not.toContain(secret);
+  });
+
+  // The profile masks by the `hidden` column, so the card does too: not by track or key prefix,
+  // which agree with it in today's data only by convention.
+  it('masks by the hidden column, whatever the track or key says', async () => {
+    await addUser(CREATOR);
+    await addMilestone('create:models-1', 'create', 'First Model', 1, true);
+    await grantKey(CREATOR, 'create:models-1');
+
+    expect(await achievementCard('create:models-1')).toMatchObject({
+      name: 'Unlocked a secret',
+      eyebrow: 'Special Achievement',
+    });
+    expect((await getMilestoneShareStates(CREATOR, { pg, now: NOW })).secret).toEqual([
+      'create:models-1',
+    ]);
   });
 
   it('falls back for an achievement the creator does not hold, or hides on their profile', async () => {
@@ -546,6 +573,7 @@ describe('achievement share cards', () => {
 
     expect([...states.shareable].sort()).toEqual(['reach:downloads-10000', 'score:spark']);
     expect(states.hiddenOnProfile).toEqual(['create:models-1']);
+    expect(states.secret).toEqual([]);
     // The card agrees with the list for every key, so a button never previews the bare profile.
     for (const key of states.shareable)
       expect(await achievementCard(milestoneShareToken(key)), key).not.toBeNull();
@@ -562,7 +590,46 @@ describe('achievement share cards', () => {
     expect(await getMilestoneShareStates(MUTED, { pg, now: NOW })).toEqual({
       shareable: [],
       hiddenOnProfile: [],
+      secret: [],
     });
+  });
+
+  it('offers nothing, no hint either, when the owner’s flag is off', async () => {
+    await addUser(CREATOR);
+    const badge = await addBadge('create:models-1');
+    await grantKey(CREATOR, 'create:models-1');
+    await grantKey(CREATOR, 'reach:downloads-10000');
+    await setPrivacy(CREATOR, { hiddenBadgeIds: [badge] });
+    const before = await getMilestoneShareStates(CREATOR, { pg, now: NOW });
+    expect(before.hiddenOnProfile).toEqual(['create:models-1']);
+
+    mocks.flagOn.mockResolvedValue(false);
+    expect(await getMilestoneShareStates(CREATOR, { pg, now: NOW })).toEqual({
+      shareable: [],
+      hiddenOnProfile: [],
+      secret: [],
+    });
+  });
+
+  it.each([
+    [
+      'actively struck',
+      async (id: number) => {
+        await q(`INSERT INTO "UserStrike" VALUES ($1, 'Active', '2026-12-01')`, [id]);
+      },
+    ],
+    [
+      'metric-suppressed',
+      async (id: number) => {
+        mocks.excluded.mockResolvedValue([id]);
+      },
+    ],
+  ])('renders no achievement card for an owner who is %s', async (_, exclude) => {
+    await addUser(CREATOR);
+    await grantKey(CREATOR, 'reach:downloads-10000');
+    expect(await achievementCard('reach:downloads-10000')).not.toBeNull();
+    await exclude(CREATOR);
+    expect(await achievementCard('reach:downloads-10000')).toBeNull();
   });
 });
 
@@ -595,6 +662,13 @@ describe('achievement share line', () => {
 });
 
 describe('achievement share id', () => {
+  // A key the parser refuses would get a button whose link, card and preview swap all fail silently.
+  it('parses every milestone key the code can grant, as its share token', () => {
+    const keys = Object.keys(creatorMilestoneRegistry);
+    expect(keys.length).toBeGreaterThanOrEqual(49);
+    expect(keys.filter((key) => !parseMilestoneShareToken(milestoneShareToken(key)))).toEqual([]);
+  });
+
   it('reads `<userId>.<achievementKey>`, including a special', () => {
     expect(parseMilestoneShareId('42.reach:downloads-10000')).toEqual({
       userId: 42,

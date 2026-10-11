@@ -43,6 +43,13 @@ describe('profile page server render, ?milestone=', () => {
     expect(shareable).toHaveBeenCalledWith({ userId: PROFILE_ID, milestone: 'legend' });
   });
 
+  it('prefetches for a shared achievement too, named by its key', async () => {
+    for (const milestone of ['reach:downloads-10000', 'hidden:vwjxua']) {
+      const shareable = await resolve({ username: 'ellie', milestone });
+      expect(shareable, milestone).toHaveBeenCalledWith({ userId: PROFILE_ID, milestone });
+    }
+  });
+
   // The layout queries `router.query.username` as typed. A prefetch under the slugified (lowercased)
   // name is a cache miss there, and `/user/JustMaier?milestone=` rendered with no og:image at all.
   it('prefetches under the route username as typed, not lowercased', async () => {

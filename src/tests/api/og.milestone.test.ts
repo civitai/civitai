@@ -105,6 +105,7 @@ describe('/api/og?type=milestone', () => {
 
   it('reads `<userId>.<achievementKey>` and looks up that achievement', async () => {
     const res = await render('42.reach:downloads-10000');
+    expect(getMilestoneShareCard).toHaveBeenCalledTimes(1);
     expect(getMilestoneShareCard).toHaveBeenCalledWith({
       userId: 42,
       milestone: 'reach:downloads-10000',
@@ -125,8 +126,12 @@ describe('/api/og?type=milestone', () => {
     const lined = await png({ ...achievement, line: 'One model reached 10,000 downloads' });
     const tier = await png({ ...achievement, eyebrow: 'Creator Score Tier' });
 
+    const earned = await png({ ...achievement, reachedVerb: 'Earned' });
+
     expect(Buffer.compare(lined, bare)).not.toBe(0);
     expect(Buffer.compare(tier, bare)).not.toBe(0);
+    // CARD says "Reached"; an achievement says "Earned" before its month.
+    expect(Buffer.compare(earned, bare)).not.toBe(0);
   });
 
   // Each piece of art is fetched and drawn: a card that dropped one would render the same bytes as

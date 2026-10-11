@@ -37,6 +37,8 @@ const PROFILE_BADGE_SIZE = 64;
 
 type ShareStateRow = {
   milestoneKey: string;
+  /** A secret milestone: the profile masks it from visitors, so its card and share text do too. */
+  hidden: boolean;
   isModerator: boolean;
   badgeId: number | null;
   privacySettings: PrivacySettingsSchema | null;
@@ -70,7 +72,8 @@ const equippedProfileCosmeticSql = (type: 'ProfileDecoration' | 'Badge', column:
     AND pc.type = '${type}'
   ORDER BY puc."equippedAt" DESC LIMIT 1`;
 
-const STATE_COLUMNS = `ucm."milestoneKey", u."isModerator", m."cosmeticId" AS "badgeId", p."privacySettings"`;
+const STATE_COLUMNS = `ucm."milestoneKey", m.hidden, u."isModerator", m."cosmeticId" AS "badgeId",
+  p."privacySettings"`;
 
 // The picture takes the same moderation filter as every other og card's image. `User.image` is never
 // a fallback: it is unscanned, and fetching it would send this server to any host a user stored.
@@ -126,32 +129,39 @@ async function getShowableMilestones<Row extends ShareStateRow>(
  * for whether a card renders. A backfilled grant shares too: at launch every tier held was backfilled,
  * so filtering them out offered nobody a card.
  */
-async function getShareableMilestone(
+async function getShareableMilestone<Row extends ShareStateRow = ShareCardRow>(
   { userId, milestone }: { userId: number; milestone: string },
-  options?: ShareOptions
+  options?: ShareOptions,
+  card = true
 ) {
-  const [row] = await getShowableMilestones<ShareCardRow>(
-    { userId, keys: [milestoneKeyOfShareToken(milestone)], card: true },
+  const [row] = await getShowableMilestones<Row>(
+    { userId, keys: [milestoneKeyOfShareToken(milestone)], card },
     options
   );
   return row?.shownOnProfile ? row : null;
 }
 
 /**
- * For the owner's journey page, in one read: the milestones whose share card renders, and the earned
- * ones that would share but for their badge being hidden on the profile (they get the unhide hint).
+ * For the owner, in one read: the milestones whose share card renders, the earned ones that would
+ * share but for their badge being hidden on the profile (they get the unhide hint), and which of the
+ * shareable ones are secret (their share text is masked, as their card is).
  */
 export async function getMilestoneShareStates(userId: number, options?: ShareOptions) {
   const rows = await getShowableMilestones<ShareStateRow>({ userId, card: false }, options);
+  const shown = rows.filter((row) => row.shownOnProfile);
   return {
-    shareable: rows.filter((row) => row.shownOnProfile).map((row) => row.milestoneKey),
+    shareable: shown.map((row) => row.milestoneKey),
     hiddenOnProfile: rows.filter((row) => !row.shownOnProfile).map((row) => row.milestoneKey),
+    secret: shown.filter((row) => row.hidden).map((row) => row.milestoneKey),
   };
 }
 
 /** Whether a profile link should swap its preview to this milestone's card. No swap keeps the profile's own. */
-export async function isMilestoneShareable(...args: Parameters<typeof getShareableMilestone>) {
-  return !!(await getShareableMilestone(...args));
+export async function isMilestoneShareable(
+  input: { userId: number; milestone: string },
+  options?: ShareOptions
+) {
+  return !!(await getShareableMilestone<ShareStateRow>(input, options, false));
 }
 
 const n = numberWithCommas;
@@ -177,7 +187,9 @@ export function achievementShareLine(key: string, threshold: number | null) {
 }
 
 /** The small capitals above the name, the accent the card is lit with, and the verb before its month. */
-function cardStyle(key: string, track: string) {
+function cardStyle(key: string, track: string, secret: boolean) {
+  if (secret)
+    return { eyebrow: 'Special Achievement', accent: SPECIAL_ACCENT, reachedVerb: 'Earned' };
   const slug = scoreTierSlugFromKey(key);
   if (slug)
     return {
@@ -185,8 +197,6 @@ function cardStyle(key: string, track: string) {
       accent: SCORE_TIERS.find((tier) => tier.slug === slug)?.accent ?? null,
       reachedVerb: 'Reached',
     };
-  if (track === 'hidden')
-    return { eyebrow: 'Special Achievement', accent: SPECIAL_ACCENT, reachedVerb: 'Earned' };
   const style = ACHIEVEMENT_TRACK_STYLES[track as keyof typeof ACHIEVEMENT_TRACK_STYLES];
   return {
     eyebrow: style ? `${style.title} Achievement` : 'Achievement',
@@ -196,11 +206,15 @@ function cardStyle(key: string, track: string) {
 }
 
 /** The link-preview card for a creator reaching a milestone, or null when it must not render. */
-export async function getMilestoneShareCard(...args: Parameters<typeof getShareableMilestone>) {
-  const row = await getShareableMilestone(...args);
+export async function getMilestoneShareCard(
+  input: { userId: number; milestone: string },
+  options?: ShareOptions
+) {
+  const row = await getShareableMilestone(input, options);
   if (!row) return null;
   const { pictureUrl, pictureType, pictureNsfwLevel, decorationData, profileBadgeUrl } = row;
-  const special = row.track === 'hidden';
+  // The `hidden` column, the one the profile masks by, not the track or the key's prefix.
+  const secret = row.hidden;
   return {
     username: row.username ?? 'Creator',
     avatarUrl:
@@ -210,9 +224,9 @@ export async function getMilestoneShareCard(...args: Parameters<typeof getSharea
             { width: AVATAR_SIZE, height: AVATAR_SIZE }
           )
         : null,
-    name: special ? SPECIAL_SHARE_NAME : row.name,
-    ...cardStyle(row.milestoneKey, row.track),
-    line: special ? SPECIAL_SHARE_LINE : achievementShareLine(row.milestoneKey, row.threshold),
+    name: secret ? SPECIAL_SHARE_NAME : row.name,
+    ...cardStyle(row.milestoneKey, row.track, secret),
+    line: secret ? SPECIAL_SHARE_LINE : achievementShareLine(row.milestoneKey, row.threshold),
     // `optimized` is what keeps the art's transparency: a plain resize comes back as a JPEG.
     badgeUrl: row.badgeUrl
       ? getEdgeUrl(row.badgeUrl, { width: BADGE_SIZE, anim: false, optimized: true })

@@ -88,6 +88,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
   const shelf = sortEarnedBadges(journey.earned.filter(isShelfBadge));
   const shareable = new Set(journey.share.shareable);
   const hiddenOnProfile = new Set(journey.share.hiddenOnProfile);
+  const secret = new Set(journey.share.secret);
   const accent = accentOf(currentTier);
 
   return (
@@ -211,6 +212,7 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
                       username={username}
                       milestoneKey={badge.key}
                       name={badge.name}
+                      secret={secret.has(badge.key)}
                     />
                   ) : hiddenOnProfile.has(badge.key) ? (
                     <UnhideToShareHint name={badge.name} />

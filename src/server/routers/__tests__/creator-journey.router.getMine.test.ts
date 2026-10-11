@@ -50,7 +50,11 @@ beforeEach(() => {
 
 describe('creatorJourney.getMine', () => {
   it("adds the owner's share states to the journey", async () => {
-    const share = { shareable: ['score:spark'], hiddenOnProfile: ['create:models-1'] };
+    const share = {
+      shareable: ['score:spark'],
+      hiddenOnProfile: ['create:models-1'],
+      secret: [],
+    };
     mocks.shareable.mockResolvedValue(share);
     await expect(getMine()).resolves.toEqual({ ...JOURNEY, share });
     expect(mocks.journey).toHaveBeenCalledWith(OWNER);
@@ -63,7 +67,7 @@ describe('creatorJourney.getMine', () => {
     mocks.shareable.mockRejectedValue(new Error('exclusions unavailable'));
     await expect(getMine()).resolves.toEqual({
       ...JOURNEY,
-      share: { shareable: [], hiddenOnProfile: [] },
+      share: { shareable: [], hiddenOnProfile: [], secret: [] },
     });
   });
 });

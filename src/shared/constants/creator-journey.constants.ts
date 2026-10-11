@@ -61,9 +61,6 @@ export const SPECIAL_SHARE_NAME = 'Unlocked a secret';
 export const SPECIAL_SHARE_LINE = 'What it takes stays hidden. Can you find it?';
 export const SPECIAL_SHARE_TITLE = 'I unlocked a secret achievement on Civitai';
 
-/** A special achievement: its key carries the `hidden` track, as every milestone key carries its own. */
-export const isSpecialMilestoneKey = (key: string) => key.startsWith('hidden:');
-
 // A special's key is random (`hidden:vwjxua`), so a link naming one gives away nothing about its rule.
 const ACHIEVEMENT_SHARE_KEY = /^(?:create|reach|earn|community|compete|hidden):[a-z0-9-]{1,40}$/;
 

@@ -72,6 +72,12 @@ describe('the Achievements tab opened from a shared tier link', () => {
     });
   });
 
+  it('hands the list an achievement the link named, by its key', () => {
+    expect(open({ username: 'JustMaier', milestone: 'reach:downloads-10000' })?.spotlight).toBe(
+      'reach:downloads-10000'
+    );
+  });
+
   it('picks out nothing without a tier, or for something that is not one', () => {
     expect(open({ username: 'JustMaier' })?.spotlight).toBeNull();
     expect(open({ username: 'JustMaier', milestone: 'nope' })?.spotlight).toBeNull();
