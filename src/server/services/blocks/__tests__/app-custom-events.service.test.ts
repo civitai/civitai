@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  */
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS,
   getAppCustomEvents,
@@ -69,6 +70,8 @@ type ChCall = {
 function fakeCh(opts?: {
   throws?: boolean;
   failDetail?: boolean;
+  failTop?: boolean;
+  hangDetailUntilAborted?: boolean;
   hangUntilAborted?: boolean;
   scalar?: unknown;
 }) {
@@ -81,7 +84,14 @@ function fakeCh(opts?: {
         arg.abort_signal?.addEventListener('abort', () => reject(new Error('aborted')));
       });
     }
-    if (opts?.failDetail && !arg.query.includes('AS signedInViewers')) {
+    const isTop = arg.query.includes('AS signedInViewers');
+    if (opts?.failTop && isTop) throw new Error('top read failed');
+    if (opts?.hangDetailUntilAborted && !isTop) {
+      return new Promise((_resolve, reject) => {
+        arg.abort_signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    }
+    if (opts?.failDetail && !isTop) {
       throw new Error('memory limit exceeded');
     }
     const ownerExcluded = arg.query.includes(' AND isOwner = 0');
@@ -391,6 +401,28 @@ describe('getAppCustomEvents: never throws', () => {
       ['share_clicked', 8],
       ['never_sent', 0],
     ]);
+  });
+
+  it('a failed top read aborts the detail queries still in flight, and logs once', async () => {
+    loggingMock.logToAxiom.mockClear();
+    const ch = fakeCh({ failTop: true, hangDetailUntilAborted: true });
+    const result = await getAppCustomEvents({ ...args, ch: asCh(ch) });
+    expect(result.unavailable).toBe(true);
+    const detailCalls = ch.calls.filter((c) => !c.query.includes('AS signedInViewers'));
+    expect(detailCalls).toHaveLength(3);
+    for (const call of detailCalls) expect(call.abort_signal?.aborted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      loggingMock.logToAxiom.mock.calls.map((c) => (c[0] as { message: string }).message)
+    ).toEqual(['appBlockEvents read failed']);
+  });
+
+  it('a failed detail read is logged as such', async () => {
+    loggingMock.logToAxiom.mockClear();
+    await getAppCustomEvents({ ...args, ch: asCh(fakeCh({ failDetail: true })) });
+    expect(
+      loggingMock.logToAxiom.mock.calls.map((c) => (c[0] as { message: string }).message)
+    ).toEqual(['appBlockEvents selected-event read failed']);
   });
 
   it('a hung query is aborted at the timeout and reads as unavailable', async () => {

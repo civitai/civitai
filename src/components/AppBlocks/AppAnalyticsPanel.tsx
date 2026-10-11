@@ -319,7 +319,7 @@ function CustomEventsCard({
     onSelectEvent(eventName);
     // In one column (the modal) the detail sits below the whole table, often off-screen.
     const detail = detailRef.current;
-    if (eventName && detail && detail.getBoundingClientRect().top > window.innerHeight) {
+    if (eventName && detail && detail.getBoundingClientRect().top > window.innerHeight - 80) {
       detail.scrollIntoView?.({ block: 'start' });
     }
   };
