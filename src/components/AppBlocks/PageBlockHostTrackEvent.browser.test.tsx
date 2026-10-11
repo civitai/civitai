@@ -139,10 +139,12 @@ describe('PageBlockHost forwards TRACK_EVENT', () => {
     const before = replies.all().length;
     postFromBlock('TRACK_EVENT', { eventName: 'opened' });
     // Ordering control: a request the host always answers, posted after the event. Replies
-    // arrive in order, so anything the host sent for TRACK_EVENT lands before this one.
+    // arrive in order, so a reply the TRACK_EVENT handler sends synchronously lands first.
     postFromBlock('REQUEST_TOKEN', { requestId: 'rq_order' });
     await vi.waitFor(() => {
-      if (!replies.all().includes('TOKEN_REFRESH_RESPONSE')) throw new Error('no control reply');
+      if (!replies.all().slice(before).includes('TOKEN_REFRESH_RESPONSE')) {
+        throw new Error('no control reply');
+      }
     });
     expect(events.queued()).toHaveLength(1);
     expect(replies.all().slice(before)).toEqual(['TOKEN_REFRESH_RESPONSE']);

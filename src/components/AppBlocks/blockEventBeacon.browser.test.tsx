@@ -235,6 +235,7 @@ describe('client budget', () => {
       for (let i = 0; i < 10; i++) recordBlockEvent(SLOT, { eventName: 'tick' });
       vi.advanceTimersByTime(1_000);
     }
+    recordBlockEvent({ ...SLOT, blockInstanceId: 'mbi_other' }, { eventName: 'same_app' });
     recordBlockEvent({ appBlockId: 'apb_2', blockInstanceId: 'mbi_x' }, { eventName: 'quiet' });
     flushBlockEvents();
     const rows = (await beaconBodies()).flatMap((body) => body.events);
@@ -242,6 +243,6 @@ describe('client budget', () => {
       BLOCK_EVENT_SESSION_CAP_PER_APP
     );
     expect(rows.filter((r) => r.appBlockId === 'apb_2')).toHaveLength(1);
-    expect(_internalsForTests.dropped().session_cap).toBe(600 - BLOCK_EVENT_SESSION_CAP_PER_APP);
+    expect(_internalsForTests.dropped().session_cap).toBe(601 - BLOCK_EVENT_SESSION_CAP_PER_APP);
   });
 });

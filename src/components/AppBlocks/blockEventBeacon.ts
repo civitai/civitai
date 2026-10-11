@@ -191,6 +191,11 @@ export function recordBlockEvent(identity: BlockEventIdentity, payload: unknown)
     dropped.invalid += 1;
     return;
   }
+  const accepted = acceptedByApp.get(identity.appBlockId) ?? 0;
+  if (accepted >= BLOCK_EVENT_SESSION_CAP_PER_APP) {
+    dropped.session_cap += 1;
+    return;
+  }
   const properties = primitiveProperties(payload.properties);
   const row: BlockEventRow = {
     appBlockId: identity.appBlockId,
@@ -201,11 +206,6 @@ export function recordBlockEvent(identity: BlockEventIdentity, payload: unknown)
   // Measured here as well as at flush, so an oversize row is never held in the queue.
   if (!fitsInOneBody(byteLength(JSON.stringify(row)))) {
     dropped.oversize += 1;
-    return;
-  }
-  const accepted = acceptedByApp.get(identity.appBlockId) ?? 0;
-  if (accepted >= BLOCK_EVENT_SESSION_CAP_PER_APP) {
-    dropped.session_cap += 1;
     return;
   }
   const instanceKey = `${identity.appBlockId}\u0000${identity.blockInstanceId}`;
