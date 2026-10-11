@@ -1,6 +1,7 @@
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown } from '@trpc/server';
 import * as z from 'zod';
+import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
   isLaunchSlot,
@@ -150,6 +151,10 @@ import {
   getMyAppAnalytics,
   resolveRange,
 } from '~/server/services/blocks/app-analytics.service';
+import {
+  deniedCustomEvents,
+  getMyAppCustomEvents,
+} from '~/server/services/blocks/app-custom-events.service';
 import { resolveBlockCheckpoint } from '~/server/services/blocks/checkpoint.service';
 // The viewer-settings write body, shared verbatim with its REST twin
 // `POST /api/v1/blocks/user-checkpoint/set`. `getRepresentativeBaseModel` and
@@ -8279,6 +8284,42 @@ export const blocksRouter = router({
         appBlockId: input.appBlockId,
         from,
         to,
+      });
+    }),
+
+  /**
+   * The Custom events card on the owner analytics panel (`appBlockEvents`, ClickHouse). Its own
+   * procedure so the card's owner toggle and event selection re-run only these reads. Same
+   * scope, flag gate and ownership resolution as `getMyAppAnalytics`, and the same range
+   * resolution, so its buckets line up with the panel's charts.
+   */
+  getMyAppCustomEvents: appDeveloperProcedure
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
+        includeOwner: z.boolean().optional(),
+        // Declared-name shape; `__undeclared__` cannot match it.
+        event: z.string().regex(BLOCK_ANALYTICS_NAME_RE).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return deniedCustomEvents(resolveRange({ from, to }), 'notEntitled');
+      }
+      const user = ctx.user as SessionUser;
+      return getMyAppCustomEvents({
+        userId: user.id,
+        appBlockId: input.appBlockId,
+        from,
+        to,
+        includeOwner: input.includeOwner,
+        event: input.event,
       });
     }),
 
