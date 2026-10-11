@@ -19,6 +19,8 @@ import {
   type SharedDataHitCategory,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import { appSchemaIdent, isValidAppSlug } from '~/server/utils/apps-slug';
+import { toCsvRows } from '~/utils/csv';
 
 export type Query = <R>(sql: string, params?: unknown[]) => Promise<R[]>;
 
@@ -72,12 +74,11 @@ export interface AppSchema {
 }
 
 /**
- * The provisioned schema shape: `app_` + a slug that passes the provisioner's slug rule
- * (`^[a-z][a-z0-9_]{2,40}$`, in `storage-provision.service.ts`). Re-checked here because the name
- * is interpolated into SQL as an identifier; a name that fails it is reported, never scanned and
- * never silently dropped.
+ * The provisioned schema shape: `app_` + a slug the provisioner's own rule accepts
+ * (`isValidAppSlug`). Re-checked because the name becomes an SQL identifier (via `appSchemaIdent`,
+ * the provisioner's quoting); a name that fails it is reported, never scanned, never dropped.
  */
-const APP_SCHEMA_RE = /^app_([a-z][a-z0-9_]{2,40})$/;
+const APP_SCHEMA_PREFIX = 'app_';
 
 export interface AppSchemaSelection {
   /** Schemas holding `shared_kv` and/or `counters` — the ones to scan. */
@@ -91,8 +92,8 @@ export interface AppSchemaSelection {
 export function selectAppSchemas(rows: AppSchemaRow[]): AppSchemaSelection {
   const selection: AppSchemaSelection = { apps: [], withoutSharedTables: [], rejected: [] };
   for (const row of rows) {
-    const match = APP_SCHEMA_RE.exec(row.schema);
-    if (!match) {
+    const slug = row.schema.slice(APP_SCHEMA_PREFIX.length);
+    if (!row.schema.startsWith(APP_SCHEMA_PREFIX) || !isValidAppSlug(slug)) {
       selection.rejected.push(row.schema);
       continue;
     }
@@ -102,7 +103,7 @@ export function selectAppSchemas(rows: AppSchemaRow[]): AppSchemaSelection {
     }
     selection.apps.push({
       schema: row.schema,
-      slug: match[1],
+      slug,
       hasSharedKv: row.has_shared_kv,
       hasCounters: row.has_counters,
     });
@@ -121,11 +122,11 @@ export const DEFAULT_PAGE_SIZE = 500;
  * `value ? 'data'` separates "no data" from a stored JSON `null`; both scan to zero leaves, but only
  * the first is a row without a blob, which is what `rowsWithData` counts.
  */
-export const sharedKvPageSql = (schema: string) => `SELECT key,
+export const sharedKvPageSql = (slug: string) => `SELECT key,
   value ? 'data' AS has_data,
   value -> 'data' AS data,
   hidden_at IS NOT NULL AS hidden
-FROM "${schema}".shared_kv
+FROM ${appSchemaIdent(slug)}.shared_kv
 WHERE $1::text IS NULL OR key > $1
 ORDER BY key
 LIMIT $2`;
@@ -133,20 +134,21 @@ LIMIT $2`;
 /**
  * A counter's key is user-chosen only when its anchor `shared_kv` row is the bare `{}` the
  * increment path inserts. A counter seeded by an append carries that row's server-generated key,
- * which no live scan ever reads. Both are scanned; `anchor` lets the summary separate them.
+ * which no live scan ever reads. Both are scanned; `anchor` marks each CSV row and gets its own
+ * tally (`userChosenCounters`), so the rate the enforce flip would see can be read on its own.
  */
-export const countersPageSql = (schema: string, joinSharedKv: boolean) =>
+export const countersPageSql = (slug: string, joinSharedKv: boolean) =>
   joinSharedKv
     ? `SELECT c.key,
   s.value = '{}'::jsonb AS anchor,
   s.hidden_at IS NOT NULL AS hidden
-FROM "${schema}".counters c
-LEFT JOIN "${schema}".shared_kv s ON s.key = c.key
+FROM ${appSchemaIdent(slug)}.counters c
+LEFT JOIN ${appSchemaIdent(slug)}.shared_kv s ON s.key = c.key
 WHERE $1::text IS NULL OR c.key > $1
 ORDER BY c.key
 LIMIT $2`
     : `SELECT key, NULL::boolean AS anchor, false AS hidden
-FROM "${schema}".counters
+FROM ${appSchemaIdent(slug)}.counters
 WHERE $1::text IS NULL OR key > $1
 ORDER BY key
 LIMIT $2`;
@@ -177,6 +179,8 @@ export interface ReplayCsvRow {
   matched: string;
   leafLength: number;
   leaf: string;
+  /** Counter rows: whether the key is user-chosen (see `countersPageSql`). Data rows: null. */
+  userChosenCounter: boolean | null;
   /** `blockingHit` would reject this row/counter under enforce, with the pattern list recorded only. */
   blocksUnderEnforce: boolean;
   /** The same, once `user-content-pattern-enforce` is on too. */
@@ -194,6 +198,7 @@ export const CSV_COLUMNS: ReadonlyArray<keyof ReplayCsvRow> = [
   'matched',
   'leafLength',
   'leaf',
+  'userChosenCounter',
   'blocksUnderEnforce',
   'blocksUnderEnforceWithPatterns',
 ];
@@ -205,7 +210,13 @@ export const CSV_COLUMNS: ReadonlyArray<keyof ReplayCsvRow> = [
  */
 export function replayCsvRows(
   scan: SharedTextScan,
-  ctx: { app: string; surface: ReplaySurface; rowKey: string; hidden: boolean }
+  ctx: {
+    app: string;
+    surface: ReplaySurface;
+    rowKey: string;
+    hidden: boolean;
+    userChosenCounter?: boolean | null;
+  }
 ): ReplayCsvRow[] {
   if (!scan.hits.length) return [];
   const blocksUnderEnforce = blockingHit(scan, { enforcePatterns: false }) !== null;
@@ -227,6 +238,7 @@ export function replayCsvRows(
     matched: row.matched,
     leafLength: row.leafLength,
     leaf: row.leafText,
+    userChosenCounter: ctx.userChosenCounter ?? null,
     blocksUnderEnforce,
     blocksUnderEnforceWithPatterns,
   }));
@@ -259,6 +271,8 @@ export interface AppTally {
   blocked: { data: number; counter: number };
   /** The same with the pattern list enforced too. */
   blockedWithPatterns: { data: number; counter: number };
+  /** The counter figures again, for user-chosen keys only — the ones a live increment scans. */
+  userChosenCounters: { hits: CategoryCounts; blocked: number; blockedWithPatterns: number };
 }
 
 export function emptyTally(app: string): AppTally {
@@ -272,13 +286,26 @@ export function emptyTally(app: string): AppTally {
     hits: { data: zeroCounts(), counter: zeroCounts() },
     blocked: { data: 0, counter: 0 },
     blockedWithPatterns: { data: 0, counter: 0 },
+    userChosenCounters: { hits: zeroCounts(), blocked: 0, blockedWithPatterns: 0 },
   };
 }
 
-function countScan(tally: AppTally, surface: ReplaySurface, scan: SharedTextScan) {
+function countScan(
+  tally: AppTally,
+  surface: ReplaySurface,
+  scan: SharedTextScan,
+  userChosenCounter = false
+) {
+  const blocks = blockingHit(scan, { enforcePatterns: false }) !== null;
+  const blocksWithPatterns = blockingHit(scan, { enforcePatterns: true }) !== null;
   for (const hit of scan.hits) tally.hits[surface][hit.category] += 1;
-  if (blockingHit(scan, { enforcePatterns: false })) tally.blocked[surface] += 1;
-  if (blockingHit(scan, { enforcePatterns: true })) tally.blockedWithPatterns[surface] += 1;
+  if (blocks) tally.blocked[surface] += 1;
+  if (blocksWithPatterns) tally.blockedWithPatterns[surface] += 1;
+  if (!userChosenCounter) return;
+  const own = tally.userChosenCounters;
+  for (const hit of scan.hits) own.hits[hit.category] += 1;
+  if (blocks) own.blocked += 1;
+  if (blocksWithPatterns) own.blockedWithPatterns += 1;
 }
 
 async function* pages<R extends { key: string }>(query: Query, sql: string, pageSize: number) {
@@ -304,7 +331,7 @@ export async function replayApp(
   const tally = emptyTally(app.slug);
 
   if (app.hasSharedKv) {
-    for await (const page of pages<SharedKvRow>(query, sharedKvPageSql(app.schema), pageSize)) {
+    for await (const page of pages<SharedKvRow>(query, sharedKvPageSql(app.slug), pageSize)) {
       for (const row of page) {
         // Absent `data` is `undefined`, as the live path hands it over.
         const scan = await scanners.scanData(row.has_data ? row.data : undefined);
@@ -324,18 +351,20 @@ export async function replayApp(
   }
 
   if (app.hasCounters) {
-    const sql = countersPageSql(app.schema, app.hasSharedKv);
+    const sql = countersPageSql(app.slug, app.hasSharedKv);
     for await (const page of pages<CounterRow>(query, sql, pageSize)) {
       for (const row of page) {
         const scan = await scanners.scanCounter(row.key);
         tally.counterKeys += 1;
-        if (row.anchor) tally.counterKeysUserChosen += 1;
-        countScan(tally, 'counter', scan);
+        const userChosenCounter = row.anchor === true;
+        if (userChosenCounter) tally.counterKeysUserChosen += 1;
+        countScan(tally, 'counter', scan, userChosenCounter);
         const ctx = {
           app: app.slug,
           surface: 'counter' as const,
           rowKey: row.key,
           hidden: row.hidden,
+          userChosenCounter,
         };
         for (const csvRow of replayCsvRows(scan, ctx)) emit(csvRow);
       }
@@ -348,19 +377,13 @@ export async function replayApp(
 // ── Output ────────────────────────────────────────────────────────────────────
 
 /**
- * RFC 4180 quoting, plus a leading `'` on a text cell a spreadsheet would read as a formula. The
- * cells hold user-written text and this file is meant to be opened by a reviewer.
+ * One CSV line through the app's shared escaper (`~/utils/csv`): RFC 4180 quoting plus the
+ * spreadsheet-formula guard, which matters here because the cells hold user-written text and the
+ * file is meant to be opened by a reviewer. CRLF, the terminator `toCsvRows` joins with.
  */
-export function csvCell(value: string | number | boolean): string {
-  let text = String(value);
-  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
+const csvLine = (cells: unknown[]) => `${toCsvRows([cells])}\r\n`;
 
-export const csvLine = (cells: ReadonlyArray<string | number | boolean>) =>
-  `${cells.map(csvCell).join(',')}\n`;
-
-export const csvHeader = () => csvLine(CSV_COLUMNS);
+export const csvHeader = () => csvLine([...CSV_COLUMNS]);
 
 export const csvRowLine = (row: ReplayCsvRow) => csvLine(CSV_COLUMNS.map((column) => row[column]));
 
@@ -379,6 +402,11 @@ export function totalTally(tallies: AppTally[]): AppTally {
       total.blocked[surface] += t.blocked[surface];
       total.blockedWithPatterns[surface] += t.blockedWithPatterns[surface];
     }
+    for (const category of Object.keys(t.userChosenCounters.hits) as SharedDataHitCategory[]) {
+      total.userChosenCounters.hits[category] += t.userChosenCounters.hits[category];
+    }
+    total.userChosenCounters.blocked += t.userChosenCounters.blocked;
+    total.userChosenCounters.blockedWithPatterns += t.userChosenCounters.blockedWithPatterns;
   }
   return total;
 }
@@ -397,8 +425,11 @@ export function formatSummary(tallies: AppTally[]): string {
         `counterKeys=${t.counterKeys} (userChosen=${t.counterKeysUserChosen})`,
       `  data hits:    ${countsText(t.hits.data)}`,
       `  counter hits: ${countsText(t.hits.counter)}`,
+      `  user-chosen counter hits: ${countsText(t.userChosenCounters.hits)}`,
       `  would block under enforce: data=${t.blocked.data} counter=${t.blocked.counter}` +
-        ` | with patterns enforced: data=${t.blockedWithPatterns.data} counter=${t.blockedWithPatterns.counter}`
+        ` | with patterns enforced: data=${t.blockedWithPatterns.data} counter=${t.blockedWithPatterns.counter}`,
+      `  user-chosen counters that would block: ${t.userChosenCounters.blocked}` +
+        ` | with patterns enforced: ${t.userChosenCounters.blockedWithPatterns}`
     );
   };
   for (const t of tallies) if (t.rows || t.counterKeys) block(t);

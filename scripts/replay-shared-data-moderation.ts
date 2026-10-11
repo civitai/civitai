@@ -14,8 +14,9 @@
  *
  * Options:
  *   --out <path>       CSV to write. Default: <os tmpdir>/shared-data-replay-<timestamp>.csv.
- *                      Refused when it is inside this repository or already exists. Written 0600:
- *                      it holds user-written text.
+ *                      Refused inside any git work tree (this repository or another clone of
+ *                      it) and when the file already exists. Written 0600: it holds user-written
+ *                      text. Deleted again if the run fails part-way.
  *   --page-size <n>    Rows per keyset page (default 500).
  *
  * Environment (the app's server env, loaded the usual `tsscript` way):
@@ -34,15 +35,16 @@
  *     calls the recording half of `shared-data-moderation.ts` (`recordSharedDataScan`,
  *     `scheduleSharedDataShadow`), and the two sink clients are absent by the env check above;
  *   - write to Redis. The one Redis write reachable from the scan path is the blocklist cache
- *     populate on a cache miss (`setCache` in `blocklist.service.ts`, via `redis.set`). That method
- *     is replaced on the cache client with a no-op that counts the suppressed writes, which the
- *     summary prints. A cold cache therefore costs main-DB reads on each scan rather than a write.
+ *     populate on a cache miss (`setCache` in `blocklist.service.ts`, via `redis.set`). That
+ *     method is redirected to a run-local memo that `get` reads first (`suppressCacheWrites`), so a
+ *     cold list costs one main-DB read for the whole run and nothing is written to Redis.
  *
  * Detectors that need I/O: only the blocklist-backed two (link domains, message patterns) and the
  * benign-phrase list the audit strips first. Every other detector is code bundled in the app. Before
  * scanning, the script requires both blocklists to be non-empty and proves each catches a probe
  * built from its own live entries — an unreadable list fails the run instead of reading as zero.
  */
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -67,7 +69,8 @@ export function parseArgs(argv: string[], now: Date = new Date()): ReplayArgs {
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
-    const value = argv[i + 1];
+    // A following flag is never a value: `--out --page-size 5` must not write a file named `--page-size`.
+    const value = argv[i + 1]?.startsWith('--') ? undefined : argv[i + 1];
     if (flag === '--out' && value) {
       args.out = value;
       i++;
@@ -83,19 +86,51 @@ export function parseArgs(argv: string[], now: Date = new Date()): ReplayArgs {
   return args;
 }
 
-/** The CSV holds user-written text: never inside the repository, where it could be committed. */
-export function resolveOutPath(out: string, repoRoot: string = REPO_ROOT): string {
-  const resolved = path.resolve(out);
-  const relative = path.relative(path.resolve(repoRoot), resolved);
-  if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
-    throw new Error(`refusing to write the CSV inside the repository: ${resolved}`);
+const isInside = (dir: string, root: string) => {
+  const relative = path.relative(root, dir);
+  return relative === '' || (!path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..');
+};
+
+/** True when `dir` is inside ANY git work tree — another clone of this repo included. */
+export function isInGitWorkTree(dir: string): boolean {
+  const result = spawnSync('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'], {
+    encoding: 'utf8',
+  });
+  return result.status === 0 && result.stdout.trim() === 'true';
+}
+
+/**
+ * The CSV holds user-written text, so it must never land where it could be committed: not inside
+ * this checkout, and not inside any other git work tree (another clone of this public repo). The
+ * parent directory is resolved through symlinks first, so a link cannot smuggle the file in.
+ */
+export function resolveOutPath(
+  out: string,
+  {
+    repoRoot = REPO_ROOT,
+    inGitWorkTree = isInGitWorkTree,
+    realpath = fs.realpathSync,
+  }: {
+    repoRoot?: string;
+    inGitWorkTree?: (dir: string) => boolean;
+    realpath?: (p: string) => string;
+  } = {}
+): string {
+  const absolute = path.resolve(out);
+  const parent = realpath(path.dirname(absolute));
+  const resolved = path.join(parent, path.basename(absolute));
+  if (isInside(parent, realpath(repoRoot)) || inGitWorkTree(parent)) {
+    throw new Error(`refusing to write the CSV inside a git work tree: ${resolved}`);
   }
   return resolved;
 }
 
-/** Both sink clients are built only from these; with them empty, neither exists in this process. */
+/**
+ * Both sink clients are built only when these are truthy (the raw value, as their own gates read
+ * it); with them empty, neither exists in this process.
+ */
 export function assertNoSinks(env: Record<string, string | undefined>): void {
-  const set = (['CLICKHOUSE_HOST', 'AXIOM_TOKEN'] as const).filter((k) => env[k]?.trim());
+  const set = (['CLICKHOUSE_HOST', 'AXIOM_TOKEN'] as const).filter((k) => !!env[k]);
   if (set.length) {
     throw new Error(
       `${set.join(' and ')} must be empty for a replay (set to the empty string, not unset)`
@@ -104,20 +139,30 @@ export function assertNoSinks(env: Record<string, string | undefined>): void {
 }
 
 /**
- * Replace the cache client's `set` with a no-op that counts. See the header: it is the one Redis
- * write the scan path can reach.
+ * Turn the cache client's `set` into a write to a RUN-LOCAL memo, and make `get` read that memo
+ * first. See the header: `set` is the one Redis write the scan path can reach.
+ *
+ * Why a memo rather than a plain no-op: a no-op leaves a cold blocklist key cold, so every later
+ * scan would miss again and re-read the main database. With the memo, a key that missed once is
+ * served from this process for the rest of the run — one main-DB read per list, no Redis write.
+ * Only keys this run tried to `set` are intercepted; every other `get` goes to Redis unchanged.
  */
 export function suppressCacheWrites(client: object): { suppressed: () => number } {
-  let suppressed = 0;
-  Object.defineProperty(client, 'set', {
-    configurable: true,
-    writable: true,
-    value: async () => {
-      suppressed += 1;
-      return null;
-    },
+  const memo = new Map<unknown, unknown>();
+  // `object`, not the client's own type: its `get` is a wide overload set no narrower signature
+  // matches, and only the call shape `blocklist.service.ts` uses (`get(key)`) matters here.
+  const { get } = client as { get: (...args: unknown[]) => unknown };
+  const originalGet = get.bind(client);
+  const define = (name: 'get' | 'set', value: (...args: unknown[]) => unknown) =>
+    Object.defineProperty(client, name, { configurable: true, writable: true, value });
+  define('set', async (key, value) => {
+    memo.set(key, value);
+    return null;
   });
-  return { suppressed: () => suppressed };
+  define('get', (key, ...rest) =>
+    memo.has(key) ? Promise.resolve(memo.get(key)) : originalGet(key, ...rest)
+  );
+  return { suppressed: () => memo.size };
 }
 
 interface ReadOnlyPool {
@@ -138,6 +183,9 @@ export async function withReadOnlyTransaction<T>(
   const client = await pool.connect();
   try {
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    // The session sits idle in this transaction while each page is classified; a role-level idle
+    // timeout would otherwise kill a long run part-way. Transaction-local, so it ends with it.
+    await client.query('SET LOCAL idle_in_transaction_session_timeout = 0');
     const query: Query = async <R>(sql: string, params?: unknown[]) =>
       (await client.query(sql, params)).rows as R[];
     return await fn(query);
@@ -176,7 +224,9 @@ async function main() {
   console.log('self-check: link and pattern detectors both caught their probe');
 
   const fd = fs.openSync(out, 'wx', 0o600);
+  console.log(`writing CSV: ${out}`);
   let hitRows = 0;
+  let complete = false;
   try {
     fs.writeSync(fd, replay.csvHeader());
     const tallies = await withReadOnlyTransaction(requireAppsDb(), async (query) => {
@@ -207,10 +257,16 @@ async function main() {
       return results;
     });
     console.log(replay.formatSummary(tallies));
+    complete = true;
   } finally {
     fs.closeSync(fd);
+    // A partial CSV of user text is worse than none: it reads as a finished run.
+    if (!complete) {
+      fs.rmSync(out, { force: true });
+      console.error(`run failed; deleted the partial CSV ${out}`);
+    }
   }
-  console.log(`blocklist cache writes suppressed: ${cacheGuard.suppressed()}`);
+  console.log(`blocklist cache keys served from the run-local memo: ${cacheGuard.suppressed()}`);
   console.log(`wrote ${hitRows} hit row(s) to ${out}`);
 }
 
