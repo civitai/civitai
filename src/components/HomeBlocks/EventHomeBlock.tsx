@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Button, Card, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -5,18 +6,57 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HolidayFrame } from '~/components/Decorations/HolidayFrame';
 import { Lightbulb } from '~/components/Decorations/Lightbulb';
 import { useQueryEvent } from '~/components/Events/events.utils';
+import { useNavBannersDismissed } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { eventHomeBlockDismissId } from '~/components/HomeBlocks/scored-event-home-block.utils';
+import { ScoredEventHomeBlock } from '~/components/HomeBlocks/ScoredEventHomeBlock';
+import { useInView } from '~/hooks/useInView';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function EventHomeBlock({ showAds, ...props }: Props) {
-  if (!props.metadata.event) return null;
+  const event = props.metadata.event;
+  const { dismissed, dismiss } = useNavBannersDismissed();
+  if (!event || dismissed.includes(eventHomeBlockDismissId(event))) return null;
 
   return (
     <HomeBlockWrapper py={32}>
-      <EventHomeBlockContent {...props} />
+      <EventHomeBlockBody
+        event={event}
+        metadata={props.metadata}
+        onDismiss={() => dismiss(eventHomeBlockDismissId(event))}
+      />
     </HomeBlockWrapper>
+  );
+}
+
+// Nothing is fetched until the block first scrolls into view.
+function EventHomeBlockBody({
+  event,
+  metadata,
+  onDismiss,
+}: {
+  event: string;
+  metadata: HomeBlockMetaSchema;
+  onDismiss: () => void;
+}) {
+  const { ref, inView } = useInView();
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    if (inView) setSeen(true);
+  }, [inView]);
+  const { data } = trpc.event.getData.useQuery({ event }, { enabled: seen });
+
+  return (
+    <div ref={ref} className="min-h-40">
+      {data?.scored ? (
+        <ScoredEventHomeBlock event={event} data={data} onDismiss={onDismiss} />
+      ) : data ? (
+        <EventHomeBlockContent metadata={metadata} />
+      ) : null}
+    </div>
   );
 }
 

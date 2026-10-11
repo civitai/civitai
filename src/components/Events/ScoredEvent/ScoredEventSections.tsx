@@ -21,15 +21,13 @@ import { trpc } from '~/utils/trpc';
 import type { ReactNode } from 'react';
 import { Fragment, useState } from 'react';
 import type { ScoredSection } from '~/components/Events/ScoredEvent/scored-event.utils';
-import { scoredSectionOrder } from '~/components/Events/ScoredEvent/scored-event.utils';
+import {
+  isFinalizing,
+  scoredSectionOrder,
+  settledWinner,
+} from '~/components/Events/ScoredEvent/scored-event.utils';
 
 type EventData = RouterOutput['event']['getData'];
-
-// The rank-1 team, as the end-of-event job decides it: ranks are unique, so a tie on points still
-// has one winner, and the page must not announce a result the prize payout contradicts.
-function winnerOf(teams?: { team: string; rank: number }[]) {
-  return teams?.find((t) => t.rank === 1)?.team;
-}
 
 /**
  * The page of a scored event: what it is, where the teams stand, the viewer's hats and what they
@@ -64,12 +62,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
     standings?.teamsTopicId,
     !ended && (heroView.inView || standingsView.inView)
   );
-  // Scores take late data until finalAt, and the standings snapshot is hourly: the result is final
-  // only once a snapshot taken after finalAt is on the page.
-  const finalizing =
-    ended &&
-    !!data.finalAt &&
-    (now < data.finalAt || (!!standings && standings.updatedAt < data.finalAt));
+  const finalizing = isFinalizing(data, standings, now);
   const { data: hats = [], dataUpdatedAt: hatsFetchedAt } = trpc.event.getMyHats.useQuery(
     { event },
     { enabled: joined }
@@ -158,7 +151,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
           points={points}
           ended={ended}
           finalizing={finalizing}
-          winner={ended && !finalizing ? winnerOf(standings?.teams) : undefined}
+          winner={settledWinner(data, standings, now)}
           teamHats={standings?.teamHats}
           onJoin={handleJoin}
           joining={equipping}

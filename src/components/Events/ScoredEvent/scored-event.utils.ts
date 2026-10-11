@@ -118,3 +118,34 @@ export function scoredSectionOrder({
   if (joined) return ['hats', 'standings', 'shop', 'topHats', 'rules'];
   return ['rules', 'shop', 'standings', 'topHats'];
 }
+
+type Settling = { endDate: Date; finalAt?: Date };
+
+/**
+ * Ended, but not yet settled: scores take late data until `finalAt`, and the standings snapshot is
+ * hourly, so the result is final only once a snapshot taken after `finalAt` is in.
+ */
+export function isFinalizing(
+  data: Settling,
+  standings: { updatedAt: Date } | undefined,
+  now: Date
+) {
+  return (
+    data.endDate < now &&
+    !!data.finalAt &&
+    (now < data.finalAt || (!!standings && standings.updatedAt < data.finalAt))
+  );
+}
+
+/**
+ * The rank-1 team once the result is settled. Ranks are unique, so a tie on points still has one
+ * winner, and nothing may announce a result the prize payout contradicts.
+ */
+export function settledWinner(
+  data: Settling,
+  standings: { updatedAt: Date; teams: { team: string; rank: number }[] } | undefined,
+  now: Date
+) {
+  if (data.endDate >= now || isFinalizing(data, standings, now)) return undefined;
+  return standings?.teams.find((t) => t.rank === 1)?.team;
+}

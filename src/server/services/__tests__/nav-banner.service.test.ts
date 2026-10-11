@@ -111,10 +111,15 @@ describe('the birthday promo, through the real access rule', () => {
       postEditor: {
         title: 'Civitai turns 4.',
         body: 'Put a party hat on an image in this post. Its views and reactions score for your team.',
-        draftNote: 'Scores as people see it, so publish to start earning.',
+        draftNote: 'Scores once people can see it.',
         image: '4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d',
       },
-      homeBlock: undefined,
+      homeBlock: {
+        eyebrow: "Civitai's 4th Birthday",
+        title: 'Civitai turns 4.',
+        body: 'Four colour teams, Nov 1 to Nov 30. Hat your best work and score for your team.',
+        cta: 'See the event',
+      },
     });
   });
 });
