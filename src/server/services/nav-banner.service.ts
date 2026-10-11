@@ -1,11 +1,18 @@
 import { events } from '~/server/events';
-import type { EventBannerCopy, EventPageCopy } from '~/server/events/base.event';
+import type { EventBannerCopy, EventPageCopy, EventPromoCopy } from '~/server/events/base.event';
 import type { EventViewer, GatedEvent } from '~/server/events/event-access';
 import { canPlayEvent, getEventAccess } from '~/server/events/event-access';
 import { logToAxiom } from '~/server/logging/client';
-import type { NavBanner } from '~/shared/constants/nav-banner.constants';
+import type { EventPromo, NavBanner } from '~/shared/constants/nav-banner.constants';
 
-type BannerEvent = GatedEvent & { title: string; page?: EventPageCopy; banner?: EventBannerCopy };
+type BannerEvent = GatedEvent & {
+  title: string;
+  page?: EventPageCopy;
+  banner?: EventBannerCopy;
+  promo?: EventPromoCopy;
+  scoring?: unknown;
+  join?: unknown;
+};
 
 /**
  * The nav announcement strips this viewer sees, highest priority first.
@@ -62,5 +69,29 @@ function eventBanner(event: BannerEvent, banner: EventBannerCopy): NavBanner {
     background: banner.background,
     dismissible: banner.dismissible ?? true,
     priority: banner.priority ?? 0,
+    promo: eventPromo(event, banner),
+  };
+}
+
+function eventPromo(event: BannerEvent, banner: EventBannerCopy): EventPromo {
+  const { promo = {} } = event;
+  const headline = event.page?.headline ?? event.title;
+  return {
+    event: event.name,
+    menuLabel: promo.menuLabel ?? event.title,
+    menuIcon: promo.menuIcon ?? 'confetti',
+    // The roster page refuses any event that is not both scored and joinable.
+    teamHref: event.scoring && event.join ? `/events/${event.name}/team` : undefined,
+    postEditor: promo.postEditor && {
+      ...promo.postEditor,
+      title: promo.postEditor.title ?? headline,
+      image: promo.postEditor.image ?? banner.image ?? event.page?.heroImage,
+    },
+    homeBlock: promo.homeBlock && {
+      ...promo.homeBlock,
+      title: promo.homeBlock.title ?? headline,
+      body: promo.homeBlock.body ?? banner.text,
+      cta: promo.homeBlock.cta ?? banner.cta,
+    },
   };
 }
