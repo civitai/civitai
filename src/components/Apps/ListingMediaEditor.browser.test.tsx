@@ -195,6 +195,27 @@ describe('ListingMediaEditor — rating visibility', () => {
       .toHaveTextContent('When this listing goes live it will be rated R');
   });
 
+  test.each(['pending', 'removed'] as const)(
+    'a %s listing that was live keeps its rating: replacing the image alone does not lower it',
+    async (status) => {
+      mocks.listing = listing({ status });
+      renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+      await expect
+        .element(page.getByTestId('apps-listing-rating-callout'))
+        .toHaveTextContent(
+          'Replacing that image alone will not lower the listing’s rating; ask a moderator to review that image’s rating.'
+        );
+    }
+  );
+
+  test('a draft that has never been live is re-rated on approve: replacing the image avoids it', async () => {
+    mocks.listing = listing({ status: 'draft' });
+    renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);
+    await expect
+      .element(page.getByTestId('apps-listing-rating-callout'))
+      .toHaveTextContent('once it is live. Replacing that image avoids this.');
+  });
+
   test('a listing whose editing is blocked never asks for asset levels', async () => {
     mocks.listing = listing({ editBlockedReason: 'A moderator removed this listing.' });
     renderWithProviders(<ListingMediaEditor appBlockId="ab_1" />);

@@ -113,9 +113,12 @@ export function OnsiteApproveRatingWarning({
  *   - `live-revision` — approved; the edits are staged as a revision, whose review cannot
  *     raise the listing's rating.
  *   - `live-direct`   — approved and edited in place (a moderator), with no review to follow.
- *   - `not-live`      — not in the store; going live rates it at least as high as its images.
+ *   - `was-live`      — out of the store after being live (reset to pending, or unpublished);
+ *     going live again keeps at least its current rating.
+ *   - `not-live`      — never live; going live rates it from the declared rating and its
+ *     images, so its current rating is not kept.
  */
-export type ListingRatingStage = 'live-revision' | 'live-direct' | 'not-live';
+export type ListingRatingStage = 'live-revision' | 'live-direct' | 'was-live' | 'not-live';
 
 /**
  * The author-facing explanation in the media editor: which images put the listing above
@@ -141,7 +144,7 @@ export function ListingMediaRatingCallout({
     allAssetsRated,
   } = summarizeListingRating({ declaredRating, listingRating, assets });
   const stores = `${SFW_STORE_HOST} (visible on ${MATURE_STORE_HOST})`;
-  const live = stage !== 'not-live';
+  const live = stage === 'live-revision' || stage === 'live-direct';
   const hidden = live ? `is hidden on ${stores}` : `will be hidden on ${stores} once it is live`;
 
   if (drivingAssets.length > 0) {
@@ -174,10 +177,14 @@ export function ListingMediaRatingCallout({
           above the {ratingLabel(declaredRating)} you declared for this app. A listing is never
           rated lower than its most mature image. {consequence}{' '}
           {currentExceedsProjected
-            ? 'Ask a moderator to review its images’ ratings.'
+            ? 'Ask a moderator to review the listing’s rating.'
+            : projectedExceedsCurrent || stage === 'not-live'
+            ? drivingAssets.length === 1
+              ? 'Replacing that image avoids this.'
+              : 'Replacing those images avoids this.'
             : drivingAssets.length === 1
-            ? 'Replace that image, or ask a moderator to review its rating.'
-            : 'Replace those images, or ask a moderator to review their ratings.'}
+            ? 'Replacing that image alone will not lower the listing’s rating; ask a moderator to review that image’s rating.'
+            : 'Replacing those images alone will not lower the listing’s rating; ask a moderator to review their ratings.'}
         </Text>
       </Alert>
     );
@@ -196,7 +203,7 @@ export function ListingMediaRatingCallout({
           This listing is rated {ratingLabel(current.rating)}, above the{' '}
           {ratingLabel(declaredRating)} you declared
           {current.hiddenOnSfw ? `, and ${hidden}` : ''} — but none of its current images is rated
-          that high. Ask a moderator to review its images’ ratings.
+          that high. Ask a moderator to review the listing’s rating.
         </Text>
       </Alert>
     );

@@ -2135,8 +2135,9 @@ export function resetRestoreWhere(appBlockId: string) {
  * `rev-<ulid>` slug, so it can never match an app slug. The `revisionOfId: null` term is
  * belt only.
  *
- * 🔴 A FIXED NUMBER OF QUERIES FOR THE WHOLE PAGE, never one per row — one parent plus one
- * per relation, since Prisma loads each separately. Keyed on the REQUEST id rather than the
+ * 🔴 A FIXED NUMBER OF QUERIES FOR THE WHOLE PAGE, never one per row: the slug join (one
+ * parent plus one per relation, since Prisma loads each separately) and one query each
+ * for the draft-transition and reset-restore lookups. Keyed on the REQUEST id rather than the
  * slug: two decided requests can share a slug while disagreeing about which listing is
  * theirs, so a slug-keyed result cannot hold both verdicts.
  */

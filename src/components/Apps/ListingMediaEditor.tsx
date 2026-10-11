@@ -403,8 +403,12 @@ export function ListingMediaEditor({ appBlockId }: { appBlockId: string }) {
                 assetsQuery.data && {
                   declaredRating: listing.declaredContentRating,
                   listingRating: listing.contentRating,
+                  // Only a never-approved `draft` is re-rated from its declaration on
+                  // approve; every other status keeps its current rating as the floor.
                   stage: !isApproved
-                    ? 'not-live'
+                    ? listing.status === 'draft'
+                      ? 'not-live'
+                      : 'was-live'
                     : modDirectLiveEdit
                     ? 'live-direct'
                     : 'live-revision',
