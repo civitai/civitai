@@ -1145,6 +1145,8 @@ async function withdrawPlatformListedItems(args: {
       select: { id: true, userId: true },
     });
     let withdrawn = 0;
+    // One pass per parent: the owner exclusion compares two tables' columns, which a Prisma
+    // `where` cannot. A client normally has one parent (more is a 409 at sync).
     for (const parent of parents) {
       if (args.authorUserId === parent.userId) continue;
       // The parent must still have the owner read above, so an ownership change in between
