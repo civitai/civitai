@@ -1171,11 +1171,12 @@ describe('team roster rank scores', () => {
     // One complete pass is not enough: pods on the previous release may still be serving.
     await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT]);
     expect(s.strings.get(keys.rankReady)).toBe(`pending:${PREVIEW_NOW.getTime()}`);
+    // Still pending: a planted rank score is still not read.
+    s.zsets.get(keys.rank('Blue', 'points', 'preview'))?.set('1', 2 ** 52);
     expect((await s.read('points')).rows.map((r) => [r.userId, r.points])).toEqual([
       [2, 9],
       [1, 5],
     ]);
-    s.zsets.get(keys.rank('Blue', 'points', 'preview'))?.set('1', 2 ** 52);
     const later = { ...s.deps, now: () => new Date(PREVIEW_NOW.getTime() + RANK_SETTLE_MS) };
     await reconcileEventRosters({ ...later, gate: gateOf(s) }, [EVENT]);
     expect(s.strings.get(keys.rankReady)).toBe('ready');
