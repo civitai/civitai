@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * correctness contract a fragment match would let a mutant keep: the owner exclusion (which
  * also governs the drop count), signed-in-only uniques (`viewerKey != 0`), and the
  * `mapContains` gate on every property aggregate (an absent Map key reads as 0).
- * Its results against a real ClickHouse are checked separately, outside this suite.
  */
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
@@ -66,11 +65,7 @@ type ChCall = {
   clickhouse_settings?: Record<string, unknown>;
 };
 
-/**
- * Answers each query by its shape. Owner rows are modelled: a query WITHOUT the owner exclusion
- * sees more events and more drops, so a mutant that loses the exclusion on whichever query feeds
- * a number changes that number. Fixture values are pairwise distinct.
- */
+/** Answers each query by its shape; owner rows are modelled, so a query without the owner exclusion sees more. */
 function fakeCh(opts?: { throws?: boolean; hangUntilAborted?: boolean; scalar?: unknown }) {
   const calls: ChCall[] = [];
   const query = vi.fn(async (arg: ChCall) => {
@@ -210,7 +205,8 @@ describe('getAppCustomEvents: SQL', () => {
       expect(call.format).toBe('JSONEachRow');
       expect(call.abort_signal).toBeInstanceOf(AbortSignal);
       expect(call.clickhouse_settings).toEqual({
-        max_execution_time: CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS,
+        max_execution_time: 10,
+        max_memory_usage: '536870912',
       });
     }
   });

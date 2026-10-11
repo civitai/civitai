@@ -38,7 +38,7 @@
 --
 -- READ PATH: unique viewers are signed-in viewers only, counted as
 --   uniqExactIf(viewerKey, viewerKey != 0)
--- Signed-out activity is reported as event counts (countIf(isAnon = 1)), never as unique viewers:
+-- Signed-out activity is reported as event counts (countIf(viewerKey = 0)), never as unique viewers:
 -- every signed-out row shares the key 0.
 --
 -- 🔴 AN ABSENT MAP KEY READS AS THE TYPE DEFAULT, not NULL: numProps['k'] = 0, boolProps['k'] = 0,

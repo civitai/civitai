@@ -26,7 +26,7 @@ import {
   Tooltip as ChartTooltip,
 } from 'chart.js';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
@@ -222,7 +222,14 @@ function formatStat(n: number | null): string {
   return n === null ? '—' : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function propertyTotal(property: CustomEventPropertyBreakdown): number {
+  if (property.type === 'enum') return property.values.reduce((sum, v) => sum + v.count, 0);
+  if (property.type === 'number') return property.count;
+  return property.trueCount + property.falseCount;
+}
+
 function PropertyBreakdown({ property }: { property: CustomEventPropertyBreakdown }) {
+  const total = propertyTotal(property);
   return (
     <Stack gap={4}>
       <Group gap="xs">
@@ -233,13 +240,23 @@ function PropertyBreakdown({ property }: { property: CustomEventPropertyBreakdow
           {property.type}
         </Badge>
       </Group>
-      {property.type === 'enum' && (
+      {total === 0 ? (
+        <Text size="sm" c="dimmed">
+          Not set on any event in this range.
+        </Text>
+      ) : property.type === 'enum' ? (
         <Table>
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>Value</Table.Th>
+              <Table.Th ta="right">Events</Table.Th>
+            </Table.Tr>
+          </Table.Thead>
           <Table.Tbody>
             {property.values.map((v) => (
               <Table.Tr key={v.value}>
                 <Table.Td>
-                  <Text size="sm" lineClamp={1}>
+                  <Text size="sm" lineClamp={1} title={v.value}>
                     {v.value}
                   </Text>
                 </Table.Td>
@@ -248,21 +265,17 @@ function PropertyBreakdown({ property }: { property: CustomEventPropertyBreakdow
             ))}
           </Table.Tbody>
         </Table>
-      )}
-      {property.type === 'number' && (
-        <Text size="sm" c={property.count === 0 ? 'dimmed' : undefined}>
-          {property.count === 0
-            ? 'Not set on any event in this range.'
-            : `Set on ${property.count.toLocaleString()} event${
-                property.count === 1 ? '' : 's'
-              } · sum ${formatStat(property.sum)} · avg ${formatStat(
-                property.avg
-              )} · median ${formatStat(property.p50)} · p95 ${formatStat(property.p95)}`}
-        </Text>
-      )}
-      {property.type === 'boolean' && (
+      ) : property.type === 'number' ? (
         <Text size="sm">
-          true {property.trueCount.toLocaleString()} · false {property.falseCount.toLocaleString()}
+          {`Set on ${property.count.toLocaleString()} event${
+            property.count === 1 ? '' : 's'
+          } · sum ${formatStat(property.sum)} · avg ${formatStat(
+            property.avg
+          )} · median ${formatStat(property.p50)} · p95 ${formatStat(property.p95)}`}
+        </Text>
+      ) : (
+        <Text size="sm">
+          {`true ${property.trueCount.toLocaleString()} · false ${property.falseCount.toLocaleString()}`}
         </Text>
       )}
     </Stack>
@@ -271,7 +284,7 @@ function PropertyBreakdown({ property }: { property: CustomEventPropertyBreakdow
 
 /**
  * 🔴 An unavailable OR absent `customEvents` (ClickHouse down, or an old pod that omits the key)
- * must never render a count: "0 events" there is a fabricated zero, as on the App loads card.
+ * must never render a count: "0 events" there is a fabricated zero.
  */
 function CustomEventsCard({
   customEvents,
@@ -292,12 +305,20 @@ function CustomEventsCard({
   onSelectEvent: (eventName: string | null) => void;
   refreshing: boolean;
 }) {
+  const detailRef = useRef<HTMLDivElement>(null);
   const measured = customEvents && !customEvents.unavailable ? customEvents : undefined;
+  // During a refetch the previous payload is shown, and its selection may be another event's.
   const selected =
     measured?.selected && measured.selected.eventName === selectedEvent
       ? measured.selected
       : undefined;
   const nothingRecorded = measured ? measured.topEvents.every((e) => e.count === 0) : false;
+
+  const selectEvent = (eventName: string | null) => {
+    onSelectEvent(eventName);
+    // In one column (the modal) the detail sits below the whole table.
+    if (eventName) detailRef.current?.scrollIntoView?.({ block: 'nearest' });
+  };
 
   return (
     <Card padding="md" radius="md" withBorder>
@@ -312,16 +333,16 @@ function CustomEventsCard({
           >
             <IconInfoCircle size={14} />
           </Tooltip>
-          {refreshing && <Loader size="xs" />}
+          {refreshing && <Loader size="xs" aria-label="Refreshing custom events" />}
         </Group>
         {appSelected && (
           <Switch
             size="sm"
             label="Include owner activity"
-            description="Events sent while the app's owner was signed in, such as dev-tunnel testing"
+            description="Events sent while the app's owner was signed in, such as your own testing. Also changes the undeclared-events count."
             checked={includeOwner}
             onChange={(e) => onIncludeOwnerChange(e.currentTarget.checked)}
-            maw={320}
+            maw={340}
           />
         )}
       </Group>
@@ -336,14 +357,19 @@ function CustomEventsCard({
           metrics on this page are unaffected.
         </Text>
       ) : (
-        <Stack gap="sm" mt="sm">
+        <Stack
+          gap="sm"
+          mt="sm"
+          aria-busy={refreshing}
+          style={refreshing ? { opacity: 0.6 } : undefined}
+        >
           {measured.undeclaredDrops > 0 && (
             <Alert variant="light" color="yellow" icon={<IconInfoCircle size={16} />}>
               <Text size="sm">
                 {measured.undeclaredDrops.toLocaleString()}{' '}
                 {measured.undeclaredDrops === 1
-                  ? 'event was sent with a name'
-                  : 'events were sent with names'}{' '}
+                  ? 'event was sent in this range with a name'
+                  : 'events were sent in this range with names'}{' '}
                 your approved manifest doesn&apos;t declare, so{' '}
                 {measured.undeclaredDrops === 1 ? 'it was' : 'they were'} not recorded by name.
                 Declare an event in your manifest and resubmit to see it here.
@@ -360,78 +386,97 @@ function CustomEventsCard({
               to see what people do inside your app.
             </Text>
           ) : (
-            <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
-              <div>
-                {nothingRecorded && (
-                  <Text c="dimmed" size="sm">
-                    No declared events were recorded in this range.
-                  </Text>
-                )}
-                <Table>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Event</Table.Th>
-                      <Table.Th ta="right">Events</Table.Th>
-                      <Table.Th ta="right">Signed-in viewers</Table.Th>
-                      <Table.Th ta="right">Signed-out events</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {measured.topEvents.map((e) => (
-                      <Table.Tr key={e.eventName}>
-                        <Table.Td>
-                          <Anchor
-                            component="button"
-                            type="button"
-                            size="sm"
-                            fw={e.eventName === selectedEvent ? 700 : undefined}
-                            aria-pressed={e.eventName === selectedEvent}
-                            onClick={() =>
-                              onSelectEvent(e.eventName === selectedEvent ? null : e.eventName)
-                            }
-                          >
-                            {e.eventName}
-                          </Anchor>
-                        </Table.Td>
-                        <Table.Td ta="right">{e.count.toLocaleString()}</Table.Td>
-                        <Table.Td ta="right">{e.signedInViewers.toLocaleString()}</Table.Td>
-                        <Table.Td ta="right">{e.anonymousEvents.toLocaleString()}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </div>
-              <div>
-                {selected ? (
-                  <Stack gap="sm">
-                    <Text size="sm" fw={600}>
-                      {selected.eventName} over time
+            <>
+              <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
+                <div>
+                  {nothingRecorded && (
+                    <Text c="dimmed" size="sm">
+                      No declared events were recorded in this range.
                     </Text>
-                    <MiniLineChart points={selected.series} granularity={granularity} />
-                    {selected.properties.length === 0 ? (
-                      <Text c="dimmed" size="sm">
-                        This event declares no properties.
+                  )}
+                  <Table.ScrollContainer minWidth={420}>
+                    <Table>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Event</Table.Th>
+                          <Table.Th ta="right">Events</Table.Th>
+                          <Table.Th ta="right">Signed-in viewers</Table.Th>
+                          <Table.Th ta="right">Signed-out events</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {measured.topEvents.map((e) => {
+                          const isSelected = e.eventName === selectedEvent;
+                          return (
+                            <Table.Tr
+                              key={e.eventName}
+                              bg={isSelected ? 'var(--mantine-color-blue-light)' : undefined}
+                            >
+                              <Table.Td>
+                                <Anchor
+                                  component="button"
+                                  type="button"
+                                  size="sm"
+                                  title={e.eventName}
+                                  aria-pressed={isSelected}
+                                  onClick={() => selectEvent(isSelected ? null : e.eventName)}
+                                >
+                                  {e.eventName}
+                                </Anchor>
+                              </Table.Td>
+                              <Table.Td ta="right">{e.count.toLocaleString()}</Table.Td>
+                              <Table.Td ta="right">{e.signedInViewers.toLocaleString()}</Table.Td>
+                              <Table.Td ta="right">{e.anonymousEvents.toLocaleString()}</Table.Td>
+                            </Table.Tr>
+                          );
+                        })}
+                      </Table.Tbody>
+                    </Table>
+                  </Table.ScrollContainer>
+                </div>
+                <div ref={detailRef} aria-live="polite">
+                  {selected ? (
+                    <Stack gap="sm">
+                      <Text size="sm" fw={600}>
+                        {selected.eventName} over time
                       </Text>
+                      <MiniLineChart points={selected.series} granularity={granularity} />
+                      {selected.properties.length === 0 ? (
+                        <Text c="dimmed" size="sm">
+                          This event declares no properties.
+                        </Text>
+                      ) : (
+                        selected.properties.map((p) => (
+                          <PropertyBreakdown key={p.name} property={p} />
+                        ))
+                      )}
+                    </Stack>
+                  ) : selectedEvent ? (
+                    refreshing ? (
+                      <Group justify="center" py="sm">
+                        <Loader size="sm" aria-label={`Loading ${selectedEvent}`} />
+                      </Group>
                     ) : (
-                      selected.properties.map((p) => (
-                        <PropertyBreakdown key={p.name} property={p} />
-                      ))
-                    )}
-                  </Stack>
-                ) : (
-                  <Text c="dimmed" size="sm">
-                    Select an event to see it over time and its property breakdown.
-                  </Text>
-                )}
-              </div>
-            </SimpleGrid>
-          )}
+                      <Text c="dimmed" size="sm">
+                        Couldn&apos;t load the details for {selectedEvent}.
+                      </Text>
+                    )
+                  ) : (
+                    <Text c="dimmed" size="sm">
+                      Select an event to see it over time and its property breakdown.
+                    </Text>
+                  )}
+                </div>
+              </SimpleGrid>
 
-          <Text c="dimmed" size="xs">
-            Counts are lower bounds: an app&apos;s host stops sending events past its per-page
-            budget, and those are never recorded. Signed-in viewers counts each signed-in person
-            once; signed-out activity is counted as events only.
-          </Text>
+              <Text c="dimmed" size="xs">
+                Counts are lower bounds: apps stop sending events after a per-page limit, and those
+                events are never recorded. Signed-in viewers counts each signed-in person once;
+                signed-out activity is counted as events only.
+                {granularity === 'week' ? ' On weekly ranges viewer counts are approximate.' : ''}
+              </Text>
+            </>
+          )}
         </Stack>
       )}
     </Card>

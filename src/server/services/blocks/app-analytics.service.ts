@@ -685,8 +685,7 @@ export async function getMyAppAnalytics({
     // because this Promise.all is on a per-app-row fan-out path.)
     getAppViews({ appBlockIds: ownedIds, from: range.from, to: range.to }),
 
-    // Never throws either. Single-app only: `appBlockId` set and the fail-closed check above
-    // guarantees `ownedApps` is exactly that app.
+    // `appBlockId` set plus the fail-closed check above means `ownedApps` is exactly that app.
     appBlockId && withCustomEvents
       ? getAppCustomEvents({
           appBlockId,

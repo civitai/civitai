@@ -8,24 +8,20 @@ import {
 import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
 
 /**
- * App Blocks custom events, read for the app's owner from `appBlockEvents`
- * (`src/server/clickhouse/migrations/2026-10-10-app-block-events.sql`, whose header is the
- * table contract this module follows).
+ * Owner read of `appBlockEvents`; the table contract (signed-in-only viewers, `viewerKey = 0` for
+ * signed-out, `mapContains` gating) is in `2026-10-10-app-block-events.sql`.
  *
- * - Unique viewers are SIGNED-IN viewers only: a signed-out row carries `viewerKey = 0`, so
- *   signed-out activity is reported as an event count, never as viewers.
- * - Owner rows (`isOwner = 1`) are excluded unless the caller asks for them, and the exclusion
- *   applies to the `__undeclared__` drop count too: the owner's dev-tunnel testing of unpublished
- *   events lands there.
- * - No small-count suppression; exact counts are shown (product decision).
- * - Never throws: any failure, including the timeout, degrades to `unavailable` so the rest of
- *   the analytics payload survives, matching `getAppViews`.
+ * - Owner rows are excluded unless asked for, and that exclusion must also cover the
+ *   `__undeclared__` drop count: the owner's dev-tunnel testing of unpublished events lands there.
+ * - Never throws: any failure, including the timeout, degrades to `unavailable`.
  *
  * Every value rides in `query_params`. The only text built at runtime is chosen from closed sets
  * (an aggregate name, a bucket expression, a property's positional index), never from input.
  */
 
 export const CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS = 10;
+/** `quantilesExactIf` keeps every value it sorts; past this a heavy event reads as unavailable. */
+export const CUSTOM_EVENTS_MAX_MEMORY_BYTES = 512 * 1024 * 1024;
 
 /** One app, one bounded time range; `time` is the partition and sort column. */
 export const CUSTOM_EVENTS_WHERE =
@@ -146,8 +142,7 @@ export async function getAppCustomEvents({
   if (!ch) return unavailableCustomEvents(declared, includeOwner);
 
   const where = CUSTOM_EVENTS_WHERE + (includeOwner ? '' : OWNER_EXCLUSION);
-  // Anonymous keys do not exist (they are all 0), but signed-in keys still make an exact count
-  // over a long range expensive; past 60 days the panel already buckets by week.
+  // Exact distinct counts are costly over long ranges, so week-bucketed ranges use the approximate one.
   const uniqIf = range.granularity === 'week' ? 'uniqCombinedIf' : 'uniqExactIf';
   const bucketExpr =
     range.granularity === 'week' ? "toStartOfWeek(time, 1, 'UTC')" : "toDate(time, 'UTC')";
@@ -172,7 +167,10 @@ export async function getAppCustomEvents({
       query_params: { ...baseParams, ...params },
       format: 'JSONEachRow',
       abort_signal: controller.signal,
-      clickhouse_settings: { max_execution_time: CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS },
+      clickhouse_settings: {
+        max_execution_time: CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS,
+        max_memory_usage: String(CUSTOM_EVENTS_MAX_MEMORY_BYTES),
+      },
     });
     return (await resp.json()) as T[];
   };

@@ -15,16 +15,19 @@ import type * as TrpcModule from '~/utils/trpc';
 
 const mocks = vi.hoisted(() => ({
   analytics: { current: undefined as unknown },
+  apps: { current: [] as unknown[] },
   queryInputs: [] as unknown[],
+  queryOptions: [] as unknown[],
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: makeTrpcProxy({
-    'blocks.getMyApps': { useQuery: () => ({ data: [], isLoading: false }) },
+    'blocks.getMyApps': { useQuery: () => ({ data: mocks.apps.current, isLoading: false }) },
     'blocks.getMyAppAnalytics': {
-      useQuery: (input: unknown) => {
+      useQuery: (input: unknown, options: unknown) => {
         mocks.queryInputs.push(input);
+        mocks.queryOptions.push(options);
         return { data: mocks.analytics.current, isLoading: false, error: null };
       },
     },
@@ -731,7 +734,6 @@ describe('AppAnalyticsPanel — custom events', () => {
   });
 
   test('(c) unavailable: says so and renders no count at all', async () => {
-    // The server's unavailable shape: declarations kept, counters empty.
     mocks.analytics.current = {
       ...ZEROED,
       customEvents: {
@@ -759,7 +761,6 @@ describe('AppAnalyticsPanel — custom events', () => {
       .toBeInTheDocument();
     expect(page.getByText(/No declared events were recorded/).elements()).toHaveLength(0);
     expect(card().textContent).not.toMatch(/\d/);
-    // The rest of the payload is real and still renders.
     await expect.element(page.getByText('Active installs', { exact: true })).toBeInTheDocument();
   });
 
@@ -769,7 +770,7 @@ describe('AppAnalyticsPanel — custom events', () => {
     await expect
       .element(
         page.getByText(
-          "5 events were sent with names your approved manifest doesn't declare, so they were not recorded by name. Declare an event in your manifest and resubmit to see it here.",
+          "5 events were sent in this range with names your approved manifest doesn't declare, so they were not recorded by name. Declare an event in your manifest and resubmit to see it here.",
           { exact: true }
         )
       )
@@ -780,7 +781,7 @@ describe('AppAnalyticsPanel — custom events', () => {
     mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, undeclaredDrops: 1 } };
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
     await expect
-      .element(page.getByText(/^1 event was sent with a name your approved manifest/))
+      .element(page.getByText(/^1 event was sent in this range with a name your approved manifest/))
       .toBeInTheDocument();
   });
 
@@ -804,13 +805,14 @@ describe('AppAnalyticsPanel — custom events', () => {
     mocks.queryInputs.length = 0;
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
 
-    // The server's selection renders only once the UI asked for that event.
     await expect
       .element(page.getByText('Select an event to see it over time and its property breakdown.'))
       .toBeInTheDocument();
     expect(page.getByText('generate_clicked over time').elements()).toHaveLength(0);
 
-    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
 
     expect(lastInput()).toEqual({
       appBlockId: 'apb_1',
@@ -830,6 +832,135 @@ describe('AppAnalyticsPanel — custom events', () => {
       .toBeInTheDocument();
     await expect.element(page.getByText('true 6 · false 1', { exact: true })).toBeInTheDocument();
     expect(card().querySelectorAll('[data-testid="chart"]')).toHaveLength(1);
+  });
+
+  test('a stale selection from the previous payload never renders under the newly clicked event', async () => {
+    // The payload still carries generate_clicked's detail (what a kept placeholder holds).
+    mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, selected: SELECTED } };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    const share = page.getByRole('button', { name: 'share_clicked' });
+    await share.click();
+    await expect.element(share).toHaveAttribute('aria-pressed', 'true');
+    await expect
+      .element(page.getByText("Couldn't load the details for share_clicked.", { exact: true }))
+      .toBeInTheDocument();
+    expect(page.getByText('generate_clicked over time').elements()).toHaveLength(0);
+  });
+
+  test('clicking the selected event again deselects it', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: { ...MEASURED, selected: SELECTED } };
+    mocks.queryInputs.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
+    await eventButton.click();
+    await expect.element(eventButton).toHaveAttribute('aria-pressed', 'false');
+    expect(lastInput()).toEqual({
+      appBlockId: 'apb_1',
+      withCustomEvents: true,
+      includeOwner: false,
+    });
+  });
+
+  test('empty breakdowns say so for every property type, and a no-property event says so', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        ...MEASURED,
+        selected: {
+          eventName: 'generate_clicked',
+          series: [],
+          properties: [
+            {
+              name: 'mode',
+              type: 'enum',
+              values: [
+                { value: 'txt2img', count: 0 },
+                { value: 'img2img', count: 0 },
+              ],
+            },
+            { name: 'batch', type: 'number', count: 0, sum: 0, avg: null, p50: null, p95: null },
+            { name: 'advanced', type: 'boolean', trueCount: 0, falseCount: 0 },
+          ],
+        },
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect.element(page.getByText('generate_clicked over time')).toBeInTheDocument();
+    expect(
+      page.getByText('Not set on any event in this range.', { exact: true }).elements()
+    ).toHaveLength(3);
+    expect(page.getByText(/^true 0/).elements()).toHaveLength(0);
+  });
+
+  test('a number property set on one event uses the singular and an em dash for a missing stat', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        ...MEASURED,
+        selected: {
+          ...SELECTED,
+          properties: [
+            { name: 'batch', type: 'number', count: 1, sum: 7, avg: 7, p50: null, p95: 7 },
+          ],
+        },
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect
+      .element(page.getByText('Set on 1 event · sum 7 · avg 7 · median — · p95 7', { exact: true }))
+      .toBeInTheDocument();
+  });
+
+  test('placeholder data is kept only for the same app (never one app under another name)', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.queryOptions.length = 0;
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await expect.element(page.getByText('Custom events', { exact: true })).toBeInTheDocument();
+    const { placeholderData } = mocks.queryOptions[mocks.queryOptions.length - 1] as {
+      placeholderData: (previous: unknown, previousQuery: unknown) => unknown;
+    };
+    const previous = { marker: 'previous payload' };
+    // tRPC v11 query keys are `[path, { input, type }]`.
+    const keyFor = (appBlockId?: string) => ({
+      queryKey: [['blocks', 'getMyAppAnalytics'], { input: { appBlockId }, type: 'query' }],
+    });
+    expect(placeholderData(previous, keyFor('apb_1'))).toBe(previous);
+    expect(placeholderData(previous, keyFor('apb_2'))).toBeUndefined();
+    expect(placeholderData(previous, keyFor(undefined))).toBeUndefined();
+    expect(placeholderData(previous, undefined)).toBeUndefined();
+  });
+
+  test('picking another app clears the selected event', async () => {
+    mocks.apps.current = [
+      { id: 'apb_1', appName: 'First app', blockId: 'b1' },
+      { id: 'apb_2', appName: 'Second app', blockId: 'b2' },
+    ];
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.queryInputs.length = 0;
+    try {
+      renderWithProviders(<AppAnalyticsPanel />);
+      await page.getByRole('textbox', { name: 'App' }).click();
+      await page.getByRole('option', { name: 'First app' }).click();
+      const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+      await eventButton.click();
+      await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
+      expect(lastInput()).toMatchObject({ appBlockId: 'apb_1', event: 'generate_clicked' });
+
+      await page.getByRole('textbox', { name: 'App' }).click();
+      await page.getByRole('option', { name: 'Second app' }).click();
+      await expect.element(eventButton).toHaveAttribute('aria-pressed', 'false');
+      expect(lastInput()).toEqual({
+        appBlockId: 'apb_2',
+        withCustomEvents: true,
+        includeOwner: false,
+      });
+    } finally {
+      mocks.apps.current = [];
+    }
   });
 
   test('"All my apps" asks for no custom events and says to pick an app', async () => {

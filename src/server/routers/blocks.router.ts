@@ -8251,8 +8251,7 @@ export const blocksRouter = router({
         to: z.string().datetime().optional(),
         withCustomEvents: z.boolean().optional(),
         includeOwner: z.boolean().optional(),
-        // The declared-name shape, which `__undeclared__` cannot match; the service only
-        // queries a name the app's manifest declares.
+        // Declared-name shape; `__undeclared__` cannot match it.
         event: z.string().regex(BLOCK_ANALYTICS_NAME_RE).optional(),
       })
     )
