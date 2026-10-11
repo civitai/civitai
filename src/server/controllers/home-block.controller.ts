@@ -256,7 +256,7 @@ export const setHomeBlocksOrderHandler = async ({
   input: SetHomeBlocksOrderInputSchema;
 }) => {
   try {
-    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id } });
+    await setHomeBlocksOrder({ input: { ...input, userId: ctx.user.id }, viewer: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

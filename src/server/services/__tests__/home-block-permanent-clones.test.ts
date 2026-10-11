@@ -100,6 +100,7 @@ describe('permanent system blocks are not cloned per user', () => {
     dbMock.dbRead.homeBlock.findMany.mockResolvedValue([]);
 
     await setHomeBlocksOrder({
+      viewer: { id: 7 },
       input: { userId: 7, homeBlocks: [{ id: 901, index: 0, userId: 7 }] },
     });
 
@@ -133,6 +134,7 @@ describe('permanent system blocks are not cloned per user', () => {
     });
 
     await setHomeBlocksOrder({
+      viewer: { id: 7 },
       input: {
         userId: 7,
         homeBlocks: [

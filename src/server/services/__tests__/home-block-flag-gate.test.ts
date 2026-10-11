@@ -64,9 +64,8 @@ vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => 
 const { getHomeBlocksHandler, getSystemHomeBlocksHandler, getHomeBlocksByIdHandler } = await import(
   '~/server/controllers/home-block.controller'
 );
-const { createHomeBlockAdmin, updateHomeBlockAdmin, upsertHomeBlock } = await import(
-  '~/server/services/home-block.service'
-);
+const { createHomeBlockAdmin, setHomeBlocksOrder, updateHomeBlockAdmin, upsertHomeBlock } =
+  await import('~/server/services/home-block.service');
 const { getHomeBlockCached } = await import('~/server/services/home-block-cache.service');
 const { REDIS_KEYS } = await import('~/server/redis/client');
 
@@ -134,7 +133,7 @@ function matches(r: Row, where: Record<string, any> | undefined): boolean {
     }
     if (k === 'id' && v !== null && typeof v === 'object') {
       if ('in' in v) return (v.in as number[]).includes(r.id);
-      if ('not' in v) return r.id !== v.not;
+      if ('not' in v) return v.not?.in ? !v.not.in.includes(r.id) : r.id !== v.not;
     }
     return (r as Record<string, unknown>)[k] === v;
   });
@@ -352,6 +351,12 @@ describe('T7: the domain ids path, the editor seed and the system list', () => {
     expect(await systemIds(ANON)).toEqual([OPEN.id]);
   });
 
+  it('system list: a system row sourced off a gated row is gated by its source', async () => {
+    seed(OPEN, GATED, sys({ id: 11, sourceId: GATED.id, metadata: {} }));
+    expect(await systemIds(STRANGER)).toEqual([OPEN.id]);
+    expect(await systemIds(TESTER)).toEqual([OPEN.id, GATED.id, 11]);
+  });
+
   it('control: the system list includes them for a flagged viewer', async () => {
     seed(OPEN, GATED, GATED_PERMANENT);
     expect(await systemIds(TESTER)).toEqual([OPEN.id, GATED.id, GATED_PERMANENT.id]);
@@ -448,11 +453,58 @@ describe('T9: an unknown flag fails closed', () => {
     seed(OPEN);
     dbMock.dbWrite.homeBlock.update.mockResolvedValue({ ...OPEN });
     await updateHomeBlockAdmin({ id: OPEN.id, metadata: { featureFlag: 'birthday2026' } });
-    expect(dbMock.dbWrite.homeBlock.update).toHaveBeenCalledTimes(1);
+    const [arg] = dbMock.dbWrite.homeBlock.update.mock.calls.at(-1) as [any];
+    expect(arg.data.metadata).toEqual({ featureFlag: 'birthday2026' });
+  });
+});
+
+describe('saving the editor', () => {
+  const removed = () =>
+    dbMock.dbWrite.homeBlock.deleteMany.mock.calls.flatMap(
+      ([arg]: [{ where: { id: { in: number[] } } }]) => arg.where.id.in
+    );
+
+  it('keeps a clone of a gated block the viewer was never offered', async () => {
+    seed(
+      OPEN,
+      GATED,
+      clone(100, STRANGER.id, GATED),
+      clone(101, STRANGER.id, OPEN),
+      clone(102, STRANGER.id, OPEN)
+    );
+    await setHomeBlocksOrder({
+      viewer: STRANGER,
+      input: { userId: STRANGER.id, homeBlocks: [{ id: 101, index: 0, userId: STRANGER.id }] },
+    });
+    expect(removed()).toEqual([102]);
+  });
+
+  it('control: a flagged viewer who drops it does remove it', async () => {
+    seed(OPEN, GATED, clone(100, TESTER.id, GATED), clone(101, TESTER.id, OPEN));
+    await setHomeBlocksOrder({
+      viewer: TESTER,
+      input: { userId: TESTER.id, homeBlocks: [{ id: 101, index: 0, userId: TESTER.id }] },
+    });
+    expect(removed()).toEqual([100]);
   });
 });
 
 describe('user writes cannot set the flag', () => {
+  it('strips featureFlag from a non-moderator update of their own row', async () => {
+    seed(OPEN, clone(100, STRANGER.id, OPEN));
+    dbMock.dbWrite.homeBlock.update.mockResolvedValue({ id: 100, userId: STRANGER.id });
+    await upsertHomeBlock({
+      input: {
+        id: 100,
+        type: HomeBlockType.Collection,
+        metadata: { collection: { id: 1, limit: 8, rows: 2 }, featureFlag: 'birthday2026' },
+        userId: STRANGER.id,
+      },
+    });
+    const [arg] = dbMock.dbWrite.homeBlock.update.mock.calls.at(-1) as [any];
+    expect(arg.data.metadata).toEqual({ collection: { id: 1, limit: 8, rows: 2 } });
+  });
+
   it('strips featureFlag from a non-moderator upsert', async () => {
     seed(OPEN, clone(100, STRANGER.id, OPEN));
     await upsertHomeBlock({

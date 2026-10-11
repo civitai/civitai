@@ -184,10 +184,15 @@ export const getSystemHomeBlocks = async ({ input }: { input: GetSystemHomeBlock
     },
   });
 
-  return homeBlocks.map((homeBlock) => ({
-    ...homeBlock,
-    metadata: homeBlock.metadata as HomeBlockMetaSchema,
-  }));
+  // Resolved, because the gate reads the flag from a sourced row's source.
+  return Promise.all(
+    homeBlocks.map(async (homeBlock) => ({
+      ...homeBlock,
+      metadata: homeBlock.sourceId
+        ? await resolveHomeBlockMetadata(homeBlock)
+        : (homeBlock.metadata as HomeBlockMetaSchema),
+    }))
+  );
 };
 
 export const getHomeBlockById = async ({
@@ -1160,8 +1165,10 @@ export async function reorderHomeBlocksAdmin({ orderedIds }: { orderedIds: numbe
 
 export const setHomeBlocksOrder = async ({
   input,
+  viewer,
 }: {
   input: SetHomeBlocksOrderInputSchema & { userId: number };
+  viewer: EventViewer;
 }) => {
   const { userId, homeBlocks } = input;
   if (homeBlocks.find((homeBlock) => homeBlock.userId !== -1 && homeBlock.userId !== userId)) {
@@ -1191,14 +1198,20 @@ export const setHomeBlocksOrder = async ({
   // with clones of permanent blocks, so for those absence means "never offered", not "removed".
   // Sweeping them would delete the last row of a user who kept only a permanent block, and this
   // app reads "no rows" as "never customized", which hands that user the full default homepage.
-  const homeBlocksToRemove = await dbRead.homeBlock.findMany({
-    select: { id: true },
-    where: {
-      userId,
-      id: { not: { in: homeBlockIds } },
-      OR: [{ sourceId: null }, { source: { permanent: false } }],
-    },
-  });
+  // A row gated from this viewer was never offered either, so it is kept for when they can see it.
+  const homeBlocksToRemove = await filterViewableHomeBlocks(
+    await resolveMetadataForAll(
+      await dbRead.homeBlock.findMany({
+        select: { id: true, type: true, metadata: true, sourceId: true },
+        where: {
+          userId,
+          id: { not: { in: homeBlockIds } },
+          OR: [{ sourceId: null }, { source: { permanent: false } }],
+        },
+      })
+    ),
+    viewer
+  );
 
   // if we have items to remove, add a deleteMany mutation to the transaction
   if (homeBlocksToRemove.length) {
