@@ -638,6 +638,7 @@ describe('team roster', () => {
     const churn: RosterSyncDeps = {
       ...s.deps,
       loadStates: async (event, ids) => {
+        if (n > 10) throw new Error('sync did not give up');
         await s.redis.hSet(keys.members, '1', `x:churn-${n++}`);
         return s.deps.loadStates(event, ids);
       },
@@ -926,17 +927,16 @@ describe('team roster', () => {
     const zRemOf = s.redis.zRem.bind(s.redis);
     let failed = false;
     (s.redis as { zRem: typeof zRemOf }).zRem = async (key, members) => {
-      if (!failed) {
-        failed = true;
-        throw new Error('redis blip');
-      }
-      return zRemOf(key, members);
+      // Every removal fails, so all entries survive and each sort's emptiness is the gate's doing.
+      failed = true;
+      throw new Error(`redis blip on ${key} ${String(members)}`);
     };
     await syncRosterMembersWith(EVENT, [1], s.deps);
     expect(failed).toBe(true);
     expect(isTombstone(s.hashes.get(keys.members)?.get('1'))).toBe(true);
     // The clear failed part-way: the join-time entry is still there, and the gate hides it anyway.
-    expect(s.zsets.get(keys.joined('Blue'))?.has('1')).toBe(true);
+    for (const key of [keys.joined('Blue'), keys.hats('Blue'), keys.points('Blue', 'preview')])
+      expect(s.zsets.get(key)?.has('1')).toBe(true);
     for (const sort of ['hats', 'points', 'newest'] as const)
       expect((await s.read(sort)).rows).toEqual([]);
   });
@@ -947,13 +947,18 @@ describe('team roster', () => {
     const churn: RosterSyncDeps = {
       ...s.deps,
       loadStates: async (event, ids) => {
+        if (n > 10) throw new Error('sync did not give up');
         await s.redis.hSet(keys.members, '1', `x:churn-${n++}`);
         return s.deps.loadStates(event, ids);
       },
     };
+    let thrown = 0;
     const zRemOf = s.redis.zRem.bind(s.redis);
     (s.redis as { zRem: typeof zRemOf }).zRem = async (key, members) => {
-      if (n >= 3) throw new Error('redis blip');
+      if (n >= 3) {
+        thrown++;
+        throw new Error('redis blip');
+      }
       return zRemOf(key, members);
     };
     await expect(syncRosterMembersWith(EVENT, [1], churn)).resolves.toEqual({
@@ -961,5 +966,6 @@ describe('team roster', () => {
       removed: 0,
     });
     expect(n).toBe(3);
+    expect(thrown).toBeGreaterThan(0);
   });
 });
