@@ -5,8 +5,8 @@ import { BLOCK_EVENT_BATCH_MAX, blockEventBatchSchema } from '~/server/schema/tr
 import {
   BLOCK_EVENT_BATCH_ROWS,
   BLOCK_EVENT_MAX_BODY_BYTES,
+  createBlockEventRecorder,
   flushBlockEvents,
-  recordBlockEvent,
   _internalsForTests,
 } from '~/components/AppBlocks/blockEventBeacon';
 
@@ -47,17 +47,20 @@ describe('blockEventBeacon request bodies satisfy the ingest contract', () => {
   test('a representative batch from both host shapes parses under blockEventBatchSchema', () => {
     const page = { appBlockId: 'apb_7f3', blockInstanceId: 'page_apb_7f3' };
     const slot = { appBlockId: 'apb_9c1', blockInstanceId: 'mbi_4d2' };
-    recordBlockEvent(page, { eventName: 'run_started', properties: { mode: 'fast', n: 2 } });
-    recordBlockEvent(page, { eventName: 'run_finished', properties: { ok: true, nested: {} } });
-    recordBlockEvent(slot, { eventName: 'opened' });
-    recordBlockEvent(slot, { eventName: 'Not Declared!', properties: { x: null } });
+    const recordPage = createBlockEventRecorder(page);
+    const recordSlot = createBlockEventRecorder(slot);
+    recordPage({ eventName: 'run_started', properties: { mode: 'fast', n: 2 } });
+    recordPage({ eventName: 'run_finished', properties: { ok: true, nested: { deep: [1] } } });
+    recordSlot({ eventName: 'opened' });
+    recordSlot({ eventName: 'Not Declared!', properties: { x: null } });
     flushBlockEvents();
 
     const bodies = sentBodies();
     expect(bodies).toHaveLength(1);
     const expected = [
       { ...page, eventName: 'run_started', properties: { mode: 'fast', n: 2 } },
-      { ...page, eventName: 'run_finished', properties: { ok: true } },
+      // Forwarded as given: the ingest classifies a wrongly typed value as `invalid_value`.
+      { ...page, eventName: 'run_finished', properties: { ok: true, nested: { deep: [1] } } },
       { ...slot, eventName: 'opened' },
       { ...slot, eventName: 'Not Declared!', properties: { x: null } },
     ];
@@ -69,12 +72,10 @@ describe('blockEventBeacon request bodies satisfy the ingest contract', () => {
   });
 
   test('a full flush of 120 events is sent as bodies that each parse', () => {
-    for (let i = 0; i < 120; i++) {
-      recordBlockEvent(
-        { appBlockId: 'apb_1', blockInstanceId: `mbi_${i % 12}` },
-        { eventName: `e${i}` }
-      );
-    }
+    const recorders = Array.from({ length: 12 }, (_, i) =>
+      createBlockEventRecorder({ appBlockId: 'apb_1', blockInstanceId: `mbi_${i}` })
+    );
+    for (let i = 0; i < 120; i++) recorders[i % 12]({ eventName: `e${i}` });
     flushBlockEvents();
     const bodies = sentBodies();
     expect(bodies.length).toBeGreaterThanOrEqual(3);

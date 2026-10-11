@@ -425,12 +425,16 @@ hand before the route deploys).
   `TRACK_EVENT` and queue one row per event in `blockEventBeacon.ts`, stamping
   `appBlockId` and `blockInstanceId` from their own props (the page's `page_…`
   id on the page host, the install's instance id in a model slot); the block's
-  payload supplies only `eventName` and `properties`, and property values that
-  are not primitives are dropped. The queue flushes every 10 s, at 50 rows, and
-  on `pagehide` / `visibilitychange` (hidden), in POSTs of at most 50 rows and
-  32 KiB; an event larger than that is dropped. A block instance may send 10
-  events a second and each app 500 per page session; the excess is dropped. A
-  moderator's review preview forwards nothing. Nothing is retried.
+  payload supplies only `eventName` and `properties`, which are forwarded as
+  given for the server to classify. `TRACK_EVENT` does not count against the
+  bridge's shared inbound limit, so a block's events cannot rate-limit its own
+  requests. The queue flushes every 10 s, at 50 rows, and on `pagehide` /
+  `visibilitychange` (hidden), in POSTs of at most 50 rows and 32 KiB; a
+  page-exit flush sends one body at most, and an event larger than a body is
+  dropped. Each host mount may send 10 events a second and 500 in all, so a
+  remount (a new page or app) starts a fresh budget and two mounts of one app
+  do not share one. A moderator's review preview forwards nothing. Nothing is
+  retried, and client-side drops are not counted.
 
 - **Declared events only.** A row is checked against the app's APPROVED manifest.
   An event the manifest does not declare is stored as one `__undeclared__` row

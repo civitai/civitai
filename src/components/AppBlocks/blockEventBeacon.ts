@@ -5,18 +5,18 @@
  * the server checks every row against the app's approved manifest, so rows cannot be merged.
  *
  * Identity (`appBlockId`, `blockInstanceId`) is supplied by the host from its own props; the
- * block's payload contributes only `eventName` and `properties`.
+ * block's payload contributes only `eventName` and `properties`. Property values are forwarded as
+ * given: the server classifies them, so an author's wrongly typed value is counted there.
  *
- * Fire-and-forget: never throws to the host; failed POSTs are not retried.
+ * Fire-and-forget: never throws to the host; failed POSTs are not retried; nothing dropped on the
+ * client is counted.
  */
 
 export type BlockEventIdentity = { appBlockId: string; blockInstanceId: string };
 
-type PropertyValue = string | number | boolean | null;
-
 export type BlockEventRow = BlockEventIdentity & {
   eventName: string;
-  properties?: Record<string, PropertyValue>;
+  properties?: Record<string, unknown>;
 };
 
 const ENDPOINT = '/api/track/block-event';
@@ -26,24 +26,17 @@ export const BLOCK_EVENT_FLUSH_INTERVAL_MS = 10_000;
 export const BLOCK_EVENT_BATCH_ROWS = 50;
 /**
  * Half the route's 64 kb body limit: the browser's keepalive quota (about 64 KiB in flight per
- * document) is shared with the other beacons flushing on the same `pagehide`.
+ * document) is shared with the other beacons flushing on the same `pagehide`. For the same reason
+ * a page-exit flush sends one body at most.
  */
 export const BLOCK_EVENT_MAX_BODY_BYTES = 32 * 1024;
-export const BLOCK_EVENT_RATE_PER_INSTANCE_PER_SECOND = 10;
-/** Per app, so one chatty app cannot use up the budget of the other apps on the page. */
-export const BLOCK_EVENT_SESSION_CAP_PER_APP = 500;
+export const BLOCK_EVENT_RATE_PER_SECOND = 10;
+export const BLOCK_EVENT_CAP_PER_MOUNT = 500;
 
-type DropReason = 'invalid' | 'rate_limited' | 'session_cap' | 'oversize';
+/** A row and its serialised form, measured once when it is recorded. */
+type QueuedRow = { row: BlockEventRow; json: string; bytes: number };
 
-const queue: BlockEventRow[] = [];
-const recentByInstance = new Map<string, number[]>();
-const dropped: Record<DropReason, number> = {
-  invalid: 0,
-  rate_limited: 0,
-  session_cap: 0,
-  oversize: 0,
-};
-const acceptedByApp = new Map<string, number>();
+const queue: QueuedRow[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
 
@@ -57,48 +50,16 @@ function byteLength(s: string): number {
 
 const FRAME_BYTES = byteLength(BODY_PREFIX) + byteLength(BODY_SUFFIX);
 
-function fitsInOneBody(rowBytes: number): boolean {
-  return FRAME_BYTES + rowBytes <= BLOCK_EVENT_MAX_BODY_BYTES;
-}
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function primitiveProperties(raw: unknown): Record<string, PropertyValue> | undefined {
-  if (!isPlainObject(raw)) return undefined;
-  const out: Record<string, PropertyValue> = {};
-  for (const key of Object.keys(raw)) {
-    const value = raw[key];
-    if (
-      value === null ||
-      typeof value === 'string' ||
-      typeof value === 'number' ||
-      typeof value === 'boolean'
-    ) {
-      out[key] = value;
-    }
-  }
-  return out;
-}
-
-function withinRate(instanceKey: string, now: number): boolean {
-  const recent = (recentByInstance.get(instanceKey) ?? []).filter((t) => now - t < 1000);
-  if (recent.length >= BLOCK_EVENT_RATE_PER_INSTANCE_PER_SECOND) {
-    recentByInstance.set(instanceKey, recent);
-    return false;
-  }
-  recent.push(now);
-  recentByInstance.set(instanceKey, recent);
-  return true;
-}
-
 function onVisibilityChange() {
-  if (document.visibilityState === 'hidden') flushBlockEvents();
+  if (document.visibilityState === 'hidden') flushBlockEvents({ pageExit: true });
 }
 
 function onPageHide() {
-  flushBlockEvents();
+  flushBlockEvents({ pageExit: true });
 }
 
 function bindLifecycleListeners() {
@@ -131,91 +92,41 @@ function post(body: string): void {
 }
 
 /**
- * Split rows into request bodies of at most {@link BLOCK_EVENT_BATCH_ROWS} rows and
- * {@link BLOCK_EVENT_MAX_BODY_BYTES} UTF-8 bytes. A row too large to fit in a body on its own is
- * dropped and counted in `oversize`.
+ * Split rows into request bodies of at most {@link BLOCK_EVENT_MAX_BODY_BYTES} UTF-8 bytes. The
+ * queue never holds more than {@link BLOCK_EVENT_BATCH_ROWS} rows, and the recorder rejects a row
+ * that cannot fit in a body on its own.
  */
-export function buildBlockEventBodies(rows: BlockEventRow[]): {
-  bodies: string[];
-  oversize: number;
-} {
+function buildBodies(rows: QueuedRow[]): string[] {
   const bodies: string[] = [];
-  let oversize = 0;
   let current: string[] = [];
   let currentBytes = FRAME_BYTES;
-  const close = () => {
-    if (current.length === 0) return;
-    bodies.push(BODY_PREFIX + current.join(',') + BODY_SUFFIX);
-    current = [];
-    currentBytes = FRAME_BYTES;
-  };
-  for (const row of rows) {
-    const json = JSON.stringify(row);
-    const rowBytes = byteLength(json);
-    if (!fitsInOneBody(rowBytes)) {
-      oversize += 1;
-      continue;
-    }
+  for (const { json, bytes } of rows) {
     const separator = current.length > 0 ? 1 : 0;
-    if (
-      current.length >= BLOCK_EVENT_BATCH_ROWS ||
-      currentBytes + separator + rowBytes > BLOCK_EVENT_MAX_BODY_BYTES
-    ) {
-      close();
+    if (current.length > 0 && currentBytes + separator + bytes > BLOCK_EVENT_MAX_BODY_BYTES) {
+      bodies.push(BODY_PREFIX + current.join(',') + BODY_SUFFIX);
+      current = [];
+      currentBytes = FRAME_BYTES;
     }
-    currentBytes += (current.length > 0 ? 1 : 0) + rowBytes;
+    currentBytes += (current.length > 0 ? 1 : 0) + bytes;
     current.push(json);
   }
-  close();
-  return { bodies, oversize };
+  if (current.length > 0) bodies.push(BODY_PREFIX + current.join(',') + BODY_SUFFIX);
+  return bodies;
 }
 
-export function flushBlockEvents(): void {
+export function flushBlockEvents(options: { pageExit?: boolean } = {}): void {
   if (timer !== null) {
     clearTimeout(timer);
     timer = null;
   }
   if (queue.length === 0) return;
-  const { bodies, oversize } = buildBlockEventBodies(queue.splice(0));
-  dropped.oversize += oversize;
-  for (const body of bodies) post(body);
+  const bodies = buildBodies(queue.splice(0));
+  for (const body of options.pageExit ? bodies.slice(0, 1) : bodies) post(body);
 }
 
-/**
- * Queue one `TRACK_EVENT` payload under the host's identity; malformed, oversize, over-rate and
- * over-cap payloads are dropped.
- */
-export function recordBlockEvent(identity: BlockEventIdentity, payload: unknown): void {
-  if (typeof window === 'undefined') return;
-  if (!isPlainObject(payload) || typeof payload.eventName !== 'string') {
-    dropped.invalid += 1;
-    return;
-  }
-  const accepted = acceptedByApp.get(identity.appBlockId) ?? 0;
-  if (accepted >= BLOCK_EVENT_SESSION_CAP_PER_APP) {
-    dropped.session_cap += 1;
-    return;
-  }
-  const properties = primitiveProperties(payload.properties);
-  const row: BlockEventRow = {
-    appBlockId: identity.appBlockId,
-    blockInstanceId: identity.blockInstanceId,
-    eventName: payload.eventName,
-    ...(properties ? { properties } : {}),
-  };
-  // Measured here as well as at flush, so an oversize row is never held in the queue.
-  if (!fitsInOneBody(byteLength(JSON.stringify(row)))) {
-    dropped.oversize += 1;
-    return;
-  }
-  const instanceKey = `${identity.appBlockId}\u0000${identity.blockInstanceId}`;
-  if (!withinRate(instanceKey, Date.now())) {
-    dropped.rate_limited += 1;
-    return;
-  }
-  acceptedByApp.set(identity.appBlockId, accepted + 1);
+function enqueue(entry: QueuedRow): void {
   bindLifecycleListeners();
-  queue.push(row);
+  queue.push(entry);
   if (queue.length >= BLOCK_EVENT_BATCH_ROWS) {
     flushBlockEvents();
     return;
@@ -228,27 +139,60 @@ export function recordBlockEvent(identity: BlockEventIdentity, payload: unknown)
   }
 }
 
+/**
+ * The recorder for ONE host mount. Its budget ({@link BLOCK_EVENT_RATE_PER_SECOND} events a
+ * second, {@link BLOCK_EVENT_CAP_PER_MOUNT} in all) belongs to that mount, so a new page or app
+ * starts fresh and two mounts of one app do not share it; it is released with the mount.
+ * Malformed, oversize and over-budget events are dropped.
+ */
+export function createBlockEventRecorder(identity: BlockEventIdentity): (payload: unknown) => void {
+  let accepted = 0;
+  let recent: number[] = [];
+  return (payload) => {
+    if (typeof window === 'undefined') return;
+    if (!isPlainObject(payload) || typeof payload.eventName !== 'string') return;
+    if (accepted >= BLOCK_EVENT_CAP_PER_MOUNT) return;
+    const now = Date.now();
+    recent = recent.filter((t) => now - t < 1000);
+    if (recent.length >= BLOCK_EVENT_RATE_PER_SECOND) return;
+
+    const row: BlockEventRow = {
+      appBlockId: identity.appBlockId,
+      blockInstanceId: identity.blockInstanceId,
+      eventName: payload.eventName,
+      ...(isPlainObject(payload.properties) ? { properties: payload.properties } : {}),
+    };
+    let json: string;
+    try {
+      // A structured-cloned payload can hold a BigInt or a cycle, which JSON cannot.
+      json = JSON.stringify(row);
+    } catch {
+      return;
+    }
+    const bytes = byteLength(json);
+    if (FRAME_BYTES + bytes > BLOCK_EVENT_MAX_BODY_BYTES) return;
+
+    accepted += 1;
+    recent.push(now);
+    enqueue({ row, json, bytes });
+  };
+}
+
 export const _internalsForTests = {
   reset(): void {
     queue.length = 0;
-    recentByInstance.clear();
-    acceptedByApp.clear();
     if (listenersBound) {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('pagehide', onPageHide);
       listenersBound = false;
     }
-    for (const reason of Object.keys(dropped) as DropReason[]) dropped[reason] = 0;
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
     }
   },
   queued(): BlockEventRow[] {
-    return queue.map((row) => ({ ...row }));
-  },
-  dropped(): Record<DropReason, number> {
-    return { ...dropped };
+    return queue.map(({ row }) => ({ ...row }));
   },
   timerArmed(): boolean {
     return timer !== null;

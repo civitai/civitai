@@ -79,7 +79,7 @@ import {
   UPLOAD_BYTES_NO_TOKEN_ERROR,
 } from './imageUploadBytes';
 import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
-import { recordBlockEvent } from './blockEventBeacon';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import {
   computeLaunchTimings,
@@ -1725,11 +1725,12 @@ export function PageBlockHost({
   }, [onMessage]);
 
   useEffect(() => {
+    const record = createBlockEventRecorder({ appBlockId, blockInstanceId });
     const off = onMessage<unknown>('TRACK_EVENT', (raw) => {
-      // A review preview runs unreviewed code; its events would be recorded against the
-      // approved app.
+      // A review mount's app id is a synthetic request id the ingest drops as an unknown app;
+      // this only saves the pointless request.
       if (reviewMode) return;
-      recordBlockEvent({ appBlockId, blockInstanceId }, raw);
+      record(raw);
     });
     return off;
   }, [onMessage, reviewMode, appBlockId, blockInstanceId]);

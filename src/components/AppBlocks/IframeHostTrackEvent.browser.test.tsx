@@ -166,7 +166,7 @@ describe('IframeHost forwards TRACK_EVENT', () => {
         appBlockId: 'apb_slot',
         blockInstanceId: 'mbi_slot_install_1',
         eventName: 'generate_clicked',
-        properties: { style: 'anime', steps: 20 },
+        properties: { style: 'anime', steps: 20, nested: { a: 1 } },
       },
     ]);
     replies.stop();

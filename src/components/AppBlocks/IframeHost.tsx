@@ -54,7 +54,7 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import { recordBlockEvent } from './blockEventBeacon';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -1948,12 +1948,11 @@ export function IframeHost({
   }, [onMessage]);
 
   useEffect(() => {
-    const off = onMessage<unknown>('TRACK_EVENT', (raw) => {
-      recordBlockEvent(
-        { appBlockId: install.appBlockId, blockInstanceId: install.blockInstanceId },
-        raw
-      );
+    const record = createBlockEventRecorder({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
     });
+    const off = onMessage<unknown>('TRACK_EVENT', record);
     return off;
   }, [onMessage, install.appBlockId, install.blockInstanceId]);
 

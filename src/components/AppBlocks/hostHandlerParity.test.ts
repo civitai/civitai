@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { INVENTORY, type HostFile } from './hostHandlerParity';
+import { BRIDGE_BUDGET_EXEMPT_TYPES } from './usePostMessage';
 import { stripSourceComments } from './stripSourceComments';
 
 /**
@@ -125,6 +126,12 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
       }
     });
   }
+
+  it('only fire-and-forget messages skip the shared inbound budget', () => {
+    // Exempt types also skip requestId dedup, which only a fire-and-forget type can afford.
+    expect(BRIDGE_BUDGET_EXEMPT_TYPES.size).toBeGreaterThan(0);
+    for (const type of BRIDGE_BUDGET_EXEMPT_TYPES) expect(INVENTORY[type].request).toBe(false);
+  });
 
   it('every REQUEST-style message is handled by PageBlockHost (the page hang surface)', () => {
     // Focused invariant: REQUEST-style messages are the ones that HANG when

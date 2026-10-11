@@ -128,7 +128,7 @@ describe('PageBlockHost forwards TRACK_EVENT', () => {
         appBlockId: 'apb_page',
         blockInstanceId: 'page_apb_page',
         eventName: 'run_started',
-        properties: { mode: 'fast', count: 3, ok: true },
+        properties: { mode: 'fast', count: 3, ok: true, list: [1] },
       },
     ]);
     replies.stop();
@@ -167,6 +167,42 @@ describe('PageBlockHost forwards TRACK_EVENT', () => {
       },
     ]);
     replies.stop();
+  });
+
+  test('a remount starts a fresh event budget', async () => {
+    const utils = await renderWithProviders(<PageBlockHost key="first" {...baseProps} />);
+    await vi.waitFor(() => {
+      if (!iframeEl().contentWindow) throw new Error('not mounted yet');
+    });
+    // A clock at 1/20 speed keeps every event below inside one 1 s rate window (20 s of real
+    // time), so only a new budget can admit the last one. Frozen, it stalls the host's own waits.
+    const base = Date.now();
+    const realStart = performance.now();
+    const clock = vi
+      .spyOn(Date, 'now')
+      .mockImplementation(() => base + Math.floor((performance.now() - realStart) / 20));
+    try {
+      for (let i = 0; i < 12; i++) postFromBlock('TRACK_EVENT', { eventName: 'burst' });
+      expect(events.queued()).toHaveLength(10);
+
+      await utils.rerender(<PageBlockHost key="second" {...baseProps} />);
+      await vi.waitFor(() => {
+        if (!iframeEl().contentWindow) throw new Error('not remounted yet');
+      });
+      const replies = listenOnBlock();
+      await vi.waitFor(() => {
+        if (!replies.all().includes('BLOCK_INIT')) throw new Error('remount not live yet');
+      });
+      expect(Date.now() - base).toBeLessThan(1000);
+      postFromBlock('TRACK_EVENT', { eventName: 'after_remount' });
+      expect(events.queued().map((r) => r.eventName)).toEqual([
+        ...Array(10).fill('burst'),
+        'after_remount',
+      ]);
+      replies.stop();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   test('a review preview forwards nothing', async () => {
