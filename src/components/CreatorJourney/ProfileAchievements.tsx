@@ -2,7 +2,7 @@ import { Anchor, Stack, Text, Title } from '@mantine/core';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { SECRET_ACCENT } from '~/components/CreatorJourney/CreatorSecrets';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
-import { TierShareButton } from '~/components/CreatorJourney/TierShareButton';
+import { MilestoneShareButton } from '~/components/CreatorJourney/MilestoneShareButton';
 import {
   accentVar,
   DEFAULT_ACCENT,
@@ -12,11 +12,13 @@ import {
 import { NextLink } from '~/components/NextLink/NextLink';
 import { SpotlightBorderCard } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Fragment, useEffect } from 'react';
+import type { ReactNode } from 'react';
+import { useEffect } from 'react';
 import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants';
 import {
   CREATOR_JOURNEY_HREF,
-  scoreTierKey,
+  milestoneKeyOfShareToken,
+  parseScoreTierSlug,
   scoreTierSlugFromKey,
 } from '~/shared/constants/creator-journey.constants';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
@@ -40,11 +42,18 @@ function accentOfTrack(track: string) {
   return achievementTracks.find((t) => t.key === track)?.accent ?? DEFAULT_ACCENT;
 }
 
-export function AchievementCard({ achievement }: { achievement: Achievement }) {
+export function AchievementCard({
+  achievement,
+  action,
+}: {
+  achievement: Achievement;
+  action?: ReactNode;
+}) {
   return (
     <EarnedBadgeCard
       badge={{ ...achievement, name: achievementName(achievement) }}
       accent={accentOfTrack(achievement.track)}
+      action={action}
     />
   );
 }
@@ -57,7 +66,7 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
   const accent = tierAccents[tier.key] ?? DEFAULT_ACCENT;
   const slug = scoreTierSlugFromKey(tier.key);
   const { data: shareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
-    { userId, slug: slug ?? 'spark' },
+    { userId, milestone: slug ?? 'spark' },
     { enabled: isOwner && !!slug }
   );
 
@@ -77,7 +86,11 @@ export function ProfileTierCard({ tier, userId }: { tier: Tier; userId: number }
       />
       {isOwner && shareable && slug && currentUser?.username && (
         <div className="absolute right-2 top-2">
-          <TierShareButton username={currentUser.username} slug={slug} tierName={tier.name} />
+          <MilestoneShareButton
+            username={currentUser.username}
+            milestoneKey={tier.key}
+            name={tier.name}
+          />
         </div>
       )}
       <Text size="xs" tt="uppercase" fw={700} c="dimmed" className="tracking-wider">
@@ -132,9 +145,37 @@ function TierCard({ tier, threshold }: { tier: Tier; threshold?: number }) {
 /** The element id of a tier's card on the Achievements tab, for a shared tier link to land on. */
 export const tierCardId = (slug: ScoreTierSlug) => `tier-${slug}`;
 
+/** The element id of the card a share token names: a tier's, or an achievement's by its key. */
+export function milestoneCardId(token: string) {
+  const slug = parseScoreTierSlug(token);
+  return slug ? tierCardId(slug) : `achievement-${token}`;
+}
+
+/** A card a shared link named, ringed; any other card as it is. */
+function Spotlit({
+  milestoneKey,
+  spotlight,
+  children,
+}: {
+  milestoneKey: string;
+  spotlight?: string | null;
+  children: ReactNode;
+}) {
+  if (!spotlight || milestoneKeyOfShareToken(spotlight) !== milestoneKey) return <>{children}</>;
+  return (
+    <div
+      id={milestoneCardId(spotlight)}
+      data-spotlight
+      className="scroll-mt-24 rounded-lg ring-2 ring-yellow-5 ring-offset-2 ring-offset-white dark:ring-offset-dark-7"
+    >
+      {children}
+    </div>
+  );
+}
+
 /**
  * The Achievements tab: the highest tier, every earned tier, then each achievement by track.
- * `spotlight` is the tier a shared link named: its card is scrolled to and ringed.
+ * `spotlight` is the share token a shared link named: its card is scrolled to and ringed.
  */
 export function ProfileAchievementsList({
   data,
@@ -143,15 +184,23 @@ export function ProfileAchievementsList({
 }: {
   data: ProfileAchievements;
   userId: number;
-  spotlight?: ScoreTierSlug | null;
+  spotlight?: string | null;
 }) {
+  const currentUser = useCurrentUser();
+  const isOwner = currentUser?.id === userId;
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery();
-  const spotlightKey = spotlight ? scoreTierKey(spotlight) : undefined;
-  const spotlit = !!spotlightKey && data.tiers.some((tier) => tier.key === spotlightKey);
+  const { data: share } = trpc.creatorJourney.getMyShareStates.useQuery(undefined, {
+    enabled: isOwner,
+  });
+  const shareable = new Set(isOwner ? share?.shareable : undefined);
+  const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
+  const spotlit =
+    !!spotlightKey &&
+    [...data.tiers, ...data.achievements].some((milestone) => milestone.key === spotlightKey);
   useEffect(() => {
     if (!spotlit || !spotlight) return;
     document
-      .getElementById(tierCardId(spotlight))
+      .getElementById(milestoneCardId(spotlight))
       ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [spotlit, spotlight]);
   const thresholds = new Map(ladder?.tiers.map((tier) => [tier.key, tier.threshold]));
@@ -176,21 +225,11 @@ export function ProfileAchievementsList({
           <Stack gap="sm" className="min-w-0">
             <GroupTitle title="Creator Score" count={data.tiers.length} />
             <div className={BADGE_CARD_GRID}>
-              {[...data.tiers].reverse().map((tier) => {
-                const card = <TierCard tier={tier} threshold={thresholds.get(tier.key)} />;
-                if (tier.key !== spotlightKey || !spotlight)
-                  return <Fragment key={tier.key}>{card}</Fragment>;
-                return (
-                  <div
-                    key={tier.key}
-                    id={tierCardId(spotlight)}
-                    data-spotlight
-                    className="scroll-mt-24 rounded-lg ring-2 ring-yellow-5 ring-offset-2 ring-offset-white dark:ring-offset-dark-7"
-                  >
-                    {card}
-                  </div>
-                );
-              })}
+              {[...data.tiers].reverse().map((tier) => (
+                <Spotlit key={tier.key} milestoneKey={tier.key} spotlight={spotlight}>
+                  <TierCard tier={tier} threshold={thresholds.get(tier.key)} />
+                </Spotlit>
+              ))}
             </div>
           </Stack>
         </div>
@@ -198,7 +237,20 @@ export function ProfileAchievementsList({
       {groups.map((group) => (
         <Stack key={group.key} gap="sm">
           <GroupTitle title={group.title} count={group.items.length} />
-          <AchievementGrid achievements={group.items} />
+          <AchievementGrid
+            achievements={group.items}
+            spotlight={spotlight}
+            action={(achievement) =>
+              shareable.has(achievement.key) &&
+              currentUser?.username && (
+                <MilestoneShareButton
+                  username={currentUser.username}
+                  milestoneKey={achievement.key}
+                  name={achievementName(achievement)}
+                />
+              )
+            }
+          />
         </Stack>
       ))}
     </Stack>
@@ -208,14 +260,20 @@ export function ProfileAchievementsList({
 export function AchievementGrid({
   achievements,
   className = BADGE_CARD_GRID,
+  spotlight,
+  action,
 }: {
   achievements: Achievement[];
   className?: string;
+  spotlight?: string | null;
+  action?: (achievement: Achievement) => ReactNode;
 }) {
   return (
     <div className={className}>
       {achievements.map((achievement) => (
-        <AchievementCard key={achievement.key} achievement={achievement} />
+        <Spotlit key={achievement.key} milestoneKey={achievement.key} spotlight={spotlight}>
+          <AchievementCard achievement={achievement} action={action?.(achievement)} />
+        </Spotlit>
       ))}
     </div>
   );

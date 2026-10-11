@@ -15,7 +15,10 @@ import {
   type PhraseLink,
 } from '~/components/CreatorJourney/journey-links';
 import { EarnedBadgeCard } from '~/components/CreatorJourney/EarnedBadgeCard';
-import { TierShareButton } from '~/components/CreatorJourney/TierShareButton';
+import {
+  MilestoneShareButton,
+  UnhideToShareHint,
+} from '~/components/CreatorJourney/MilestoneShareButton';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
@@ -25,10 +28,7 @@ import {
   TierBadge,
   tierAccents,
 } from '~/components/CreatorJourney/tier-badge';
-import {
-  CREATOR_SHOWCASE_HREF,
-  scoreTierSlugFromKey,
-} from '~/shared/constants/creator-journey.constants';
+import { CREATOR_SHOWCASE_HREF } from '~/shared/constants/creator-journey.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   CreatorScoreKinds,
@@ -85,7 +85,8 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
   // a job, and a hidden tier stays masked until then.
   const earnedKeys = new Set(journey.earned.map((badge) => badge.key));
   const shelf = journey.earned.filter(isShelfBadge);
-  const shareable = new Set<string>(journey.shareableTiers);
+  const shareable = new Set(journey.share.shareable);
+  const hiddenOnProfile = new Set(journey.share.hiddenOnProfile);
   const accent = accentOf(currentTier);
 
   return (
@@ -199,22 +200,23 @@ export function CreatorJourneyView({ journey, username }: { journey: Journey; us
         </Title>
         {shelf.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {shelf.map((badge) => {
-              const slug = scoreTierSlugFromKey(badge.key);
-              return (
-                <EarnedBadgeCard
-                  key={badge.key}
-                  badge={badge}
-                  action={
-                    username &&
-                    slug &&
-                    shareable.has(slug) && (
-                      <TierShareButton username={username} slug={slug} tierName={badge.name} />
-                    )
-                  }
-                />
-              );
-            })}
+            {shelf.map((badge) => (
+              <EarnedBadgeCard
+                key={badge.key}
+                badge={badge}
+                action={
+                  username && shareable.has(badge.key) ? (
+                    <MilestoneShareButton
+                      username={username}
+                      milestoneKey={badge.key}
+                      name={badge.name}
+                    />
+                  ) : hiddenOnProfile.has(badge.key) ? (
+                    <UnhideToShareHint name={badge.name} />
+                  ) : null
+                }
+              />
+            ))}
           </div>
         ) : (
           <Text size="sm" c="dimmed">

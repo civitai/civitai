@@ -23,15 +23,19 @@ vi.mock('~/server/services/creator-journey-flag.service', async (importOriginal)
 import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
 import type * as JourneyFlag from '~/server/services/creator-journey-flag.service';
 import {
+  achievementShareLine,
   getMilestoneShareCard,
-  getShareableTierSlugs,
+  getMilestoneShareStates,
   isMilestoneShareable,
 } from '~/server/services/creator-milestone-share.service';
+import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import {
   milestoneOgEndpoint,
+  milestoneShareToken,
   parseMilestoneShareId,
   SCORE_TIERS,
   scoreTierKey,
+  scoreTierSlugFromKey,
 } from '~/shared/constants/creator-journey.constants';
 import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants';
 
@@ -144,7 +148,7 @@ async function setPicture(userId: number, url: string, picture: Picture) {
 }
 
 const card = (slug: ScoreTierSlug = 'supernova', userId = CREATOR) =>
-  getMilestoneShareCard({ userId, slug }, { pg, now: NOW });
+  getMilestoneShareCard({ userId, milestone: slug }, { pg, now: NOW });
 
 beforeAll(async () => {
   // The app reads `timestamp` as UTC (src/server/db/appsDb.ts); PGlite's default reads it as local.
@@ -248,7 +252,7 @@ describe('milestone share card', () => {
 
     expect(result).toMatchObject({
       username: `u${CREATOR}`,
-      tierName: 'Supernova',
+      name: 'Supernova',
       accent: '#ae3ec9',
       reached: 'November 2026',
     });
@@ -268,7 +272,7 @@ describe('milestone share card', () => {
   it('renders a backfilled (caught-up) grant, with no month', async () => {
     await addUser(CREATOR);
     await grant(CREATOR, 'supernova', 'silent');
-    expect(await card()).toMatchObject({ tierName: 'Supernova', reached: null });
+    expect(await card()).toMatchObject({ name: 'Supernova', reached: null });
   });
 
   it('falls back for a tier the creator does not hold', async () => {
@@ -299,7 +303,7 @@ describe('milestone share card', () => {
     expect(await card()).toBeNull();
     // The public, un-flagged profile check must refuse too.
     expect(
-      await isMilestoneShareable({ userId: CREATOR, slug: 'supernova' }, { pg, now: NOW })
+      await isMilestoneShareable({ userId: CREATOR, milestone: 'supernova' }, { pg, now: NOW })
     ).toBe(false);
   });
 
@@ -360,7 +364,7 @@ describe('profile og:image swap', () => {
     await grant(CREATOR, 'supernova');
     await grant(CREATOR, 'nova', 'silent');
     const shareable = (slug: ScoreTierSlug) =>
-      isMilestoneShareable({ userId: CREATOR, slug }, { pg, now: NOW });
+      isMilestoneShareable({ userId: CREATOR, milestone: slug }, { pg, now: NOW });
 
     expect(await shareable('supernova')).toBe(true);
     expect(await shareable('nova')).toBe(true);
@@ -381,7 +385,8 @@ describe('profile og:image swap', () => {
 });
 
 describe('journey page share buttons', () => {
-  const tierSlugs = (userId = CREATOR) => getShareableTierSlugs(userId, { pg, now: NOW });
+  const tierSlugs = async (userId = CREATOR) =>
+    (await getMilestoneShareStates(userId, { pg, now: NOW })).shareable.map(scoreTierSlugFromKey);
 
   // The button and the card read one rule. If they drift, a shared link previews the bare profile.
   it('offers exactly the tiers whose card renders', async () => {
@@ -400,7 +405,7 @@ describe('journey page share buttons', () => {
     expect(await tierSlugs()).toEqual(expected);
     const perTier = [];
     for (const { slug } of SCORE_TIERS)
-      if (await isMilestoneShareable({ userId: CREATOR, slug }, { pg, now: NOW }))
+      if (await isMilestoneShareable({ userId: CREATOR, milestone: slug }, { pg, now: NOW }))
         perTier.push(slug);
     expect(perTier).toEqual(expected);
   });
@@ -444,7 +449,7 @@ describe('score tier slugs', () => {
 
 describe('share id', () => {
   it('reads `<userId>.<tierSlug>` for every score tier and nothing else', () => {
-    expect(parseMilestoneShareId('42.supernova')).toEqual({ userId: 42, slug: 'supernova' });
+    expect(parseMilestoneShareId('42.supernova')).toEqual({ userId: 42, milestone: 'supernova' });
     for (const raw of [
       '42.score:legend',
       '42.unknown',
@@ -454,5 +459,161 @@ describe('share id', () => {
       '9999999999.legend',
     ])
       expect(parseMilestoneShareId(raw), raw).toBeNull();
+  });
+});
+
+describe('achievement share cards', () => {
+  const addMilestone = (key: string, track: string, name: string, threshold: number | null) =>
+    q(
+      `INSERT INTO "CreatorMilestone" (key, track, name, threshold, hidden, hint, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (key) DO NOTHING`,
+      [key, track, name, threshold, track === 'hidden', 'Top of the board.', 'Only you see this.']
+    );
+  const grantKey = (userId: number, key: string) =>
+    q(
+      `INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey", "achievedAt") VALUES ($1, $2, $3)`,
+      [userId, key, CROSSED]
+    );
+  const achievementCard = (milestone: string, userId = CREATOR) =>
+    getMilestoneShareCard({ userId, milestone }, { pg, now: NOW });
+  const addBadge = async (key: string) => {
+    const { rows } = await q(`INSERT INTO "Cosmetic" (data) VALUES ('{"url":"a"}') RETURNING id`);
+    const id = (rows[0] as { id: number }).id;
+    await q(`UPDATE "CreatorMilestone" SET "cosmeticId" = $1 WHERE key = $2`, [id, key]);
+    return id;
+  };
+
+  beforeEach(async () => {
+    await addMilestone('reach:downloads-10000', 'reach', '10k Downloads', 10000);
+    await addMilestone('create:models-1', 'create', 'First Model', 1);
+    await addMilestone('hidden:vwjxua', 'hidden', 'Number One', null);
+  });
+
+  it('renders an achievement with its track, accent and a line for strangers', async () => {
+    await addUser(CREATOR);
+    await grantKey(CREATOR, 'reach:downloads-10000');
+
+    expect(await achievementCard('reach:downloads-10000')).toMatchObject({
+      name: '10k Downloads',
+      eyebrow: 'Reach Achievement',
+      accent: '#f59f00',
+      line: 'One model reached 10,000 downloads',
+      reachedVerb: 'Earned',
+      reached: 'November 2026',
+    });
+  });
+
+  // Decided with Justin: a shared special stays secret, as a visitor to the profile sees it masked.
+  it('masks a special achievement: no name, hint or description anywhere on the card', async () => {
+    await addUser(CREATOR);
+    await grantKey(CREATOR, 'hidden:vwjxua');
+
+    const result = await achievementCard('hidden:vwjxua');
+
+    expect(result).toMatchObject({
+      name: 'Unlocked a secret',
+      eyebrow: 'Special Achievement',
+      line: 'What it takes stays hidden. Can you find it?',
+    });
+    const text = JSON.stringify(result);
+    for (const secret of ['Number One', 'Top of the board.', 'Only you see this.'])
+      expect(text, secret).not.toContain(secret);
+  });
+
+  it('falls back for an achievement the creator does not hold, or hides on their profile', async () => {
+    const OTHER = 11;
+    await addUser(CREATOR);
+    await addUser(OTHER);
+    const badge = await addBadge('create:models-1');
+    await grantKey(CREATOR, 'create:models-1');
+    await grantKey(OTHER, 'create:models-1');
+    await setPrivacy(OTHER, { hiddenBadgeIds: [badge] });
+
+    expect(await achievementCard('reach:downloads-10000')).toBeNull();
+    expect(await achievementCard('create:models-1')).not.toBeNull();
+    expect(await achievementCard('create:models-1', OTHER)).toBeNull();
+  });
+
+  it('lists shareable milestones and the ones hidden on the profile, in one read', async () => {
+    await addUser(CREATOR);
+    const badge = await addBadge('create:models-1');
+    await grant(CREATOR, 'spark');
+    await grantKey(CREATOR, 'create:models-1');
+    await grantKey(CREATOR, 'reach:downloads-10000');
+    await setPrivacy(CREATOR, { hiddenBadgeIds: [badge] });
+
+    const states = await getMilestoneShareStates(CREATOR, { pg, now: NOW });
+
+    expect([...states.shareable].sort()).toEqual(['reach:downloads-10000', 'score:spark']);
+    expect(states.hiddenOnProfile).toEqual(['create:models-1']);
+    // The card agrees with the list for every key, so a button never previews the bare profile.
+    for (const key of states.shareable)
+      expect(await achievementCard(milestoneShareToken(key)), key).not.toBeNull();
+    expect(await achievementCard('create:models-1')).toBeNull();
+  });
+
+  // Unhiding cannot make a card render for an owner who may not be put on show, so no hint either.
+  it('offers no unhide hint to an owner whose cards cannot render anyway', async () => {
+    const MUTED = 11;
+    await addUser(MUTED, { muted: true });
+    await grantKey(MUTED, 'create:models-1');
+    await setPrivacy(MUTED, { showBadges: false });
+
+    expect(await getMilestoneShareStates(MUTED, { pg, now: NOW })).toEqual({
+      shareable: [],
+      hiddenOnProfile: [],
+    });
+  });
+});
+
+describe('achievement share line', () => {
+  // Every activity milestone the code can grant gets a line: a new measure without one fails here.
+  it('has a line for every activity milestone in the registry, and none for tiers', () => {
+    const activity = Object.keys(creatorMilestoneRegistry).filter(
+      (key) => !key.startsWith('score:')
+    );
+    const missing = activity.filter(
+      (key) => !achievementShareLine(key, Number(key.split('-').at(-1)))
+    );
+    expect(activity.length).toBeGreaterThanOrEqual(40);
+    expect(missing).toEqual([]);
+    expect(achievementShareLine('score:spark', 500)).toBeNull();
+    expect(achievementShareLine('hidden:vwjxua', null)).toBeNull();
+  });
+
+  it.each([
+    ['create:models-1', 1, 'Published a first model'],
+    ['create:articles-25', 25, 'Published 25 articles'],
+    ['reach:followers-1000', 1000, 'Reached 1,000 followers'],
+    ['earn:shop-sales-100000', 100000, '100,000 Buzz in shop sales'],
+    ['community:crucible-votes-500', 500, 'Cast 500 Crucible votes'],
+    ['compete:wins-1', 1, 'Won a first challenge or Crucible'],
+    ['compete:wins-5', 5, 'Won 5 challenges and Crucibles'],
+  ])('reads %s as "%s"', (key, threshold, line) => {
+    expect(achievementShareLine(key, threshold)).toBe(line);
+  });
+});
+
+describe('achievement share id', () => {
+  it('reads `<userId>.<achievementKey>`, including a special', () => {
+    expect(parseMilestoneShareId('42.reach:downloads-10000')).toEqual({
+      userId: 42,
+      milestone: 'reach:downloads-10000',
+    });
+    expect(parseMilestoneShareId('42.hidden:vwjxua')).toEqual({
+      userId: 42,
+      milestone: 'hidden:vwjxua',
+    });
+  });
+
+  it.each([
+    '42.reach:Downloads-10',
+    '42.other:x',
+    '42.reach:',
+    "42.reach:x' OR 1=1",
+    '42.reach:downloads-10000.extra',
+    `42.reach:${'a'.repeat(41)}`,
+  ])('refuses %s', (raw) => {
+    expect(parseMilestoneShareId(raw)).toBeNull();
   });
 });

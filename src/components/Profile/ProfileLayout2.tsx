@@ -29,18 +29,18 @@ import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.c
 import { isBlobUrl } from '~/utils/type-guards';
 import {
   milestoneOgEndpoint,
-  parseScoreTierSlug,
+  parseMilestoneShareToken,
 } from '~/shared/constants/creator-journey.constants';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { username } = router.query as { username: string };
-  const milestone = parseScoreTierSlug(router.query.milestone);
+  const milestone = parseMilestoneShareToken(router.query.milestone);
 
   const { isInitialLoading, data: user } = trpc.userProfile.get.useQuery({ username });
   const { data: milestoneShareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
-    { userId: user?.id ?? 0, slug: milestone ?? 'spark' },
+    { userId: user?.id ?? 0, milestone: milestone ?? 'spark' },
     { enabled: !!user && !!milestone }
   );
   const blockedByThem = !!(user && 'blockedByThem' in user && user.blockedByThem);

@@ -40,7 +40,7 @@ const resolve = async (query: Record<string, string>, ssg = fakeSsg()) => {
 describe('profile page server render, ?milestone=', () => {
   it('prefetches whether the tier card renders, keyed as the layout queries it', async () => {
     const shareable = await resolve({ username: 'ellie', milestone: 'legend' });
-    expect(shareable).toHaveBeenCalledWith({ userId: PROFILE_ID, slug: 'legend' });
+    expect(shareable).toHaveBeenCalledWith({ userId: PROFILE_ID, milestone: 'legend' });
   });
 
   // The layout queries `router.query.username` as typed. A prefetch under the slugified (lowercased)
