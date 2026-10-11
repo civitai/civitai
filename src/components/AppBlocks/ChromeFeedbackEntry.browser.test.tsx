@@ -191,6 +191,28 @@ const RESTING_ICON_PX = 22;
 /** 22 + `py={4}` ×2 + 1px border: the bar's measured resting height (see the mobile-shell suite). */
 const CHROME_BAR_RENDERED_PX = 31;
 
+/** The wide-bar form: the visible "Feedback" text beside the icon, at the bar's 22px height. */
+function expectLabelled() {
+  const el = feedbackButton().element() as HTMLElement;
+  expect(el.getAttribute('data-labelled')).toBe('true');
+  expect(el.textContent?.trim()).toBe('Feedback');
+  const r = rectOf(el);
+  expect(r.height).toBe(RESTING_ICON_PX);
+  expect(r.width).toBeGreaterThan(RESTING_ICON_PX * 2);
+  // The accessible name is the full sentence, which still contains the visible word.
+  expect(el.getAttribute('aria-label')).toBe('Send feedback to developer');
+}
+
+/** The narrow-bar form: the bare 22px icon, no visible text. */
+function expectIconOnly() {
+  const el = feedbackButton().element() as HTMLElement;
+  expect(el.getAttribute('data-labelled')).toBe('false');
+  expect(el.textContent?.trim()).toBe('');
+  const r = rectOf(el);
+  expect([r.width, r.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+  expect(el.getAttribute('aria-label')).toBe('Send feedback to developer');
+}
+
 /** Guard-the-guard: without the stylesheet every measurement below reads as something else. */
 function expectStyledOneLineBar() {
   expect(getComputedStyle(chromeBar()).display).toBe('flex');
@@ -246,7 +268,7 @@ describe('the bar button', () => {
     expect(mocks.eligibilityInputs).toEqual([{ target: { appBlockId: APP_BLOCK_ID } }]);
   });
 
-  test('sits in the bar immediately before the ⋮ trigger, the same size as it', async () => {
+  test('desktop: a labelled "Feedback" button right before the ⋮ trigger, the bar height', async () => {
     renderChrome();
     await expect.element(feedbackButton()).toBeVisible();
     const button = feedbackButton().element() as HTMLElement;
@@ -261,11 +283,22 @@ describe('the bar button', () => {
     // Right before ⋮ (the cluster's 4px gap), not floated elsewhere in the row.
     expect(b.right).toBeLessThanOrEqual(t.left);
     expect(t.left - b.right).toBeLessThanOrEqual(8);
-    expect([b.width, b.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+    expectLabelled();
     expect([t.width, t.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
     expect(b.top).toBe(t.top);
+    await expect.element(page.getByText('Feedback', { exact: true })).toBeVisible();
     // Pinned to the right edge with ⋮, not floated into the middle of the row.
     expect(rectOf(chromeBar()).right - t.right).toBeLessThan(16);
+  });
+
+  test('a full-width bar (~1840px) shows the label at the far right', async () => {
+    await page.viewport(1840, 900);
+    renderChrome();
+    await expect.element(feedbackButton()).toBeVisible();
+    expectStyledOneLineBar();
+    expect(Math.round(rectOf(chromeBar()).width)).toBe(1840);
+    expect(chromeBar().getAttribute('data-chrome-compact')).toBe('false');
+    expectLabelled();
   });
 
   test('hover shows a tooltip with the same text', async () => {
@@ -544,7 +577,8 @@ describe('narrow bars', () => {
     );
     await expect.element(feedbackButton()).toBeVisible();
     expectStyledOneLineBar();
-    // Same tap target as its neighbours, the back chevron and ⋮.
+    // Icon-only here, the same tap target as its neighbours, the back chevron and ⋮.
+    expectIconOnly();
     for (const id of ['app-block-feedback-button', 'app-block-menu-trigger', 'app-block-back']) {
       const r = rectOf(page.getByTestId(id).element());
       expect([r.width, r.height], id).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
@@ -586,20 +620,26 @@ describe('narrow bars', () => {
     expect(b.right).toBeLessThanOrEqual(t.left);
     expect(t.left - b.right).toBeLessThanOrEqual(8);
     expect(t.right).toBeLessThanOrEqual(bar.right);
-    expect([b.width, b.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+    // No mobile shell on the model slot (`data-chrome-compact` is the SHELL decision, page-only),
+    // but the bar is still narrow, so the button is icon-only.
+    expect(chromeBar().getAttribute('data-chrome-compact')).toBe('false');
+    expect(chromeBar().getAttribute('data-chrome-tier')).toBe('base');
+    expectIconOnly();
   });
 
   const LONG_NAME =
     'An Extraordinarily Long Application Name That Would Happily Fill The Whole Bar';
 
   test.each([
-    ['320px model sidebar', SLOT_PROPS, 320],
-    ['375px compact page shell', PAGE_PROPS, 375],
+    ['320px model sidebar', SLOT_PROPS, 320, false],
+    ['375px compact page shell', PAGE_PROPS, 375, false],
+    ['1280px desktop page host', PAGE_PROPS, 1280, true],
   ] as const)(
-    // INVARIANT GUARD, not regression coverage: Mantine's ActionIcon `min-width` already holds
-    // 22px (removing every `flexShrink: 0` here stays green). It pins the outcome, whatever holds it.
+    // INVARIANT GUARD, not regression coverage: Mantine's ActionIcon `min-width` and the Button
+    // label's `nowrap` already hold the size (removing every `flexShrink: 0` here stays green). It
+    // pins the outcome, whatever holds it.
     'INVARIANT GUARD — a long app name cannot squeeze the button or ⋮ (%s)',
-    async (_label, props, width) => {
+    async (_label, props, width, labelled) => {
       await page.viewport(width, 720);
       render(
         <div style={{ width }}>
@@ -610,11 +650,12 @@ describe('narrow bars', () => {
       await expect.element(feedbackButton()).toBeVisible();
       expectStyledOneLineBar();
       const bar = rectOf(chromeBar());
-      for (const id of ['app-block-feedback-button', 'app-block-menu-trigger']) {
-        const r = rectOf(page.getByTestId(id).element());
-        expect([r.width, r.height], id).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
-        expect(r.right, id).toBeLessThanOrEqual(bar.right);
-      }
+      if (labelled) expectLabelled();
+      else expectIconOnly();
+      const t = rectOf(menuTrigger().element());
+      expect([t.width, t.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+      expect(rectOf(feedbackButton().element()).right).toBeLessThanOrEqual(t.left);
+      expect(t.right).toBeLessThanOrEqual(bar.right);
     }
   );
 });

@@ -884,7 +884,15 @@ export function AppBlockChrome({
           than the bar's own so the pair reads as one group of app actions. The button renders
           its own gates and may be null. */}
         <Group gap={4} wrap="nowrap">
-          <ChromeFeedbackButton request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
+          {/* Labelled on a wide bar, icon-only below `sm` (the same `compact` width test the
+            mobile shell uses, but WITHOUT its `isPage` term: a narrow model sidebar is just as
+            short of room). An unmeasured bar (SSR, first paint) is not compact, so it starts
+            labelled. */}
+          <ChromeFeedbackButton
+            request={feedbackRequest}
+            labelled={!geometry.compact}
+            onOpenFeedback={setFeedbackTarget}
+          />
           {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
             was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
             because the mobile bar has no second trigger to hang that behind — the
