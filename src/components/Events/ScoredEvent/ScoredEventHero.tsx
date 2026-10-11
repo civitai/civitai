@@ -1,4 +1,4 @@
-import { Badge, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
+import { Badge, Checkbox, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
 import { IconCalendarEvent, IconEye, IconPlayerPlayFilled, IconTrophy } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -36,6 +36,8 @@ export function ScoredEventHero({
   teamHats,
   onJoin,
   joining,
+  rosterOnJoin,
+  rosterSwitch,
 }: {
   data: EventData;
   /** Ended, but scores are still taking late data, so no result yet. */
@@ -52,6 +54,10 @@ export function ScoredEventHero({
   ended: boolean;
   onJoin: () => void;
   joining: boolean;
+  /** The "show me on the roster" choice offered beside the join button, for events with a roster. */
+  rosterOnJoin?: { checked: boolean; onChange: (checked: boolean) => void };
+  /** The joined member's own roster switch, under their team panel. */
+  rosterSwitch?: ReactNode;
 }) {
   const teamColor = useTeamColor();
   const now = new Date();
@@ -247,15 +253,27 @@ export function ScoredEventHero({
               <Figure label="Team points" value={<AnimatedCount value={teamPoints ?? 0} />} />
               <Figure label="Your hats" value={<AnimatedCount value={points ?? 0} />} />
             </Group>
+            {rosterSwitch && <div className="basis-full">{rosterSwitch}</div>}
           </Group>
         ) : (
           !ended && (
-            <Group gap="sm">
-              <JoinEventButton onClick={onJoin} loading={joining} />
-              <Text size="sm" c="dimmed">
-                You get a random team. Teams are final.
-              </Text>
-            </Group>
+            <Stack gap="xs">
+              <Group gap="sm">
+                <JoinEventButton onClick={onJoin} loading={joining} />
+                <Text size="sm" c="dimmed">
+                  You get a random team. Teams are final.
+                </Text>
+              </Group>
+              {rosterOnJoin && (
+                <Checkbox
+                  size="xs"
+                  label="Show me on my team's roster (avatar, username, hats and points)"
+                  checked={rosterOnJoin.checked}
+                  onChange={(e) => rosterOnJoin.onChange(e.currentTarget.checked)}
+                  data-testid="roster-opt-in-on-join"
+                />
+              )}
+            </Stack>
           )
         )}
       </Stack>

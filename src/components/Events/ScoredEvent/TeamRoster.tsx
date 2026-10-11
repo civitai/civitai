@@ -1,20 +1,23 @@
-import { Alert, Loader, SegmentedControl, Switch, Text, Title } from '@mantine/core';
+import { Alert, Chip, Group, Loader, SegmentedControl, Skeleton, Text, Title } from '@mantine/core';
+import clsx from 'clsx';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { RosterLivePoints } from '~/components/Events/ScoredEvent/event-points-live';
-import { HatArt } from '~/components/Events/ScoredEvent/HatArt';
+import type { RosterCardContext } from '~/components/Events/ScoredEvent/roster/RosterCards';
+import {
+  RosterPodiumCard,
+  RosterShelfCard,
+} from '~/components/Events/ScoredEvent/roster/RosterCards';
+import type { RosterSort } from '~/components/Events/ScoredEvent/roster/roster-cards.utils';
+import {
+  rosterPricePoints,
+  rosterRanks,
+} from '~/components/Events/ScoredEvent/roster/roster-cards.utils';
+import { RosterOptIn } from '~/components/Events/ScoredEvent/roster/RosterOptIn';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useInView } from '~/hooks/useInView';
-import type { RouterOutput } from '~/types/router';
-import { formatDate } from '~/utils/date-helpers';
-import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-
-type RosterSort = 'hats' | 'points' | 'newest';
-type RosterItem = RouterOutput['event']['getTeamRoster']['items'][number];
 
 const SORTS: { value: RosterSort; label: string }[] = [
   { value: 'hats', label: 'Most hats' },
@@ -22,12 +25,13 @@ const SORTS: { value: RosterSort; label: string }[] = [
   { value: 'newest', label: 'Newest' },
 ];
 const PAGE_SIZE = 24;
-// Hats a placeholder card draws before it says "+N".
-const CARD_HATS = 6;
+const PODIUM_SIZE = 3;
+// Wide podium order: #2, #1, #3, so the leader stands in the middle. On a phone #1 comes first.
+const PODIUM_ORDER = ['@sm:order-2 @sm:-mt-4', '@sm:order-1', '@sm:order-3'];
 
 /**
- * A scored event's team rosters: one team at a time, the members who chose to be listed, as cards.
- * The cards are placeholders until the card design lands.
+ * A scored event's team rosters: one team at a time, the members who chose to be listed. The top
+ * three of the sort stand on a podium of trading cards; everyone after them is a shelf card.
  */
 export function TeamRoster({
   event,
@@ -51,6 +55,7 @@ export function TeamRoster({
     trpc.event.getTeamRoster.useInfiniteQuery(input, {
       getNextPageParam: (page) => page.nextCursor,
     });
+  const { data: standings } = trpc.event.getStandings.useQuery({ event });
   // The roster is edge-cached (about 90s with stale-while-revalidate), so a refetch right after opting out can still
   // list you: your own status, read uncached, decides your own card.
   const currentUser = useCurrentUser();
@@ -66,6 +71,9 @@ export function TeamRoster({
       ),
     [data, hideSelf, currentUser?.id]
   );
+  // Ranked after the viewer's own card is dropped, so a hidden card leaves no gap.
+  const ranks = useMemo(() => rosterRanks(items, sort), [items, sort]);
+  const prices = useMemo(() => rosterPricePoints(items.map((i) => i.hats)), [items]);
   const total = data?.pages[0]?.total ?? 0;
 
   // The cards in view, whose totals are followed live.
@@ -78,25 +86,43 @@ export function TeamRoster({
     });
   }, []);
 
+  const [now] = useState(() => new Date());
+  const ctx: RosterCardContext = {
+    team,
+    color: teamColor(team),
+    glow: `var(--mantine-color-${team.toLowerCase()}-5)`,
+    sort,
+    prices,
+    now,
+    onVisible,
+  };
+  const teamHatUrl = standings?.teamHats?.find((h) => h.team === team)?.url;
+  const podium = items.slice(0, PODIUM_SIZE);
+  const grid = items.slice(PODIUM_SIZE);
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="@container flex flex-col gap-4">
       <div className="flex flex-col gap-1">
         <Title order={1}>Teams</Title>
         <Text c="dimmed">Members who chose to show their hats.</Text>
       </div>
       <RosterOptIn event={event} />
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <SegmentedControl
-          value={team}
-          onChange={setTeam}
-          data={teams.map((t) => ({ value: t, label: t }))}
-          styles={{ indicator: { backgroundColor: teamColor(team) } }}
-        />
+        <Chip.Group multiple={false} value={team} onChange={setTeam}>
+          <Group gap="xs">
+            {teams.map((t) => (
+              <Chip key={t} value={t} color={t.toLowerCase()} variant="light" radius="xl">
+                {t}
+              </Chip>
+            ))}
+          </Group>
+        </Chip.Group>
         <SegmentedControl
           value={sort}
           onChange={(v) => setSort(v as RosterSort)}
           data={SORTS}
           size="xs"
+          radius="xl"
         />
       </div>
       {!isLoading && (
@@ -105,23 +131,42 @@ export function TeamRoster({
         </Text>
       )}
       {isLoading ? (
-        <div className="flex justify-center p-8">
-          <Loader />
-        </div>
+        <RosterSkeleton />
       ) : items.length ? (
-        <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2 @md:grid-cols-3 @lg:grid-cols-4">
-          {items.map((item, i) => (
-            <PlaceholderRosterCard
-              key={item.user.id}
-              item={item}
-              rank={i + 1}
-              color={teamColor(team)}
-              onVisible={onVisible}
-            />
-          ))}
-        </div>
+        <>
+          <div
+            className="grid grid-cols-2 items-stretch gap-3 @sm:grid-cols-3 @sm:pt-4"
+            data-testid="roster-podium"
+          >
+            {podium.map((item, i) => (
+              <RosterPodiumCard
+                key={item.user.id}
+                item={item}
+                rank={ranks[i]}
+                ctx={ctx}
+                teamHatUrl={teamHatUrl}
+                className={clsx(PODIUM_ORDER[i], i === 0 && 'col-span-2 @sm:col-span-1')}
+              />
+            ))}
+          </div>
+          {grid.length > 0 && (
+            <div
+              className="grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]"
+              data-testid="roster-grid"
+            >
+              {grid.map((item, i) => (
+                <RosterShelfCard
+                  key={item.user.id}
+                  item={item}
+                  rank={ranks[i + PODIUM_SIZE]}
+                  ctx={ctx}
+                />
+              ))}
+            </div>
+          )}
+        </>
       ) : (
-        <Alert color="gray">Nobody on {team} has chosen to be listed yet.</Alert>
+        <Alert color="gray">No one on Team {team} has joined the roster yet.</Alert>
       )}
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
@@ -135,95 +180,24 @@ export function TeamRoster({
   );
 }
 
-// @ai: placeholder; the card design seat replaces this with the chosen card.
-function PlaceholderRosterCard({
-  item,
-  rank,
-  color,
-  onVisible,
-}: {
-  item: RosterItem;
-  rank: number;
-  color?: string;
-  onVisible: (topicId: string, inView: boolean) => void;
-}) {
-  const { ref, inView } = useInView();
-  useEffect(() => {
-    onVisible(item.topicId, inView);
-    return () => onVisible(item.topicId, false);
-  }, [item.topicId, inView, onVisible]);
-  const extra = item.hats.length - CARD_HATS;
-
+function RosterSkeleton() {
   return (
-    <div
-      ref={ref}
-      className="flex flex-col gap-3 rounded-lg border border-solid border-gray-3 p-3 dark:border-dark-4"
-      data-testid="roster-card"
-    >
-      <div className="flex items-center justify-between gap-2">
-        <UserAvatar user={item.user} avatarSize="sm" withUsername linkToProfile />
-        <Text size="xs" c="dimmed" className="tabular-nums">
-          #{rank}
-        </Text>
+    <div className="flex flex-col gap-3" data-testid="roster-loading">
+      <div className="grid grid-cols-2 gap-3 @sm:grid-cols-3">
+        {Array.from({ length: PODIUM_SIZE }, (_, i) => (
+          <Skeleton
+            key={i}
+            h={380}
+            radius="md"
+            className={clsx(i === 0 && 'col-span-2 @sm:col-span-1')}
+          />
+        ))}
       </div>
-      <div className="grid grid-cols-6 gap-1">
-        {item.hats
-          .slice(0, CARD_HATS)
-          .map((hat, i) =>
-            hat.url ? (
-              <HatArt key={`${hat.cosmeticId}-${i}`} url={hat.url} color={color} width={96} />
-            ) : null
-          )}
+      <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(240px,1fr))]">
+        {Array.from({ length: 6 }, (_, i) => (
+          <Skeleton key={i} h={260} radius="md" />
+        ))}
       </div>
-      <div className="flex items-center justify-between text-sm">
-        <Text size="sm" fw={700} className="tabular-nums" style={{ color }}>
-          {numberWithCommas(item.points)} pts
-        </Text>
-        <Text size="xs" c="dimmed">
-          {item.hatCount} {item.hatCount === 1 ? 'hat' : 'hats'}
-          {extra > 0 ? ` (+${extra} more)` : ''} · joined {formatDate(item.joinedAt)}
-        </Text>
-      </div>
-    </div>
-  );
-}
-
-/** The viewer's own listing: off until they turn it on. Only for members who joined. */
-function RosterOptIn({ event }: { event: string }) {
-  const currentUser = useCurrentUser();
-  const utils = trpc.useUtils();
-  const { data: cosmetic } = trpc.event.getCosmetic.useQuery({ event }, { enabled: !!currentUser });
-  const joined = !!cosmetic?.obtained;
-  const { data: status } = trpc.event.getMyRosterStatus.useQuery({ event }, { enabled: joined });
-  const { mutate, isPending } = trpc.event.setRosterOptIn.useMutation({
-    onSuccess: async (result) => {
-      utils.event.getMyRosterStatus.setData({ event }, result);
-      await utils.event.getTeamRoster.invalidate();
-    },
-    onError: (error) => showErrorNotification({ title: 'Could not save', error }),
-  });
-  if (!joined) return null;
-
-  const optedIn = status?.optedIn ?? false;
-  return (
-    <div className="flex flex-col gap-1">
-      <Switch
-        label="Show me on my team's roster"
-        description="Your avatar, username, hats and points. Off by default."
-        checked={optedIn}
-        disabled={!status || isPending}
-        onChange={(e) => mutate({ event, optIn: e.currentTarget.checked })}
-      />
-      {optedIn && status?.listedTeam && (
-        <Text size="xs" c="dimmed">
-          You&apos;re on the roster. It can take a couple of minutes to show for everyone.
-        </Text>
-      )}
-      {optedIn && status && !status.listedTeam && (
-        <Text size="xs" c="dimmed">
-          Saved. You will appear once your account can earn points for your team.
-        </Text>
-      )}
     </div>
   );
 }
