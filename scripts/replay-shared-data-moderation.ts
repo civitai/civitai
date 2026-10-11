@@ -186,25 +186,43 @@ export async function withReadOnlyTransaction<T>(
 
 /**
  * Create the CSV (exclusively, 0600: it holds user-written text), print its path, and hand `body` a
- * line writer. If `body` throws, the file is deleted — a partial CSV reads as a finished run. Only
- * the file this call created can be deleted: an existing path fails the exclusive open first.
- * (A signal or OOM kill skips the cleanup; the printed path is how to find what was left.)
+ * line writer. If anything fails after the file exists — `body`, a write, or the final close (an
+ * EIO/ENOSPC flush) — the file is deleted and the ORIGINAL error is rethrown: a partial CSV reads
+ * as a finished run. Only the file this call created can be deleted: an existing path fails the
+ * exclusive open first. (A signal or OOM kill skips the cleanup; the printed path is how to find
+ * what was left.)
  */
 export async function withCsvFile<T>(
   out: string,
   body: (write: (line: string) => void) => Promise<T>,
-  log: (message: string) => void = console.log
+  {
+    log = console.log,
+    warn = console.error,
+    files = fs,
+  }: {
+    log?: (message: string) => void;
+    warn?: (message: string) => void;
+    files?: Pick<typeof fs, 'openSync' | 'writeSync' | 'closeSync' | 'rmSync'>;
+  } = {}
 ): Promise<T> {
-  const fd = fs.openSync(out, 'wx', 0o600);
+  const fd = files.openSync(out, 'wx', 0o600);
   log(`writing CSV: ${out}`);
+  let open = true;
   try {
-    const result = await body((line) => fs.writeSync(fd, line));
-    fs.closeSync(fd);
+    const result = await body((line) => files.writeSync(fd, line));
+    open = false;
+    files.closeSync(fd);
     return result;
   } catch (error) {
-    fs.closeSync(fd);
-    fs.rmSync(out, { force: true });
-    log(`run failed; deleted the partial CSV ${out}`);
+    if (open) {
+      try {
+        files.closeSync(fd);
+      } catch {
+        // The original error is the one worth reporting.
+      }
+    }
+    files.rmSync(out, { force: true });
+    warn(`run failed; deleted the partial CSV ${out}`);
     throw error;
   }
 }

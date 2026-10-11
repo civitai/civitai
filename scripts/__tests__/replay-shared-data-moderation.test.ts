@@ -642,7 +642,7 @@ describe('entry-script guards', () => {
             write('r\r\n');
             return 7;
           },
-          log
+          { log }
         )
       ).resolves.toBe(7);
       expect(fs.readFileSync(out, 'utf8')).toBe('h\r\nr\r\n');
@@ -660,18 +660,42 @@ describe('entry-script guards', () => {
             write('partial user text\r\n');
             throw new Error('scan failed');
           },
-          log
+          { log: () => undefined, warn: log }
         )
       ).rejects.toThrow('scan failed');
       expect(fs.existsSync(out)).toBe(false);
       expect(log).toHaveBeenCalledWith(`run failed; deleted the partial CSV ${out}`);
     });
 
+    it('a failing final close still deletes the file and surfaces THAT error, not a double-close EBADF', async () => {
+      const out = path.join(dir, 'd.csv');
+      let closes = 0;
+      const files = {
+        ...fs,
+        closeSync: (fd: number) => {
+          closes += 1;
+          fs.closeSync(fd);
+          if (closes === 1) throw new Error('EIO on close');
+        },
+      };
+      await expect(
+        withCsvFile(
+          out,
+          async (write) => {
+            write('row\r\n');
+          },
+          { log: () => undefined, warn: () => undefined, files }
+        )
+      ).rejects.toThrow('EIO on close');
+      expect(closes).toBe(1);
+      expect(fs.existsSync(out)).toBe(false);
+    });
+
     it('refuses an existing file and leaves it untouched', async () => {
       const out = path.join(dir, 'c.csv');
       fs.writeFileSync(out, 'keep');
       const body = vi.fn(async () => undefined);
-      await expect(withCsvFile(out, body, () => undefined)).rejects.toThrow(/EEXIST/);
+      await expect(withCsvFile(out, body, { log: () => undefined })).rejects.toThrow(/EEXIST/);
       expect(body).not.toHaveBeenCalled();
       expect(fs.readFileSync(out, 'utf8')).toBe('keep');
     });
@@ -768,16 +792,22 @@ describe('entry-script guards', () => {
               : '';
             if (name === 'require') found.push('require()');
             (calls[name] ??= []).push(node.getStart());
+            const withArgs = `${name}(${node.arguments.map((a) => a.getText()).join(', ')})`;
+            (calls[withArgs] ??= []).push(node.getStart());
           }
         }
         ts.forEachChild(node, visit);
       };
       visit(file);
 
-      const sinkCheck = calls.assertNoSinks?.[0] ?? -1;
-      const guard = calls.suppressCacheWrites?.[0] ?? -1;
-      if (sinkCheck < 0) found.push('no assertNoSinks call');
-      if (guard < 0) found.push('no suppressCacheWrites call');
+      // Only the REAL calls count: a decoy `assertNoSinks({})` or `suppressCacheWrites(other)`
+      // placed early must not stand in for them.
+      const sinkCheck = calls['assertNoSinks(process.env)']?.[0] ?? -1;
+      const guard = calls['suppressCacheWrites(redis)']?.[0] ?? -1;
+      if (!dynamicImports.some((d) => d.spec === '~/env/server'))
+        found.push('no ~/env/server import');
+      if (sinkCheck < 0) found.push('no assertNoSinks(process.env) call');
+      if (guard < 0) found.push('no suppressCacheWrites(redis) call');
       for (const { spec, pos } of dynamicImports) {
         if (spec === '~/env/server' ? pos > sinkCheck : pos < sinkCheck) {
           found.push(`import(${spec}) on the wrong side of assertNoSinks`);
@@ -825,6 +855,37 @@ describe('entry-script guards', () => {
           "  getBlocklistData('x');\n  const cacheGuard = suppressCacheWrites(redis);"
         ),
         'getBlocklistData before suppressCacheWrites',
+      ],
+      [
+        'a decoy sink check ahead of a hoisted import',
+        entry.replace(
+          "  await import('~/env/server');",
+          "  assertNoSinks({});\n  await import('./shared-data-replay/replay');\n  await import('~/env/server');"
+        ),
+        'wrong side of assertNoSinks',
+      ],
+      [
+        'a decoy cache guard ahead of an early blocklist read',
+        entry.replace(
+          '  const cacheGuard = suppressCacheWrites(redis);',
+          "  suppressCacheWrites({});\n  getBlocklistData('x');\n  const cacheGuard = suppressCacheWrites(redis);"
+        ),
+        'getBlocklistData before suppressCacheWrites',
+      ],
+      [
+        'the env import moved after the check',
+        entry
+          .replace("  await import('~/env/server');\n", '')
+          .replace(
+            '  assertNoSinks(process.env);',
+            "  assertNoSinks(process.env);\n  await import('~/env/server');"
+          ),
+        'import(~/env/server) on the wrong side',
+      ],
+      [
+        'no env import at all',
+        entry.replace("  await import('~/env/server');\n", ''),
+        'no ~/env/server import',
       ],
     ])('negative control: catches %s', (_, source, expected) => {
       expect(source).not.toBe(entry);
