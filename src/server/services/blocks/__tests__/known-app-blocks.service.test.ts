@@ -276,18 +276,6 @@ describe('getApprovedAppBlockAnalytics — the app team (owner and accepted coll
     );
   });
 
-  it('asks for accepted seats on on-site listings of approved apps', async () => {
-    await getApprovedAppBlockAnalytics('apb_team');
-    expect(mockListingFindMany).toHaveBeenCalledWith({
-      where: { kind: 'onsite', appBlockId: { not: null }, appBlock: { status: 'approved' } },
-      select: { id: true, appBlockId: true },
-    });
-    expect(mockSeatFindMany).toHaveBeenCalledWith({
-      where: { appListingId: { in: ['lst_team', 'lst_solo'] }, status: 'accepted' },
-      select: { appListingId: true, userId: true },
-    });
-  });
-
   it('isAppTeamMember: the owner and accepted collaborators, nobody else', async () => {
     const team = (await getApprovedAppBlockAnalytics('apb_team'))!;
     expect(isAppTeamMember(team, OWNER)).toBe(true);

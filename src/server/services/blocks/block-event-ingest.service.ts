@@ -177,8 +177,8 @@ export function buildAppBlockEventRow(args: {
   /** `null` for a signed-out viewer. */
   userId: number | null;
   viewerKey: string;
-  /** The viewer is the app's owner or an accepted collaborator; stored as `isOwner`. */
-  isTeam: boolean;
+  /** True when the viewer is the app's owner or an accepted collaborator (team). */
+  isOwner: boolean;
 }): AppBlockEventRow {
   return {
     time: formatClickhouseDateTime64(args.nowMs),
@@ -188,7 +188,7 @@ export function buildAppBlockEventRow(args: {
     userId: args.userId ?? 0,
     viewerKey: args.viewerKey,
     isAnon: args.userId === null ? 1 : 0,
-    isOwner: args.isTeam ? 1 : 0,
+    isOwner: args.isOwner ? 1 : 0,
     enumProps: args.classified.enumProps,
     numProps: args.classified.numProps,
     boolProps: args.classified.boolProps,
@@ -292,7 +292,7 @@ export async function ingestBlockEvents(args: {
           classified,
           userId: viewer && signedIn ? viewer.id : null,
           viewerKey,
-          isTeam,
+          isOwner: isTeam,
         })
       );
     }
