@@ -20,7 +20,7 @@ import { parseManifestAnalytics } from '~/shared/constants/block-analytics.const
  */
 
 export const CUSTOM_EVENTS_QUERY_TIMEOUT_SECONDS = 10;
-/** `quantilesExactIf` keeps every value it sorts; past this a heavy event reads as unavailable. */
+/** `quantilesExactIf` keeps every value it sorts; past this a heavy event's detail fails to load. */
 export const CUSTOM_EVENTS_MAX_MEMORY_BYTES = 512 * 1024 * 1024;
 
 /** One app, one bounded time range; `time` is the partition and sort column. */
@@ -72,7 +72,7 @@ export type AppCustomEvents = {
   topEvents: CustomEventTotals[];
   /** Rows stored as `__undeclared__`: sent under a name the approved manifest does not declare. */
   undeclaredDrops: number;
-  /** Present only when the requested event is declared. */
+  /** Present only when the requested event is declared and its detail read succeeded. */
   selected?: {
     eventName: string;
     series: TimePoint[];
@@ -112,6 +112,18 @@ function finiteOrNull(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function logReadFailure(error: unknown, message: string) {
+  logToAxiom(
+    {
+      name: 'app-custom-events-service',
+      type: 'error',
+      message,
+      error: (error as Error)?.message,
+    },
+    'clickhouse'
+  ).catch(() => undefined);
 }
 
 type TopRow = {
@@ -226,12 +238,13 @@ export async function getAppCustomEvents({
           )
         : Promise.resolve([]);
 
-    const [topRows, seriesRows, scalarRows, enumRows] = await Promise.all([
-      topQuery,
-      seriesQuery,
-      scalarQuery,
-      enumQuery,
-    ]);
+    // A failing detail (a heavy event over the memory cap, say) must not take the table with it:
+    // the owner could then never deselect the event that keeps failing.
+    const detail = Promise.all([seriesQuery, scalarQuery, enumQuery]).catch((error: unknown) => {
+      logReadFailure(error, 'appBlockEvents selected-event read failed');
+      return null;
+    });
+    const [topRows, detailRows] = await Promise.all([topQuery, detail]);
 
     const byName = new Map(topRows.map((r) => [r.eventName, r]));
     const topEvents = declared
@@ -253,7 +266,8 @@ export async function getAppCustomEvents({
       undeclaredDrops: Number(byName.get(UNDECLARED_EVENT_NAME)?.events ?? 0),
     };
 
-    if (selected) {
+    if (selected && detailRows) {
+      const [seriesRows, scalarRows, enumRows] = detailRows;
       const scalar = scalarRows[0] ?? {};
       const enumCounts = new Map(enumRows.map((r) => [`${r.property}\u0000${r.value}`, r.events]));
       const numberIndex = new Map(numberProps.map((p, i) => [p.name, i]));
@@ -298,15 +312,7 @@ export async function getAppCustomEvents({
     }
     return result;
   } catch (error) {
-    logToAxiom(
-      {
-        name: 'app-custom-events-service',
-        type: 'error',
-        message: 'appBlockEvents read failed',
-        error: (error as Error)?.message,
-      },
-      'clickhouse'
-    ).catch(() => undefined);
+    logReadFailure(error, 'appBlockEvents read failed');
     return unavailableCustomEvents(declared, includeOwner);
   } finally {
     clearTimeout(timer);

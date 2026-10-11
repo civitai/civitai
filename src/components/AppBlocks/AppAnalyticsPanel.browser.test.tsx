@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   apps: { current: [] as unknown[] },
   queryInputs: [] as unknown[],
   queryOptions: [] as unknown[],
+  isPlaceholderData: { current: false },
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -28,7 +29,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useQuery: (input: unknown, options: unknown) => {
         mocks.queryInputs.push(input);
         mocks.queryOptions.push(options);
-        return { data: mocks.analytics.current, isLoading: false, error: null };
+        return {
+          data: mocks.analytics.current,
+          isLoading: false,
+          isPlaceholderData: mocks.isPlaceholderData.current,
+          error: null,
+        };
       },
     },
   }),
@@ -932,6 +938,56 @@ describe('AppAnalyticsPanel — custom events', () => {
     expect(placeholderData(previous, keyFor('apb_2'))).toBeUndefined();
     expect(placeholderData(previous, keyFor(undefined))).toBeUndefined();
     expect(placeholderData(previous, undefined)).toBeUndefined();
+  });
+
+  test('"All my apps" keeps placeholder data across its own refetches', async () => {
+    mocks.analytics.current = { ...ZEROED };
+    mocks.queryOptions.length = 0;
+    renderWithProviders(<AppAnalyticsPanel />);
+    await expect.element(page.getByText('Custom events', { exact: true })).toBeInTheDocument();
+    const { placeholderData } = mocks.queryOptions[mocks.queryOptions.length - 1] as {
+      placeholderData: (previous: unknown, previousQuery: unknown) => unknown;
+    };
+    const previous = { marker: 'previous payload' };
+    const allApps = { queryKey: [['blocks', 'getMyAppAnalytics'], { input: {}, type: 'query' }] };
+    expect(placeholderData(previous, allApps)).toBe(previous);
+  });
+
+  test('while a selection refetches: a loader in the detail pane, the stale table marked busy', async () => {
+    mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
+    mocks.isPlaceholderData.current = true;
+    try {
+      renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+      const eventButton = page.getByRole('button', { name: 'generate_clicked' });
+      await eventButton.click();
+      await expect
+        .element(page.getByRole('status', { name: 'Loading generate_clicked' }))
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByRole('status', { name: 'Refreshing custom events' }))
+        .toBeInTheDocument();
+      expect(card().querySelector('[aria-busy="true"]')).not.toBeNull();
+      expect(page.getByText(/Couldn't load the details/).elements()).toHaveLength(0);
+    } finally {
+      mocks.isPlaceholderData.current = false;
+    }
+  });
+
+  test('a boolean set only to false still shows its split, not "Not set"', async () => {
+    mocks.analytics.current = {
+      ...ZEROED,
+      customEvents: {
+        ...MEASURED,
+        selected: {
+          ...SELECTED,
+          properties: [{ name: 'advanced', type: 'boolean', trueCount: 0, falseCount: 5 }],
+        },
+      },
+    };
+    renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
+    await page.getByRole('button', { name: 'generate_clicked' }).click();
+    await expect.element(page.getByText('true 0 · false 5', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('Not set on any event in this range.').elements()).toHaveLength(0);
   });
 
   test('picking another app clears the selected event', async () => {

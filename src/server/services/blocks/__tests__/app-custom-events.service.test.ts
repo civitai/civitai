@@ -66,7 +66,12 @@ type ChCall = {
 };
 
 /** Answers each query by its shape; owner rows are modelled, so a query without the owner exclusion sees more. */
-function fakeCh(opts?: { throws?: boolean; hangUntilAborted?: boolean; scalar?: unknown }) {
+function fakeCh(opts?: {
+  throws?: boolean;
+  failDetail?: boolean;
+  hangUntilAborted?: boolean;
+  scalar?: unknown;
+}) {
   const calls: ChCall[] = [];
   const query = vi.fn(async (arg: ChCall) => {
     calls.push(arg);
@@ -75,6 +80,9 @@ function fakeCh(opts?: { throws?: boolean; hangUntilAborted?: boolean; scalar?: 
       return new Promise((_resolve, reject) => {
         arg.abort_signal?.addEventListener('abort', () => reject(new Error('aborted')));
       });
+    }
+    if (opts?.failDetail && !arg.query.includes('AS signedInViewers')) {
+      throw new Error('memory limit exceeded');
     }
     const ownerExcluded = arg.query.includes(' AND isOwner = 0');
     let rows: unknown[] = [];
@@ -371,6 +379,18 @@ describe('getAppCustomEvents: never throws', () => {
     await expect(
       getAppCustomEvents({ ...args, ch: asCh(fakeCh({ throws: true })) })
     ).resolves.toEqual({ ...UNAVAILABLE, declared: expect.any(Array) });
+  });
+
+  it('a failing selected-event read drops only the detail; the table survives', async () => {
+    const result = await getAppCustomEvents({ ...args, ch: asCh(fakeCh({ failDetail: true })) });
+    expect(result.unavailable).toBeUndefined();
+    expect(result.selected).toBeUndefined();
+    expect(result.undeclaredDrops).toBe(3);
+    expect(result.topEvents.map((e) => [e.eventName, e.count])).toEqual([
+      ['generate_clicked', 57],
+      ['share_clicked', 8],
+      ['never_sent', 0],
+    ]);
   });
 
   it('a hung query is aborted at the timeout and reads as unavailable', async () => {

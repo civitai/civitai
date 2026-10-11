@@ -317,7 +317,7 @@ function CustomEventsCard({
   const selectEvent = (eventName: string | null) => {
     onSelectEvent(eventName);
     // In one column (the modal) the detail sits below the whole table.
-    if (eventName) detailRef.current?.scrollIntoView?.({ block: 'nearest' });
+    if (eventName) detailRef.current?.scrollIntoView?.({ block: 'start' });
   };
 
   return (
@@ -333,7 +333,7 @@ function CustomEventsCard({
           >
             <IconInfoCircle size={14} />
           </Tooltip>
-          {refreshing && <Loader size="xs" aria-label="Refreshing custom events" />}
+          {refreshing && <Loader size="xs" role="status" aria-label="Refreshing custom events" />}
         </Group>
         {appSelected && (
           <Switch
@@ -434,10 +434,10 @@ function CustomEventsCard({
                     </Table>
                   </Table.ScrollContainer>
                 </div>
-                <div ref={detailRef} aria-live="polite">
+                <div ref={detailRef}>
                   {selected ? (
                     <Stack gap="sm">
-                      <Text size="sm" fw={600}>
+                      <Text size="sm" fw={600} aria-live="polite">
                         {selected.eventName} over time
                       </Text>
                       <MiniLineChart points={selected.series} granularity={granularity} />
@@ -454,7 +454,7 @@ function CustomEventsCard({
                   ) : selectedEvent ? (
                     refreshing ? (
                       <Group justify="center" py="sm">
-                        <Loader size="sm" aria-label={`Loading ${selectedEvent}`} />
+                        <Loader size="sm" role="status" aria-label={`Loading ${selectedEvent}`} />
                       </Group>
                     ) : (
                       <Text c="dimmed" size="sm">
