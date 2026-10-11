@@ -40,7 +40,7 @@ describe('event entry points, from the gated answer', () => {
     return {
       menu: eventMenuEntries(promos).map((e) => e.href),
       roster: teamRosterHref(promos, 'birthday2026'),
-      hints: banners.map(dismissHint).filter(Boolean),
+      hints: banners.map((b) => dismissHint(b, banners)).filter(Boolean),
     };
   };
 
@@ -103,6 +103,18 @@ describe('eventMenuEntries', () => {
       ['a label', '/events/a'],
       ['b label', '/events/b'],
     ]);
+  });
+});
+
+describe('dismissHint', () => {
+  it('points to the menu only for an event the menu lists', () => {
+    const banners = ['a', 'b', 'c'].map((e) => banner(e));
+    expect(banners.map((b) => dismissHint(b, banners))).toEqual([
+      'Find a label in your menu any time.',
+      'Find b label in your menu any time.',
+      undefined,
+    ]);
+    expect(dismissHint(banner('d', { promo: undefined }), banners)).toBeUndefined();
   });
 });
 

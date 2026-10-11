@@ -35,7 +35,12 @@ export function teamRosterHref(promos: EventPromo[], event: string) {
   return promos.find((promo) => promo.event === event)?.teamHref;
 }
 
-/** Said once, when the strip goes: where the event now lives. */
-export function dismissHint(banner: NavBanner) {
-  return banner.promo && `Find ${banner.promo.menuLabel} in your menu any time.`;
+/** Said once, when the strip goes: where the event now lives, if the menu lists it. */
+export function dismissHint(banner: NavBanner, banners: NavBanner[]) {
+  const listed = eventMenuEntries(eventPromosFrom(banners)).some(
+    (entry) => entry.event === banner.promo?.event
+  );
+  return listed && banner.promo
+    ? `Find ${banner.promo.menuLabel} in your menu any time.`
+    : undefined;
 }

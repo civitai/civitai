@@ -1,5 +1,4 @@
 import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import {
   type Icon,
   type IconProps,
@@ -38,8 +37,7 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { eventMenuEntries } from '~/components/Events/event-promos';
-import { useEventPromos } from '~/components/Events/useEventPromos';
+import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
@@ -110,19 +108,9 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
   // `staleTime: Infinity`. Reading it here adds no round trip.
   const { pendingPlacements, pendingCollectionReviews } = useQueryNotificationsCount();
 
-  const [seenEvents, setSeenEvents] = useLocalStorage<string[]>({
-    key: 'event-menu-seen',
-    defaultValue: [],
-  });
-  const eventItems: UserMenuItem[] = eventMenuEntries(useEventPromos()).map((entry) => ({
-    href: entry.href,
-    icon: entry.icon,
-    color: theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')],
-    label: entry.label,
-    isNew: !seenEvents.includes(entry.event),
-    onNavigate: () =>
-      setSeenEvents((seen) => (seen.includes(entry.event) ? seen : [...seen, entry.event])),
-  }));
+  const eventItems = useEventMenuItems(
+    theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')]
+  );
 
   return [
     {

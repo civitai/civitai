@@ -50,7 +50,6 @@ export function WornHatPopover({
     { enabled: opened }
   );
   const definition = getEventDecorationDefinition(event);
-  const rosterHref = teamRosterHref(useEventPromos(), event);
 
   return (
     <Popover
@@ -100,18 +99,7 @@ export function WornHatPopover({
           >
             {definition?.eventLinkLabel ?? 'See the event'}
           </Button>
-          {rosterHref && (
-            <Button
-              component={NextLink}
-              href={rosterHref}
-              radius="xl"
-              variant="light"
-              fullWidth
-              onClick={() => onChange(false)}
-            >
-              Team rosters
-            </Button>
-          )}
+          <TeamRostersButton event={event} onClick={() => onChange(false)} />
           {data?.team && (
             <Text size="xs" c="dimmed" ta="center">
               Scores for Team {data.team} while it&apos;s worn
@@ -120,6 +108,24 @@ export function WornHatPopover({
         </Stack>
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+// Rendered only inside the open dropdown, so a feed of hatted cards holds no subscription for it.
+export function TeamRostersButton({ event, onClick }: { event: string; onClick: () => void }) {
+  const href = teamRosterHref(useEventPromos(), event);
+  if (!href) return null;
+  return (
+    <Button
+      component={NextLink}
+      href={href}
+      radius="xl"
+      variant="light"
+      fullWidth
+      onClick={onClick}
+    >
+      Team rosters
+    </Button>
   );
 }
 

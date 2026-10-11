@@ -29,7 +29,7 @@ export function NavAnnouncementSlot() {
   );
 }
 
-function EventNavBanners() {
+export function EventNavBanners() {
   const { data = [] } = trpc.event.getNavBanners.useQuery(undefined, {
     staleTime: NAV_BANNERS_STALE_TIME,
   });
@@ -43,7 +43,7 @@ function EventNavBanners() {
           banner={banner}
           onDismiss={() => {
             dismiss(banner.id);
-            const hint = dismissHint(banner);
+            const hint = dismissHint(banner, data);
             if (hint)
               showInfoNotification({
                 id: `${banner.id}:dismissed`,
