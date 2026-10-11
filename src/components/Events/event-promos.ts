@@ -4,6 +4,8 @@ import type {
   EventPromoIcon,
   NavBanner,
 } from '~/shared/constants/nav-banner.constants';
+import { getEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
 // The user menu lists at most this many events; the strip shows only the first.
 export const MAX_EVENT_MENU_ENTRIES = 2;
@@ -42,5 +44,22 @@ export function dismissHint(banner: NavBanner, banners: NavBanner[]) {
   );
   return listed && banner.promo
     ? `Find ${banner.promo.menuLabel} in your menu any time.`
+    : undefined;
+}
+
+export const postEditorCardId = (event: string) => `post-editor:event:${event}`;
+
+/** The event card the post editor shows: the first playable event with editor copy, unless hidden. */
+export function postEditorPromo(promos: EventPromo[], dismissed: string[]) {
+  return promos.find(
+    (promo) => promo.postEditor && !dismissed.includes(postEditorCardId(promo.event))
+  );
+}
+
+/** "Put on a Party Hat", for an event whose decoration can sit on an image. */
+export function hatButtonLabel(event: string) {
+  const decoration = getEventDecorationDefinition(event);
+  return decoration?.entityTypes.includes(CosmeticEntity.Image)
+    ? `Put on a ${decoration.label}`
     : undefined;
 }

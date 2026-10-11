@@ -1,4 +1,5 @@
 import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import {
   Accordion,
@@ -79,7 +80,12 @@ import {
   getGenerationBaseModelResourceOptions,
 } from '~/shared/constants/basemodel.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  ImageIngestionStatus,
+  MediaType,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import type { MyRecentlyAddedModels } from '~/types/router';
@@ -1294,6 +1300,13 @@ function PostImage() {
               <Menu.Item leftSection={<IconPencil size={16} />} onClick={onEditMetaClick}>
                 Edit image
               </Menu.Item>
+            )}
+            {!isBlocked && image.id > 0 && (
+              <AddEventDecorationMenuItem
+                entityType={CosmeticEntity.Image}
+                entityId={image.id}
+                image={image}
+              />
             )}
             {!isBlocked && image.id > 0 && (
               // Inside the menu rather than on the card: it is a setting, not an

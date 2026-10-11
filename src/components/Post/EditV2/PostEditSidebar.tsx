@@ -20,6 +20,7 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
+import { PostEditEventCard } from '~/components/Post/EditV2/PostEditEventCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
@@ -461,6 +462,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             </Tooltip>
           )}
         </Button.Group>
+      )}
+
+      {/* Contest entries already carry their own callout here. */}
+      {!collectionId && (
+        <PostEditEventCard coverImage={addedImages[0]} published={!!post.publishedAt} />
       )}
 
       {!post.publishedAt && !isUnpublishedByParent && !deleted && (

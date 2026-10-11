@@ -10,7 +10,7 @@ import type { EventDecorationCosmetic } from '~/server/selectors/cosmetic.select
 const EventHatPickerModal = dynamic(() => import('~/components/Decorations/EventHatPickerModal'), {
   ssr: false,
 });
-const openEventHatPicker = createDialogTrigger(EventHatPickerModal);
+export const openEventHatPicker = createDialogTrigger(EventHatPickerModal);
 
 /**
  * Puts on or takes off this entity's event decoration (a party hat during the birthday event).
