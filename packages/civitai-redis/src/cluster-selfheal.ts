@@ -98,6 +98,11 @@ export interface ClusterSelfHealConfig {
    * jitter (reconnect fires immediately — the original behavior).
    */
   reconnectJitterMs: number;
+  /**
+   * Which client this watchdog heals, for its log lines ("<label> self-heal: …"). The class is
+   * shared by the cluster and sys watchdogs. Defaults to 'Cluster'.
+   */
+  label?: string;
 }
 
 export interface ClusterSelfHealDeps {
@@ -166,9 +171,11 @@ export class ClusterSelfHealWatchdog {
   private lastReconnectAt: number | null = null;
   /** Single-flight guard: true while a reconnect promise is in flight. */
   private reconnecting = false;
+  private readonly prefix: string;
 
   constructor(cfg: ClusterSelfHealConfig, deps: ClusterSelfHealDeps) {
     this.cfg = cfg;
+    this.prefix = `${cfg.label ?? 'Cluster'} self-heal`;
     this.deps = {
       ...deps,
       now: deps.now ?? Date.now,
@@ -244,8 +251,8 @@ export class ClusterSelfHealWatchdog {
 
     this.deps.log(
       deadlineTriggered
-        ? `Cluster self-heal: ${deadlineHits} command-deadline timeouts in ${this.cfg.deadlineHitWindowMs}ms (>= ${this.cfg.deadlineHitThreshold}), inflight=${inflight} — forcing reconnect`
-        : `Cluster self-heal: inflight pinned at ${inflight} > ${this.cfg.inflightThreshold} for >=${this.cfg.sustainedMs}ms — forcing reconnect`
+        ? `${this.prefix}: ${deadlineHits} command-deadline timeouts in ${this.cfg.deadlineHitWindowMs}ms (>= ${this.cfg.deadlineHitThreshold}), inflight=${inflight} — forcing reconnect`
+        : `${this.prefix}: inflight pinned at ${inflight} > ${this.cfg.inflightThreshold} for >=${this.cfg.sustainedMs}ms — forcing reconnect`
     );
     // onReconnect is a fire-and-forget observability hook (Prom counter + Loki line). A throw
     // from it must NOT abort the reconnect or wedge the watchdog (it would leave reconnecting
@@ -257,7 +264,7 @@ export class ClusterSelfHealWatchdog {
       this.deps.onReconnect(inflight, deadlineTriggered ? 'deadline' : 'inflight');
     } catch (err) {
       this.deps.log(
-        `Cluster self-heal: onReconnect hook threw (ignored): ${
+        `${this.prefix}: onReconnect hook threw (ignored): ${
           err instanceof Error ? err.message : String(err)
         }`
       );
@@ -287,7 +294,7 @@ export class ClusterSelfHealWatchdog {
         ? this.deps
             .delay(jitterMs)
             .then(() => {
-              this.deps.log(`Cluster self-heal: reconnecting after ${jitterMs}ms jitter`);
+              this.deps.log(`${this.prefix}: reconnecting after ${jitterMs}ms jitter`);
               return this.deps.reconnect();
             })
         : this.deps.reconnect();
@@ -296,11 +303,11 @@ export class ClusterSelfHealWatchdog {
     // Any rejection is logged, not thrown.
     void reconnectChain
       .then(() => {
-        this.deps.log('Cluster self-heal: reconnect completed');
+        this.deps.log(`${this.prefix}: reconnect completed`);
       })
       .catch((err: unknown) => {
         this.deps.log(
-          `Cluster self-heal: reconnect failed: ${err instanceof Error ? err.message : String(err)}`
+          `${this.prefix}: reconnect failed: ${err instanceof Error ? err.message : String(err)}`
         );
       })
       .finally(() => {

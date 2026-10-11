@@ -31,7 +31,15 @@ export const redisEnvSchema = z
     REDIS_SYS_SOCKET_TIMEOUT_MS: z.coerce.number().default(0),
     // System client reply-queue cap: with socketTimeout disabled, bounds heap growth on a
     // silent half-open by fast-failing new commands (fail-open callers catch it). 0 = off.
+    // Also enforced as an IN-FLIGHT cap in the package's own command wrapper, because on the
+    // Sentinel path commands wait inside RedisSentinel (for a master / a rediscovery) before they
+    // ever reach a node client's queue, where node-redis's own cap would see them.
     REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: z.coerce.number().default(10000),
+    // Sys client per-command wall-clock backstop (a promise race — it never touches the socket,
+    // unlike the socketTimeout reverted in #2586). Bounds callers awaiting a sys WRITE or any
+    // command the app's 2s withSysReadDeadline does not wrap. MUST stay above
+    // REDIS_SYS_SELFHEAL_SUSTAINED_MS (see superRefine). 0 = off.
+    REDIS_SYS_COMMAND_TIMEOUT_MS: z.coerce.number().default(30000),
     // Keepalive PING interval. Kept comfortably below the socketTimeout — client.ts clamps
     // it to min(this, socketTimeout/2) so a healthy idle socket never spuriously fires.
     REDIS_PING_INTERVAL_MS: z.coerce.number().default(5000),
@@ -150,6 +158,37 @@ export const redisEnvSchema = z
     // and the self-heal goes BLIND to the exact deadline-park wedge this trigger exists to catch
     // (2026-07-06). Only enforced when BOTH are active (>0): the reaper can be disabled (T=0) — the
     // settle-time signal still works without it — and slow-settle recording can be disabled (S=0).
+    // Sys self-heal invariants. The sys watchdog's ONLY trigger is in-flight count staying above
+    // REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD for REDIS_SYS_SELFHEAL_SUSTAINED_MS. A per-command
+    // backstop at or under that window reaps the parked commands before it fills, so inflight
+    // sawtooths and the watchdog never fires (the cluster watchdog went blind exactly this way);
+    // an in-flight cap at or under the threshold keeps inflight from ever crossing it.
+    if (env.REDIS_SYS_SELFHEAL_ENABLED) {
+      const sysDeadlineMs = env.REDIS_SYS_COMMAND_TIMEOUT_MS;
+      const sustainedMs = env.REDIS_SYS_SELFHEAL_SUSTAINED_MS;
+      if (sysDeadlineMs > 0 && sysDeadlineMs <= sustainedMs) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['REDIS_SYS_COMMAND_TIMEOUT_MS'],
+          message:
+            `REDIS_SYS_COMMAND_TIMEOUT_MS (${sysDeadlineMs}) must be > REDIS_SYS_SELFHEAL_SUSTAINED_MS ` +
+            `(${sustainedMs}): a shorter backstop drains sys inflight before the sustained window ` +
+            `fills, so the sys self-heal watchdog can never fire.`,
+        });
+      }
+      const cap = env.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH;
+      const threshold = env.REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD;
+      if (cap > 0 && cap <= threshold) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH'],
+          message:
+            `REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH (${cap}) must be > REDIS_SYS_SELFHEAL_INFLIGHT_THRESHOLD ` +
+            `(${threshold}): the in-flight cap would keep sys inflight at or under the threshold, ` +
+            `so the sys self-heal watchdog can never fire.`,
+        });
+      }
+    }
     const reaperMs = env.REDIS_CLUSTER_COMMAND_TIMEOUT_MS;
     const slowMs = env.REDIS_CLUSTER_SELFHEAL_SLOW_COMMAND_MS;
     if (reaperMs > 0 && slowMs > 0 && slowMs >= reaperMs) {
@@ -185,6 +224,7 @@ function buildEnv() {
     socketTimeoutMs: parsed.data.REDIS_SOCKET_TIMEOUT_MS,
     sysSocketTimeoutMs: parsed.data.REDIS_SYS_SOCKET_TIMEOUT_MS,
     sysCommandsQueueMaxLength: parsed.data.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH,
+    sysCommandTimeoutMs: parsed.data.REDIS_SYS_COMMAND_TIMEOUT_MS,
     pingIntervalMs: parsed.data.REDIS_PING_INTERVAL_MS,
     clusterCommandTimeoutMs: parsed.data.REDIS_CLUSTER_COMMAND_TIMEOUT_MS,
     clusterSelfHealEnabled: parsed.data.REDIS_CLUSTER_SELFHEAL_ENABLED,

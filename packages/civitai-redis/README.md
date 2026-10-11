@@ -49,3 +49,16 @@ exported as `REDIS_KEYS`, `REDIS_SYS_KEYS`, `REDIS_SUB_KEYS`.
 - For real-time auth revocation, pass a sysRedis-backed `isRevoked` to `createSpokeGuard`.
 
 Reference: the auth app ([apps/auth](../../apps/auth)) wires both clients.
+
+## Tests
+
+`pnpm --filter @civitai/redis test` runs the unit suite. Two integration tests run a real 3-master Redis
+cluster in docker and move a node to a new address; they are **opt-in** and report as skipped
+otherwise (CI does not run them):
+
+```bash
+REDIS_CLUSTER_IT=1 pnpm --filter @civitai/redis exec vitest run integration
+```
+
+Linux only (the test dials the containers' bridge addresses). `REDIS_CLUSTER_IT_LOG=1` also prints the
+client's own log lines.
