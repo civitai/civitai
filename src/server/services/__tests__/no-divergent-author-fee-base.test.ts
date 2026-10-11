@@ -43,12 +43,12 @@ import {
  * that governs whether a fee may be computed on it, and both must come from the
  * RAW ORCHESTRATOR RESPONSE — `submitted.cost.base` / `submitted.cost.variable`,
  * hoisted into `realizedBaseCost` / `realizedPriceIsCap` — and NEVER from
- * `snapshot`. `BlockWorkflowSnapshot.cost` is deliberately `{ total }` only,
- * because widening that wire shape would publish the platform's cost breakdown to
- * every third-party app; so `snapshot` cannot supply either, and a
- * `snapshot.cost?.base` in the router would be `undefined` silently. The asserted
- * count makes the ledger fail when the set GROWS (a new submit path added without
- * a base) as well as when it SHRINKS.
+ * `snapshot`. `BlockWorkflowSnapshot.cost` is `{ total, authorFee? }` — it
+ * itemises the author's own fee by decision and never the base or cap flag (see
+ * the disclosure boundary on its `authorFee`); so `snapshot` cannot supply
+ * either, and a `snapshot.cost?.base` in the router would be `undefined`
+ * silently. The asserted count makes the ledger fail when the set GROWS (a new
+ * submit path added without a base) as well as when it SHRINKS.
  *
  * ⚠️ THE COUNT WENT 3 → 4 ON 2026-09-17, AND THAT IS THE GUARD WORKING. A fourth
  * `recordSpendAttribution` call site — `submitPassThroughStepWorkflow` — landed
@@ -227,7 +227,7 @@ const QUOTE_SITE_LEDGER: Record<
     typeDerivation:
       'const blockGenerationType = resolveBlockGenerationType(textToImageBody, ' +
       '{ imageWorkflowType: generateInput.workflow, });',
-    disclosedBy: 'estimateWorkflow',
+    disclosedBy: 'estimateBlockWorkflowCell',
     reason:
       'txt2img submit. The quote is added to `cost` BEFORE the per-call budget gate, the ' +
       'per-user cap, the consent budget, the per-app cap and the dev-tunnel backstop, and is ' +
@@ -244,7 +244,13 @@ const QUOTE_SITE_LEDGER: Record<
       'registry-step submit. Same placement: `reserveBuzz = reserveGenerationBuzz + ' +
       'reservedAuthorFeeBuzz`, gated and reserved before the orchestrator submit.',
   },
-  estimateWorkflow: {
+  // Keyed by the FUNCTION the quote now sits in. This is the txt2img arm of the
+  // `estimateWorkflow` procedure: its tail was moved, unchanged, into
+  // `estimateBlockWorkflowCell` so `estimateWorkflowBatch` prices each cell with
+  // the same code. Both procedures disclose through this one site, so the batch
+  // adds no quote site of its own — a second one appearing is a change to this
+  // ledger, not something the move permits.
+  estimateBlockWorkflowCell: {
     role: 'disclosing',
     baseExpr: 'baseGenerationBuzz: whatIfResult.cost?.base',
     capExpr: 'priceIsCap: whatIfResult.cost?.variable',
@@ -301,11 +307,12 @@ describe('author fee — the spend-attribution seam', () => {
     expect(sites.filter((s) => !s.includes('workflowId'))).toEqual([]);
   });
 
-  it('there are exactly FOUR spend-attribution call sites', () => {
-    // textToImage, customComfy, the registry-step bridge, and the pass-through
-    // step. A new submit path is a deliberate decision about whether it charges
-    // an author fee, so it should land here rather than silently inherit a skip.
-    expect(sites).toHaveLength(4);
+  it('there are exactly FIVE spend-attribution call sites', () => {
+    // textToImage, customComfy, the registry-step bridge, the pass-through step,
+    // and the `kind:'training'` run. A new submit path is a deliberate decision
+    // about whether it charges an author fee, so it should land here rather than
+    // silently inherit a skip.
+    expect(sites).toHaveLength(5);
   });
 
   it('every call site passes a base generation cost', () => {
@@ -337,8 +344,8 @@ describe('author fee — the spend-attribution seam', () => {
 
   it('`realizedBaseCost` and `realizedPriceIsCap` are read from the orchestrator response', () => {
     // 🔴 The wire shape a block sees (`BlockWorkflowSnapshot.cost`) is
-    // `{ total }` only, so `snapshot` CANNOT supply either — they have to come
-    // off the raw submit response. This pins that, and pins the count, so a new
+    // `{ total, authorFee? }` only, so `snapshot` CANNOT supply either — they
+    // have to come off the raw submit response. This pins that, and pins the count, so a new
     // submit path cannot hoist a base from the total by copy-paste.
     //
     // 🔴 WHAT THIS GUARD DOES NOT COVER, STATED SO IT IS NOT MISTAKEN FOR
@@ -354,13 +361,13 @@ describe('author fee — the spend-attribution seam', () => {
     // tri-state is SLICE 2'S POLICY CALL — this guard deliberately pins the
     // current shape rather than pre-empting it.
     const assignments = source.match(/realizedBaseCost =\s*\n?\s*typeof submitted\.cost\?\.base/g);
-    expect(assignments).toHaveLength(4);
+    expect(assignments).toHaveLength(5);
     expect(source).not.toMatch(/realizedBaseCost\s*=\s*[^;]*cost\?\.total/);
 
     const capAssignments = source.match(
       /realizedPriceIsCap =\s*\n?\s*submitted\.cost\?\.variable === true/g
     );
-    expect(capAssignments).toHaveLength(4);
+    expect(capAssignments).toHaveLength(5);
     // `snapshot` has no `variable` either — reading one would be `undefined`,
     // i.e. "never a cap", which is the fail-OPEN direction.
     expect(source).not.toMatch(/realizedPriceIsCap\s*=\s*[^;]*snapshot\./);
@@ -465,6 +472,17 @@ const NO_FEE_PATHS: Record<string, { charges: number; reason: string; whatifAttr
         '`quotePassThroughStepBuzz`, which returns `cost.total` and nothing else, so there is no ' +
         '`cost.base` at reservation time. Widening that helper is what would wire a fee here.',
     },
+    submitTrainingWorkflow: {
+      charges: 0,
+      whatifAttribution:
+        'Same as the pass-through arm: no fee is charged, so only `recordSpendAttribution`’s ' +
+        '(workflowId, appBlockId) idempotency is at stake. DEFENSIVE, NOT ACTIVE — the ' +
+        'orchestrator stamps an id on every workflow it returns.',
+      reason:
+        'ZERO-FEE BY DECISION. The viewer confirms ONE exact price for a training run before it ' +
+        'is charged, so a fee on top would charge more than they confirmed. The `training` ' +
+        'override in `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG` prices any future caller at zero too.',
+    },
   };
 
 describe('author fee — the viewer-charge seam', () => {
@@ -497,7 +515,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(charges.filter((c) => !c.includes('workflowId'))).toEqual([]);
   });
 
-  it('the submit-path locator names all four paths (positive control)', () => {
+  it('the submit-path locator names all five paths (positive control)', () => {
     // The ledger below is keyed on these names, so a locator that resolved every
     // offset to `<module scope>` would make the ledger vacuous rather than red.
     expect(submitPaths).toEqual([
@@ -505,6 +523,7 @@ describe('author fee — the viewer-charge seam', () => {
       'submitCustomComfyWorkflow',
       'submitStepWorkflow',
       'submitPassThroughStepWorkflow',
+      'submitTrainingWorkflow',
     ]);
   });
 
@@ -595,9 +614,9 @@ describe('author fee — the viewer-charge seam', () => {
 
   it('every charge site prices off the RAW orchestrator response, never `snapshot`', () => {
     // Same rule, same reason, as the attribution seam above: `snapshot.cost` is
-    // `{ total }` only, so a `snapshot.cost?.base` here is `undefined` silently —
-    // and `undefined` maps to a `base-unavailable` skip, i.e. the fee quietly
-    // stops charging on every generation with nothing to say so.
+    // `{ total, authorFee? }` only, so a `snapshot.cost?.base` here is
+    // `undefined` silently — and `undefined` maps to a `base-unavailable` skip,
+    // i.e. the fee quietly stops charging on every generation with nothing to say so.
     for (const site of charges) {
       expect(ownProps(site)).toContain('baseGenerationBuzz: realizedBaseCost');
       expect(ownProps(site)).toContain('priceIsCap: realizedPriceIsCap');
@@ -627,11 +646,11 @@ describe('author fee — the viewer-charge seam', () => {
     }
   });
 
-  it('🔴 the two NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
+  it('🔴 the NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
     // 🔴 WHY A SECOND, PATH-SPECIFIC TEST WHEN THE LOOP ABOVE ALREADY COVERS ALL
-    // FOUR MARKERS. On the two priced paths the exclusion is a FEE argument: one
+    // FIVE MARKERS. On the two priced paths the exclusion is a FEE argument: one
     // shared sentinel id means one shared idempotency key and one UNIQUE accrual
-    // row across every viewer. On these two paths no fee is charged, so that
+    // row across every viewer. On these paths no fee is charged, so that
     // argument does not apply and the clause's only effect would be that
     // `recordSpendAttribution` — a payout-relevant table — stops being written for
     // a submit whose orchestrator response carried no workflow id. That effect is
@@ -654,6 +673,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(Object.keys(NO_FEE_PATHS)).toEqual([
       'submitCustomComfyWorkflow',
       'submitPassThroughStepWorkflow',
+      'submitTrainingWorkflow',
     ]);
 
     for (const [pathName, entry] of Object.entries(NO_FEE_PATHS)) {
@@ -1193,7 +1213,7 @@ describe('author fee — the viewer-charge seam', () => {
     // PRICE", NOT ONE SPELLING OF IT — AND THE NARROW VERSION OF THIS GUARD WAS
     // WALKABLE. It enumerated `additionalCostBuzz:` alone, which is how the
     // TXT2IMG estimate inflates; the STEP estimate adds its fee with a plain
-    // `shownGenerationBuzz + …`, so the guard covered 1 of the 2 arms this change
+    // `shownGenerationBuzz + shownAuthorFeeBuzz`, so the guard covered 1 of the 2 arms this change
     // introduced, and a submit path inflating its own `snapshot.cost` directly
     // was invisible to it. Both spellings are enumerated here, and the title now
     // says what the body checks.
@@ -1205,13 +1225,13 @@ describe('author fee — the viewer-charge seam', () => {
     // is how the narrower expression below was arrived at.
     const inflators = [
       ...[...source.matchAll(/additionalCostBuzz:/g)],
-      ...[...source.matchAll(/shownGenerationBuzz \+ \(authorFeeQuote/g)],
+      ...[...source.matchAll(/shownGenerationBuzz \+ shownAuthorFeeBuzz/g)],
     ].map((m) => enclosingSubmitPath(source, m.index));
     expect(inflators.length, 'no inflator found — the matcher is wrong').toBeGreaterThan(0);
     // Both spellings must be present, or one half of the matcher is dead and the
     // guard silently narrows back to what it used to be.
     expect(source).toContain('additionalCostBuzz:');
-    expect(source).toContain('shownGenerationBuzz + (authorFeeQuote');
+    expect(source).toContain('shownGenerationBuzz + shownAuthorFeeBuzz');
     for (const owner of inflators) {
       expect(QUOTE_SITE_LEDGER[owner]?.role, `${owner} adds a fee to a reported total`).toBe(
         'disclosing'

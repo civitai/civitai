@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 import sharp from 'sharp';
 
@@ -128,6 +129,16 @@ const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefin
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_test_${++ids.n}`,
@@ -722,6 +733,8 @@ function stageApproveScenario(listing: {
     name: 'Cool App',
     slug: 'cool-app',
     revisionOfId: null,
+    // What the author declared; the approve replaces it with the derived rating.
+    contentRating: 'pg',
     // 🔴 `kind` is REQUIRED in this fixture, not decoration. The go-live actionability
     // gate is off-site-only, so a row without a `kind` makes that gate a silent no-op
     // and every approve test would pass with the guard deleted. Off-site is what this
@@ -1147,6 +1160,7 @@ describe('approveExternalRequest', () => {
   });
 
   it('TOCTOU: the guarded request flip matches 0 rows (concurrent withdraw) → NOT_PENDING, listing NOT flipped', async () => {
+    recordRatingChange.mockClear();
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
     // Inside the tx, the request updateMany loses the race → count 0.
     mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
@@ -1156,6 +1170,7 @@ describe('approveExternalRequest', () => {
     // The tx opened + the request flip ran, but we bailed BEFORE the listing flip.
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(recordRatingChange).not.toHaveBeenCalled();
   });
 
   it('mod SELF-APPROVE is ALLOWED (v1): reviewer == submitter succeeds (no self-approve block)', async () => {
@@ -1198,6 +1213,7 @@ describe('approveExternalRequest', () => {
   }
 
   it('DERIVES the rating from the assets max nsfwLevel (icon PG, cover PG13, screenshot R → r)', async () => {
+    recordRatingChange.mockClear();
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
     stagePrimaryAssetLevels([
       { id: 1, nsfwLevel: 1 }, // icon PG
@@ -1206,6 +1222,14 @@ describe('approveExternalRequest', () => {
     ]);
     await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
     expect(ratingStampedOnFlip()).toBe('r');
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_1',
+      slug: 'cool-app',
+      before: 'pg',
+      after: 'r',
+      actorUserId: MOD,
+    });
   });
 
   it('a mod override ABOVE the derived rating is HONOURED (derived r, override x → x)', async () => {

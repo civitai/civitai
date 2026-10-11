@@ -22,9 +22,9 @@ import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/Sou
 import { useDisabledGates } from '~/components/generation_v2/gate-block';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
-import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-fingerprints';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
+import { applyWhatIfFingerprints } from '~/shared/generation/whatif-fingerprints';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';

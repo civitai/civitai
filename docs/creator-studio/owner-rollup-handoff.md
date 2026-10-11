@@ -34,7 +34,8 @@ sources are already in `default.buzzTransactions`, already keyed by the creator.
 | Source | Filter (`toAccountId = <creatorId>` in all cases) |
 |---|---|
 | Tip | `type = 'tip'` |
-| Generation compensation | `type = 'compensation'` |
+| Generation compensation | `type = 'compensation'` (minus generation tips, below) |
+| Generation tip | `type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%'` (payout dates from 2026-10-13) |
 | License fee | `type = 'licenseFee'` — ⚠️ **currently `'27'`, see the blocker below** |
 | Access sale (early access) | `type = 'purchase' AND externalTransactionId LIKE 'early-access-%'` |
 | Cosmetic sale | `type = 'sell'` |
@@ -182,9 +183,10 @@ exists.
   wrong: on the *buyer's* leg both are `purchase`, but on the *creator's receiving* leg — the only side earnings
   cares about — cosmetic is already `sell` and access is `purchase` + a stable `early-access-` prefix. **No new
   type/flag is needed and no schema change is required.** A distinct type would be *cleaner*, not *blocking*.
-- **`earnings.md` claimed `resourceCompensations` carries a `tip` source.** It does not — the only real `source`
-  values are `compensation`, `compensation_recovered_20260507`, and `licenseFee`. Tips are
-  `buzzTransactions.type = 'tip'`.
+- **`resourceCompensations` carries a `tip` source since 2026-10-08.** Before that the only `source` values were
+  `compensation`, `compensation_recovered_20260507` and `licenseFee`. `deliver-creator-compensation` pays them inside its
+  `compensation` transaction until 2026-10-12, and from payout date 2026-10-13 as their own `compensation`
+  transaction keyed `generation-tip-` (`GENERATION_TIP_TRANSACTION_START`), which `/earnings` shows as Generation tips.
 
 ## Precision — resolved, and the earlier "must NOT FLOOR" note was wrong
 

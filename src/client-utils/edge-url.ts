@@ -185,6 +185,13 @@ function srcSetSafe(url: string) {
   );
 }
 
+/** Asks the cacher for a JPEG still of a video instead of the video itself. */
+export const videoStillEdgeOptions = {
+  type: MediaType.image,
+  anim: false,
+  transcode: true,
+} satisfies Omit<EdgeUrlProps, 'src'>;
+
 export function getEdgeUrl(
   src: string,
   {

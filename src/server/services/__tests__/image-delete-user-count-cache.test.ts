@@ -46,7 +46,7 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 import * as imageService from '~/server/services/image.service';
-import { userImageVideoCountCaches } from '~/server/redis/caches';
+import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const { deleteImageById, deleteImages } = imageService;
@@ -61,12 +61,14 @@ const OTHER_OWNER_ID = 4419;
 const mockDbWrite = dbMock.dbWrite;
 
 let bustSpy: ReturnType<typeof vi.spyOn>;
+let thumbnailRefreshSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(imageService, 'queueImageSearchIndexUpdate').mockResolvedValue(undefined as never);
   vi.spyOn(imageService, 'deleteImageFromS3').mockResolvedValue(undefined as never);
   bustSpy = vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
+  thumbnailRefreshSpy = vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
 });
 
 describe('deleteImageById', () => {
@@ -83,6 +85,80 @@ describe('deleteImageById', () => {
 
     expect(bustSpy).toHaveBeenCalledTimes(1);
     expect(bustSpy).toHaveBeenCalledWith(OWNER_ID);
+  });
+});
+
+describe('deleting a custom video thumbnail', () => {
+  // The cache is keyed by the video; once the thumbnail row is gone nothing else can name it.
+  // The search-index delete also refreshes the deleted ids themselves, so only the parent-id
+  // calls are counted here.
+  const parentRefreshes = () =>
+    thumbnailRefreshSpy.mock.calls.filter(
+      ([ids]) => ids === 900 || (Array.isArray(ids) && ids.includes(900))
+    );
+  it('refreshes the parent video’s thumbnail entry on a single delete', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValue([]);
+    mockDbWrite.image.delete.mockResolvedValue({
+      url: 'thumb',
+      postId: null,
+      nsfwLevel: 1,
+      userId: OWNER_ID,
+      metadata: { parentId: 900 },
+    });
+
+    await deleteImageById({ id: IMAGE_ID });
+
+    expect(thumbnailRefreshSpy).toHaveBeenCalledWith(900);
+  });
+
+  it('refreshes each parent video once on a bulk delete, and nothing for plain images', async () => {
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      Array.from(strings).join('?').includes('DELETE FROM "Image"')
+        ? [
+            { id: IMAGE_ID, url: 'a', postId: null, nsfwLevel: 1, userId: OWNER_ID, parentId: 900 },
+            {
+              id: OTHER_IMAGE_ID,
+              url: 'b',
+              postId: null,
+              nsfwLevel: 1,
+              userId: OWNER_ID,
+              parentId: 900,
+            },
+            {
+              id: THIRD_IMAGE_ID,
+              url: 'c',
+              postId: null,
+              nsfwLevel: 1,
+              userId: OWNER_ID,
+              parentId: null,
+            },
+          ]
+        : []
+    );
+
+    await deleteImages([IMAGE_ID, OTHER_IMAGE_ID, THIRD_IMAGE_ID]);
+
+    expect(parentRefreshes()).toEqual([[[900]]]);
+
+    const deleteCall = mockDbWrite.$queryRaw.mock.calls.find(([strings]: [string[]]) =>
+      Array.from(strings).join('?').includes('DELETE FROM "Image"')
+    ) as [string[]];
+    expect(Array.from(deleteCall[0]).join('?')).toMatch(/RETURNING[^;]*"parentId"/);
+  });
+
+  it('refreshes nothing when no deleted image was a thumbnail', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValue([]);
+    mockDbWrite.image.delete.mockResolvedValue({
+      url: 'img',
+      postId: null,
+      nsfwLevel: 1,
+      userId: OWNER_ID,
+      metadata: {},
+    });
+
+    await deleteImageById({ id: IMAGE_ID });
+
+    expect(parentRefreshes()).toEqual([]);
   });
 });
 

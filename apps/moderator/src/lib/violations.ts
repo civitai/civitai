@@ -58,8 +58,7 @@ export const VIOLATION_LABELS: Record<(typeof VIOLATION_TYPES)[number], string> 
 const USER_FACING_REASONS: Partial<Record<(typeof VIOLATION_TYPES)[number], string>> = {
   schoolNsfw:
     'School settings are moderated more strictly, and this was removed under that stricter standard',
-  minorViolence:
-    'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed',
+  minorViolence: 'Violence against, or implied harm to, characters who appear young is not allowed',
 };
 
 export function violationUserMessage(violationType: string): string {

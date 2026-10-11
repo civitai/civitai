@@ -1,7 +1,7 @@
 import { Badge, Button, Container, Text, Title } from '@mantine/core';
-import { IconArrowLeft, IconPhoto, IconUsers, IconVideo } from '@tabler/icons-react';
+import { IconArrowLeft, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { NavigateBack } from '~/components/BackButton/BackButton';
+import Link from 'next/link';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { CrucibleFollowToggle } from '~/components/Crucible/CrucibleFollowToggle';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -10,12 +10,19 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { Currency, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
+import { CrucibleContentBadges } from '~/components/Crucible/CrucibleContentBadges';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
-import { getCrucibleStatusBadge, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  CRUCIBLE_NO_DESCRIPTION,
+  getCrucibleStatusBadge,
+  getCrucibleTotalPrizePool,
+} from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -76,6 +83,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, paidEntryCount, seededPrizePool });
   const browsingLevel = useBrowsingLevelDebounced();
+  const currentUser = useCurrentUser();
   // Drawn without an ImageGuard, so it only shows once scanned and inside the viewer's level.
   const backgroundImage =
     [heroImage, image].find(
@@ -127,19 +135,17 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
         className="relative z-10 flex w-full flex-col justify-between gap-6 pt-4"
       >
         <div className="flex items-center justify-between">
-          <NavigateBack url="/crucibles">
-            {({ onClick }) => (
-              <Button
-                variant="light"
-                color="gray"
-                size="compact-sm"
-                leftSection={<IconArrowLeft size={16} />}
-                onClick={onClick}
-              >
-                Back
-              </Button>
-            )}
-          </NavigateBack>
+          {/* Not `NavigateBack`: history here is usually the judge page, which links back to this one. */}
+          <Button
+            component={Link}
+            href="/crucibles"
+            variant="light"
+            color="gray"
+            size="compact-sm"
+            leftSection={<IconArrowLeft size={16} />}
+          >
+            Back
+          </Button>
           <div className="flex items-center gap-2">
             <CrucibleFollowToggle crucible={{ id: crucible.id, status: crucible.status }} />
             <CrucibleContextMenu
@@ -173,7 +179,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             {name}
           </Title>
 
-          {description && (
+          {description ? (
             // Spoiler draws "Show More" in its bottom margin; a margin here would collapse into it.
             <div className="pb-4">
               <ContentClamp maxHeight={72}>
@@ -182,6 +188,10 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
                 </Text>
               </ContentClamp>
             </div>
+          ) : (
+            <Text size="sm" c="dimmed" fs="italic" pb="md">
+              {CRUCIBLE_NO_DESCRIPTION}
+            </Text>
           )}
 
           <CrucibleUserLink user={user}>
@@ -200,6 +210,14 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
               )}
             </div>
           </CrucibleUserLink>
+
+          <div className="mt-4">
+            <OwnerRatingControls
+              entityType="Crucible"
+              entityId={crucible.id}
+              isOwner={currentUser?.id === user.id}
+            />
+          </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-white/10 pt-4">
             <div className="flex items-center gap-2">
@@ -222,23 +240,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
 
             {status === CrucibleStatus.Active && endAt && <CrucibleTimer endAt={endAt} />}
 
-            <div className="flex flex-wrap items-center gap-1">
-              <Badge
-                size="sm"
-                variant="light"
-                color="gray"
-                leftSection={
-                  contentType === MediaType.video ? (
-                    <IconVideo size={12} />
-                  ) : (
-                    <IconPhoto size={12} />
-                  )
-                }
-              >
-                {contentType === MediaType.video ? 'Videos' : 'Images'}
-              </Badge>
-              <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} />
-            </div>
+            <CrucibleContentBadges contentType={contentType} nsfwLevel={nsfwLevel} />
           </div>
         </div>
       </Container>

@@ -55,8 +55,9 @@ const GEN_IDEM_IN_PROGRESS = ' in-progress';
  * Compose the per-(user, app, key) redis key. INJECTIVE because: `userId` is
  * numeric (colon-free), `appBlockId` is a real `apb_<ULID>` or one of the three
  * synthetic pre-approval ids `ephemeral-<slug>` / `page_local_<slug>` /
- * `pubreq_<ULID>` (all colon-free), and `idempotencyKey` is charset-
- * restricted to `^[A-Za-z0-9_-]{1,64}$` at the zod input (colon-free). So no two
+ * `pubreq_<ULID>` (all colon-free), and `idempotencyKey` is LAST, so only it may carry
+ * a colon: client keys are `^[A-Za-z0-9_-]{1,64}$` at the zod input, and the
+ * server-built `training-quote:<quoteId>` carries a colon no client key can spell. So no two
  * distinct (user, app, key) triples can ever collide on the delimiter. (A colon
  * IS a safe delimiter here — this is an internal redis key, not the orchestrator
  * `externalId`, whose charset excludes it. See composeBlockExternalId.)
@@ -109,6 +110,7 @@ const APP_BLOCK_ID_MAX_FOR_ENCODING = 99;
  */
 const BLOCK_EXTERNAL_ID_PREFIX_CLIENT = 'blk';
 const BLOCK_EXTERNAL_ID_PREFIX_SERVER = 'bls';
+const BLOCK_EXTERNAL_ID_PREFIX_TRAINING = 'blt';
 
 /**
  * The SINGLE gate every emitted externalId passes. Shared by the client-key
@@ -214,6 +216,21 @@ export function mintServerBlockExternalId(): string {
   return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_SERVER}${randomUUID()}`);
 }
 
+/**
+ * The orchestrator `externalId` for an App Blocks `kind:'training'` run, derived from
+ * the RUN's identity (`runKey`, a sha256 hex digest — see `trainingRunKey`) rather
+ * than from any one request. A retry after an ambiguous submit failure — which needs
+ * a fresh quote, and so a fresh request — therefore dedupes onto the run the
+ * orchestrator may already have created, instead of charging a second one. The
+ * `blt` tag keeps it disjoint from the client (`blk`) and minted (`bls`) namespaces.
+ */
+export function composeTrainingBlockExternalId(runKey: string): string {
+  if (!/^[a-f0-9]{64}$/.test(runKey)) {
+    throw new Error('training externalId: runKey must be a sha256 hex digest');
+  }
+  return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_TRAINING}${runKey}`);
+}
+
 export type BlockGenIdempotencyClaim<T> =
   | { state: 'acquired'; key: string }
   | { state: 'replay'; result: T }
@@ -284,8 +301,12 @@ export async function finalizeGenIdempotency(key: string, result: unknown): Prom
 /**
  * Release the idempotency claim for a NON-committed outcome (a pre-reservation
  * rejection, a cap/velocity reject that already refunded, or a throw before a
- * resolved submit) so a genuine retry with the same key can execute. Safe because
- * NO money moved and NO reservation stands. Best-effort; never throws.
+ * resolved submit) so a genuine retry with the same key can execute. Callers
+ * release after refunding, so no reservation stands — except the training submit's
+ * unconfirmed arm, which releases its per-quote claim while its reservations stand
+ * and a run may exist. That is safe for a different reason: the quote was spent
+ * (GETDEL) before the call, so a retry under that claim key can never run again.
+ * Best-effort; never throws.
  */
 export async function releaseGenIdempotency(key: string): Promise<void> {
   await sysRedis.del(key as never).catch(() => {

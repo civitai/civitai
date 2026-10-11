@@ -17,6 +17,7 @@ import {
   submitAutoLabelWorkflowSchema,
 } from '~/server/schema/training.schema';
 import { getTrainingEpochArchive } from '~/server/services/orchestrator/training/epoch-archive';
+import { moveAsset } from '~/server/services/orchestrator/training/move-asset';
 import { getTrainingRunState } from '~/server/services/orchestrator/training/training-state';
 import {
   autoCaptionHandler,
@@ -27,7 +28,6 @@ import {
   getAutoLabelWorkflow,
   getJobEstStartsHandler,
   getTrainingServiceStatus,
-  moveAsset,
   submitAutoLabelWorkflow,
   setTrainingServiceStatus,
 } from '~/server/services/training.service';
@@ -70,7 +70,9 @@ export const trainingRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(moveAssetInput)
     .use(isFlagProtected('imageTraining'))
-    .mutation(({ input, ctx }) => moveAsset({ ...input, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      moveAsset({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator })
+    ),
   // One zip of everything a finished run produced (epoch models + sample media).
   // A mutation rather than a query: each call mints a short-lived signed URL from
   // the orchestrator, which must not be served from the tRPC query cache.

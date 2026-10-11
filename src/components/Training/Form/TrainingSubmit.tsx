@@ -39,7 +39,7 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/generation_v2/FormFooter';
+import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/Generation/footer-parts';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';

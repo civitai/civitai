@@ -92,6 +92,13 @@ async function deliverSeasonCosmetics() {
 }
 
 const LEGEND_COSMETIC_CUTOFF = 10;
+/**
+ * The Legacy leaderboard's nameplate, found by name. It was 'Legendary Nameplate' before the board
+ * was renamed Legacy; both are listed so the cosmetic can be renamed before or after this deploys.
+ * Never add 'Legend Nameplate': that is the Creator Journey Legend tier's plate, and the revoke below
+ * would strip it from every Legend who is not on this board.
+ */
+export const LEGACY_NAMEPLATE_NAMES = ['Legacy Nameplate', 'Legendary Nameplate'];
 async function deliverLegendCosmetics() {
   // deliver
   // --------------------------------------------
@@ -105,7 +112,7 @@ async function deliverLegendCosmetics() {
         id
       FROM "Cosmetic"
       WHERE type = 'NamePlate'
-      AND name = 'Legendary Nameplate'
+      AND name = ANY(${LEGACY_NAMEPLATE_NAMES})
     )
     INSERT INTO "UserCosmetic"("userId", "cosmeticId", "obtainedAt")
     SELECT
@@ -129,7 +136,7 @@ async function deliverLegendCosmetics() {
           id
         FROM "Cosmetic"
         WHERE type = 'NamePlate'
-        AND name = 'Legendary Nameplate'
+        AND name = ANY(${LEGACY_NAMEPLATE_NAMES})
     )
     DELETE FROM "UserCosmetic" uc
     USING cosmetic c

@@ -6,6 +6,7 @@ import {
 } from '../tagsOnImageNew.service';
 import * as systemCache from '../system-cache';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { refreshThumbnailCache } from '~/server/redis/caches';
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {},
@@ -14,7 +15,7 @@ vi.mock('~/server/db/pgDb', () => ({
 }));
 vi.mock('~/server/redis/caches', () => ({
   tagIdsForImagesCache: { bust: vi.fn() },
-  thumbnailCache: { refresh: vi.fn() },
+  refreshThumbnailCache: vi.fn(),
   imageTagsCache: { bust: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({
@@ -198,6 +199,16 @@ describe('blocked-level tags written after the scan', () => {
     const [, written] = queueQueries()[0];
     expect(JSON.parse(written as string)).toEqual([{ imageId: 7, tagId: URINE, source: 'User' }]);
     expect(reviewInserts()).toEqual([expect.stringContaining(`(7, ${URINE})`)]);
+  });
+
+  it('refreshes the thumbnail cache, parent videos included, for re-rated images', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: 7, tagId: XXX },
+      { imageId: 8, tagId: SAFE },
+    ]);
+
+    expect(refreshThumbnailCache).toHaveBeenCalledTimes(1);
+    expect(refreshThumbnailCache).toHaveBeenCalledWith([7]);
   });
 
   it('does not touch review state when no blocked-level tag was written', async () => {

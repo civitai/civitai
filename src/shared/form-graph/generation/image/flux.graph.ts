@@ -1,5 +1,6 @@
 import { branch, defineGraph } from 'form-graph';
 import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
+import { DRAFT_WORKFLOW } from '~/shared/constants/generation.constants';
 import { checkpointDef } from '../checkpoint';
 import {
   FLUX1_PRO_AR,
@@ -21,13 +22,11 @@ import {
 } from '../shared';
 
 /**
- * Flux family (Flux1 + FluxKrea), ported from `flux-graph.ts`. No negative
+ * Flux family (Flux1 + FluxKrea). No negative
  * prompt, no sampler, no CLIP skip. The MODE (draft/standard/pro/krea/ultra)
  * derives from the model version id and picks the mode branch; the mounted
  * branch's pick sees `model` because ctx-so-far merges over ext.
  */
-
-// ---- copied from flux-graph.ts, which dies with the data-graph engine -------
 
 export type FluxMode = 'draft' | 'standard' | 'pro' | 'krea' | 'ultra';
 
@@ -57,8 +56,6 @@ const fluxUltraAspectRatios = [
   { label: '9:21', value: '9:21', width: 1344, height: 3136 },
 ];
 
-// ---- end of flux-graph.ts copies --------------------------------------------
-
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const fluxModeOf = versionModeOf(fluxVersionIds, 'standard');
 
@@ -84,7 +81,7 @@ const pro = defineGraph<FluxModeExt>()
   .field('steps', STEPS)
   .field('seed', SEED);
 
-/** standard and krea share this shape (v1 mounts one graph for both). */
+/** standard and krea share this shape. */
 const standard = defineGraph<FluxModeExt>()
   .field('aspectRatio', AR)
   .field('cfgScale', CFG)
@@ -98,7 +95,7 @@ const ultra = defineGraph<FluxModeExt>()
   .field('fluxUltraRaw', boolDef(false))
   .field('seed', SEED);
 
-/** Tagged: v1's `fluxMode` computed becomes the branch key, same state shape. */
+/** Tagged: the picked key is stamped into state as `fluxMode`. */
 const modes = branch('fluxMode', (ext: FluxModeExt) => fluxModeOf(ext.model), {
   draft,
   standard,
@@ -108,14 +105,35 @@ const modes = branch('fluxMode', (ext: FluxModeExt) => fluxModeOf(ext.model), {
 });
 
 export const flux = defineGraph<FamilyExt>({ scope: familyScope })
-  .field('model', ({ _ext }) =>
-    checkpointDef({
+  // reconcile.ts has already moved a draft build into the draft workflow, so the second branch only
+  // catches a parse that skipped reconcile.
+  .field('model', ({ _ext }) => {
+    const isDraftWorkflow = _ext.workflow === DRAFT_WORKFLOW;
+    const base = checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
       versions: { options: fluxModeVersionOptions },
-    })
-  )
+      modelLocked: isDraftWorkflow,
+    });
+    return {
+      ...base,
+      correct: (value: ResourceData | undefined) => {
+        const isDraftModel = value?.id === fluxVersionIds.draft;
+        if (isDraftWorkflow && !isDraftModel)
+          return {
+            value: { id: fluxVersionIds.draft, model: { type: 'Checkpoint' } } as ResourceData,
+            reason: 'draft_workflow_forces_draft_model',
+          };
+        if (!isDraftWorkflow && isDraftModel)
+          return {
+            value: { id: fluxVersionIds.standard, model: { type: 'Checkpoint' } } as ResourceData,
+            reason: 'draft_model_needs_draft_workflow',
+          };
+        return base.correct?.(value);
+      },
+    };
+  })
   .use(modes)
   .use(promptOnlyTextBlock);
 

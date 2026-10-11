@@ -43,8 +43,97 @@ export function monthlyPricingAllowance(tier: string | null | undefined): number
 }
 
 /**
- * Whether an entity already carries a price, and so is exempt from both rules. The single definition of
- * that question — a timed early-access window is not a price.
+ * Extra licensing-fee slots granted to Creator Program bankers ahead of the November 2026 banking
+ * change. Granted per creator; the grant list lives in system Redis and is read by both apps.
+ */
+export const FEE_ALLOWANCE_BOOST_MAX = 100;
+export const FEE_ALLOWANCE_BOOST_ENDS_AT = new Date('2026-11-01T00:00:00Z');
+
+/** The boost's last day as creators read it, e.g. "October 31 (UTC)". */
+const BOOST_LAST_DAY = `${new Date(FEE_ALLOWANCE_BOOST_ENDS_AT.getTime() - 1).toLocaleDateString(
+  'en-US',
+  { month: 'long', day: 'numeric', timeZone: 'UTC' }
+)} (UTC)`;
+
+/**
+ * The boost a creator holds at `now`: their stored grant clamped to the maximum, or 0 once the window
+ * closes. This date check is the cutoff; the key's Redis expiry is only cleanup.
+ */
+export function feeAllowanceBoost(granted: unknown, now: Date = new Date()): number {
+  if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
+  const value = typeof granted === 'string' ? Number(granted) : granted;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(FEE_ALLOWANCE_BOOST_MAX, Math.max(0, Math.floor(value)));
+}
+
+/**
+ * The limit a NEW price is checked against. The boost widens only a licensing fee; a write adding a
+ * permanent paid-access gate stays on the tier allowance.
+ */
+export function pricingLimitFor({
+  tier,
+  boost,
+  addsGate,
+}: {
+  tier: string | null | undefined;
+  boost: number;
+  addsGate: boolean;
+}): number {
+  const base = monthlyPricingAllowance(tier);
+  return addsGate ? base : base + boost;
+}
+
+/** Both limits a counter needs. `null` = unlimited. A paid-access gate is held to `baseLimit`. */
+export function pricingAllowanceLimits({
+  tier,
+  boost,
+}: {
+  tier: string | null | undefined;
+  boost: number;
+}): { baseLimit: number | null; feeLimit: number | null } {
+  return {
+    baseLimit: finiteOrNull(monthlyPricingAllowance(tier)),
+    feeLimit: finiteOrNull(pricingLimitFor({ tier, boost, addsGate: false })),
+  };
+}
+
+export function feeAllowanceBoostNote(boost: number): string {
+  return boost > 0 ? `includes ${boost} extra for licensing fees through ${BOOST_LAST_DAY}` : '';
+}
+
+/**
+ * Whether putting a permanent gate on versions that already carry a fee would get past the tier
+ * allowance. Such a write spends no new slot, so without this a fee-only slot opened by the boost
+ * could be turned into a gate the tier never allowed. Only a slot spent this month can have been
+ * opened by the boost, and spending at most the tier allowance means every one of them fits in it.
+ *
+ * `boost` is the raw read: `null` (the grant list could not be read) counts as a grant, because
+ * wrongly refusing costs a retry and wrongly allowing costs a gate the tier never allowed.
+ */
+export function gateConversionExceedsAllowance({
+  used,
+  tier,
+  boost,
+  slotSpentThisMonth,
+}: {
+  used: number;
+  tier: string | null | undefined;
+  boost: number | null;
+  slotSpentThisMonth: boolean;
+}): boolean {
+  const base = monthlyPricingAllowance(tier);
+  return slotSpentThisMonth && boost !== 0 && Number.isFinite(base) && used > base;
+}
+
+export function gateConversionMessage(used: number, tier: string | null | undefined): string {
+  return `Permanent paid access can't be added this month to a version you licensed this month: you have priced ${used} model versions this month, more than the ${monthlyPricingAllowance(
+    tier
+  )} your membership allows, and extra licensing-fee slots cover licensing fees only.`;
+}
+
+/**
+ * Whether an entity already carries a price, exempting it from both rules unless a boosted fee is
+ * gaining a gate. A timed early-access window is not a price.
  */
 export function isAlreadyPriced({
   licensingFee,
@@ -127,6 +216,30 @@ export function capTierLabel(tier: string | null | undefined): string | undefine
 export function pricingAllowanceMessage(used: number, limit: number, tierLabel?: string): string {
   const tier = tierLabel ? ` on ${tierLabel}` : '';
   return `You have priced ${used} of ${limit} model versions this month${tier}. ${PRICING_SLOT_EXPLAINER} Upgrade your membership to price more, or wait until next month.`;
+}
+
+/**
+ * The refusal for a write checked against `pricingLimitFor`. A boosted creator refused a paid-access
+ * gate may still have fee room, so say the extra slots are fee-only.
+ */
+export function pricingLimitMessage({
+  used,
+  limit,
+  boost,
+  addsGate,
+  tierLabel,
+}: {
+  used: number;
+  limit: number;
+  boost: number;
+  addsGate: boolean;
+  tierLabel?: string;
+}): string {
+  const base = pricingAllowanceMessage(used, limit, tierLabel);
+  if (boost <= 0) return base;
+  return addsGate
+    ? `${base} Your ${boost} extra slots through ${BOOST_LAST_DAY} cover licensing fees only, not paid access.`
+    : `${base} This includes your ${boost} extra licensing-fee slots through ${BOOST_LAST_DAY}.`;
 }
 
 /** What the creator's allowance looks like right now, for every counter and gate in either UI. */

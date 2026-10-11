@@ -3,6 +3,20 @@ export type UploadPartError = {
   retryAfter?: string | null;
   networkError?: boolean;
   aborted?: boolean;
+  /**
+   * A silence watchdog gave up on this part: it went quiet with no error and no response. Set
+   * WITH `networkError` and WITHOUT `aborted`, because the transfer did fail at the network
+   * layer and nobody cancelled it — the two flags are what every predicate below reads, and
+   * `stalled` only refines the reason.
+   */
+  stalled?: boolean;
+  /**
+   * Whether a `stalled` part had already sent its whole body, i.e. the ETag reply never came.
+   * 🔴 Sample it when the watchdog DECIDES, never infer it from an `upload.loadend` handler having
+   * run: XHR's request-error steps fire that event on `abort` and on `error` too — the watchdog's
+   * own `xhr.abort()` included, which is how every mid-body stall once arrived here with it set.
+   */
+  responsePhase?: boolean;
   partNumber?: number;
 };
 
@@ -13,13 +27,63 @@ const MIN_RETRY_AFTER_MS = 1000;
 /** The relay route's body cap (Next's 10 MB truncation point) mirrored client-side. */
 export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
 
+// Bounds SILENCE, not part duration: it resets on every progress event, so a slow 25 MB part
+// keeps it alive while a half-open connection trips it. 30s is well past the inter-chunk gap
+// a usable mobile link produces, and `xhr.timeout` cannot express this — being total-duration,
+// any value short enough to catch a stall would kill a legitimate 25 MB part on a slow link.
+const PART_STALL_TIMEOUT_MS = 30_000;
+
+/**
+ * The silence window for one in-flight part: `arm` restarts it, `clear` ends it.
+ *
+ * `arm` takes the window so a caller can widen it for a phase whose silence means something
+ * else, and the widened value survives the internal re-arms below — a hidden tab must not
+ * quietly drop back to the default.
+ *
+ * 🔴 NOT a bare `setTimeout`, because of BACKGROUNDED TABS. Chromium throttles background
+ * timers to roughly one per minute and freezes a backgrounded mobile tab outright, so a
+ * window armed before the tab went away expires on a transfer that was merely suspended —
+ * and someone switching apps mid-upload is the population a stall watchdog is for. Neither a
+ * progress delta nor elapsed wall clock can separate the two, because no bytes move while
+ * hidden either; only `visibilityState` can. So time spent hidden does not count as silence,
+ * and a part that is genuinely dead is given away one full window after the tab comes back.
+ *
+ * 🔴 Lives HERE rather than inside the hook for the reason `isTerminalCompleteStatus` below
+ * gives: `s3-upload.store.ts` has the same missing timeout, and the one predicate that was
+ * open-coded in both went wrong in one of them.
+ */
+export function createPartStallWatchdog(onStall: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let windowMs = PART_STALL_TIMEOUT_MS;
+  const arm = (ms: number = PART_STALL_TIMEOUT_MS) => {
+    windowMs = ms;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (document.visibilityState !== 'visible') return arm(windowMs);
+      onStall();
+    }, windowMs);
+  };
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') arm(windowMs);
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  return {
+    arm,
+    /** 🔴 Drops the listener too: one watchdog per part attempt, 4 parts at a time. */
+    clear: () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    },
+  };
+}
+
 /**
  * The bounded, serializable reason a multipart upload gave up, carried in the
  * `/api/upload/abort` body so the server-side `s3-upload-abort` event can say WHY the
  * client stopped — the field whose absence forced the 2026-09 image-upload investigation
  * to ask users for devtools screenshots. Caller-shaped input is sanitized again
  * server-side (see `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`); this
- * side only ever produces the three shapes below.
+ * side only ever produces the five shapes below.
  *
  * A user cancel maps to `client-aborted` ahead of every other reading: the cancel trips
  * the workers, which can race a status-0 `loadend` onto the same fatal slot, and user
@@ -27,6 +91,8 @@ export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
  */
 export type PartFailureReason =
   | { kind: 'client-aborted' }
+  | { kind: 'stalled'; partNumber?: number }
+  | { kind: 'response-stalled'; partNumber?: number }
   | { kind: 'network-error'; partNumber?: number }
   | { kind: 'part-status'; partNumber?: number; status: number };
 
@@ -35,6 +101,20 @@ export function describePartFailure(
 ): PartFailureReason | undefined {
   if (!err) return undefined;
   if (err.aborted) return { kind: 'client-aborted' };
+  // Ahead of `networkError`, which a stall sets too so it can reach the relay. Read the
+  // other way round, a dead radio is indistinguishable from a connection reset in the logs.
+  if (err.stalled) {
+    // Split for the same reason `stalled` was split out of `network-error`: a dead transfer and
+    // a host that took every byte and never answered are different populations, and one kind for
+    // both leaves whichever is rarer invisible in the abort stream.
+    if (err.responsePhase)
+      return err.partNumber === undefined
+        ? { kind: 'response-stalled' }
+        : { kind: 'response-stalled', partNumber: err.partNumber };
+    return err.partNumber === undefined
+      ? { kind: 'stalled' }
+      : { kind: 'stalled', partNumber: err.partNumber };
+  }
   if (err.networkError) {
     return err.partNumber === undefined
       ? { kind: 'network-error' }

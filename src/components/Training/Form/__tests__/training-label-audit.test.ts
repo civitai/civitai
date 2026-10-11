@@ -103,15 +103,17 @@ describe('auditTrainingLabels', () => {
     });
   });
 
-  // `isSoftBlock` is false for an empty trigger set, and the over-length refusal reports none.
-  it('keeps a failure carrying no triggers hard', () => {
+  // The over-length refusal carries a hard `over_length` trigger, so it lands hard.
+  it('keeps an over-length label hard', () => {
     const result = auditTrainingLabels({
       triggerWord: '',
       labels: labels(['a.png', 'a'.repeat(20001)]),
       checkProfanity: true,
     });
     expect(result.severity).toBe('hard');
-    expect(result.offendingWords).toEqual(['Prompt exceeds the maximum allowed length']);
+    expect(result.offendingWords).toEqual([
+      'Prompt exceeds the maximum allowed length (20,000 characters)',
+    ]);
   });
 
   it('dedupes offending words across labels', () => {

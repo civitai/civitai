@@ -36,6 +36,8 @@ describe('FEATURE_NOTICES', () => {
     referralKickback: 'referral-kickback-info',
     referralHowItWorks: 'referral-how-it-works',
     referralTokenShop: 'referral-token-shop-info',
+    firstModelPublished: 'first-model-published',
+    firstArticlePublished: 'first-article-published',
   };
 
   test.each(Object.entries(ID_AT_ITS_ORIGINAL_CALL_SITE))(
@@ -52,6 +54,14 @@ describe('FEATURE_NOTICES', () => {
       Object.keys(ID_AT_ITS_ORIGINAL_CALL_SITE).sort()
     );
   });
+
+  // The first-publish card links to /creators/journey, which 404s without the flag.
+  test.each(['firstModelPublished', 'firstArticlePublished'] as const)(
+    '%s is announced only to the Creator Journey audience',
+    (key) => {
+      expect(FEATURE_NOTICES[key]).toMatchObject({ audience: { feature: 'creatorJourney' } });
+    }
+  );
 
   test('every id is unique — two notices sharing one id would dismiss each other', () => {
     expect(new Set(FEATURE_NOTICE_IDS).size).toBe(FEATURE_NOTICE_IDS.length);

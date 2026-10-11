@@ -16,7 +16,7 @@ import { showSuccessNotification } from '~/utils/notifications';
  * THE OWNER PUBLISHING LEDGER, now on the authoring page's **Publishing** tab.
  *
  * 🔴 WHY THIS FILE EXISTS, AND WHY IT IS NOT JUST "TESTS FOR THE FIX". PR #4154 consolidated
- * `/apps/my-submissions` into `/apps/mine`. `MySubmissionsList` — the only surface carrying
+ * `/apps/my-submissions` into `/apps/mine`. `MySubmissionsList` (since deleted) — the only surface carrying
  * the owner Unpublish/Republish controls — was orphaned by that merge, and the new page body
  * contained zero occurrences of `unpublish`. The gap was DISCLOSED in the implementing PR and
  * recorded as a noted omission rather than as a functional regression, and then THREE audit

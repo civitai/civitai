@@ -45,7 +45,8 @@ export const resourceDataCache = createCachedArray({
               m."poi",
               m."minor",
               m."userId",
-              m."sfwOnly"
+              m."sfwOnly",
+              (SELECT u."flags" FROM "User" u WHERE u.id = m."userId") AS "userFlags"
             FROM "Model" m
             WHERE m.id = mv."modelId"
           ) as obj
@@ -99,5 +100,6 @@ export type GenerationResourceDataModel = {
     userId: number;
     minor?: boolean;
     sfwOnly?: boolean;
+    userFlags?: number | null;
   };
 };

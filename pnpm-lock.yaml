@@ -74,8 +74,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0(next@16.3.1(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
       '@civitai/orchestration-client':
-        specifier: 0.2.0-beta.116
-        version: 0.2.0-beta.116
+        specifier: 0.2.0-beta.120
+        version: 0.2.0-beta.120
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
@@ -413,8 +413,8 @@ importers:
         specifier: ^2.0.5
         version: 2.0.5
       form-graph:
-        specifier: ^0.4.2
-        version: 0.4.2(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17)
+        specifier: ^0.5.0
+        version: 0.5.0(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17)
       google-auth-library:
         specifier: ^9.15.0
         version: 9.15.1
@@ -890,6 +890,9 @@ importers:
       vitest-browser-react:
         specifier: ^2.2.0
         version: 2.2.0(@types/react-dom@18.0.5)(@types/react@18.0.14)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(vitest@4.1.11)
+      wasmoon:
+        specifier: 1.16.0
+        version: 1.16.0
       ws:
         specifier: ^8.19.0
         version: 8.19.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
@@ -1422,6 +1425,9 @@ importers:
       '@civitai/auth':
         specifier: workspace:*
         version: link:../../packages/civitai-auth
+      '@civitai/axiom':
+        specifier: workspace:*
+        version: link:../../packages/civitai-axiom
       '@civitai/brand':
         specifier: workspace:*
         version: link:../../packages/civitai-brand
@@ -2241,8 +2247,8 @@ packages:
     resolution: {integrity: sha512-ggULbVQdhp43MNq0vyhbVi91rljwrmCZGme38T7V2ZSBgz2vNbRnHycfOt3w0ecwMCOYnr7LGd5gs2pfMU7eKw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/orchestration-client@0.2.0-beta.116':
-    resolution: {integrity: sha512-V4Xg8BPemq64katHhUdPcNRGYMZVVGxiVCCTCpqczvi/lI4jyW+D8/v7ItOZzCIrqQIFWta3GZWboF65Fom5og==}
+  '@civitai/orchestration-client@0.2.0-beta.120':
+    resolution: {integrity: sha512-bPWgs+iKUkI3fEaAe7z0TRTYI1vXza3dWE/deldS8MiXGt1zdPOz4uztLINxdREBFn/WECReKNpGAkHJik+09g==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@clavata/sdk@0.2.3':
@@ -5511,6 +5517,9 @@ packages:
   '@types/dom-speech-recognition@0.0.1':
     resolution: {integrity: sha512-udCxb8DvjcDKfk1WTBzDsxFbLgYxmQGKrE/ricoMqHRNjSlSUCcamVTA5lIQqzY10mY5qCY0QDwBfFEwhfoDPw==}
 
+  '@types/emscripten@1.39.10':
+    resolution: {integrity: sha512-TB/6hBkYQJxsZHSqyeuO1Jt0AB/bW6G7rHt9g7lML7SOF6lbgcHvw/Lr+69iqN0qxgXLhWKScAon73JNnptuDw==}
+
   '@types/eslint-scope@3.7.7':
     resolution: {integrity: sha512-MzMFlSLBqNF2gcHWO0G1vP/YQyfvrxZ0bF+u7mzUdZ1/xK4A4sru+nraZz5i3iEIk1l1uyicaDVTB4QbbEkAYg==}
 
@@ -7928,8 +7937,8 @@ packages:
     resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
     engines: {node: '>= 6'}
 
-  form-graph@0.4.2:
-    resolution: {integrity: sha512-VrcQ0AsyYGw31lMSG7QRS42Q82EWrk/dtOzkiT/JMt1jfS/A2yf2ueRgsZYzac3NruPnZNJj/PIiqzjlnnKzKQ==}
+  form-graph@0.5.0:
+    resolution: {integrity: sha512-taYKJkXKTlp6dGbtz2I/6rI/qGUgZalZinLzj5eQX+I+EsLGCigiQzcBbqr0ZC77ZlBs+fdgshnPl8nNdP1YCQ==}
     engines: {node: '>=20'}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
@@ -12347,6 +12356,10 @@ packages:
     resolution: {integrity: sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==}
     engines: {node: '>=18'}
 
+  wasmoon@1.16.0:
+    resolution: {integrity: sha512-FlRLb15WwAOz1A9OQDbf6oOKKSiefi5VK0ZRF2wgH9xk3o5SnU11tNPaOnQuAh1Ucr66cwwvVXaeVRaFdRBt5g==}
+    hasBin: true
+
   watchpack@2.5.2:
     resolution: {integrity: sha512-6i/00NBjP4yGPs+caKSyRfpTF/8Torsu0MOW3mMzIbhgISFder8i7xbqgHlLMwJrdiN8ndBV3UA1/AfzPSr+jg==}
     engines: {node: '>=10.13.0'}
@@ -13555,7 +13568,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/orchestration-client@0.2.0-beta.116':
+  '@civitai/orchestration-client@0.2.0-beta.120':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -17019,6 +17032,8 @@ snapshots:
 
   '@types/dom-speech-recognition@0.0.1': {}
 
+  '@types/emscripten@1.39.10': {}
+
   '@types/eslint-scope@3.7.7':
     dependencies:
       '@types/eslint': 9.6.1
@@ -20054,7 +20069,7 @@ snapshots:
       hasown: 2.0.4
       mime-types: 2.1.35
 
-  form-graph@0.4.2(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17):
+  form-graph@0.5.0(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17):
     optionalDependencies:
       react: 18.3.1
       svelte: 5.56.3(@typescript-eslint/types@8.60.1)
@@ -25575,6 +25590,10 @@ snapshots:
   w3c-xmlserializer@5.0.0:
     dependencies:
       xml-name-validator: 5.0.0
+
+  wasmoon@1.16.0:
+    dependencies:
+      '@types/emscripten': 1.39.10
 
   watchpack@2.5.2:
     dependencies:

@@ -14,7 +14,22 @@
 // prompt that writes it and its area flag is off, so it cannot grow.
 // Enforced: `feedback.schema.test.ts` compares a hand-typed list against this one,
 // so removing the slug fails there with an array diff rather than silently.
-export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'] as const;
+//
+// `app-block` is private per-app feedback about one App Block, read by the app's owner and by
+// moderators. Unlike the other areas its rows carry `Feedback.appListingId` (the DB CHECK
+// `Feedback_app_columns_check` requires all eight app columns — appListingId, appBlockVersion,
+// appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById, ownerFlaggedAt, hiddenFromOwnerAt — to be
+// NULL on every other area), and it is NOT meant to be written through the generic
+// `feedback.create` — a dedicated procedure resolves the listing server-side. Listing it here makes
+// the shared area enum accept the slug, so the generic `feedback.create` / `feedback.getArea`
+// inputs refuse it explicitly (`genericFeedbackAreaSchema` in src/server/schema/feedback.schema.ts)
+// whatever its `feedback-area-app-block` flag says; that flag gates only the dedicated procedure.
+export const FEEDBACK_AREAS = [
+  'bitdex-image-feed',
+  'apps-marketplace',
+  'site-bug-report',
+  'app-block',
+] as const;
 
 /**
  * The area behind the support menu's "Report a bug", and the only one that is not
@@ -22,6 +37,33 @@ export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace', 'site-bu
  * `context.path` is the only thing that says where the report came from.
  */
 export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
+
+/** Private per-app feedback from the App Block chrome — see the `app-block` note on FEEDBACK_AREAS. */
+export const APP_BLOCK_FEEDBACK_AREA: FeedbackArea = 'app-block';
+
+/**
+ * Who can read an `app-block` report, as user-facing copy. ONE phrase for both ends: the send
+ * dialog's privacy notice and the developer's inbox both interpolate it, so the reporter is never
+ * told a narrower audience than the inbox actually admits. Accepted collaborators (editor seats)
+ * read the inbox alongside the owner — `resolveInboxListingId` in `app-feedback.service.ts`.
+ */
+export const APP_FEEDBACK_READERS =
+  "this app's developer, their collaborators and Civitai moderators";
+
+/**
+ * The developer's status on an `app-block` report. NULL in the column means "new to the developer".
+ *
+ * Deliberately a SEPARATE vocabulary from the moderator triage `status` ('new' | 'reviewed' |
+ * 'actioned' | 'dismissed'), stored in separate columns, so an owner can never move moderator
+ * triage and neither status drives the other.
+ *
+ * 🔴 Mirrored by the `Feedback_ownerStatus_check` CHECK in the manual-apply migration
+ * `*_feedback_app_listing`. A value added here and not there fails the owner's write with a
+ * constraint violation; `feedback.schema.test.ts` reads the CHECK back out of the SQL and compares.
+ */
+export const FEEDBACK_OWNER_STATUSES = ['acknowledged', 'resolved', 'wont_fix'] as const;
+
+export type FeedbackOwnerStatus = (typeof FEEDBACK_OWNER_STATUSES)[number];
 
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
 

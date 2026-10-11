@@ -1,13 +1,21 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
+import {
+  getReports,
+  setReportStatus,
+  updateReportNotes,
+  getGameMirrors,
+  getReportedGame,
+} from '$lib/server/reports.service';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
+import { delistGame, delistReason } from '$lib/server/game-frame';
 import { canAccess } from '$lib/server/access';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
   reportEntityForSlug,
+  reportPath,
   reportReasons,
   reportStatuses,
   ReportStatus,
@@ -54,6 +62,10 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reportedBy: reportedBy || undefined,
     reportId,
   });
+  const games =
+    type === 'gameFrameGame'
+      ? await getGameMirrors(data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : [])))
+      : [];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
@@ -68,6 +80,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reasons: urlReasons,
     hidingAutomated: !reportId && !url.searchParams.has('reason'),
     reportedBy,
+    games,
     ...data,
   };
 };
@@ -144,6 +157,42 @@ export const actions: Actions = {
     const result = await removePlacement({ placementId, moderatorId: locals.user.id });
     if (!result.ok) return fail(400, { error: result.error });
     return { success: true, placementRemoved: placementId };
+  },
+
+  /**
+   * Delists the reported game on Game Frame, then sets the report Actioned (which pays the reporters).
+   * The report is only touched once Game Frame says the game is down, so a failed call leaves it open.
+   */
+  delistGame: async ({ request, locals, params, getClientAddress }) => {
+    const type = reportEntityForSlug(params.slug);
+    if (type !== 'gameFrameGame' || !canAccess(locals.user, reportPath(type)))
+      return fail(403, { error: 'Not permitted.' });
+
+    const data = await request.formData();
+    const id = Number(data.get('id'));
+    if (!Number.isInteger(id) || id <= 0) return fail(400, { error: 'Invalid report.' });
+
+    const game = await getReportedGame(id);
+    if (!game) return fail(410, { error: 'That report no longer exists.', gone: true });
+
+    const outcome = await delistGame({
+      slug: game.slug,
+      reason: delistReason(game, id),
+      reportId: id,
+      moderator: { id: locals.user.id, username: locals.user.username ?? null },
+    });
+    if (!outcome.ok) return fail(outcome.status, { error: outcome.message });
+
+    const forks = outcome.affected ? ` (+${outcome.affected} forks)` : '';
+    const result = await setReportStatus({
+      id,
+      status: ReportStatus.Actioned,
+      userId: locals.user.id,
+      ip: getClientAddress(),
+    });
+    if (!result.ok)
+      return fail(410, { error: `Delisted${forks}, but ${result.error}`, gone: true });
+    return { success: true, delisted: `Delisted${forks}` };
   },
 
   saveNotes: async ({ request }) => {

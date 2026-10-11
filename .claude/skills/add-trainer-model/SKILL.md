@@ -199,15 +199,19 @@ both are clean.
 ## Step 5 — Verify (optional)
 
 - **In-app trainer**: with a dev server (`dev-server` skill) and the `<name>Training` Flipt flag on for
-  your user, open the training form → Step 1 shows the new base model under its media; selecting it
-  loads the expected defaults; a `whatif` submit returns a price with no validation error.
+  your user, open the training form (`/models/train`) → Step 1 shows the new base model under its media;
+  selecting it loads the expected defaults; a `whatif` submit returns a price with no validation error.
+  The Training Studio is the default trainer for everyone `trainingStudioUi` covers (every moderator),
+  so `/models/train` redirects to `/training-studio` until you click **Use the classic trainer** in the
+  banner there. The choice is stored per user.
 - **Training Studio**: `pnpm dev:training-studio` (`TRAINING_STUDIO_DEV_LOGIN=1` in its `.env` to skip
   OAuth) → the Select step shows the new card/version, auto-picks the right labeler (tags vs captions),
   and the Review step's whatif price resolves. The dev-login stub sees the whole catalog including gated
   cards; to check the **gate** itself, evaluate the flag against a real signed-in non-mod user (or toggle
   it in Flipt) and confirm a gated card is hidden until the flag is on. The embed is a second evaluator:
-  open `/training-studio?view=new` in the main app (behind `trainingStudioUi`) and confirm the card
-  appears there too — a key missing from `studioModelFlagFeatures` stays hidden there even for moderators.
+  open `/training-studio?view=new` in the main app (behind `trainingStudioUi` — on by default, but off
+  if you switched to the classic trainer for the check above; **Switch to Training Studio** on
+  `/models/train` turns it back on) and confirm the card appears there too — a key missing from `studioModelFlagFeatures` stays hidden there even for moderators.
 
 ## Recap of what lives where
 

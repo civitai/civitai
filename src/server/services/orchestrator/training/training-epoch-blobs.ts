@@ -42,7 +42,7 @@ export function isActiveTrainingStepStatus(status: WorkflowStatus | null | undef
 }
 
 /** AI-Toolkit epochs carry `model` (a Blob), legacy epochs carry `blobUrl`. */
-type AnyEpoch = Partial<TrainingOutputEpochResult & EpochResult>;
+export type AnyEpoch = Partial<TrainingOutputEpochResult & EpochResult>;
 
 /**
  * Unlike workflow-state.ts this scans EVERY step for the epoch shape instead of
@@ -63,18 +63,28 @@ export function trainingWorkflowEpochBlobs(workflow: Workflow): TrainingEpochBlo
     const input = (step as { input?: { ecosystem?: string; model?: string } }).input;
     ecosystem =
       input?.ecosystem ?? (input?.model ? parseAIRSafe(input.model)?.ecosystem : null) ?? ecosystem;
-    for (const epoch of epochs) {
-      // `available: false` is a checkpoint the run hasn't finished — the studio never offers
-      // it, and its blob may not exist yet, so it must not count as owned. Matches the
-      // finished-checkpoint filter in workflow-state.ts / mapWorkflowToTrainingResultsV2.
-      if (epoch.model && epoch.model.available !== false) {
-        if (epoch.model.id) blobKeys.add(epoch.model.id);
-        const key = epoch.model.url ? getConsumerBlobId(epoch.model.url) : undefined;
-        if (key) blobKeys.add(key);
-      }
-      const legacyKey = epoch.blobUrl ? getConsumerBlobId(epoch.blobUrl) : undefined;
-      if (legacyKey) blobKeys.add(legacyKey);
-    }
+    for (const checkpoint of finishedEpochCheckpoints(epochs))
+      for (const key of checkpoint.keys) blobKeys.add(key);
   }
   return { blobKeys: [...blobKeys], completedAt, stepStatus, ecosystem };
+}
+
+/** A finished epoch checkpoint: every blob key that names it, and the URL it is served from. */
+export type EpochCheckpoint = { keys: string[]; url: string | undefined };
+
+export function finishedEpochCheckpoints(epochs: AnyEpoch[]): EpochCheckpoint[] {
+  const checkpoints: EpochCheckpoint[] = [];
+  for (const epoch of epochs) {
+    // `available: false` is a checkpoint the run hasn't finished — the studio never offers
+    // it, and its blob may not exist yet, so it must not count as owned. Matches the
+    // finished-checkpoint filter in workflow-state.ts / mapWorkflowToTrainingResultsV2.
+    if (epoch.model && epoch.model.available !== false) {
+      const url = epoch.model.url ?? undefined;
+      const keys = [epoch.model.id, url ? getConsumerBlobId(url) : undefined];
+      checkpoints.push({ keys: keys.filter((key): key is string => !!key), url });
+    }
+    const legacyKey = epoch.blobUrl ? getConsumerBlobId(epoch.blobUrl) : undefined;
+    if (legacyKey) checkpoints.push({ keys: [legacyKey], url: epoch.blobUrl ?? undefined });
+  }
+  return checkpoints;
 }

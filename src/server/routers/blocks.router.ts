@@ -1,6 +1,7 @@
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
-import { TRPCError } from '@trpc/server';
+import { TRPCError, getTRPCErrorFromUnknown } from '@trpc/server';
 import * as z from 'zod';
+import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
   isLaunchSlot,
@@ -12,7 +13,9 @@ import { FORGEJO_ORG } from '~/server/services/blocks/forgejo.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import {
+  BLOCK_TRAINING_MAX_BUZZ_PER_RUN,
   blockPerCallBudget,
+  blockTrainingRunCeiling,
   parseSubjectUserId,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
@@ -21,7 +24,10 @@ import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge
 // because `src/pages/api/v1/blocks/me.ts` is its other caller and a Next API route must
 // not import this router. See that module's docblock for why a second copy is banned.
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
-import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
+import {
+  assertSharedWriteTrust,
+  hasLinkedOAuthAccount,
+} from '~/server/services/blocks/block-write-trust.service';
 import {
   BLOCK_POST_DETAIL_MAX,
   BLOCK_POST_MAX_SOURCES,
@@ -48,15 +54,18 @@ import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz
 import { recordBlockBridgeRateLimitRefusal } from '~/server/metrics/app-block-runtime.metrics';
 import {
   checkBlockCatalogRateLimit,
+  checkBlockEstimateCellsRateLimit,
   checkBlockPollRateLimit,
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
+  checkBlockTrainingDatasetRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   claimGenIdempotency,
   composeBlockExternalId,
+  composeTrainingBlockExternalId,
   finalizeGenIdempotency,
   mintServerBlockExternalId,
   releaseGenIdempotency,
@@ -103,8 +112,19 @@ import {
   teardownPreviewSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
-import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
-import type { BlockWorkflowBody } from '~/server/schema/blocks/workflow.schema';
+import {
+  BLOCK_TRAINING_QUOTE_ID_REGEX,
+  blockEstimateBatchInputSchema,
+  blockTrainingDatasetItemsSchema,
+  blockWorkflowBodySchema,
+} from '~/server/schema/blocks/workflow.schema';
+import type {
+  BlockEstimateBatchResult,
+  BlockTrainingBody,
+  BlockWorkflowBody,
+  BlockWorkflowSnapshot,
+} from '~/server/schema/blocks/workflow.schema';
+import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import type { Context } from '~/server/createContext';
 import {
   allowMatureContentForCeiling,
@@ -116,6 +136,7 @@ import {
   isAppBlocksPostCreationEnabled,
 } from '~/server/services/app-blocks-flag';
 import { rateLimit } from '~/server/middleware.trpc';
+import { persistBlockUploadImageSchema } from '~/server/schema/blocks/block-image-upload.schema';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
@@ -130,6 +151,10 @@ import {
   getMyAppAnalytics,
   resolveRange,
 } from '~/server/services/blocks/app-analytics.service';
+import {
+  deniedCustomEvents,
+  getMyAppCustomEvents,
+} from '~/server/services/blocks/app-custom-events.service';
 import { resolveBlockCheckpoint } from '~/server/services/blocks/checkpoint.service';
 // The viewer-settings write body, shared verbatim with its REST twin
 // `POST /api/v1/blocks/user-checkpoint/set`. `getRepresentativeBaseModel` and
@@ -144,6 +169,7 @@ import {
 // it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
 import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
 // generation-service import graph (image.service → event-engine-common, etc.)
@@ -169,7 +195,7 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
-import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
+import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -192,9 +218,11 @@ import {
   containsAirReference,
   estimateStepBuzz,
   getStep,
+  isTrainingStepType,
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
   PlatformInternalStepTypeError,
@@ -293,6 +321,16 @@ import {
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import {
+  getOrchestratorSubmitFailure,
+  isDefiniteOrchestratorSubmitRefusal,
+} from '~/server/services/orchestrator/submit-failure';
+import {
+  classifyQuoteFailure,
+  quoteFailureLogLevel,
+  unquotedTrainingRefusal,
+  type PassThroughQuoteFailure,
+} from '~/server/services/blocks/pass-through-quote-failure';
+import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -301,6 +339,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
+  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -474,9 +513,8 @@ const blockPostPayloadShape = {
  * REQUIRED, changed from optional: an integrity check a caller may decline is not
  * an invariant, it is a suggestion. Every caller now states the count it showed.
  *
- * It is safe to trust because it is host chrome, not the block: the block never
- * holds the block token and cannot reach this procedure — it can only post a
- * message the host chooses to act on.
+ * Sent by host chrome, echoed from the server's own preview: an integrity check
+ * against the set the dialog showed, not evidence of a confirm.
  */
 const confirmedImageCountInput = z.number().int().positive().max(100);
 
@@ -489,13 +527,14 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  * ⚠️ IT IS NOT A CLAIM THAT THE TWO PROCEDURES HAVE THE SAME GATE SET, AND
  * READING IT THAT WAY WOULD BE WRONG. The write deliberately carries gates the
  * preview does not — `assertSharedWriteTrust` (#6 in the `createPostFromApp`
- * enumeration) and the two post rate buckets are WRITE-ONLY, because a read that
- * renders a dialog is not the act those gates exist to bound, and charging a rate
- * bucket for a preview would let a dialog the viewer never confirmed consume the
- * budget. The resulting asymmetry — a resolvable preview for a subject who would
- * be refused the post — is the accepted position and is asserted by a test, not
- * an oversight. What this helper guarantees is narrower and exact: NEITHER
- * procedure can be reached without all five of the gates below.
+ * enumeration) and the two post rate buckets are WRITE-ONLY. They are write-only
+ * because a read that renders a dialog is not the act those gates exist to bound,
+ * and charging a rate bucket for a preview would let a dialog the viewer never
+ * confirmed consume the budget. The resulting asymmetry — a resolvable
+ * preview for a subject who would be refused the post — is the accepted position
+ * and is asserted by a test, not an oversight. What this helper guarantees is
+ * narrower and exact: NEITHER procedure can be reached without all five of the
+ * gates below.
  *
  * 🔴 THE GUARD CALL LIVES HERE, AND THAT IS WHY THIS IS A MODULE-SCOPE HELPER
  * RATHER THAN AN IMPORT. `no-unguarded-block-bridge-token.test.ts` computes
@@ -510,7 +549,9 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  *      it is the ONLY place the bridge resolves claims.
  *   2. scope — cheap, and refusing an unscoped app before hydrating a session
  *      keeps the unauthorized path off the auth hub.
- *   3. non-anon subject.
+ *   3. non-anon subject — and that subject IS the signed-in user the request
+ *      arrived with. Both procedures are `protectedProcedure`s and pass that
+ *      user's id; the helper takes it as a required argument.
  *   4. the App-Blocks RUNTIME flag, evaluated on the token SUBJECT.
  *   5. the SUBJECT HYDRATES. Refused on its own terms, with its own message, and
  *      NOT folded into (6) — see the docblock on the refusal itself.
@@ -547,7 +588,8 @@ type BlockPostRequestAuth = {
  */
 async function authorizeBlockPostRequest(
   blockToken: string,
-  surface: AppBlockPostSurface
+  surface: AppBlockPostSurface,
+  sessionUserId: number
 ): Promise<BlockPostRequestAuth> {
   const claims = await authorizeBlockBridgeToken(blockToken);
   // NOT `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
@@ -564,6 +606,10 @@ async function authorizeBlockPostRequest(
       message: 'posting requires an authenticated viewer',
     });
   }
+  // Both halves are bound to the signed-in viewer: the token's subject must be
+  // the session the request arrived with. Checked before any flag or hydration
+  // read, so a mismatched request does no further work.
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
   await assertAppBlocksEnabledForTokenUser(userId);
 
   const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
@@ -917,7 +963,7 @@ function buildGateVersion(gate: {
 //   3. enforces the platform's REAL generation-compatibility check against the
 //      checkpoint.
 // The compatibility check is the correctness boundary: the orchestrator belt
-// filters by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by
+// filters by resource TYPE (the belt keeps a LoRA-typed resource), NOT by
 // generation compatibility — so an incompatible LoRA of type LORA is PASSED
 // downstream and billed for, producing a gen the viewer paid for that quietly
 // ignored (or degraded) their LoRA. This explicit check is what prevents such a
@@ -1833,6 +1879,22 @@ async function createBlockTextToImageStep(opts: {
         : workflowMetadata,
     modelSubstitutions,
   };
+}
+
+/**
+ * Refuses unless the block token's subject is the signed-in user the request
+ * arrived with. For bridge writes that run as `protectedProcedure`s: the session
+ * proves who is at the keyboard, the token proves which app and install is asking,
+ * and the two must name the same person. Shared by `publishGenerationOutputs` and
+ * both post procedures (via `authorizeBlockPostRequest`).
+ */
+function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: number): void {
+  if (subjectUserId !== sessionUserId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'this app session belongs to a different account; reload the page to continue',
+    });
+  }
 }
 
 export const blocksRouter = router({
@@ -2844,9 +2906,10 @@ export const blocksRouter = router({
    * `retriggerBuildSchema` and the service's supersede guard.
    *
    * MOD-ONLY IS A DELIBERATE CHOICE, not an oversight: owner self-service would
-   * need its own abuse controls and a build-capacity budget. The owner instead
-   * gets the real build-failure reason on /apps/my-submissions plus a
-   * "contact a moderator" affordance.
+   * need its own abuse controls and a build-capacity budget. The app's team instead
+   * sees the failure on the listing's History tab (`ListingHistoryPanel`): a
+   * headline, a best-effort cause, the build-log excerpt, and — for anything that
+   * is not their code to fix — guidance to contact us rather than resubmit.
    */
   retriggerBuild: moderatorProcedure
     .use(enforceAppBlocksFlag)
@@ -2915,6 +2978,7 @@ export const blocksRouter = router({
             // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
             // declare a launchable page). PUBLIC subset only — never the raw manifest.
             manifest: true,
+            contentRating: true,
             _count: { select: { userSubscriptions: true } },
           },
         },
@@ -2969,6 +3033,7 @@ export const blocksRouter = router({
         tagline: string | null;
         category: string | null;
         screenshotCount: number;
+        contentRating: string | null;
         /**
          * The listing's kind, threaded into `computeListingProblems` so the three
          * empty-text problems name the right remedy.
@@ -2995,6 +3060,7 @@ export const blocksRouter = router({
           description: true,
           tagline: true,
           category: true,
+          contentRating: true,
           // Filtered COUNT — only screenshots whose Image is still live. A row
           // whose Image was deleted (imageId → null via onDelete: SetNull) has
           // no displayable asset, so it must not inflate the count, else the
@@ -3018,6 +3084,7 @@ export const blocksRouter = router({
             tagline: l.tagline,
             category: l.category,
             screenshotCount: l._count.screenshots,
+            contentRating: l.contentRating ?? null,
           });
       }
     }
@@ -3093,6 +3160,13 @@ export const blocksRouter = router({
               description: listing.description,
               tagline: listing.tagline,
               category: listing.category,
+              status: listing.status,
+              contentRating: listing.contentRating,
+              declaredContentRating: declaredListingRating({
+                kind: listing.kind,
+                appRating: r.appBlock?.contentRating,
+                listingRating: listing.contentRating,
+              }),
             }).problems
           : [],
         // Whether the manifest declares a launchable page (drives the Open-live →
@@ -5104,8 +5178,13 @@ export const blocksRouter = router({
   /**
    * PUBLISH selected outputs of ONE of the calling app's OWN workflows as bare,
    * REAL-SCANNED public `Image` rows — the write half of the Model-Benchmarking
-   * shared-grid seam. FAIL-CLOSED, and identical gate order to
-   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard.
+   * shared-grid seam. FAIL-CLOSED, and the same gate order as
+   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard, plus one gate
+   * those two do not carry: the request must arrive with the viewer's signed-in
+   * session (`protectedProcedure`, API-key and OAuth-token requests refused), and
+   * the token's subject must be that session's user. That comparison runs right
+   * after the non-anon subject check, before any flag read, rate bucket or
+   * orchestrator call.
    *
    * The block sends `workflowId` + optional `imageIndexes` (indexes into the same
    * ordered `images` array queryAppWorkflows exposes) — NEVER urls: the HOST
@@ -5124,7 +5203,8 @@ export const blocksRouter = router({
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
-  publishGenerationOutputs: publicProcedure
+  publishGenerationOutputs: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -5150,6 +5230,7 @@ export const blocksRouter = router({
           message: 'publishing requires an authenticated viewer',
         });
       }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
       // Publish has its OWN (image-weighted) bucket — separate from the catalog
       // read bucket. Charge a base token per call up front (bounds call frequency
@@ -5273,6 +5354,65 @@ export const blocksRouter = router({
     }),
 
   /**
+   * `OPEN_IMAGE_UPLOAD { bytes }`: persist an app's own uploaded image exactly as
+   * `blockImageUpload.persist` does, except the row is stamped `blockUploadedAppId` = the verified
+   * token appId, which lets this app post it as a `{ kind: 'published' }` source.
+   *
+   * Gated as a post, because posting is the only thing the stamp unlocks: the shared post
+   * preamble (`posts:write:self`, subject = session user, runtime flag, subject hydration,
+   * post-creation flag) and page tokens only. Then the upload's ONE per-install publish-bucket
+   * charge, BEFORE the persist, so a refusal creates no Image row and starts no scan. The bytes
+   * are already in the store by then; a refused upload leaves that object unreferenced, as a
+   * picked upload refused at `blockImageUpload.persist` does.
+   *
+   * ⚠️ The 60/h `rateLimit` below does NOT bind every caller: the middleware skips moderators
+   * (the current flag audience) and non-prod envs. For them the binding server bound is the
+   * publish bucket (60 per 300 s per install), plus the host's 3-per-60-s window per page.
+   */
+  persistAppUploadImage: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many image uploads — slow down.',
+      })
+    )
+    .input(
+      persistBlockUploadImageSchema
+        .pick({ url: true, name: true })
+        .extend({ blockToken: z.string().min(1) })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'upload',
+        ctx.user.id
+      );
+      if (!isPageToken(claims)) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'image byte uploads are available to page apps only',
+        });
+      }
+      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { persistBlockUploadImage } = await import(
+        '~/server/services/blocks/block-image-upload.service'
+      );
+      return persistBlockUploadImage({
+        input: { url: input.url, name: input.name },
+        userId,
+        uploadedByAppId: claims.appId,
+      });
+    }),
+
+  /**
    * ── CREATE_POST_FROM_APP, part 1 of 2: the READ-ONLY preview. ───────────────
    *
    * Resolves EVERYTHING the host-chrome consent dialog renders — the exact title
@@ -5294,13 +5434,22 @@ export const blocksRouter = router({
    * a caller that skips the preview gets the identical refusals and a
    * preview/commit divergence is a UX bug, never an authorization hole.
    *
+   * Bound the same way as the write: a signed-in browser session whose user is
+   * the token subject (API-key and OAuth-token requests refused), so the preview
+   * and the write cannot disagree about who is asking.
+   *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows), despite
    * being a pure read.
    */
-  previewPostFromApp: publicProcedure
+  previewPostFromApp: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
     .mutation(async ({ ctx, input }) => {
-      const { claims, userId } = await authorizeBlockPostRequest(input.blockToken, 'preview');
+      const { claims, userId } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'preview',
+        ctx.user.id
+      );
       // NOTE: the CATALOG bucket, not the post bucket. The preview writes
       // nothing, so charging it against the 3-posts/hour ceiling would let a
       // block exhaust its own posting budget by rendering dialogs — and the
@@ -5350,13 +5499,17 @@ export const blocksRouter = router({
    * app") is FALSE for a profile post, and that sentence is the security control.
    *
    * GUARDS, in order — those marked ✚ are additions over the publish path:
+   *   0. a signed-in browser session (`protectedProcedure`, with API-key and
+   *      OAuth-token requests refused) — the publish path carries this too.
    *   1. `authorizeBlockBridgeToken` — token validity, instance revocation, and
    *      the backing app still `approved`. All three, in one call, because that
    *      helper is the single gate for every bridge proc.
    *   2. ✚ scope `posts:write:self` — consent-GATED and sensitive, NOT
    *      `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
    *      generation has NOT thereby been authorised to publish under their name.
-   *   3. non-anon subject — there is no anonymous profile to post to.
+   *   3. non-anon subject — there is no anonymous profile to post to — and
+   *      that subject is the signed-in user from (0); anything else is refused.
+   *      The publish path makes the same subject/session check.
    *   4. `assertAppBlocksEnabledForTokenUser` — the runtime flag, on the SUBJECT.
    *   5. ✚ `isAppBlocksPostCreationEnabled` — the DEDICATED fail-closed flag, so
    *      a GA widening of the runtime flag does not arm public post creation on
@@ -5366,9 +5519,10 @@ export const blocksRouter = router({
    *      shared-storage path: it is the platform's existing answer to "may this
    *      human write something other users see", and a public post is strictly
    *      more consequential than a 64 KB shared-storage row.
-   *   7. ✚ TWO dedicated post rate buckets — per INSTALL (3/hour/instance) and
-   *      per APP (300/hour/appId, the aggregate an install-keyed bucket cannot
-   *      express) — plus the image count charged to the existing publish bucket so
+   *   7. ✚ TWO dedicated post rate buckets — per VIEWER OF AN INSTALL
+   *      (3/hour/(instance, viewer)) and per APP (300/hour/appId, the aggregate
+   *      a viewer-and-install-keyed bucket cannot express) — plus the image count
+   *      charged to the existing publish bucket so
    *      this path cannot be used to bypass the per-image origin-cost ceiling.
    *      All three FAIL OPEN on a Redis error; they are cost ceilings, not
    *      authorization.
@@ -5384,12 +5538,14 @@ export const blocksRouter = router({
    *
    * 🔴 THE HOST CONFIRM IS NOT ONE OF THESE GUARDS AND MUST NOT BE READ AS ONE.
    * It is the CONSENT boundary and it lives in host chrome, outside this proc's
-   * reach; every line above is enforced server-side and would still refuse a
-   * caller that never rendered a dialog.
+   * reach. The server cannot see whether a dialog was rendered; what it enforces
+   * is that the request carries the viewer's own signed-in session (0, 3) and
+   * passes every check above.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
-  createPostFromApp: publicProcedure
+  createPostFromApp: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -5402,20 +5558,13 @@ export const blocksRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { claims, userId, subjectUser } = await authorizeBlockPostRequest(
         input.blockToken,
-        'create'
+        'create',
+        ctx.user.id
       );
 
-      // WRITE TRUST. Reused from the shared-storage path. "Verified email" is
-      // satisfied by emailVerified OR a linked OAuth account; only query for the
-      // link when emailVerified is absent, so a verified-email user pays nothing.
-      // No `subjectUser &&` guard here any more: the preamble refuses an
-      // unhydratable subject outright, so this is a real `SessionUser` by
-      // construction. Re-adding the null check would be dead code that quietly
-      // claims the opposite.
-      let hasLinkedOAuth = false;
-      if (!subjectUser.emailVerified) {
-        hasLinkedOAuth = (await dbRead.account.count({ where: { userId } })) > 0;
-      }
+      // WRITE TRUST. Reused from the shared-storage path. No `subjectUser &&` guard: the
+      // preamble refuses an unhydratable subject outright, so this is a real `SessionUser`.
+      const hasLinkedOAuth = await hasLinkedOAuthAccount(subjectUser);
       assertSharedWriteTrust(subjectUser, hasLinkedOAuth);
 
       // ── THE TWO POST BUCKETS. One token per POST in each, regardless of image
@@ -5423,9 +5572,13 @@ export const blocksRouter = router({
       // selection is known, so a block cannot route around the publish ceiling by
       // posting.
       //
-      // 🔴 BOTH, AND NEITHER SUBSUMES THE OTHER. The per-INSTANCE bucket bounds
-      // one install. An app has many installs, so on its own it bounds the app at
-      // N × the per-install ceiling and no ceiling anywhere sees the total — the
+      // 🔴 BOTH, AND NEITHER SUBSUMES THE OTHER. The first bucket bounds ONE
+      // VIEWER of one install: it is keyed on (instance, viewer), because a page
+      // app's instance id is shared by every viewer of that app and an
+      // instance-only key would make them share one allowance. `userId` here is
+      // the verified token subject from the preamble, never client input. An app
+      // has many viewers and installs, so on its own that bucket bounds the app at
+      // N × its ceiling and no ceiling anywhere sees the total — the
       // APP bucket is that total. A popular legitimate app never reaches it (see
       // `BLOCK_POST_APP_RATE_LIMIT_MAX` for how the number was picked, and for the
       // plain statement that it is not derived from data).
@@ -5434,7 +5587,7 @@ export const blocksRouter = router({
       // limiter follows. Do not read either as a hard cap or a security control:
       // what actually bounds abuse on this path is the self-dealing guard, the
       // per-source ownership proofs and the per-post consent confirm.
-      const postRate = await checkBlockPostRateLimit(claims.blockInstanceId);
+      const postRate = await checkBlockPostRateLimit(claims.blockInstanceId, userId);
       if (!postRate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
@@ -5781,6 +5934,193 @@ export const blocksRouter = router({
     }),
 
   /**
+   * ── TRAINING DATASET: the `kind:'training'` data primitive. ─────────────────
+   *
+   * A block names the viewer's image ids and per-image captions; the server
+   * admits only the viewer's OWN images that pass the gated-image predicate under
+   * the token's maturity ceiling, moderates the captions, imports the admitted
+   * images into orchestrator blobs under the viewer's orchestrator token, and
+   * returns an opaque `datasetId` bound to this subject, app and install. The
+   * training body names that handle — never images, blob references or a count.
+   *
+   * Same gates as the training estimate/submit (page token, ordinary viewer, spend
+   * scope, runtime + training flags on the token subject), so an app cannot prepare
+   * a dataset for a run it could not submit.
+   *
+   * RATE LIMIT — its own image-weighted bucket keyed per (install, viewer): a page
+   * app's install id is shared by every viewer, and the publish bucket would let one
+   * viewer's dataset starve another's (and the app's publishing). Charged before any
+   * image is read. MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   */
+  prepareTrainingDataset: publicProcedure
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        items: blockTrainingDatasetItemsSchema,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const { userId, user } = await assertTrainingRequestAllowed(claims, ctx);
+      const rate = await checkBlockTrainingDatasetRateLimit(
+        claims.blockInstanceId,
+        userId,
+        input.items.length
+      );
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { resolveViewerBrowsingLevel } = await import(
+        '~/server/services/blocks/block-gated-images.service'
+      );
+      const { prepareBlockTrainingDataset } = await import(
+        '~/server/services/blocks/block-training-dataset.service'
+      );
+      const { allowMatureContent } = resolveBlockMaturity(claims);
+      const token = await getOrchestratorToken(userId, ctx);
+      return prepareBlockTrainingDataset({
+        actor: {
+          userId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          browsingLevel: resolveViewerBrowsingLevel(claims.maxBrowsingLevel),
+          allowMatureContent,
+        },
+        items: input.items,
+        token,
+        auditCaptions: (text) => auditBlockTrainingText({ claims, userId, user, text }),
+      });
+    }),
+
+  /**
+   * ── RUN_TRAINING, part 1 of 2: the READ-ONLY consent preview. ───────────────
+   *
+   * Resolves everything the host's training consent dialog shows — the quoted
+   * price, the base model, epochs/steps, the image count and thumbnails, the
+   * quote's expiry, and how much Buzz the viewer is short — from the server-stored
+   * QUOTE and DATASET, never from the block. A sandboxed block cannot be trusted to
+   * display a price truthfully, and the dialog is where the viewer agrees to one.
+   *
+   * It CONFERS NOTHING. Bound like the write below: a signed-in browser session
+   * whose user is the token subject (API-key and OAuth-token requests refused).
+   */
+  previewTrainingQuote: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockTrainingConsentRequest(
+        input.blockToken,
+        ctx,
+        ctx.user.id
+      );
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const binding = {
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+      };
+      const { readTrainingQuote } = await import(
+        '~/server/services/blocks/block-training-quote.service'
+      );
+      const { loadBlockTrainingDataset } = await import(
+        '~/server/services/blocks/block-training-dataset.service'
+      );
+      const quote = await readTrainingQuote(input.quoteId, binding);
+      if (!quote) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'training quote not found or expired' });
+      }
+      const dataset = await loadBlockTrainingDataset(quote.datasetId, binding);
+      // How much more Buzz the viewer needs, across the accounts this submit may
+      // draw from. Fail-open to `null` (unknown) — here it only decides whether the
+      // dialog offers a top-up; the submit runs the same read as its own gate.
+      let shortfall: number | null = null;
+      try {
+        shortfall = Math.max(
+          0,
+          quote.total - (await readBlockTrainingSpendableBuzz(claims, userId))
+        );
+      } catch {
+        shortfall = null;
+      }
+      return {
+        quoteId: quote.quoteId,
+        total: quote.total,
+        imageCount: quote.imageCount,
+        modelName: quote.modelName,
+        epochs: quote.epochs,
+        steps: quote.steps,
+        expiresAt: quote.expiresAt,
+        thumbnails: (dataset?.items ?? []).slice(0, 12).map((item) => item.thumbnailUrl),
+        shortfall,
+      };
+    }),
+
+  /**
+   * ── RUN_TRAINING, part 2 of 2: the viewer's CONFIRMATION. ───────────────────
+   *
+   * Records that the signed-in viewer confirmed this exact quote. The training
+   * submit refuses a quote no one confirmed, and only this procedure can confirm
+   * one — it requires the viewer's own session, which the block (holding nothing
+   * but its own token) cannot present. That is the control; the host dialog that
+   * precedes the call is the consent surface, not the enforcement.
+   *
+   * The confirmation does not extend the quote's life, and a confirmed quote is
+   * still single-use and still re-quoted at submit.
+   */
+  consentTrainingQuote: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { claims, userId } = await authorizeBlockTrainingConsentRequest(
+        input.blockToken,
+        ctx,
+        ctx.user.id
+      );
+      // The read bucket, like the preview: one Redis read + write per call.
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
+      }
+      const { recordTrainingQuoteConsent } = await import(
+        '~/server/services/blocks/block-training-quote.service'
+      );
+      const updated = await recordTrainingQuoteConsent(
+        input.quoteId,
+        { userId, appBlockId: claims.appBlockId, blockInstanceId: claims.blockInstanceId },
+        ctx.user.id
+      );
+      if (!updated) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'training quote not found or expired' });
+      }
+      return { quoteId: updated.quoteId, total: updated.total, consented: true as const };
+    }),
+
+  /**
    * Cost-only preview. Builds the same orchestrator step `submitWorkflow`
    * would, then calls submit with `whatif:true` so the orchestrator computes
    * cost without queueing the job. No budget gate — estimate is how the block
@@ -5833,273 +6173,161 @@ export const blocksRouter = router({
           message: 'Rate limit exceeded, please retry shortly.',
         });
       }
-      // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
-      // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
-      // estimate. The textToImage path below stays byte-identical (we only ADD a
-      // branch). Everything customComfy-specific lives in the helper.
-      if (input.body.kind === 'customComfy') {
-        return await estimateCustomComfyWorkflow({ claims, body: input.body });
+      // Everything below the limiter — the `kind` dispatch and the txt2img arm —
+      // lives in `estimateBlockWorkflowCell`, which `estimateWorkflowBatch` calls
+      // once per cell. One function, so a per-cell rule cannot hold here and be
+      // missing there.
+      return await estimateBlockWorkflowCell(ctx, claims, input);
+    }),
+
+  /**
+   * Cost-only preview for a LIST of bodies — the batch twin of `estimateWorkflow`,
+   * for an app that prices one generation per grid cell.
+   *
+   * `snapshots[i]` answers `bodies[i]`, and `aggregate` sums the cells that priced.
+   * Nothing is submitted, reserved or charged, no workflow is created and no id is
+   * issued for the list: each cell is still submitted later through
+   * `submitWorkflow`, with its own budget gate and its own viewer confirmation.
+   *
+   * 🔴 IT CANNOT SUBMIT, BY CONSTRUCTION. The only thing it runs per cell is
+   * `estimateBlockWorkflowCell` — the single estimate's own tail — and nothing in
+   * this resolver names a submit, reserve or charge primitive.
+   *
+   * PER-CELL INDEPENDENCE. A cell that is malformed, refused or unpriceable
+   * becomes that cell's failure snapshot and the others still price. What fails
+   * the WHOLE call is what is wrong with the call: the token, the scope, the
+   * viewer, the rate limits, or the list itself (not an array, empty, over
+   * `BLOCK_ESTIMATE_BATCH_MAX_CELLS` — refused by the input schema).
+   *
+   * 🔴 RATE LIMIT — TWO BUCKETS, AND THE SECOND IS WHY THE FIRST CAN BE WEIGHT 1.
+   *   1. The CATALOG bucket, weight 1, per `blockInstanceId` — exactly what one
+   *      single estimate costs. A 16-cell grid used to take 16 of an allowance a
+   *      page app shares between every viewer and every other read; it now takes 1.
+   *   2. The ESTIMATE-CELLS bucket, weight = cell count, per `blockInstanceId`.
+   *      Each cell is still an orchestrator `whatif`, so weight 1 alone would let
+   *      a caller start `C × N` cost quotes per window for the price of `C`
+   *      requests. Keyed per install like the catalog bucket (not per viewer), so
+   *      the bound below does not grow with the number of viewers.
+   *
+   * Upstream cost quotes per window, per block instance (C = the catalog ceiling,
+   * K = the cell ceiling, N = the cell cap; all in `block-catalog-rate-limit.ts`
+   * and `block-estimate-batch.constants.ts`):
+   *   - before this procedure: C (single estimates only);
+   *   - after: (C - B) single estimates + min(B × N, K) batch cells for B batch
+   *     calls, at most (C - ceil(K / N)) + K, whatever the number of viewers.
+   * With weight 1 alone it would be C × N.
+   *
+   * Both fail open on a Redis incident and both THROW when they refuse, like
+   * `estimateWorkflow` and for its reason: an estimate has no workflow and no money
+   * behind it, so an error is the truthful answer.
+   *
+   * 🔴 `kind: 'training'` IS REFUSED PER CELL. A training estimate stores the quote
+   * record the viewer later confirms, so it is the one arm of the single estimate
+   * that writes state. A batch that created one record per cell would not be
+   * "estimate only". Refusing it here is the conservative direction, and admitting
+   * it later is not a wire change.
+   *
+   * Cells run with bounded concurrency so one call cannot open an unbounded number
+   * of upstream requests at once.
+   *
+   * 🔴 THE CALL HAS A TIME BUDGET (`BLOCK_ESTIMATE_BATCH_BUDGET_MS`). A cell not
+   * priced when it runs out — in flight or never started — is a failure snapshot
+   * with `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`, and the cells that did price are
+   * returned with it. No cell starts after the budget; a late result is discarded.
+   */
+  estimateWorkflowBatch: publicProcedure
+    // Block-JWT-authed, like `estimateWorkflow`.
+    .input(blockEstimateBatchInputSchema)
+    .mutation(async ({ ctx, input }): Promise<BlockEstimateBatchResult> => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
-      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
-      // step's cost now comes from a real `whatif` quote, with the declared
-      // billing mode as the FLOOR and the fallback — this used to read "not a
-      // whatIf", which was the defect, not the design. The textToImage path
-      // below stays byte-identical (we only ADD a branch).
-      if (input.body.kind === 'step') {
-        return isPassThroughStepBody(input.body)
-          ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
-          : await estimateStepWorkflow({ ctx, claims, body: input.body });
+      const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+      if (!rate.allowed) {
+        recordBlockBridgeRateLimitRefusal('estimateWorkflowBatch', 'catalog');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
+        });
       }
-      // Context binding. A MODEL token pins `ctx.modelId`; the body must match
-      // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
-      // lets the viewer pick a model, so the modelId match is SKIPPED and
-      // replaced (below, after the version read) by the pre-spend availability
-      // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
-      // layer over the body version + LoRAs only — it does NOT cover the
-      // resolved/billed checkpoint anchor; early-access + Private-subscription
-      // entitlement (and the resolved anchor) are enforced by the orchestrator
-      // resource belt over the full array. See isPageToken /
-      // assertViewerCanGeneratePageResources.
-      const isPage = isPageToken(claims);
-      if (!isPage) {
-        const ctxModelId = Number(
-          (claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN
-        );
-        if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
-        }
-        // Page-LoRA (Increment 1): additionalResources is a PAGE-ONLY feature.
-        // A MODEL token's checkpoint comes from resolveBlockCheckpoint (install
-        // rows), and the model branch never runs the per-resource entitlement
-        // gate — so accepting additionalResources here would fan un-gated LoRAs
-        // into the resources array. Reject them fail-closed on the model path.
-        if (input.body.additionalResources?.length) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'additionalResources are not supported for model-bound blocks',
-          });
-        }
-        // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
-        // feature. Custom Generators is a page app; model-bound img2img is out
-        // of scope and unvetted for 2a, so reject it fail-closed on the model
-        // path (mirrors the additionalResources guard above).
-        //
-        // BOTH wire shapes are gated identically — the deprecated singular
-        // `sourceImage` AND the array `sourceImages`. Gating only one would
-        // leave a model-bound token a way in through the other.
-        if (input.body.sourceImage || input.body.sourceImages?.length) {
-          throw new TRPCError({
-            code: 'FORBIDDEN',
-            message: 'source image (img2img) is not supported for model-bound blocks',
-          });
-        }
-      }
-      const userId = parseSubjectUserId(claims.sub);
-      if (userId == null) {
+      // Every arm of the single estimate refuses an anonymous subject, so a batch
+      // from one is refused whole, before any cell is charged.
+      if (parseSubjectUserId(claims.sub) == null) {
         throw new TRPCError({
           code: 'UNAUTHORIZED',
           message: 'estimate requires authenticated viewer',
         });
       }
-      // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
-      await assertAppBlocksEnabledForTokenUser(userId);
-      const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
-      if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
-      }
-      const resolved = await resolveBlockVersionContext(
-        input.body.modelVersionId,
-        input.body.modelId
+      const cellRate = await checkBlockEstimateCellsRateLimit(
+        claims.blockInstanceId,
+        input.bodies.length
       );
-      const user = await getBlockSessionUser(userId);
-      // Resolve the effective checkpoint BEFORE the page gate. This is the
-      // ACTUAL anchor buildTextToImageInput puts at the head of the resources
-      // array — for a non-Checkpoint page body it is NOT resolved.baseModel
-      // (resolveBlockCheckpoint falls through to a viewer/publisher/popular
-      // checkpoint that may belong to a different base-model family). The page
-      // LoRA family-match must anchor on THIS checkpoint, not the body model.
-      // resolveBlockCheckpoint is a pure read (install/override rows + a
-      // fail-open cache populate) with no side effect that must follow the
-      // gate, so it is safe to run before it.
-      const checkpoint = await resolveBlockCheckpoint({
-        blockInstanceId: claims.blockInstanceId,
-        modelId: resolved.modelId,
-        modelVersionId: resolved.modelVersionId,
-        baseModel: resolved.baseModel,
-        modelType: resolved.modelType,
-        userId,
-        slotId: ctxSlotId,
-      });
-      // PAGE branch: pre-spend availability gate over the resources THIS gate
-      // can see — the viewer-picked BODY version (`resolved.gate`) AND each
-      // additional LoRA — as a fail-fast UX layer in place of the skipped
-      // model-binding check. NOTE it does NOT cover the resolved/billed
-      // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
-      // picks a DIFFERENT default checkpoint (validated there only for
-      // Published + base-model family — not early-access/Private/availability).
-      // That anchor's entitlement — and early-access + Private-sub entitlement
-      // for the whole array — is enforced downstream by the orchestrator
-      // resource belt over the FULL resources array; this gate is not the sole
-      // boundary. Keep both belts.
-      // Maturity clamp (authoritative). Derived ONCE from the token's
-      // server-minted ceiling claim, NOT a client body field nor request-time
-      // `ctx.domain`. Drives both the resource-selection gate (`sfwOnly`, so a
-      // SFW-domain block can't even PICK a mature resource — defense in depth)
-      // and the generation-output clamp (`allowMatureContent`). Green AND blue
-      // → sfwOnly true; red → false. Mirrors submitWorkflow below.
-      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
-      // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
-      // the domain currency, derived from the SAME authoritative ceiling as the
-      // output clamp. SFW → blue/green; mature → blue/yellow.
-      const currencies = resolveBlockCurrencies(isGreen);
-      // #4159: the resolved `modelVersionId → ModelType` for the LoRA stack.
-      // Declared out here because `buildTextToImageInput` below needs it to emit
-      // graph-valid `resources` entries; on the MODEL path `additionalResources`
-      // is rejected outright, so an empty map is the correct value there.
-      let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
-      if (isPage) {
-        // Resolve + validate the LoRA stack first (LoRA-only + family-match)
-        // so a bad resource fails BEFORE the entitlement gate / any cost.
-        // Family-match anchors on the RESOLVED checkpoint's baseModel.
-        const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
-          additionalResources: input.body.additionalResources,
-          checkpointBaseModel: checkpoint.baseModel,
-        });
-        additionalResourceTypes = resourceTypes;
-        await assertViewerCanGeneratePageResources({
-          gates: [buildGateVersion(resolved.gate), ...loraGates],
-          viewer: { id: userId, isModerator: !!user.isModerator },
-          // SFW-only resource selection unifies with the output clamp: derive
-          // from the authoritative token maturity (green/blue → true), not the
-          // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
-          sfwOnly: allowMatureContent === false,
-          wildcardsEnabled: !!ctx.features.wildcards,
+      if (!cellRate.allowed) {
+        recordBlockBridgeRateLimitRefusal('estimateWorkflowBatch', 'estimate-cells');
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Rate limit exceeded, please retry shortly.',
         });
       }
-      const token = await getOrchestratorToken(userId, ctx);
-      const generateInput = buildTextToImageInput(input.body, {
-        ...resolved,
-        checkpointVersionId: checkpoint.versionId,
-        checkpointBaseModel: checkpoint.baseModel,
-        additionalResourceTypes,
-      });
-      // whatIf: no `metadata` on the body — matches the normal path
-      // (`generateFromGraph` builds workflowMetadata only for real submits) and
-      // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
-      const { step, modelSubstitutions } = await createBlockTextToImageStep({
-        input: generateInput,
-        user,
-        whatIf: true,
-      });
-      const whatIfResult = await submitWorkflow({
-        token,
-        body: {
-          steps: [step],
-          tags: buildWorkflowTags(claims, resolved.baseModel),
-          currencies,
-          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
-        },
-        query: { whatif: true },
-      });
-      // ── 🔴 THE ESTIMATE PRICES THE AUTHOR FEE TOO, AND THIS IS A DISCLOSING
-      //    QUOTE, NOT A RESERVING ONE. Nothing here gates, reserves, debits or
-      //    accrues; the returned number is added to the cost the block is shown
-      //    and then discarded. The submit runs its OWN quote (`:5557`) and that
-      //    one is what money is taken against.
-      //
-      // WHY IT HAS TO EXIST. The submit adds the fee to `cost` BEFORE every
-      // guardrail, so with the fee live a viewer shown `N` is debited `N + fee`
-      // — and where the app's token budget sits near the price, the submit is
-      // refused outright with `insufficient buzz budget`, which reads to the
-      // viewer as a broken app rather than as a price. Correcting the TOTAL is
-      // what makes the shown number true for EVERY existing app with no
-      // app-side change; an itemised field would be inert until each
-      // third-party author wrote a renderer for it.
-      //
-      // 🔴 THE PAYEE LOOKUP IS ACCEPTED, NOT SKIPPED, ON THIS UNBOUNDED PATH.
-      // `quoteBlockAuthorFee` resolves the payee (one `dbRead.oauthClient
-      // .findUnique` by primary key, two columns) and a disclosure-only variant
-      // that skipped it would be cheaper. It is not used, because the skipped
-      // arm is SELF-DEALING: an author running their own app is not charged,
-      // and a variant that cannot see that would quote them a fee they will
-      // never pay — on the surface whose entire job is to predict the charge,
-      // to the population that exercises it most. Re-creating estimate/submit
-      // divergence one layer down is the defect this change removes, not a
-      // saving. The read is also gated behind the flag AND behind a non-zero
-      // computed fee, so it costs nothing while the fee is dark, and when it is
-      // live it is one indexed row against an orchestrator round-trip this
-      // handler has already paid for.
-      //
-      // 🔴 WHAT THIS NUMBER IS AND IS NOT. It is a QUOTE, not a price lock.
-      // Estimate and submit are two independent whatIfs seconds apart, so the
-      // quoted price can differ from the charged one and NOTHING HERE BOUNDS
-      // THAT.
-      //
-      // ⚠️ THE ONE GUARANTEE, STATED AT THE WIDTH IT ACTUALLY HOLDS. An earlier
-      // revision of this comment said the two sites "agree whenever the base
-      // does". That is a SUFFICIENCY claim and it is false: base agreement is
-      // necessary, not sufficient. FIVE inputs can move between the two quotes —
-      // `cost.base`, `cost.variable` (a cap-priced submit charges nothing while
-      // the estimate showed a fee, or the reverse), the PAYEE (an ownership
-      // transfer in between is exactly what `chargeBlockAuthorFee` re-resolves
-      // for), the FLAG itself, which is read separately at each site and is
-      // operator-flippable, and — the one an earlier revision of this comment
-      // left out — the `generationType`.
-      //
-      // ⚠️ `generationType` IS NOT A PASSENGER, IT IS THE FEE'S LOOKUP KEY. It
-      // selects the `byType` override, so a type that differs between the two
-      // quotes prices a DIFFERENT fee, not merely a differently-derived one, and
-      // `chat-completion`'s 0/0 entry makes the gap total rather than marginal.
-      // On THIS arm it genuinely can differ: `resolveBlockGenerationType` is
-      // handed a body the caller supplies plus `generateInput.workflow`, which is
-      // derived through a cache-backed model-version read — two calls seconds
-      // apart are two reads. The step arm's key is the registered `step.id` and
-      // cannot move. Each site's spelling AND its derivation are pinned per site
-      // in `no-divergent-author-fee-base.test.ts`'s ledger, because a mutation of
-      // this argument on this arm survived the whole battery before it was.
-      //
-      // What IS established, and all that is: `chargeBlockAuthorFee` clamps the
-      // debit to `min(reserved, realized)` where `reserved` is the SUBMIT's own
-      // quote — so the viewer is never billed past what the SUBMIT's budget gate
-      // was measured against. THIS estimate is not that bound and must not be
-      // described as one.
-      //
-      // Degradation is CORRELATED, not guaranteed: when the orchestrator cannot
-      // supply a base the fee is not priced HERE, and the submit — which quotes
-      // the same orchestrator — typically cannot price one either, so both show
-      // and charge no fee together. Typically, not always.
-      //
-      // ⚠️ ONE SHAPE WHERE THE SHOWN NUMBER SITS BELOW THE DEBIT, RECORDED
-      // BECAUSE IT IS NOT CLOSED. If the orchestrator returns `cost.base` but no
-      // `cost.total`, `snapshotFromWorkflow` omits `cost` entirely (there is no
-      // total to correct, and inventing one would report a fee AS the price)
-      // while the submit gates and reserves `0 + fee`. The block is then shown no
-      // price at all rather than a low one, which is the recoverable direction —
-      // but it is a divergence, not an absence of one.
-      const blockGenerationType = resolveBlockGenerationType(input.body, {
-        imageWorkflowType: generateInput.workflow,
-      });
-      const authorFeeQuote = await quoteBlockAuthorFee({
-        baseGenerationBuzz: whatIfResult.cost?.base,
-        priceIsCap: whatIfResult.cost?.variable,
-        generationType: blockGenerationType,
-        appId: claims.appId,
-        viewerUserId: userId,
-        workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
-        privateRun: claims.privateRun === true,
-        // Unbounded surface — see the flag's own note. The skip lines it silences
-        // are re-derived at the submit, once per real generation.
-        suppressQuoteLogs: true,
-      });
-      // #3520: the ESTIMATE reports the substitution too — a block that quotes a
-      // cost for model A and is silently priced for model B has the same
-      // detectability problem as the submit, one step earlier.
-      return {
-        snapshot: snapshotFromWorkflow(whatIfResult, {
-          modelSubstitutions,
-          additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
-        }),
+
+      // 🔴 THE CALL HAS A BUDGET (`BLOCK_ESTIMATE_BATCH_BUDGET_MS`). When it runs out:
+      //   - the reply is built from the cells that finished, and every other cell is
+      //     `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`;
+      //   - no further cell is started: a worker only ever waits INSIDE a cell, so the
+      //     one `expired` check after that wait is what stops every worker;
+      //   - a cell still in flight is not cancelled, but its result is DISCARDED: the
+      //     worker drops it, and the reply is a copy taken at expiry anyway. Letting it
+      //     finish is safe because the per-cell path only quotes — nothing it runs
+      //     reserves, debits, persists a workflow or submits for real (see
+      //     `estimateBlockWorkflowCell`); at most it warms a read cache or bumps a
+      //     metric, exactly as a single estimate would.
+      const finished = new Array<BlockWorkflowSnapshot | undefined>(input.bodies.length);
+      let next = 0;
+      let expired = false;
+      const worker = async () => {
+        while (next < input.bodies.length) {
+          const index = next++;
+          const snapshot = await estimateBatchCell(ctx, claims, input.bodies[index]);
+          if (expired) return;
+          finished[index] = snapshot;
+        }
       };
+      let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+      const budget = new Promise<void>((resolve) => {
+        budgetTimer = setTimeout(() => {
+          expired = true;
+          resolve();
+        }, BLOCK_ESTIMATE_BATCH_BUDGET_MS);
+      });
+      try {
+        await Promise.race([
+          Promise.all(
+            Array.from(
+              { length: Math.min(BLOCK_ESTIMATE_BATCH_CONCURRENCY, input.bodies.length) },
+              worker
+            )
+          ),
+          budget,
+        ]);
+      } finally {
+        expired = true;
+        clearTimeout(budgetTimer);
+      }
+      const snapshots = Array.from(
+        finished,
+        (snapshot) => snapshot ?? failedEstimateCell(BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR)
+      );
+
+      let total = 0;
+      let pricedCells = 0;
+      for (const snapshot of snapshots) {
+        const cellTotal = snapshot.cost?.total;
+        if (snapshot.status === 'failed' || typeof cellTotal !== 'number') continue;
+        total += cellTotal;
+        pricedCells += 1;
+      }
+      return { snapshots, aggregate: { total, pricedCells, cellCount: snapshots.length } };
     }),
 
   /**
@@ -6253,6 +6481,12 @@ export const blocksRouter = router({
           body: input.body,
           idempotencyKey: input.idempotencyKey,
         });
+      }
+      // App Blocks TRAINING kind — charged against the viewer-CONFIRMED quote the
+      // body names, not the token's per-call budget. Its idempotency key is that
+      // quote, so a client `idempotencyKey` is not used on this arm.
+      if (input.body.kind === 'training') {
+        return await submitTrainingWorkflow({ ctx, claims, body: input.body });
       }
       // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1) — a SPEND
       // path. Branch to the registry-backed handler, which runs the same
@@ -6508,9 +6742,11 @@ export const blocksRouter = router({
       // does NOT set while leaving the part it DOES set unbounded.
       //
       // Priced off the whatIf's `cost.base` / `cost.variable`, for the same reason
-      // the realized ones below are read off the raw response: `snapshot.cost` is
-      // deliberately `{ total }` only. Fail-closed behind the flag and
-      // non-throwing — an unavailable quote is simply no fee.
+      // the realized ones below are read off the raw response: the block-facing
+      // cost is `{ total, authorFee? }` and never itemises the base (see the
+      // disclosure boundary on `BlockWorkflowSnapshot.cost.authorFee`).
+      // Fail-closed behind the flag and non-throwing — an unavailable quote is
+      // simply no fee.
       //
       // 🔴 RESOLVED ONCE, HERE, AND READ BY ALL THREE CONSUMERS. The fee quote,
       // the fee charge and the spend-attribution row must agree on the generation
@@ -6540,6 +6776,9 @@ export const blocksRouter = router({
       // reading the orchestrator's own number, not one this line inflated.
       const quotedGenerationBuzz = whatIfResult.cost?.total ?? 0;
       const cost = quotedGenerationBuzz + reservedAuthorFeeBuzz;
+      // The price every refusal reply below reports. Not for the success reply:
+      // that one's total is the realized generation cost and carries no fee.
+      const refusalCost = { total: cost, authorFee: reservedAuthorFeeBuzz };
       // `pricesAuthorFee: true` — `cost` carries the author fee (line above).
       // The flag classifies the gate, it does not price it: the helper returns the
       // SAME number for both of its values, so this comparison is unchanged by it.
@@ -6556,7 +6795,7 @@ export const blocksRouter = router({
             // top-up CTA. (Same class as failureSnapshot in IframeHost.tsx.)
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: cost },
+            cost: refusalCost,
             // Quotes the ceiling that was actually compared, so the sentence
             // stays true if that ceiling ever stops being the raw claim.
             error: `insufficient buzz budget: estimate ${cost} exceeds budget ${perCallBudget}`,
@@ -6655,7 +6894,7 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: cost },
+            cost: refusalCost,
             // 🔴 ONE ARM PER CEILING, BECAUSE THE SENTENCE NAMES THE WINDOW AND THE
             // SCOPE. A private run reserves against a per-(viewer, app) counter on a
             // rolling ~25h key, so the `else` below — "already spent today across your
@@ -6698,7 +6937,7 @@ export const blocksRouter = router({
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: cost },
+            cost: refusalCost,
             error: consentBudgetRejection(
               reservation.consent,
               cost,
@@ -6749,7 +6988,7 @@ export const blocksRouter = router({
             snapshot: {
               workflowId: 'failed',
               status: 'failed' as const,
-              cost: { total: cost },
+              cost: refusalCost,
               // Generic, no-number rejection — the exact aggregate ceiling is not
               // leaked to a (potentially hostile) app.
               error:
@@ -6820,7 +7059,7 @@ export const blocksRouter = router({
               snapshot: {
                 workflowId: 'failed',
                 status: 'failed' as const,
-                cost: { total: cost },
+                cost: refusalCost,
                 error:
                   `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
                   `this dev session, this generation costs ${Math.ceil(cost)}, ` +
@@ -6853,12 +7092,13 @@ export const blocksRouter = router({
       let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
       // Hoisted for the same reason as `realizedTransactions` above: the
       // per-generation author-fee observation needs the orchestrator's BASE cost,
-      // and it is NOT reachable from `snapshot`. 🔴 `BlockWorkflowSnapshot.cost` is
-      // deliberately `{ total }` ONLY — that is the block-facing WIRE shape, and
-      // widening it would publish the platform's cost breakdown to every
-      // third-party app for a number no app has asked for. So the base is read off
-      // the raw orchestrator response here and passed to the attribution writer,
-      // never surfaced to the block.
+      // and it is NOT reachable from `snapshot`. 🔴 The block-facing WIRE shape is
+      // `{ total, authorFee? }` — the author's own fee is itemised by decision, and
+      // every other component, the base included, stays folded into `total`; no
+      // further breakdown field without a new decision (see the disclosure
+      // boundary on `BlockWorkflowSnapshot.cost.authorFee`). So the base is read
+      // off the raw orchestrator response here and passed to the attribution
+      // writer, never surfaced to the block.
       let realizedBaseCost: number | null = null;
       // `WorkflowCost.variable` — TRUE when the price is a CAP that may settle
       // lower. Hoisted and threaded for the SAME reason as the base: nothing
@@ -8048,6 +8288,42 @@ export const blocksRouter = router({
     }),
 
   /**
+   * The Custom events card on the owner analytics panel (`appBlockEvents`, ClickHouse). Its own
+   * procedure so the card's team-activity toggle and event selection re-run only these reads. Same
+   * scope, flag gate and ownership resolution as `getMyAppAnalytics`, and the same range
+   * resolution, so its buckets line up with the panel's charts.
+   */
+  getMyAppCustomEvents: appDeveloperProcedure
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
+        includeOwner: z.boolean().optional(),
+        // Declared-name shape; `__undeclared__` cannot match it.
+        event: z.string().regex(BLOCK_ANALYTICS_NAME_RE).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return deniedCustomEvents(resolveRange({ from, to }), 'notEntitled');
+      }
+      const user = ctx.user as SessionUser;
+      return getMyAppCustomEvents({
+        userId: user.id,
+        appBlockId: input.appBlockId,
+        from,
+        to,
+        includeOwner: input.includeOwner,
+        event: input.event,
+      });
+    }),
+
+  /**
    * The apps the caller can act on (OWNED + apps they hold an ACCEPTED collaborator
    * seat on) + lifetime revenue per app. Drives the per-app dropdown on /apps/revenue.
    *
@@ -8620,9 +8896,8 @@ export const blocksRouter = router({
     // stricter but would recreate the "one command needs two different scopes" problem
     // the analytics note above argues against.
     //
-    // 🟡 Consequence worth knowing: the consent string for this bit is "Submit Apps for
-    // review", which does not mention minting a git credential. That copy lives in
-    // @civitai/auth and is a product decision, not a drive-by edit.
+    // 🟡 The consent string for this bit (`tokenScopeLabels`, in @civitai/auth) covers this as
+    // "pull source". It is product copy: change it deliberately, with whatever the bit gates.
     //
     // If an `AppBlocksRead` bit is ever introduced, THIS proc must not move to it — it is
     // not a read. getMyAppAnalytics could, but only TOGETHER WITH the REST route
@@ -8823,6 +9098,405 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
   // belt's exemption is asserted by the subscription NOT being queried.
   const tier = row.isModerator ? undefined : (await getHighestTierSubscription(userId))?.tier;
   return { ...row, tier: tier ?? 'free' } as unknown as SessionUser;
+}
+
+/**
+ * How many cells of one `estimateWorkflowBatch` call are priced at a time. Each
+ * cell is an orchestrator `whatif` plus its reads, so this is the most upstream
+ * requests one call holds open at once.
+ */
+const BLOCK_ESTIMATE_BATCH_CONCURRENCY = 4;
+
+/**
+ * The total time one `estimateWorkflowBatch` call may spend pricing cells. When it
+ * runs out the call replies with the cells that finished, and every other cell is
+ * a failure snapshot carrying `BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR`.
+ *
+ * WHY A CALL BUDGET AT ALL. One cell's orchestrator `whatif` is bounded per attempt
+ * (`WHATIF_SUBMIT_ATTEMPT_TIMEOUT_MS`, 8 s, in `services/orchestrator/workflows.ts`)
+ * and retried up to 3 attempts with 0.5 s + 1.5 s of backoff, so a single cell can
+ * take ~26 s. Cells run `BLOCK_ESTIMATE_BATCH_CONCURRENCY` (4) at a time, so a
+ * 16-cell call is 4 waves: ~104 s worst case without a budget. That is past the
+ * SDK's default request timeout (120 s for this request, minus the round trip),
+ * so one slow upstream would fail the whole grid client-side while this process
+ * kept working for a reply nobody reads.
+ *
+ * WHY 30 s. It is at least one cell's worst case (~26 s), so a cell that starts at
+ * once still ends on its own terms — priced, or failed with its own error — and
+ * the budget only cuts what an unhealthy upstream has queued behind it. And it is
+ * a quarter of the SDK's 120 s default, so the reply arrives long before a client
+ * using the default gives up, well within typical request timeouts.
+ */
+const BLOCK_ESTIMATE_BATCH_BUDGET_MS = 30_000;
+
+/**
+ * The error a cell carries when the call's budget ran out before it was priced —
+ * whether it was in flight or never started. A stable string: apps may match it to
+ * tell "not priced in time, retry later" apart from a refusal.
+ */
+const BLOCK_ESTIMATE_BATCH_TIMEOUT_ERROR = 'estimate timed out';
+
+/**
+ * A failed cell, in the shape a host builds for a failed single estimate
+ * (`failureSnapshot` in `components/AppBlocks/failureSnapshot.ts`). Every way a
+ * cell fails — a throw, or the call's budget running out — goes through this.
+ */
+function failedEstimateCell(error: string): BlockWorkflowSnapshot {
+  return { workflowId: 'failed', status: 'failed', error };
+}
+
+/**
+ * The text a block is shown for a cell whose estimate threw — the same string a
+ * host would have read off the single `estimateWorkflow` call's error.
+ *
+ * A single estimate's throw crosses tRPC before the host sees it: an unrecognised
+ * throw is wrapped by `getTRPCErrorFromUnknown`, and `errorFormatter` replaces a
+ * server fault's message with a generic one carrying a reference. A cell's throw
+ * never leaves this process, so both steps are applied here instead. Without the
+ * second, an internal error message would reach a third-party block through a
+ * batch that a single estimate would have withheld.
+ */
+function estimateBatchCellErrorMessage(err: unknown): string {
+  const trpcError = getTRPCErrorFromUnknown(err);
+  const safe = getClientSafeError(trpcError);
+  if (safe) {
+    logToAxiom({
+      name: 'block-estimate-batch-cell-fault',
+      type: 'error',
+      errorRef: safe.errorRef,
+      code: trpcError.code,
+      message: trpcError.message,
+      stack: trpcError.cause instanceof Error ? trpcError.cause.stack : trpcError.stack,
+    }).catch(() => undefined);
+    return safe.message;
+  }
+  return trpcError.message;
+}
+
+/**
+ * One cell of `estimateWorkflowBatch`: parse the body with the single estimate's
+ * own schema, price it with the single estimate's own function, and turn a throw
+ * into the failure-shape snapshot a host builds for a failed single estimate
+ * (`failureSnapshot` in `components/AppBlocks/failureSnapshot.ts` — the shapes are
+ * pinned equal in `blocks.router.workflow.test.ts`).
+ *
+ * It never throws: a cell's failure is that cell's result.
+ */
+async function estimateBatchCell(
+  ctx: Context,
+  claims: BlockClaims,
+  rawBody: unknown
+): Promise<BlockWorkflowSnapshot> {
+  try {
+    const parsed = blockWorkflowBodySchema.safeParse(rawBody);
+    // The same error tRPC raises when `estimateWorkflow`'s `.input()` rejects a body.
+    if (!parsed.success) throw new TRPCError({ code: 'BAD_REQUEST', cause: parsed.error });
+    if (parsed.data.kind === 'training') {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'a training estimate cannot be part of a batch — estimate it on its own',
+      });
+    }
+    const { snapshot } = await estimateBlockWorkflowCell(ctx, claims, { body: parsed.data });
+    return snapshot;
+  } catch (err) {
+    return failedEstimateCell(estimateBatchCellErrorMessage(err));
+  }
+}
+
+/**
+ * ONE ESTIMATE — the per-cell half of `estimateWorkflow`, and the ONLY thing
+ * `estimateWorkflowBatch` runs per cell.
+ *
+ * It is everything the single estimate does after its token, scope and rate-limit
+ * preamble: the `kind` dispatch, the page-vs-model body restrictions, the viewer
+ * and flag gates, the entitlement and maturity gates, the orchestrator `whatif`
+ * and the author-fee disclosure. It was the tail of the `estimateWorkflow`
+ * resolver, moved here unchanged so a batch can call it; nothing in it was
+ * rewritten.
+ *
+ * 🔴 THE THIRD PARAMETER IS NAMED `input` AND SHAPED `{ body }` ON PURPOSE. The
+ * moved code reads `input.body` throughout, and the author-fee ledger
+ * (`no-divergent-author-fee-base.test.ts`) pins the fee key's derivation by that
+ * spelling. Keeping the name keeps the move a move.
+ *
+ * 🔴 IT QUOTES, IT NEVER SUBMITS. Every orchestrator call it reaches carries
+ * `whatif: true`, and it reserves, debits and accrues nothing. That is what makes
+ * it safe to call N times from the batch procedure.
+ */
+async function estimateBlockWorkflowCell(
+  ctx: Context,
+  claims: BlockClaims,
+  input: { body: BlockWorkflowBody }
+) {
+  // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
+  // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
+  // estimate. The textToImage path below stays byte-identical (we only ADD a
+  // branch). Everything customComfy-specific lives in the helper.
+  if (input.body.kind === 'customComfy') {
+    return await estimateCustomComfyWorkflow({ claims, body: input.body });
+  }
+  // App Blocks TRAINING kind: prices the run and stores the quote the viewer
+  // confirms. Everything training-specific lives in the helper.
+  if (input.body.kind === 'training') {
+    return await estimateTrainingWorkflow({ ctx, claims, body: input.body });
+  }
+  // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
+  // step's cost now comes from a real `whatif` quote, with the declared
+  // billing mode as the FLOOR and the fallback — this used to read "not a
+  // whatIf", which was the defect, not the design. The textToImage path
+  // below stays byte-identical (we only ADD a branch).
+  if (input.body.kind === 'step') {
+    return isPassThroughStepBody(input.body)
+      ? await estimatePassThroughStepWorkflow({ ctx, claims, body: input.body })
+      : await estimateStepWorkflow({ ctx, claims, body: input.body });
+  }
+  // Context binding. A MODEL token pins `ctx.modelId`; the body must match
+  // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
+  // lets the viewer pick a model, so the modelId match is SKIPPED and
+  // replaced (below, after the version read) by the pre-spend availability
+  // gate (assertViewerCanGeneratePageResources). That gate is a fail-fast UX
+  // layer over the body version + LoRAs only — it does NOT cover the
+  // resolved/billed checkpoint anchor; early-access + Private-subscription
+  // entitlement (and the resolved anchor) are enforced by the orchestrator
+  // resource belt over the full array. See isPageToken /
+  // assertViewerCanGeneratePageResources.
+  const isPage = isPageToken(claims);
+  if (!isPage) {
+    const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
+    if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+    }
+    // Page-LoRA (Increment 1): additionalResources is a PAGE-ONLY feature.
+    // A MODEL token's checkpoint comes from resolveBlockCheckpoint (install
+    // rows), and the model branch never runs the per-resource entitlement
+    // gate — so accepting additionalResources here would fan un-gated LoRAs
+    // into the resources array. Reject them fail-closed on the model path.
+    if (input.body.additionalResources?.length) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'additionalResources are not supported for model-bound blocks',
+      });
+    }
+    // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
+    // feature. Custom Generators is a page app; model-bound img2img is out
+    // of scope and unvetted for 2a, so reject it fail-closed on the model
+    // path (mirrors the additionalResources guard above).
+    //
+    // BOTH wire shapes are gated identically — the deprecated singular
+    // `sourceImage` AND the array `sourceImages`. Gating only one would
+    // leave a model-bound token a way in through the other.
+    if (input.body.sourceImage || input.body.sourceImages?.length) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'source image (img2img) is not supported for model-bound blocks',
+      });
+    }
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'estimate requires authenticated viewer',
+    });
+  }
+  // App-Blocks flag gate, evaluated against the TOKEN subject (not ctx.user).
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
+  if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
+  }
+  const resolved = await resolveBlockVersionContext(input.body.modelVersionId, input.body.modelId);
+  const user = await getBlockSessionUser(userId);
+  // Resolve the effective checkpoint BEFORE the page gate. This is the
+  // ACTUAL anchor buildTextToImageInput puts at the head of the resources
+  // array — for a non-Checkpoint page body it is NOT resolved.baseModel
+  // (resolveBlockCheckpoint falls through to a viewer/publisher/popular
+  // checkpoint that may belong to a different base-model family). The page
+  // LoRA family-match must anchor on THIS checkpoint, not the body model.
+  // resolveBlockCheckpoint is a pure read (install/override rows + a
+  // fail-open cache populate) with no side effect that must follow the
+  // gate, so it is safe to run before it.
+  const checkpoint = await resolveBlockCheckpoint({
+    blockInstanceId: claims.blockInstanceId,
+    modelId: resolved.modelId,
+    modelVersionId: resolved.modelVersionId,
+    baseModel: resolved.baseModel,
+    modelType: resolved.modelType,
+    userId,
+    slotId: ctxSlotId,
+  });
+  // PAGE branch: pre-spend availability gate over the resources THIS gate
+  // can see — the viewer-picked BODY version (`resolved.gate`) AND each
+  // additional LoRA — as a fail-fast UX layer in place of the skipped
+  // model-binding check. NOTE it does NOT cover the resolved/billed
+  // checkpoint ANCHOR: for a non-Checkpoint page body, resolveBlockCheckpoint
+  // picks a DIFFERENT default checkpoint (validated there only for
+  // Published + base-model family — not early-access/Private/availability).
+  // That anchor's entitlement — and early-access + Private-sub entitlement
+  // for the whole array — is enforced downstream by the orchestrator
+  // resource belt over the FULL resources array; this gate is not the sole
+  // boundary. Keep both belts.
+  // Maturity clamp (authoritative). Derived ONCE from the token's
+  // server-minted ceiling claim, NOT a client body field nor request-time
+  // `ctx.domain`. Drives both the resource-selection gate (`sfwOnly`, so a
+  // SFW-domain block can't even PICK a mature resource — defense in depth)
+  // and the generation-output clamp (`allowMatureContent`). Green AND blue
+  // → sfwOnly true; red → false. Mirrors submitWorkflow below.
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // Currency parity (on-site `resolveGenerationCurrencies`): blue-first +
+  // the domain currency, derived from the SAME authoritative ceiling as the
+  // output clamp. SFW → blue/green; mature → blue/yellow.
+  const currencies = resolveBlockCurrencies(isGreen);
+  // #4159: the resolved `modelVersionId → ModelType` for the LoRA stack.
+  // Declared out here because `buildTextToImageInput` below needs it to emit
+  // graph-valid `resources` entries; on the MODEL path `additionalResources`
+  // is rejected outright, so an empty map is the correct value there.
+  let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
+  if (isPage) {
+    // Resolve + validate the LoRA stack first (LoRA-only + family-match)
+    // so a bad resource fails BEFORE the entitlement gate / any cost.
+    // Family-match anchors on the RESOLVED checkpoint's baseModel.
+    const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
+      additionalResources: input.body.additionalResources,
+      checkpointBaseModel: checkpoint.baseModel,
+    });
+    additionalResourceTypes = resourceTypes;
+    await assertViewerCanGeneratePageResources({
+      gates: [buildGateVersion(resolved.gate), ...loraGates],
+      viewer: { id: userId, isModerator: !!user.isModerator },
+      // SFW-only resource selection unifies with the output clamp: derive
+      // from the authoritative token maturity (green/blue → true), not the
+      // request domain. `allowMatureContent === false` ⇔ SFW ceiling.
+      sfwOnly: allowMatureContent === false,
+      wildcardsEnabled: !!ctx.features.wildcards,
+    });
+  }
+  const token = await getOrchestratorToken(userId, ctx);
+  const generateInput = buildTextToImageInput(input.body, {
+    ...resolved,
+    checkpointVersionId: checkpoint.versionId,
+    checkpointBaseModel: checkpoint.baseModel,
+    additionalResourceTypes,
+  });
+  // whatIf: no `metadata` on the body — matches the normal path
+  // (`generateFromGraph` builds workflowMetadata only for real submits) and
+  // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
+  const { step, modelSubstitutions } = await createBlockTextToImageStep({
+    input: generateInput,
+    user,
+    whatIf: true,
+  });
+  const whatIfResult = await submitWorkflow({
+    token,
+    body: {
+      steps: [step],
+      tags: buildWorkflowTags(claims, resolved.baseModel),
+      currencies,
+      ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+    },
+    query: { whatif: true },
+  });
+  // ── 🔴 THE ESTIMATE PRICES THE AUTHOR FEE TOO, AND THIS IS A DISCLOSING
+  //    QUOTE, NOT A RESERVING ONE. Nothing here gates, reserves, debits or
+  //    accrues; the returned number is added to the cost the block is shown
+  //    and then discarded. The submit runs its OWN quote (`:5557`) and that
+  //    one is what money is taken against.
+  //
+  // WHY IT HAS TO EXIST. The submit adds the fee to `cost` BEFORE every
+  // guardrail, so with the fee live a viewer shown `N` is debited `N + fee`
+  // — and where the app's token budget sits near the price, the submit is
+  // refused outright with `insufficient buzz budget`, which reads to the
+  // viewer as a broken app rather than as a price. Correcting the TOTAL is
+  // what makes the shown number true for EVERY existing app with no
+  // app-side change; an itemised field ALONE would be inert until each
+  // third-party author wrote a renderer for it. `snapshotFromWorkflow` also
+  // reports the addend as `cost.authorFee`.
+  //
+  // 🔴 THE PAYEE LOOKUP IS ACCEPTED, NOT SKIPPED, ON THIS UNBOUNDED PATH.
+  // `quoteBlockAuthorFee` resolves the payee (one `dbRead.oauthClient
+  // .findUnique` by primary key, two columns) and a disclosure-only variant
+  // that skipped it would be cheaper. It is not used, because the skipped
+  // arm is SELF-DEALING: an author running their own app is not charged,
+  // and a variant that cannot see that would quote them a fee they will
+  // never pay — on the surface whose entire job is to predict the charge,
+  // to the population that exercises it most. Re-creating estimate/submit
+  // divergence one layer down is the defect this change removes, not a
+  // saving. The read is also gated behind the flag AND behind a non-zero
+  // computed fee, so it costs nothing while the fee is dark, and when it is
+  // live it is one indexed row against an orchestrator round-trip this
+  // handler has already paid for.
+  //
+  // 🔴 WHAT THIS NUMBER IS AND IS NOT. It is a QUOTE, not a price lock.
+  // Estimate and submit are two independent whatIfs seconds apart, so the
+  // quoted price can differ from the charged one and NOTHING HERE BOUNDS
+  // THAT.
+  //
+  // ⚠️ THE ONE GUARANTEE, STATED AT THE WIDTH IT ACTUALLY HOLDS. An earlier
+  // revision of this comment said the two sites "agree whenever the base
+  // does". That is a SUFFICIENCY claim and it is false: base agreement is
+  // necessary, not sufficient. FIVE inputs can move between the two quotes —
+  // `cost.base`, `cost.variable` (a cap-priced submit charges nothing while
+  // the estimate showed a fee, or the reverse), the PAYEE (an ownership
+  // transfer in between is exactly what `chargeBlockAuthorFee` re-resolves
+  // for), the FLAG itself, which is read separately at each site and is
+  // operator-flippable, and — the one an earlier revision of this comment
+  // left out — the `generationType`.
+  //
+  // ⚠️ `generationType` IS NOT A PASSENGER, IT IS THE FEE'S LOOKUP KEY. It
+  // selects the `byType` override, so a type that differs between the two
+  // quotes prices a DIFFERENT fee, not merely a differently-derived one, and
+  // `chat-completion`'s 0/0 entry makes the gap total rather than marginal.
+  // On THIS arm it genuinely can differ: `resolveBlockGenerationType` is
+  // handed a body the caller supplies plus `generateInput.workflow`, which is
+  // derived through a cache-backed model-version read — two calls seconds
+  // apart are two reads. The step arm's key is the registered `step.id` and
+  // cannot move. Each site's spelling AND its derivation are pinned per site
+  // in `no-divergent-author-fee-base.test.ts`'s ledger, because a mutation of
+  // this argument on this arm survived the whole battery before it was.
+  //
+  // What IS established, and all that is: `chargeBlockAuthorFee` clamps the
+  // debit to `min(reserved, realized)` where `reserved` is the SUBMIT's own
+  // quote — so the viewer is never billed past what the SUBMIT's budget gate
+  // was measured against. THIS estimate is not that bound and must not be
+  // described as one.
+  //
+  // Degradation is CORRELATED, not guaranteed: when the orchestrator cannot
+  // supply a base the fee is not priced HERE, and the submit — which quotes
+  // the same orchestrator — typically cannot price one either, so both show
+  // and charge no fee together. Typically, not always.
+  //
+  // ⚠️ ONE SHAPE WHERE THE SHOWN NUMBER SITS BELOW THE DEBIT, RECORDED
+  // BECAUSE IT IS NOT CLOSED. If the orchestrator returns `cost.base` but no
+  // `cost.total`, `snapshotFromWorkflow` omits `cost` entirely (there is no
+  // total to correct, and inventing one would report a fee AS the price)
+  // while the submit gates and reserves `0 + fee`. The block is then shown no
+  // price at all rather than a low one, which is the recoverable direction —
+  // but it is a divergence, not an absence of one.
+  const blockGenerationType = resolveBlockGenerationType(input.body, {
+    imageWorkflowType: generateInput.workflow,
+  });
+  const authorFeeQuote = await quoteBlockAuthorFee({
+    baseGenerationBuzz: whatIfResult.cost?.base,
+    priceIsCap: whatIfResult.cost?.variable,
+    generationType: blockGenerationType,
+    appId: claims.appId,
+    viewerUserId: userId,
+    workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
+    privateRun: claims.privateRun === true,
+    // Unbounded surface — see the flag's own note. The skip lines it silences
+    // are re-derived at the submit, once per real generation.
+    suppressQuoteLogs: true,
+  });
+  // #3520: the ESTIMATE reports the substitution too — a block that quotes a
+  // cost for model A and is silently priced for model B has the same
+  // detectability problem as the submit, one step earlier.
+  return {
+    snapshot: snapshotFromWorkflow(whatIfResult, {
+      modelSubstitutions,
+      additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
+    }),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9772,6 +10446,29 @@ function stampUnquotedTimeout(
 }
 
 /**
+ * The refusal for a training `$type` the orchestrator would not quote, or `null`
+ * when the step may proceed. Shared by the pass-through estimate and submit so
+ * the two cannot disagree about which steps are refused.
+ *
+ * A training run takes far longer than any `maxBuzz` an app could sensibly
+ * declare as seconds, so the stamped-timeout fallback (`stampUnquotedTimeout`)
+ * would cancel the run partway through. Refusing up front lets the block retry
+ * once a quote is available.
+ *
+ * The snapshot carries no `cost`: there is no price to show, and the declared
+ * `maxBuzz` is not one.
+ */
+function refuseUnquotedTraining(
+  stepType: string,
+  quote: PassThroughQuote
+): { snapshot: BlockWorkflowSnapshot } | null {
+  if (quote.quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
+  return {
+    snapshot: { workflowId: 'failed', status: 'failed', ...unquotedTrainingRefusal(quote.failure) },
+  };
+}
+
+/**
  * Resolve the registry entry from the (schema-gated) `step` id. The wire
  * schema's `z.enum(REGISTERED_STEP_IDS)` already rejected any unregistered id at
  * the union, so this never returns undefined for a schema-valid body — the
@@ -10136,7 +10833,9 @@ async function estimateStepWorkflow(opts: {
     // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
     suppressQuoteLogs: true,
   });
-  const shownBuzz = shownGenerationBuzz + (authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0);
+  // One local feeds both the sum and `cost.authorFee`, so they cannot disagree.
+  const shownAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
+  const shownBuzz = shownGenerationBuzz + shownAuthorFeeBuzz;
 
   return {
     snapshot: {
@@ -10144,7 +10843,7 @@ async function estimateStepWorkflow(opts: {
       // snapshots. The block treats estimate as a cost quote and never polls it.
       workflowId: 'wf_estimate',
       status: 'pending' as const,
-      cost: { total: shownBuzz },
+      cost: { total: shownBuzz, authorFee: shownAuthorFeeBuzz },
     },
   };
 }
@@ -10441,6 +11140,9 @@ async function submitStepWorkflow(opts: {
   // and leave the counters genuinely under-corrected.
   const reserveGenerationBuzz = Math.max(declaredBuzz, quotedBuzz);
   const reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz;
+  // The price every refusal reply below reports. Not for the success reply:
+  // that one's total is the realized generation cost and carries no fee.
+  const refusalCost = { total: reserveBuzz, authorFee: reservedAuthorFeeBuzz };
 
   // (1) Pre-submit gate against the token's per-call budget — now enforced
   // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
@@ -10454,7 +11156,7 @@ async function submitStepWorkflow(opts: {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
-        cost: { total: reserveBuzz },
+        cost: refusalCost,
         error: `insufficient buzz budget: step price ${reserveBuzz} exceeds budget ${perCallBudget}`,
       },
     };
@@ -10509,7 +11211,7 @@ async function submitStepWorkflow(opts: {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
-        cost: { total: reserveBuzz },
+        cost: refusalCost,
         error:
           claims.reviewRunForReal === true
             ? `review run-for-real Buzz cap reached: ${total - reserveBuzz} already ` +
@@ -10532,7 +11234,7 @@ async function submitStepWorkflow(opts: {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
-        cost: { total: reserveBuzz },
+        cost: refusalCost,
         error: consentBudgetRejection(
           reservation.consent,
           reserveBuzz,
@@ -10562,7 +11264,7 @@ async function submitStepWorkflow(opts: {
         snapshot: {
           workflowId: 'failed',
           status: 'failed' as const,
-          cost: { total: reserveBuzz },
+          cost: refusalCost,
           error:
             appSpend.reason === 'velocity'
               ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
@@ -10601,7 +11303,7 @@ async function submitStepWorkflow(opts: {
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
-            cost: { total: reserveBuzz },
+            cost: refusalCost,
             error:
               `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
               `this dev session, this step costs ${reserveBuzz}, ` +
@@ -11068,6 +11770,9 @@ async function submitStepWorkflow(opts: {
  * at the `ceiling` in `submitPassThroughStepWorkflow`: the stamped `timeout`
  * bounds a GPU-second-metered step and nothing else, so for a per-unit-priced
  * `$type` an unquotable submit reserves `maxBuzz` and may bill more.
+ *
+ * Training `$type`s are the exception on BOTH paths: with no quote, the estimate
+ * returns a failed snapshot and the submit refuses (`refuseUnquotedTraining`).
  */
 async function estimatePassThroughStepWorkflow(opts: {
   ctx: Context;
@@ -11084,9 +11789,9 @@ async function estimatePassThroughStepWorkflow(opts: {
   // an estimate must degrade to the declared ceiling when the mint fails, while a
   // submit that cannot mint must throw before it reserves anything.
   const token = await getOrchestratorToken(userId, ctx).catch(() => null);
-  let quotedBuzz: number | null = null;
+  let quote: PassThroughQuote = { quotedBuzz: null, failure: { kind: 'unavailable' } };
   if (token) {
-    quotedBuzz = await quotePassThroughBuzz({
+    quote = await quotePassThroughBuzz({
       claims,
       body,
       orchestratorStep,
@@ -11096,6 +11801,10 @@ async function estimatePassThroughStepWorkflow(opts: {
   } else {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
   }
+  const { quotedBuzz } = quote;
+
+  const refusal = refuseUnquotedTraining(body.$type, quote);
+  if (refusal) return refusal;
 
   return {
     snapshot: {
@@ -11108,9 +11817,13 @@ async function estimatePassThroughStepWorkflow(opts: {
   };
 }
 
+type PassThroughQuote =
+  | { quotedBuzz: number }
+  | { quotedBuzz: null; failure: PassThroughQuoteFailure };
+
 /**
- * The orchestrator's live price for an already-built pass-through step, or
- * `null` if it could not be had.
+ * The orchestrator's live price for an already-built pass-through step, or a
+ * `null` price and why it could not be had.
  *
  * Only the orchestrator ROUND-TRIP is swallowed. The `$type` refusal is
  * deliberately outside this, at both call sites, so a deterministic denial can
@@ -11120,7 +11833,8 @@ async function estimatePassThroughStepWorkflow(opts: {
  * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
  * it borrows the counter from. There a missing quote fails the submit closed, so
  * the outage is loud; here the arm deliberately falls back to the declared
- * `maxBuzz` and proceeds — so without this pair, an orchestrator that stopped
+ * `maxBuzz` and proceeds (a training `$type` excepted, see
+ * `refuseUnquotedTraining`) — so without this pair, an orchestrator that stopped
  * pricing would move every pass-through job onto its declared ceiling with
  * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
  *
@@ -11145,7 +11859,7 @@ async function quotePassThroughBuzz(opts: {
    * denominator and falls when submit volume falls, which reads as healthy.
    */
   phase: 'estimate' | 'submit';
-}): Promise<number | null> {
+}): Promise<PassThroughQuote> {
   const { claims, body, orchestratorStep, token, phase } = opts;
   const [quoted, absent] =
     phase === 'estimate'
@@ -11158,7 +11872,7 @@ async function quotePassThroughBuzz(opts: {
       body: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         steps: [orchestratorStep as any],
-        tags: buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step'),
+        tags: buildPassThroughWorkflowTags(claims, body.$type),
         currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
       },
@@ -11167,13 +11881,30 @@ async function quotePassThroughBuzz(opts: {
     const total = quote.cost?.total;
     if (typeof total !== 'number' || !Number.isFinite(total)) {
       recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
-      return null;
+      return { quotedBuzz: null, failure: { kind: 'unpriced' } };
     }
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, quoted);
-    return Math.ceil(total);
-  } catch {
+    return { quotedBuzz: Math.ceil(total) };
+  } catch (e) {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, absent);
-    return null;
+    const failure = classifyQuoteFailure(e, JSON.stringify(body.input));
+    const response = getOrchestratorSubmitFailure(e);
+    void Promise.resolve(
+      logToAxiom({
+        name: 'block-pass-through-quote-failed',
+        type: quoteFailureLogLevel(failure, e),
+        outcome: failure.kind,
+        phase,
+        stepType: body.$type,
+        appBlockId: claims.appBlockId,
+        code: e instanceof TRPCError ? e.code : null,
+        attempt: response?.attempt ?? null,
+        status: response?.status ?? null,
+        error: e instanceof Error ? e.message : String(e),
+        cause: e instanceof Error && e.cause instanceof Error ? e.cause.message : null,
+      })
+    ).catch(() => undefined);
+    return { quotedBuzz: null, failure };
   }
 }
 
@@ -11230,27 +11961,18 @@ async function submitPassThroughStepWorkflow(opts: {
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
-  // 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
-  // arms pass a bounded server-side id there (a registry step id, a recipe id);
-  // `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
-  // verbatim into the same array as `app-block:<appId>` — the tag
-  // `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
-  // app-scoping boundary. The argument that it is safe anyway (an unknown
-  // `$type` fails the submit, so no workflow persists the forged tag) delegates
-  // the control to an orchestrator behaviour this repo does not own and has not
-  // measured. A constant needs no such argument. The per-`$type` dimension is
-  // kept on the audit row's `detail` JSON, which has no scoping meaning and no
-  // cardinality budget.
-  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+  // `$type` never reaches the tag array as text — see `buildPassThroughWorkflowTags`.
+  const tags = buildPassThroughWorkflowTags(claims, body.$type);
 
   const token = await getOrchestratorToken(userId, ctx);
-  const quotedBuzz = await quotePassThroughBuzz({
+  const quote = await quotePassThroughBuzz({
     claims,
     body,
     orchestratorStep,
     token,
     phase: 'submit',
   });
+  const { quotedBuzz } = quote;
 
   // 🔴 THE RESERVATION IS THE LARGER OF THE TWO, AND THE TIMEOUT IS STILL
   // `maxBuzz`. The declared ceiling is the floor because the job may accrue up
@@ -11268,6 +11990,9 @@ async function submitPassThroughStepWorkflow(opts: {
   // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
   // reachable types are priced per unit at submit, where a timeout bounds
   // wall-clock and nothing else. Operator decision, recorded in the PR.
+  //
+  // The exception is a training `$type`, refused after the idempotency claim
+  // below — see `refuseUnquotedTraining`.
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
 
   if (quotedBuzz === null) stampUnquotedTimeout(orchestratorStep, body.maxBuzz);
@@ -11320,6 +12045,16 @@ async function submitPassThroughStepWorkflow(opts: {
       });
     }
     genClaimKey = claim.key;
+  }
+
+  // 🔴 AFTER THE CLAIM, NOT BEFORE IT: a same-key retry of a submit that already
+  // went through must get its replay (or CONFLICT while it is in flight), never
+  // a "try again" that invites a second paid run. Still before any reservation,
+  // and the claim is released so the key can be retried once a quote exists.
+  const refusal = refuseUnquotedTraining(body.$type, quote);
+  if (refusal) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return refusal;
   }
 
   // (2) Reserve the CEILING against the per-user cumulative cap.
@@ -11659,6 +12394,768 @@ async function submitPassThroughStepWorkflow(opts: {
   return genResult;
 }
 
+// ── App Blocks TRAINING kind (`kind:'training'`) ──────────────────────────────
+//
+// An ai-toolkit LoRA run on a server-prepared dataset of the viewer's own images.
+// The confirmation the submit requires is recorded only by the session-only
+// `blocks.consentTrainingQuote`, which the block (holding only its token) cannot
+// call — that is why a confirmed run may exceed `buzzBudget`; see
+// `blockTrainingRunCeiling`.
+//
+// Labels are constants (metric cardinality), like the pass-through arm's.
+const TRAINING_ENGINE_LABEL = 'training';
+const TRAINING_RECIPE_LABEL = '__training__';
+// The submit's answer when the orchestrator call was attempted but its outcome is
+// unknown (`submissionUnconfirmed: true` on the result).
+const BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE =
+  'the training run could not be confirmed — it may be running; check your trainings before retrying';
+
+type TrainingRequestAuth = {
+  userId: number;
+  user: SessionUser;
+  features: Record<string, boolean | undefined>;
+};
+
+/**
+ * The gates every `kind:'training'` request passes first — estimate, submit and
+ * dataset preparation alike, so a caller can never price or prepare a run it could
+ * not submit.
+ *
+ * PAGE tokens only, and of those only an ordinary viewer's: a DEV token (local
+ * harness, dev tunnel, review sandbox — run-for-real included) is refused because
+ * there is no host page whose chrome can show the viewer a price, and an editor's
+ * read-only private run is refused because its per-call budget is zero. Hub/OAuth
+ * claims never reach the tRPC bridge (`verifyBlockToken` admits only signed block
+ * JWTs), so they need no branch here.
+ */
+async function assertTrainingRequestAllowed(
+  claims: BlockClaims,
+  ctx: Context
+): Promise<TrainingRequestAuth> {
+  if (!isPageToken(claims)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'training is page-only' });
+  }
+  if (claims.dev === true || claims.reviewRunForReal === true) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'training is not available from a development or review session',
+    });
+  }
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
+  // The shared per-call ceiling helper, consulted for its REFUSAL only: 0 means no
+  // budget was minted or this is an editor's read-only private run.
+  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'training requires an authenticated viewer',
+    });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  const user = await getBlockSessionUser(userId);
+  const { isAppBlocksTrainingKindEnabled } = await import('~/server/services/app-blocks-flag');
+  if (!(await isAppBlocksTrainingKindEnabled({ user }))) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'training from apps is not enabled' });
+  }
+  const { getFeatureFlagsLazy } = await import('~/server/services/feature-flags.service');
+  const features = getFeatureFlagsLazy({ user, req: ctx.req });
+  return { userId, user, features: features as Record<string, boolean | undefined> };
+}
+
+/**
+ * The training run's tags: the provenance set every block workflow carries, with
+ * `TRAINING_WORKFLOW_TAG` in the workflow-type slot (it admits the run to the
+ * training publish wizard and the viewer's Training Studio list) and the engine in
+ * the baseModel slot — server constants only, never app text. Shared by the quote
+ * and the submit.
+ */
+function buildBlockTrainingTags(claims: BlockClaims): string[] {
+  return buildWorkflowTags(claims, 'ai-toolkit', TRAINING_WORKFLOW_TAG);
+}
+
+/**
+ * The orchestrator's `whatif` price for an already-built training step, or `null`.
+ *
+ * 🔴 FAIL-CLOSED, UNLIKE THE PASS-THROUGH QUOTE. `null` — and therefore a refusal
+ * at both call sites — for a throw, a missing or non-finite total, a total that is
+ * not positive, and a VARIABLE (cap) price. A training run is charged against a
+ * number a person confirmed, so there is no declared ceiling to fall back to.
+ */
+async function quoteBlockTrainingStep(opts: {
+  claims: BlockClaims;
+  step: Record<string, unknown>;
+  token: string;
+}): Promise<number | null> {
+  const { claims, step, token } = opts;
+  try {
+    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const quote = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [step as any],
+        tags: buildBlockTrainingTags(claims),
+        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+      },
+      query: { whatif: true },
+    });
+    const total = quote.cost?.total;
+    if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) return null;
+    if (quote.cost?.variable === true) return null;
+    return Math.ceil(total);
+  } catch {
+    return null;
+  }
+}
+
+type BlockTrainingConsentAuth = { claims: BlockClaims; userId: number };
+
+/**
+ * The preamble of the two SESSION-bound training procedures (preview + confirm):
+ * the bridge token, the spend scope, a real subject, that subject being the
+ * signed-in user the request arrived with, and then the same training gates the
+ * estimate and submit run. Keep the signature on one line — see the note on
+ * `authorizeBlockPostRequest` about how the bridge-token ledger chunks this file.
+ */
+async function authorizeBlockTrainingConsentRequest(
+  blockToken: string,
+  ctx: Context,
+  sessionUserId: number
+): Promise<BlockTrainingConsentAuth> {
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'training requires an authenticated viewer',
+    });
+  }
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
+  await assertTrainingRequestAllowed(claims, ctx);
+  return { claims, userId };
+}
+
+/**
+ * The dataset a `kind:'training'` body names, bound to this subject, app and install —
+ * or a refusal. Reads only the dataset record; the estimate uses this alone.
+ */
+async function loadBoundBlockTrainingDataset(
+  claims: BlockClaims,
+  userId: number,
+  datasetId: string
+) {
+  const { loadBlockTrainingDataset } = await import(
+    '~/server/services/blocks/block-training-dataset.service'
+  );
+  const dataset = await loadBlockTrainingDataset(datasetId, {
+    userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+  });
+  if (!dataset) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'training dataset not found or expired' });
+  }
+  return dataset;
+}
+
+/**
+ * The bound dataset with every image re-admitted on the primary — the submit's check,
+ * run before anything is charged.
+ */
+async function loadEligibleBlockTrainingDataset(
+  claims: BlockClaims,
+  userId: number,
+  datasetId: string
+) {
+  const dataset = await loadBoundBlockTrainingDataset(claims, userId, datasetId);
+  const { assertBlockTrainingDatasetStillEligible } = await import(
+    '~/server/services/blocks/block-training-dataset.service'
+  );
+  const { resolveViewerBrowsingLevel } = await import(
+    '~/server/services/blocks/block-gated-images.service'
+  );
+  await assertBlockTrainingDatasetStillEligible(
+    dataset,
+    resolveViewerBrowsingLevel(claims.maxBrowsingLevel)
+  );
+  return dataset;
+}
+
+/**
+ * The viewer's Buzz across the accounts a training run charges: the block's allowed
+ * set for its maturity (`getBlockAllowedAccountTypes`), the same set
+ * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
+ * Throws when the balance cannot be read — including a response naming none of
+ * those accounts, which is an unreadable balance, not a zero one.
+ */
+async function readBlockTrainingSpendableBuzz(claims: BlockClaims, userId: number) {
+  const { isGreen } = resolveBlockMaturity(claims);
+  const accounts = (await getUserBuzzAccounts({ userId })) as Record<string, number | null>;
+  const types = getBlockAllowedAccountTypes(isGreen);
+  if (!types.some((type) => typeof accounts[type] === 'number')) {
+    throw new Error('balance response names none of the charged accounts');
+  }
+  return types.reduce((sum, type) => sum + (accounts[type] ?? 0), 0);
+}
+
+/**
+ * TRAINING ESTIMATE — prices the run and stores the quote the viewer will confirm.
+ * Creates nothing and reserves nothing.
+ */
+async function estimateTrainingWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: BlockTrainingBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const { userId, user, features } = await assertTrainingRequestAllowed(claims, ctx);
+  // Binding only: images are re-admitted at submit, before anything is charged.
+  const dataset = await loadBoundBlockTrainingDataset(claims, userId, body.datasetId);
+
+  const { getTrainingServiceStatus } = await import('~/server/services/training.service');
+  const { resolveBlockTrainingRun, hashTrainingBody, storeTrainingQuote } = await import(
+    '~/server/services/blocks/block-training-quote.service'
+  );
+  const run = resolveBlockTrainingRun({
+    body,
+    dataset,
+    status: await getTrainingServiceStatus(),
+    features,
+    isModerator: !!user.isModerator,
+  });
+
+  // App-supplied text that drives sample generation — moderated like a prompt.
+  await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+
+  const step = { ...run.step, name: BLOCK_STEP_NAME };
+  const token = await getOrchestratorToken(userId, ctx);
+  const total = await quoteBlockTrainingStep({ claims, step, token });
+  if (total === null) {
+    throw new TRPCError({
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'the training price could not be determined — please retry',
+    });
+  }
+  if (total > BLOCK_TRAINING_MAX_BUZZ_PER_RUN) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `this training run costs ${total} Buzz, above the per-run limit of ${BLOCK_TRAINING_MAX_BUZZ_PER_RUN} for apps`,
+    });
+  }
+
+  const quote = await storeTrainingQuote({
+    userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+    total,
+    bodyHash: hashTrainingBody(body),
+    datasetId: dataset.datasetId,
+    imageCount: dataset.count,
+    modelKey: run.modelKey,
+    modelName: run.modelName,
+    ecosystem: run.ecosystem,
+    epochs: run.epochs,
+    steps: run.steps,
+  });
+
+  return {
+    snapshot: {
+      // Non-empty sentinel, as on the other estimate arms: the block treats an
+      // estimate as a quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total },
+      trainingQuote: {
+        quoteId: quote.quoteId,
+        total,
+        imageCount: dataset.count,
+        expiresAt: quote.expiresAt,
+      },
+    },
+  };
+}
+
+/**
+ * The one prompt-moderation pass for `kind:'training'` text: dataset captions, and a
+ * body's trigger word + sample prompts. Not a generation submit, so it joins the
+ * `other` moderation-source population.
+ */
+async function auditBlockTrainingText(opts: {
+  claims: BlockClaims;
+  userId: number;
+  user: SessionUser;
+  text: string;
+}): Promise<void> {
+  const { claims, userId, user, text } = opts;
+  if (text.length === 0) return;
+  const { isGreen } = resolveBlockMaturity(claims);
+  await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
+}
+
+/** A training body's own free text, joined for one audit. */
+function trainingBodyAuditText(body: BlockTrainingBody): string {
+  return [body.triggerWord, ...body.samplePrompts]
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .join('\n');
+}
+
+/**
+ * TRAINING SUBMIT. Post-paid on the pass-through arm's reservation belt, but its
+ * ceiling is the viewer-confirmed quote, not the token's per-call budget.
+ *
+ * A lost-response retry of this submit replays (claim keyed on the quote). The
+ * orchestrator `externalId` is keyed on the RUN (`trainingRunKey`): a retry after an
+ * ambiguous failure — which needs a fresh quote — dedupes there instead of charging
+ * twice, and a deliberate re-run after a definite submit is a new run. Nothing that
+ * costs Buzz happens before the re-quote check.
+ */
+async function submitTrainingWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: BlockTrainingBody;
+}) {
+  const { ctx, claims, body } = opts;
+  const { userId, user, features } = await assertTrainingRequestAllowed(claims, ctx);
+  const quoteId = body.quoteId;
+  if (!quoteId) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'a training submit must name the confirmed quoteId from its estimate',
+    });
+  }
+
+  const {
+    bumpTrainingRunGeneration,
+    claimTrainingQuote,
+    hashTrainingBody,
+    readTrainingRunGeneration,
+    resolveBlockTrainingRun,
+    trainingRunKey,
+  } = await import('~/server/services/blocks/block-training-quote.service');
+  const runKey = trainingRunKey(claims.appBlockId, body, await readTrainingRunGeneration(body));
+
+  // The replay claim is per QUOTE (a lost-response retry of this submit replays); the
+  // orchestrator id is per RUN (below). The colon is outside the client key charset,
+  // so this claim can never collide with a key a block chose.
+  let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+  try {
+    claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+      userId,
+      claims.appBlockId,
+      `training-quote:${quoteId}`
+    );
+  } catch {
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'generation idempotency unavailable; please retry',
+    });
+  }
+  if (claim.state === 'replay') return claim.result;
+  if (claim.state === 'in_progress') {
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'this training run is already being submitted',
+    });
+  }
+  const genClaimKey = claim.key;
+
+  // Everything before a reservation. Any refusal releases the claim.
+  let runBuzz: number;
+  let step: Record<string, unknown>;
+  let token: string;
+  let ecosystem: string;
+  try {
+    const quote = await claimTrainingQuote(quoteId);
+    if (!quote) {
+      throw new TRPCError({
+        code: 'NOT_FOUND',
+        message: 'training quote not found, expired or already used — estimate again',
+      });
+    }
+    // THE money gate for this kind, and the ONLY check of the quote's binding and
+    // confirmation — deliberately not repeated here, so `blockTrainingRunCeiling`
+    // is load-bearing rather than a shadowed second copy. 0 = refused.
+    const ceiling = blockTrainingRunCeiling(claims, quote, userId);
+    if (ceiling <= 0) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: 'this training run has not been confirmed by the viewer in this session',
+      });
+    }
+    if (quote.bodyHash !== hashTrainingBody(body)) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'the training body differs from the one that was quoted — estimate again',
+      });
+    }
+
+    const dataset = await loadEligibleBlockTrainingDataset(claims, userId, body.datasetId);
+    const { getTrainingServiceStatus } = await import('~/server/services/training.service');
+    const run = resolveBlockTrainingRun({
+      body,
+      dataset,
+      status: await getTrainingServiceStatus(),
+      features,
+      isModerator: !!user.isModerator,
+    });
+    await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
+    ecosystem = run.ecosystem;
+    // `name` is what the snapshot/publish extractors key on; NO `timeout` — the
+    // run is bounded by its confirmed price, never by an app-supplied number.
+    step = { ...run.step, name: BLOCK_STEP_NAME };
+    token = await getOrchestratorToken(userId, ctx);
+
+    const requote = await quoteBlockTrainingStep({ claims, step, token });
+    if (requote === null) {
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'the training price could not be confirmed — estimate again',
+      });
+    }
+    if (requote > quote.total) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `the training price changed from ${quote.total} to ${requote} Buzz since it was confirmed — estimate again`,
+      });
+    }
+    // The per-run cap half of the same ceiling: a confirmed quote above
+    // `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (the estimate never stores one, so this
+    // binds a record from anywhere else) still cannot be charged past it.
+    if (requote > ceiling) {
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: `insufficient buzz budget: training run ${requote} exceeds the per-run limit ${ceiling}`,
+      });
+    }
+    // A definite refusal before anything is reserved and before the run is submitted.
+    // The orchestrator's own funds refusal is definite only on its first attempt, so
+    // checking here keeps the common case definite. Fail-open on a balance-read error —
+    // the orchestrator still checks.
+    let spendable: number | null = null;
+    try {
+      spendable = await readBlockTrainingSpendableBuzz(claims, userId);
+    } catch {
+      spendable = null;
+    }
+    if (spendable !== null && spendable < requote) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Not enough Buzz for this training run.' });
+    }
+    runBuzz = requote;
+  } catch (e) {
+    await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+  const tags = buildBlockTrainingTags(claims);
+  const blockExternalId = composeTrainingBlockExternalId(runKey);
+
+  // ── (4) Reserve the re-quoted price against the per-user cumulative cap.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, runBuzz);
+  } catch (e) {
+    await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzReservation(reservation, runBuzz);
+    await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: runBuzz },
+        error:
+          claims.privateRun === true
+            ? `private run Buzz cap reached: this training run costs ${runBuzz}, ` +
+              `cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - runBuzz} already spent today ` +
+              `across your installed apps, this training run costs ${runBuzz}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  if (consentBudgetExceeded(reservation)) {
+    await refundBlockBuzzReservation(reservation, runBuzz);
+    await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: runBuzz },
+        error: consentBudgetRejection(
+          reservation.consent,
+          runBuzz,
+          `this training run costs ${runBuzz}`
+        ),
+      },
+    };
+  }
+
+  // Per-app aggregate (daily Buzz + velocity). `claims.dev` is refused above.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, runBuzz);
+    if (!appSpend.allowed) {
+      await refundBlockBuzzReservation(reservation, runBuzz);
+      await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: runBuzz },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: runBuzz };
+  }
+
+  // Dev-tunnel per-session backstop, as on every other arm.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        runBuzz,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzReservation(reservation, runBuzz);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: runBuzz },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this training run costs ${runBuzz}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: runBuzz };
+    }
+  }
+
+  // ── Submit.
+  const submittedAt = Date.now();
+  let submitted: Awaited<ReturnType<typeof submitWorkflow>>;
+  try {
+    try {
+      submitted = await submitWorkflow({
+        token,
+        body: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          steps: [step as any],
+          tags,
+          currencies,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          externalId: blockExternalId,
+        },
+      });
+    } catch (e) {
+      // DEFINITE only for a 4xx on the first attempt (see
+      // `isDefiniteOrchestratorSubmitRefusal`): refunded below. Anything else is
+      // AMBIGUOUS — an earlier attempt may have created and charged the run.
+      const definite = isDefiniteOrchestratorSubmitRefusal(e);
+      const failure = getOrchestratorSubmitFailure(e);
+      logToAxiom({
+        name: 'block-training-submit-failed',
+        type: definite ? 'warning' : 'error',
+        outcome: definite ? 'refused' : 'unconfirmed',
+        userId,
+        appBlockId: claims.appBlockId,
+        quoteId,
+        externalId: blockExternalId,
+        code: e instanceof TRPCError ? e.code : null,
+        attempt: failure?.attempt ?? null,
+        status: failure?.status ?? null,
+        error: e instanceof Error ? e.message : String(e),
+      }).catch(() => undefined);
+      if (definite) throw e;
+      // AMBIGUOUS: the reservations are NOT refunded. With no workflow id there is no
+      // settle record, so nothing reconciles them later — each stays counted until
+      // its own window key expires. The run generation is not advanced, so a retry of
+      // this body (after a fresh estimate) reuses the same orchestrator `externalId`.
+      await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: runBuzz },
+          error: BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE,
+        },
+        submissionUnconfirmed: true as const,
+      };
+    }
+    // The owner check the training form's own submit runs: a run the orchestrator
+    // attributed to someone else is torn down and refused — a definite outcome for
+    // this viewer, so it is refunded below like a refusal.
+    const { assertWorkflowOwner } = await import(
+      '~/server/services/orchestrator/assert-workflow-owner'
+    );
+    await assertWorkflowOwner(submitted, userId, token);
+  } catch (e) {
+    // A DEFINITE refusal (a first-attempt orchestrator 4xx, or an owner mismatch): no run is
+    // charged to this viewer, so every reservation is refunded.
+    await refundBlockBuzzReservation(reservation, runBuzz);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const snapshot = snapshotFromWorkflow(submitted);
+  const realizedTransactions = submitted.transactions;
+  const realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+  const realizedPriceIsCap = submitted.cost?.variable === true;
+
+  const genResult = { snapshot };
+  await finalizeGenIdempotency(genClaimKey, genResult);
+  // Only a DEFINITE submit advances the run; an ambiguous failure (the throw arm
+  // above) does not, so its retry keeps the same orchestrator id.
+  await bumpTrainingRunGeneration(body);
+
+  // ── Settle record + persistent output queue, as on the other post-paid arms.
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      consentBudgetKey: reservation.consent?.key ?? null,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      ceiling: runBuzz,
+      engine: TRAINING_ENGINE_LABEL,
+      recipe: TRAINING_RECIPE_LABEL,
+      submittedAt,
+    });
+    const realWorkflowId = snapshot.workflowId;
+    void (async () => {
+      const { upsertBlockWorkflowOnSubmit } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      await upsertBlockWorkflowOnSubmit({
+        workflowId: realWorkflowId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        userId,
+        status: snapshot.status,
+      });
+    })().catch(() => {
+      /* best-effort: a failed queue write never breaks (or slows) submit */
+    });
+  }
+
+  // ── Durable audit row, server-derived and fire-and-forget.
+  {
+    const invocationCost = snapshot.cost?.total ?? runBuzz;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        endpoint: 'workflow:submit',
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        detail: {
+          action: 'workflow.submit',
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          step: TRAINING_ENGINE_LABEL,
+          variant: ecosystem,
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+        },
+        dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  // 🔴 SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON
+  // THIS PATH, AND THAT EXCLUSION IS A DEFENSIVE GUARD RATHER THAN AN ACTIVE
+  // BEHAVIOUR CHANGE. Same reasoning as the pass-through arm. No author fee here
+  // (ledgered in `NO_FEE_PATHS`).
+  const spendWorkflowId = snapshot.workflowId;
+  if (
+    spendWorkflowId &&
+    spendWorkflowId !== 'failed' &&
+    spendWorkflowId !== 'whatif' &&
+    snapshot.status !== 'failed'
+  ) {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        snapshot.cost?.total ?? runBuzz
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
+        modelId: null,
+        sharedContentKey: null,
+        baseGenerationBuzz: realizedBaseCost,
+        generationPriceIsCap: realizedPriceIsCap,
+        // `training:<ecosystem>` — the `training` coarse key, whose author-fee
+        // override is zero.
+        generationType: resolveBlockGenerationType(body),
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
+  return genResult;
+}
+
 /**
  * Derive the PAYOUT-SAFE currency basis (buzzType + buzzAmount) for a block
  * spend-attribution row off the orchestrator's REALIZED per-account
@@ -11739,6 +13236,31 @@ function buildWorkflowTags(
     `app-block:block:${claims.blockId}`,
     `app-block:instance:${claims.blockInstanceId}`,
   ];
+}
+
+/**
+ * The pass-through arm's tags — the quote and the submit both build them here.
+ *
+ * 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
+ * arms pass a bounded server-side id there (a registry step id, a recipe id);
+ * `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
+ * verbatim into the same array as `app-block:<appId>` — the tag
+ * `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
+ * app-scoping boundary. The argument that it is safe anyway (an unknown
+ * `$type` fails the submit, so no workflow persists the forged tag) delegates
+ * the control to an orchestrator behaviour this repo does not own and has not
+ * measured. A constant needs no such argument. The per-`$type` dimension is
+ * kept on the audit row's `detail` JSON, which has no scoping meaning and no
+ * cardinality budget.
+ *
+ * A training `$type` ALSO gets `TRAINING_WORKFLOW_TAG` — a server constant chosen
+ * by a closed-set test, so still no app text — because that tag is what admits a
+ * workflow to `/models/train/from-orchestrator`, the publish wizard a block hands
+ * its viewer to. It also lists the run in the viewer's Training Studio.
+ */
+function buildPassThroughWorkflowTags(claims: BlockClaims, stepType: string): string[] {
+  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+  return isTrainingStepType(stepType) ? [...tags, TRAINING_WORKFLOW_TAG] : tags;
 }
 
 /**

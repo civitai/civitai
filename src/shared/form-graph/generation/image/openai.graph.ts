@@ -1,17 +1,15 @@
 import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SEED, aspectRatioDef, boolDef } from '../defs';
+import { optionFallback, img2imgImages, SEED, aspectRatioDef, boolDef } from '../defs';
 import { familyScope, modelIdOf, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * OpenAI (v1 / v1.5 / v2 / 2.5 flare + sunburst), ported from
- * `openai-graph.ts`. GPT-1 builds expose a transparency toggle; both variants
+ * OpenAI (v1 / v1.5 / v2 / 2.5 flare + sunburst). GPT-1 builds expose a
+ * transparency toggle; both variants
  * expose quality. Seed lives at the top level even though GPT-2 and 2.5 ignore
  * it (keeps the ctx union shape consistent). No negative prompt.
  */
-
-// ---- copied from openai-graph.ts, which dies with the data-graph engine -----
 
 export const openaiVersionIds = {
   v1: 1733399,
@@ -68,6 +66,7 @@ const QUALITY = {
   input: z.enum(qualityOptions).optional(),
   output: z.enum(qualityOptions),
   default: 'high' as OpenAIQuality,
+  correct: optionFallback(qualityOptions, 'high' as OpenAIQuality),
   meta: {
     options: qualityOptions.map((q) => ({
       label: q.charAt(0).toUpperCase() + q.slice(1),
@@ -75,8 +74,6 @@ const QUALITY = {
     })),
   },
 };
-
-// ---- end of openai-graph.ts copies ------------------------------------------
 
 type OpenAIModeExt = FamilyExt & { model?: unknown };
 
@@ -101,7 +98,7 @@ const gpt2 = defineGraph<OpenAIModeExt>()
   )
   .field('quality', QUALITY);
 
-/** Tagged: v1's `openaiVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `openaiVariant`. */
 const variants = branch('openaiVariant', variantOf, { gpt1, gpt2 });
 
 export const openai = defineGraph<FamilyExt>({ scope: familyScope })

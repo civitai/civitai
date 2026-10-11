@@ -209,6 +209,11 @@ module.exports = {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
+        // One tile of NamePlateText's 200%-wide gradient: 200% of (box - image) is -2x the box width.
+        'nameplate-sweep': {
+          '0%': { backgroundPosition: '0% 50%' },
+          '100%': { backgroundPosition: '200% 50%' },
+        },
         'buzz-glow': {
           '0%, 100%': { boxShadow: '0 0 4px 1px rgba(var(--buzz-color), 0.3)' },
           '50%': { boxShadow: '0 0 12px 4px rgba(var(--buzz-color), 0.7)' },
@@ -233,6 +238,7 @@ module.exports = {
         'border-chase': 'border-chase 3s linear infinite',
         'gradient-shift': 'gradient-shift 8s ease infinite',
         shimmer: 'shimmer 6s ease-in-out infinite',
+        'nameplate-sweep': 'nameplate-sweep 3s linear infinite',
         'buzz-glow': 'buzz-glow 2s ease-in-out infinite',
         'icon-glow': 'icon-glow 2s ease-in-out infinite',
       },

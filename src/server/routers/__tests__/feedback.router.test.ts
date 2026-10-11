@@ -3,7 +3,8 @@ import type * as MiddlewareTrpc from '~/server/middleware.trpc';
 import type * as FeedbackService from '~/server/services/feedback.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
+import { FEEDBACK_AREAS, FEEDBACK_RATE_LIMIT } from '~/shared/constants/feedback.constants';
+import { GENERIC_FEEDBACK_APP_BLOCK_REFUSAL } from '~/server/schema/feedback.schema';
 
 /**
  * `feedback.create` — the extended context must survive the ROUTER, and the
@@ -161,6 +162,58 @@ describe('feedback.create — extended context reaches the service', () => {
 
     expect(createFeedbackMock).toHaveBeenCalledTimes(1);
     expect(createFeedbackMock.mock.calls[0][0].context).not.toHaveProperty('sessionId');
+  });
+});
+
+/**
+ * `app-block` is a declared area (moderators and the DB CHECK need the slug), but its rows must
+ * carry a server-resolved listing and are read by the app's OWNER, so only the dedicated
+ * app-feedback procedure may write them. The generic route refuses the slug DETERMINISTICALLY:
+ * the flag mock below says ON, so the only thing that can stop the submission is the guard.
+ *
+ * Matched on the guard's OWN message, not just `BAD_REQUEST`: any input-validation failure (an
+ * unknown slug, an over-long message) is also BAD_REQUEST, and would satisfy a code-only check
+ * while saying nothing about this guard. The unknown-slug case below is that control.
+ */
+describe('feedback — the generic route refuses the app-block area', () => {
+  const refusal = expect.objectContaining({
+    code: 'BAD_REQUEST',
+    message: expect.stringContaining(GENERIC_FEEDBACK_APP_BLOCK_REFUSAL),
+  });
+
+  it('create refuses app-block before the flag lookup and the service, with the flag ON', async () => {
+    await expect(
+      caller().create({ area: 'app-block', message: 'this app is broken' })
+    ).rejects.toEqual(refusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+    expect(createFeedbackMock).not.toHaveBeenCalled();
+  });
+
+  // The seam with `create`: a notice that says "enabled" for an area whose submit is refused is
+  // the disagreement `feedback.router.flag-context.test.ts` exists to prevent.
+  it('getArea refuses app-block too, so it can never report it enabled', async () => {
+    await expect(caller().getArea({ area: 'app-block' })).rejects.toEqual(refusal);
+    expect(isFeedbackAreaEnabledMock).not.toHaveBeenCalled();
+  });
+
+  // Positive control: every OTHER declared area still goes through both procedures.
+  it.each(FEEDBACK_AREAS.filter((a) => a !== 'app-block'))(
+    'still accepts %s on create and getArea',
+    async (area) => {
+      await expect(caller().getArea({ area })).resolves.toEqual({ enabled: true });
+      await caller().create({ area, message: 'something looked wrong' });
+      expect(createFeedbackMock).toHaveBeenCalledTimes(1);
+      expect(createFeedbackMock.mock.calls[0][0].area).toBe(area);
+    }
+  );
+
+  // Control for the matcher: an undeclared slug is ALSO a BAD_REQUEST, but not this guard's.
+  it('an undeclared slug fails for a different reason (not the app-block message)', async () => {
+    const err = await caller()
+      .create({ area: 'models-feed' as never, message: 'x' })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'BAD_REQUEST' });
+    expect((err as Error).message).not.toContain(GENERIC_FEEDBACK_APP_BLOCK_REFUSAL);
   });
 });
 

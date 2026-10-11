@@ -161,13 +161,17 @@ The fully-substituted text also lives in `step.input.imageMetadata` (the EXIF-em
 
 ### Snippets node target registration
 
-The graph-state `snippets.targets` map is populated by the text editors themselves, not declared up front by the ecosystem subgraph. `snippetsGraph` ships with `targets: {}`; each `createTextEditorGraph(...)` call (the factory behind `promptGraph`, `negativePromptGraph`, and any future text editor) adds a small effect that, whenever the `snippets` node is reachable in the active subgraph, writes its own `name` into `snippets.targets[name] = []`.
+The graph-state `snippets.targets` map is baked per graph rather than converged on: `makeTextBlock`
+(`src/shared/form-graph/generation/shared.ts`) knows which text editors a graph mounts, and
+`withTargets` writes an empty slice for each on BOTH the `default` and the parse path. The editor set
+is static per graph, so there is no evaluation-order dependence. Pinned by
+`src/shared/form-graph/generation/__tests__/snippets-targets.test.ts`.
 
 Consequences:
 
-- An ecosystem subgraph that wants snippet support merges `snippetsGraph` once (no target list). Adding or removing a text editor changes which targets appear in `snippets.targets` automatically.
-- Workflows whose discriminator branches contain different text editors (e.g. flux2-klein's `negativePrompt` only in the base mode, or wan-image's `negativePrompt` only on v2.7) get an accurate per-branch target list — the registration effect fires for editors that are active in the current branch and stays silent for ones that aren't.
-- Subgraphs that don't merge `snippetsGraph` (image upscale, background-removal, video interpolation) have no `snippets` in ctx; the registration effect short-circuits and is a no-op.
+- A graph opts in with `makeTextBlock({ snippets: true })`; which editors register is derived from the same options (`negativePromptIsEditor`, `negativePromptRegistersTarget`).
+- Per-branch accuracy is a property of the family graph, not of an effect — zimage Base is the one editor that deliberately does NOT register, and `snippets-targets.test.ts` pins that.
+- Graphs built with `makeTextBlock({ snippets: false })` (hi-dream-o1) and the standalone workflows (image upscale, background-removal, video interpolation) have no `snippets` key at all.
 
 The persisted `workflow.metadata.params.snippets.targets` (above) is a different map: it's the orchestrator's parsed-refs snapshot for THIS submission, with empty entries stripped. Graph state's `targets` = "editors that accept snippets right now"; persisted `targets` = "editors that had refs to substitute in this submission."
 
@@ -191,7 +195,7 @@ This creates a normalization rule: anywhere a `Wildcards`-type ModelVersion show
 
 **Client-side routing.** When a wildcard enters the form (via the "Add wildcard set" button, the wildcard model detail page's "Generate" click, or a preset / remix that carries a `wildcardSetId`-stamped resource), the form reads the `wildcardSetId` field and appends it to `snippets.wildcardSetIds`. The wildcard never lives in the `resources` graph node.
 
-**Edge case — active subgraph doesn't support snippets.** Some workflows (`vid2vid:upscale`, `img2img:remove-background`, video interpolation) don't merge `snippetsGraph` and have no `snippets` node in ctx. A preset loaded into such a workflow with wildcards present **silently drops** the wildcard entries (matching how ecosystem-incompatible resources already vanish today). A soft warning surfaces in the UI so the user understands their wildcards aren't active.
+**Edge case — active subgraph doesn't support snippets.** Some workflows (`vid2vid:upscale`, `img2img:remove-background`, video interpolation) carry no `snippets` field. A preset loaded into such a workflow with wildcards present **silently drops** the wildcard entries (matching how ecosystem-incompatible resources already vanish today). A soft warning surfaces in the UI so the user understands their wildcards aren't active.
 
 **Preset save shape.** Presets serialize wildcards as `wildcardSetIds: number[]` on `GenerationPreset.values`, NOT as Wildcards entries inside `resources`. The routing layer above is only for legacy data and external paths — anything saved through the form's own preset flow already has the canonical shape.
 

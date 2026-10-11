@@ -29,6 +29,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * all, and four cover `publishGenerationOutputs`, whose two guards already existed there and had
  * no behavioural test anywhere. Counting any of the ten as proof of this change would be wrong.
  * Re-run both halves if the base moves again — the numbers are pinned to that sha, not to "main".
+ *
+ * LATER ADDITION — the publish session binding (`blocks.publishGenerationOutputs — bound to the
+ * signed-in session`). Measured against `6594d3f8e7`'s router: 4 failed / 30 passed; with the
+ * binding: 34 passed. The four refusal cases there are its regression coverage; the success case
+ * is an INVARIANT GUARD. The four older publish cases now pass the viewer's session.
  */
 
 const {
@@ -48,6 +53,7 @@ const {
   mockUpdateBlockWorkflowStatus,
   mockBlockWorkflowOwnedByAppUser,
   mockSettleCustomComfySpend,
+  mockPersistBlockWorkflowOutputImage,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -65,6 +71,7 @@ const {
   mockUpdateBlockWorkflowStatus: vi.fn(async () => undefined),
   mockBlockWorkflowOwnedByAppUser: vi.fn(async () => true),
   mockSettleCustomComfySpend: vi.fn(async () => undefined),
+  mockPersistBlockWorkflowOutputImage: vi.fn(),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -90,6 +97,12 @@ vi.mock('~/server/services/blocks/custom-comfy-settle.service', async (importOri
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, settleCustomComfySpend: mockSettleCustomComfySpend };
 });
+// The publish write itself (fetch + re-upload + Image row). Mocked so the session-binding
+// cases can observe whether a publish happened at all.
+vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
+  persistBlockWorkflowOutputImage: (...a: unknown[]) =>
+    mockPersistBlockWorkflowOutputImage(...(a as [])),
+}));
 vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: vi.fn(async () => undefined),
 }));
@@ -196,11 +209,18 @@ function validClaims(over: Record<string, unknown> = {}) {
   };
 }
 
-function fakeCtx() {
+/**
+ * The signed-in session the request arrived with. Defaults to NONE: the poll and cancel
+ * procedures are reached without one, and every case written before the publish session
+ * binding ran that way. A case that needs a session names it.
+ */
+type Session = { id: number } | null;
+
+function fakeCtx(user: Session = null, apiKeyId: number | null = null) {
   return {
     acceptableOrigin: true,
-    user: undefined,
-    apiKeyId: null,
+    user: user ?? undefined,
+    apiKeyId,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
     res: { setHeader: () => undefined } as never,
@@ -210,7 +230,10 @@ function fakeCtx() {
   };
 }
 
-const caller = () => blocksRouter.createCaller(fakeCtx() as never);
+const caller = (user: Session = null, apiKeyId: number | null = null) =>
+  blocksRouter.createCaller(fakeCtx(user, apiKeyId) as never);
+/** `publishGenerationOutputs` requires the viewer's own session; the token names VIEWER. */
+const viewerSession = { id: VIEWER };
 
 beforeEach(() => {
   for (const fn of [
@@ -228,6 +251,7 @@ beforeEach(() => {
     mockUpdateBlockWorkflowStatus,
     mockBlockWorkflowOwnedByAppUser,
     mockSettleCustomComfySpend,
+    mockPersistBlockWorkflowOutputImage,
   ]) {
     fn.mockReset();
   }
@@ -681,7 +705,7 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     );
 
     await expect(
-      caller().publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+      caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
     ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
   });
 
@@ -696,7 +720,7 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     );
 
     await expect(
-      caller().publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+      caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
     ).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: 'workflow is not in this app subqueue',
@@ -734,7 +758,7 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     );
 
     await expect(
-      caller().publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+      caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
     ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'workflow is not tagged for this app' });
   });
 
@@ -756,7 +780,7 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     // null, so the negation passes vacuously — measured, by making the procedure return early
     // below the guard, which left the whole set green. Naming the exact failure the procedure must
     // reach INSTEAD pins that it got past the tag assertion AND no further than expected.
-    const err = await caller()
+    const err = await caller(viewerSession)
       .publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
       .then(
         () => null,
@@ -765,6 +789,112 @@ describe('blocks.publishGenerationOutputs — app scope', () => {
     expect(err?.message).toBe('workflow has no available outputs to publish');
     expect(mockGetWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({ path: { workflowId: OWN_ID } })
+    );
+  });
+});
+
+describe('blocks.publishGenerationOutputs — bound to the signed-in session', () => {
+  /** A finished workflow with two publishable outputs, so a call that gets through publishes. */
+  function publishableWorkflow() {
+    return workflowFixture({
+      status: 'succeeded',
+      cost: { total: 89 },
+      steps: [
+        {
+          $type: 'customComfy',
+          output: {
+            blobs: [
+              { url: 'https://blobs.example.test/a.png', available: true },
+              { url: 'https://blobs.example.test/b.png', available: true },
+            ],
+          },
+        },
+      ],
+    });
+  }
+
+  beforeEach(() => {
+    mockBlockWorkflowOwnedByAppUser.mockResolvedValue(true);
+    mockGetWorkflow.mockResolvedValue(publishableWorkflow());
+    let nextImageId = 901;
+    mockPersistBlockWorkflowOutputImage.mockImplementation(async () => ({
+      imageId: nextImageId++,
+    }));
+  });
+
+  /** Nothing below the refusal ran: no flag read, no rate bucket, no orchestrator call, no write. */
+  function expectNothingPublished() {
+    expect(mockCheckBlockPublishRateLimit).not.toHaveBeenCalled();
+    expect(mockBlockWorkflowOwnedByAppUser).not.toHaveBeenCalled();
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  }
+
+  it('REFUSES a valid block token with NO session, before any token work, and publishes nothing', async () => {
+    // `null` is the explicit "no session"; `caller()`'s default is also none, but the
+    // refusal cases say so rather than lean on a default.
+    await expect(
+      caller(null).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+    expectNothingPublished();
+  });
+
+  it('REFUSES when the session user is not the token subject, and publishes nothing', async () => {
+    // The token names VIEWER (42); the session is STRANGER (77).
+    await expect(
+      caller({ id: STRANGER }).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'this app session belongs to a different account; reload the page to continue',
+    });
+    // Refused before the flag read, not by a later gate.
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expectNothingPublished();
+  });
+
+  it('REFUSES the mismatch in the other direction too (token names someone else)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: `user:${STRANGER}` }));
+    mockParseSubjectUserId.mockImplementation((sub: string) =>
+      sub === `user:${STRANGER}` ? STRANGER : VIEWER
+    );
+
+    await expect(
+      caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'this app session belongs to a different account; reload the page to continue',
+    });
+    expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
+    expectNothingPublished();
+  });
+
+  it('REFUSES an API-key / OAuth-token request even for the same user, before any token work', async () => {
+    await expect(
+      caller(viewerSession, 99).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'This action cannot be performed via API key or OAuth token.',
+    });
+    expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+    expectNothingPublished();
+  });
+
+  it('PUBLISHES when the session user is the token subject', async () => {
+    // INVARIANT GUARD (passes at base too): the legitimate path must not become collateral.
+    const result = await caller(viewerSession).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+    });
+
+    expect(result).toEqual({ imageIds: [901, 902] });
+    expect(mockPersistBlockWorkflowOutputImage).toHaveBeenCalledTimes(2);
+    expect(mockPersistBlockWorkflowOutputImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageUrl: 'https://blobs.example.test/b.png',
+        userId: VIEWER,
+        appId: APP_ID,
+      })
     );
   });
 });

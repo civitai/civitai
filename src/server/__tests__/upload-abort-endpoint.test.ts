@@ -13,8 +13,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *
  * 409-vs-204 decision for abort: aborting an already-gone upload is IDEMPOTENT — the
  * desired end-state (the upload no longer exists) ALREADY holds, so it's a success,
- * not a conflict. We return 204 (the sole caller, s3-upload.store.ts, fire-and-forgets
- * abort and ignores the response, so 204 is safe and terminal). Transient/real-fault
+ * not a conflict. We return 204 (both callers — s3-upload.store.ts and useS3Upload.tsx —
+ * ignore the response entirely, so 204 is safe and terminal). Transient/real-fault
  * mapping matches complete (503 / 500).
  *
  * Fails before the fix (everything is a raw 500); passes after.
@@ -112,6 +112,11 @@ const s3Error = (props: Record<string, unknown>) =>
 
 beforeEach(() => {
   mockAbortMultipartUpload.mockReset();
+  // 🔴 Every `mock.calls.at(-1)` reader below is measuring the LAST log event, so a test whose
+  // own log never fired reads the preceding test's. Measured: with the success-path
+  // `logToAxiom` deleted from the handler, `passes the declarable value rescued through
+  // unchanged` stayed GREEN on the `rescued` left behind by the abort-error case above it.
+  vi.mocked(logToAxiom).mockClear();
 });
 
 describe('/api/upload/abort — error classification', () => {
@@ -411,5 +416,81 @@ describe('/api/upload/abort — client failure reason', () => {
 
     const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
     expect(logged.failure).toBeUndefined();
+  });
+});
+
+/**
+ * The client's account of what the relay fallback did — caller-supplied JSON on an
+ * unauthenticated-body route, so it is narrowed against a closed set before it becomes a log
+ * field.
+ */
+describe('/api/upload/abort — relay fallback outcome', () => {
+  const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  it('logs the outcome the client declared', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { relayOutcome: 'bad_body' } }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload-abort', relayOutcome: 'bad_body' })
+    );
+  });
+
+  it('logs it on the abort-error path too', async () => {
+    mockAbortMultipartUpload.mockRejectedValue(
+      s3Error({ name: 'InternalError', $metadata: { httpStatusCode: 500 } })
+    );
+    const res = makeRes();
+    await handler(makeReq({ body: { relayOutcome: 'rescued' } }), res);
+
+    expect(res.statusCode).toBe(503);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload-abort-error', relayOutcome: 'rescued' })
+    );
+  });
+
+  it.each([
+    ['rescued'],
+    ['not_attempted'],
+    ['transport_error'],
+    ['aborted'],
+    ['non_2xx'],
+    ['bad_body'],
+  ])('passes the declarable value %s through unchanged', async (value) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { relayOutcome: value } }), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe(value);
+  });
+
+  it.each([
+    ['an unrecognised string', 'definitely_not_an_outcome'],
+    // 🔴 A SERVER bucket declared BY A CLIENT. `unknown` is the row a rollout is graded on — a
+    // falling `unknown` reads as stale bundles clearing — so a client able to write it could
+    // make the rollout look finished.
+    ['the server-only bucket unknown', 'unknown'],
+    ['the server-only bucket other', 'other'],
+    ['an empty string', ''],
+    ['a number', 7],
+    ['an array', ['rescued']],
+    ['an object', { reason: 'rescued' }],
+    ['null', null],
+  ])('maps %s to other rather than minting a field value', async (_name, value) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { relayOutcome: value } }), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe('other');
+  });
+
+  it('reports an ABSENT outcome as unknown, so the field is never missing', async () => {
+    // 🔴 Always present, unlike `failure`: grouping aborts by this field needs one denominator,
+    // and an omitted key would split it across two shapes. `unknown` is also a real population
+    // here — a bundle predating the field, and the abort paths that never reach the relay.
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq(), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe('unknown');
   });
 });

@@ -255,7 +255,8 @@ export default function UserBuzzDashboard() {
                     </Button>
                   ) : (
                     isMember &&
-                    features.membershipsV2 && (
+                    features.membershipsV2 &&
+                    selectedAccountType !== 'blue' && (
                       <Text size="sm" c="dimmed">
                         Check out the{' '}
                         <Anchor

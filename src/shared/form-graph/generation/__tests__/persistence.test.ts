@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { StorageAdapter } from 'form-graph';
 import { generationHub } from '../hub.graph';
 import { familyScope } from '../shared';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
- * The persistence scope layout (v1's storage-adapter groups, as per-graph
+ * The persistence scope layout (per-graph
  * scopes): family fields bucket per ecosystem group, prompt/seed/controlNets
  * stay global, the ecosystem selection buckets per output type, images per
  * workflow, and turbo-variant families refine cfg/steps per model version.
@@ -66,6 +66,24 @@ describe('scope layout through the store', () => {
     const store = generationHub.createStore({ ext: CTX, storage });
     store.set({ ecosystem: 'Boogu', model: 3050010, cfgScale: 1.5 });
     expect(storage.last()['cfgScale@Boogu/3050010']).toBe(1.5);
+  });
+
+  it('draft keeps its own steps per ecosystem, leaving txt2img and the other SD ecosystem intact', () => {
+    const storage = captureAdapter();
+    const store = generationHub.createStore({ ext: CTX, storage });
+    const steps = () => (store.getSnapshot().state as { steps?: number }).steps;
+    store.set({ workflow: 'txt2img', ecosystem: 'SDXL', steps: 30 });
+    store.set({ workflow: 'txt2img:draft' });
+    store.set({ steps: 10 });
+    expect(storage.last()['steps@txt2img:draft/SDXL']).toBe(10);
+
+    store.set({ ecosystem: 'SD1' });
+    expect(steps()).toBeLessThanOrEqual(8);
+    store.set({ ecosystem: 'SDXL' });
+    expect(steps()).toBe(10);
+
+    store.set({ workflow: 'txt2img' });
+    expect(steps()).toBe(30);
   });
 
   it('images bucket per workflow', () => {

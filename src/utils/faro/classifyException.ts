@@ -19,7 +19,14 @@
  * worked example: it was built as a DROP and deliberately changed to a tag.
  *
  * This is PURE and unit-tested (`__tests__/classifyException.test.ts`) and is composed INTO the
- * Faro `beforeSend` pipeline AFTER `deepRedact` (redaction still runs on every beacon).
+ * Faro `beforeSend` pipeline BEFORE `deepRedact` — it sees the RAW payload, and the tag it returns
+ * is written onto the scrubbed clone afterwards. (`processBeacon` in
+ * `src/components/Faro/FaroProvider.tsx` calls `classifyException(item.payload)` and only then
+ * `scrubBeacon`, which is what runs `deepRedact`.) Redaction still runs on every beacon that
+ * ships. 🔴 This line said AFTER until 2026-10-05 and that was wrong in the direction that
+ * matters, because it is the claim deciding whether redaction can rewrite a literal a pattern
+ * matches: the answer is no, classification runs first. The note above
+ * `EXTENSION_OBJECT_PATH_RES` already said "pre-redact" and the two contradicted each other.
  *
  * 🔴 SAFETY — CONSERVATIVE ALLOWLIST. The DROP set is an explicit allowlist of KNOWN-benign
  * patterns. A pattern must match one of the enumerated shapes to be dropped; ANYTHING unmatched
@@ -280,10 +287,45 @@ const EXTENSION_OBJECT_PATH_RES = [
 // field carries no information and the match must be on the VALUE. Anchored at the start and left
 // open at the end: MetaMask appends varying detail, but a mid-message occurrence is not evidence.
 //
+// `Window message "chrome: call method" timed out.` is the same shape, named by its API rather
+// than its brand — Chrome's extension-messaging wording. Verified on `origin/main` across BOTH
+// the tracked tree and the installed dependency tree: three spellings of the phrase, 0 matches
+// each, against a positive control that does match — so nothing we ship emits it. Measured over
+// 96.3h (2026-10-01T18:20Z → 2026-10-05T18:40Z, non-bot): 1,727 of 76,470 `real` exceptions —
+// 2.26%, hourly share p50 1.33% and max 21.11% — uniformly `browser_name=Chrome`, and no sampled
+// beacon carried a stack frame. ⚠️ Read that last one carefully: it is partly a property of the
+// FILTER, not only of the population, because the sample was drawn from `error_category="real"`
+// and rule 5 has already removed every injected-only stack from that stream.
+//
+// WHY IT IS WORTH MATCHING: it was the dominant single contributor to the worst client
+// error-breadth reading in the window, and excluding it moves that metric's MAX by 36.9% while
+// moving its p99 by only 3.5%. So this buys alert stability, not ingest volume. (Breadth
+// thresholds and the alerting identity are deliberately not recorded here — public repo.)
+//
+// 🔴 ONE CHARACTER DIFFERS FROM THE SIBLING'S PREFIX — `*` here, `+` above — and the reason is
+// NARROWER than it looks, so do not restate it from memory. The measured shape (`type: 'Error'`,
+// value = the bare phrase) tags under EITHER spelling via the `value` arm, because the prefix
+// group is optional; `+` would NOT have lost the production population. What `*` additionally
+// covers is the message-only form `Error: <phrase>` carrying no separate `type`, which `+` cannot
+// match since it requires a letter before `Error`. And note what is NOT the reason: the `typed`
+// composite arm cannot decide the outcome for ANY pattern on this array, since an optional prefix
+// group already subsumes it — contrast `SCRIPT_ERROR_RE`, whose MANDATORY `Error:` prefix is
+// exactly why the `value`/`typed` pair exists at all. The MetaMask sibling stays at `+`: no such
+// form has been measured for it, and this file adds patterns from measurement, not symmetry.
+//
+// The straight double quotes are the measured spelling and are load-bearing — a smart-quote or
+// single-quote variant makes this pattern inert (failing SAFE, the beacon stays `real`, but
+// silently). `EXTENSION_OBJECT_PATH_RES` above writes `['"]` because two ENGINES quote that
+// clause differently; here only Chrome emits the sentence, so one spelling is matched until
+// another is measured.
+//
 // This is a KEEP+TAG, never a DROP — deliberately, and the asymmetry matters if a first-party
 // wallet connector ever ships. A mis-tag is recoverable (the beacon is still in Loki, queryable
 // by `context_error_category="extension"`); a mis-drop is not, because the beacon was never sent.
-const EXTENSION_MESSAGE_RES = [/^(?:[A-Za-z]+Error:\s*)?Failed to connect to MetaMask\b/i];
+const EXTENSION_MESSAGE_RES = [
+  /^(?:[A-Za-z]+Error:\s*)?Failed to connect to MetaMask\b/i,
+  /^(?:[A-Za-z]*Error:\s*)?Window message "chrome: call method" timed out\b/i,
+];
 
 function isExtensionInjectedError(value: string, typed: string): boolean {
   for (const re of EXTENSION_BARE_GLOBAL_RES) {

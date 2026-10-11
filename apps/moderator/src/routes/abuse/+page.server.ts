@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { PageServerLoad } from './$types';
 import { parseQuery } from '$lib/server/query';
+import { moderatorDbStatus } from '$lib/moderator-db-status';
 import { getAbuseDetectors, getAbuseRuns } from '$lib/server/abuse-detection.service';
 
 const querySchema = z.object({
@@ -26,18 +27,9 @@ export const load: PageServerLoad = async ({ url }) => {
     return { runs, detectors, detector, status: 'ok' as const };
   } catch (e) {
     console.error('[abuse-detection] load failed', e);
-    const code = (e as { code?: unknown }).code;
-    // `42P01` undefined_table — the DDL has never been applied here.
-    if (code === '42P01')
-      return { runs: [], detectors: [], detector, status: 'no-schema' as const };
-    // 🔴 `42501` insufficient_privilege, and it is here because the DDL's natural operator shortcut
-    // produces it. The app connects as role `internal_tools`; applying schema.sql as `postgres` —
-    // i.e. `kubectl exec … psql -U postgres` — creates postgres-owned tables with no grant to that
-    // role. Without this branch the page reports "could not reach the database" about a database it
-    // is connected to, which is the misdiagnosis these statuses exist to prevent.
-    if (code === '42501') return { runs: [], detectors: [], detector, status: 'no-grant' as const };
-    if (e instanceof Error && e.message.includes('DATABASE_URL'))
-      return { runs: [], detectors: [], detector, status: 'not-configured' as const };
-    return { runs: [], detectors: [], detector, status: 'unreachable' as const };
+    // `42P01` = the DDL has never been applied here; `42501` = it was applied as the wrong role (the
+    // natural `psql -U postgres` shortcut), which without its own state reads as "could not reach the
+    // database" about a database the app is connected to. See `moderatorDbStatus`.
+    return { runs: [], detectors: [], detector, status: moderatorDbStatus(e) };
   }
 };

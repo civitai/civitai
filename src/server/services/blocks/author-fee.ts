@@ -267,7 +267,12 @@ export const BLOCK_AUTHOR_FEE_DEFAULT_PARAMS: BlockAuthorFeeParams = {
  */
 export const BLOCK_AUTHOR_FEE_PLATFORM_CONFIG: BlockAuthorFeeConfig = {
   default: BLOCK_AUTHOR_FEE_DEFAULT_PARAMS,
-  byType: [['chat-completion', { flatBuzz: 0, pctOfBase: 0 }]],
+  byType: [
+    ['chat-completion', { flatBuzz: 0, pctOfBase: 0 }],
+    // `kind:'training'` → NO FEE: the viewer confirms one exact price, so a fee on
+    // top would exceed it.
+    ['training', { flatBuzz: 0, pctOfBase: 0 }],
+  ],
 };
 
 /** Params after the platform ceiling has been applied, in computable units. */

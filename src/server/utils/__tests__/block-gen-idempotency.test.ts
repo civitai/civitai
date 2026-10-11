@@ -42,6 +42,7 @@ import {
   ORCHESTRATOR_EXTERNAL_ID_REGEX,
   claimGenIdempotency,
   composeBlockExternalId,
+  composeTrainingBlockExternalId,
   finalizeGenIdempotency,
   mintServerBlockExternalId,
   releaseGenIdempotency,
@@ -185,9 +186,7 @@ describe('charset + externalId guards (audit 🟢)', () => {
     expect(ORCHESTRATOR_EXTERNAL_ID_REGEX.test(worst)).toBe(true);
     expect(worst.length).toBeLessThanOrEqual(ORCHESTRATOR_EXTERNAL_ID_MAX);
     // The other two synthetic shapes are strictly shorter, so they cannot beat it.
-    expect(composeBlockExternalId(`ephemeral-${'s'.repeat(40)}`, 'k'.repeat(64))).toHaveLength(
-      119
-    );
+    expect(composeBlockExternalId(`ephemeral-${'s'.repeat(40)}`, 'k'.repeat(64))).toHaveLength(119);
     expect(composeBlockExternalId(`pubreq_${'0'.repeat(26)}`, 'k'.repeat(64))).toHaveLength(102);
   });
 
@@ -261,5 +260,22 @@ describe('mintServerBlockExternalId (audit 🔴-1)', () => {
     expect(client.startsWith('blk')).toBe(true);
     const minted = new Set(Array.from({ length: 50 }, () => mintServerBlockExternalId()));
     expect(minted.has(client)).toBe(false);
+  });
+});
+
+describe('composeTrainingBlockExternalId', () => {
+  it('namespaces a run key under `blt`, disjoint from client and minted ids', () => {
+    const key = 'a'.repeat(64);
+    expect(composeTrainingBlockExternalId(key)).toBe(`blt${key}`);
+  });
+
+  it.each([
+    ['not hex', 'z'.repeat(64)],
+    ['too short', 'a'.repeat(63)],
+    ['too long', 'a'.repeat(65)],
+    ['prefixed', `-${'a'.repeat(64)}`],
+    ['upper-case', 'A'.repeat(64)],
+  ])('refuses a run key that is %s', (_l, key) => {
+    expect(() => composeTrainingBlockExternalId(key)).toThrow('sha256 hex digest');
   });
 });

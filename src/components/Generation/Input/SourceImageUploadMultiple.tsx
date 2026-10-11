@@ -21,9 +21,15 @@ import {
 } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile } from '~/utils/file-utils';
-import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
+import { SIGN_IN_TO_UPLOAD_MESSAGE, uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
+import {
+  ImagePrepError,
+  type ImagePrepStage,
+  imageToJpegBlob,
+  prepStage,
+  resizeImage,
+} from '~/shared/utils/canvas-utils';
 import { getImageDimensions } from '~/utils/image-utils';
 import { ExifParser } from '~/utils/metadata';
 import clsx from 'clsx';
@@ -34,6 +40,7 @@ import { IconFileSearch, IconPalette, IconPhoto, IconUpload, IconX } from '@tabl
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
+import { openSignInToUpload, useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
 import { ImageMetadataModal, type ImageMetadataApply } from './ImageMetadataModal';
 import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawing.types';
@@ -49,6 +56,18 @@ import {
   extractSourceMetadataFromUrl,
 } from '~/utils/metadata/extract-source-metadata';
 import { isDefined } from '~/utils/type-guards';
+import { reportApplicationError } from '~/utils/application-error';
+import {
+  boundedFileFields,
+  createPickUrls,
+  isPickSnapshot,
+  isReadFailure,
+  splitUnreadablePicks,
+} from '~/utils/unreadable-pick';
+import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
+import { isMediaHost } from '~/shared/utils/media-host';
+import { isCivitaiSiteUrl } from '~/utils/civitai-url';
+import { env } from '~/env/client';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -121,9 +140,17 @@ type ImageComplete = {
 
 type ImageCrop = { status: 'cropping'; url: string; id: string; slotIndex?: number };
 
+/** `queued`: picked, upload not started yet. `uploading`: in flight. */
+type UploadCard = {
+  status: 'queued' | 'uploading';
+  url: string;
+  id: string;
+  slotIndex?: number;
+};
+
 type ImagePreview =
   | ImageCrop
-  | { status: 'uploading'; url: string; id: string; slotIndex?: number }
+  | UploadCard
   | {
       status: 'error';
       url: string;
@@ -191,6 +218,119 @@ function MetadataAction({ url, apply }: { url: string; apply?: ImageMetadataAppl
 
 const iconSize = 18;
 const maxSizeFormatted = formatBytes(maxOrchestratorImageFileSize);
+
+const IMAGE_LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
+/** A local preparation step failed: the browser's own text ("failed to load image blob", …) is not shown. */
+const IMAGE_PREP_ERROR =
+  "Couldn't read this image on your device. Try a different file or a screenshot.";
+const IMAGE_PREP_TIMEOUT_ERROR =
+  "Couldn't process this image on your device. Try a smaller photo or a screenshot.";
+const IMAGE_NETWORK_TIMEOUT_ERROR =
+  "Couldn't load this image. Check your connection and try again.";
+/** Bound on each local step of preparing a source image (read, decode, encode, metadata). */
+export const IMAGE_PREP_STAGE_TIMEOUT_MS = 30_000;
+
+const REPORTED_ERROR_NAMES = [
+  'Error',
+  'TypeError',
+  'DOMException',
+  'NotReadableError',
+  'EncodingError',
+  'NotFoundError',
+  'SecurityError',
+  'AbortError',
+  'TimeoutError',
+  'InvalidStateError',
+];
+
+/** `snapshot`: an in-memory copy taken at the pick, rather than the device's own file. */
+type PickedFileInfo = { type: string; size: number; snapshot: boolean };
+/** Whether a url was already in the form value, or arrived as a new card. */
+type ImageOrigin = 'value' | 'card';
+
+const isRemoteUrl = (src: string | Blob | File) => typeof src === 'string' && /^https?:/i.test(src);
+
+// Order matters: orchestrator hosts also satisfy the image-cdn and site-host checks.
+function imageHostClass(url: string) {
+  if (isOrchestratorUrl(url)) return 'orchestrator';
+  if (isMediaHost(url, env.NEXT_PUBLIC_IMAGE_LOCATION)) return 'image-cdn';
+  if (isCivitaiSiteUrl(url)) return 'site-page';
+  return 'other';
+}
+
+/** The text for a failed preparation step. A remote image that timed out loading is a network problem. */
+function prepFailureText(error: ImagePrepError, src: string | Blob | File, otherwise: string) {
+  if (!error.timedOut) return otherwise;
+  return isRemoteUrl(src) && (error.stage === 'dims' || error.stage === 'read-blob')
+    ? IMAGE_NETWORK_TIMEOUT_ERROR
+    : IMAGE_PREP_TIMEOUT_ERROR;
+}
+
+function sourceKind(src: string | Blob | File) {
+  if (typeof src !== 'string') return src instanceof File ? 'picked-file' : 'blob';
+  if (src.startsWith('blob:')) return 'picked-file';
+  if (src.startsWith('data:')) return 'data-url';
+  return isRemoteUrl(src) ? 'url' : 'other';
+}
+
+const PICK_READ_STAGES: ImagePrepStage[] = ['dims', 'read-blob', 'decode', 'metadata'];
+
+/**
+ * A later stage could not read a picked file, the way a photo-picker File fails once it turns
+ * unreadable after the pick. The caller also checks the file is still the device's own: an
+ * in-memory copy cannot become unreadable, so its failure is the image itself (corrupt, undecodable).
+ */
+function isPickedFileReadFailure(error: unknown, src: string | Blob | File) {
+  return (
+    sourceKind(src) === 'picked-file' &&
+    error instanceof ImagePrepError &&
+    PICK_READ_STAGES.includes(error.stage) &&
+    isReadFailure(error.cause)
+  );
+}
+
+/**
+ * Reports a source image that could not be prepared on the device, with bounded fields only: the
+ * stage, where the image came from, a picked file's type (from a short list) and size bucket, the
+ * underlying error's name (from a short list), and for a url its origin and a host class from a
+ * fixed list. Never a url, file name or error text.
+ */
+function reportImagePrepFailure(
+  error: ImagePrepError,
+  src: string | Blob | File,
+  file?: PickedFileInfo,
+  origin?: ImageOrigin
+) {
+  const source = sourceKind(src);
+  const info = typeof src !== 'string' ? src : file;
+  const { type, size } = info ? boundedFileFields(info) : { type: undefined, size: undefined };
+  const cause = error.cause;
+  const causeName = cause instanceof Error || cause instanceof DOMException ? cause.name : 'Error';
+  const errorName = REPORTED_ERROR_NAMES.includes(causeName) ? causeName : 'other';
+  const urlFields =
+    source === 'url' && typeof src === 'string'
+      ? [origin && `origin:${origin}`, `host:${imageHostClass(src)}`]
+      : [];
+  void reportApplicationError(
+    new Error(`source image prep failed: ${error.stage}${error.timedOut ? ':timeout' : ''}`),
+    {
+      name: 'source-image-prep',
+      message: [
+        source,
+        type,
+        size,
+        error.timedOut ? undefined : errorName,
+        ...urlFields,
+        // Whether the Files fallback was offered for it (Android only).
+        error.stage === 'pick-unreadable' ? `android:${isAndroidDevice()}` : undefined,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      resolveStack: false,
+    }
+  );
+}
+
 export function SourceImageUploadMultiple({
   value: rawValue,
   onChange,
@@ -219,9 +359,26 @@ export function SourceImageUploadMultiple({
   const isSingleMode = max === 1 && !children && !isSlotsMode;
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const { signedOut, requireSignIn } = useSignInToUpload();
+  // Set when an image arrived without a user gesture (a data: url in the value) while signed out.
+  const [signInRequired, setSignInRequired] = useState(false);
+  // Set when picked files could not be read; a slot pick keeps their slots, in pick order, for the
+  // Files fallback.
+  const [unreadablePick, setUnreadablePick] = useState<{
+    count: number;
+    slotIndices?: number[];
+  } | null>(null);
+  // Picks whose files are being probed for readability, before anything is queued for them.
+  const [picksProbing, setPicksProbing] = useState(0);
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
   const isCroppingRef = useRef(false);
-  const verifiedDimsRef = useRef(new Set<string>());
+  // Counts crop sessions that ended, so the crop/upload effect can start a card queued while the
+  // modal was open, even when the session ended without changing anything else it re-runs on.
+  const [cropsEnded, setCropsEnded] = useState(0);
+  const endCropping = () => {
+    isCroppingRef.current = false;
+    setCropsEnded((n) => n + 1);
+  };
   // Track which ids/urls this component has marked as uploading/verifying in the
   // global store, so we can force-clear them on unmount. Otherwise a workflow
   // switch that unmounts mid-flight (e.g., img2vid → txt2vid while a slot upload
@@ -229,9 +386,32 @@ export function SourceImageUploadMultiple({
   // stuck in its loading state.
   const trackedUploadingIdsRef = useRef(new Set<string>());
   const trackedVerifyingUrlsRef = useRef(new Set<string>());
+  // Type and size of picked files by preview url, for the load-failure report only.
+  const pickedFilesRef = useRef(new Map<string, PickedFileInfo>());
+  const reportedLoadFailuresRef = useRef(new Set<string>());
+  // Urls whose dimensions could not be read. They no longer hold back the crop/upload effect, which
+  // otherwise waits on every url in play and would never start any other card.
+  const [unreadableUrls, setUnreadableUrls] = useState<ReadonlySet<string>>(new Set());
   // Always-current value ref for use in async callbacks to avoid stale closures
   const valueRef = useRef(value);
   valueRef.current = value;
+  const uploadsRef = useRef(uploads);
+  uploadsRef.current = uploads;
+  // Blob urls of picked files. Each is revoked once no card or slot shows it and no read of it is in
+  // flight, so the in-memory copy taken at the pick is freed rather than kept for the page's life.
+  const [pickUrls] = useState(createPickUrls);
+  useEffect(() => {
+    pickUrls.releaseAllBut(
+      new Set([...uploads.map((x) => x.url), ...(value ?? []).map((x) => x?.url)])
+    );
+  }, [uploads, value, pickUrls]);
+  useEffect(() => () => pickUrls.releaseAllBut(new Set()), [pickUrls]);
+
+  /** A picked file still backed by the device, so a failed read of it may be the picker's doing. */
+  function isDeviceBacked(src: string | Blob | File) {
+    if (src instanceof File) return !isPickSnapshot(src);
+    return typeof src === 'string' && pickedFilesRef.current.get(src)?.snapshot === false;
+  }
 
   useEffect(() => {
     const uploadingIds = trackedUploadingIdsRef.current;
@@ -353,15 +533,49 @@ export function SourceImageUploadMultiple({
     [cropToFirstImage, aspectRatios]
   );
 
-  // Collect pending upload URLs for the crop/upload effect (exclude slot uploads —
+  // Queued and in-flight cards for the crop/upload effect (exclude slot uploads —
   // those are managed by handleSlotUpload's own flow)
-  const pendingUploadUrls = useMemo(
+  const pendingUploads = useMemo(
     () =>
-      uploads
-        .filter((u) => u.status === 'uploading' && u.slotIndex === undefined)
-        .map((u) => u.url),
+      uploads.filter(
+        (u): u is UploadCard =>
+          (u.status === 'queued' || u.status === 'uploading') && u.slotIndex === undefined
+      ),
     [uploads]
   );
+  const pendingUploadUrls = useMemo(() => pendingUploads.map((u) => u.url), [pendingUploads]);
+  const queuedCardIds = pendingUploads
+    .filter((u) => u.status === 'queued')
+    .map((u) => u.id)
+    .join(',');
+  // Only while cards wait: a crop session ending with none queued must not re-run the effect, or a
+  // cancelled re-crop of the value's own images would reopen the modal straight away.
+  const cropEndedWithQueued = queuedCardIds ? cropsEnded : 0;
+
+  // Holds the generator from the pick until the image is in the value, under one key per mount that
+  // no upload id can take. The per-upload marker set inside uploadOrchestratorImage starts after an
+  // await and ends before the value write, and each gap reads as "nothing pending" (the cost box
+  // flickers to its idle state). It starts at the pick itself: while a pick's files are probed for
+  // readability (card or slot) nothing is in `uploads` yet, so `picksProbing` covers that window,
+  // and the probe's end and the first `uploads` write land in one render. Otherwise derived from
+  // card `uploads`, so every way a card stops being pending — in the value, errored, removed, crop
+  // cancelled, unreadable — releases it; unmount clears it below.
+  const cardsPendingKey = useMemo(() => `cards:${getRandomId()}`, []);
+  const cardsPending =
+    picksProbing > 0 ||
+    uploads.some(
+      (u) =>
+        u.slotIndex === undefined &&
+        (u.status === 'queued' ||
+          u.status === 'uploading' ||
+          u.status === 'cropping' ||
+          (u.status === 'complete' && !value?.some((v) => v.url === u.url)))
+    );
+  useEffect(() => {
+    setImageUploading(cardsPendingKey, cardsPending);
+    if (cardsPending) trackedUploadingIdsRef.current.add(cardsPendingKey);
+    else trackedUploadingIdsRef.current.delete(cardsPendingKey);
+  }, [cardsPending, cardsPendingKey]);
 
   // All image URLs currently in play (value + pending uploads)
   const allImageUrls = useMemo(
@@ -375,7 +589,7 @@ export function SourceImageUploadMultiple({
       allImageUrls.length > 0 &&
       allImageUrls.every((url) => {
         const meta = state.metadataByUrl[url];
-        return meta?.width && meta?.height;
+        return (meta?.width && meta?.height) || unreadableUrls.has(url);
       })
   );
 
@@ -389,27 +603,28 @@ export function SourceImageUploadMultiple({
     if (!allDimsResolved) return;
 
     // Build dimensioned image list for crop check
-    const allImages = allImageUrls.map((url) => {
+    const allImages = allImageUrls.flatMap((url) => {
       const fromValue = value?.find((v) => v.url === url);
-      if (fromValue?.width && fromValue?.height) return fromValue;
+      if (fromValue?.width && fromValue?.height) return [fromValue];
       const meta = sourceMetadataStore.getMetadata(url);
-      return { url, width: meta!.width!, height: meta!.height! };
+      // An unreadable url has no dimensions to check against.
+      return meta?.width && meta?.height ? [{ url, width: meta.width, height: meta.height }] : [];
     });
 
     if (!getShouldCrop(allImages)) {
-      // No crop needed — upload any pending images
-      if (pendingUploadUrls.length) {
-        for (const url of pendingUploadUrls) handleUpload(url);
-      }
+      // No crop needed — start the queued cards. In-flight ones are already started.
+      for (const card of pendingUploads) if (card.status === 'queued') handleUpload(card);
     } else {
       // Crop needed — open crop modal with all dimensioned images
       const withAspectRatio = allImages.map((img) => ({
         ...img,
         aspectRatio: img.width / img.height,
       }));
-      openCropModal(withAspectRatio, pendingUploadUrls);
+      openCropModal(withAspectRatio, pendingUploads);
     }
-  }, [allDimsResolved, allImageUrls.length, getShouldCrop]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Keyed on the queued cards too: a card queued for a url already in play (a data: url swapped
+    // out of the value for its upload) changes neither the url count nor dimension readiness.
+  }, [allDimsResolved, allImageUrls.length, getShouldCrop, queuedCardIds, cropEndedWithQueued]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function removeItem(index: number) {
     const item = previewItems[index];
@@ -475,17 +690,21 @@ export function SourceImageUploadMultiple({
   useEffect(() => {
     // Collect all image URLs from value + pending uploads
     const valueUrls = value?.map((v) => v.url) ?? [];
-    const uploadUrls = uploads.filter((u) => u.status === 'uploading').map((u) => u.url);
+    const uploadUrls = uploads
+      .filter((u) => u.status === 'queued' || u.status === 'uploading')
+      .map((u) => u.url);
     const allUrls = [...valueUrls, ...uploadUrls];
 
+    // Read any url without cached dimensions, unless a read of it is already in flight. Keyed on
+    // the cache rather than on "read once": an entry the store evicts must be read again, or the
+    // crop/upload effect waits on it forever and no new card starts.
     const unresolved = allUrls.filter((url) => {
-      if (verifiedDimsRef.current.has(url)) return false;
+      if (trackedVerifyingUrlsRef.current.has(url)) return false;
       const cached = sourceMetadataStore.getMetadata(url);
       return !cached?.width || !cached?.height;
     });
 
     if (!unresolved.length) return;
-    for (const url of unresolved) verifiedDimsRef.current.add(url);
 
     // Track verifying state so FormFooter can show loading
     for (const url of unresolved) {
@@ -494,25 +713,72 @@ export function SourceImageUploadMultiple({
     }
 
     const snapshot = value;
+    const failures = new Map<string, ImagePrepError>();
     Promise.all(
-      unresolved.map((url) =>
-        getImageDimensions(url, { loadRetries: 2 })
+      unresolved.map((url) => {
+        const read = getImageDimensions(url, { loadRetries: 2 });
+        pickUrls.hold(url, read);
+        return prepStage('dims', () => read, IMAGE_PREP_STAGE_TIMEOUT_MS)
           .then(({ width, height }) => ({ url, width, height }))
-          .catch(() => {
-            // A failed load must stay retryable, or the dimensions it was meant to
-            // correct are submitted as-is for the life of this mount.
-            verifiedDimsRef.current.delete(url);
+          .catch((e: ImagePrepError) => {
+            // Nothing is cached for a failed load, so it is retried on the next change; otherwise
+            // the dimensions it was meant to correct are submitted as-is for the life of this mount.
+            failures.set(url, e);
             return null;
           })
           .finally(() => {
             setImageVerifying(url, false);
             trackedVerifyingUrlsRef.current.delete(url);
-          })
-      )
+          });
+      })
     ).then((results) => {
       const verified = results.filter(
         (r): r is { url: string; width: number; height: number } => r !== null
       );
+
+      // A url the browser cannot read never gets dimensions, so its queued cards would never
+      // start: end them on an error the user can act on. The url stays retryable (above).
+      const unreadable = new Set(failures.keys());
+      for (const [url, error] of failures) {
+        // Once per url: a url already in the value is retried on every change.
+        if (reportedLoadFailuresRef.current.has(url)) continue;
+        reportedLoadFailuresRef.current.add(url);
+        const origin = snapshot?.some((v) => v.url === url) ? 'value' : 'card';
+        reportImagePrepFailure(error, url, pickedFilesRef.current.get(url), origin);
+      }
+      if (unreadable.size) {
+        const pickReadFailures = new Set(
+          [...failures]
+            .filter(([url, e]) => isPickedFileReadFailure(e, url) && isDeviceBacked(url))
+            .map(([url]) => url)
+        );
+        addUnreadablePicks(
+          uploadsRef.current.filter(
+            (x) => x.status === 'queued' && x.slotIndex === undefined && pickReadFailures.has(x.url)
+          ).length
+        );
+        // Only when a queued card is affected: a new array re-runs this effect, which retries the
+        // url, which would fail again, without end, for an unreadable image already in the value.
+        setUploads((items) => {
+          let changed = false;
+          const next = items.flatMap((x): ImagePreview[] => {
+            if (x.status !== 'queued' || x.slotIndex !== undefined) return [x];
+            const error = failures.get(x.url);
+            if (!error) return [x];
+            changed = true;
+            if (pickReadFailures.has(x.url)) return [];
+            const message = prepFailureText(error, x.url, IMAGE_LOAD_ERROR);
+            return [{ status: 'error', url: x.url, src: x.url, error: message, id: x.id }];
+          });
+          return changed ? next : items;
+        });
+      }
+      setUnreadableUrls((prev) => {
+        const next = new Set(prev);
+        for (const url of unreadable) next.add(url);
+        for (const { url } of verified) next.delete(url);
+        return next.size === prev.size && [...next].every((u) => prev.has(u)) ? prev : next;
+      });
 
       // Cache verified dims in the store
       for (const { url, width, height } of verified) {
@@ -568,7 +834,10 @@ export function SourceImageUploadMultiple({
     // Remove data: URLs from value and feed them through the upload pipeline
     const remaining = value.filter((v) => !v.url.startsWith('data:'));
     onChange?.(remaining.length > 0 ? remaining : null);
-    handleChange(dataUrlItems.map((v) => v.url));
+    handleChange(
+      dataUrlItems.map((v) => v.url),
+      { userStarted: false }
+    );
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // TODO - better error messaging
@@ -576,62 +845,89 @@ export function SourceImageUploadMultiple({
   const imagesMissingMetadataCount = previewImages.filter((x) => missingAiMetadata[x.url]).length;
   const _error = initialError ?? error;
 
-  async function handleUpload(src: string | Blob | File, originUrl?: string) {
-    const previewUrl = originUrl ?? (typeof src !== 'string' ? URL.createObjectURL(src) : src);
-    const id = getRandomId();
-    setUploads((items) => {
-      const copy = [...items];
-      const index = copy.findIndex((x) => x.url === previewUrl);
-      if (index > -1) copy[index].status = 'uploading';
-      else copy.push({ status: 'uploading', url: previewUrl, id });
-      return copy;
+  // Starts a queued card. Every update finds the card by id: two cards can share a url.
+  async function handleUpload({ id, url }: UploadCard) {
+    // Both updates return the same array when the card is not in the expected state (removed, or
+    // already moved on), so they never hand the effects keyed on `uploads` a change that isn't one.
+    setUploads((items) =>
+      items.some((x) => x.id === id && x.status === 'queued')
+        ? items.map((x) =>
+            x.id === id && x.status === 'queued' ? { ...x, status: 'uploading' as const } : x
+          )
+        : items
+    );
+    // uploadOrchestratorImage marks `id` itself; tracked so an unmount mid-upload clears it too.
+    trackedUploadingIdsRef.current.add(id);
+    const upload = uploadOrchestratorImage(url, id, undefined, {
+      file: pickedFilesRef.current.get(url),
+      origin: 'card',
     });
-
-    try {
-      const response = await uploadOrchestratorImage(src, id);
-      setUploads((items) => {
-        const index = items.findIndex((x) => x.status === 'uploading' && x.url === previewUrl);
-        if (index > -1) {
-          if (response.blockedReason || !response.available || !response.url)
-            items[index] = {
-              status: 'error',
-              url: previewUrl,
-              src,
-              error: response.blockedReason ?? 'Unexpected image upload error',
-              id,
-            };
-          else
-            items[index] = {
-              status: 'complete',
-              url: response.url,
-              width: response.width,
-              height: response.height,
-              id,
-            };
-        }
-        return [...items];
-      });
-    } catch (e) {
-      setError((e as Error).message);
+    pickUrls.hold(
+      url,
+      upload.then((r) => r.reads)
+    );
+    const response = await upload;
+    trackedUploadingIdsRef.current.delete(id);
+    if (response.pickReadFailure && isDeviceBacked(url)) {
       setUploads((items) => items.filter((x) => x.id !== id));
+      addUnreadablePicks(1);
+      return;
     }
+    setUploads((items) => {
+      if (!items.some((x) => x.id === id && x.status === 'uploading')) return items;
+      return items.map((x): ImagePreview => {
+        if (x.id !== id || x.status !== 'uploading') return x;
+        if (response.blockedReason || !response.available || !response.url)
+          return {
+            status: 'error',
+            url,
+            src: url,
+            error: response.blockedReason ?? 'Unexpected image upload error',
+            id,
+          };
+        return {
+          status: 'complete',
+          url: response.url,
+          width: response.width,
+          height: response.height,
+          id,
+        };
+      });
+    });
   }
 
-  // Open crop modal with already-dimensioned images. pendingUrls are URLs that
-  // need orchestrator upload. Images should already be in value (eagerly set).
+  // Open crop modal with already-dimensioned images. pending are the cards that
+  // need orchestrator upload: non-slot picks, which are not in value until their
+  // upload lands. In slots mode it is empty (slot picks go through handleSlotUpload).
   function openCropModal(
     images: { url: string; width: number; height: number; aspectRatio: number }[],
-    pendingUrls: string[]
+    pending: UploadCard[]
   ) {
     isCroppingRef.current = true;
-    const pendingUrlSet = new Set(pendingUrls);
+    const pendingUrlSet = new Set(pending.map((u) => u.url));
+    // Cleared from the uploading markers when the crop modal confirms/cancels
+    const earlyUploadIds = pending.map((u) => u.id);
+    const isPendingCard = (x: ImagePreview) => !!x.id && earlyUploadIds.includes(x.id);
 
-    // Capture upload IDs for pending URLs so we can clear their uploading markers
-    // when the crop modal confirms/cancels (they were set early by handleSlotUpload)
-    const earlyUploadIds = uploads
-      .filter((u) => pendingUrlSet.has(u.url))
-      .map((u) => u.id)
-      .filter(isDefined);
+    function cancelCrop() {
+      // Clear early uploading markers
+      for (const id of earlyUploadIds) {
+        setImageUploading(id, false);
+        trackedUploadingIdsRef.current.delete(id);
+      }
+
+      // Remove pending upload indicators
+      setUploads((prev) => prev.filter((x) => !isPendingCard(x)));
+
+      // Remove the pending URLs from value
+      const latest = valueRef.current;
+      if (latest) {
+        const reverted = latest.filter((img) => !pendingUrlSet.has(img.url));
+        onChange?.(reverted.length > 0 ? reverted : null);
+      }
+
+      endCropping();
+    }
 
     dialogStore.trigger({
       id: 'image-crop-modal',
@@ -665,13 +961,17 @@ export function SourceImageUploadMultiple({
             }
           }
 
+          // A crop of an image already in the value can open without a pick, so this confirm can be
+          // the first upload a signed-out user starts.
+          if (toUpload.length && requireSignIn()) return cancelCrop();
+
           if (toUpload.length) {
             // Show cropping indicators, preserving any unrelated uploads.
             // Status 'cropping' (rather than 'uploading') so previewImages links
             // these entries to the matching value image by URL — this hides the
             // original image behind the loading card instead of rendering both.
             setUploads((prev) => [
-              ...prev.filter((x) => !pendingUrlSet.has(x.url)),
+              ...prev.filter((x) => !isPendingCard(x)),
               ...toUpload.map(({ id, index, originalUrl }) => ({
                 status: 'cropping' as const,
                 url: originalUrl,
@@ -690,26 +990,37 @@ export function SourceImageUploadMultiple({
             // original value image behind each linked cropping card as its entry
             // is removed before the batched value swap.
             const toUploadIds = new Set(toUpload.map((u) => u.id));
+            let failure: string | undefined;
+            let unreadablePicks = 0;
             const uploadResults = await Promise.all(
               toUpload.map(async ({ src, id, originalUrl }) => {
-                try {
-                  const response = await uploadOrchestratorImage(src, id, originalUrl);
-                  if (response.url && response.available) {
-                    return {
-                      originalUrl,
-                      result: {
-                        url: response.url,
-                        width: response.width,
-                        height: response.height,
-                      },
-                    };
-                  }
-                } catch {
-                  // fall through to null below
+                const origin = valueRef.current?.some((v) => v.url === originalUrl)
+                  ? 'value'
+                  : 'card';
+                const upload = uploadOrchestratorImage(src, id, originalUrl, { origin });
+                pickUrls.hold(
+                  originalUrl,
+                  upload.then((r) => r.reads)
+                );
+                const response = await upload;
+                if (response.url && response.available) {
+                  return {
+                    originalUrl,
+                    result: {
+                      url: response.url,
+                      width: response.width,
+                      height: response.height,
+                    },
+                  };
                 }
+                if (response.pickReadFailure && isDeviceBacked(src)) unreadablePicks++;
+                else failure ??= response.blockedReason ?? 'Unexpected image upload error';
                 return null;
               })
             );
+            // The cropping cards are cleared below, so a failure has to be reported here.
+            if (failure) setError(failure);
+            addUnreadablePicks(unreadablePicks);
 
             const successful = uploadResults.filter(isDefined);
             if (successful.length > 0) {
@@ -743,49 +1054,110 @@ export function SourceImageUploadMultiple({
             // emitted. Any entries that errored out are also removed here.
             setUploads((prev) => prev.filter((x) => !x.id || !toUploadIds.has(x.id)));
 
-            isCroppingRef.current = false;
+            endCropping();
           } else {
-            isCroppingRef.current = false;
+            // Nothing to upload: every image came back uncropped and is already an orchestrator
+            // url. Pending picks go into the value as they are (what the no-crop path does for the
+            // same url), and their cards are cleared rather than left queued with nothing to start
+            // them, which would hold the generator.
+            const latest = valueRef.current ?? [];
+            const ready = images
+              .filter((img) => pendingUrlSet.has(img.url) && !latest.some((v) => v.url === img.url))
+              .map(({ url, width, height }) => ({ url, width, height }));
+            if (ready.length) onChange?.([...latest, ...ready]);
+            setUploads((prev) => prev.filter((x) => !isPendingCard(x)));
+            endCropping();
           }
         },
-        onCancel: () => {
-          // Clear early uploading markers
-          for (const id of earlyUploadIds) {
-            setImageUploading(id, false);
-            trackedUploadingIdsRef.current.delete(id);
-          }
-
-          // Remove pending upload indicators
-          setUploads((prev) => prev.filter((x) => !pendingUrlSet.has(x.url)));
-
-          // Remove the pending URLs from value
-          const latest = valueRef.current;
-          if (latest) {
-            const reverted = latest.filter((img) => !pendingUrlSet.has(img.url));
-            onChange?.(reverted.length > 0 ? reverted : null);
-          }
-
-          isCroppingRef.current = false;
-        },
+        onCancel: cancelCrop,
         aspectRatios,
       },
     });
   }
 
-  // handle adding new urls or files — just show previews, effects handle the rest
-  function handleChange(items: (string | File)[]) {
+  // handle adding new urls or files — just show previews, effects handle the rest.
+  // `userStarted: false` is an image that arrived without a gesture (a data: url in the value).
+  function handleChange(items: (string | File)[], { userStarted = true } = {}) {
+    // Signed out, nothing is queued: no upload starts and no card holds the generator.
+    if (signedOut) {
+      if (userStarted) requireSignIn();
+      else setSignInRequired(true);
+      return;
+    }
+    const files = items.filter((src): src is File => typeof src !== 'string');
+    if (!files.length) return queueItems(items);
+    setPicksProbing((n) => n + 1);
+    return splitUnreadablePicks(files, { maxBytes: maxOrchestratorImageFileSize }).then(
+      ({ unreadable, replacements }) => {
+        setPicksProbing((n) => n - 1);
+        rejectUnreadablePicks(unreadable);
+        queueItems(
+          items.flatMap((src): (string | File)[] => {
+            if (typeof src === 'string') return [src];
+            const replacement = replacements.get(src);
+            return replacement ? [replacement] : [];
+          })
+        );
+      }
+    );
+  }
+
+  /**
+   * Reports picked files the browser cannot read and shows the unreadable-pick alert for them (with
+   * the Files fallback on Android); a pick with none clears it.
+   */
+  function rejectUnreadablePicks(
+    unreadable: { file: File; error: DOMException }[],
+    slotIndices?: number[]
+  ) {
+    for (const { file, error } of unreadable)
+      reportImagePrepFailure(
+        new ImagePrepError('pick-unreadable', false, error.message, { cause: error }),
+        file
+      );
+    setUnreadablePick(unreadable.length ? { count: unreadable.length, slotIndices } : null);
+  }
+
+  /** Picks a later stage could not read: they get the unreadable-pick alert too. */
+  function addUnreadablePicks(count: number, slotIndices?: number[]) {
+    if (!count) return;
+    setUnreadablePick((prev) => ({
+      count: (prev?.count ?? 0) + count,
+      slotIndices: slotIndices ? [...(prev?.slotIndices ?? []), ...slotIndices] : prev?.slotIndices,
+    }));
+  }
+
+  function queueItems(items: (string | File)[]) {
+    if (!items.length) return;
+    // A new pick of a url whose read failed before is a new attempt: it is read again and goes
+    // through the crop check like any pick (not started as "unreadable"), and a failure is reported.
+    const urls = new Set(items.filter((src): src is string => typeof src === 'string'));
+    if (urls.size) {
+      for (const url of urls) reportedLoadFailuresRef.current.delete(url);
+      setUnreadableUrls((prev) =>
+        [...urls].some((url) => prev.has(url))
+          ? new Set([...prev].filter((url) => !urls.has(url)))
+          : prev
+      );
+    }
     setUploads((prev) => [
       ...prev,
-      ...items.map((src) => ({
-        status: 'uploading' as const,
-        url: typeof src !== 'string' ? URL.createObjectURL(src) : src,
-        id: getRandomId(),
-      })),
+      ...items.map((src) => {
+        const url = typeof src !== 'string' ? pickUrls.create(src) : src;
+        if (typeof src !== 'string')
+          pickedFilesRef.current.set(url, {
+            type: src.type,
+            size: src.size,
+            snapshot: isPickSnapshot(src),
+          });
+        return { status: 'queued' as const, url, id: getRandomId() };
+      }),
     ]);
   }
 
   // handle drawing upload for individual images
   async function handleDrawingUpload(index: number, drawingBlob: Blob, elements: DrawingElement[]) {
+    if (requireSignIn()) return;
     const response = await uploadOrchestratorImage(drawingBlob, getRandomId());
 
     if (response.url && response.available) {
@@ -800,9 +1172,10 @@ export function SourceImageUploadMultiple({
   // The crop modal (when applicable) operates on blob URLs in its own state
   // without touching value. Slot dropzone loading state is rendered from the
   // `uploads` list (matched by slotIndex), not from value.
-  async function handleSlotUpload(entries: { slotIndex: number; src: File | string }[]) {
+  async function handleSlotUpload(pickedEntries: { slotIndex: number; src: File | string }[]) {
+    if (requireSignIn()) return;
     // Validate file sizes
-    for (const { src } of entries) {
+    for (const { src } of pickedEntries) {
       if (src instanceof File && src.size > maxOrchestratorImageFileSize) {
         setError(`Images should not exceed ${maxSizeFormatted}`);
         return;
@@ -811,10 +1184,31 @@ export function SourceImageUploadMultiple({
 
     setError(null);
 
+    let entries = pickedEntries;
+    const files = entries.flatMap(({ src }) => (src instanceof File ? [src] : []));
+    if (files.length) {
+      // Counted as pending from here: the slot's own uploading marker is set only after the probe.
+      setPicksProbing((n) => n + 1);
+      const { unreadable, replacements } = await splitUnreadablePicks(files, {
+        maxBytes: maxOrchestratorImageFileSize,
+      });
+      setPicksProbing((n) => n - 1);
+      const unreadableSlots = entries
+        .filter(({ src }) => unreadable.some(({ file }) => file === src))
+        .map(({ slotIndex }) => slotIndex);
+      rejectUnreadablePicks(unreadable, unreadableSlots);
+      entries = entries.flatMap(({ slotIndex, src }): typeof entries => {
+        if (typeof src === 'string') return [{ slotIndex, src }];
+        const replacement = replacements.get(src);
+        return replacement ? [{ slotIndex, src: replacement }] : [];
+      });
+      if (!entries.length) return;
+    }
+
     const items = entries.map(({ slotIndex, src }) => ({
       slotIndex,
       src,
-      previewUrl: typeof src === 'string' ? src : URL.createObjectURL(src),
+      previewUrl: typeof src === 'string' ? src : pickUrls.create(src),
       uploadId: getRandomId(),
     }));
     const itemIds = new Set(items.map((x) => x.uploadId));
@@ -850,20 +1244,48 @@ export function SourceImageUploadMultiple({
     };
 
     try {
-      // Resolve dimensions (cache-first) so we can detect whether cropping is needed.
-      const dimensioned = await Promise.all(
+      // Resolve dimensions (cache-first) so we can detect whether cropping is needed. A picked file
+      // that can no longer be read is set aside for the Files fallback; the others carry on.
+      const settled = await Promise.allSettled(
         items.map(async (item) => {
           const cached = sourceMetadataStore.getMetadata(item.previewUrl);
-          const dims =
+          let dims =
             cached?.width && cached?.height
               ? { width: cached.width, height: cached.height }
-              : await getImageDimensions(item.previewUrl);
-          if (!cached?.width || !cached?.height) {
+              : undefined;
+          if (!dims) {
+            try {
+              const read = getImageDimensions(item.previewUrl);
+              pickUrls.hold(item.previewUrl, read);
+              dims = await prepStage('dims', () => read);
+            } catch (e) {
+              if (isPickedFileReadFailure(e, item.src) && isDeviceBacked(item.src))
+                return { unreadable: item };
+              throw e;
+            }
             sourceMetadataStore.setMetadata(item.previewUrl, dims);
           }
-          return { ...item, width: dims.width, height: dims.height };
+          return { dimensioned: { ...item, width: dims.width, height: dims.height } };
         })
       );
+      const measured = settled.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+      const unreadableItems = measured.flatMap((m) => (m.unreadable ? [m.unreadable] : []));
+      if (unreadableItems.length) {
+        const ids = new Set(unreadableItems.map((x) => x.uploadId));
+        setUploads((prev) => prev.filter((x) => !x.id || !ids.has(x.id)));
+        for (const { uploadId } of unreadableItems) {
+          setImageUploading(uploadId, false);
+          trackedUploadingIdsRef.current.delete(uploadId);
+        }
+        addUnreadablePicks(
+          unreadableItems.length,
+          unreadableItems.map((x) => x.slotIndex)
+        );
+      }
+      const failed = settled.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (failed) throw failed.reason;
+      const dimensioned = measured.flatMap((m) => (m.dimensioned ? [m.dimensioned] : []));
+      if (!dimensioned.length) return;
 
       // If cropping is required, open the crop modal and await the user's
       // crops as a promise. The crop modal operates entirely on blob URLs in
@@ -898,7 +1320,7 @@ export function SourceImageUploadMultiple({
             },
           });
         });
-        isCroppingRef.current = false;
+        endCropping();
 
         if (!cropResult) {
           // Cancelled — clear upload indicators and tracking, leave value alone.
@@ -918,38 +1340,41 @@ export function SourceImageUploadMultiple({
       // Upload all in parallel and collect successful results with their slot.
       const uploadResults = await Promise.all(
         toUpload.map(async ({ slotIndex, src, uploadId }) => {
-          try {
-            const response = await uploadOrchestratorImage(src, uploadId);
-            if (response.blockedReason || !response.available || !response.url) {
-              const previewUrl = items.find((x) => x.uploadId === uploadId)?.previewUrl ?? '';
-              setUploads((prev) =>
-                prev.map((item) =>
-                  item.id === uploadId
-                    ? {
-                        status: 'error' as const,
-                        url: previewUrl,
-                        src,
-                        error: response.blockedReason ?? 'Upload failed',
-                        id: uploadId,
-                        slotIndex,
-                      }
-                    : item
-                )
-              );
-              return null;
-            }
-            return {
-              slotIndex,
-              uploadId,
-              result: {
-                url: response.url,
-                width: response.width,
-                height: response.height,
-              },
-            };
-          } catch {
+          const response = await uploadOrchestratorImage(src, uploadId, undefined, {
+            origin: 'card',
+          });
+          if (response.pickReadFailure && isDeviceBacked(src)) {
+            setUploads((prev) => prev.filter((item) => item.id !== uploadId));
+            addUnreadablePicks(1, [slotIndex]);
             return null;
           }
+          if (response.blockedReason || !response.available || !response.url) {
+            const previewUrl = items.find((x) => x.uploadId === uploadId)?.previewUrl ?? '';
+            setUploads((prev) =>
+              prev.map((item) =>
+                item.id === uploadId
+                  ? {
+                      status: 'error' as const,
+                      url: previewUrl,
+                      src,
+                      error: response.blockedReason ?? 'Upload failed',
+                      id: uploadId,
+                      slotIndex,
+                    }
+                  : item
+              )
+            );
+            return null;
+          }
+          return {
+            slotIndex,
+            uploadId,
+            result: {
+              url: response.url,
+              width: response.width,
+              height: response.height,
+            },
+          };
         })
       );
 
@@ -973,7 +1398,8 @@ export function SourceImageUploadMultiple({
       setUploads((prev) => prev.filter((x) => !x.id || !successfulIds.has(x.id)));
       cleanupTracking();
     } catch (e) {
-      setError((e as Error).message);
+      // The browser's own text for an image it could not read is not shown.
+      setError(e instanceof ImagePrepError ? IMAGE_PREP_ERROR : (e as Error).message);
       setUploads((prev) => prev.filter((x) => !x.id || !itemIds.has(x.id)));
       cleanupTracking();
     }
@@ -999,13 +1425,30 @@ export function SourceImageUploadMultiple({
     setUploads((items) => items.filter((x) => x.slotIndex !== slotIndex));
   }
 
+  // Files picked through the fallback go to the slots, in order, or the card list the unreadable pick
+  // was meant for. The alert has already refused a selection with a file of the wrong type or size,
+  // so the alert is cleared only for a selection that is taken.
+  function handleUnreadableFallback(files: File[]) {
+    const target = unreadablePick;
+    setUnreadablePick(null);
+    setError(null);
+    const slotIndices = target?.slotIndices;
+    if (slotIndices?.length)
+      return handleSlotUpload(
+        files.slice(0, slotIndices.length).map((src, i) => ({ slotIndex: slotIndices[i], src }))
+      );
+    const remaining = Math.max(0, max - previewItems.length);
+    return handleChange(files.slice(0, remaining));
+  }
+
   // Single mode render - VideoInput-style layout
   const renderSingleMode = () => {
     const firstImage = previewItems.find((item) => item.status === 'complete') as
       | ImageComplete
       | undefined;
     const isUploading = previewItems.some(
-      (item) => item.status === 'uploading' || item.status === 'cropping'
+      (item) =>
+        item.status === 'queued' || item.status === 'uploading' || item.status === 'cropping'
     );
 
     if (firstImage) {
@@ -1243,6 +1686,31 @@ export function SourceImageUploadMultiple({
     return <div className="flex gap-2">{slots.map((slot, index) => renderSlot(slot, index))}</div>;
   };
 
+  const unreadablePickAlert = unreadablePick && (
+    <UnreadablePickAlert
+      accept={IMAGE_MIME_TYPE}
+      count={unreadablePick.count}
+      maxSize={maxOrchestratorImageFileSize}
+      multiple={
+        unreadablePick.slotIndices?.length ? unreadablePick.slotIndices.length > 1 : max > 1
+      }
+      disabled={disabled}
+      onFiles={handleUnreadableFallback}
+    />
+  );
+
+  // Only while still signed out: a session that resolves signed-in in place drops the message.
+  const signInAlert = signInRequired && signedOut && (
+    <Alert color="blue">
+      <div className="flex items-center justify-between gap-2">
+        <Text size="sm">{SIGN_IN_TO_UPLOAD_MESSAGE}</Text>
+        <Button size="compact-sm" onClick={openSignInToUpload}>
+          Sign in
+        </Button>
+      </div>
+    </Alert>
+  );
+
   return (
     <Provider
       value={{
@@ -1255,7 +1723,7 @@ export function SourceImageUploadMultiple({
         aspect,
         cropToFirstImage,
         aspectRatios,
-        onChange: handleChange,
+        onChange: (items) => handleChange(items),
         enableDrawing,
         handleDrawingUpload,
         annotations,
@@ -1271,6 +1739,8 @@ export function SourceImageUploadMultiple({
         <div className="flex w-full flex-col gap-2" id={id}>
           {renderSlotsMode()}
           {_error && <Alert color="red">{_error}</Alert>}
+          {unreadablePickAlert}
+          {signInAlert}
           {imagesMissingMetadataCount > 0 && (
             <Alert color="yellow" title="We couldn't detect valid metadata in one or more images.">
               Outputs based on these images must be PG, PG-13, or they will be blocked and you will
@@ -1282,6 +1752,8 @@ export function SourceImageUploadMultiple({
         <div className="flex w-full flex-col gap-2" id={id}>
           {renderSingleMode()}
           {_error && <Alert color="red">{_error}</Alert>}
+          {unreadablePickAlert}
+          {signInAlert}
           {imagesMissingMetadataCount > 0 && (
             <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
               Outputs based on this image must be PG, PG-13, or they will be blocked and you will
@@ -1294,6 +1766,8 @@ export function SourceImageUploadMultiple({
           {children?.(previewItems)}
 
           {_error && <Alert color="red">{_error}</Alert>}
+          {unreadablePickAlert}
+          {signInAlert}
           {imagesMissingMetadataCount > 0 && (
             <Alert
               color="yellow"
@@ -1670,9 +2144,9 @@ SourceImageUploadMultiple.Image = function ImagePreview({
             aspect === 'square' ? 'aspect-square' : 'aspect-video'
           )}
         >
-          {(previewItem.status === 'uploading' || previewItem.status === 'cropping') && (
-            <Loader size="sm" />
-          )}
+          {(previewItem.status === 'queued' ||
+            previewItem.status === 'uploading' ||
+            previewItem.status === 'cropping') && <Loader size="sm" />}
           {previewItem.status === 'complete' && (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1740,22 +2214,34 @@ export async function uploadOrchestratorImage(
    * Where to read generation metadata from, when that isn't `src` itself — the
    * crop flow uploads a re-encoded Blob and only the pre-crop url still has EXIF.
    */
-  metadataSource?: string | File
+  metadataSource?: string | File,
+  /** For the failure report only: the picked file behind a `blob:` src, and where a url came from. */
+  report: { file?: PickedFileInfo; origin?: ImageOrigin } = {}
 ) {
-  const originalSize = await getImageDimensions(src);
-
-  // If already an orchestrator URL, return it directly
-  if (typeof src === 'string' && isOrchestratorUrl(src)) {
-    return {
-      url: src,
-      ...originalSize,
-      available: true,
-      type: 'image',
-      id: '',
-    };
-  }
-
+  let originalSize = { width: 0, height: 0 };
+  const timeoutMs = IMAGE_PREP_STAGE_TIMEOUT_MS;
+  // Reads of the source that can outlast the returned promise; `reads` on the result settles once
+  // they have, so a caller can release a blob: url only when nothing is reading it.
+  let sourceMetadata: ReturnType<typeof extractSourceMetadata> | undefined;
+  const reads = () => Promise.resolve(sourceMetadata).then(() => undefined);
   try {
+    // Inside the try: callers render a failed upload from `blockedReason`, and a throw here
+    // would leave their card loading forever.
+    originalSize = await prepStage('dims', () => getImageDimensions(src), timeoutMs);
+
+    // If already an orchestrator URL, return it directly
+    if (typeof src === 'string' && isOrchestratorUrl(src)) {
+      return {
+        url: src,
+        ...originalSize,
+        available: true,
+        pickReadFailure: false,
+        reads: reads(),
+        type: 'image',
+        id: '',
+      };
+    }
+
     setImageUploading(id, true);
 
     // Read the source's generation metadata before the resize + JPEG re-encode
@@ -1763,7 +2249,7 @@ export async function uploadOrchestratorImage(
     // back and the image-metadata modal comes up empty for local files.
     const metadataSrc =
       metadataSource ?? (typeof src === 'string' || src instanceof File ? src : undefined);
-    const sourceMetadata = metadataSrc
+    sourceMetadata = metadataSrc
       ? extractSourceMetadata(metadataSrc).catch(() => undefined)
       : undefined;
 
@@ -1773,11 +2259,16 @@ export async function uploadOrchestratorImage(
       maxWidth: maxUpscaleSize,
       minWidth: minUploadSize,
       minHeight: minUploadSize,
+      stageTimeoutMs: timeoutMs,
     });
-    const jpegBlob = await imageToJpegBlob(resized);
+    const jpegBlob = await imageToJpegBlob(resized, { stageTimeoutMs: timeoutMs });
 
     // Get dimensions after resizing
-    const resizedSize = await getImageDimensions(jpegBlob);
+    const resizedSize = await prepStage(
+      'dims-after-encode',
+      () => getImageDimensions(jpegBlob),
+      timeoutMs
+    );
 
     // Upload using presigned URL
     const blob = await uploadConsumerBlob(jpegBlob);
@@ -1805,23 +2296,39 @@ export async function uploadOrchestratorImage(
         : undefined;
     if (provenanceFrom && uploadedUrl) remixProvenanceStore.transfer(provenanceFrom, uploadedUrl);
 
+    // Cached before the url reaches the value, so the dimension check does not download it again.
+    if (uploadedUrl) sourceMetadataStore.setMetadata(uploadedUrl, resizedSize);
+
     if (sourceMetadata && uploadedUrl) {
-      sourceMetadata.then((metadata) => {
+      void sourceMetadata.then((metadata) => {
         if (metadata)
           sourceMetadataStore.setMetadata(uploadedUrl, { ...metadata, exifExtracted: true });
       });
     }
 
-    return { ...blob, ...resizedSize };
+    return { ...blob, ...resizedSize, pickReadFailure: false, reads: reads() };
   } catch (e) {
     setImageUploading(id, false);
     const error = e as Error;
+    // Local preparation failures only: the upload itself reports its own (consumer-blob-upload),
+    // and a size requirement is a validation message, not a failure.
+    if (error instanceof ImagePrepError)
+      reportImagePrepFailure(error, src, report.file, report.origin);
 
     return {
-      url: typeof src === 'string' ? src : URL.createObjectURL(src),
+      // No url is made for a Blob src: every caller shows its own preview of a failed upload, and
+      // a url made here would hold the Blob (an in-memory copy of a pick, say) for the page's life.
+      url: typeof src === 'string' ? src : '',
       ...originalSize,
       available: false,
-      blockedReason: error.message,
+      pickReadFailure: isPickedFileReadFailure(error, src),
+      reads: reads(),
+      // A local preparation failure shows fixed text; the upload's own failures and size
+      // validation keep their messages.
+      blockedReason:
+        error instanceof ImagePrepError
+          ? prepFailureText(error, src, IMAGE_PREP_ERROR)
+          : error.message,
     };
   }
 }

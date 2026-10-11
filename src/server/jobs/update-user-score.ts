@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { chunk } from 'lodash-es';
+import { chunk, partition } from 'lodash-es';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -8,6 +8,27 @@ import { templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
+import {
+  buildCreatorScoreUnlocks,
+  compiledCreatorScoreUnlockInputs,
+  getCreatorScoreUnlocks,
+} from '~/server/services/creator-score-unlocks.service';
+import type {
+  ScoreTierCrossing,
+  ScoreTotalTransition,
+} from '~/server/services/creator-milestone-grant.service';
+import {
+  grantScoreTierMilestones,
+  markMilestonesSeen,
+  notifyScoreTierCrossings,
+} from '~/server/services/creator-milestone-grant.service';
+import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
+import { alertNewLegends } from '~/server/services/creator-legend-alert.service';
+import {
+  CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
+  creatorJourneyAudience,
+} from '~/server/services/creator-journey-flag.service';
 import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
@@ -36,6 +57,8 @@ export const updateUserScore = createJob(
       scoreMultipliers: await getScoreMultipliers(),
       lastUpdate: legacyLastUpdate,
       toUpdate: {},
+      tierUnlocks: [],
+      tierGrantErrors: [],
       setScore: (id, category, score) => {
         if (!ctx.toUpdate[id]) ctx.toUpdate[id] = {};
         ctx.toUpdate[id][category] = Number(score);
@@ -49,20 +72,11 @@ export const updateUserScore = createJob(
     // and advance — one broken category can't freeze all six (as images did nightly
     // from 2026-06-22). Failures are collected and re-thrown after the good work is
     // committed, so the run still surfaces as failed for alerting.
-    const scoreFetchers = {
-      models: getModelScore,
-      articles: getArticleScore,
-      users: getUserScore,
-      reportsActioned: getReportedActionedScore,
-      reportsAgainst: getReportAgainstScore,
-      images: getImageScore,
-    } as const;
-
     const advanceCheckpoint: Array<() => Promise<void>> = [];
     const failures: Array<{ category: string; error: unknown }> = [];
     for (const [category, fetcher] of Object.entries(scoreFetchers)) {
       const [lastUpdate, setLastUpdate] = await getJobDate(
-        `${jobKey}:${category}`,
+        checkpointKey(category),
         legacyLastUpdate
       );
       ctx.lastUpdate = lastUpdate;
@@ -76,6 +90,13 @@ export const updateUserScore = createJob(
       }
     }
 
+    try {
+      ctx.tierUnlocks = await getCreatorScoreUnlocks();
+    } catch (e) {
+      failures.push({ category: 'tierUnlocks', error: e });
+      ctx.tierUnlocks = buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs);
+    }
+
     // Update score totals
     //-------------------------------------
     const totalTasks = await getUpdateTotalTasks(ctx);
@@ -87,6 +108,11 @@ export const updateUserScore = createJob(
     // for the five absolute categories, but a double-count for the incremental
     // `images` category (see getImageScore). Accepted; force-backfill reconciles.
     for (const setLastUpdate of advanceCheckpoint) await setLastUpdate();
+
+    await settleTierGrants(ctx.tierGrantErrors, failures, async () => {
+      const [, setTierGrantsCheckpoint] = await getJobDate(checkpointKey(TIER_GRANTS_CHECKPOINT));
+      await setTierGrantsCheckpoint();
+    });
 
     // Re-throw so the run still surfaces as failed. Each category's original stack
     // is embedded into the thrown error's own stack: the job runner logs
@@ -122,7 +148,29 @@ type Context = {
   toUpdate: Record<number, Partial<Record<ScoreCategory, number>>>;
   setScore: (id: number, category: ScoreCategory, score: number) => void;
   lastUpdate: Date;
+  tierUnlocks: CreatorScoreUnlock[];
+  tierGrantErrors: unknown[];
 };
+
+const scoreFetchers = {
+  models: getModelScore,
+  articles: getArticleScore,
+  users: getUserScore,
+  reportsActioned: getReportedActionedScore,
+  reportsAgainst: getReportAgainstScore,
+  images: getImageScore,
+} as const;
+
+const TIER_GRANTS_CHECKPOINT = 'tierGrants';
+const checkpointKey = (name: string) => `${jobKey}:${name}`;
+
+/**
+ * One per category, advanced only by a run in which that category scored cleanly, plus one advanced
+ * only by a run in which every tier grant succeeded.
+ */
+export const userScoreCheckpointKeys = [...Object.keys(scoreFetchers), TIER_GRANTS_CHECKPOINT].map(
+  checkpointKey
+);
 
 async function getModelScore(ctx: Context) {
   await getScores(ctx, 'models')`
@@ -312,32 +360,86 @@ async function getReportAgainstScore(ctx: Context) {
 }
 
 async function getUpdateTotalTasks(ctx: Context) {
-  const tasks = chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map((records) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    await applyUserScoreUpdates(ctx.pg, records, (cancel) => ctx.jobContext.on('cancel', cancel));
-    userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
-  });
+  return chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map(
+    (records) => () => persistScoreBatch(ctx, records)
+  );
+}
 
-  return tasks;
+export async function settleTierGrants(
+  tierGrantErrors: unknown[],
+  failures: { category: string; error: unknown }[],
+  advanceCheckpoint: () => Promise<void>
+) {
+  if (tierGrantErrors.length) failures.push({ category: 'tierGrants', error: tierGrantErrors[0] });
+  else await advanceCheckpoint();
+}
+
+export async function persistScoreBatch(
+  ctx: Pick<Context, 'pg' | 'jobContext' | 'tierUnlocks' | 'tierGrantErrors'>,
+  records: [string, Partial<Record<ScoreCategory, number>>][],
+  { grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG, now = new Date() } = {}
+) {
+  ctx.jobContext.checkIfCanceled();
+  const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
+  const transitions = await applyUserScoreUpdates(ctx.pg, records, onCancel);
+  userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
+
+  // Scores are already committed, so a failed grant must not fail the batch. The next run that
+  // touches these users grants silently, and the backfill endpoint reconciles everyone else.
+  let crossings: ScoreTierCrossing[];
+  let audience: Set<number>;
+  try {
+    audience = await creatorJourneyAudience(
+      ctx.pg,
+      transitions.map((t) => t.userId)
+    );
+    const grantable = grantsRequireFlag
+      ? transitions.filter((t) => audience.has(t.userId))
+      : transitions;
+    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel);
+  } catch (e) {
+    log('tier grant failed for batch', e);
+    ctx.tierGrantErrors.push(e);
+    return;
+  }
+  const audienceCrossings = crossings.filter((crossing) => audience.has(crossing.userId));
+  const [announced, silenced] = partition(audienceCrossings, (crossing) =>
+    isMilestoneAnnounced(crossing.milestoneKey, now)
+  );
+  try {
+    await markMilestonesSeen(ctx.pg, silenced, onCancel);
+  } catch (e) {
+    log('marking silent tier grants seen failed for batch', e);
+    ctx.tierGrantErrors.push(e);
+  }
+  // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
+  await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
+  // Staff hear about every Legend crossing, including one whose user-facing announcement is silenced.
+  await alertNewLegends(audienceCrossings).catch((e) => log('new-legend alert failed', e));
 }
 
 // Persist per-category scores and recompute `total` for a batch of users in one
 // statement. `records` are `[userId, { category: score }]` entries; each total is
 // the sum of the six categories, taking the freshly-supplied value when present
 // and otherwise the user's previously-stored value. Shared by the cron job and
-// the `testing/user-score` debug endpoint.
+// the image-score backfill. Returns each user's total before and after; `prev` is a self-join, so it
+// reads the pre-update row.
 export async function applyUserScoreUpdates(
   pg: AugmentedPool,
   records: [string, Partial<Record<ScoreCategory, number>>][],
   onCancel?: (cancel: () => Promise<void>) => void
-) {
-  if (!records.length) return;
+): Promise<ScoreTotalTransition[]> {
+  if (!records.length) return [];
 
   const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
-  const updateQuery = await pg.cancellableQuery(`
+  const updateQuery = await pg.cancellableQuery<{
+    userId: number;
+    oldTotal: string | null;
+    newTotal: string;
+  }>(`
     WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
     UPDATE "User" u
-      SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores}', COALESCE(meta->'scores', '{}') || s.scores || jsonb_build_object('total',
+      SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || s.scores || jsonb_build_object('total',
           COALESCE((s.scores->>'models')::numeric, (u.meta->'scores'->>'models')::numeric, 0)
           + COALESCE((s.scores->>'articles')::numeric, (u.meta->'scores'->>'articles')::numeric, 0)
           + COALESCE((s.scores->>'images')::numeric, (u.meta->'scores'->>'images')::numeric, 0)
@@ -347,10 +449,20 @@ export async function applyUserScoreUpdates(
         )
       )
     FROM scores s
-    WHERE s.id = u.id;
+    JOIN "User" prev ON prev.id = s.id
+    WHERE s.id = u.id
+    RETURNING
+      u.id AS "userId",
+      (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
+      (u.meta->'scores'->>'total')::numeric AS "newTotal";
   `);
   onCancel?.(updateQuery.cancel);
-  await updateQuery.result();
+  const rows = await updateQuery.result();
+  return rows.map((row) => ({
+    userId: row.userId,
+    oldTotal: row.oldTotal == null ? null : Number(row.oldTotal),
+    newTotal: Number(row.newTotal),
+  }));
 }
 
 // #region [helpers]

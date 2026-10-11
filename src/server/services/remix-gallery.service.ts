@@ -14,6 +14,7 @@ import {
 } from '~/server/services/free-placement.service';
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -637,6 +638,7 @@ export async function actOnRemixGallerySubmission({
 
     if (!count)
       throw throwBadRequestError('remix gallery: that entry was already removed elsewhere');
+    void onPlacementsTakenDown([placementId]);
 
     return { settled: true, removed: true };
   }

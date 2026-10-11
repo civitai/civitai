@@ -65,9 +65,9 @@ export async function resolveTotalScore(
   return getTotalScore(userId);
 }
 
-// Moderator-only testing override (this app only), mirroring TEST_MODELS_SCORE_COOKIE. Scheduled sales
-// are gated on the AGGREGATE score at every tier, so without this the below-floor state — the one a
-// paying member below 10,000 actually sees — cannot be reached from the sidebar simulator at all.
+// Moderator-only testing override (this app only), mirroring TEST_MODELS_SCORE_COOKIE. Without it the
+// below-floor sale state — the one a paying member below 10,000 actually sees — cannot be reached from
+// the sidebar simulator at all.
 export const TEST_CREATOR_SCORE_COOKIE = 'cs-test-creator-score';
 
 export async function resolveCreatorScore(

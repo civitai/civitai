@@ -661,14 +661,18 @@ describe('image-scan-result webhook - pipeline tests', () => {
             sql.params.at(-1) === imageId
         );
       if (!update) return undefined;
-      const param = (column: string) => {
-        const match = update.text.match(new RegExp(`"${column}" = \\$(\\d+)`));
+      const param = (column: string, valueAt = '\\$(\\d+)') => {
+        const match = update.text.match(new RegExp(`"${column}" = ${valueAt}`));
         return match ? update.params[Number(match[1]) - 1] : undefined;
       };
       return {
         ingestion: param('ingestion'),
         nsfwLevel: param('nsfwLevel'),
-        needsReview: param('needsReview'),
+        // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
+        needsReview: param(
+          'needsReview',
+          `CASE WHEN "needsReview" = 'csam' THEN 'csam'\\s+ELSE \\$(\\d+) END`
+        ),
         minor: param('minor'),
         pHash: param('pHash'),
       };

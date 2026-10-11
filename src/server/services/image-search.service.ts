@@ -1,17 +1,26 @@
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { INT4_MAX } from '~/server/schema/base.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
-import { imageMetaCache } from '~/server/redis/caches';
+import {
+  getAllImages,
+  getImagesFromFeedSearch,
+  getImagesFromFeedServiceForRest,
+} from '~/server/services/image.service';
+import { parseFeedCursor } from '~/server/common/feed-cursor';
+import { imageMetaCache, thumbnailCache } from '~/server/redis/caches';
+import type { PublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
+import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   NsfwLevelDeprecated,
 } from '~/shared/constants/browsingLevel.constants';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
  * Shared image-search + response-shaping body extracted verbatim from
@@ -49,6 +58,17 @@ export type RunImageSearchInput = {
   withMeta: boolean;
   flatMeta?: boolean;
   withTags: boolean;
+  /**
+   * Serve `data.postId`'s images in the uploader's order instead of by `sort`. Only the DB path
+   * keeps that order; feed search ranks the whole post first, so re-sorting a page of it is not
+   * the same thing.
+   */
+  postOrder?: boolean;
+  /**
+   * Let the feed service answer feed-search requests behind its flag, and accept the `feed:`
+   * cursors it hands out. Only the public endpoint opts in.
+   */
+  feedService?: boolean;
   /** The remaining `...data` fields off the parsed schema (postId/modelId/username/etc). */
   data: Record<string, unknown>;
 };
@@ -78,6 +98,8 @@ export type ShapedImage = {
   browsingLevel: number;
   createdAt: unknown;
   postId: unknown;
+  /** A JPEG still and its dimensions; null unless `type` is video. */
+  thumbnail: PublicVideoThumbnail | null;
   stats: {
     cryCount: number;
     laughCount: number;
@@ -93,6 +115,21 @@ export type ShapedImage = {
   tags?: Array<{ id: number; name: string }>;
 };
 
+// The feed emits `${offset}|${sortAtUnix}` and reads only the offset, via `parseInt(...) || 0`
+// (event-engine-common/feeds/base.ts), so anything else silently restarts at page one.
+const FEED_OFFSET_CURSOR = /^(-?\d+)(?:\|[^|]*)?$/;
+
+function assertFeedOffsetCursor(cursor: RunImageSearchInput['cursor'], allowFeedCursor: boolean) {
+  if (cursor === undefined || cursor === '') return;
+  const value = cursor instanceof Date ? cursor.toISOString() : String(cursor);
+  if (allowFeedCursor && parseFeedCursor(value)) return;
+  const match = FEED_OFFSET_CURSOR.exec(value);
+  if (!match) return throwBadRequestError(`Invalid cursor: not a feed offset "${value}"`);
+  const offset = Number(match[1]);
+  if (offset < 0 || offset > INT4_MAX)
+    throwBadRequestError(`Invalid cursor: out of range "${value}"`);
+}
+
 /**
  * Run the image search and shape the response. Behavior-preserving extraction
  * of the body of `/api/v1/images/index.ts`. The caller owns: param parsing,
@@ -104,7 +141,8 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
-  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, data } = input;
+  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, postOrder, feedService, data } =
+    input;
 
   const features = getFeatureFlags({ user, req });
 
@@ -149,10 +187,14 @@ export async function runImageSearch(
   // those sorts are honored.
   const batchIds = (data as { ids?: unknown }).ids;
   const useLegacyMethod =
-    (Array.isArray(batchIds) && batchIds.length > 0) || (data as { imageId?: unknown }).imageId
+    (Array.isArray(batchIds) && batchIds.length > 0) ||
+    (data as { imageId?: unknown }).imageId ||
+    (postOrder && (data as { postId?: unknown }).postId)
       ? true
       : !!(data as { modelId?: unknown }).modelId &&
         !(data as { modelVersionId?: unknown }).modelVersionId;
+
+  if (!useLegacyMethod) assertFeedOffsetCursor(cursor, !!feedService);
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
@@ -204,47 +246,68 @@ export async function runImageSearch(
   // are always present in `data` since the destructure only pulls out
   // limit/page/cursor/maturity/type/meta flags. The image service reads them at
   // runtime, so this is byte-equivalent to the original inline call.
+  const include = ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])];
+  const dbQuery = {
+    ...data,
+    types: type ? [type] : undefined,
+    limit,
+    skip,
+    cursor,
+    // Only fetch tagIds and profilePictures here; metaSelect is fetched
+    // on-demand in the controller below to avoid query filtering.
+    include,
+    periodMode: 'published',
+    headers: { src: '/api/v1/images' },
+    browsingLevel,
+    withMeta: false,
+    user,
+    disableMinor: true,
+    disablePoi: true,
+    includeBaseModel: true,
+    dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+  } as unknown as Parameters<typeof getAllImages>[0];
+  const searchQuery = {
+    ...data,
+    types: type ? [type] : undefined,
+    limit,
+    skip,
+    cursor,
+    include,
+    periodMode: 'published',
+    browsingLevel,
+    withMeta: false,
+    currentUserId: user?.id,
+    isModerator: user?.isModerator,
+    disableMinor: true,
+    disablePoi: true,
+    actor,
+  } as unknown as Parameters<typeof getImagesFromFeedSearch>[0];
+
+  // A `feed:` cursor is a later page of a feed-served scroll. Clients walking whole
+  // back-catalogues spend nearly all their requests there, on images rarely read again, so those
+  // pages don't write the per-image caches; first pages, which pollers repeat, still do.
+  const cacheWriteBack = parseFeedCursor(cursor) === undefined;
+  const fromFeedService =
+    feedService && !useLegacyMethod
+      ? await getImagesFromFeedServiceForRest(
+          { ...searchQuery, headers: { src: '/api/v1/images' } },
+          { ...dbQuery, cacheWriteBack }
+        )
+      : undefined;
   const { items, nextCursor } = useLegacyMethod
-    ? await getAllImages({
-        ...data,
-        types: type ? [type] : undefined,
-        limit,
-        skip,
-        cursor,
-        // Only fetch tagIds and profilePictures here; metaSelect is fetched
-        // on-demand in the controller below to avoid query filtering.
-        include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
-        periodMode: 'published',
-        headers: { src: '/api/v1/images' },
-        browsingLevel,
-        withMeta: false,
-        user,
-        disableMinor: true,
-        disablePoi: true,
-        includeBaseModel: true,
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-      } as unknown as Parameters<typeof getAllImages>[0])
-    : await getImagesFromFeedSearch({
-        ...data,
-        types: type ? [type] : undefined,
-        limit,
-        skip,
-        cursor,
-        include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
-        periodMode: 'published',
-        browsingLevel,
-        withMeta: false,
-        currentUserId: user?.id,
-        isModerator: user?.isModerator,
-        disableMinor: true,
-        disablePoi: true,
-        actor,
-      } as unknown as Parameters<typeof getImagesFromFeedSearch>[0]);
+    ? await getAllImages(dbQuery)
+    : fromFeedService ?? (await getImagesFromFeedSearch(searchQuery));
 
   let imageMetas: Record<number, { id: number; meta?: any }> = {};
   if (withMeta && items.length > 0) {
-    imageMetas = await imageMetaCache.fetch(items.map((img) => img.id));
+    imageMetas = await imageMetaCache.fetch(
+      items.map((img) => img.id),
+      { writeBack: !fromFeedService || cacheWriteBack }
+    );
   }
+
+  const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);
+  const customThumbnails = videoIds.length > 0 ? await thumbnailCache.fetch(videoIds) : {};
 
   const shaped: ShapedImage[] = items.map((image) => {
     const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
@@ -261,6 +324,11 @@ export async function runImageSearch(
       browsingLevel: image.nsfwLevel,
       createdAt: image.createdAt,
       postId: image.postId,
+      thumbnail: getPublicVideoThumbnail({
+        image,
+        customThumbnail: customThumbnails[image.id],
+        browsingLevel,
+      }),
       stats: {
         cryCount: image.stats?.cryCountAllTime ?? 0,
         laughCount: image.stats?.laughCountAllTime ?? 0,

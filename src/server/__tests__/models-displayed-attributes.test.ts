@@ -172,8 +172,8 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // `insight` is the models index's suitability object — the sortable+filterable
     // `insight.qualityScore`, the filter-only meaning axes `insight.role` and
     // `insight.styleFamily`, and `insight.modelVersionId`, which is declared in NO attribute list
-    // at all. No consumer reads any of them off a hit: the resource-intent matcher sorts on the
-    // score and reads what it needs from Postgres. ONE top-level entry covers all FOUR, because
+    // at all. No consumer reads any of them off a hit: the resource-intent matcher reads its
+    // labels from Postgres. ONE top-level entry covers all FOUR, because
     // `transformData` emits `insight: { qualityScore, role, styleFamily, modelVersionId }` and both
     // withholding paths are keyed on the top-level attribute — Meili's `displayedAttributes` (where
     // nested children ride along with their parent) and `withheldStripped`'s `delete out[attr]`.

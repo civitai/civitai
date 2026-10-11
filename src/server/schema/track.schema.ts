@@ -528,22 +528,21 @@ const imageRemixClickSchema = z.object({
 //     only if both definition boundaries above are acceptable for the question
 //     being asked; 'video' rows have the field absent rather than false, so
 //     exclude them or bucket them on their own.
-//     'new' and 'form-graph' are also different POPULATIONS, not just different
-//     forms: the form-graph lane is gated by the `formGraphGenerator` flag, so
-//     those rows are whatever audience `form-graph-generator` admits rather than
-//     everyone. The static `['mod']` beside it is only the Flipt-down fallback —
-//     Flipt overrides the role check in both directions, so the real audience is
-//     not knowable from this repo. Comparing a rate across the two buckets
-//     compares two cohorts.
+//     'new' and 'form-graph' were also different POPULATIONS, not just different
+//     forms: the form-graph lane was gated by a flag, so those rows are whatever
+//     audience it admitted rather than everyone. HISTORIC ROWS ONLY — the flag and
+//     the other lane are gone and everything now emits 'form-graph', so a rate
+//     compared across the two buckets compares two cohorts for any window that
+//     straddles the cutover.
 //
 //   formVersion: absent on rate-limited emits from GenForm — the legacy
 //     image GenForm wrapper and VideoGenerationForm don't have a way to
-//     discriminate from the wrapping layer without a prop drill. v2's
-//     FormFooter rate-limit emit does include formVersion:'new'. So
-//     `isRateLimited:true AND formVersion missing` = legacy image or
-//     video form; `isRateLimited:true AND formVersion:'new'` = v2.
-//     Rate-limited GenForm emits are ONLY fired from the two opt-in call
-//     sites (`<GenForm track>` in GenerationForm2 + VideoGenerationForm);
+//     discriminate from the wrapping layer without a prop drill. The retired v2
+//     FormFooter's rate-limit emit did include formVersion:'new'. So in HISTORIC
+//     data, `isRateLimited:true AND formVersion missing` = legacy image or video
+//     form and `formVersion:'new'` = v2; today every emit is 'form-graph'.
+//     Rate-limited GenForm emits are ONLY fired from the opt-in call sites
+//     (`<GenForm track>` in the surviving footer + VideoGenerationForm);
 //     orchestrator modals (upscale / bg-removal / video-interpolation)
 //     deliberately omit the rate-limited emit so they don't produce
 //     asymmetric data — they have no success / validation-fail emits of
@@ -657,10 +656,9 @@ const generatorSubmitSchema = z.object({
     // opened from the remix entry point. See the doc-block above: the meaning
     // changed when the prompt-similarity gate was removed.
     hasRemixOfId: z.boolean().optional(),
-    // 'new' (generation_v2/FormFooter) is emitted by the current form;
-    // 'form-graph' by the form-graph lane's footer. 'legacy'/'video' are
-    // retained for backward-compatibility with historical events from the
-    // removed legacy generation form.
+    // Every emit is 'form-graph' today. 'new' came from the retired v2 footer and
+    // 'legacy'/'video' from the generation form before it — all three are retained only
+    // so historical events stay readable.
     formVersion: z.enum(['legacy', 'new', 'video', 'form-graph']).optional(),
     // False when the submit attempt failed validation (react-hook-form
     // onError path or graph.validate() early return). The data team can
@@ -919,6 +917,15 @@ export const IMPRESSION_SURFACES = [
   'bounties',
   'search',
   'user',
+  'hubs',
+  'challenges',
+  '3d-models',
+  'ecosystems',
+  'tag',
+  'tools',
+  'comics',
+  'crucibles',
+  'events',
   'other',
 ] as const;
 export type ImpressionSurface = (typeof IMPRESSION_SURFACES)[number];
@@ -1051,4 +1058,30 @@ export const blockMessageBatchSchema = z.object({
     )
     .min(1)
     .max(BRIDGE_MESSAGE_BATCH_MAX),
+});
+
+// ── App Blocks custom events ─────────────────────────────────────────────────
+//
+// The wire shape for /api/track/block-event: one row per `track()` call. Unknown keys are
+// stripped, which is how a client-sent `userId`, `isOwner` or `ts` is ignored: identity and time
+// are stamped by the server.
+//
+// `eventName` and `properties` are deliberately NOT bounded or shaped here. A zod array rejects
+// wholesale, and one batch can carry rows from several apps on a page, so a strict rule would
+// let one app's malformed event discard its neighbours'. Neither is stored unless it equals
+// something the app's manifest declares. The route's body-size limit bounds them.
+export const BLOCK_EVENT_BATCH_MAX = 50;
+export type BlockEventBatchInput = z.infer<typeof blockEventBatchSchema>;
+export const blockEventBatchSchema = z.object({
+  events: z
+    .array(
+      z.object({
+        appBlockId: z.string().trim().min(1).max(256),
+        blockInstanceId: z.string().trim().min(1).max(256),
+        eventName: z.unknown(),
+        properties: z.unknown().optional(),
+      })
+    )
+    .min(1)
+    .max(BLOCK_EVENT_BATCH_MAX),
 });

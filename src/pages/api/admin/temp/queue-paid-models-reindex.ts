@@ -36,9 +36,8 @@ import { booleanString } from '~/utils/zod-helpers';
  *
  * Response reports `queueDepthBefore` and `queueDepthAfter` as READ BACK from the queue, not as
  * inferred from the call returning. `addToQueue` fails open on a degraded sysRedis — it parks the
- * ids in Postgres and returns false — and neither `SearchIndexUpdate.queueUpdate` nor
- * `modelsSearchIndex.queueUpdate` propagates that boolean. So "the call returned" is not evidence
- * the ids landed.
+ * ids in Postgres and returns false — and `modelsSearchIndex.queueUpdate` does not propagate that
+ * boolean. So "the call returned" is not evidence the ids landed.
  *
  * `landed` is one-directional evidence. Equal to `gatedModelCount` it proves the ids are queued.
  * BELOW it, the ids may have been dropped OR the 15-minute search-index sync may have checked the

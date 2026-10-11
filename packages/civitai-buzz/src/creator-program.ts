@@ -3,6 +3,9 @@
 // (apps/creator-studio/src/lib/server/creator-program.ts). Pure and dependency-free / browser-safe:
 // buzz → projected USD, capped at $1 per 1000 buzz. Mirrors the `licensing-fee.ts` shared-math pattern.
 
+/** Creator score needed to join the Creator Program. Here so the main app and the studio read one number. */
+export const CREATOR_PROGRAM_MIN_CREATOR_SCORE = 40000;
+
 /** The compensation-pool figures these projections read: the pool's total USD `value`, and the buzz
  *  `size` used as the denominator — `forecasted` = end-of-month projection, `current` = live pool. */
 export type CompensationPoolValueInput = {

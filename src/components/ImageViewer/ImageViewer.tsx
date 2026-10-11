@@ -8,7 +8,11 @@ import type { SimpleUser } from '~/server/selectors/user.selector';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
 import type { NsfwLevel } from '~/server/common/enums';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 import { removeEmpty } from '~/utils/object-helpers';
 
 type ImageGuardConnect = {
@@ -43,6 +47,7 @@ export interface ImageProps {
   userId?: number;
   user?: SimpleUser;
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  eventDecoration?: EventDecorationCosmetic | null;
   tags?: Array<{ id: number }> | number[];
   metadata?: MixedObject | null;
   publishedAt?: Date | null;

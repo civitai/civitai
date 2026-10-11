@@ -189,7 +189,7 @@ export type ModelInsightProjection = Omit<ResourceIntentInsight, 'confidence'> &
  * an explicit null sort identically. They do; sorting was simply the wrong property to
  * check. Every live write is a MERGE (`PUT /indexes/<uid>/documents`), so on a document
  * that already carries a score, omitting the key leaves the OLD value in place — a
- * retracted label would keep its top-of-pool seeding permanently. Measured both arms on
+ * retracted label would stay visible to any filter or sort on it permanently. Measured both arms on
  * v1.15.0: a PUT of the null cleared a stored 0.9, and the control PUT with no key at all
  * left a stored 0.1 intact.
  *
@@ -289,9 +289,9 @@ export function modelInsightProjection(
  * 🔴 `?? null` and not `||` — a genuine `qualityScore: 0` from a version that DID clear
  * the floor must survive as 0, not collapse into the unlabeled null. Pinned by a test.
  *
- * ⚠️ The measured Meilisearch sort/merge behaviour that ./resource-intent-matcher.service.ts
- * sends a reader here for moved one function UP, onto `modelInsightProjection`, when that
- * function took over the rule. It was not deleted — read it there.
+ * ⚠️ The measured Meilisearch sort/merge behaviour moved one function UP, onto
+ * `modelInsightProjection`, when that function took over the rule. It was not deleted —
+ * read it there.
  */
 export function modelInsightQualityScore(
   versionIds: number[],

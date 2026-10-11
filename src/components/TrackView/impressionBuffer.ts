@@ -95,16 +95,28 @@ export function getImpressionSurface(pathname: string): ImpressionSurface {
   return first && SURFACES.has(first) ? (first as ImpressionSurface) : 'other';
 }
 
-// Record that an entity was seen. Synchronous, never throws, no-ops on repeats.
-//
-// The surface is read from `window.location` HERE rather than passed in from a
+// The surface is read from `window.location` rather than passed in from a
 // component. Taking it from `useRouter` would subscribe every card on the page to
 // route changes, and a router subscription re-renders straight through
 // `React.memo` — on a feed that is hundreds of cards re-rendering per navigation,
 // which is a steep price for a telemetry label.
-export function recordImpression(entityType: ImpressionEntityType, entityId: number): void {
+export function getCurrentImpressionSurface(): ImpressionSurface {
+  return getImpressionSurface(window.location.pathname);
+}
+
+// Record that an entity was seen. Synchronous, never throws, no-ops on repeats.
+//
+// Pass `surface` when it was captured earlier than now. The dwell timer does:
+// opening the image-detail dialog rewrites the URL while the feed stays mounted
+// and intersecting underneath, so a surface read when the timer FIRES labels
+// cards seen on /hubs or /models as `images`.
+export function recordImpression(
+  entityType: ImpressionEntityType,
+  entityId: number,
+  surface?: ImpressionSurface
+): void {
   if (typeof window === 'undefined') return;
-  const surface = getImpressionSurface(window.location.pathname);
+  surface ??= getCurrentImpressionSurface();
   const key = entityKey(entityType, entityId);
   if (seen.has(key)) return;
 

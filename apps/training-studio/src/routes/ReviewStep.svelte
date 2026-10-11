@@ -801,6 +801,10 @@
     </Button>
     {#if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
+    {:else if total == null && !quoting}
+      <p class="mt-2 text-center font-mono text-xs text-dark-2">
+        We couldn't price every run right now — start is disabled until each run shows a cost.
+      </p>
     {/if}
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails

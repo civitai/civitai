@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 // Type-only namespace import (NOT `typeof import('...')`, which
 // @typescript-eslint/consistent-type-imports rejects) so the spread below keeps the
 // real module's type.
@@ -88,35 +89,24 @@ vi.mock('~/components/TrackView/track.utils', () => ({
 // no failing assertion.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    blocks: {
-      getNavSummary: {
-        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
-          mocks.lastEnabled = opts?.enabled;
-          // A query that never ran never becomes `isFetched`. See the header.
-          if (opts?.enabled === false) return { data: undefined, isFetched: false };
-          return { data: mocks.navSummary, isFetched: mocks.isFetched };
-        },
-      },
-      withdrawPublishRequest: {
-        useMutation: () => ({ mutate: () => undefined, isPending: false }),
+  trpc: makeTrpcProxy({
+    'blocks.getNavSummary': {
+      useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
+        mocks.lastEnabled = opts?.enabled;
+        // A query that never ran never becomes `isFetched`. See the header.
+        if (opts?.enabled === false) return { data: undefined, isFetched: false };
+        return { data: mocks.navSummary, isFetched: mocks.isFetched };
       },
     },
     // `MyAppsBody` — mounted by the workbench state. Held in its loading branch; this
     // suite is about WHICH screen renders, not about the table's contents.
-    appListings: {
-      listMine: { useQuery: () => ({ data: undefined, isLoading: true, error: null }) },
-      listMyOrphanedSubmissions: {
-        useQuery: () => ({ data: undefined, isLoading: true, error: null }),
-      },
+    'appListings.listMine': {
+      useQuery: () => ({ data: undefined, isLoading: true, error: null }),
     },
-    useUtils: () => ({
-      appListings: {
-        listMine: { invalidate: () => undefined },
-        listMyOrphanedSubmissions: { invalidate: () => undefined },
-      },
-    }),
-  },
+    'appListings.listMyOrphanedSubmissions': {
+      useQuery: () => ({ data: undefined, isLoading: true, error: null }),
+    },
+  }),
 }));
 
 const { AppsBuildBody } = await import('./AppsBuildBody');

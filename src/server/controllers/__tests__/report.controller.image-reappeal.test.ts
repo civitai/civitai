@@ -123,6 +123,9 @@ beforeEach(() => {
     }
   );
 
+  // The image row the appeal flags; refusing a flagged image is image-appeal-review-flag's subject.
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+
   mockCharge.mockResolvedValue({ transactionCount: 1 });
   mockRefund.mockResolvedValue(undefined);
 });

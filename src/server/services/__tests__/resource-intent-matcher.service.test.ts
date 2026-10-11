@@ -236,44 +236,18 @@ describe('findResourceIntentCandidates', () => {
     baseModel: 'SDXL 1.0',
   };
 
-  it('seeds the pool by INSIGHT first and popularity second, and returns the capped shortlist', async () => {
+  // The seed's QUERY SHAPE is pinned in ./resource-intent-matcher.seed.test.ts, against an
+  // in-memory index that honours the sort array. Every hit fixture in THIS file is served
+  // as the seed page as-is, so here the seed order is the fixture order.
+  it('returns the capped shortlist from the seed', async () => {
     searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
     const { entries } = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 50,
     });
-    const args = meiliArgsOf();
-    expect(args.sort).toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc']);
-    expect(args.limit).toBeGreaterThanOrEqual(50);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ versionId: 11, modelType: 'LORA', baseModel: 'SDXL 1.0' });
-  });
-
-  // 🔴 Separate from the whole-array assertion above on purpose, and it is the one that encodes
-  // the POINT of the change rather than its spelling. The arc's closing condition is that the
-  // pool stops being popularity-SEEDED; `metrics.thumbsUpCount:desc` legitimately remains in the
-  // array as the SECOND key (it is what orders the ~99% of documents that carry no label — see
-  // `modelInsightQualityScore`). So "popularity is absent" is the wrong invariant and a grep for
-  // that string is the wrong guard: what must hold is that popularity is not FIRST.
-  //
-  // Demoting insight to second, or dropping it, restores a popularity-seeded pool while the sort
-  // array still mentions insight — which reads as correct in a diff. This fails on exactly that.
-  it('🔴 never lets popularity be the FIRST sort key', async () => {
-    searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
-    await findResourceIntentCandidates(criteria, {
-      browsingLevel: 3,
-      coverage: COVERAGE,
-      cap: 50,
-    });
-    const sort = meiliArgsOf().sort ?? [];
-    expect(sort.length).toBeGreaterThan(0);
-    expect(sort[0]).toBe('insight.qualityScore:desc');
-    expect(sort[0]).not.toMatch(/thumbsUpCount/);
-    // A second key is REQUIRED, not optional: without one, the unlabeled documents come back in
-    // document order. Measured against Meilisearch v1.15.0 — they are not dropped and they sort
-    // last in both directions, but their internal order is arbitrary until a second key orders it.
-    expect(sort.length).toBeGreaterThanOrEqual(2);
   });
 
   it('returns [] without querying when the role is none', async () => {
@@ -287,7 +261,13 @@ describe('findResourceIntentCandidates', () => {
     // on this early return then passed the entire suite. No label read happens
     // here, so the only honest value is `false` — and a `true` would shorten the
     // cache TTL for every `role: 'none'` response.
-    expect(result).toEqual({ entries: [], insightFallback: false });
+    expect(result).toEqual({
+      entries: [],
+      insightFallback: false,
+      promotableVersions: 0,
+      pool: [],
+      basePool: [],
+    });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
@@ -299,7 +279,13 @@ describe('findResourceIntentCandidates', () => {
       cap: 50,
     });
     // Whole return, for the same reason as the role-none case above.
-    expect(result).toEqual({ entries: [], insightFallback: false });
+    expect(result).toEqual({
+      entries: [],
+      insightFallback: false,
+      promotableVersions: 0,
+      pool: [],
+      basePool: [],
+    });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
@@ -450,13 +436,13 @@ describe('findResourceIntentCandidates — the labels change the response', () =
       versions: [{ id: versionId, name: 'v1', baseModel: 'SDXL 1.0', canGenerate: true }],
     });
 
-  // Meilisearch hands these back popularity-descending, which is the seed order.
+  // Served as the seed page, so this IS the seed order.
   const seed = [hitFor(7701, 10701, 97), hitFor(7702, 20802, 61), hitFor(7703, 30903, 23)];
 
-  it('🔴 orders the shortlist by the labels, not by the popularity seed', async () => {
+  it('🔴 orders the shortlist by the labels, not by the seed order', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
     dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
-      // The most popular candidate is also the highest-quality one and agrees on neither axis.
+      // The first-seeded candidate is also the highest-quality one and agrees on neither axis.
       insightRow(10701, {
         role: 'character',
         styleFamily: 'pixel_retro',
@@ -480,7 +466,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(entries.map((e) => e.versionId)).toEqual([30903, 20802, 10701]);
   });
 
-  it('🔴 promotes a candidate the popularity seed ranked outside the cap', async () => {
+  it('🔴 promotes a candidate the seed ranked outside the cap', async () => {
     searchWithSignal.mockResolvedValue({
       hits: [...seed, hitFor(7704, 40904, 8)],
       estimatedTotalHits: 4,
@@ -692,7 +678,13 @@ describe('findResourceIntentCandidates — the labels change the response', () =
 
     // Whole return: an empty pool skips the label read entirely, which is NOT a
     // fallback — the read did not fail, it never happened.
-    expect(result).toEqual({ entries: [], insightFallback: false });
+    expect(result).toEqual({
+      entries: [],
+      insightFallback: false,
+      promotableVersions: 0,
+      pool: [],
+      basePool: [],
+    });
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
   });
 
@@ -715,7 +707,8 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     searchWithSignal.mockResolvedValue({ hits: wide, estimatedTotalHits: 600 });
     await findResourceIntentCandidates(criteria, { ...opts, cap: 50 });
     expect(pooledIds()).toHaveLength(100);
-    // And the page is one document per targeted version — no multiplier.
+    // And each seed page's limit is one document per targeted version — no multiplier
+    // (this reads the first page; both are pinned in ./resource-intent-matcher.seed.test.ts).
     expect(meiliArgsOf().limit).toBe(100);
 
     searchWithSignal.mockReset();
@@ -868,5 +861,135 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(
       (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
     ).toEqual([20802, 10701]);
+  });
+});
+
+describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
+  const criteria = {
+    criteriaVersion: 2,
+    specHash: 'abc',
+    role: 'style' as const,
+    styleFamily: 'anime_manga' as const,
+    modelTypes: ['LORA'] as never,
+    baseModel: 'SDXL 1.0',
+  };
+
+  /** Model `id` with versions; `ok: false` versions are on another base model (gate fails). */
+  const hit = (id: number, versions: { id: number; ok: boolean }[]) =>
+    shortlistHit({
+      id,
+      metrics: { thumbsUpCount: 10_000 - id },
+      versions: versions.map((v) => ({
+        id: v.id,
+        name: `v${v.id}`,
+        baseModel: v.ok ? 'SDXL 1.0' : 'Pony',
+        canGenerate: true,
+      })),
+    });
+
+  /** Serves `corpus` in order, honouring each request's `limit`. */
+  const serve = (corpus: unknown[]) =>
+    searchWithSignal.mockImplementation(async (_index, _q, params: { limit: number }) => ({
+      hits: corpus.slice(0, params.limit),
+      estimatedTotalHits: corpus.length,
+    }));
+  const limits = () => searchWithSignal.mock.calls.map((c) => (c[2] as { limit: number }).limit);
+
+  it('takes the FIRST gate-passing version of each model, skips models with none, in seed order', async () => {
+    serve([
+      hit(1, [
+        { id: 11, ok: false },
+        { id: 12, ok: true },
+        { id: 13, ok: true },
+      ]),
+      hit(2, [{ id: 21, ok: false }]),
+      hit(3, [{ id: 31, ok: true }]),
+    ]);
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 50,
+    });
+    expect(result.basePool.map((e) => [e.modelId, e.versionId])).toEqual([
+      [1, 12],
+      [3, 31],
+    ]);
+    // Its own 500-document page, every time — even when the seed page already held every match.
+    expect(limits()).toEqual([100, 500]);
+  });
+
+  it('takes the first 2 × cap models of its own page, even when the seed page would do', async () => {
+    serve(Array.from({ length: 300 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: true }])));
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+    expect(result.basePool.map((e) => e.modelId)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(limits()).toEqual([10, 500]);
+  });
+
+  it('🔴 reaches past the seed page, under the seed page filter and sort', async () => {
+    // Seed page = 10 docs (cap 5 × 2), of which only models 3 and 7 pass the gate; the
+    // other passing models sit deeper. The 500-document page must reach them, in order.
+    const passing = new Set([3, 7, 12, 15, 40, 41]);
+    serve(
+      Array.from({ length: 600 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: passing.has(i + 1) }]))
+    );
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+    expect(result.basePool.map((e) => e.modelId)).toEqual([3, 7, 12, 15, 40, 41]);
+    expect(limits()).toEqual([10, 500]);
+    const [seedArgs, deepArgs] = searchWithSignal.mock.calls.map((c) => c[2] as object);
+    expect({ ...deepArgs, limit: 10 }).toEqual(seedArgs);
+    // The SHORTLIST still comes from the seed page alone.
+    expect(result.pool.map((e) => e.modelId)).toEqual([3, 7]);
+  });
+
+  it('🔴 follows its OWN page when the two pages order tied documents differently', async () => {
+    // Nothing guarantees Meilisearch orders tied documents the same at limit 10 and 500,
+    // so the fake does not: the seed page leads 2, 1; the 500-document page 1, 2.
+    const docs = Array.from({ length: 30 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: true }]));
+    // A real tie: models 1 and 2 share a score, so both orders are valid sorts.
+    (docs[1] as unknown as { metrics: { thumbsUpCount: number } }).metrics.thumbsUpCount = 9_999;
+    const seedOrder = [docs[1], docs[0], ...docs.slice(2)];
+    searchWithSignal.mockImplementation(async (_index, _q, params: { limit: number }) => ({
+      hits: (params.limit === 500 ? docs : seedOrder).slice(0, params.limit),
+      estimatedTotalHits: docs.length,
+    }));
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+    expect(result.basePool.map((e) => e.modelId)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(result.pool.map((e) => e.modelId)).toEqual([2, 1, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it('a failing deep page fails the call like any other search failure (the service degrades)', async () => {
+    const corpus = Array.from({ length: 600 }, (_, i) =>
+      hit(i + 1, [{ id: 1000 + i, ok: i === 2 }])
+    );
+    searchWithSignal
+      .mockResolvedValueOnce({ hits: corpus.slice(0, 10), estimatedTotalHits: 600 })
+      .mockRejectedValueOnce(new Error('meili down'));
+    await expect(
+      findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
+    ).rejects.toThrow('meili down');
+  });
+
+  it('is returned on a label-read fallback too', async () => {
+    serve([hit(1, [{ id: 11, ok: true }])]);
+    dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 50,
+    });
+    expect(result.insightFallback).toBe(true);
+    expect(result.basePool.map((e) => e.versionId)).toEqual([11]);
   });
 });

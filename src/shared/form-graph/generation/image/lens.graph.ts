@@ -1,17 +1,21 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { SEED, aspectRatioDef, resourcesDef, type AspectRatioOption } from '../defs';
+import {
+  optionFallback,
+  SEED,
+  aspectRatioDef,
+  resourcesDef,
+  type AspectRatioOption,
+} from '../defs';
 import { familyScope, modelIdOf, perModelSlider, textBlock, type FamilyExt } from '../shared';
 
 /**
- * Lens (base + turbo), ported from `lens-graph.ts`. Both variants carry LoRAs
- * (raw resourcesNode — no cross-ecosystem filter); resolution is a
+ * Lens (base + turbo). Both variants carry LoRAs
+ * (raw resourcesDef — no cross-ecosystem filter); resolution is a
  * parent-level node so it survives variant switches, and aspect-ratio dims
  * follow it. Negative prompt supported.
  */
-
-// ---- copied from lens-graph.ts, which dies with the data-graph engine -------
 
 export const lensVersionIds = {
   base: 2982236,
@@ -59,8 +63,6 @@ const lensAspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
 
 const lensPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
-// ---- end of lens-graph.ts copies --------------------------------------------
-
 type LensModeExt = FamilyExt & { model?: unknown };
 
 const variantOf = (ext: LensModeExt): LensVariant => {
@@ -85,13 +87,14 @@ const turbo = defineGraph<LensModeExt>()
   .field('cfgScale', perModelSlider({ min: 1, max: 2, step: 0.1, default: 1 }))
   .field('steps', perModelSlider({ min: 1, max: 12, default: 4 }));
 
-/** Tagged: v1's `lensVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `lensVariant`. */
 const variants = branch('lensVariant', variantOf, { base, turbo });
 
 const RESOLUTION = {
   input: z.enum(lensResolutionOptions).optional(),
   output: z.enum(lensResolutionOptions),
   default: '1024' as (typeof lensResolutionOptions)[number],
+  correct: optionFallback(lensResolutionOptions, '1024' as (typeof lensResolutionOptions)[number]),
   meta: { options: lensResolutionOptions.map((r) => ({ label: r, value: r })) },
 };
 

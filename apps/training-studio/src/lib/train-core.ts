@@ -211,7 +211,7 @@ export async function submitTraining(
 ): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
-  const { data, error } = await submitWorkflow({
+  const { data, error, response } = await submitWorkflow({
     client,
     body: {
       tags: slug
@@ -224,8 +224,28 @@ export async function submitTraining(
     },
     query: { wait: 0 },
   });
-  if (!data?.id) throw new Error(`training submit failed: ${describeSubmitError(error)}`);
+  if (!data?.id) throw new TrainingSubmitError(describeSubmitError(error), response?.status);
   return data.id;
+}
+
+// Unauthorized (expired token), request timeout, rate limited.
+const TRANSIENT_CLIENT_STATUSES = new Set([401, 408, 429]);
+
+/** The orchestrator did not accept a submit. `status` is its HTTP status, absent when it never answered. */
+export class TrainingSubmitError extends Error {
+  readonly reason: string;
+  readonly status: number | undefined;
+  constructor(reason: string, status: number | undefined) {
+    super(`training submit failed: ${reason}`);
+    this.reason = reason;
+    this.status = status;
+  }
+
+  /** A 4xx is a refusal of this payload that a retry would repeat — except these, which can clear on retry. */
+  get isRefusal(): boolean {
+    if (this.status === undefined || TRANSIENT_CLIENT_STATUSES.has(this.status)) return false;
+    return this.status >= 400 && this.status < 500;
+  }
 }
 
 /** A batch refused before anything was submitted — callers map it to their 400/"bad request" arm. */
@@ -340,14 +360,25 @@ async function assertCustomModelTrainable(
     );
 }
 
+export interface SubmittedBatch {
+  workflowIds: string[];
+  /** Why the runs after `workflowIds` did not start; set only when some runs landed and a later one failed. */
+  failure?: string;
+}
+
+/** A submit failure as the user should read it: the orchestrator's own reason when it gave one. */
+export function submitFailureReason(err: unknown): string {
+  return err instanceof TrainingSubmitError ? err.reason : 'the training service did not respond';
+}
+
 /** Submit a batch of runs, one workflow each, in series, stopping at the first failure. If nothing
  *  landed the failure is rethrown (the whole batch is safe to retry); if some runs already landed
- *  their ids are returned instead, so the already-charged runs are never re-submitted. */
+ *  their ids are returned with the failure's reason, so the already-charged runs are never re-submitted. */
 export async function submitTrainingBatch(
   client: OrchestratorClient,
   runs: TrainingRunInput[] | undefined,
-  opts: SubmitOptions & { onRunError?: (err: unknown) => void } = {}
-): Promise<string[]> {
+  opts: SubmitOptions & { onRunError?: (err: unknown, runIndex: number) => void } = {}
+): Promise<SubmittedBatch> {
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
@@ -364,10 +395,11 @@ export async function submitTrainingBatch(
   try {
     for (const run of runs) workflowIds.push(await submitTraining(client, run, opts));
   } catch (err) {
-    opts.onRunError?.(err);
+    opts.onRunError?.(err, workflowIds.length);
     if (workflowIds.length === 0) throw err;
+    return { workflowIds, failure: submitFailureReason(err) };
   }
-  return workflowIds;
+  return { workflowIds };
 }
 
 type EpochOutput = {

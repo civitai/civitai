@@ -43,6 +43,21 @@ export const infiniteQuerySchema = z.object({
 export const INT4_MAX = 2147483647;
 
 /**
+ * Floor for a keyset cursor's numeric value, in EVERY spelling — the number and
+ * bigint members of `keysetCursorSchema` below, and the per-token range check in
+ * `parseCursor` (`src/server/utils/pagination-helpers.ts`) that covers the
+ * string spelling a REST query param always arrives as.
+ *
+ * 🔴 Shared rather than restated at each site precisely BECAUSE the value has no
+ * established justification — see the lower-bound paragraphs on
+ * `keysetCursorSchema`. If it ever moves to the int4 minimum it has to move for
+ * all three at once, or the same cursor is accepted in one spelling and rejected
+ * in another, which is the defect that made a negative cursor a 500 rather than
+ * a 400. Sharing the constant is NOT a third justification for the value.
+ */
+export const CURSOR_MIN = 0;
+
+/**
  * Keyset-pagination cursor, as issued by a previous page's `nextCursor` (the
  * row's `cursorId`): either a single column value, for a single-field sort, or a
  * `CONCAT(col, '|', …)` string, for a multi-field sort.
@@ -129,12 +144,13 @@ export const INT4_MAX = 2147483647;
  * `parseCursor` (`src/server/utils/pagination-helpers.ts`) rejects the BARE
  * SCALAR shape of that — a number/bigint/Date where the sort needs N values.
  * 🔴 It does NOT reject the COMPOSITE-STRING shape: a hand-built `"165997|123"`
- * on a date-headed sort has the right token COUNT, and `parseCursor` decides
- * date-vs-numeric per token by whether the token contains `-`, so the numeric
- * head token is bound to the timestamp column and Postgres throws exactly as
- * before. That is a KNOWN, open residual — closing it needs per-field type
- * information the sort string does not carry. It is pinned as a documented gap
- * in `src/server/utils/pagination-helpers.test.ts`; do not read this schema, or
+ * on a date-headed sort has the right token COUNT, and `parseCursor` classifies
+ * each token by its own SPELLING rather than by the column it will be compared
+ * against — `165997` is spelled as an integer, so it takes the numeric branch,
+ * is bound to the timestamp column, and Postgres throws exactly as before. That
+ * is a KNOWN, open residual — closing it needs per-field type information the
+ * sort string does not carry. It is pinned as a documented gap in
+ * `src/server/utils/pagination-helpers.test.ts`; do not read this schema, or
  * `parseCursor`'s guards, as covering it.
  *
  * A string cursor is left unbounded HERE on purpose: the composite form carries
@@ -144,17 +160,22 @@ export const INT4_MAX = 2147483647;
  * field arity are known — see PR #5146. 🔴 The two are NOT redundant: this union
  * covers the number/bigint spellings, `parseCursor` covers the string spelling,
  * and a REST query param is ALWAYS a string. Do not delete either as duplicative.
+ * 🔴 That split is also why the `.gte(0)` floor here is NOT the whole floor: the
+ * number `-5` is rejected by this union, the string `'-5'` passes through it and
+ * is rejected by `parseCursor`'s range guard. Both spellings must stay covered,
+ * or the same value 400s one way and 500s the other — which is what it did until
+ * `parseCursor`'s date-vs-numeric split was made numeric-first.
  *
  * What is still unvalidated anywhere: whether a token's TYPE is coherent with the
  * column it will be compared against. `parseCursor` checks token COUNT, each
- * token's PARSEABILITY and now its MAGNITUDE — not its type.
+ * token's PARSEABILITY and its RANGE (floor and int4 ceiling) — not its type.
  */
 export const keysetCursorSchema = z
   .union([
     // Both numeric members carry the SAME floor. Splitting them would mean `0`
     // parses as a number and 400s as a bigint, for one value on one sort column.
-    z.bigint().gte(BigInt(0)).lte(BigInt(INT4_MAX)),
-    z.number().int().gte(0).lte(INT4_MAX),
+    z.bigint().gte(BigInt(CURSOR_MIN)).lte(BigInt(INT4_MAX)),
+    z.number().int().gte(CURSOR_MIN).lte(INT4_MAX),
     z.string(),
     z.date(),
   ])

@@ -11,11 +11,23 @@ const {
   mockTrackModActivity,
   mockQueueImageSearchIndexUpdate,
   mockResolveEntityAppeal,
+  mockGrantModelTextScanPoi,
+  mockStampModelTextScanAppeal,
+  mockReassertModelPoiRestrictions,
+  mockLoadTextScanTextHash,
+  mockQueueTextScanRescan,
+  mockStampModeratorTextScanRuling,
 } = vi.hoisted(() => ({
   mockSetModelMinor: vi.fn(),
   mockTrackModActivity: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockResolveEntityAppeal: vi.fn(),
+  mockGrantModelTextScanPoi: vi.fn(),
+  mockStampModelTextScanAppeal: vi.fn(),
+  mockReassertModelPoiRestrictions: vi.fn(),
+  mockLoadTextScanTextHash: vi.fn(),
+  mockQueueTextScanRescan: vi.fn(),
+  mockStampModeratorTextScanRuling: vi.fn(),
 }));
 
 // MINOR_FLAG_SNAPSHOT_KEY is read at module scope by the service's Prisma.sql
@@ -32,6 +44,18 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/report.service', () => ({
   resolveEntityAppeal: mockResolveEntityAppeal,
+}));
+// Hand-listed: the real model-poi-minor pulls notification.service, and appeal-text-hash loads
+// every registered profile module.
+vi.mock('~/server/services/text-scan/actions/model-poi-minor', () => ({
+  grantModelTextScanPoi: mockGrantModelTextScanPoi,
+  stampModelTextScanAppeal: mockStampModelTextScanAppeal,
+  reassertModelPoiRestrictions: mockReassertModelPoiRestrictions,
+}));
+vi.mock('~/server/services/text-scan/actions/appeal-text-hash', () => ({
+  loadTextScanTextHash: mockLoadTextScanTextHash,
+  queueTextScanRescan: mockQueueTextScanRescan,
+  stampModeratorTextScanRuling: mockStampModeratorTextScanRuling,
 }));
 
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
@@ -74,6 +98,7 @@ beforeEach(() => {
   mockReplicaModelFindUnique.mockResolvedValue({ minor: true });
   mockPrimaryModelFindUnique.mockResolvedValue({ minor: true });
   mockLogToAxiom.mockResolvedValue(undefined);
+  mockLoadTextScanTextHash.mockResolvedValue('h-text');
 });
 
 describe('findMinorHashMatches', () => {
@@ -169,6 +194,13 @@ describe('minor-hash CTE predicates', () => {
   it('excludes auto-flagged models from the seed set so it cannot self-amplify', () => {
     expect(minorSrcCte.sql).toContain(`->>'source' IS DISTINCT FROM 'auto'`);
     expect(minorSrcCte.values).toContain('minorFlagSnapshot');
+  });
+
+  // An unreviewed LLM verdict seeding the hash auto-flagger would flag other people's uploads
+  // from a decision no human made.
+  it('excludes text-scan flags from the seed set', () => {
+    expect(minorSrcCte.sql).toContain(`->>'source' IS DISTINCT FROM 'auto'`);
+    expect(minorSrcCte.sql).toContain(`->>'source' IS DISTINCT FROM 'text-scan'`);
   });
 
   // A moderator's own "Set as Minor" writes source='manual', so it must still
@@ -1042,6 +1074,31 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(values).toContain(MINOR_HASH_CLEARED_KEY);
   });
 
+  // Minor flagged first, poi second: the snapshot's pre-minor state can be NSFW, and restoring it
+  // must not leave a model that is still poi without its restrictions.
+  it('reasserts the poi restrictions after restoring the pre-minor state', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([
+      rollbackRow({ prevNsfw: true, prevSfwOnly: false, prevLockedProperties: [] }),
+    ]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100, modelIds: [200] });
+
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledTimes(1);
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledWith(200);
+    const writeOrder = (fragment: string) =>
+      mockDbWrite.$executeRaw.mock.invocationCallOrder[
+        mockDbWrite.$executeRaw.mock.calls.findIndex((call) =>
+          Array.from(call[0] as TemplateStringsArray)
+            .join('?')
+            .includes(fragment)
+        )
+      ];
+    const reassertOrder = mockReassertModelPoiRestrictions.mock.invocationCallOrder[0];
+    expect(writeOrder('SET nsfw'), 'restore write').toBeLessThan(reassertOrder);
+    // The reassert's side effects rewrite every image's minor flag, so the re-mark must follow it.
+    expect(reassertOrder).toBeLessThan(writeOrder('UPDATE "Image"'));
+  });
+
   it('re-marks prevMinorImageIds back to minor and queues them for search-index update', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ prevMinorImageIds: [123, 456] })]);
 
@@ -1115,8 +1172,9 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(scopeText).toContain('"ModActivity" ma');
   });
 
-  // A blanket rollback must never revert a moderator's deliberate "Set as Minor".
-  it('scopes a bulk rollback to auto flags, excluding manual ones', async () => {
+  // A bulk rollback undoes the hash backfill. A text-scan flag is a different automation, and a
+  // manual one a moderator's decision; neither may be reverted as its collateral.
+  it('scopes a bulk rollback to auto flags only — never manual, never text-scan', async () => {
     mockRollbackQueries({ rows: [] });
 
     await rollbackMinorHashAutoFlags({ dryRun: true, limit: 100 });
@@ -1125,7 +1183,8 @@ describe('rollbackMinorHashAutoFlags', () => {
       .flatMap((call) => call.slice(1))
       .map((v) => (v as { strings?: readonly string[] })?.strings?.join('?') ?? '')
       .join('\n');
-    expect(rendered).toContain(`->>'source' IS DISTINCT FROM 'manual'`);
+    expect(rendered).toContain(`->>'source' = 'auto'`);
+    expect(rendered).not.toContain(`IS DISTINCT FROM 'manual'`);
   });
 
   it('targets exact modelIds regardless of source, bypassing the human-confirmation skip', async () => {
@@ -1329,6 +1388,15 @@ describe('acceptExpiredMinorAutoFlags', () => {
 });
 
 describe('getMinorFlagAppealsForReview', () => {
+  it('returns poi and the text-scan verdict so a moderator can read the reason', async () => {
+    await getMinorFlagAppealsForReview({ limit: 10 });
+    const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+    const text = Array.from(strings as TemplateStringsArray).join('?');
+    expect(text).toContain('m.poi');
+    expect(text).toContain('AS "textScanFlags"');
+    expect(values).toContain('textScanFlags');
+  });
+
   it('surfaces appeals against manual flags, not just automated ones', async () => {
     mockDbRead.$queryRaw.mockResolvedValue([]);
 
@@ -1401,6 +1469,11 @@ describe('resolveMinorFlagAppeal', () => {
   });
 
   it('overturns by reverting the flag and approving the appeal', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { minorFlagSnapshot: { at: 'x', source: 'auto' } },
+    });
     await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
 
     expect(mockTrackModActivity).toHaveBeenCalledWith(
@@ -1430,6 +1503,11 @@ describe('resolveMinorFlagAppeal', () => {
   });
 
   it('leaves the appeal open when the revert fails', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { minorFlagSnapshot: { at: 'x', source: 'auto' } },
+    });
     mockDbRead.$queryRaw.mockRejectedValueOnce(new Error('boom'));
 
     await expect(resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).rejects.toThrow(
@@ -1488,6 +1566,395 @@ describe('resolveMinorFlagAppeal', () => {
 
     expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ status: AppealStatus.Approved })
+    );
+  });
+
+  const grantStamps = () =>
+    mockStampModelTextScanAppeal.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => arg.decision === 'appealGranted');
+
+  const poiEntry = {
+    at: 'x',
+    workflowId: 'wf-1',
+    reason: 'Names a real actor.',
+    textHash: 'h-text',
+  };
+
+  it('overturns a text-scan poi flag without touching the minor-hash rollback', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: false,
+      poi: true,
+      meta: { textScanFlags: { poi: poiEntry } },
+    });
+
+    expect(await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).toEqual({
+      rescanQueued: false,
+    });
+
+    expect(mockTrackModActivity).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
+    );
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      currentHash: 'h-text',
+    });
+    expect(grantStamps()).toEqual([]);
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: AppealStatus.Approved })
+    );
+    expect(mockQueueTextScanRescan).not.toHaveBeenCalled();
+  });
+
+  // Review Focus 4.
+  it('overturns minor before poi, and stamps before closing the appeal', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    const rollbackOrder =
+      mockTrackModActivity.mock.invocationCallOrder[
+        mockTrackModActivity.mock.calls.findIndex(([, a]) => a.activity === 'rollbackMinorAutoHash')
+      ];
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalled();
+    expect(rollbackOrder).toBeLessThan(mockGrantModelTextScanPoi.mock.invocationCallOrder[0]);
+    expect(grantStamps()).toEqual([expect.objectContaining({ labels: ['minor'] })]);
+    expect(mockResolveEntityAppeal).toHaveBeenCalled();
+    expect(mockStampModelTextScanAppeal.mock.invocationCallOrder[0]).toBeLessThan(
+      mockResolveEntityAppeal.mock.invocationCallOrder[0]
+    );
+  });
+
+  // A rescan landing between the lift and the stamp would otherwise see no grant and re-flag.
+  it.each([
+    ['an auto minor flag', { source: 'text-scan' }, 'rollback'],
+    ['a moderator minor flag', { source: 'manual' }, 'unset'],
+  ])('stamps the minor grant before lifting %s', async (_label, snapshot, path) => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', ...snapshot },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+    mockLoadTextScanTextHash.mockResolvedValue('h-current');
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    const stamp = mockStampModelTextScanAppeal.mock.calls.findIndex(
+      ([arg]) => arg.decision === 'appealGranted'
+    );
+    expect(stamp, 'appealGranted stamp').toBeGreaterThanOrEqual(0);
+    const stampOrder = mockStampModelTextScanAppeal.mock.invocationCallOrder[stamp];
+    const liftOrder =
+      path === 'rollback'
+        ? mockDbRead.$queryRaw.mock.invocationCallOrder[0]
+        : mockSetModelMinor.mock.invocationCallOrder[0];
+    expect(liftOrder, 'minor lift').toBeDefined();
+    expect(stampOrder).toBeLessThan(liftOrder);
+    expect(grantStamps()).toEqual([
+      {
+        modelId: 42,
+        userId: 7,
+        decision: 'appealGranted',
+        labels: ['minor'],
+        currentHash: 'h-current',
+      },
+    ]);
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      currentHash: 'h-current',
+    });
+  });
+
+  // A recorded grant reads as lifted, so a grant stamped ahead of a lift that then failed would
+  // leave poi on with nothing able to retry it.
+  it('leaves no poi grant behind when the poi lift fails, so a retry lifts it', async () => {
+    const model = {
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    };
+    mockPrimaryModelFindUnique.mockResolvedValue(model);
+    mockGrantModelTextScanPoi.mockRejectedValueOnce(new Error('boom'));
+
+    await expect(resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).rejects.toThrow(
+      'boom'
+    );
+    expect(grantStamps().flatMap((arg) => arg.labels)).not.toContain('poi');
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+
+    mockPrimaryModelFindUnique.mockResolvedValue({ ...model, minor: false });
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledTimes(2);
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: AppealStatus.Approved })
+    );
+  });
+
+  // Review Focus 4.
+  it('rules each label separately', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+
+    await resolveMinorFlagAppeal({
+      modelId: 42,
+      uphold: false,
+      userId: 7,
+      labels: { minor: 'uphold', poi: 'overturn' },
+    });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ activity: 'setMinor' })
+    );
+    expect(mockTrackModActivity).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
+    );
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      currentHash: 'h-text',
+    });
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'appealUpheld', labels: ['minor'] })
+    );
+    expect(grantStamps()).toEqual([]);
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: AppealStatus.Approved })
+    );
+  });
+
+  it('refuses a per-label decision on a label that is not flagged', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({ minor: true, poi: false, meta: {} });
+
+    await expect(
+      resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7, labels: { poi: 'overturn' } })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  // Review Focus 4: an appeal never rolls a moderator's own flag back to a pre-state.
+  it('takes the plain unset path for a moderator-origin minor flag', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { minorFlagSnapshot: { at: 'x', source: 'manual' } },
+    });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockSetModelMinor).toHaveBeenCalledWith({ id: 42, minor: false, userId: 7 });
+    expect(mockTrackModActivity).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
+    );
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: 'appealGranted', labels: ['minor'] })
+    );
+  });
+
+  it('still fully reverts an auto flag a moderator later confirmed', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: false,
+      meta: { minorFlagSnapshot: { at: 'x', source: 'manual', confirmedFrom: 'auto' } },
+    });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ activity: 'rollbackMinorAutoHash' })
+    );
+    expect(mockSetModelMinor).not.toHaveBeenCalled();
+  });
+
+  // Review Focus 2.
+  it('throws and leaves the appeal open when the text hash is unknown', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: false,
+      poi: true,
+      meta: { textScanFlags: { poi: poiEntry } },
+    });
+    mockLoadTextScanTextHash.mockResolvedValue(null);
+
+    await expect(
+      resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+    expect(mockStampModelTextScanAppeal).not.toHaveBeenCalled();
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  // Review Focus 2.
+  it('queues a rescan when the text changed while the appeal was pending', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: false,
+      poi: true,
+      meta: { textScanFlags: { poi: { ...poiEntry, textHash: 'h-flagged' } } },
+    });
+
+    expect(await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 })).toEqual({
+      rescanQueued: true,
+    });
+    expect(mockQueueTextScanRescan).toHaveBeenCalledWith('Model', 42);
+    expect(mockResolveEntityAppeal.mock.invocationCallOrder[0]).toBeLessThan(
+      mockQueueTextScanRescan.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('upholds a text-scan poi flag by stamping it, without a minor confirm', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: false,
+      poi: true,
+      meta: { textScanFlags: { poi: poiEntry } },
+    });
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 });
+
+    expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(mockLoadTextScanTextHash).not.toHaveBeenCalled();
+    expect(mockStampModelTextScanAppeal).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      decision: 'appealUpheld',
+      labels: ['poi'],
+    });
+    expect(mockResolveEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ status: AppealStatus.Rejected })
+    );
+  });
+
+  it('refuses to uphold a poi flag an earlier appeal already lifted', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: false,
+      poi: true,
+      meta: {
+        textScanFlags: { poi: { ...poiEntry, appealGranted: { at: 'x', by: 1, textHash: 'h' } } },
+      },
+    });
+
+    await expect(
+      resolveMinorFlagAppeal({ modelId: 42, uphold: true, userId: 7 })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockResolveEntityAppeal).not.toHaveBeenCalled();
+  });
+
+  // The reassert lives in the minor-lift paths themselves; the appeal must not add its own.
+  it('reasserts the poi restrictions once, inside the minor revert, on a model that stays poi', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan', prevNsfw: true },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 42, prevNsfw: true })]);
+
+    await resolveMinorFlagAppeal({
+      modelId: 42,
+      uphold: false,
+      userId: 7,
+      labels: { minor: 'overturn', poi: 'uphold' },
+    });
+
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledTimes(1);
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalledWith(42);
+    expect(mockGrantModelTextScanPoi).not.toHaveBeenCalled();
+  });
+
+  it('adds no reassert of its own on the plain unset path', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'manual' },
+        textScanFlags: { poi: poiEntry },
+      },
+    });
+
+    await resolveMinorFlagAppeal({
+      modelId: 42,
+      uphold: false,
+      userId: 7,
+      labels: { minor: 'overturn', poi: 'uphold' },
+    });
+
+    expect(mockSetModelMinor).toHaveBeenCalledWith({ id: 42, minor: false, userId: 7 });
+    expect(mockReassertModelPoiRestrictions).not.toHaveBeenCalled();
+  });
+
+  it('grants poi after the minor revert when both are lifted, so the grant decides the final state', async () => {
+    mockPrimaryModelFindUnique.mockResolvedValue({
+      minor: true,
+      poi: true,
+      meta: {
+        minorFlagSnapshot: { at: 'x', source: 'text-scan' },
+        textScanFlags: { poi: poiEntry, minor: poiEntry },
+      },
+    });
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 42 })]);
+
+    await resolveMinorFlagAppeal({ modelId: 42, uphold: false, userId: 7 });
+
+    expect(mockReassertModelPoiRestrictions).toHaveBeenCalled();
+    expect(mockGrantModelTextScanPoi).toHaveBeenCalled();
+    expect(mockReassertModelPoiRestrictions.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGrantModelTextScanPoi.mock.invocationCallOrder[0]
+    );
+  });
+});
+
+// Review Focus 7: a moderator's revert of a text-scan minor must hold against a rescan of the
+// same text, like their Unset does.
+describe('revertMinorHashAutoFlag — moderator ruling', () => {
+  it('records the ruling before the revert when asked to', async () => {
+    mockStampModeratorTextScanRuling.mockResolvedValue(true);
+    await revertMinorHashAutoFlag({ modelId: 42, userId: 7, recordTextScanRuling: true });
+    expect(mockStampModeratorTextScanRuling).toHaveBeenCalledWith({
+      modelId: 42,
+      userId: 7,
+      label: 'minor',
+    });
+    expect(mockStampModeratorTextScanRuling.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbRead.$queryRaw.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('records nothing by default — the appeal path stamps its own grant', async () => {
+    await revertMinorHashAutoFlag({ modelId: 42, userId: 7 });
+    expect(mockStampModeratorTextScanRuling).not.toHaveBeenCalled();
+  });
+
+  it('still reverts when the text cannot be read, and logs the miss', async () => {
+    mockStampModeratorTextScanRuling.mockResolvedValue(false);
+    await revertMinorHashAutoFlag({ modelId: 42, userId: 7, recordTextScanRuling: true });
+    expect(mockDbRead.$queryRaw).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', modelId: 42 })
     );
   });
 });

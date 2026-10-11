@@ -421,7 +421,7 @@ Examples:
   node query.mjs search --me --status "in progress"
   node query.mjs search "bug" --all                       # full-workspace scan (slow)
   node query.mjs find-list "Red Launch"                   # locate a list/folder by name
-  node query.mjs assign 86a1b2c3d justin
+  node query.mjs assign 86a1b2c3d jane
   node query.mjs due 86a1b2c3d "tomorrow"
   node query.mjs priority 86a1b2c3d high
   node query.mjs subtask 86a1b2c3d "Write unit tests"
@@ -429,7 +429,7 @@ Examples:
   node query.mjs link 86a1b2c3d "https://github.com/..." "PR #123"
   node query.mjs checklist 86a1b2c3d "Review code"
   node query.mjs delete-comment 90110200841741
-  node query.mjs watch 86a1b2c3d koen
+  node query.mjs watch 86a1b2c3d john
   node query.mjs tag 86a1b2c3d "DevOps"
   node query.mjs description 86a1b2c3d "## Summary\\nThis is **bold** text"
 

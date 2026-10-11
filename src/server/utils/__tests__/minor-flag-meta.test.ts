@@ -4,6 +4,7 @@ import {
   isMinorAutoFlagged,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
   stripMinorHashMeta,
   stripModerationOwnedMeta,
 } from '~/server/utils/minor-flag-meta';
@@ -246,5 +247,45 @@ describe('stripModerationOwnedMeta', () => {
   it('handles null and undefined', () => {
     expect(stripModerationOwnedMeta(null)).toBeNull();
     expect(stripModerationOwnedMeta(undefined)).toBeUndefined();
+  });
+});
+describe('textScanFlags is moderation-owned', () => {
+  const textScanFlags = {
+    poi: { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.', names: ['Jane Doe'] },
+  };
+
+  it('is stripped from every client-facing meta, moderators included', () => {
+    const meta = { textScanFlags, commentsLocked: true } as ModelMeta;
+    expect(stripMinorHashMeta(meta)).toEqual({ commentsLocked: true });
+    expect(filterModelMetaForClient(meta, true)).toEqual({ commentsLocked: true });
+  });
+
+  it('cannot be authored by a creator on save', () => {
+    const meta = { textScanFlags, commentsLocked: true } as ModelMeta;
+    expect(stripModerationOwnedMeta(meta, false)).toEqual({ commentsLocked: true });
+    expect(stripModerationOwnedMeta(meta, true)).toEqual(meta);
+  });
+});
+
+describe('resolvePoiFlagged', () => {
+  const meta = {
+    textScanFlags: { poi: { at: 'x', workflowId: 'wf-1', reason: 'r' } },
+  } as ModelMeta;
+
+  it('is true only for the owner of a poi model with an open text-scan flag', () => {
+    expect(resolvePoiFlagged({ isOwner: true, poi: true, meta })).toBe(true);
+    expect(resolvePoiFlagged({ isOwner: false, poi: true, meta })).toBe(false);
+    expect(resolvePoiFlagged({ isOwner: true, poi: false, meta })).toBe(false);
+    expect(resolvePoiFlagged({ isOwner: true, poi: true, meta: {} })).toBe(false);
+  });
+});
+
+describe('resolveMinorFlagged — text-scan minor', () => {
+  it('shows the owner alert for an open text-scan minor even when the snapshot capture failed', () => {
+    const meta = {
+      textScanFlags: { minor: { at: 'x', workflowId: 'wf-1', reason: 'r' } },
+    } as ModelMeta;
+    expect(resolveMinorFlagged({ isOwner: true, minor: true, meta })).toBe(true);
+    expect(resolveMinorFlagged({ isOwner: true, minor: false, meta })).toBe(false);
   });
 });

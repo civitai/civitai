@@ -19,7 +19,7 @@
 {#if data.routes.length === 0}
   <div class="placeholder">No page visits recorded yet.</div>
 {:else}
-  <div class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
+  <div class="overflow-x-auto rounded-xl border border-dark-4 bg-dark-6">
     <table class="w-full text-sm">
       <thead>
         <tr class="border-b border-dark-4 text-left text-xs uppercase tracking-wider text-dark-2">

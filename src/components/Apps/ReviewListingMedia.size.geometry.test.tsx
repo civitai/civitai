@@ -180,7 +180,7 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *   (A probe here must use an UNSEEN payload: re-running the same dead URI flips `complete`
  *   to true off the browser profile's cached failure.)
  *
- * ⚠️ Local figures here were measured on Chrome 149, not the pinned 143 — see CLAUDE.md,
+ * ⚠️ Local figures here were measured on Chrome 149, not the pinned 143 — see `docs/dev/worktrees.md`,
  * "Browser/component tests on NixOS". CI runs the pin.
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the

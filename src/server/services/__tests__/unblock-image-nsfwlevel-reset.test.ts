@@ -179,6 +179,7 @@ type AppealRow = {
   userId: number;
   status: string;
   buzzTransactionId: string | null;
+  createdAt: Date;
 };
 type AppealWhere = {
   id?: { in: number[] };
@@ -272,6 +273,7 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         userId: 1,
         status: 'Pending',
         buzzTransactionId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
       },
     ]);
   });
@@ -316,8 +318,9 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     expect(capturedClickhouse.some((sql) => sql.includes('blocked_images'))).toBe(false);
   });
 
-  // An image can be appealed again after a re-block. The notification service reuses the row for
-  // a repeated key, so a per-entity key would show the second decision as the first one.
+  // An image can be appealed again after a re-block, and a reopened appeal keeps its row. The
+  // notification service reuses the row for a repeated key, so a per-entity key would show the
+  // second decision as the first one.
   it('keys the resolution notification by appeal, not only by image', async () => {
     await resolveEntityAppeal({
       ids: [128489949],
@@ -327,7 +330,9 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     } as any);
 
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'entity-appeal-resolved:Image:128489949:555' })
+      expect.objectContaining({
+        key: `entity-appeal-resolved:Image:128489949:555:${Date.parse('2026-01-01T00:00:00Z')}`,
+      })
     );
   });
 
@@ -341,6 +346,7 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         userId: 1,
         status: 'Approved',
         buzzTransactionId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
       },
       {
         id: 555,
@@ -349,6 +355,7 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         userId: 1,
         status: 'Pending',
         buzzTransactionId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
       },
     ];
     useAppealTable(rows);
@@ -378,6 +385,7 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         userId: 1,
         status: 'Pending',
         buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
       },
     ]);
     const resolve = () =>
@@ -405,6 +413,7 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         userId: 1,
         status: 'Pending',
         buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
       },
     ]);
 
@@ -430,6 +439,7 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
         userId: 1,
         status: 'Pending',
         buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
       },
     ]);
     vi.mocked(refundMultiAccountTransaction).mockRejectedValueOnce(

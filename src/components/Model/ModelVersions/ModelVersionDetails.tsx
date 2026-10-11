@@ -591,7 +591,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
+      <ContainerGrid2.Col
+        span={{ base: 12, sm: 5, md: 4 }}
+        order={{ sm: 2 }}
+        className={classes.sidebarSection}
+        ref={adContainerRef}
+      >
         <Stack>
           {/* Owner-only banner: lists publisher_all_my_models subscriptions
               that would render here so the model owner can opt out of any

@@ -9,7 +9,7 @@
  *   step.metadata.params: TextToImageParams (prompt, negativePrompt, cfgScale, etc.)
  *
  * New format:
- *   step.metadata.input: GenerationGraphOutput
+ *   step.metadata.input: GenerationData
  *     - model: ResourceData (checkpoint)
  *     - resources: ResourceData[] (LoRAs, etc.)
  *     - vae: ResourceData (optional)
@@ -21,13 +21,14 @@
 import type { WorkflowStep } from '@civitai/client';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
-import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
+import type { ResourceData } from '~/shared/generation/values';
+import { DRAFT_WORKFLOW, getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { parseAIRSafe } from '~/shared/utils/air';
-import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { LooseGenerationData } from './form-graph/types';
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { isMediaHost } from '~/shared/utils/media-host';
 import { logToAxiom } from '~/server/logging/client';
 import { logHostOf } from '~/server/services/orchestrator/trusted-blob-url';
@@ -38,7 +39,7 @@ import {
   getOutputTypeForWorkflow,
   getWorkflowsForEcosystem,
   workflowConfigByKey,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 import {
   ecosystemByKey,
   getBaseModelConfig,
@@ -283,8 +284,7 @@ function resolveWorkflowFromParams(
     const NEW_TO_OLD: Record<string, string> = {
       'image:create': 'txt2img',
       'image:edit': 'img2img:edit',
-      // Draft was retired; an old key remixes as an ordinary create.
-      'image:draft': 'txt2img',
+      'image:draft': 'txt2img:draft',
       'image:face-fix': 'txt2img:face-fix',
       'image:hires-fix': 'txt2img:hires-fix',
       'image:upscale': 'img2img:upscale',
@@ -600,7 +600,7 @@ export function mapDataToGraphInput(
     process: _process,
     engine: _engine,
     fluxMode: _fluxMode,
-    draft: _draft, // Retired for images; re-applied below for video only
+    draft: _draft, // Images name draft by workflow key; re-applied below for video only
     turbo: _turbo, // Legacy Wan field — now mapped to 'draft' node
     // Legacy field names that map to different graph node keys
     openAITransparentBackground,
@@ -625,16 +625,15 @@ export function mapDataToGraphInput(
     ['txt2vid', 'img2vid', 'vid2vid'].some((prefix) => workflow.startsWith(prefix));
   const videoDraft = isVideoWorkflow ? _draft ?? _turbo ?? undefined : undefined;
 
-  // Draft pinned steps/cfgScale/sampler to values that only cohere with the draft LoRA, which
-  // a remix strips (allInjectableResourceIds) — carried over, they bill the ordinary rate for
-  // an image that cannot come out right. An image draft is named by its WORKFLOW KEY and stores
-  // no `draft` field; only video stores the flag.
+  // Draft's steps/cfgScale/sampler only cohere with its accelerator (SD's injected LoRA, Flux's
+  // draft build): kept when the remix lands back on the draft workflow, dropped anywhere else. An
+  // image draft is named by its WORKFLOW KEY with no `draft` field; only video stores the flag.
   const incomingWorkflow =
     typeof _wf === 'string' ? _wf : typeof _process === 'string' ? _process : '';
   const wasImageDraft = !isVideoWorkflow && (incomingWorkflow.endsWith(':draft') || !!_draft);
 
   const passthrough: Record<string, unknown> = { ...rest };
-  if (wasImageDraft) {
+  if (wasImageDraft && workflow !== DRAFT_WORKFLOW) {
     delete passthrough.steps;
     delete passthrough.cfgScale;
     delete passthrough.sampler;
@@ -694,12 +693,14 @@ export function getGenerationDisplayKeys(
       ...mapDataToGraphInput(meta, enriched),
       ...splitResourcesByType(enriched),
     };
-    const result = generationGraph.safeParse(input, DISPLAY_GENERATION_CTX);
+    const result = generationHub.parse(reconcileSelectors(input).raw, DISPLAY_GENERATION_CTX);
     if (!result.success) return null;
 
-    return Object.values(result.nodes)
-      .filter((node) => node.kind === 'node')
-      .map((node) => node.key)
+    // Input fields = emitted data minus `computedKeys`. The `meta[key] != null` filter below
+    // bounds any discrepancy: a field absent from the payload cannot be reported.
+    const computed = new Set(result.computedKeys ?? []);
+    return Object.keys(result.data)
+      .filter((key) => !computed.has(key))
       .filter((key) => key !== 'prompt' && key !== 'negativePrompt' && meta[key] != null);
   } catch {
     return null;
@@ -721,7 +722,7 @@ export function getGenerationDisplayKeys(
 export function mapLegacyMetadata(
   step: WorkflowStep,
   enrichedResources: GenerationResource[]
-): Partial<GenerationGraphCtx> | undefined {
+): Partial<LooseGenerationData> | undefined {
   const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
   const legacyMetadata = metadata as GeneratedImageStepMetadata;
@@ -744,14 +745,14 @@ export function mapLegacyMetadata(
   }
 
   // Cast needed: the return is a loose superset of fields from the discriminated union,
-  // which doesn't match any single branch of Partial<GenerationGraphCtx> exactly.
+  // which doesn't match any single branch of Partial<LooseGenerationData> exactly.
   return {
     ...graphInput,
     model,
     upscaler,
     resources,
     vae,
-  } as Partial<GenerationGraphCtx>;
+  } as Partial<LooseGenerationData>;
 }
 
 /**
@@ -814,7 +815,7 @@ export function mapGraphToLegacyParams(
     quality,
     fluxMode,
     workflow,
-    // v2 DataGraph uses 'wanVersion'; legacy form uses 'version'
+    // The generation graph uses 'wanVersion'; the legacy form uses 'version'
     wanVersion,
     // Extract draft so the explicit return value doesn't shadow it from ...rest
     draft: graphDraft,
@@ -853,7 +854,7 @@ export function mapGraphToLegacyParams(
   const engine = typeof ecosystem === 'string' ? getEngineFromEcosystem(ecosystem) : undefined;
 
   // Map wanVersion → version for legacy Wan form compatibility.
-  // The v2 DataGraph stores 'wanVersion', but the legacy form expects 'version'.
+  // The generation graph stores 'wanVersion', but the legacy form expects 'version'.
   const version = wanVersion ?? rest.version;
   if (wanVersion) delete rest.version; // avoid both fields
 

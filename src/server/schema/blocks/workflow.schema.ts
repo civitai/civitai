@@ -4,11 +4,14 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { REGISTERED_RECIPE_IDS } from '~/server/services/blocks/recipes';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import type { BlockStepToolCall } from '~/server/services/blocks/steps';
+import type { TrainingQuoteErrorCode } from '~/server/services/blocks/pass-through-quote-failure';
 import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
 } from '~/server/schema/blocks/civitai-image-url';
-import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
+import { BLOCK_ESTIMATE_BATCH_MAX_CELLS } from '~/shared/constants/block-estimate-batch.constants';
+import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -122,10 +125,9 @@ export type BlockSourceImage = z.infer<typeof blockSourceImageSchema>;
 
 // ── Multi-image conditioning (App Blocks IMAGE bridge) ───────────────────────
 // ABSOLUTE wire bound on `sourceImages`, NOT the real cap. The real cap is
-// PER-ECOSYSTEM and derived from the graph's own `imagesNode` config at build
-// time (`getImagesLimit` — Boogu/Kontext/MAI/SD-family 1, Qwen/Qwen2/MageFlow
-// 3, Reve/HiDream-O1 4, WanImage 5, Flux.2/Klein/OpenAI/NanoBanana/Seedream/
-// Grok 7). This constant only stops an untrusted iframe from posting an
+// PER-ECOSYSTEM and derived from the graph's own `imagesDef` config at build
+// time (`getImagesLimit`, ranging 1–10). This constant only stops an untrusted
+// iframe from posting an
 // unbounded array before the body is even parsed — it is set ABOVE the largest
 // per-ecosystem cap on purpose so a future ecosystem raising its own limit is
 // not silently clamped here. Every element is validated individually against
@@ -167,7 +169,7 @@ const blockTextToImageBodySchema = z.object({
   // (`normalizeBlockSourceImages`) and everything downstream sees only arrays.
   sourceImage: blockSourceImageSchema.optional(),
   // Multi-image conditioning. The graph layer has always supported N images
-  // (`imagesNode({ min, max, slots })`); the block bridge could only ever
+  // (`imagesDef({ min, max, slots })`); the block bridge could only ever
   // express one. Each element is validated INDIVIDUALLY (Civitai-hosted https
   // host check + DIM_MIN/DIM_MAX bounds) — the array form has exactly the same
   // per-image posture as the singular one, with no "first element only" gap.
@@ -635,6 +637,65 @@ export const blockPassThroughStepBodySchema = z
     message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
   });
 
+// ── App Blocks TRAINING kind (`kind:'training'`) ───────────────────────────────
+//
+// Trains a LoRA with the ai-toolkit engine on a dataset the server prepared
+// (`blocks.prepareTrainingDataset`) from the viewer's own images. The body names
+// that dataset by an opaque handle; the images, their blob references and the
+// image COUNT never come from the block.
+//
+// 🔴 THERE IS NO `maxBuzz` AND NO TIMEOUT KNOB, ON PURPOSE. The price is the
+// orchestrator's own quote for exactly this step, taken by the estimate and stored
+// server-side; the submit names that quote (`quoteId`), runs only once the viewer
+// has confirmed it from a signed-in session, and re-quotes before charging. An
+// app-supplied number is never the ceiling and never a step timeout.
+//
+// `.strict()` everywhere a key could be smuggled: an unknown top-level key is
+// rejected. `params` is the training form's own ai-toolkit schema
+// (`aiToolkitTrainingParamsSchema`), so the two cannot drift.
+
+/** Opaque handle to a server-prepared training dataset. */
+export const BLOCK_TRAINING_DATASET_ID_REGEX = /^tds_[a-f0-9]{32}$/;
+/** Opaque handle to a server-stored training quote. */
+export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
+/** Max sample prompts on a training run. */
+export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
+/** Max characters of one sample prompt. */
+export const BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS = 1000;
+/** Max characters of the trigger word. */
+export const BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS = 64;
+/** Max characters of a base-model key (`trainingModelInfo` key). */
+export const BLOCK_TRAINING_MODEL_KEY_MAX_CHARS = 64;
+// The dataset item schema lives in its own dependency-free module so the page host
+// can validate a `PREPARE_TRAINING_DATASET` payload without pulling this file (and
+// the step/recipe registries it imports) into the client bundle.
+export {
+  BLOCK_TRAINING_CAPTION_MAX_CHARS,
+  BLOCK_TRAINING_DATASET_MAX_ITEMS,
+  blockTrainingDatasetItemsSchema,
+} from '~/server/schema/blocks/training-dataset.schema';
+
+export const blockTrainingBodySchema = z
+  .object({
+    kind: z.literal('training'),
+    datasetId: z.string().regex(BLOCK_TRAINING_DATASET_ID_REGEX),
+    engine: z.literal('ai-toolkit'),
+    // A base-model key from the training form's catalog (`trainingModelInfo`);
+    // resolved and gated server-side. Custom AIRs are not accepted in v1.
+    model: z.string().min(1).max(BLOCK_TRAINING_MODEL_KEY_MAX_CHARS),
+    params: aiToolkitTrainingParamsSchema,
+    triggerWord: z.string().max(BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS),
+    samplePrompts: z
+      .array(z.string().max(BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS))
+      .max(BLOCK_TRAINING_SAMPLE_PROMPTS_MAX),
+    // Present on SUBMIT only — the confirmed quote this run is charged against.
+    // Excluded from the body hash that binds a quote to its body.
+    quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX).optional(),
+  })
+  .strict();
+
+export type BlockTrainingBody = z.infer<typeof blockTrainingBodySchema>;
+
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 
 // 🔴 THE `customComfy` MEMBER IS A NESTED DISCRIMINATED UNION ON `mode`, AND THE
@@ -734,7 +795,54 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockTextToImageBodySchemaChecked,
   blockCustomComfyMemberSchema,
   blockStepMemberSchema,
+  blockTrainingBodySchema,
 ]);
+
+export { BLOCK_ESTIMATE_BATCH_MAX_CELLS };
+
+/**
+ * Input of `blocks.estimateWorkflowBatch` — the batch twin of `estimateWorkflow`.
+ *
+ * 🔴 `bodies` IS `unknown[]`, NOT `blockWorkflowBodySchema[]`, AND THAT IS THE
+ * PER-CELL INDEPENDENCE RULE RATHER THAN A LOOSENING. tRPC validates `.input()`
+ * for the whole call, so a typed array would fail EVERY cell when one is
+ * malformed. Each element is parsed against `blockWorkflowBodySchema` inside the
+ * procedure instead — the same schema, applied per cell — and a cell that fails it
+ * becomes that cell's error. What this schema still refuses for the whole call is
+ * what is wrong with the LIST: not an array, empty, or longer than the cap.
+ */
+export const blockEstimateBatchInputSchema = z.object({
+  blockToken: z.string().min(1),
+  bodies: z.array(z.unknown()).min(1).max(BLOCK_ESTIMATE_BATCH_MAX_CELLS),
+});
+
+/**
+ * The run total a batch estimate reports beside its per-cell snapshots.
+ *
+ * `total` is the sum of `cost.total` over the cells that PRICED — a non-failed
+ * snapshot carrying a numeric `cost.total`, the same rule the SDK applies to one
+ * estimate. It is a total for the whole list only when `pricedCells` equals
+ * `cellCount`; otherwise it is a partial sum and must be shown as one.
+ *
+ * It is a quote, exactly as each cell is: nothing reserves it and each cell is
+ * priced again when it is submitted.
+ */
+export type BlockEstimateBatchAggregate = {
+  total: number;
+  pricedCells: number;
+  cellCount: number;
+};
+
+/**
+ * Reply of `blocks.estimateWorkflowBatch`. `snapshots[i]` answers `bodies[i]`:
+ * either the snapshot `estimateWorkflow` would have returned for that body, or
+ * the failure-shape snapshot a host builds when that call throws
+ * (`{ workflowId: 'failed', status: 'failed', error }`).
+ */
+export type BlockEstimateBatchResult = {
+  snapshots: BlockWorkflowSnapshot[];
+  aggregate: BlockEstimateBatchAggregate;
+};
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
 // Keep field names in lockstep — this is the wire contract the iframe consumes.
@@ -746,9 +854,46 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
 export type BlockWorkflowSnapshot = {
   workflowId: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
-  cost?: { total: number };
+  cost?: {
+    /** Whole Buzz. Includes `authorFee` whenever that field is present. */
+    total: number;
+    /**
+     * The part of `total` that is the app author's per-generation fee, in whole
+     * Buzz — the exact amount added into `total` for this reply. Display only.
+     *
+     * A NUMBER wherever `total` was built from a fee quote: the `textToImage`
+     * and registered-`step` estimate replies, and those kinds' submit refusals
+     * by a budget, spend cap or rate limit (they quote the refused price). `0`
+     * means a fee was looked up and none applies.
+     *
+     * ABSENT wherever `total` carries no fee quote — every snapshot of a
+     * submitted workflow (its total is the realized generation cost; the fee is
+     * a separate charge), the registered-`step` submit refusal for a missing
+     * orchestrator price quote (it refuses before any fee is looked up), and the
+     * kinds that price no fee. Absent means "not itemised", which an app must
+     * not read as zero.
+     *
+     * 🔴 THE DISCLOSURE BOUNDARY — this is the one place it is explained. The
+     * cost an app sees is `{ total, authorFee? }` and nothing more: every other
+     * component of `total` — the generation base, other creators' licensing and
+     * lineage fees, the viewer's tips — stays folded into `total` and is NOT
+     * itemised. Showing the author fee is a deliberate product decision: the app
+     * is the fee's beneficiary and the fee formula is already public. It does let
+     * an app (or a viewer) bound the generation base and so roughly infer how much
+     * of `total` went to other parties; that consequence was accepted. Do NOT add
+     * any further breakdown field (base, licensing, lineage, tip) to this wire
+     * shape without a new decision.
+     */
+    authorFee?: number;
+  };
   imageUrls?: string[];
   error?: string;
+  /**
+   * A stable, machine-readable companion to `error`, for a block to branch on.
+   * OPTIONAL + additive: set only on the refusals that define a code, absent
+   * everywhere else. Treat an unknown value as opaque — codes may be added.
+   */
+  errorCode?: TrainingQuoteErrorCode;
   // The buzz account that primarily funded this generation (the accountType of
   // the largest realized debit). OPTIONAL + additive: existing consumers that
   // don't read it are unaffected. Only the account TYPE is surfaced — nothing
@@ -1006,14 +1151,22 @@ export type BlockWorkflowSnapshot = {
    * (`blocks.getImagesByIds` → `BlockGatedImage`). A pass-through step must not
    * create a SECOND image channel that those two do not see.
    *
-   * ⚠️ "BLOB-SHAPED" IS THE EXACT SCOPE OF THAT PROPERTY, AND TWO ALLOWED TYPES
-   * FALL OUTSIDE IT. `blobArchive`'s whole output is `{ url, entryCount, … }`
-   * and `imageResourceTraining.epochs[].blobUrl` is a plain string; a shape test
-   * cannot see either, so those urls reach the app here and are never seen by
-   * the publish path or the gated read. Stated rather than implied, because the
-   * measurement behind the splitter enumerated blob-TYPED fields and a reader
-   * takes it for the whole population. Closing it is a decision — lift a named
-   * string field, or refuse those `$type`s — not a cleanup.
+   * 🔴 A TRAINED CHECKPOINT IS IN NEITHER CHANNEL. For the `training` /
+   * `imageResourceTraining` `$type`s the epoch checkpoint (`epochs[].model`, or
+   * `epochs[].blobUrl` + `blobName`) is dropped before the split, so it reaches
+   * neither `imageUrls` nor this field; which epochs had one is reported on
+   * {@link trainedEpochs} instead. The legacy type's plain-string
+   * `epochs[].sampleImages` are lifted to `imageUrls` by position. See
+   * `splitPassThroughStep`.
+   *
+   * ⚠️ "BLOB-SHAPED" IS THE EXACT SCOPE OF THAT PROPERTY, AND PLAIN-STRING URLS
+   * FALL OUTSIDE IT. `blobArchive`'s whole output is `{ url, entryCount, … }`,
+   * and `imageResourceTraining.sampleInputImages` is a string list; a shape test
+   * sees neither, so those reach the app here and are never seen by the publish
+   * path or the gated read. Stated rather than implied, because the measurement
+   * behind the splitter enumerated blob-TYPED fields and a reader takes it for
+   * the whole population. Closing them is a decision — handle a named field by
+   * position, or refuse the `$type` — not a cleanup.
    *
    * 🔴 EVERYTHING ELSE IS UNSCANNED. Unlike {@link textOutputs}, no moderation
    * scan runs over this field: the pass-through arm has no `moderationPosture`,
@@ -1046,4 +1199,44 @@ export type BlockWorkflowSnapshot = {
    * SDK repo — tracked separately; nothing here edits another repo.
    */
   stepOutputs?: Array<{ $type: string; output: unknown }>;
+  /**
+   * The epochs of a pass-through `training` / `imageResourceTraining` step whose
+   * checkpoint is ready — the `epoch` a block hands to
+   * `/models/train/from-orchestrator?workflowId=…&epoch=…`, the publish wizard.
+   * The checkpoint itself is never on the wire (see {@link stepOutputs}). Empty —
+   * so omitted — unless the run's `moderationStatus` is `approved`. Also on
+   * `AppWorkflow`.
+   *
+   * OMITTED when there is none, so every other snapshot stays byte-identical.
+   * 🔴 WIRE CONTRACT: name and shape are mirrored by `@civitai/app-sdk`.
+   */
+  trainedEpochs?: Array<{ $type: 'training' | 'imageResourceTraining'; epochNumber: number }>;
+  /**
+   * The model a block-run training workflow became, read from the ids the
+   * publish wizard stamps onto the workflow's metadata (`stampWorkflowDraftModel`
+   * on draft creation, `stampWorkflowPublished` on publish). `published` is
+   * false while it is still a draft. Also on `AppWorkflow`.
+   *
+   * Only for a workflow carrying a pass-through training step, and only when
+   * both ids are positive integers; OMITTED otherwise.
+   * 🔴 WIRE CONTRACT: name and shape are mirrored by `@civitai/app-sdk`.
+   */
+  publishedModel?: BlockPublishedModel;
+  /**
+   * The server-stored quote a `kind:'training'` ESTIMATE produced. The block passes
+   * `quoteId` back on `RUN_TRAINING`; the host shows the viewer this price (read
+   * back from the server, never from the block) and the submit charges against it.
+   * `expiresAt` is ISO-8601. Present only on a training estimate reply.
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
+   */
+  trainingQuote?: BlockTrainingQuote;
 };
+
+export type BlockTrainingQuote = {
+  quoteId: string;
+  total: number;
+  imageCount: number;
+  expiresAt: string;
+};
+
+export type BlockPublishedModel = { modelId: number; modelVersionId: number; published: boolean };

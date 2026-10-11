@@ -125,6 +125,10 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   // reads. (It also cannot BE the newest event on a `removed` listing: `removed` is not
   // level-eligible, so the write is refused there.)
   'set-visibility',
+  // Writes `content_rating` only. A go-live that floors the rating records this right AFTER
+  // its own status event, so it is routinely the newest event on a listing — and must not
+  // displace the status event underneath it.
+  'rating-change',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

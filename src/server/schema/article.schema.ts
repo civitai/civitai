@@ -12,16 +12,23 @@ import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
 import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
 import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
   ArticleUnpublishReason,
   ...ArticleUnpublishReason[]
+];
+
+export const dailyArticleTiers = [
+  { minScore: 1000, limit: 5 },
+  { minScore: 5000, limit: 10 },
+  { minScore: 10000, limit: 20 },
 ];
 
 export const articleRateLimits: RateLimit[] = [
@@ -36,21 +43,13 @@ export const articleRateLimits: RateLimit[] = [
     limit: 3,
     period: CacheTTL.day,
   },
-  {
-    limit: 5,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 1000,
-  },
-  {
-    limit: 10,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 5000,
-  },
-  {
-    limit: 20,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 10000,
-  },
+  ...dailyArticleTiers.map(
+    ({ minScore, limit }): RateLimit => ({
+      limit,
+      period: CacheTTL.day,
+      userReq: (user) => creatorScoreFromMeta(user.meta) >= minScore,
+    })
+  ),
 ];
 
 export const userPreferencesForArticlesSchema = z.object({
@@ -105,7 +104,7 @@ export const upsertArticleInput = z.object({
   content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  coverImage: imageSchema.nullish(),
+  coverImage: imageReferenceInputSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),
@@ -164,20 +163,6 @@ export const unpublishArticleSchema = z.object({
 });
 
 export type UnpublishArticleSchema = z.infer<typeof unpublishArticleSchema>;
-
-// --- Article rating review / dispute ---
-
-export type CreateArticleRatingReviewInput = z.infer<typeof createArticleRatingReviewSchema>;
-export const createArticleRatingReviewSchema = z.object({
-  articleId: z.number(),
-  suggestedLevel: z.number().int().positive(),
-  userComment: z.string().max(500).optional(),
-});
-
-export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingReviewSchema>;
-export const getMyArticleRatingReviewSchema = z.object({
-  articleId: z.number(),
-});
 
 export type SetArticleOfficialInput = z.infer<typeof setArticleOfficialSchema>;
 export const setArticleOfficialSchema = z.object({

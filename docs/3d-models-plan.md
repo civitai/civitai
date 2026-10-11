@@ -283,7 +283,7 @@ Behind feature flags `model3d-feed` + `model3d-generator` (both mod-only at laun
 - New service `src/server/services/model3d.service.ts`: `upsertModel3D`, `getModel3DById`, `getModel3DsInfinite` (mod-only), `publishModel3D`, `unpublishModel3D`, `deleteModel3D`, `getModel3DFiles` (signed download URLs).
 - New router `src/server/routers/model3d.router.ts`.
 - **Orchestrator integration** (unblocked — `@civitai/client@0.2.0-beta.67` ships PolyGen):
-  - New `src/server/services/orchestrator/ecosystems/polyGen.handler.ts` mirroring `sora.handler.ts` shape. Builds a `PolyGenStep` for `submitWorkflow`.
+  - New `src/server/services/orchestrator/handlers/polyGen.handler.ts` mirroring `sora.handler.ts` shape. Builds a `PolyGenStep` for `submitWorkflow`.
   - New `src/server/orchestrator/polygen/polygen.schema.ts` — discriminated union mirroring `MeshyTextTo3dFalPolyGenInput` / `MeshyImageTo3dFalPolyGenInput` plus a `sourceImageSchema` for image-to-3D (mirroring Sora's source-image ingestion).
   - Register in `src/server/orchestrator/generation/generation.config.ts` (sibling to existing video/image configs).
   - **Workflow result handler** (server-side, runs on workflow completion): ingests `PolyGenOutput.thumbnail` as an `Image` row via the existing image-ingest pipeline (NSFW + CSAM scan); copies `model.url` and `fbxModel?.url` blobs into our S3 (`3d/` prefix); normalizes `Model3dBlob.format` (lowercase, strip leading dot); creates the `Model3D` row in `Draft` with `workflowId` set; creates `Model3DFile` rows (one per format).

@@ -1,5 +1,4 @@
 import {
-  Alert,
   Button,
   Group,
   Modal,
@@ -7,12 +6,12 @@ import {
   Select,
   Stack,
   Switch,
-  Text,
   TextInput,
 } from '@mantine/core';
 import { IconLock, IconTrash } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { ComicChapterStatus } from '~/shared/utils/prisma/enums';
+import { ChapterEarlyAccessLocked } from '~/components/Comics/ChapterEarlyAccessLocked';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EARLY_ACCESS_CONFIG } from '~/server/common/constants';
@@ -87,17 +86,14 @@ export function ChapterSettingsModal({
 
   // Allowed timeframe values: at most `maxDays`, AND at most the current
   // timeframe if EA was already configured (server forbids increasing).
-  const ceilingDays = currentEaConfig
-    ? Math.min(currentEaConfig.timeframe, maxDays)
-    : maxDays;
+  const ceilingDays = currentEaConfig ? Math.min(currentEaConfig.timeframe, maxDays) : maxDays;
   const baseAllowed = EARLY_ACCESS_CONFIG.timeframeValues.filter((d) => d <= ceilingDays);
   // Defensive: a grandfathered chapter may have a non-canonical timeframe
   // (e.g. `1` from before we constrained to the discrete set). Surface it
   // in the Select so the user isn't locked out of editing — picking any
   // canonical option below it is still a valid reduce.
   const allowedTimeframes =
-    currentEaConfig &&
-    !EARLY_ACCESS_CONFIG.timeframeValues.includes(currentEaConfig.timeframe)
+    currentEaConfig && !EARLY_ACCESS_CONFIG.timeframeValues.includes(currentEaConfig.timeframe)
       ? Array.from(new Set([...baseAllowed, currentEaConfig.timeframe])).sort((a, b) => a - b)
       : baseAllowed;
   const isEaUnavailable = !currentEaConfig && allowedTimeframes.length === 0;
@@ -108,9 +104,7 @@ export function ChapterSettingsModal({
   const buzzPriceFloor = currentEaConfig
     ? Math.min(MIN_BUZZ_PRICE, currentEaConfig.buzzPrice)
     : MIN_BUZZ_PRICE;
-  const buzzPriceCeiling = currentEaConfig
-    ? Math.min(currentEaConfig.buzzPrice, 10000)
-    : 10000;
+  const buzzPriceCeiling = currentEaConfig ? Math.min(currentEaConfig.buzzPrice, 10000) : 10000;
 
   const handleSave = () => {
     onSave({
@@ -144,14 +138,7 @@ export function ChapterSettingsModal({
               disabled={isEaUnavailable}
             />
 
-            {isEaUnavailable && (
-              <Alert color="yellow" variant="light" icon={<IconLock size={16} />}>
-                <Text size="xs">
-                  Early access unlocks as your creator score grows. Once you reach the first
-                  tier, you&apos;ll be able to put chapters behind a paywall.
-                </Text>
-              </Alert>
-            )}
+            {isEaUnavailable && <ChapterEarlyAccessLocked />}
 
             {chapterSettingsEaEnabled && (
               <>
@@ -215,11 +202,7 @@ export function ChapterSettingsModal({
             <Button variant="default" onClick={onClose}>
               Cancel
             </Button>
-            <Button
-              onClick={handleSave}
-              loading={isSaving}
-              disabled={!chapterSettingsName.trim()}
-            >
+            <Button onClick={handleSave} loading={isSaving} disabled={!chapterSettingsName.trim()}>
               Save
             </Button>
           </Group>

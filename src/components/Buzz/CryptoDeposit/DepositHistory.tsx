@@ -310,21 +310,25 @@ function SignalStatusBadge({
     );
   }
 
+  // The live connection retries on its own for as long as an outage lasts (it no longer gives up
+  // and reports 'closed' after a few minutes), so the manual refresh is offered here too.
   if (status === 'reconnecting') {
     return (
       <HoverCard width={220} position="bottom-end" withArrow shadow="md" openDelay={300}>
         <HoverCard.Target>
-          <Group gap={4} wrap="nowrap" className="cursor-help">
-            <IconRefresh size={14} className="text-yellow-500" />
-            <Text size="xs" c="yellow">
-              Reconnecting&hellip;
-            </Text>
-          </Group>
+          <UnstyledButton onClick={onRefresh} aria-label="Refresh deposit history">
+            <Group gap={4} wrap="nowrap">
+              <IconRefresh size={14} className="text-yellow-500" />
+              <Text size="xs" c="yellow">
+                Reconnecting&hellip;
+              </Text>
+            </Group>
+          </UnstyledButton>
         </HoverCard.Target>
         <HoverCard.Dropdown>
           <Text size="xs">
             Reconnecting to live updates. Deposits are still being processed &mdash; they&rsquo;ll
-            appear once the connection is restored.
+            appear once the connection is restored. Click to refresh manually in the meantime.
           </Text>
         </HoverCard.Dropdown>
       </HoverCard>

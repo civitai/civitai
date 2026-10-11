@@ -3,8 +3,8 @@
  * `FormFooter` on the form-graph store: quantity input, submit button with
  * buzz-type selector, reset, priority alerts (missing fields, whatIf errors,
  * submit errors, insufficient buzz, BOGO), queue snackbar, prompt-block
- * handling, telemetry, and license attribution. The buzz selector and its
- * hooks are graph-free and imported from the v1 footer rather than copied.
+ * handling, telemetry, and license attribution. The buzz selector and its hooks are
+ * engine-free and imported from `~/components/Generation/footer-parts`.
  */
 
 import {
@@ -51,23 +51,23 @@ import {
   useGenerateFromGraph,
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/Generation/footer-parts';
 import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
 import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { GeneratorMessageWarnings } from './GateRuleWarnings';
-import { StepWarningsNotification } from '~/components/generation_v2/FormFooter';
+import { StepWarningsNotification } from '~/components/Generation/footer-parts';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import {
   TrialAccessWarning,
   TrialBlockedAlert,
 } from '~/components/Generate/GenerationPaidAccessAlerts';
-import { parseTrialMessage } from '~/components/Generate/paid-access-gate';
+import { parseTrialMessage, type SelectedResources } from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
 import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
-import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import { workflowConfigByKey } from '~/shared/generation/config/workflows';
 import {
   ecosystemByKey,
   getBaseModelLicense,
@@ -82,7 +82,6 @@ import {
 } from '~/shared/constants/generation.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
 import { isDefined } from '~/utils/type-guards';
@@ -93,6 +92,8 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { showWarningNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
+import { hasTipEligibleSelection } from './creator-tip';
+import { FOOTER_RESET } from './footer-reset';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
 import { useSelectedResourceIds, type GenerationStore } from './store';
 
@@ -100,25 +101,14 @@ import { useSelectedResourceIds, type GenerationStore } from './store';
 // Cost (including tips)
 // =============================================================================
 
-interface ResourceSnapshot {
-  model?: { id: number };
-  resources?: { id: number }[];
-  vae?: { id: number };
-}
-
-/** Creator tips apply when any user-created resource is selected. */
-function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
-  const { model, resources, vae } = snapshot;
-  return !!(model?.id || (resources && resources.length > 0) || vae?.id);
-}
-
 function useTotalGenerationCost(store: GenerationStore) {
   const features = useFeatureFlags();
   const { creatorTip, civitaiTip } = useTipStore();
   const { data } = useWhatIfContext();
+  const { resources: resourceData } = useResourceDataContext();
 
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
-  const hasCreatorTip = getHasCreatorTip(snapshot);
+  const snapshot = store.getSnapshot().state as SelectedResources;
+  const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
   const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
   const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
@@ -128,14 +118,18 @@ function useTotalGenerationCost(store: GenerationStore) {
   return (data?.cost?.total ?? 0) + totalTip;
 }
 
-function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
-  const { isLoading, isError, refetch } = useWhatIfContext();
+export function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
+  const { isLoading, isError, refetch, canEstimateCost, gateBlocked } = useWhatIfContext();
   const cost = useTotalGenerationCost(store);
   return (
     <BuzzTypeSelector
       cost={cost}
       loading={isLoading}
       error={isError}
+      // The whatIf query is disabled in both cases, so no estimate is coming. Its other disable
+      // reasons are transient (resources/images loading), hide this box (no user), or render a
+      // different footer (noSubmit workflows).
+      unavailable={!canEstimateCost || gateBlocked}
       onRetry={() => refetch()}
       tourTarget={GEN_BUZZ_KEY}
     />
@@ -376,7 +370,7 @@ function BaseModelWarnings() {
 // Submit button
 // =============================================================================
 
-function SubmitButton({
+export function SubmitButton({
   store,
   isLoading: isSubmitting,
   onSubmit,
@@ -435,11 +429,12 @@ function SubmitButton({
 function CostBreakdown({ store }: { store: GenerationStore }) {
   const features = useFeatureFlags();
   const { data } = useWhatIfContext();
+  const { resources: resourceData } = useResourceDataContext();
 
   if (!features.creatorComp) return null;
 
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
-  const hasCreatorTip = getHasCreatorTip(snapshot);
+  const snapshot = store.getSnapshot().state as SelectedResources;
+  const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
   return (
     <GenerationCostPopover
@@ -804,17 +799,17 @@ export function FormFooter({
     setSubmitError(undefined);
 
     // One Generator_Submit event per click; validate FIRST so the invalid +
-    // rate-limited overlap collapses to isValid:false, matching the v1 footer
-    // (see generation_v2/FormFooter.tsx for the full ordering rationale)
+    // rate-limited overlap collapses to isValid:false
     const result = store.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
 
-    // See generation_v2/FormFooter.tsx — resolved against the form, not the store.
+    // Resolved against the form, not the store: the claim dies when the form no longer
+    // holds what the remix put there.
     const remixOfId = resolveRemixOfId(store.getSnapshot().state as RemixClaimFormState);
 
     if (!result.success) {
       try {
-        const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+        const submitSnapshot = store.getSnapshot().state as SelectedResources;
         trackAction({
           type: 'Generator_Submit',
           details: {
@@ -863,7 +858,7 @@ export function FormFooter({
     let externalId: string | undefined;
     try {
       externalId = crypto.randomUUID();
-      const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+      const submitSnapshot = store.getSnapshot().state as SelectedResources;
       trackAction({
         type: 'Generator_Submit',
         details: {
@@ -892,8 +887,7 @@ export function FormFooter({
     });
 
     // The wire schema strips `canGenerate`, so re-check against the resource
-    // data store: drop resources the user can't actually use (v1 filters
-    // these off the snapshot, where the flag is still present).
+    // data store: drop resources the user can't actually use.
     // The not-yet-hydrated fallback below lets an unchecked resource through —
     // safe ONLY because the server re-rejects !canGenerate resources
     // (orchestration-new.service validateAndEnrichResources); this filter is
@@ -905,13 +899,13 @@ export function FormFooter({
       );
     }
 
-    const snapshot = store.getSnapshot().state as ResourceSnapshot & {
+    const snapshot = store.getSnapshot().state as SelectedResources & {
       workflow?: string;
       images?: Array<{ url: string }>;
       video?: { url: string };
       snippets?: { seed?: number };
     };
-    const hasCreatorTip = getHasCreatorTip(snapshot);
+    const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
     const needsSourceMetadata = snapshot.workflow
       ? workflowConfigByKey.get(snapshot.workflow)?.enhancement === true
@@ -932,8 +926,9 @@ export function FormFooter({
       }
     }
 
-    // Collected by CURRENT url, outside the `needsSourceMetadata` gate — see
-    // generation_v2/FormFooter.tsx for why both of those matter.
+    // Collected by CURRENT url, and outside the `needsSourceMetadata` gate: a token is
+    // keyed by the url the image has NOW, and a gated collection would skip the provenance
+    // on exactly the submissions that need it.
     const sourceProvenance = [
       ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
       // The reuse-prompt entry point's token. It seeds no source image, so the
@@ -1009,17 +1004,7 @@ export function FormFooter({
   };
 
   const handleReset = () => {
-    const snap = store.getSnapshot().state as { output?: string };
-    const outputType = (snap.output ?? 'image') as 'image' | 'video' | 'audio' | 'model3d';
-
-    // clear only THIS output's buckets (v1's clearStorageForOutput semantics)
-    // while preserving output preferences; other outputs' settings survive
-    store.prune(outputResetPredicate(outputType, { exclude: ['outputFormat', 'priority'] }));
-
-    if (outputType === 'video') store.set({ workflow: 'txt2vid' });
-    if (outputType === 'audio') store.set({ workflow: 'txt2music' });
-    if (outputType === 'model3d') store.set({ workflow: 'txt2model3d' });
-
+    store.reset(FOOTER_RESET);
     remixStore.clearRemix();
     clearWarning();
     setSubmitError(undefined);

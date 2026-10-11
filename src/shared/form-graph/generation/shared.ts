@@ -3,7 +3,7 @@ import { cachedFactory, defineGraph, rootScope, type Scope } from 'form-graph';
 import { ecosystemByKey, getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
 import { resolveCompatibleEcosystem } from './ecosystem-gates';
 
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import {
   MAX_NEGATIVE_PROMPT_LENGTH,
   SNIPPETS,
@@ -30,14 +30,13 @@ export type HubCtx = { workflow: string; ecosystem: string };
 export type FamilyExt = GenerationCtx & HubCtx;
 
 /**
- * The tail every video family shares, transcribed from common.ts's
- * `triggerWordsGraph` + `snippetsGraph` + `promptGraph` + `negativePromptGraph`
- * merge sequence. It is an ordinary graph: its `Ext` names what it needs from
+ * The tail every video family shares — trigger words, snippets, prompt, negative
+ * prompt. It is an ordinary graph: its `Ext` names what it needs from
  * whatever mounts it, so `.use(textBlock)` satisfies those from the parent's
  * fields (model/resources/images) plus the parent's ext.
  *
- * Ordering matches common.ts's documented merge order (triggerWords →
- * snippets → editors), because the editors read both off ctx.
+ * Merge order is load-bearing (triggerWords → snippets → editors): the editors read
+ * the first two off ctx.
  */
 export type TextBlockNeeds = FamilyExt & {
   model?: ResourceData;
@@ -46,15 +45,14 @@ export type TextBlockNeeds = FamilyExt & {
 };
 
 /**
- * `snippets.targets` registration: in data-graph each text editor announces
- * itself through an effect that writes an empty target slice. The editor set of
- * a given graph is static, so the port bakes the same result into the value
- * rather than converging on it — same output, no evaluation-order dependence.
+ * `snippets.targets` registration: every text editor a graph has gets an empty target
+ * slice. The editor set is static per graph, so it is baked into the value rather than
+ * converged on — no evaluation-order dependence.
  *
- * It has to be baked on BOTH paths. `coerce` alone covers trusted `set()` writes
- * only — the lib says so — so a parse that SUPPLIED a snippets value kept whatever
- * targets the caller sent and registered none of the editors, while v1's effects
- * added them. Measured as the largest single shadow-parse divergence class.
+ * It has to be baked on BOTH paths. `coerce` covers trusted `set()` writes only — the
+ * lib says so — so with `coerce` alone a parse that SUPPLIED a snippets value kept
+ * whatever targets the caller sent and registered no editors at all. Pinned by
+ * `snippets-targets.test.ts`.
  */
 const withTargets = (value: SnippetsValue, names: readonly string[]): SnippetsValue => {
   const targets = { ...(value.targets ?? {}) };
@@ -78,20 +76,18 @@ export function makeTextBlock(
   opts: {
     negativePrompt?: boolean | ((ext: TextBlockNeeds) => boolean);
     /**
-     * Whether the negative prompt is a TEXT EDITOR (createTextEditorGraph) —
+     * Whether the negative prompt is a TEXT EDITOR —
      * live triggerWords + a snippets slice in meta — or a plain node with
      * neither (wan 2.7's `negativePromptNode()`).
      */
     negativePromptIsEditor?: boolean;
     /**
      * Whether that editor also REGISTERS itself in `snippets.targets`.
-     * Defaults to `negativePromptIsEditor`; zimage Base's editor sits inside
-     * a v1 mode subgraph where registration never fires, so it is an editor
-     * that does NOT register — the differential pins its targets as
-     * `{ prompt }` alone.
+     * Defaults to `negativePromptIsEditor`. zimage Base is the one editor that must
+     * NOT register — targets stay `{ prompt }` alone, pinned by `snippets-targets.test.ts`.
      */
     negativePromptRegistersTarget?: boolean;
-    /** hi-dream-o1 omits v1's snippetsGraph entirely — no snippets key at all. */
+    /** hi-dream-o1 has no snippets key at all. */
     snippets?: boolean;
     /** wan-image caps its negative editor at 500 chars, not the shared 6000. */
     negativePromptMaxLength?: number;
@@ -117,7 +113,7 @@ export function makeTextBlock(
       : (['prompt'] as const);
 
   return (
-    // v1 stores the text block globally — detach from whatever family
+    // The text block is stored globally — detach from whatever family
     // bucket this mounts under
     defineGraph<TextBlockNeeds>({ scope: () => rootScope() })
       .computed('triggerWords', ({ _ext }) => {
@@ -138,7 +134,7 @@ export function makeTextBlock(
           : null
       )
       // The editors read triggerWords/snippets from the BAG — they are this
-      // graph's own fields, declared above. Meta mirrors v1's textNode contract:
+      // graph's own fields, declared above. Meta is the text-field contract:
       // the snippets slice's PRESENCE doubles as the wildcards feature flag.
       .field('prompt', ({ triggerWords, snippets, _ext }) => {
         const required = promptAlwaysRequired || !_ext.images?.length;
@@ -160,7 +156,7 @@ export function makeTextBlock(
         if (!hasNegative(_ext)) return null;
         const base = textDef('negativePrompt', negativePromptMaxLength);
         // a plain (non-editor) negative prompt is not a snippet target and does
-        // not track trigger words — v1's negativePromptNode vs negativePromptGraph
+        // not track trigger words
         return {
           ...base,
           meta: {
@@ -178,7 +174,7 @@ export function makeTextBlock(
 }
 
 /**
- * The per-family persistence bucket (v1's ecosystem/group storage group):
+ * The per-family persistence bucket:
  * grouped ecosystems (wan versions, klein variants) share their group id so
  * settings survive version switches; standalone ecosystems get their own key.
  * Family graphs attach it with `defineGraph({ scope: familyScope })`.
@@ -188,14 +184,14 @@ export function familyScope(ext: { ecosystem: string }): Scope {
 }
 
 /**
- * v1's turbo-variant refinement: ecosystems that ship distilled and base
+ * The turbo-variant refinement: ecosystems that ship distilled and base
  * builds with different slider ranges store cfgScale/steps per MODEL VERSION,
  * so switching variants doesn't clamp values one-way.
  */
 export function perModelScope(ext: { model?: unknown }): Scope | undefined {
   const id = modelIdOf(ext.model);
   // a RELATIVE segment: appended to the family bucket the graph inherits,
-  // yielding v1's ['ecosystem', 'model.id'] address; no model -> inherit as-is
+  // yielding an ['ecosystem', 'model.id'] address; no model -> inherit as-is
   return id != null ? [id] : undefined;
 }
 
@@ -203,8 +199,7 @@ export function perModelScope(ext: { model?: unknown }): Scope | undefined {
  * Runtime-checked narrowing for a multi-ecosystem family's `effectiveEcosystem`
  * emit: the value is one of the family's served keys, typed as their literal
  * union so `GenerationData` discriminates per arm. The fallback can only fire
- * if an unserved ecosystem reached the family — the hub dispatch prevents it,
- * and the differential suites would catch the changed wire value.
+ * if an unserved ecosystem reached the family — the hub dispatch prevents it.
  */
 export function narrowEcosystem<const E extends readonly string[]>(
   served: E,
@@ -241,8 +236,8 @@ export function perModelSlider(opts: Parameters<typeof sliderDef>[0]) {
 
 /**
  * Version-id → mode lookup, input-tolerant (bare number or object). One
- * builder for the graphs AND the handlers, so the two lanes cannot drift on
- * which ids map to which mode.
+ * builder for the graphs AND the handlers, so the client graph and the server
+ * handler cannot drift on which ids map to which mode.
  */
 export function versionModeOf<M extends string>(
   ids: Record<M, number>,
@@ -298,7 +293,7 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
             message: 'Ecosystem is currently unavailable',
           })
         : z.string(),
-    // v1 did this in an effect keyed on `workflow`, so a one-shot parse that
+    // This used to be an effect keyed on `workflow`, so a one-shot parse that
     // supplied `ecosystem` without `workflow` skipped it and failed validation
     // instead. On the field it runs whatever the caller sent.
     correct: (value: string) => {

@@ -96,18 +96,17 @@ vi.mock('~/server/search-index/base.search-index', async (importOriginal) => ({
 }));
 
 /**
- * `insight.qualityScore` is the attribute the resource-intent pool is SEEDED by,
  * `insight.role` / `insight.styleFamily` are the two MEANING axes — filterable, not
- * sortable, nothing reads them yet — and `insight.modelVersionId` is the id of the version
- * all three were taken from, projected but declared in NO attribute list, so no search path
- * can return it at all (argued at the projection site in ../models.search-index.ts; the four
- * absences are pinned below). This file pins the wiring that puts all four on a document.
+ * sortable; no runtime query filters or sorts on any `insight.*` field (the resource-intent
+ * seed is popularity alone). `insight.modelVersionId` is the id of the version all three were taken from, projected but
+ * declared in NO attribute list, so no search path can return it at all (argued at the
+ * projection site in ../models.search-index.ts; the four absences are pinned below). This
+ * file pins the wiring that puts all four on a document.
  *
- * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's sort array. Adding the axes to the
- * projection changed `searchShortlistModels` not at all — what the index WRITES and how the
- * seed ORDERS are separable — and that array is already pinned whole by
- * `toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc'])` in
- * ~/server/services/__tests__/resource-intent-matcher.service.test.ts. A second guard here
+ * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's query. What the index WRITES and
+ * how the seed QUERIES are separable, and the seed page (filter, sort and limit) is already
+ * pinned in ~/server/services/__tests__/resource-intent-matcher.seed.test.ts, which also
+ * runs the matcher against an in-memory index that honours it. A second guard here
  * would fail in exactly the cases that one already fails in, so there isn't one.
  *
  * ⚠️ An earlier version of this paragraph said "the attribute lists reach a live index only
@@ -410,7 +409,7 @@ describe('models search index projects insight.qualityScore', () => {
     // attribute and an explicit null sort the same way (measured). But every live write is
     // `PUT /indexes/<uid>/documents`, which MERGES top-level fields — so on a document that
     // already carries a score, omitting leaves the stale value in place and a retracted
-    // label keeps its top-of-pool seeding forever. Measured both arms on v1.15.0: the null
+    // label stays visible to any filter or sort on it forever. Measured both arms on v1.15.0: the null
     // PUT cleared a stored 0.9; the control PUT with no key left a stored 0.1 intact.
     //
     // 🔴 All FOUR keys, for the same reason: `role`, `styleFamily` and `modelVersionId` are
@@ -436,9 +435,9 @@ describe('models search index projects insight.qualityScore', () => {
   it('🔴 fails soft on a label-read error rather than dropping the whole index batch', () => {
     // `ResourceInsight` is hand-applied per environment, so in any environment where that
     // has not happened this read throws on EVERY batch. Unguarded that does not merely lose
-    // the score: the batch is scored `error`, dropped after its retries, and `setLastUpdate`
-    // advances anyway — so published models leave the index permanently, every 15 minutes,
-    // with only a console line. An optional ordering refinement must not be able to do that.
+    // the score: every batch is scored `error` and fails after its retries, so published
+    // models stay out of the index for as long as the read keeps throwing, with only console
+    // lines. An optional ordering refinement must not be able to do that.
     //
     // Pinned on the RELATIONSHIP rather than the spelling: the call must sit inside a `try`,
     // and the recovery must be an empty Map (which falls through to the same cleared path an

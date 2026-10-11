@@ -1,9 +1,11 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
 import { comicNotifications } from '~/server/notifications/comics.notifications';
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
+import { ratingReviewNotifications } from '~/server/notifications/rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
+import { appFeedbackNotifications } from '~/server/notifications/app-feedback.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
 import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
@@ -19,12 +21,15 @@ import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.
 import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
+import { creatorMilestoneNotifications } from '~/server/notifications/creator-milestone.notifications';
 import { creatorAnnouncementNotifications } from '~/server/notifications/creator-announcement.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
 import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
+import { reviewMuteNotifications } from '~/server/notifications/review-mute.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { minorFlagNotifications } from '~/server/notifications/minor-flag.notifications';
+import { textScanFlagNotifications } from '~/server/notifications/text-scan-flag.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import { strikeNotifications } from '~/server/notifications/strike.notifications';
@@ -35,6 +40,7 @@ import { systemNotifications } from '~/server/notifications/system.notifications
 import { unpublishNotifications } from '~/server/notifications/unpublish.notifications';
 import { userJourneyNotifications } from '~/server/notifications/user-journey.notifications';
 import { referralNotifications } from '~/server/notifications/referral.notifications';
+import { textScanNotifications } from '~/server/notifications/text-scan.notifications';
 
 export const notificationProcessors = {
   ...creatorAnnouncementNotifications,
@@ -47,13 +53,16 @@ export const notificationProcessors = {
   ...userJourneyNotifications,
   ...unpublishNotifications,
   ...minorFlagNotifications,
+  ...textScanFlagNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
   ...appListingNotifications,
   ...appBlockNotifications,
   ...appCollaboratorNotifications,
+  ...appFeedbackNotifications,
   ...appModeratorMessageNotifications,
   ...articleRatingReviewNotifications,
+  ...ratingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
@@ -64,6 +73,7 @@ export const notificationProcessors = {
   ...creatorsProgramNotifications,
   ...followNotifications,
   ...generationMuteNotifications,
+  ...reviewMuteNotifications,
   ...cosmeticShopNotifications,
   ...challengeNotifications,
   ...crucibleNotifications,
@@ -73,6 +83,8 @@ export const notificationProcessors = {
   ...strikeNotifications,
   ...referralNotifications,
   ...membershipGiftNotifications,
+  ...textScanNotifications,
+  ...creatorMilestoneNotifications,
 };
 
 // Sort notifications by priority and group them by priority

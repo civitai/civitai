@@ -103,17 +103,18 @@ both routes require `collections:read:self`, whose non-anon binding still runs.
 A third such site has to make its own argument — see the note at the foot of
 `src/server/middleware/__tests__/block-scope.required-scope-binding.test.ts`.
 
-| Scope                                | Bind                                    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------ | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `models:read:self`                   | `query.id == ctx.modelId`               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ~~`media:read:owned`~~               | —                                       | **REMOVED** from the scope registry (purely decorative — no endpoint ever checked it). A manifest declaring it is REJECTED. The OAuth `MediaRead` bit is unaffected                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `buzz:read:self`                     | non-anon `sub`                          | **required for EVERY host-mediated buzz read**, `blocks.getMyBuzzBalance` included — it is no longer scope-free. A token without it gets `block lacks buzz:read:self scope` (FORBIDDEN)                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `social:tip:self`                    | non-anon `sub`                          |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `user:read:self`                     | non-anon `sub`                          | viewer identity. Gates `GET /api/v1/blocks/me` — the REST read, and the default surface for it (see "Direction" under Routes) — AND its host-mediated twin, the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Neither is deprecated                                                                                                                                                                                                                                                                                                                                                                |
-| `ai:write:budgeted`                  | positive `buzzBudget`                   |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ~~`block:settings:read` / `:write`~~ | —                                       | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `apps:storage:read` / `:write`       | scope present on `claims.scopes` per op | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `posts:write:self`                   | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.createPostFromApp`), optionally attached to a model version's gallery. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
+| Scope                                | Bind                                    | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `models:read:self`                   | `query.id == ctx.modelId`               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~~`media:read:owned`~~               | —                                       | **REMOVED** from the scope registry (purely decorative — no endpoint ever checked it). A manifest declaring it is REJECTED. The OAuth `MediaRead` bit is unaffected                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `buzz:read:self`                     | non-anon `sub`                          | **required for EVERY host-mediated buzz read**, `blocks.getMyBuzzBalance` included — it is no longer scope-free. A token without it gets `block lacks buzz:read:self scope` (FORBIDDEN)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `social:tip:self`                    | non-anon `sub`                          |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `user:read:self`                     | non-anon `sub`                          | viewer identity. Gates `GET /api/v1/blocks/me` — the REST read, and the default surface for it (see "Direction" under Routes) — AND its host-mediated twin, the `useViewer()` hook (`GET_VIEWER` bridge → `blocks.getMyViewer`). Neither is deprecated                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `ai:write:budgeted`                  | positive `buzzBudget`                   |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ~~`block:settings:read` / `:write`~~ | —                                       | **REMOVED** from the scope registry (no runtime capability ever verified them; the settings paths authorize on valid-token + app-developer + installer-resolution). A manifest declaring either is REJECTED                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `apps:storage:read` / `:write`       | scope present on `claims.scopes` per op | per-app KV store (App Storage); no OAuth bit (`SKIP_OAUTH_CHECK`) — gated by the approved-scope snapshot + `resolveStorageContext`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `posts:write:self`                   | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Create a REAL, published Post on the viewer's own profile from the app's own outputs (`CREATE_POST_FROM_APP` → `blocks.previewPostFromApp` then `blocks.createPostFromApp`; both also require the viewer's signed-in session and refuse unless it is the token's `sub`), optionally attached to a model version's gallery. Outputs are workflow outputs or — page apps only — images uploaded from the app's own bytes (`OPEN_IMAGE_UPLOAD { bytes }` → the store upload, then `blocks.persistAppUploadImage`, which is gated by this scope); such an image is postable only by the app that uploaded it, only for its owner, only within the SFW ceiling (whatever the viewer's own browsing level allows; bytes uploads are SFW-only in v1), and is never readable through `blocks.getImagesByIds`. Maps to the REAL `MediaWrite` OAuth bit. Deliberately NOT consent-exempt, so a token carries it only after an explicit grant — AND the host opens a per-post confirm rendering the host-resolved content, because a blanket grant cannot inform about content that differs every time. Behind its own fail-closed flag (`app-blocks-post-creation`), independent of `app-blocks-enabled` |
+| `apps:store:items:write`             | non-anon `sub`                          | **SENSITIVE + CONSENT-EXEMPT.** Publish the viewer's own app items as App Store sub-listing cards under the calling app (`/api/v1/blocks/sub-listings/{upsert,withdraw,mine}`). Gated per call by the parent's `app_sub_listing_parents` switch, the shared-write trust check, item authorship in shared storage, the shared text-safety check, rate limits and moderator approval. In no dev or review mint allowlist. See `docs/features/app-store-sub-listings.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ⚠️ **This table is NOT exhaustive and the constant is the authority.** Absent
 from it today: `apps:storage:shared:read` / `:write` (the cross-user shared
@@ -379,27 +380,127 @@ read that file. As of this writing the families are:
   surface and both stay (see "Direction" under Routes). Page host only today.
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
-  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`.
+  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `PREPARE_TRAINING_DATASET` (→
+  `TRAINING_DATASET_RESULT`) and `RUN_TRAINING` (→ `TRAINING_RESULT`), the last two
+  page host only — see "Training runs".
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
-- **Resource pickers** (host chrome so the iframe only learns the one resource the
+- **Resource pickers** (host chrome so the iframe only learns the resources the
   user picked): `OPEN_CHECKPOINT_PICKER` (model slot) and the wider
   `OPEN_RESOURCE_PICKER` (page host only). `SET_USER_CHECKPOINT` persists to
   `block_user_settings` (model-bound installs only).
+  `OPEN_RESOURCE_PICKER` answers `{ requestId, selected? }` with one resource. With
+  `multiple: { max }` (LoRA-family types only; `max` above 5 is clamped to 5, the
+  `additionalResources` cap) it answers `{ requestId, selectedResources }` instead:
+  the picked resources in pick order, `[]` on dismiss. `multiple` with a
+  Checkpoint, or a `max` that is not a whole number of at least 1, is answered
+  with `{ requestId, error }` and the picker does not open.
 - **App Storage** (per-app KV; `apps:storage:*` scopes): `APP_STORAGE_GET` /
   `_SET` / `_DELETE` / `_LIST` / `_QUOTA`.
 - **Navigation**: `NAVIGATE` — page host only; the model slot intentionally does
   not bridge it (an embedded panel navigating the host away is out of remit).
-- **Analytics**: `TRACK_EVENT` — fire-and-forget, **not** host-bridged by either
-  real host today (no analytics sink wired), so it is silently dropped (never
-  hangs the block). Flip the host entries to `required` in the inventory if/when
-  a sink lands.
+- **Analytics**: `TRACK_EVENT` — fire-and-forget (no reply), forwarded by both
+  real hosts to the custom-events ingest; see "Custom events" below.
 
 `SUSPEND` / `RESUME`, `TOKEN_REFRESH` (see "Token refresh") and `THEME_CHANGE`
 (see "Theme changes") flow the other direction (host→block), which is why they
 are absent from that inventory — it covers block→host only. The SDK degrades
 gracefully when a host does not handle a fire-and-forget surface, and a block
 that ignores a host→block push is equally fine.
+
+### Custom events
+
+The events an app may send are declared in the manifest's optional
+`analytics.events` and validated at submit by `parseManifestAnalytics`
+(`src/shared/constants/block-analytics.constants.ts`). A property is an `enum`
+of declared string values, a `number` or a `boolean`; there is no free-text type.
+The moderator review screen shows the declaration in an "Analytics events" card
+(`ManifestAnalytics` in `src/components/Apps/OnsiteReviewModal.tsx`): every
+event with its description, properties, types and enum values, or the parser's errors if it
+does not validate.
+
+`POST /api/track/block-event` (`src/pages/api/track/block-event.ts`,
+`src/server/services/blocks/block-event-ingest.service.ts`) records them in the
+`appBlockEvents` ClickHouse table
+(`src/server/clickhouse/migrations/2026-10-10-app-block-events.sql`, applied by
+hand before the route deploys).
+
+- **The hosts forward them.** `IframeHost` and `PageBlockHost` handle
+  `TRACK_EVENT` and queue one row per event in `blockEventBeacon.ts`, stamping
+  `appBlockId` and `blockInstanceId` from their own props (the page's `page_…`
+  id on the page host, the install's instance id in a model slot); the block's
+  payload supplies only `eventName` and `properties`, which are forwarded as
+  given for the server to classify. `TRACK_EVENT` does not count against the
+  bridge's shared inbound limit, so a block's events cannot rate-limit its own
+  requests. The queue flushes every 10 s, at 50 rows, and on `pagehide` /
+  `visibilitychange` (hidden), in POSTs of at most 50 rows and 32 KiB; a
+  page-exit flush sends one body at most, and an event larger than a body is
+  dropped. Each host mount may send 10 events a second and 500 in all, so a
+  remount (a new page or app) starts a fresh budget and two mounts of one app
+  do not share one. A moderator's review preview forwards nothing. Nothing is
+  retried, and client-side drops are not counted.
+
+- **Declared events only.** A row is checked against the app's APPROVED manifest.
+  An event the manifest does not declare is stored as one `__undeclared__` row
+  with no properties, so the owner can see that events are being dropped without
+  the name the caller chose ever being stored. An undeclared property, or a value
+  of the wrong type or outside an enum's declared values, is stripped and the
+  rest of the row is kept. An app that is not approved has its rows dropped.
+- **Identity is the server's.** The body carries the app id, the block instance
+  id, the event name and its properties, and nothing else is read from it. The
+  viewer comes from the session, the time from the server clock, and `isOwner`
+  from whether the viewer is on the app's team: its owner or an accepted
+  collaborator (the same seats that can open the app's analytics panel). The
+  team is cached for up to five minutes per process, so a collaborator who was
+  just added or removed is reflected after that; rows already written keep the
+  flag they were written with. A block instance id that is
+  not shaped like a platform id (for a page, not that app's own page id) is
+  stored empty.
+- **Unique viewers are signed-in viewers only.** Each row carries a `viewerKey`:
+  a hash of the user id for a signed-in viewer, and `0` ("unknown viewer") for
+  a signed-out one. Nothing derived from a client address is stored for
+  signed-out viewers; their activity is reported as event counts, never as
+  unique viewers.
+- **Private runs are excluded.** A private run is of an app that is not
+  approved, and those rows are dropped. The impression writers' server-derived
+  predicate is also consulted, for an app that has just left the approved set.
+- **A public beacon.** Like the impression beacon it is same-origin but
+  unauthenticated, so anyone can post events for an approved app. The
+  declared-only filter bounds what can be stored, and a per-process budget per
+  client address and app bounds how much each process accepts. The address is
+  used in memory for that budget only and is never stored.
+- **Only a deployment that says it is production writes.** A write needs
+  `CIVITAI_DEPLOYMENT_ENVIRONMENT=production` (exact value) and no
+  non-production signal (`IS_PREVIEW`, a cache-key namespace). Every other
+  deployment, including one where the variable is unset, runs the same
+  validation and skips the insert.
+- **Counts**: `civitai_app_block_custom_events_total{outcome}` (no per-app
+  label; the per-app breakdown is the table).
+
+**The owner panel.** The app analytics panel (`AppAnalyticsPanel.tsx`) has a
+"Custom events" card, read by its own procedure, `blocks.getMyAppCustomEvents`, for
+one app (`src/server/services/blocks/app-custom-events.service.ts`). It has the same
+scope, flag gate, ownership check and date range as `getMyAppAnalytics`. The team
+(owner and accepted collaborators) sees aggregates only, never rows:
+
+- every event the app's manifest declares, including ones never sent, with its
+  event count, **signed-in viewers** (distinct signed-in viewers only; signed-out
+  activity appears as an event count) and signed-out events;
+- for a selected event, its series and a property breakdown: a count per declared
+  enum value, count / sum / average / median / p95 for a number, and a true /
+  false split for a boolean. Each covers only the events that carried the
+  property;
+- a banner when events arrived under names the approved manifest does not
+  declare (`__undeclared__` rows).
+
+The team's own activity (rows with `isOwner`: the owner or an accepted
+collaborator was signed in, including dev-tunnel testing) is excluded by
+default, from the drop count too; an "Include team activity" toggle adds it.
+Rows written before collaborators were counted are flagged for the owner only,
+so a collaborator's earlier activity still shows with the toggle off. Counts are
+exact (there is no small-count suppression) and are lower bounds, since
+client-side drops are never recorded. A ClickHouse failure shows "couldn't
+load", never a zero.
 
 ### Buzz and per-account spend
 
@@ -456,6 +557,69 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 - **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
+
+### Training runs (`kind: 'training'`)
+
+A page app can train a LoRA (ai-toolkit engine) on the viewer's own images. Behind its
+own fail-closed flag, `app-blocks-training-kind`. Page tokens only: dev, dev-tunnel and
+review-sandbox tokens are refused, and so is an editor's read-only private run. The app
+owner's own private run is allowed, under the private-run Buzz cap.
+
+**Prerequisites.** The app is a page app (`/apps/run/<slug>`); the model slot has no
+training bridge and answers both training messages with an error. The manifest declares
+`ai:write:budgeted`, and the viewer has granted it. `app-blocks-training-kind` is on for
+the viewer, and the viewer is signed in. Steps 1–3 check these server-side.
+
+1. **Dataset** — `PREPARE_TRAINING_DATASET { requestId, items: [{ imageId, caption }] }`
+   → `TRAINING_DATASET_RESULT { requestId, result: { datasetId, count, rejected } }` or
+   `{ requestId, error }`. The block cannot call the procedure itself (the web tRPC
+   endpoint refuses its origin), so the host calls `blocks.prepareTrainingDataset` with
+   the page's block token. No dialog: preparing charges nothing. The host refuses a
+   payload that fails the server's item schema (`blockTrainingDatasetItemsSchema`: 1 to
+   `BLOCK_TRAINING_DATASET_MAX_ITEMS` (50) items, positive integer ids, captions up to
+   `BLOCK_TRAINING_CAPTION_MAX_CHARS` (1,000) characters, no other keys) with
+   `invalid training dataset`, before any call; its other refusals are `review-mode`,
+   `block is not ready`, `sign in to train` and `no block token`. Server refusals arrive
+   in the same `error` field.
+
+   The server admits only the viewer's own scanned, unflagged images within the token's
+   maturity ceiling, moderates the captions, imports the admitted images under the
+   viewer's orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
+   bound to the viewer, app and install; the image count is always server-derived.
+   Every image is re-checked at submit, before anything is charged; a dataset with an
+   image that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator
+   outage) is a retryable rejection; `import-failed` is not.
+
+2. **Estimate** — `ESTIMATE_WORKFLOW` with a `kind: 'training'` body (no `maxBuzz`)
+   returns `snapshot.trainingQuote: { quoteId, total, imageCount, expiresAt }`. The
+   price is the orchestrator's quote for that exact step; an unknown or variable price
+   is refused.
+3. **Run** — `RUN_TRAINING { body: { …, quoteId } }`. The host shows the server's copy
+   of the quote, and on the viewer's confirm records it through
+   `blocks.consentTrainingQuote` (signed-in session only) and then submits. A submit
+   whose quote the viewer did not confirm is refused, so calling `SUBMIT_WORKFLOW`
+   directly cannot start a run. If the outcome of the submit is unknown — the connection
+   dropped, or the server attempted the run but could not confirm it — the host replies
+   `error: 'submission-unconfirmed'`: the run may be running and charged, so check the viewer's
+   trainings before offering a retry. When the server could not confirm the run, a retry of the
+   same body (new estimate, new confirmation) reuses that run's orchestrator id; but after a
+   dropped connection the server may already have started the run, and a retry of the same body
+   then starts a second, separately charged run. The block cannot tell these cases apart.
+4. **Follow the run** — `TRAINING_RESULT` carries the submit's `snapshot`; poll it with
+   `POLL_WORKFLOW`, or list the app's runs with `QUERY_APP_WORKFLOWS`. Both carry
+   `trainedEpochs: [{ $type, epochNumber }]` for the epochs whose checkpoint is ready,
+   and only once the run's moderation status is `approved`; the field is absent until then.
+5. **Publish** — the block sends the viewer to the training publish wizard,
+   `/models/train/from-orchestrator?workflowId=…&epoch=…`, with an `epochNumber` from
+   `trainedEpochs`. The checkpoint itself never reaches the block. Once the wizard has
+   created the model, `publishedModel: { modelId, modelVersionId, published }` appears on
+   the run (`published` is false while it is a draft).
+
+A confirmed run may cost more than the token's per-call budget, up to
+`BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.
+A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
+re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
+reserved, when the balance can be read). Training charges no author fee.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
@@ -673,8 +837,9 @@ documented above, so they're dropped from this list.
   (`Tracker.blockRender()` → the block-render insert, `sendBlockRender.ts`,
   `/api/track/block-render`) and workflow attribution flows through
   `/api/internal/blocks/workflow-completed`, but the analytics tables are still
-  being stood up (the hosts note "until the … ClickHouse table exists") and a
-  block-interactions stream is not yet emitted.
+  being stood up (the hosts note "until the … ClickHouse table exists"). Custom
+  events are forwarded by both hosts, recorded, and shown to owners (see "Custom
+  events").
 - **Health-check job + auto-suspend on consecutive failures.** The
   `health_status` column exists (default `'unknown'`) but nothing populates it
   and there's no auto-suspend job (and no suspend transition — see the

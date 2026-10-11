@@ -15,13 +15,13 @@ import { IconMusic, IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import {
   disabledMediaTooltip,
   isStudioToggleAvailable,
   showStudioAudioNotice,
 } from '~/components/Training/Form/studioAudioNotice';
+import { useTrainingStudioSwitch } from '~/components/Training/TrainingStudioSwitch';
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -156,6 +156,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
     gcTime: Infinity,
     staleTime: Infinity,
   });
+  const { switchTo, switching } = useTrainingStudioSwitch();
   const status = useTrainingServiceStatus();
 
   const { resetRuns } = trainingStore;
@@ -441,11 +442,16 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
                 alongside a redesigned flow for image and video training.
               </Text>
               <Text size="sm">
-                To try it, go to{' '}
-                <Anchor component={Link} href="/user/account/preferences">
-                  Settings → Preferences
+                <Anchor
+                  component="button"
+                  type="button"
+                  size="sm"
+                  disabled={switching}
+                  onClick={() => switchTo(true, '/training-studio?view=new')}
+                >
+                  Switch to Training Studio
                 </Anchor>{' '}
-                and turn on <b>Training Studio</b>. You can switch back at any time.
+                to try it. You can switch back at any time.
               </Text>
             </Stack>
           </AlertWithIcon>

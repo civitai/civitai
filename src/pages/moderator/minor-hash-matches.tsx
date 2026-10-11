@@ -17,8 +17,10 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconExternalLink } from '@tabler/icons-react';
 import type { MRT_ColumnDef } from 'mantine-react-table';
 import { MantineReactTable } from 'mantine-react-table';
-import { useMemo, useState } from 'react';
+import { useRouter } from 'next/router';
+import { useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { appealRowState } from '~/components/Moderation/appeal-row-state';
 import { MinorFlagAppealActions } from '~/components/Moderation/MinorFlagAppealActions';
 import { MinorFlagNoMatchAlert } from '~/components/Moderation/MinorFlagNoMatchAlert';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -30,10 +32,12 @@ import type {
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({ requireModerator: true });
+
+const TABS = ['pending', 'auto', 'appeals'] as const;
 
 // The full queue is fetched in one request; this is a safety cap, not a page size.
 const limit = 1000;
@@ -444,7 +448,15 @@ function AutoFlaggedTable() {
   );
 }
 
+const SOURCE_BADGE_COLOR: Record<ReturnType<typeof appealRowState>['sourceLabel'], string> = {
+  Reverted: 'gray',
+  'Text scan': 'blue',
+  Auto: 'orange',
+  Mod: 'grape',
+};
+
 function AppealDetailPanel({ row }: { row: MinorFlagAppealRow }) {
+  const { verdictLabels, showHashMatch } = appealRowState(row);
   return (
     <Stack gap="xs">
       <Stack gap={2} maw={900} className="px-2 pt-2">
@@ -455,7 +467,21 @@ function AppealDetailPanel({ row }: { row: MinorFlagAppealRow }) {
           {row.appealMessage}
         </Text>
       </Stack>
-      <AutoFlaggedDetailPanel row={row} />
+      {verdictLabels.map((label) => {
+        const flag = row.textScanFlags?.[label];
+        if (!flag) return null;
+        return (
+          <Stack key={label} gap={2} maw={900} className="px-2">
+            <Text size="xs" fw={600}>
+              Text scan · {label === 'poi' ? 'real person' : 'minor'}
+              {flag.at ? ` · ${formatDate(flag.at)}` : ''}
+            </Text>
+            <Text size="sm">{flag.reason}</Text>
+            {!!flag.names?.length && <Text size="xs">Names: {flag.names.join(', ')}</Text>}
+          </Stack>
+        );
+      })}
+      {showHashMatch && <AutoFlaggedDetailPanel row={row} />}
     </Stack>
   );
 }
@@ -471,7 +497,13 @@ function AppealsTable() {
   const items = useMemo(() => data?.items ?? [], [data]);
 
   const resolveMutation = trpc.moderator.models.resolveMinorFlagAppeal.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      if (result?.rescanQueued)
+        showSuccessNotification({
+          title: 'Appeal resolved',
+          message:
+            'The uploader edited the text while the appeal was open, so it will be scanned again.',
+        });
       await queryUtils.moderator.models.queryMinorFlagAppeals.invalidate();
       await queryUtils.moderator.models.queryAutoFlaggedMinorModels.invalidate();
       await queryUtils.moderator.models.queryMinorHashMatches.invalidate();
@@ -521,24 +553,17 @@ function AppealsTable() {
         // this is decides how much weight the existing decision carries.
         id: 'flagSource',
         header: 'Flag',
-        accessorFn: (row) => (!row.minor ? 'Reverted' : row.flagSource === 'auto' ? 'Auto' : 'Mod'),
+        accessorFn: (row) => appealRowState(row).sourceLabel,
         size: 110,
         filterVariant: 'multi-select',
-        Cell: ({ row: { original } }) =>
-          !original.minor ? (
-            <Badge size="sm" tt="none" color="gray" variant="light">
-              Reverted
+        Cell: ({ row: { original } }) => {
+          const label = appealRowState(original).sourceLabel;
+          return (
+            <Badge size="sm" tt="none" color={SOURCE_BADGE_COLOR[label]} variant="light">
+              {label}
             </Badge>
-          ) : (
-            <Badge
-              size="sm"
-              tt="none"
-              color={original.flagSource === 'auto' ? 'orange' : 'grape'}
-              variant="light"
-            >
-              {original.flagSource === 'auto' ? 'Auto' : 'Mod'}
-            </Badge>
-          ),
+          );
+        },
       },
       {
         id: 'status',
@@ -615,12 +640,16 @@ function AppealsTable() {
             row={original}
             pending={
               resolveMutation.isPending && resolveMutation.variables?.modelId === original.modelId
-                ? resolveMutation.variables.uphold
+                ? resolveMutation.variables.labels
+                  ? 'split'
+                  : resolveMutation.variables.uphold
                   ? 'uphold'
                   : 'overturn'
                 : undefined
             }
-            onResolve={(uphold) => resolveMutation.mutate({ modelId: original.modelId, uphold })}
+            onResolve={(uphold, labels) =>
+              resolveMutation.mutate({ modelId: original.modelId, uphold, labels })
+            }
           />
         ),
       },
@@ -667,7 +696,12 @@ function AppealsTable() {
 
 export default function MinorHashMatches() {
   const queryUtils = trpc.useUtils();
-  const [tab, setTab] = useState<string>('pending');
+  const router = useRouter();
+  const tab = TABS.find((value) => value === router.query.tab) ?? 'pending';
+  const setTab = (value: string | null) =>
+    router.replace({ query: { ...router.query, tab: value ?? 'pending' } }, undefined, {
+      shallow: true,
+    });
   const { data: autoData } = trpc.moderator.models.queryAutoFlaggedMinorModels.useQuery({ limit });
   const autoCount = autoData?.items.length ?? 0;
   const { data: appealData } = trpc.moderator.models.queryMinorFlagAppeals.useQuery({ limit });
@@ -836,16 +870,28 @@ export default function MinorHashMatches() {
     <Container size="xl">
       <Stack gap="md">
         <div>
-          <Title order={1}>Minor hash matches</Title>
-          <Text c="dimmed" size="sm">
-            Models sharing a byte-identical weight file with a model a moderator already flagged
-            minor. Different-uploader matches wait for review here; same-uploader matches are
-            flagged automatically at scan time and are listed under Auto-flagged. Uploaders
-            contesting a flag appear under Review requested.
-          </Text>
+          {tab === 'appeals' ? (
+            <>
+              <Title order={1}>Model flag appeals</Title>
+              <Text c="dimmed" size="sm">
+                Owners contesting a model flagged as depicting a minor or a real person, whether the
+                flag came from a hash match, the text scan or a moderator.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Title order={1}>Minor hash matches</Title>
+              <Text c="dimmed" size="sm">
+                Models sharing a byte-identical weight file with a model a moderator already flagged
+                minor. Different-uploader matches wait for review here; same-uploader matches are
+                flagged automatically at scan time and are listed under Auto-flagged. Uploaders
+                contesting a flag appear under Review requested.
+              </Text>
+            </>
+          )}
         </div>
 
-        <Tabs value={tab} onChange={(value) => setTab(value ?? 'pending')}>
+        <Tabs value={tab} onChange={setTab}>
           <Tabs.List>
             <Tabs.Tab value="pending">Pending review</Tabs.Tab>
             <Tabs.Tab value="auto">Auto-flagged{autoCount ? ` (${autoCount})` : ''}</Tabs.Tab>

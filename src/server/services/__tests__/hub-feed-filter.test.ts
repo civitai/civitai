@@ -17,11 +17,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as UserHubService from '~/server/services/user-hub.service';
+import type * as NewCreatorsService from '~/server/services/new-creators.service';
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 
-const { fetchDocumentsMock, resolveHubSourcesMock } = vi.hoisted(() => ({
+const { fetchDocumentsMock, resolveHubSourcesMock, getNewCreatorUserIdsMock } = vi.hoisted(() => ({
   fetchDocumentsMock: vi.fn(),
   resolveHubSourcesMock: vi.fn(),
+  getNewCreatorUserIdsMock: vi.fn(),
 }));
 
 // Every stub goes through this, so a field added to `ResolvedHubSources` has one
@@ -88,6 +90,11 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserHubService>()),
   resolveHubSources: resolveHubSourcesMock,
+}));
+
+vi.mock('~/server/services/new-creators.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NewCreatorsService>()),
+  getNewCreatorUserIds: getNewCreatorUserIdsMock,
 }));
 
 import {
@@ -557,5 +564,25 @@ describe('the unscanned-image arm is not open to anonymous callers', () => {
 
     expect(fetchDocumentsMock).toHaveBeenCalled();
     expect(emittedFilter()).not.toContain('nsfwLevel = 0');
+  });
+});
+
+// The Meili builders serve the New & Upcoming home shelf whenever the feed service is off or
+// fails over. If either drops the follower cap, the shelf's 1k+ creators come back only during
+// a failover, which nobody would trace to the cap.
+describe('new-creators follower cap reaches the search fallback', () => {
+  it.each([
+    ['pre-filter', getImagesFromSearchPreFilter],
+    ['post-filter', getImagesFromSearchPostFilter],
+  ] as const)('the %s builder resolves the capped board', async (_, build) => {
+    getNewCreatorUserIdsMock.mockResolvedValue([11, 12]);
+
+    await build({ ...input(), newCreators: true, newCreatorsMaxFollowers: 500 } as never);
+
+    expect(getNewCreatorUserIdsMock).toHaveBeenCalledTimes(1);
+    expect(getNewCreatorUserIdsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ entity: 'images', maxFollowers: 500 })
+    );
+    expect(emittedFilter()).toContain('userId IN [11,12]');
   });
 });

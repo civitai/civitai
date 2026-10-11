@@ -22,6 +22,7 @@ import {
   IconProgressBolt,
   IconSword,
   IconShoppingBag,
+  IconStairsUp,
   IconSticker,
   IconThumbUp,
   IconTrophy,
@@ -36,11 +37,13 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OnboardingSteps } from '~/server/common/enums';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -59,6 +62,7 @@ export type UserMenuItem = {
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
   newUntil?: Date;
+  isNew?: boolean;
   /**
    * A count rendered as a filled badge after the label. Zero and undefined both
    * render nothing — a badge that says "0" reads as a broken badge, not as an
@@ -102,6 +106,10 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
   // `staleTime: Infinity`. Reading it here adds no round trip.
   const { pendingPlacements, pendingCollectionReviews } = useQueryNotificationsCount();
 
+  const eventItems = useEventMenuItems(
+    theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')]
+  );
+
   return [
     {
       visible: !!currentUser,
@@ -112,6 +120,8 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
         },
+        // Stays after the event's strip is dismissed: the way back to the event.
+        ...eventItems,
         {
           href: `/user/${currentUser?.username as string}/shop`,
           // Only Creator Program members qualify to run a shop.
@@ -144,8 +154,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-09-20'),
         },
         {
-          // Same flag swap as the trainer entry below: with the Training Studio on, "my trainings"
-          // IS the studio's run list — the old DB-backed list stays reachable via the banner there.
+          // With the Training Studio on, "my trainings" IS the studio's run list.
           href: features.trainingStudioUi
             ? '/training-studio'
             : `/user/${currentUser?.username as string}/models?section=training`,
@@ -206,6 +215,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Creator Studio',
           newUntil: new Date('2026-09-01'),
+        },
+        {
+          href: CREATOR_JOURNEY_HREF,
+          visible: !!currentUser && features.creatorJourney,
+          icon: IconStairsUp,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Creator Journey',
+          newUntil: new Date('2026-11-15'),
         },
         {
           href: '/user/vault',
@@ -314,6 +331,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
     {
       visible: !currentUser,
       items: [
+        ...eventItems,
         {
           href: '/leaderboard/overall',
           icon: IconCrown,

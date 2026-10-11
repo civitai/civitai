@@ -13,6 +13,7 @@ import type {
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
@@ -54,6 +55,7 @@ export const getUserProfileHandler = async ({
       username: input.username,
       isModerator: ctx.user?.isModerator,
       sessionUserId: ctx.user?.id,
+      eventViewer: eventViewerOf(ctx),
       domain: ctx.domain,
     });
 

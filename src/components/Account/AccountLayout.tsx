@@ -2,8 +2,7 @@ import type { MantineSize } from '@mantine/core';
 import { Badge, CloseButton, Text, TextInput } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight, IconSearch } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { AccountSection } from '~/components/Account/account-sections';
@@ -11,7 +10,6 @@ import {
   accountSectionGroups,
   getAccountSectionHref,
   getOverviewHref,
-  resolveLegacyAnchor,
   searchAccountSections,
 } from '~/components/Account/account-sections';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -21,32 +19,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { SUBNAV_STICKY_GAP, useSubnavBottom } from '~/hooks/useSubnavBottom';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
-
-function useLegacyAnchorRedirect() {
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!router.isReady) return;
-
-    const redirect = () => {
-      const section = resolveLegacyAnchor(window.location.hash);
-      if (!section) return;
-      // Read the query off the URL rather than `router.query`: that one carries the route's own
-      // `section` param and goes stale inside this closure.
-      const query = Object.fromEntries(new URLSearchParams(window.location.search).entries());
-      router.replace({ pathname: getAccountSectionHref(section), query });
-    };
-
-    redirect();
-    // A link to `/user/account#creator-score` from a page already on `/user/account` changes only
-    // the fragment, so the browser navigates within the same document and nothing remounts. Mount
-    // alone would leave those in-app anchors dead while the same URL worked on a cold load.
-    window.addEventListener('hashchange', redirect);
-    return () => window.removeEventListener('hashchange', redirect);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router.isReady]);
-}
-
+import { useLegacyAnchorRedirect } from '~/components/Account/useLegacyAnchorRedirect';
 
 function SectionLink({ section, active }: { section: AccountSection; active: boolean }) {
   const Icon = section.icon;

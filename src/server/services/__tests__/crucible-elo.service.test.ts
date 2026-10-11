@@ -66,6 +66,7 @@ describe('processVote', () => {
         establishedK: K_FACTOR_ESTABLISHED,
         provisionalVotes: PROVISIONAL_VOTE_THRESHOLD,
       },
+      undefined,
       undefined
     );
   });
@@ -79,7 +80,29 @@ describe('processVote', () => {
 
     await processVote(7, 101, 102, stored);
 
-    expect(processVoteAtomic).toHaveBeenCalledWith(7, 101, 102, expect.any(Object), stored);
+    expect(processVoteAtomic).toHaveBeenCalledWith(
+      7,
+      101,
+      102,
+      expect.any(Object),
+      stored,
+      undefined
+    );
+  });
+
+  it('hands the script the side an anchor vote leaves as it is', async () => {
+    processVoteAtomic.mockResolvedValue(atomicResult);
+
+    await processVote(7, 101, 102, undefined, 'loser');
+
+    expect(processVoteAtomic).toHaveBeenCalledWith(
+      7,
+      101,
+      102,
+      expect.any(Object),
+      undefined,
+      'loser'
+    );
   });
 
   it('returns the ELO the Lua script computed, not its own recomputation', async () => {
@@ -129,9 +152,16 @@ describe('initializeEntryElo and getAllEntryElos', () => {
 
 describe('CrucibleEloRedisClient.processVoteAtomic', () => {
   const k = { provisionalK: 64, establishedK: 32, provisionalVotes: 10 };
-  const run = async (...stored: [] | [Parameters<typeof client.processVoteAtomic>[4]]) => {
+  const run = async (
+    ...rest:
+      | []
+      | [
+          Parameters<typeof client.processVoteAtomic>[4],
+          Parameters<typeof client.processVoteAtomic>[5]?
+        ]
+  ) => {
     evalScript.mockResolvedValue([1700, 1400, 1705, 1395, 5, -5]);
-    await client.processVoteAtomic(9, 1, 2, k, ...stored);
+    await client.processVoteAtomic(9, 1, 2, k, ...rest);
     return evalScript.mock.calls[0] as [string, { keys: string[]; arguments: string[] }];
   };
   const evalScript = vi.fn();
@@ -153,7 +183,7 @@ describe('CrucibleEloRedisClient.processVoteAtomic', () => {
       loser: { score: 1400, voteCount: 12 },
     });
 
-    expect(args.slice(5)).toEqual(['1700', '25', '1400', '12']);
+    expect(args.slice(5, 9)).toEqual(['1700', '25', '1400', '12']);
     expect(script).toContain("redis.call('HGET', eloKey, winnerField)) or winnerStoredElo");
     expect(script).toContain("redis.call('HGET', votesKey, loserField)) or loserStoredVotes");
     expect(script).toContain("redis.call('HSET', votesKey, winnerField, winnerVotes + 1)");
@@ -162,6 +192,28 @@ describe('CrucibleEloRedisClient.processVoteAtomic', () => {
 
   it("falls back to a new entry's rating when given none", async () => {
     const [, { arguments: args }] = await run();
-    expect(args.slice(5)).toEqual(['1500', '0', '1500', '0']);
+    expect(args.slice(5)).toEqual(['1500', '0', '1500', '0', '']);
   });
+
+  it.each(['winner', 'loser'] as const)(
+    'tells the script to leave the %s of an anchor vote as it is',
+    async (side) => {
+      const [script, { arguments: args }] = await run(undefined, side);
+      const change = side === 'winner' ? 'winnerChange' : 'loserChange';
+      const field = side === 'winner' ? 'winnerField' : 'loserField';
+      const votes = side === 'winner' ? 'winnerVotes' : 'loserVotes';
+      const newElo = side === 'winner' ? 'newWinnerElo' : 'newLoserElo';
+
+      expect(args[9]).toBe(side);
+      expect(script).toContain('local frozen = ARGV[10]');
+      expect(script).toContain(`if frozen == '${side}' then ${change} = 0 end`);
+      expect(script).toMatch(
+        new RegExp(
+          `if frozen ~= '${side}' then\\s+` +
+            `redis\\.call\\('HSET', eloKey, ${field}, ${newElo}\\)\\s+` +
+            `redis\\.call\\('HSET', votesKey, ${field}, ${votes} \\+ 1\\)\\s+end`
+        )
+      );
+    }
+  );
 });

@@ -28,8 +28,10 @@ import type { ReferralDashboardData } from '~/components/Referrals/dashboard.typ
 // migration, not a refactor. Same rule, and same reason, as the
 // `ID_AT_ITS_ORIGINAL_CALL_SITE` table in `notice-registry.test.ts`.
 //
-// COVERAGE — all 9 registry entries, 11 (affordance → id) pairs:
+// COVERAGE — all 11 registry entries, 13 (affordance → id) pairs:
 //   here  earnBlueBuzzRewards     BuyBuzzModal / EarnRewardsBanner
+//   here  firstModelPublished     CreatorJourney / FirstPublishCard
+//   here  firstArticlePublished   CreatorJourney / FirstPublishCard
 //   here  remixGalleryExplainer   RemixGallery / RemixGalleryExplainer
 //   here  referralLiteOnboarding  Referrals / ReferralDashboard   (dismiss + restore)
 //   here  referralKickback        Referrals / ReferralDashboard
@@ -104,20 +106,26 @@ function useSettingsQuery(_input?: unknown, opts?: { enabled?: boolean }) {
   return { data: enabled ? data : undefined, isLoading: false, isError: false };
 }
 
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcUtils>()),
-  trpc: {
-    user: {
-      getSettings: {
-        useQuery: (input?: unknown, opts?: { enabled?: boolean }) => useSettingsQuery(input, opts),
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcUtils>()),
+    trpc: makeTrpcProxy(
+      {
+        'user.getSettings': {
+          useQuery: (input?: unknown, opts?: { enabled?: boolean }) =>
+            useSettingsQuery(input, opts),
+        },
+        'user.dismissAlert': { useMutation: mocks.useDismissMutation },
+        'referral.getTierBonuses': { useQuery: () => ({ data: undefined }) },
+        'subscriptions.getPlans': { useQuery: () => ({ data: [] }) },
+        'creatorJourney.getFirstPublishCard': { useQuery: () => ({ data: { show: true } }) },
+        'creatorJourney.getLadder': { useQuery: () => ({ data: { unlocks: [], tiers: [] } }) },
       },
-      dismissAlert: { useMutation: mocks.useDismissMutation },
-    },
-    referral: { getTierBonuses: { useQuery: () => ({ data: undefined }) } },
-    subscriptions: { getPlans: { useQuery: () => ({ data: [] }) } },
-    useUtils: () => mocks.utils,
-  },
-}));
+      { useUtils: () => mocks.utils }
+    ),
+  };
+});
 
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => mocks.state.currentUser,
@@ -161,6 +169,7 @@ vi.mock('~/components/Payments/usePaymentProvider', () => ({
 import { renderWithProviders } from '../../../../test/component-setup';
 import { EarnRewardsBanner } from '~/components/Modals/BuyBuzzModal';
 import { RemixGalleryExplainer } from '~/components/RemixGallery/RemixGalleryExplainer';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { ReferralDashboard } from '~/components/Referrals/ReferralDashboard';
 import { ReferralDashboardFull } from '~/components/Referrals/ReferralDashboardFull';
 
@@ -170,7 +179,7 @@ beforeEach(() => {
   // `remixGallery` on by default: `remixGalleryExplainer` declares it as its
   // `audience`, so a user without it is — correctly — not shown the notice at
   // all, and every dismissal case below would have nothing to click.
-  mocks.state.features = { remixGallery: true };
+  mocks.state.features = { remixGallery: true, creatorJourney: true };
   mocks.state.mutateCalls = [];
 });
 
@@ -294,6 +303,40 @@ describe('BuyBuzzModal / EarnRewardsBanner', () => {
 
     await expect.element(page.getByTestId('buy-buzz-sentinel')).toBeVisible();
     expect(document.querySelectorAll('[aria-label="Dismiss"]')).toHaveLength(0);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// FirstPublishCard — one card, two notices, picked by entity type.
+// -----------------------------------------------------------------------------
+describe('CreatorJourney / FirstPublishCard', () => {
+  const justNow = new Date(Date.now() - 60 * 1000);
+
+  test.each([
+    ['model', 'Your first model is live', 'first-model-published'],
+    ['article', 'Your first article is live', 'first-article-published'],
+  ] as const)('its Close on a %s card persists its own id', async (entityType, title, alertId) => {
+    renderWithProviders(
+      <FirstPublishCard entityType={entityType} entityId={1} ownerId={1} publishedAt={justNow} />
+    );
+
+    await expect.element(page.getByText(title)).toBeVisible();
+    await userEvent.click(page.getByRole('button', { name: 'Close' }));
+
+    await expectPersisted(`CreatorJourney / FirstPublishCard (${entityType})`, [{ alertId }]);
+  });
+
+  test('a dismissed model card stays gone while the article card still shows', async () => {
+    mocks.state.settings = { dismissedAlerts: ['first-model-published'] };
+    renderWithProviders(
+      <>
+        <FirstPublishCard entityType="model" entityId={1} ownerId={1} publishedAt={justNow} />
+        <FirstPublishCard entityType="article" entityId={2} ownerId={1} publishedAt={justNow} />
+      </>
+    );
+
+    await expect.element(page.getByText('Your first article is live')).toBeVisible();
+    expect(document.body.textContent).not.toContain('Your first model is live');
   });
 });
 

@@ -4,7 +4,12 @@
 // checkNotUpToDate(lsn), dbKV) keep their signatures.
 export * from '@civitai/db/db-helpers';
 
-import { createPool } from '@civitai/db/db-helpers';
+import {
+  createPgPoolAcquireHistogram,
+  createPool,
+  PG_POOL_ACQUIRE_HISTOGRAM_NAME,
+} from '@civitai/db/db-helpers';
+import { instrumentationRegistry, registerInstrumentationMetric } from '@civitai/telemetry/client';
 import { loadDbEnv, type DbConfig, type DbLogFn } from '@civitai/db';
 import {
   getCurrentLSN as _getCurrentLSN,
@@ -33,6 +38,12 @@ export type GetClientOptions = Partial<DbConfig> & {
   /** Debug logger (app-defined). Defaults to a no-op. */
   log?: DbLogFn;
 };
+
+// The pools are process-global (pgDb.ts), so whichever module graph builds them first owns their
+// closures; the acquire histogram must therefore live in the cross-graph registry /api/metrics reads.
+const pgPoolAcquireHistogram = registerInstrumentationMetric(PG_POOL_ACQUIRE_HISTOGRAM_NAME, () =>
+  createPgPoolAcquireHistogram([instrumentationRegistry])
+);
 
 export function getClient(options: GetClientOptions = {}) {
   const { instance = 'primary', log: logOption, ...envOverrides } = options;
@@ -77,5 +88,6 @@ export function getClient(options: GetClientOptions = {}) {
         : config.writeTimeout,
     perConnectionStatementTimeout,
     log,
+    acquireHistogram: pgPoolAcquireHistogram,
   });
 }

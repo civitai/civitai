@@ -2,7 +2,7 @@
  * Priority Input Component
  *
  * A compact dropdown selector for request priority levels.
- * Works with the DataGraph Controller pattern, receiving options from meta.
+ * Receives its options from the field meta.
  */
 
 import { Menu, Tooltip, UnstyledButton } from '@mantine/core';

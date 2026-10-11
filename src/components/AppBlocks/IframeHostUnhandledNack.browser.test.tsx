@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure).
 import type * as TrpcMod from '~/utils/trpc';
+import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * AN UNHANDLED REQUEST-STYLE MESSAGE GETS AN ERROR REPLY, ON THE REAL MODEL-SLOT HOST.
@@ -50,56 +51,21 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
 }));
 
+// A proxy, not a literal: no procedure is measured here, so every un-listed one
+// answers with an inert hook (`test/trpcProxyStub.ts`). The two overrides keep the
+// LOADED, non-empty shapes the model-slot host renders from.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    collection: {
-      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+  trpc: makeTrpcProxy({
+    'blocks.getEffectiveCheckpoint': {
+      useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
     },
-    blocks: {
-      getEffectiveCheckpoint: {
-        useQuery: () => ({ data: { checkpoint: null }, isLoading: false }),
-      },
-      getShowcaseImages: { useQuery: () => ({ data: [], isLoading: false }) },
-      submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      updateUserSettings: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-    },
-    apps: {
-      shared: {
-        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      },
-      storage: {
-        set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        delete: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      },
-    },
-    useUtils: () => ({
-      collection: { getById: { fetch: vi.fn() } },
-      apps: {
-        shared: {
-          list: { fetch: vi.fn() },
-          getCount: { fetch: vi.fn() },
-          getCounts: { fetch: vi.fn() },
-          get: { fetch: vi.fn() },
-        },
-        storage: {
-          get: { fetch: vi.fn() },
-          list: { fetch: vi.fn() },
-          getQuota: { fetch: vi.fn() },
-        },
-      },
-    }),
-  },
+    'blocks.getShowcaseImages': { useQuery: () => ({ data: [], isLoading: false }) },
+    // Two levels deep (`trpc.apps.shared.append`), which the proxy resolves only
+    // through an explicit sub-router.
+    'apps.shared': makeInertSubRouter(),
+    'apps.storage': makeInertSubRouter(),
+  }),
 }));
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
@@ -263,6 +229,34 @@ describe('IframeHost NACKs a page-only REQUEST-style message instead of hanging'
     replies.stop();
   });
 
+  test('PREPARE_TRAINING_DATASET is declared page-only, REQUEST-style, replying TRAINING_DATASET_RESULT', () => {
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.IframeHost).toBe(
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_DATASET_RESULT error'
+    );
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.PageBlockHost).toBe('required');
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.request).toBe(true);
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.reply).toBe('TRAINING_DATASET_RESULT');
+  });
+
+  test('PREPARE_TRAINING_DATASET gets a TRAINING_DATASET_RESULT error on the model slot, not a hang', async () => {
+    const replies = await mountAndReady();
+    postFromBlock('PREPARE_TRAINING_DATASET', {
+      requestId: 'rq_dataset',
+      items: [{ imageId: 1, caption: '' }],
+    });
+    await vi.waitFor(
+      () => {
+        if (replies.of('TRAINING_DATASET_RESULT').length === 0) throw new Error('no reply yet');
+      },
+      { timeout: 1000, interval: 5 }
+    );
+    expect(replies.of('TRAINING_DATASET_RESULT')[0].payload).toEqual({
+      requestId: 'rq_dataset',
+      error: 'unsupported on this host',
+    });
+    replies.stop();
+  });
+
   test('a message with NO requestId is not answered — there is nothing to correlate to', async () => {
     // 🔴 NOT AN INVARIANT GUARD, despite passing at `origin/main` (where NOTHING
     // is answered). It DISCRIMINATES a real mutation of the new code: remove the
@@ -295,17 +289,20 @@ describe('IframeHost NACKs a page-only REQUEST-style message instead of hanging'
     });
     const rows = beacon.buffered();
     // The labels are read off the REAL host, not a harness prop — that is the
-    // whole point: `host` is what tells a declared page-only N/A apart from a
-    // missing bridge, and `app_block_id` is the attribution.
+    // whole point: the real host's `host` label is what the dispatcher reads
+    // against the parity INVENTORY, and GET_VIEWER is declared N/A for the model
+    // slot, so the row is `not_applicable` (a declared refusal), not `no_handler`
+    // (a missing bridge). `app_block_id` is the attribution.
     expect(rows).toContainEqual(
       expect.objectContaining({
         appBlockId: 'apb_test',
         host: 'IframeHost',
         type: 'GET_VIEWER',
-        outcome: 'no_handler',
+        outcome: 'not_applicable',
       })
     );
-    // …and the mount's own handled traffic is there too, so `no_handler` has a
+    expect(rows.some((r) => r.outcome === 'no_handler')).toBe(false);
+    // …and the mount's own handled traffic is there too, so the refusal has a
     // denominator rather than being the only thing this host ever reports.
     expect(rows.some((r) => r.outcome === 'handled' && r.host === 'IframeHost')).toBe(true);
     replies.stop();

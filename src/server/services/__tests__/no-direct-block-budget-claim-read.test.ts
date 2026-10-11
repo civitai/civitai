@@ -17,10 +17,11 @@ import {
  * `pricesAuthorFee` classifications, so routing the gates through it alters
  * nothing today. What it buys is a single place where a future ceiling decision
  * can be made KNOWING WHICH GATE IS ASKING — and that distinction is a money
- * question, because the four gates are not interchangeable:
+ * question, because the submit gates are not interchangeable:
  *
- *   - two of them add the per-generation author fee into the value they compare;
- *   - two do not, and on the pass-through path the value that clears the gate is
+ *   - the txt2img and registry-step gates add the per-generation author fee into the
+ *     value they compare;
+ *   - the others do not, and on the post-paid paths the value that clears the gate is
  *     the value reserved and the value the terminal settle BILLS.
  *
  * A ceiling raised above what the app's manifest declared is therefore spendable
@@ -335,7 +336,7 @@ describe('no production code reads the per-call budget claim outside the allowed
   });
 });
 
-describe('the four submit gates are routed through one helper', () => {
+describe('every submit gate is routed through one helper', () => {
   const sites = callSitesByFile.flatMap((f) => f.sites);
 
   it('every call site declares which kind of gate it is', () => {
@@ -353,9 +354,15 @@ describe('the four submit gates are routed through one helper', () => {
 
     // txt2img submit and the registry step price a fee; customComfy/recipe and
     // the pass-through step do not. Adding a gate means deciding which it is.
+    //
+    // The `kind:'training'` arm adds TWO fee-free sites, neither a fifth copy of the
+    // comparison: `assertTrainingRequestAllowed` reads the helper only for its 0
+    // REFUSAL (no budget / editor private run), and `blockTrainingRunCeiling` in the
+    // middleware routes through it before granting the viewer-confirmed per-run
+    // ceiling. Both are pinned to their owners in the tests below.
     expect(pricing).toHaveLength(2);
-    expect(feeFree).toHaveLength(2);
-    expect(sites).toHaveLength(4);
+    expect(feeFree).toHaveLength(4);
+    expect(sites).toHaveLength(6);
   });
 
   it('the fee-pricing population agrees with the RESERVING fee call sites', () => {
@@ -501,6 +508,46 @@ describe('the four submit gates are routed through one helper', () => {
         .map((g) => g.owner)
         .sort(),
       'a fee-free submit gate is missing, or one gained a fee quote without flipping its flag'
-    ).toEqual(['submitCustomComfyWorkflow', 'submitPassThroughStepWorkflow']);
+    ).toEqual([
+      'assertTrainingRequestAllowed',
+      'submitCustomComfyWorkflow',
+      'submitPassThroughStepWorkflow',
+    ]);
+  });
+
+  it("the training arm's raised ceiling is granted in ONE place and gated in ONE place", () => {
+    // 🔴 THE RELATIONSHIP the `kind:'training'` arm rests on: the only ceiling that
+    // may exceed the token's per-call budget is `blockTrainingRunCeiling`, it lives
+    // beside `blockPerCallBudget` and routes through it, and exactly one submit path
+    // consults it. A second consumer, or a training submit that compares against
+    // something else, moves one of these.
+    const router = blankComments(
+      readFileSync(path.join(SRC, 'server/routers/blocks.router.ts'), 'utf8')
+    );
+    const owners = [...router.matchAll(/blockTrainingRunCeiling\(/g)].map((m) =>
+      enclosingDecl(router, m.index)
+    );
+    expect(owners).toEqual(['submitTrainingWorkflow']);
+
+    const mw = blankComments(
+      readFileSync(path.join(SRC, 'server/middleware/block-scope.middleware.ts'), 'utf8')
+    );
+    const fnAt = mw.indexOf('export function blockTrainingRunCeiling(');
+    expect(fnAt, 'blockTrainingRunCeiling not found in the middleware').toBeGreaterThan(-1);
+    const body = mw.slice(fnAt, mw.indexOf('\n}\n', fnAt));
+    expect(perCallBudgetSites(body)).toEqual([
+      'blockPerCallBudget(claims, { pricesAuthorFee: false })',
+    ]);
+
+    // Every OTHER production file is free of it — the grant has no second reader.
+    const readers = sourceFiles
+      .map((f) => ({ file: rel(f), code: blankComments(readFileSync(f, 'utf8')) }))
+      .filter((f) => /blockTrainingRunCeiling\(/.test(f.code))
+      .map((f) => f.file)
+      .sort();
+    expect(readers).toEqual([
+      'server/middleware/block-scope.middleware.ts',
+      'server/routers/blocks.router.ts',
+    ]);
   });
 });

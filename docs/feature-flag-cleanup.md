@@ -11,7 +11,7 @@ Before deleting any flag, grep for **all** of these patterns. The destructure pa
 | `features.X`           | `if (features.clubs) ...`                                    |
 | Destructure            | `const { apiKeys, oauthApps } = useFeatureFlags();`          |
 | `ctx.features.X`       | server-side tRPC handlers                                    |
-| `ext.flags?.X`         | DataGraph node extensions (e.g. wan-graph.ts)                |
+| `ext.flags?.X`         | DataGraph node extensions (e.g. image/anima.graph.ts)                |
 | `isFlagProtected('X')` | tRPC router middleware                                       |
 | `'X'` literal          | component-config maps (e.g. AppFooter footer items)          |
 | Flipt key (`X-name`)   | direct `isFlipt(...)` / `evaluateBoolean(FLIPT_FEATURE_FLAGS.X)` calls |
@@ -23,7 +23,7 @@ Also check the `FLIPT_FEATURE_FLAGS` enum in [src/server/flipt/client.ts](../src
 | Flag         | Status                                                                                 |
 | ------------ | -------------------------------------------------------------------------------------- |
 | `imageIndex` | ✅ Removed — zero consumers                                                            |
-| `draftMode`  | ✅ Removed — image draft mode retired with `txt2img:draft`; zero consumers              |
+| `draftMode`  | ✅ Removed — zero consumers; the `txt2img:draft` workflow is ungated                    |
 | `apiKeys`    | ❌ Restored — gates `ApiKeysCard` in [AccountPanes.tsx:92](../src/components/Account/AccountPanes.tsx#L92) and [LegacyAccountPage.tsx:62](../src/components/Account/LegacyAccountPage.tsx#L62) |
 | `oauthApps`  | ❌ Restored — gates `OAuthAppsCard` + `ConnectedAppsCard` in [AccountPanes.tsx:93-94](../src/components/Account/AccountPanes.tsx#L93) and [LegacyAccountPage.tsx:63-64](../src/components/Account/LegacyAccountPage.tsx#L63) |
 
@@ -110,8 +110,8 @@ it against a deleted index with no flag left to switch it off), `challengePlatfo
 kill-switch key), and `vault` (`['user']`).
 
 Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six
-toggleable entries: `air`, `assistant` and `chat` are `default: true` and all three already fail
-condition 1 on their availability, and `trainingStudioUi` fails conditions 1 and 2. The other two —
+toggleable entries: `air`, `assistant`, `chat` and `trainingStudioUi` are `default: true` and all four
+already fail condition 1 on their availability (`trainingStudioUi` fails condition 2 as well). The other two —
 `largerGenerationImages` and `nativeVideoControls` — are `['public']` with no `fliptKey`, so
 condition 3 is the only thing excluding them. That is why `largerGenerationImages` sits in the 6
 above: drop condition 3 and the split is 20/5, not 19/6. `nativeVideoControls` was never on the

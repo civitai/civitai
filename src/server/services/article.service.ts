@@ -1,3 +1,4 @@
+import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -15,7 +16,6 @@ import { CacheTTL } from '~/server/common/constants';
 import type {
   ArticleCursor,
   ArticleMetadata,
-  CreateArticleRatingReviewInput,
   GetInfiniteArticlesSchema,
   SetArticleOfficialInput,
   UpsertArticleInput,
@@ -25,13 +25,14 @@ import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import {
-  browsingLevels,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
-import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  EventDecorationCosmetic,
+  WithClaimKey,
+} from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
@@ -45,7 +46,10 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import {
+  getCosmeticsForEntity,
+  getEventDecorationsForEntity,
+} from '~/server/services/cosmetic.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   deleteImageById,
@@ -89,12 +93,9 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { ReportStatus } from '~/shared/utils/prisma/enums';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import {
-  AutoResolveRaceLost,
-  autoResolveArticleRatingReview,
   computeArticleDerivedNsfwLevel,
-  evaluateAutoApproveGate,
   maybeAutoResolveDisputeAfterScan,
   shouldRestampOverrideBasis,
 } from '~/server/services/article-rating-review.helpers';
@@ -185,9 +186,13 @@ export const getArticles = async ({
   browsingLevel,
   include,
   forceHidePrivate,
+  eventDecorationViewer,
 }: GetInfiniteArticlesSchema & {
   sessionUser?: { id: number; isModerator?: boolean; username?: string };
   include?: Array<'cosmetics'>;
+  // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
+  // routes whose response is never cached for another viewer.
+  eventDecorationViewer?: EventViewer;
   // When true, `availability = Private` articles are ALWAYS dropped, even when a
   // `username`/`collectionId`/etc. filter is set (which normally expands the result
   // set to include the caller's private articles). Used by the public REST surface
@@ -530,9 +535,16 @@ export const getArticles = async ({
       : [];
 
     const articleCategories = await getCategoryTags('article');
-    const cosmetics = includeCosmetics
-      ? await getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' })
-      : {};
+    const [cosmetics, eventDecorations] = includeCosmetics
+      ? await Promise.all([
+          getCosmeticsForEntity({ ids: articles.map((x) => x.id), entity: 'Article' }),
+          getEventDecorationsForEntity({
+            ids: articles.map((x) => x.id),
+            entity: 'Article',
+            viewer: eventDecorationViewer,
+          }),
+        ])
+      : [{}, {}];
 
     // Fetch article stats separately
     const articleStats = await getArticleStatsObject(articles);
@@ -587,14 +599,16 @@ export const getArticles = async ({
               }
             : undefined,
           cosmetic: cosmetics[article.id] ?? null,
+          eventDecoration: eventDecorations[article.id] ?? null,
         };
       });
 
     return {
       nextCursor,
       items: items as Array<
-        Omit<(typeof items)[number], 'cosmetic'> & {
+        Omit<(typeof items)[number], 'cosmetic' | 'eventDecoration'> & {
           cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+          eventDecoration?: EventDecorationCosmetic | null;
         }
       >,
     };
@@ -1040,12 +1054,17 @@ export const upsertArticle = async ({
         const textForModeration = [data.title, removeTags(result.content)]
           .filter(Boolean)
           .join(' ');
-        submitTextModeration({
+        submitTextModerationOrScan({
           entityType: 'Article',
           entityId: result.id,
-          content: textForModeration,
-          labels: ['nsfw'],
-          recordForReview: true,
+          xguard: () =>
+            submitTextModeration({
+              entityType: 'Article',
+              entityId: result.id,
+              content: textForModeration,
+              labels: ['nsfw'],
+              recordForReview: true,
+            }),
         }).catch((e) => {
           logToAxiom({
             type: 'error',
@@ -1446,12 +1465,17 @@ export async function applyArticleContentChange({
     } else {
       const textForModeration = [currentTitle, removeTags(content)].filter(Boolean).join(' ');
 
-      submitTextModeration({
+      submitTextModerationOrScan({
         entityType: 'Article',
         entityId: id,
-        content: textForModeration,
-        labels: ['nsfw'],
-        recordForReview: true,
+        xguard: () =>
+          submitTextModeration({
+            entityType: 'Article',
+            entityId: id,
+            content: textForModeration,
+            labels: ['nsfw'],
+            recordForReview: true,
+          }),
       }).catch((e) => {
         logToAxiom({
           type: 'error',
@@ -2502,13 +2526,19 @@ export async function rescanArticle({
       .filter(Boolean)
       .join(' ');
 
-    await submitTextModeration({
+    await submitTextModerationOrScan({
       entityType: 'Article',
       entityId: id,
-      content: textForModeration,
-      labels: ['nsfw'],
-      recordForReview: true,
-      forceRescan: true,
+      force: true,
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: textForModeration,
+          labels: ['nsfw'],
+          recordForReview: true,
+          forceRescan: true,
+        }),
     }).catch((e) => {
       logToAxiom({
         type: 'error',
@@ -2637,331 +2667,6 @@ export async function rescanArticleImage({
     isModerator,
   }).catch();
 }
-
-// =============================================================================
-// Article NSFW level dispute / review
-// =============================================================================
-
-const NSFW_REVIEW_LIMIT = 3;
-const NSFW_REVIEW_WINDOW_SECONDS = CacheTTL.day; // 24 hours
-
-const VALID_NSFW_LEVELS = new Set<number>(browsingLevels);
-
-/**
- * Owner-driven request to re-rate an article. Performs service-layer auth
- * (no router middleware) per project convention.
- *
- * Invariants:
- * - Only the article owner can file a dispute.
- * - `suggestedLevel` must be a single-bit constant from the canonical
- *   set (PG / PG13 / R / X / XXX).
- * - At most one Pending review per article at any time.
- * - Owners are gated by a rate limit (3 / 24h, mods bypass).
- * - If a prior review has resolved, the owner can re-file only if the
- *   article was edited after that resolution (`updatedAt > resolvedAt`).
- */
-export async function createArticleRatingReview({
-  articleId,
-  userId,
-  suggestedLevel,
-  userComment,
-  isModerator,
-}: CreateArticleRatingReviewInput & {
-  userId: number;
-  isModerator?: boolean;
-}) {
-  await throwOnBlockedUserContent(userComment, { isModerator, surface: 'articleRatingReview' });
-
-  // --- Validate the suggested level against the canonical bitwise set ---
-  if (!VALID_NSFW_LEVELS.has(suggestedLevel)) {
-    throw throwBadRequestError(
-      `Invalid suggested NSFW level. Must be one of: ${[...VALID_NSFW_LEVELS].join(', ')}`
-    );
-  }
-
-  // --- Load article and assert ownership at the service layer ---
-  // Fetch the article + existing-pending + last-resolved reads in parallel —
-  // they're independent and the round-trips dominate latency here.
-  const [article, existingPending, lastResolved] = await Promise.all([
-    dbRead.article.findUnique({
-      where: { id: articleId },
-      select: {
-        id: true,
-        userId: true,
-        nsfwLevel: true,
-        updatedAt: true,
-        // Extra fields powering the auto-approve gate (status / ingestion /
-        // override / coverId) — cheap to fetch alongside the ownership check
-        // so we don't issue a second round-trip on the eligible path.
-        status: true,
-        ingestion: true,
-        moderatorNsfwLevel: true,
-        moderatorNsfwLevelBasis: true,
-        coverId: true,
-        title: true,
-      },
-    }),
-    dbRead.articleRatingReview.findFirst({
-      where: { articleId, status: ReportStatus.Pending },
-      select: { id: true },
-    }),
-    dbRead.articleRatingReview.findFirst({
-      where: {
-        articleId,
-        status: { in: [ReportStatus.Actioned, ReportStatus.Unactioned] },
-        resolvedAt: { not: null },
-      },
-      orderBy: { resolvedAt: 'desc' },
-      select: { id: true, resolvedAt: true },
-    }),
-  ]);
-
-  if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
-  if (article.userId !== userId) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Only the article owner can submit a rating review',
-    });
-  }
-
-  // --- No-op guard ---
-  // A review that suggests the rating the article already carries can never
-  // change anything, so reject it up front (before the rate-limit gate burns
-  // a slot). The modal also disables the current level, but a stale client or
-  // the mod API could still send it.
-  if (suggestedLevel === article.nsfwLevel) {
-    throw throwBadRequestError(
-      'The suggested rating matches the article’s current rating. Choose a different level.'
-    );
-  }
-
-  // --- One Pending per article ---
-  if (existingPending) {
-    throw throwBadRequestError('A review is already pending for this article');
-  }
-
-  // --- Re-edit gate: if any prior resolved review exists, require the
-  //     article to have been edited since the most recent resolution ---
-  if (
-    lastResolved?.resolvedAt &&
-    (!article.updatedAt || article.updatedAt <= lastResolved.resolvedAt)
-  ) {
-    throw throwBadRequestError(
-      'This article has already been reviewed. Edit the article before requesting another review.'
-    );
-  }
-
-  // --- Rate limit (owners only, mods bypass) ---
-  // Run AFTER the "one Pending per article" and re-edit gates so a request
-  // that's guaranteed to be rejected by either of those doesn't burn a slot.
-  // Atomic INCR + EXPIRE-on-first to avoid the TOCTOU race in the prior
-  // get → check → set → expire dance. Concurrent duplicate Pending inserts
-  // are still prevented by the partial unique index on `ArticleRatingReview`.
-  // `incr` isn't surfaced on the typed redis client, hence the cast.
-  const cacheKey = `${REDIS_KEYS.ARTICLE.RATING_REVIEW_RATE_LIMIT}:${userId}` as const;
-  if (!isModerator) {
-    const count = await (redis as any).incr(cacheKey);
-    if (count === 1) await redis.expire(cacheKey, NSFW_REVIEW_WINDOW_SECONDS);
-    if (count > NSFW_REVIEW_LIMIT) {
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: `You can only submit ${NSFW_REVIEW_LIMIT} rating reviews per day. Please try again later.`,
-      });
-    }
-  }
-
-  // --- Auto-approve branch ---
-  // If the dispute is a down-direction request and the article's rescan
-  // already agrees with the requested level, skip the mod queue entirely:
-  // insert the review directly as Actioned, clear the mod override, and let
-  // the recompute land the effective level at `suggestedLevel`. Moderators
-  // bypass this path — they go through `resolveArticleRatingReview` instead,
-  // so a mod hitting the dispute endpoint as themselves still creates a
-  // normal Pending row for review.
-  if (!isModerator) {
-    const gate = await evaluateAutoApproveGate({
-      article: {
-        id: article.id,
-        status: article.status,
-        ingestion: article.ingestion,
-        nsfwLevel: article.nsfwLevel,
-        moderatorNsfwLevel: article.moderatorNsfwLevel,
-        moderatorNsfwLevelBasis: article.moderatorNsfwLevelBasis,
-        coverId: article.coverId,
-      },
-      suggestedLevel,
-    });
-
-    if (gate.eligible) {
-      // Insert as Pending FIRST so the partial unique index
-      // (`ArticleRatingReview_pending_per_article`, WHERE status='Pending')
-      // serializes concurrent submissions for the same article — the loser of
-      // the race hits P2002 and is rejected here rather than producing a
-      // duplicate Actioned row + duplicate "approved" notification. We then
-      // promote the row via the race-safe resolve-existing path.
-      let pendingId: number;
-      try {
-        const created = await dbWrite.articleRatingReview.create({
-          data: {
-            articleId,
-            userId,
-            currentLevel: article.nsfwLevel,
-            suggestedLevel,
-            userComment,
-            status: ReportStatus.Pending,
-          },
-          select: { id: true },
-        });
-        pendingId = created.id;
-      } catch (e) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-          throw throwBadRequestError('A review is already pending for this article');
-        }
-        throw e;
-      }
-
-      try {
-        const auto = await autoResolveArticleRatingReview({
-          mode: 'resolve-existing',
-          reviewId: pendingId,
-          articleId,
-          ownerUserId: userId,
-          suggestedLevel,
-          previousLevel: article.nsfwLevel,
-          articleTitle: article.title ?? 'your article',
-        });
-
-        logToAxiom({
-          type: 'info',
-          name: 'article-rating-review-auto-resolved',
-          articleId,
-          reviewId: auto.reviewId,
-          suggestedLevel,
-          derivedLevel: gate.derivedLevel,
-          entryPoint: 'submission',
-        }).catch();
-
-        return auto.review;
-      } catch (e) {
-        // Another resolver (a mod, or the scan-completion retry) won the race
-        // and promoted this row first. Return the row as-is; it is already
-        // resolved and the article mutation stands.
-        if (e instanceof AutoResolveRaceLost) {
-          return dbRead.articleRatingReview.findUniqueOrThrow({ where: { id: pendingId } });
-        }
-        throw e;
-      }
-    }
-  }
-
-  // --- Snapshot the current effective level + insert ---
-  const review = await dbWrite.articleRatingReview.create({
-    data: {
-      articleId,
-      userId,
-      currentLevel: article.nsfwLevel,
-      suggestedLevel,
-      userComment,
-      status: ReportStatus.Pending,
-    },
-  });
-
-  return review;
-}
-
-/**
- * Owner-only fetch of the most recent review row for this article (any
- * status) so the article detail page can render
- * "Submit review / Pending / Approved / Rejected" badges.
- */
-export async function getArticleRatingReviewForOwner({
-  articleId,
-  userId,
-}: {
-  articleId: number;
-  userId: number;
-}) {
-  const article = await dbRead.article.findUnique({
-    where: { id: articleId },
-    select: {
-      id: true,
-      userId: true,
-      updatedAt: true,
-      nsfwLevel: true,
-      moderatorNsfwLevel: true,
-      moderatorNsfwLevelBasis: true,
-    },
-  });
-  if (!article) throw throwNotFoundError(`No article with id ${articleId}`);
-  if (article.userId !== userId) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'Only the article owner can view this review',
-    });
-  }
-
-  const review = await dbRead.articleRatingReview.findFirst({
-    where: { articleId },
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      status: true,
-      createdAt: true,
-      resolvedAt: true,
-      currentLevel: true,
-      suggestedLevel: true,
-      appliedLevel: true,
-      userComment: true,
-      modComment: true,
-    },
-  });
-
-  // Stale-override signal for the owner banner: only meaningful when an
-  // override is active AND content has genuinely dropped below the basis it was
-  // set against — which is exactly the auto-approve gate's #6 precondition. We
-  // compare derived to `moderatorNsfwLevelBasis` (not to the override itself) so
-  // the banner only advertises a dispute that will actually auto-approve; an
-  // override sitting above the images (basis == derived) won't light it up,
-  // since disputing it would just route to the mod queue.
-  // Skip the derived computation when there's no override (the auto path
-  // already resolves to ground truth) or when the article has no resubmit
-  // option anyway (Pending review blocks it).
-  let derivedLevel: number | null = null;
-  let derivedRatingDroppedBelowOverride = false;
-  if (article.moderatorNsfwLevel != null && review?.status !== ReportStatus.Pending) {
-    derivedLevel = await computeArticleDerivedNsfwLevel(articleId);
-    derivedRatingDroppedBelowOverride =
-      derivedLevel != null &&
-      article.moderatorNsfwLevelBasis != null &&
-      derivedLevel < article.moderatorNsfwLevelBasis;
-  }
-
-  if (!review) {
-    return {
-      review: null,
-      canResubmit: true,
-      derivedLevel,
-      derivedRatingDroppedBelowOverride,
-    };
-  }
-
-  // Compute canResubmit server-side so clock skew can't open or close the
-  // resubmit gate from the client. Mirrors the createArticleRatingReview
-  // re-edit gate: a fresh dispute is allowed only when the article has been
-  // edited after the prior review resolved. Pending reviews block resubmit
-  // outright.
-  const canResubmit =
-    review.status !== ReportStatus.Pending &&
-    review.resolvedAt != null &&
-    article.updatedAt != null &&
-    article.updatedAt > review.resolvedAt;
-
-  return { review, canResubmit, derivedLevel, derivedRatingDroppedBelowOverride };
-}
-
-// NOTE(moderator-migration): the moderator resolution path (formerly resolveArticleRatingReview) now
-// lives in the spoke app (apps/moderator, Kysely). The owner-facing create + auto-resolve paths above
-// stay here.
 
 /**
  * Mark an article as published by Civitai, or take that mark off.

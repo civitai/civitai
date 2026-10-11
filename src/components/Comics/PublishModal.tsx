@@ -1,5 +1,4 @@
 import {
-  Alert,
   Button,
   Group,
   Modal,
@@ -14,6 +13,7 @@ import { DateTimePicker } from '@mantine/dates';
 import { IconCalendar, IconLock } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
 
+import { ChapterEarlyAccessLocked } from '~/components/Comics/ChapterEarlyAccessLocked';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EARLY_ACCESS_CONFIG } from '~/server/common/constants';
@@ -77,15 +77,14 @@ export function PublishModal({
     onPublish(eaConfig, scheduled);
   };
 
-  const isScheduleInvalid = publishMode === 'schedule' && (!scheduledDate || scheduledDate <= new Date());
+  const isScheduleInvalid =
+    publishMode === 'schedule' && (!scheduledDate || scheduledDate <= new Date());
   const isEaUnavailable = allowedTimeframes.length === 0;
 
   return (
     <Modal opened={opened} onClose={onClose} title="Publish Chapter" size="sm">
       <Stack gap="md">
-        <Text size="sm">
-          Publishing will make this chapter visible to all readers.
-        </Text>
+        <Text size="sm">Publishing will make this chapter visible to all readers.</Text>
 
         <div>
           <Text size="sm" fw={500} mb={4}>
@@ -123,14 +122,7 @@ export function PublishModal({
           disabled={isEaUnavailable}
         />
 
-        {isEaUnavailable && (
-          <Alert color="yellow" variant="light" icon={<IconLock size={16} />}>
-            <Text size="xs">
-              Early access unlocks as your creator score grows. You&apos;ll be able to put
-              chapters behind a paywall once you reach the first score tier.
-            </Text>
-          </Alert>
-        )}
+        {isEaUnavailable && <ChapterEarlyAccessLocked />}
 
         {publishEaEnabled && !isEaUnavailable && (
           <>

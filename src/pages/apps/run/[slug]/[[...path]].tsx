@@ -21,6 +21,7 @@ import { isAppBlocksPrivateRunEnabled } from '~/server/services/app-blocks-flag'
 import { resolvePrivateRunAccess } from '~/server/services/blocks/private-run-access.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { isAppSubListingId } from '~/shared/constants/app-sub-listing.constants';
 import { Page } from '~/components/AppLayout/Page';
 import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
@@ -289,7 +290,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // resolver — the `undefined` is only in the type. Passing an explicit `null` tells the
     // Tracker "known anonymous" so it skips a second JWE decrypt, which is precisely the
     // anonymous case its constructor note calls out.
-    void recordAppListingOpen({ appBlockId: page.appBlockId, session: session ?? null, ctx });
+    void recordAppListingOpen({
+      appBlockId: page.appBlockId,
+      subListingId: isAppSubListingId(ctx.query?.sl) ? ctx.query.sl : null,
+      session: session ?? null,
+      ctx,
+    });
 
     return {
       props: {
@@ -840,8 +846,8 @@ function AppPage(props: PageProps) {
  * over someone else's UI. The scrollbar fix does not depend on this, so
  * restoring the tabs is a safe one-word reversal.
  *
- * Note `RewardsBonusBanner` still renders regardless (`AppLayout` shows it in
- * the `{!subNav && …}` branch), so it is NOT removed by this.
+ * Note the nav announcement slot (Buzz Bonus, event strips) still renders regardless
+ * (`AppLayout` shows it in the `{!subNav && …}` branch), so it is NOT removed by this.
  */
 export default Page(AppPage, {
   scrollable: false,

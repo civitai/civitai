@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { createKrea2Input } from '../ecosystems/krea2.handler';
-import { krea2VersionIds } from '~/shared/data-graph/generation/krea2-graph';
+import { createKrea2Input } from '../form-graph/krea2.handler';
+import { krea2VersionIds } from '~/shared/form-graph/generation/image/krea2.graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
 const communityVersionId = 8888;

@@ -29,7 +29,7 @@ All 10 video ecosystem `*.schema.ts` files + the `VideoGenerationConfig2` factor
 generation runs entirely through the graph (every ecosystem has a graph + handler); the schema configs
 were dead runtime code.
 
-- The `src/shared/data-graph/generation/*` files define their own constants — they do **not** import
+- The then-current `src/shared/data-graph/generation/*` files defined their own constants — they did **not** import
   the legacy schemas. Only 3 server files imported any video schema, and only from `wan`/`veo3`.
 - **`generation.config.ts`** reduced to a types-only module exporting `OrchestratorEngine2` (explicit
   literal union). (`VideoGenerationSchema2` was added here, then removed in Phase 3 — see below.)

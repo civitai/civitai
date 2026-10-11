@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { settlePlacement } from '~/server/services/placement-escrow.service';
+import { onPlacementsTakenDown } from '~/server/events/points/hooks';
 
 /**
  * Whether either user has blocked the other.
@@ -187,6 +188,7 @@ export async function removePlacementsByUser({
       takenDownById: actorId,
     },
   });
+  if (takenDown > 0) void onPlacementsTakenDown(approved.map((row) => row.id));
 
   return {
     ...settled,
@@ -247,6 +249,7 @@ export async function removePlacementByModerator({
     },
   });
 
+  if (count > 0) void onPlacementsTakenDown([placementId]);
   return { removed: count > 0, wasLive: true };
 }
 
@@ -360,6 +363,7 @@ export async function removePlacementsByCosmetic({
       takenDownById: actorId,
     },
   });
+  if (takenDown > 0) void onPlacementsTakenDown(approved.map((row) => row.id));
 
   return {
     ...settled,

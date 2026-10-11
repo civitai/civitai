@@ -267,3 +267,22 @@ describe('device +server — the authorization request is bounded per caller, no
     expect(h.hSet).not.toHaveBeenCalled();
   });
 });
+
+describe('device authorization — client_credentials-only scopes', () => {
+  it('rejects AppStoreCatalogWrite even when the client ceiling carries it', async () => {
+    h.clientRow = clientRow(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite);
+    const res = await POST(
+      makeEvent({ client_id: 'civitai-cli', scope: String(TokenScope.AppStoreCatalogWrite) })
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.hSet).not.toHaveBeenCalled();
+  });
+
+  it('still accepts the rest of that ceiling (positive control)', async () => {
+    h.clientRow = clientRow(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite);
+    const res = await POST(makeEvent({ client_id: 'civitai-cli', scope: '1' }));
+    expect(res.status).toBe(200);
+    expect(storedScope()).toBe(TokenScope.UserRead);
+  });
+});

@@ -241,7 +241,7 @@ describe('dev-server test queue', () => {
   /**
    * 🔴 The saturating group holds the lanes that each want most of the machine. If you are here
    * because you moved one of these into `light`: that is the 31-vitest-workers-plus-12-Chromium
-   * pair CLAUDE.md names, and arbitrating it is what this queue exists for.
+   * pair `.claude/rules/testing.md` names, and arbitrating it is what this queue exists for.
    */
   it.each(['component', 'packages', 'apps', 'geometry'])(
     'does not start a %s run beside a running unit suite',

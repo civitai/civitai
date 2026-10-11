@@ -83,6 +83,18 @@ const MINIFIED_CHUNK_FRAME_2 = {
   colno: 96602,
 };
 
+/**
+ * The measured Chrome extension-messaging timeout, verbatim.
+ *
+ * 🔴 The only MESSAGE string this file extracts — every other repeated message literal is inlined
+ * at its call site, and the exception is deliberate. The negatives for this pattern have to embed
+ * the IDENTICAL phrase mid-message to prove what the `^` anchor buys; a hand-retyped near-copy
+ * would pass whether the anchor was there or not. Deriving them from one constant makes that
+ * airtight. The cost is that a wrong constant moves every derived case together, so one positive
+ * below spells the phrase out in full as the control.
+ */
+const CHROME_CALL_METHOD = 'Window message "chrome: call method" timed out.';
+
 /** A genuine first-party caller — OUR code asking for something over the network. */
 const OUR_FETCH_CALLER_FRAME = {
   filename: 'turbopack:///[project]/src/components/Generate/useGenerate.ts',
@@ -1106,6 +1118,53 @@ describe('classifyException — extension tag: deliberate negatives (may be app 
     expect(r.category).toBe('real');
   });
 
+  // 🔴 What the `^` anchor on the chrome extension-messaging pattern BUYS, pinned rather than left
+  // in prose: a mid-message occurrence is not evidence. Both of these would tag under an
+  // unanchored substring match, and the first is the shape an app wrapper would actually produce
+  // when it re-throws with its own prefix. Both embed `CHROME_CALL_METHOD` rather than a retyped
+  // copy, so they cannot drift into testing a phrase the pattern never matched in the first place.
+  it.each([
+    ['Error', `Block bridge handshake failed: ${CHROME_CALL_METHOD}`],
+    ['TypeError', `Retry exhausted — ${CHROME_CALL_METHOD}`],
+  ])('does NOT tag %s / %s — the phrase is mid-message', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Plausible first-party errors that talk about window messaging without being the extension's
+  // sentence. `postMessage` is live app code (the App Blocks iframe bridge), so these shapes are
+  // reachable and must stay in the real-app-bug stream.
+  it.each([
+    ['Error', 'Window message handler threw while posting to the block iframe'],
+    ['Error', 'Window message timed out waiting for the block bridge to acknowledge'],
+    ['Error', 'Window message "block: call method" timed out.'],
+  ])('does NOT tag the first-party window-message error %s / %s', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // 🔴 The STRAIGHT DOUBLE QUOTES in the pattern are load-bearing, and the module comment says so
+  // — so it is pinned here rather than left as prose. Only Chrome emits this sentence and it uses
+  // `"`, so a quote-agnostic pattern would buy nothing and could reach an app message; the sibling
+  // `EXTENSION_OBJECT_PATH_RES` writes `['"]` only because two ENGINES quote that clause
+  // differently. Without these cases a mutant replacing each quote with `.` passes the whole suite
+  // (measured: 215/215 green), because widening a KEEP+TAG never reddens a positive.
+  //
+  // ⚠️ If a single- or smart-quote variant is ever MEASURED on this stream, this is the test that
+  // must change — and it should, together with the comment. It fails safe either way: an unmatched
+  // variant stays `real`, i.e. noise kept, never a real bug hidden.
+  it.each([
+    ["Window message 'chrome: call method' timed out."],
+    ['Window message “chrome: call method” timed out.'],
+    ['Window message chrome: call method timed out.'],
+  ])('does NOT tag the unmeasured quote variant %j', (value) => {
+    const r = classifyException(exc('Error', value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
   // No-regression pin: the four existing keep-and-tag/default categories still classify
   // exactly as before the extension rule was inserted.
   it('existing categories still classify unchanged', () => {
@@ -1430,6 +1489,105 @@ describe('classifyException — GROUP E: window.ethereum narrowed to .selectedAd
     );
     expect(r.drop).toBe(false);
     expect(r.category).toBe('extension');
+  });
+});
+
+// 🔴 GROUP F. The second entry on `EXTENSION_MESSAGE_RES`: an extension naming itself by its API
+// rather than its brand. Measured over 96.3h (2026-10-01T18:20Z → 2026-10-05T18:40Z, non-bot),
+// `Window message "chrome: call method" timed out.` was 1,727 of 76,470 `real` exceptions (2.26%;
+// hourly share p50 1.33%, max 21.11%), uniformly `browser_name=Chrome`, with no stack frame on any
+// sampled beacon — and the phrase appears nowhere on `origin/main`, in the tracked tree or the
+// dependency tree. Its value is as a TAIL contributor: it was the dominant single contributor to
+// the worst client error-breadth reading in the window, and excluding it moves that metric's max
+// by 36.9% while moving its p99 by 3.5%. Thresholds and the alerting identity stay out of this
+// public repo on purpose.
+describe('classifyException — GROUP F: TAG the chrome extension-messaging timeout (kept, never dropped)', () => {
+  // The production shape: `type` is a plain `Error` and the beacon carries no frames at all.
+  //
+  // 🔴 This one case spells the message out in FULL rather than using `CHROME_CALL_METHOD`, and it
+  // is the control for every case that does. A constant shared by the whole group means a wrong
+  // constant moves them all together and the suite stays green against a phrase production never
+  // emits; this case cannot. If it and the derived cases ever disagree, the constant is wrong.
+  it('tags the measured no-stack Error form as extension', () => {
+    const r = classifyException(exc('Error', 'Window message "chrome: call method" timed out.'));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // 🔴 THE MESSAGE-ONLY FORM — the whole and only reason this entry's prefix group is
+  // `[A-Za-z]*Error:` where the sibling's is `[A-Za-z]+Error:`. `+` requires a letter before
+  // `Error`, so it cannot match a bare `Error:`; the first case below is the one that goes red if
+  // anyone "tidies" the `*` back to `+`.
+  //
+  // 🔴 AND THE REASON IS NOT WHAT IT LOOKS LIKE. The production shape (`type: 'Error'` + the bare
+  // phrase) tags under EITHER spelling via the `value` arm, because the prefix group is optional —
+  // `+` would not have lost it. Nor does `*` make the `type + ': ' + value` composite arm live:
+  // that arm cannot decide the outcome for ANY pattern on this array, since an optional prefix
+  // already subsumes it. Verified exhaustively over 7 types × 4 values: 0 cases where the
+  // composite matches and the bare `value` does not, under `*` AND under `+`. The array where the
+  // composite genuinely decides is `SCRIPT_ERROR_RE`, whose `Error:` prefix is MANDATORY.
+  it.each([
+    [`Error: ${CHROME_CALL_METHOD}`],
+    [`TypeError: ${CHROME_CALL_METHOD}`],
+    [CHROME_CALL_METHOD],
+  ])('tags the message-only form %j (no separate `type` field)', (value) => {
+    const r = classifyException({ value });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // Rule 7 reads the MESSAGE and never consults the stack, so a project-source frame does not stop
+  // the tag. (That is the opposite of the abort/network DROPs, which are gated on the stack.)
+  it('tags it when an app frame is present — the rule reads the message, not the stack', () => {
+    const r = classifyException(exc('Error', CHROME_CALL_METHOD, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // 🔴 THE TAIL IS LEFT OPEN (`\b`, not `$`) AND THAT IS A DECISION, SO IT IS PINNED HERE.
+  // Chromium demonstrably appends build-dependent detail to its own messages — the abort rule
+  // above carries `…was removed from the document` both with and without a trailing
+  // `https://goo.gl/LdLk22` help URL for exactly that reason — so an end-anchored pattern is the
+  // kind that goes silently inert on a Chrome release. Without this case a mutant tightening the
+  // tail to `\.?$` passes the whole suite (measured: 212/212 green), because every other positive
+  // happens to end exactly at the period.
+  it.each([
+    [`${CHROME_CALL_METHOD} https://goo.gl/LdLk22`],
+    [`${CHROME_CALL_METHOD} (messageId=42)`],
+    ['Window message "chrome: call method" timed out'],
+  ])('tags it with trailing detail appended: %j', (value) => {
+    const r = classifyException(exc('Error', value));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // 🔴 KEEP+TAG, never DROP — a tag is recoverable (the beacon is in Loki, queryable by
+  // `context_error_category="extension"`) and a mis-drop is not. Same asymmetry as GROUP C.
+  //
+  // INVARIANT GUARD, not a regression test: at base this message fell through to `real`, whose
+  // `drop` is ALSO `false`, so this cannot distinguish "tagged" from "defaulted" — the three
+  // category-asserting cases above are what do that. It is kept only to pin the KEEP/DROP
+  // direction against a future edit to rule 7, and it is labelled so nobody reads it as coverage.
+  //
+  // 🔴 AND THE TITLE IS DELIBERATELY NARROW. "Whatever the stack shape" would be FALSE: rule 5
+  // (`isInjectedOnlyStack`) runs BEFORE rule 7 and ignores the message entirely, so an
+  // all-`undefined:` stack drops as `injected` no matter what the value says — pinned by the next
+  // case. These three shapes are the ones rule 5 does not claim.
+  it('never drops it on any stack rule 5 does not claim', () => {
+    for (const frames of [undefined, APP_FRAME, { frames: [OTEL_FETCH_FRAME] }]) {
+      expect(classifyException(exc('Error', CHROME_CALL_METHOD, frames)).drop).toBe(false);
+    }
+  });
+
+  // INVARIANT GUARD (green pre-change): the tag-only addition must not UN-drop anything. Mirrors
+  // the same assertion already made for a denylisted bare global, and records the real precedence
+  // that the test above deliberately does not overclaim: the `injected` DROP wins over rule 7.
+  it('does NOT un-drop it behind an all-injected stack — the injected DROP still wins', () => {
+    const r = classifyException(
+      exc('Error', CHROME_CALL_METHOD, { frames: [{ filename: 'undefined', lineno: 1, colno: 9 }] })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('injected');
   });
 });
 

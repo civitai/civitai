@@ -13,7 +13,7 @@ describe('violationUserMessage', () => {
   it('words a minor-with-violence removal without the mature-context accusation', () => {
     const message = violationUserMessage('minorViolence');
     expect(message).toBe(
-      'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed'
+      'Violence against, or implied harm to, characters who appear young is not allowed'
     );
   });
 

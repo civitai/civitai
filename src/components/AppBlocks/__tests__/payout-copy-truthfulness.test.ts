@@ -374,8 +374,7 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // the cadence copy false was that its body only read and logged. It has now been
     // deleted outright, so the check is structural: the module must not exist, and the
     // `jobs` array must not name it. Membership of that array plus a cron string IS the
-    // registration on this deployment — see CLAUDE.md, "How a scheduled job actually gets
-    // scheduled" — so the array is the authoritative place to assert the absence.
+    // registration on this deployment — see .claude/rules/server.md, "Scheduling a job" — so the array is the authoritative place to assert the absence.
     expect(existsSync(join(REPO_ROOT, PAYOUT_JOB_MODULE))).toBe(false);
 
     const runJobs = read(RUN_JOBS);

@@ -321,7 +321,8 @@ async function writeTests() {
   // ── @Mentions ──
 
   await test('mention: posts comment with @[username] mention', async () => {
-    const { stdout } = await runJson(['comment', testTaskId, 'SMOKE TEST: Hey @[justin], take a look']);
+    const me = assertJson((await runJson(['me'])).stdout);
+    const { stdout } = await runJson(['comment', testTaskId, `SMOKE TEST: Hey @[${me.username}], take a look`]);
     const data = assertJson(stdout);
     assert(data.id, 'Expected comment ID');
     // Clean up

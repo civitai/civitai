@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 
 import {
   LISTING_ASSET_MAX_DIMENSION_PX,
@@ -60,6 +61,16 @@ const { mockDb, ids } = vi.hoisted(() => ({
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingScreenshotId: () => `apls_test_${++ids.n}`,
 }));
@@ -1246,6 +1257,59 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
       where: { id: 'apl_live' },
       data: { contentRating: 'x' },
     });
+  });
+
+  it.each([
+    ['setListingIcon', { width: 512, height: 512 }],
+    ['setListingCover', { width: 1280, height: 720 }],
+    ['addListingScreenshot', { width: 1280, height: 720 }],
+  ] as const)(
+    '%s hands a raise to the history, attributed to the moderator',
+    async (proc, dims) => {
+      recordRatingChange.mockClear();
+      // The fake does not apply the asset write, so the row already names image 500 in
+      // every slot the re-derive reads back.
+      mockDb.appListing.findUnique.mockResolvedValue({
+        ...approvedListing,
+        contentRating: 'pg',
+        iconId: 500,
+        coverId: 500,
+      });
+      mockDb.image.findUnique.mockResolvedValue({
+        ...validScreenshotImage,
+        ...dims,
+        nsfwLevel: NsfwLevel.X,
+      });
+      mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
+      mockDb.appListingScreenshot.count.mockResolvedValue(1);
+      mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.X }]);
+      const service = await import('../app-listing-assets.service');
+
+      await service[proc]({ listingId: 'apl_live', imageId: 500 }, mod);
+
+      expect(recordRatingChange).toHaveBeenCalledTimes(1);
+      expect(recordRatingChange).toHaveBeenCalledWith({
+        appListingId: 'apl_live',
+        slug: 's',
+        before: 'pg',
+        after: 'x',
+        actorUserId: 7,
+      });
+    }
+  );
+
+  it('a moderator edit that raises nothing hands the history nothing', async () => {
+    recordRatingChange.mockClear();
+    mockDb.appListing.findUnique.mockResolvedValue({ ...approvedListing, contentRating: 'x' });
+    mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, nsfwLevel: NsfwLevel.R });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
+    mockDb.appListingScreenshot.count.mockResolvedValue(1);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
+    const { addListingScreenshot } = await import('../app-listing-assets.service');
+
+    await addListingScreenshot({ listingId: 'apl_live', imageId: 500 }, mod);
+
+    expect(recordRatingChange).not.toHaveBeenCalled();
   });
 
   it('mod adds a PG13 asset to a pg-rated live listing → floors up to pg13 (intra-ladder raise)', async () => {

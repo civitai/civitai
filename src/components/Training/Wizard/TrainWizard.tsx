@@ -14,6 +14,7 @@ import { TrainingFormBasic } from '~/components/Training/Form/TrainingBasicInfo'
 import { basePath } from '~/components/Training/Form/TrainingCommon';
 import { TrainingFormImages } from '~/components/Training/Form/TrainingImages';
 import { TrainingFormSubmit } from '~/components/Training/Form/TrainingSubmit';
+import { SwitchToTrainingStudioAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { hashify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -116,6 +117,7 @@ export default function TrainWizard() {
             />
           </Group>
           <TrainStatusMessage />
+          <SwitchToTrainingStudioAlert destination="/training-studio?view=new" />
           <WizardStepper
             active={state.step - 1}
             onStepClick={(step) =>

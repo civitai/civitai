@@ -1,6 +1,7 @@
 ---
 name: svelte-abstraction-review
 description: Reviews a feature segment in any SvelteKit app (apps/moderator, apps/auth, apps/creator-studio) for duplication and missing abstractions — what should be a shared component, helper, or service, and where it belongs. Use before calling a segment done, alongside svelte-correctness-review and svelte-idiom-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 

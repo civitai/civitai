@@ -3,7 +3,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * Eligibility for Flipt-gated TOGGLEABLE flags (`getFliptGatedEligibility` +
  * `computeUserFeatureFlagsOverlay`) — the pair that decides whether
- * `/training-studio` renders or 404s for a user whose settings toggle is ON.
+ * `/training-studio` renders or 404s for a user who has not switched back to the
+ * classic trainer.
  *
  * The regression this pins: `trainingStudioUi` is `availability: ['mod']` with a
  * fliptKey. Inside `hasFeature` a non-null Flipt eval short-circuits the static
@@ -89,8 +90,38 @@ describe('getFliptGatedEligibility', () => {
 });
 
 describe('computeUserFeatureFlagsOverlay with gated eligibility', () => {
-  const hostFeatures = {} as FeatureAccess; // toggleable default:false keys are never in host flags
+  const hostFeatures = {} as FeatureAccess;
   const toggledOn = { trainingStudioUi: true };
+
+  it('defaults a Flipt-granted user with no stored choice into the Training Studio', () => {
+    fliptAnswers({ 'training-studio-ui': true });
+    const overlay = computeUserFeatureFlagsOverlay(
+      undefined,
+      hostFeatures,
+      getFliptGatedEligibility({ user: regularUser })
+    );
+    expect(overlay.trainingStudioUi).toBe(true);
+  });
+
+  it('keeps a stored opt-back over the default', () => {
+    fliptAnswers({ 'training-studio-ui': true });
+    const overlay = computeUserFeatureFlagsOverlay(
+      { trainingStudioUi: false },
+      hostFeatures,
+      getFliptGatedEligibility({ user: regularUser })
+    );
+    expect(overlay.trainingStudioUi).toBe(false);
+  });
+
+  it('does not default an ineligible user in', () => {
+    fliptAnswers({ 'training-studio-ui': false });
+    const overlay = computeUserFeatureFlagsOverlay(
+      undefined,
+      hostFeatures,
+      getFliptGatedEligibility({ user: regularUser })
+    );
+    expect(overlay.trainingStudioUi).toBeUndefined();
+  });
 
   it('retains the ON toggle for a moderator the Flipt segment excludes', () => {
     fliptAnswers({ 'training-studio-ui': false });
@@ -123,9 +154,8 @@ describe('computeUserFeatureFlagsOverlay with gated eligibility', () => {
   });
 
   it('withholds the key when eligibility is omitted — host-flag presence cannot stand in for it', () => {
-    // The trap a4495fe41a fixed: a toggleable default:false key is NEVER present in
-    // host flags, so the presence fallback reads "ineligible" for everyone. Any new
-    // call site must thread getFliptGatedEligibility or it locks the feature out.
+    // The trap a4495fe41a fixed: the presence fallback reads a key absent from host flags as
+    // "ineligible". Any new call site must thread getFliptGatedEligibility.
     const overlay = computeUserFeatureFlagsOverlay(toggledOn, hostFeatures);
     expect(overlay.trainingStudioUi).toBeUndefined();
   });

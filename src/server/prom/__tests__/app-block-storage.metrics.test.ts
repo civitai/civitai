@@ -455,7 +455,10 @@ describe('the seeded domain matches the service', () => {
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
           const code = codeOf(fs.readFileSync(full, 'utf8'));
           if (REACH_KEYS.some((k) => code.includes(k))) {
-            const rel = path.relative(SRC, full);
+            // Posix separators: SEEDER_REL/SERVICE_REL are written with `/`, so on Windows
+            // path.relative() produced backslashes and this set matched neither — two files
+            // found, two expected, no overlap. Third instance of this in the no-* guards.
+            const rel = path.relative(SRC, full).split(path.sep).join('/');
             reaching.push(rel);
             const imports = (code.match(/import\s[\s\S]*?from\s*'[^']*';?/g) ?? []).join('\n');
             for (const sym of LEDGERED_WRITERS) {

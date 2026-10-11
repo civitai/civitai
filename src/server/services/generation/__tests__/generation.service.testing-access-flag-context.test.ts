@@ -40,9 +40,6 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   getDbWithoutLagBatch: vi.fn(),
 }));
-vi.mock('~/server/services/orchestrator/ecosystems/wan.handler', () => ({
-  wanBaseModelGroupIdMap: {},
-}));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: {} }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
 vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: vi.fn() }));

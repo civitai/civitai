@@ -4,6 +4,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { AppSubListingCard } from '~/components/Apps/AppSubListingCard';
 import { AppListingCardSkeletonGrid } from '~/components/Apps/AppListingCardSkeleton';
 import gridClasses from '~/components/Apps/AppListingsMarketplaceBody.module.scss';
 import { AppsStoreFiltersDropdown } from '~/components/Apps/AppsStoreFiltersDropdown';
@@ -23,7 +24,8 @@ import {
 } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ListingCard, ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
+import type { ListingSort, StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
+import { isSubListingCard, onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
@@ -247,6 +249,7 @@ export function AppListingsMarketplaceBody() {
       // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
       // request-time zod error, not a bigger page.
       limit: 48,
+      includeSubListings: true,
     },
     {
       // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
@@ -307,7 +310,13 @@ export function AppListingsMarketplaceBody() {
     }
   );
 
-  const items = useMemo(() => (data?.pages ?? []).flatMap((p) => p.items as ListingCard[]), [data]);
+  const gridItems = useMemo(
+    () => (data?.pages ?? []).flatMap((p): StoreGridItem[] => p.items),
+    [data]
+  );
+  // The app cards alone. Sub-listing cards are grid-only: the "Recently opened" rail is about
+  // APPS, so it reconciles against these.
+  const items = useMemo(() => onlyListingCards(gridItems), [gridItems]);
 
   /**
    * RECONCILE the persisted recents against the listings already on this page.
@@ -398,13 +407,13 @@ export function AppListingsMarketplaceBody() {
   // this is complete only while the catalog fits in the loaded pages.
   const filteredItems = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
+    if (!q) return gridItems;
+    return gridItems.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.tagline ? c.tagline.toLowerCase().includes(q) : false)
     );
-  }, [items, debouncedSearch]);
+  }, [gridItems, debouncedSearch]);
 
   // The BROAD predicate — includes search, because a viewer looking at an empty
   // grid can't tell which control emptied it. The dropdown's `Indicator` counts
@@ -637,7 +646,11 @@ export function AppListingsMarketplaceBody() {
             <div className={gridClasses.grid} data-testid="apps-listing-grid">
               {filteredItems.map((card) => (
                 <div key={card.id} data-testid="apps-listing-grid-col">
-                  <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  {isSubListingCard(card) ? (
+                    <AppSubListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  ) : (
+                    <AppListingCard card={card} canOpenPage={!!features.appBlocksPages} />
+                  )}
                 </div>
               ))}
             </div>

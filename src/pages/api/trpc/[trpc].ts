@@ -5,7 +5,11 @@ import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
-import { recordTrpcError } from '~/server/prom/http-errors';
+import {
+  recordTrpcError,
+  recordUnloggedTrpcClientError,
+  shouldSkipExpectedNotFoundLog,
+} from '~/server/prom/http-errors';
 import {
   instrumentTrpcBatchRequest,
   shouldSkipBatchCapLog,
@@ -98,6 +102,25 @@ const trpcHandler = createNextApiHandler({
       // can only ever suppress the cap rejection itself.
       if (shouldSkipBatchCapLog(req, error)) return error;
 
+      // Uninformative 404s. `image.getGenerationData` answers NOT_FOUND only when the image id
+      // does not exist (an image without generation metadata still returns normally). Most of
+      // that volume comes from clients calling the procedure directly to enumerate ids, and at
+      // that rate its lines were most of this route's Axiom ingest, each paying
+      // JSON.stringify(input) + an ingest for a line that says nothing the 404 doesn't.
+      //
+      // Narrow by construction: `shouldSkipExpectedNotFoundLog` matches only the exact
+      // (path, code) pairs in `EXPECTED_NOT_FOUND_LOG_SKIPS`, so every other procedure's
+      // NOT_FOUND, and every other code on this procedure, is still logged below.
+      //
+      // The signal is not lost: `recordTrpcError` above counts only 5xx, so the skipped errors
+      // are counted in `civitai_app_trpc_unlogged_client_errors_total{path,code}` instead —
+      // `sum by (path)` of their rate over that of `civitai_app_trpc_procedure_duration_seconds_count` is
+      // the 404 share (see the counter's comment in http-errors.ts for why both sides aggregate).
+      if (shouldSkipExpectedNotFoundLog(path, error)) {
+        recordUnloggedTrpcClientError(error, path);
+        return error;
+      }
+
       // Auth-class rejections (FORBIDDEN / UNAUTHORIZED) are client-fault 4xx
       // responses — the status code already tells the caller + edge what
       // happened, and at scraper/bot scale these are the dominant noise in
@@ -153,7 +176,8 @@ const trpcHandler = createNextApiHandler({
       // (INTERNAL_SERVER_ERROR / TIMEOUT — the invisible raw-500 class) or a
       // remaining client-fault 4xx (BAD_REQUEST / NOT_FOUND / CONFLICT /
       // PRECONDITION_FAILED); FORBIDDEN/UNAUTHORIZED/TOO_MANY_REQUESTS/
-      // SERVICE_UNAVAILABLE already returned above. buildCentralErrorLog un-masks
+      // SERVICE_UNAVAILABLE, and the allowlisted 404s, already returned
+      // above. buildCentralErrorLog un-masks
       // the `.cause` chain for server faults and tags severity `type:'error'` (so
       // 500s are queryable as detected_level="error"), while tagging the client-
       // fault 4xx `type:'info'` so they stay out of the error stream. Behavior is

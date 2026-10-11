@@ -18,12 +18,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 const captured = vi.hoisted(() => [] as string[]);
 const capturedParams = vi.hoisted(() => [] as unknown[][]);
+const cannedRows = vi.hoisted(() => [] as unknown[]);
 
 // Built inside the factory, not in `vi.hoisted`: hoisted blocks run before this file's own imports, so
 // constructing the client there reads it before initialisation.
 vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
-  const db = capturingDb(captured, [], capturedParams);
+  const db = capturingDb(captured, cannedRows, capturedParams);
   return { dbRead: db, dbWrite: db };
 });
 
@@ -68,7 +69,7 @@ describe('getGenerationRestrictions — type scoping', () => {
 
   // 🔴 The leak, stated as a property rather than as one example: whatever type is asked for, no other
   // type's rows can satisfy the query. A predicate bound to the requested value is what guarantees it.
-  it.each(['generation', 'bot-account'] as const)(
+  it.each(['generation', 'bot-account', 'scam'] as const)(
     'binds %s and no other type, in both the list and the count',
     async (type) => {
       const compiled = await compile({ ...base, type });
@@ -126,5 +127,37 @@ describe('getGenerationRestrictions — type scoping', () => {
     // would report coverage of a column that is not being selected at all.
     const selectList = list.sql.slice(0, list.sql.indexOf(' from "UserRestriction"'));
     expect(selectList).toContain('"ur"."type"');
+  });
+});
+
+describe('getGenerationRestrictions — trigger view', () => {
+  it('keeps a scam cleanup’s count and drops the recorded ids', async () => {
+    cannedRows.push({
+      id: 9,
+      userId: 42,
+      type: 'scam',
+      triggers: [
+        {
+          category: 'scam',
+          reason: 'Fake support',
+          cleanup: { kind: 'comments', count: 2, truncated: false, ids: [3, 4], at: 'x' },
+        },
+        { category: 'scam', reason: 'Fake support', cleanup: null },
+      ],
+    });
+    try {
+      const { items } = await getGenerationRestrictions({ ...base, type: 'scam' });
+      const [withCleanup, without] = items[0].triggers;
+      expect(withCleanup.cleanup).toEqual({
+        kind: 'comments',
+        count: 2,
+        truncated: false,
+        at: 'x',
+      });
+      expect(withCleanup).toMatchObject({ reason: 'Fake support', key: '9-0' });
+      expect(without.cleanup).toBeNull();
+    } finally {
+      cannedRows.length = 0;
+    }
   });
 });

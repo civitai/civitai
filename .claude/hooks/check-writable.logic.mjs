@@ -55,7 +55,7 @@ function prettierWriteTargets(command) {
     );
 }
 
-// The rule from CLAUDE.md is about BREADTH, not about prettier: a run may only reach files this
+// The rule in root CLAUDE.md / docs/dev/prettier.md is about BREADTH, not about prettier: a run may only reach files this
 // change owns, because the repo is not Prettier-clean (789 of 4,116 `src` files) and a broad `--write`
 // both buries the change and rewrites colleagues' uncommitted work in place. So a named file or a
 // directory deep enough to belong to one feature runs; anything that could sweep an app or the repo

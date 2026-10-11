@@ -108,7 +108,7 @@ vi.mock('~/server/services/tag.service', () => ({
   findOrCreateTagsByName: vi.fn(),
   getVotableImageTags: vi.fn(),
 }));
-vi.mock('~/server/services/technique.service', () => ({ getTechniqueByName: vi.fn() }));
+vi.mock('~/server/services/technique.service', () => ({ getTechniqueForWorkflow: vi.fn() }));
 vi.mock('~/server/services/tool.service', () => ({
   getToolByAlias: vi.fn(),
   getToolByDomain: vi.fn(),

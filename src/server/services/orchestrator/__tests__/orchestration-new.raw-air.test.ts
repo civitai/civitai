@@ -65,7 +65,7 @@ vi.mock('~/server/services/image.service', () => ({
 
 import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
 import type * as PromptAuditingMod from '~/server/services/orchestrator/promptAuditing';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { resetHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';

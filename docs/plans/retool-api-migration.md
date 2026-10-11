@@ -98,7 +98,7 @@ Wins:
 - Schema auto-assembled — `z.discriminatedUnion('action', Object.entries(actions).map(...))`.
 - Doc-comment block at top of file still lists actions for human readability — could even be generated from the registry at build time later.
 
-Each file leads with a doc comment block (per `CLAUDE.md` Debug Endpoints section) listing actions + required params.
+Each file leads with a doc comment block (per `.claude/rules/debug-endpoints.md`) listing actions + required params.
 
 ### `defineRetoolEndpoint` wrapper
 

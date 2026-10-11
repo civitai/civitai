@@ -185,22 +185,12 @@ export async function resolveTrainingRun({
     architecture: trainingArchitectureKey(version.trainingDetails as TrainingDetailsObj | null),
   };
 
-  const file = pickBestTrainingFile(version.files);
-  const stored = ((file?.metadata as FileMetadata | null)?.trainingResults ??
-    null) as TrainingResultsV2 | null;
+  const { file, stored, workflowId } = resolveTrainingWorkflowId(version);
   const storedState: TrainingRunState = {
     source: 'stored',
     trainingStatus: version.trainingStatus,
     trainingResults: stored,
   };
-
-  const workflowId =
-    stored?.workflowId ??
-    // Written alongside the training results at submit. It lives on a small json column the
-    // TOAST-dropping replication bug cannot reach, so it is the one handle that survives a run
-    // whose stored results came back empty — which is exactly when this screen needs the
-    // orchestrator most.
-    ((version.meta as { trainingWorkflowId?: string } | null)?.trainingWorkflowId || undefined);
 
   if (!file || !workflowId) return { state: storedState, run };
 
@@ -222,6 +212,26 @@ export async function resolveTrainingRun({
     },
     run,
   };
+}
+
+/**
+ * The orchestrator workflow a model version was trained by, from its stored records. Read the
+ * version through `dbWrite` — see `resolveTrainingRun`.
+ */
+export function resolveTrainingWorkflowId<F extends { metadata: unknown }>(version: {
+  meta: unknown;
+  files: F[];
+}): { file: F | undefined; stored: TrainingResultsV2 | null; workflowId: string | undefined } {
+  const file = pickBestTrainingFile(version.files);
+  const stored = ((file?.metadata as FileMetadata | null)?.trainingResults ??
+    null) as TrainingResultsV2 | null;
+  const workflowId =
+    stored?.workflowId ??
+    // Written alongside the training results at submit. It lives on a small json column the
+    // TOAST-dropping replication bug cannot reach, so it is the one handle that survives a run
+    // whose stored results came back empty.
+    ((version.meta as { trainingWorkflowId?: string } | null)?.trainingWorkflowId || undefined);
+  return { file, stored, workflowId };
 }
 
 /** One workflow, derived, or null if it cannot be read — past retention, malformed, or upstream down. */

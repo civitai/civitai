@@ -44,8 +44,10 @@ vi.mock('~/server/services/blocks/forgejo.service', () => ({
 }));
 
 import {
-  resolveReviewRequestTarget,
+  draftTransitionWhere,
   getReviewRequestById,
+  resetRestoreWhere,
+  resolveReviewRequestTarget,
 } from '~/server/services/blocks/publish-request.service';
 
 // A full hydrated DB row shaped as getReviewRequestById's `select` returns it.
@@ -79,6 +81,9 @@ beforeEach(() => {
   // `listingBelongsToRequest` requires the listing to be keyed on that same block.
   mockDbRead.appListing.findMany.mockResolvedValue([
     {
+      id: 'apl_mine',
+      status: 'draft',
+      contentRating: 'pg13',
       slug: 'my-app',
       kind: 'onsite',
       appBlockId: 'appblk_1',
@@ -173,7 +178,12 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       expect(res!.request.playCount).toBe(1234);
       expect(res!.request.iconUrl).toContain('icon-uuid');
       expect(res!.request.coverUrl).toContain('cover-uuid');
-      expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
+      // One slug join for the page; the other two reads are the re-rate lookups.
+      const slugJoins = mockDbRead.appListing.findMany.mock.calls.filter(
+        (c) => ((c[0] ?? {}) as { where?: { slug?: unknown } }).where?.slug !== undefined
+      );
+      expect(slugJoins).toHaveLength(1);
+      expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(3);
       const joinArgs = mockDbRead.appListing.findMany.mock.calls[0][0] as {
         where: { slug: { in: string[] } };
       };
@@ -207,6 +217,111 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
     mockDbRead.appListing.findMany.mockResolvedValue([]);
     const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
     expect(res!.request).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
+    expect(res!.request).toMatchObject({ appListingId: null, approveRating: null });
+  });
+
+  /**
+   * `approveRating` asks the database with approveRequest's own `where` builders; these
+   * pin that it sends exactly those and maps what comes back. The listing's own rating
+   * (`r`) and the manifest's (`pg13`) differ so the wrong source is visible.
+   */
+  describe('approveRating — will this approve re-rate a listing, and from what', () => {
+    const SUBMITTER = 7;
+    type Where = { OR?: Record<string, unknown>[] };
+    const isDraftQuery = (w: Where) => w.OR?.[0]?.status === 'draft';
+    const isResetQuery = (w: Where) => w.OR?.[0]?.status === 'pending';
+    const approveRatingFor = async (
+      found: { drafts?: unknown[]; resets?: unknown[] },
+      request: Record<string, unknown> = {}
+    ) => {
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+        dbRow({ manifest: { name: 'my-app', contentRating: 'pg13' }, ...request })
+      );
+      mockDbRead.appListing.findMany.mockImplementation(async (...a: unknown[]) => {
+        const w = ((a[0] ?? {}) as { where?: Where }).where ?? {};
+        if (isDraftQuery(w)) return found.drafts ?? [];
+        if (isResetQuery(w)) return found.resets ?? [];
+        return [];
+      });
+      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+      return (res!.request as unknown as { approveRating: unknown }).approveRating;
+    };
+    const queries = () =>
+      mockDbRead.appListing.findMany.mock.calls.map(
+        (c) => ((c[0] ?? {}) as { where?: Where }).where ?? {}
+      );
+
+    it('asks with exactly draftTransitionWhere and resetRestoreWhere for this request', async () => {
+      await approveRatingFor({});
+      const wheres = queries();
+      expect(wheres.find(isDraftQuery)).toEqual({
+        OR: [draftTransitionWhere({ slug: 'my-app', submittedByUserId: SUBMITTER })],
+      });
+      expect(wheres.find(isResetQuery)).toEqual({ OR: [resetRestoreWhere('appblk_1')] });
+    });
+
+    it('a request not yet keyed to an app asks for no reset restore', async () => {
+      await approveRatingFor({}, { appBlockId: null });
+      expect(queries().some(isResetQuery)).toBe(false);
+    });
+
+    it('a matching first-version DRAFT is floored from the submitted manifest rating', async () => {
+      expect(
+        await approveRatingFor({ drafts: [{ id: 'apl_draft', slug: 'my-app', userId: SUBMITTER }] })
+      ).toEqual({ listingId: 'apl_draft', declared: 'pg13' });
+    });
+
+    it('a manifest with no rating floors from g', async () => {
+      expect(
+        await approveRatingFor(
+          { drafts: [{ id: 'apl_draft', slug: 'my-app', userId: SUBMITTER }] },
+          { manifest: { name: 'my-app' } }
+        )
+      ).toEqual({ listingId: 'apl_draft', declared: 'g' });
+    });
+
+    it('a listing RESET to pending is floored from the rating it already carries', async () => {
+      expect(
+        await approveRatingFor({
+          resets: [{ id: 'apl_reset', appBlockId: 'appblk_1', contentRating: 'r' }],
+        })
+      ).toEqual({ listingId: 'apl_reset', declared: 'r' });
+    });
+
+    it('rows for another request on the same page are not this one’s', async () => {
+      expect(
+        await approveRatingFor({
+          drafts: [{ id: 'apl_other', slug: 'other-app', userId: SUBMITTER }],
+          resets: [{ id: 'apl_other2', appBlockId: 'appblk_9', contentRating: 'r' }],
+        })
+      ).toBeNull();
+    });
+
+    it('nothing the writer would re-rate: null', async () => {
+      expect(await approveRatingFor({})).toBeNull();
+    });
+  });
+
+  it('another app’s slug-matched listing lends this submission no listing id either', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      dbRow({ status: 'rejected', appBlockId: null })
+    );
+    mockDbRead.appListing.findMany.mockResolvedValue([
+      {
+        id: 'apl_theirs',
+        status: 'approved',
+        contentRating: 'r',
+        slug: 'my-app',
+        kind: 'onsite',
+        appBlockId: null,
+        userId: 999,
+        icon: null,
+        cover: null,
+        metric: null,
+      },
+    ]);
+    const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+    expect(res!.request).toMatchObject({ appListingId: null, approveRating: null });
   });
 
   it('a rejected detail carries the rejectionReason the history view renders', async () => {

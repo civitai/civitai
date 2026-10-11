@@ -250,11 +250,13 @@ async function runQuery(strings: TemplateStringsArray, ...values: unknown[]) {
     return [...out].map(([entityId, lastActedAt]) => ({ entityId, lastActedAt }));
   }
 
-  // remove-blocked-images: images held back because an appeal is pending on them.
-  if (sql.includes(`"needsReview" = 'appeal'`)) {
+  // remove-blocked-images: images held back by a pending review flag the query names.
+  const reviewFlags = sql.match(/"needsReview" IN \(([^)]*)\)/);
+  if (reviewFlags) {
+    const named = [...reviewFlags[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
     return store.images
-      .filter((i) => i.needsReview === 'appeal' && i.ingestion === 'Blocked')
-      .map((i) => ({ id: i.id }));
+      .filter((i) => i.needsReview && named.includes(i.needsReview) && i.ingestion === 'Blocked')
+      .map((i) => ({ id: i.id, needsReview: i.needsReview }));
   }
 
   // remove-blocked-images: the batch fetch, scoped to the ids that survived the queue exclusion.

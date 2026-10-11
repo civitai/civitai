@@ -12,12 +12,16 @@ import {
 } from '~/server/services/feed-shadow.service';
 
 export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
+const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
   name: 'feed_primary_requests_total',
   help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
-  labelNames: ['outcome', 'reason'] as const,
+  labelNames: ['outcome', 'reason', 'route'] as const,
 });
+
+/** Which caller asked: the site's image feed or the public REST images endpoint. */
+export type FeedPrimaryRoute = 'website' | 'rest';
 
 // These three mapping reasons carry request text; the rest are a fixed set.
 const UNBOUNDED_REASONS = ['sort', 'period', 'types'];
@@ -25,8 +29,11 @@ export function reasonLabel(reason: string) {
   const head = reason.split(':')[0] as string;
   return UNBOUNDED_REASONS.includes(head) ? head : reason;
 }
-const count = (outcome: string, reason = '') =>
-  requestCounter.inc({ outcome, reason: reasonLabel(reason) });
+export const countFeedPrimary = (
+  outcome: string,
+  reason = '',
+  route: FeedPrimaryRoute = 'website'
+) => requestCounter.inc({ outcome, reason: reasonLabel(reason), route });
 
 const UNMAPPED_LOG_INTERVAL_MS = 60_000;
 const unmappedLoggedAt = new Map<string, number>();
@@ -67,13 +74,15 @@ export type FeedPrimaryPage<T> = {
 };
 export type FeedPrimaryResult<T> =
   | { ok: true; page: FeedPrimaryPage<T> }
-  | { ok: false; reason: string };
+  /** `nextCursor` is set on `hydrate:empty`: the feed's continuation past the emptied page. */
+  | { ok: false; reason: string; nextCursor?: string };
 
 export type FeedPrimaryDeps<T extends { id: number }> = {
   fetchFeed: (query: string, timeoutMs: number) => Promise<FeedAnswer>;
   /** Loads the page's records in any order; the feed's order is restored here. */
   hydrate: (ids: number[]) => Promise<T[]>;
   timeoutMs?: number;
+  route?: FeedPrimaryRoute;
 };
 
 /** The image query for hydrating exactly `ids`: the request's filters without its paging or
@@ -88,14 +97,28 @@ export function feedHydrateQuery<
     period?: unknown;
     modelId?: number;
     modelVersionId?: number;
+    hubId?: number;
+    hubExcludedSources?: unknown;
   }
 >(
   input: T,
   ids: number[]
-): Omit<T, 'cursor' | 'skip' | 'offset' | 'entry' | 'period' | 'modelId' | 'modelVersionId'> & {
+): Omit<
+  T,
+  | 'cursor'
+  | 'skip'
+  | 'offset'
+  | 'entry'
+  | 'period'
+  | 'modelId'
+  | 'modelVersionId'
+  | 'hubId'
+  | 'hubExcludedSources'
+> & {
   ids: number[];
   limit: number;
   period: 'AllTime';
+  throwOnStatementTimeout: true;
 } {
   const {
     cursor: _cursor,
@@ -107,9 +130,14 @@ export function feedHydrateQuery<
     // the hydrate's resource join would drop it.
     modelId: _modelId,
     modelVersionId: _modelVersionId,
+    // The feed already applied the hub, and the database path refuses a hub outright.
+    hubId: _hubId,
+    hubExcludedSources: _hubExcludedSources,
     ...rest
   } = input;
-  return { ...rest, ids, limit: ids.length, period: 'AllTime' };
+  // getAllImages would answer a statement timeout with an empty page, which here would read as
+  // a page the hydrate filtered out; as an error it is a hydrate:error instead.
+  return { ...rest, ids, limit: ids.length, period: 'AllTime', throwOnStatementTimeout: true };
 }
 
 /** Truthful subset of the request-path Flipt context (feature-flags.service.ts) built
@@ -130,11 +158,14 @@ export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
 ): Promise<FeedPrimaryResult<T>> {
+  const count = (outcome: string, reason = '') => countFeedPrimary(outcome, reason, deps.route);
   // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set,
-  // and an unpopulated new-creator board serves nothing rather than the global feed.
+  // an unpopulated new-creator board serves nothing rather than the global feed, and so does a
+  // hub that resolves to nothing for this viewer.
   if (
     (input.followed === true && input.followedUserIds?.length === 0) ||
-    (input.newCreators === true && input.newCreatorUserIds?.length === 0)
+    (input.newCreators === true && input.newCreatorUserIds?.length === 0) ||
+    (!!input.hubId && input.hubSources === null)
   ) {
     count('served');
     return { ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } };
@@ -159,6 +190,12 @@ export async function serveFromFeed<T extends { id: number }>(
     count('error', `status:${answer.status}`);
     return { ok: false, reason: `status:${answer.status}` };
   }
+  // A feed build without the any-of sources ignores them and answers with the open feed. Only
+  // a plan that took the union, or the feed's own empty page, is the hub.
+  if (input.hubId && !HUB_ROUTES.has(answer.route ?? '')) {
+    count('error', 'hub:route');
+    return { ok: false, reason: 'hub:route' };
+  }
   const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
   if (!answer.ids.length) {
     count('served');
@@ -174,11 +211,11 @@ export async function serveFromFeed<T extends { id: number }>(
   } finally {
     endHydrate();
   }
-  // getAllImages answers its own statement timeout with an empty page; ids that hydrate to
-  // nothing are that, not the end of the feed.
+  // Every id was filtered out by the hydrate's own checks (its statement timeout is thrown, see
+  // feedHydrateQuery). That is not the end of the feed, so the feed's cursor travels with it.
   if (!rows.length) {
     count('error', 'hydrate:empty');
-    return { ok: false, reason: 'hydrate:empty' };
+    return { ok: false, reason: 'hydrate:empty', nextCursor };
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const data = answer.ids.flatMap((id) => {

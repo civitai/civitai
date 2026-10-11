@@ -4,12 +4,14 @@ import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { ownDomainCanonical } from '~/components/Meta/canonical';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import type { TagPageSeoData } from '~/server/services/tag.service';
+import { useAppContext } from '~/providers/AppProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
 import { tagDisplayName } from '~/utils/tag-display-name';
@@ -34,6 +36,7 @@ export const getServerSideProps = createServerSideProps({
     let seoData: TagPageSeoData = { count: 0, models: [] };
     let deIndexForDomain = false;
     let greenCanonical: string | null = null;
+    let claimsCanonical = false;
     if (tagname) {
       const {
         getTagPageSeoData,
@@ -47,7 +50,12 @@ export const getServerSideProps = createServerSideProps({
         ? shouldDeIndexAdultTermOnGreen(seoData) || shouldDeIndexMatureOnlyTag(seoData)
         : shouldDeIndexSafeOnlyTag(seoData);
 
-      if (!isGreen && !deIndexForDomain && shouldPointTagCanonicalAtGreen(seoData)) {
+      const pointsAtGreen =
+        !isGreen && !deIndexForDomain && shouldPointTagCanonicalAtGreen(seoData);
+      // A green handover with no green host configured keeps the old relative canonical rather
+      // than claiming the tag for red.
+      claimsCanonical = !isGreen && !pointsAtGreen;
+      if (pointsAtGreen) {
         // Read the green host directly: `getBaseUrl('green')` falls back to this deployment's own
         // URL when SERVER_DOMAIN_GREEN is unset, which would hand red a self-canonical that looks
         // right in the HTML and quietly cancels the rule.
@@ -63,7 +71,10 @@ export const getServerSideProps = createServerSideProps({
     // Red is exempt: it serves direct ads, no auction.
     const suppressAds = isGreen && seoData.nsfwTerm === true;
 
-    return { props: { tagname, seoData, deIndexForDomain, greenCanonical }, suppressAds };
+    return {
+      props: { tagname, seoData, deIndexForDomain, greenCanonical, claimsCanonical },
+      suppressAds,
+    };
   },
 });
 
@@ -72,8 +83,10 @@ export default function TagPage({
   seoData,
   deIndexForDomain,
   greenCanonical,
+  claimsCanonical,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { set, ...queryFilters } = useModelQueryParams();
+  const { domain, serverDomains } = useAppContext();
 
   const { data = [] } = trpc.tag.getTagWithModelCount.useQuery({ name: tagname });
   const [tag] = data;
@@ -127,7 +140,12 @@ export default function TagPage({
       <Meta
         title={title}
         description={description}
-        canonical={greenCanonical ?? `/tag/${tagname}`}
+        canonical={
+          greenCanonical ??
+          (claimsCanonical
+            ? ownDomainCanonical(`/tag/${tagname}`, domain, serverDomains)
+            : `/tag/${tagname}`)
+        }
         deIndex={(tag?.unfeatured ?? false) || deIndexForDomain}
         schema={schema}
       />

@@ -1,7 +1,7 @@
 import { Alert, Button, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import { useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { useSelectedBuzzType } from '~/components/Generation/footer-parts';
 import {
   encodeGenerationHandoff,
   GENERATION_HANDOFF_PARAM,

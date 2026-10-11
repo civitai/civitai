@@ -1,4 +1,6 @@
 export const LINK_CLASS = 'text-blue-4 hover:underline';
+/** A secondary link beside a primary one — an external "↗" next to the row's own link. */
+export const MUTED_LINK_CLASS = 'text-dark-2 text-xs hover:underline';
 
 /**
  * Local time, its zone named, and the UTC equivalent — in the text, not a tooltip.

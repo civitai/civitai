@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
-import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
+import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 
 /**
  * 🔴 POPULATION + WIRING GUARD for the `source` label of
@@ -163,6 +163,14 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
   'src/server/routers/blocks.router.ts::submitWorkflow': {
     sites: 1,
     siteNote: "the block host's pre-check on the submitted workflow prompt",
+    arg: { kind: 'absent' },
+  },
+  // The `kind:'training'` text audit — dataset captions and a body's trigger word + sample
+  // prompts. A training run is not a generation submission, so it is not `generate`.
+  'src/server/routers/blocks.router.ts::auditBlockTrainingText': {
+    sites: 1,
+    siteNote:
+      "the training arm's one audit: dataset captions, and the body's trigger word + sample prompts",
     arg: { kind: 'absent' },
   },
   'src/server/routers/blocks.router.ts::submitCustomComfyWorkflow': {

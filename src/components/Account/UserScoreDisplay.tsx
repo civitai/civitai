@@ -1,6 +1,7 @@
 import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
 import { IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { creatorScorePenalty, creatorScoreSources } from '~/components/Account/creator-score-copy';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Scores = {
@@ -13,32 +14,16 @@ type Scores = {
   reportsAgainst?: number;
 };
 
-const scoreCategories = [
-  {
-    key: 'models' as const,
-    label: 'Models',
-    color: 'blue',
-    tooltip: 'Based on reviews, downloads, and generations across published models',
-  },
-  {
-    key: 'images' as const,
-    label: 'Images',
-    color: 'teal',
-    tooltip: 'Based on reactions and comments images receive',
-  },
-  {
-    key: 'articles' as const,
-    label: 'Articles',
-    color: 'orange',
-    tooltip: 'Based on views, comments, and reactions on articles',
-  },
-  {
-    key: 'users' as const,
-    label: 'Users',
-    color: 'grape',
-    tooltip: 'Based on follower count',
-  },
-];
+export const scoreCategories = [
+  { key: 'models' as const, color: 'blue' },
+  { key: 'images' as const, color: 'teal' },
+  { key: 'articles' as const, color: 'orange' },
+  { key: 'users' as const, color: 'grape' },
+].map((category) => ({
+  ...category,
+  label: creatorScoreSources[category.key].label,
+  tooltip: creatorScoreSources[category.key].earnedBy,
+}));
 
 const reportCategories = [
   {
@@ -47,7 +32,9 @@ const reportCategories = [
     color: 'red',
     icon: IconFlag,
     tooltip:
-      'Points deducted for content this user posted that was removed for Terms of Service violations',
+      'Points deducted for images this user posted that were removed for Terms of Service violations',
+    ownerLabel: 'Removed content',
+    ownerTooltip: creatorScorePenalty,
   },
   {
     key: 'reportsActioned' as const,
@@ -55,17 +42,22 @@ const reportCategories = [
     color: 'green',
     icon: IconShieldCheck,
     tooltip: 'Points earned for reports this user filed that moderators actioned',
+    ownerLabel: creatorScoreSources.reportsActioned.label,
+    ownerTooltip: creatorScoreSources.reportsActioned.earnedBy,
   },
 ];
 
 export function UserScoreDisplay({
   scores,
   showReports = false,
+  owner = false,
   flat = false,
   abbreviate = true,
 }: {
   scores: Scores | null | undefined;
   showReports?: boolean;
+  /** The creator looking at their own score: the reports block speaks to them, not about them. */
+  owner?: boolean;
   /** Drop the panel chrome when the caller already provides it. */
   flat?: boolean;
   abbreviate?: boolean;
@@ -163,7 +155,14 @@ export function UserScoreDisplay({
                           style={{ cursor: 'help' }}
                         />
                       </Tooltip>
-                      <Text size="sm">{label}</Text>
+                      <Text size="sm">
+                        {label}{' '}
+                        <Text span size="sm" c="dimmed" className="tabular-nums">
+                          {abbreviate
+                            ? abbreviateNumber(categoryValues[index], { decimals: 1 })
+                            : Math.round(categoryValues[index]).toLocaleString()}
+                        </Text>
+                      </Text>
                     </Group>
                   );
                 })}
@@ -195,12 +194,7 @@ export function UserScoreDisplay({
             <Group gap={8} wrap="nowrap">
               <IconFlag size={16} color="var(--mantine-color-red-6)" style={{ flexShrink: 0 }} />
               <Text size="sm">Reports against</Text>
-              <Tooltip
-                label="Content you posted that was reported and removed for Terms of Service violations reduces your score."
-                multiline
-                w={240}
-                withArrow
-              >
+              <Tooltip label={creatorScorePenalty} multiline w={240} withArrow>
                 <IconInfoCircle
                   size={14}
                   style={{ flexShrink: 0, cursor: 'help' }}
@@ -221,10 +215,16 @@ export function UserScoreDisplay({
           <>
             <Divider label="Reports" labelPosition="left" />
             <Stack gap="sm">
-              {reportCategories.map(({ key, label, color, icon: Icon, tooltip }) => {
+              {reportCategories.map((category) => {
+                const { key, color, icon: Icon } = category;
                 const value = scores[key] ?? 0;
                 return (
-                  <ScoreRow key={key} icon={<Icon size={16} />} label={label} tooltip={tooltip}>
+                  <ScoreRow
+                    key={key}
+                    icon={<Icon size={16} />}
+                    label={owner ? category.ownerLabel : category.label}
+                    tooltip={owner ? category.ownerTooltip : category.tooltip}
+                  >
                     <Text size="sm" fw={600} c={color}>
                       {Math.round(value).toLocaleString()} pts
                     </Text>
@@ -260,7 +260,7 @@ function ScoreRow({
   return (
     <Group gap="sm" wrap="nowrap">
       <div style={{ flexShrink: 0 }}>{icon}</div>
-      <Text size="sm" w={70}>
+      <Text size="sm" miw={70}>
         {label}
       </Text>
       <Tooltip label={tooltip} multiline w={220} withArrow>

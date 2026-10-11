@@ -192,14 +192,20 @@ const GUARD_CALL_SITE_LEDGER = [
   // `blocks.router.ts`, so a preamble living in an imported service would read as
   // UNGUARDED.
   'authorizeBlockPostRequest',
+  // The training consent preamble: `previewTrainingQuote` and `consentTrainingQuote`
+  // reach the guard through it and nothing else — the same shape as the post
+  // preamble above, and router-local for the same reason.
+  'authorizeBlockTrainingConsentRequest',
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
+  'estimateWorkflowBatch',
   'getImagesByIds',
   'getMyBuzzBalance',
   'getMyViewer',
   'listMyWorkflows',
   'pollWorkflow',
+  'prepareTrainingDataset',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',
@@ -220,6 +226,9 @@ const BRIDGE_INPUT_LEDGER = [
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
+  // The batch twin of `estimateWorkflow`. Its `blockToken` arrives through
+  // `blockEstimateBatchInputSchema`, imported from the workflow schema.
+  'estimateWorkflowBatch',
   'getImagesByIds',
   'getMyBuzzAccounts',
   'getMyBuzzBalance',
@@ -235,6 +244,15 @@ const BRIDGE_INPUT_LEDGER = [
   // not the population.
   'createPostFromApp',
   'previewPostFromApp',
+  // The server half of `OPEN_IMAGE_UPLOAD { bytes }` (persist with the app's stamp); reaches the
+  // guard via `authorizeBlockPostRequest`.
+  'persistAppUploadImage',
+  // The `kind:'training'` bridge procs: the dataset primitive reaches the guard
+  // directly; the two consent halves reach it via
+  // `authorizeBlockTrainingConsentRequest`, above.
+  'prepareTrainingDataset',
+  'previewTrainingQuote',
+  'consentTrainingQuote',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

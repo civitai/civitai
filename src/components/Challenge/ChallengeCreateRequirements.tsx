@@ -1,13 +1,13 @@
-import { Anchor, Button, Divider, Modal, Stack, Text } from '@mantine/core';
+import { Button, Divider, Modal, Stack, Text } from '@mantine/core';
 import { IconArrowLeft, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
-import { NextLink } from '~/components/NextLink/NextLink';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { describeActiveLimitsByTier } from '~/shared/constants/challenge.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import type { RouterOutput } from '~/types/router';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 type Eligibility = RouterOutput['challenge']['getCreateEligibility'];
 type Requirement = Eligibility['requirements'][number];
@@ -16,18 +16,10 @@ function renderRequirement(req: Requirement, noun: string): { title: string; con
   switch (req.key) {
     case 'score':
       return {
-        title: `Have a creator score of at least ${abbreviateNumber(req.min)}`,
+        title: `Have a Creator Score of at least ${numberWithCommas(req.min)}`,
         content: (
           <Text size="sm" c="dimmed">
-            Your current{' '}
-            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-              Creator Score
-            </Anchor>{' '}
-            is{' '}
-            <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-              {abbreviateNumber(req.current)}
-            </Anchor>
-            .
+            <CreatorScoreGateMessage score={req.current} required={req.min} />
           </Text>
         ),
       };

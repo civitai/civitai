@@ -103,6 +103,7 @@ function base(over: Partial<ListingDetail> = {}): ListingDetail {
     contentRating: null,
     isBeta: false,
     betaMessage: null,
+    restrictedAudience: null,
     iconUrl: null,
     coverUrl: null,
     creator: null,
