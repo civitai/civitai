@@ -269,6 +269,17 @@ describe('T4: a guessed id', () => {
     expect(ctx.cache.skip).toBe(true);
   });
 
+  it('refuses a clone of a gated source by its own id', async () => {
+    seed(OPEN, GATED, clone(100, TESTER.id, GATED));
+    await expect(
+      getHomeBlocksByIdHandler({ ctx: ctxFor(STRANGER), input: { id: 100 } })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(getHomeBlockCached).not.toHaveBeenCalled();
+    // control: its owner, who is flagged, is served it
+    const block = await getHomeBlocksByIdHandler({ ctx: ctxFor(TESTER), input: { id: 100 } });
+    expect(block.id).toBe(100);
+  });
+
   it('control: an ungated row by id stays edge-cacheable for anyone', async () => {
     seed(OPEN, GATED);
     const ctx = ctxFor(STRANGER);
