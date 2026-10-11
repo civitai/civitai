@@ -648,6 +648,49 @@ export async function assertAppEditAccess(args: {
   if (!seated) deny();
 }
 
+/**
+ * The listing half of "this seat reaches an AppBlock" (why both conditions:
+ * {@link resolveAccessibleAppBlockIds}). Shared with {@link listApprovedAppBlockSeatHolders} so
+ * panel access and the ingest's team stay one set; `app-block-team.seam.test.ts` pins that.
+ */
+export const APP_BLOCK_SEAT_LISTING_WHERE = {
+  kind: 'onsite',
+  appBlockId: { not: null },
+} as const;
+
+/**
+ * Every ACCEPTED collaborator of every APPROVED AppBlock, as `(appBlockId, userId)` pairs, under
+ * the same seat conditions as {@link resolveAccessibleAppBlockIds}. The owner is not included.
+ * Degrades to empty only when the table is missing; any other failure propagates.
+ */
+export async function listApprovedAppBlockSeatHolders(): Promise<
+  Array<{ appBlockId: string; userId: number }>
+> {
+  const listings = (await dbRead.appListing.findMany({
+    where: { ...APP_BLOCK_SEAT_LISTING_WHERE, appBlock: { status: 'approved' } },
+    select: { id: true, appBlockId: true },
+  })) as Array<{ id: string; appBlockId: string | null }>;
+  const blockByListing = new Map<string, string>();
+  for (const listing of listings) {
+    if (listing.appBlockId) blockByListing.set(listing.id, listing.appBlockId);
+  }
+  if (blockByListing.size === 0) return [];
+  const seats = await safeCollaboratorQuery(
+    () =>
+      dbRead.appCollaborator.findMany({
+        where: { appListingId: { in: [...blockByListing.keys()] }, status: ACCEPTED },
+        select: { appListingId: true, userId: true },
+      }),
+    [] as Array<{ appListingId: string; userId: number }>
+  );
+  const pairs: Array<{ appBlockId: string; userId: number }> = [];
+  for (const seat of seats) {
+    const appBlockId = blockByListing.get(seat.appListingId);
+    if (appBlockId) pairs.push({ appBlockId, userId: seat.userId });
+  }
+  return pairs;
+}
+
 export type AccessibleAppBlocks = {
   /** AppBlock ids the caller OWNS (via `OauthClient.userId`). */
   ownedIds: string[];
@@ -709,6 +752,8 @@ export type AccessibleAppBlocks = {
  * no rows, no user-visible difference (see 1), and no capability actually withheld.
  */
 export async function resolveAccessibleAppBlockIds(userId: number): Promise<AccessibleAppBlocks> {
+  // `status: ACCEPTED` is repeated in `listApprovedAppBlockSeatHolders`: change both
+  // (`app-block-team.seam.test.ts`).
   const [owned, seats] = await Promise.all([
     dbRead.appBlock.findMany({ where: { app: { userId } }, select: { id: true } }),
     safeCollaboratorQuery(
@@ -730,7 +775,7 @@ export async function resolveAccessibleAppBlockIds(userId: number): Promise<Acce
   const seatListingIds = seats.map((s: { appListingId: string }) => s.appListingId);
   const seatBlocks = seatListingIds.length
     ? await dbRead.appListing.findMany({
-        where: { id: { in: seatListingIds }, kind: 'onsite', appBlockId: { not: null } },
+        where: { id: { in: seatListingIds }, ...APP_BLOCK_SEAT_LISTING_WHERE },
         select: { appBlockId: true },
       })
     : [];

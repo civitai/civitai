@@ -806,12 +806,21 @@ describe('AppAnalyticsPanel — custom events', () => {
       .toBeInTheDocument();
   });
 
-  test('the owner toggle refetches with includeOwner: true', async () => {
+  test('the team toggle refetches with includeOwner: true', async () => {
     mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
     mocks.cardInputs.length = 0;
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
-    const toggle = page.getByRole('switch', { name: 'Include owner activity' });
+    const toggle = page.getByRole('switch', { name: 'Include team activity' });
     await expect.element(toggle).not.toBeChecked();
+    await expect
+      .element(
+        page.getByText(
+          'Events sent while the app owner or an accepted collaborator was signed in.',
+          { exact: true }
+        )
+      )
+      .toBeInTheDocument();
+    expect(page.getByText(/always counted/).elements()).toHaveLength(0);
     await toggle.click();
     await expect.element(toggle).toBeChecked();
     expect(lastInput()).toEqual({
@@ -957,7 +966,7 @@ describe('AppAnalyticsPanel — custom events', () => {
     mocks.analytics.current = { ...ZEROED, customEvents: MEASURED };
     mocks.queryInputs.length = 0;
     renderWithProviders(<AppAnalyticsPanel scopedAppBlockId="apb_1" />);
-    await page.getByRole('switch', { name: 'Include owner activity' }).click();
+    await page.getByRole('switch', { name: 'Include team activity' }).click();
     await page.getByRole('button', { name: 'generate_clicked' }).click();
     await expect
       .element(page.getByRole('button', { name: 'generate_clicked' }))
@@ -994,7 +1003,7 @@ describe('AppAnalyticsPanel — custom events', () => {
     await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
     mocks.cardError.current = { message: 'timeout' };
     try {
-      await page.getByRole('switch', { name: 'Include owner activity' }).click();
+      await page.getByRole('switch', { name: 'Include team activity' }).click();
       const clear = page.getByRole('button', { name: 'Clear the selected event' });
       await clear.click();
       await expect.element(clear).not.toBeInTheDocument();
@@ -1055,7 +1064,7 @@ describe('AppAnalyticsPanel — custom events', () => {
       const eventButton = page.getByRole('button', { name: 'generate_clicked' });
       await eventButton.click();
       await expect.element(eventButton).toHaveAttribute('aria-pressed', 'true');
-      await page.getByRole('switch', { name: 'Include owner activity' }).click();
+      await page.getByRole('switch', { name: 'Include team activity' }).click();
       expect(lastInput()).toEqual({
         appBlockId: 'apb_1',
         includeOwner: true,

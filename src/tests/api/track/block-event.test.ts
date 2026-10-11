@@ -114,6 +114,36 @@ const APPROVED_ROWS = [
   },
 ];
 
+/** The approved apps' on-site listings, which is where collaborator seats live. */
+const SEAT_LISTINGS = [
+  { id: 'lst_arcade', appBlockId: APP },
+  { id: 'lst_shop', appBlockId: OTHER_APP },
+];
+const ACCEPTED_COLLABORATOR = 7001;
+const PENDING_COLLABORATOR = 7002;
+const DECLINED_COLLABORATOR = 7003;
+/** Removing a collaborator deletes the seat row, so a removed one has no row at all. */
+const REMOVED_COLLABORATOR = 7004;
+const SEATS = [
+  { appListingId: 'lst_arcade', userId: ACCEPTED_COLLABORATOR, status: 'accepted' },
+  { appListingId: 'lst_arcade', userId: PENDING_COLLABORATOR, status: 'pending' },
+  { appListingId: 'lst_arcade', userId: DECLINED_COLLABORATOR, status: 'rejected' },
+];
+
+/**
+ * `appCollaborator.findMany` over `SEATS`, honouring the listing and status filters it is
+ * asked for, so a read that forgot `status` would see the pending and declined seats.
+ */
+async function seatsMatching(args: unknown): Promise<unknown[]> {
+  const where = (args as { where?: { appListingId?: { in?: string[] }; status?: string } })?.where;
+  return SEATS.filter(
+    (seat) =>
+      (where?.appListingId?.in === undefined ||
+        where.appListingId.in.includes(seat.appListingId)) &&
+      (where?.status === undefined || seat.status === where.status)
+  ).map(({ appListingId, userId }) => ({ appListingId, userId }));
+}
+
 const DAY_1_NOON = Date.UTC(2031, 2, 14, 12, 0, 0);
 const VIEWER_IP = '198.51.100.23';
 
@@ -260,6 +290,8 @@ beforeEach(() => {
   mockPrivateRun.mockImplementation(async () => false);
   loggingMock.logToAxiom.mockImplementation(async () => undefined);
   dbMock.dbRead.appBlock.findMany.mockResolvedValue(APPROVED_ROWS);
+  dbMock.dbRead.appListing.findMany.mockResolvedValue(SEAT_LISTINGS);
+  dbMock.dbRead.appCollaborator.findMany.mockImplementation(seatsMatching);
 });
 
 afterEach(() => {
@@ -653,6 +685,55 @@ describe('POST /api/track/block-event — identity is server-derived', () => {
       ['apb_arcade', 9102, 0],
       ['apb_arcade', 0, 0],
     ]);
+  });
+
+  it('🔴 marks isOwner for the app team: the owner and ACCEPTED collaborators only', async () => {
+    const viewers: Array<[string, number | null]> = [
+      ['owner', APP_OWNER],
+      ['accepted collaborator', ACCEPTED_COLLABORATOR],
+      ['pending collaborator', PENDING_COLLABORATOR],
+      ['declined collaborator', DECLINED_COLLABORATOR],
+      ['removed collaborator', REMOVED_COLLABORATOR],
+      ['unrelated viewer', OTHER_VIEWER],
+      ['signed out', null],
+    ];
+    for (const [, id] of viewers) {
+      sessionStore.session = id === null ? null : { user: { id } };
+      await post({ events: [event()] });
+    }
+    expect(insertedRows().map((r, i) => [viewers[i][0], r.userId, r.isAnon, r.isOwner])).toEqual([
+      ['owner', 6611, 0, 1],
+      ['accepted collaborator', 7001, 0, 1],
+      ['pending collaborator', 7002, 0, 0],
+      ['declined collaborator', 7003, 0, 0],
+      ['removed collaborator', 7004, 0, 0],
+      ['unrelated viewer', 9102, 0, 0],
+      ['signed out', 0, 1, 0],
+    ]);
+  });
+
+  it('an accepted collaborator of one app is not team on another app', async () => {
+    sessionStore.session = { user: { id: ACCEPTED_COLLABORATOR } };
+    await post({
+      events: [event(), event({ appBlockId: OTHER_APP, eventName: 'purchase_started' })],
+    });
+    expect(insertedRows().map((r) => [r.appBlockId, r.isOwner])).toEqual([
+      ['apb_arcade', 1],
+      ['apb_shop', 0],
+    ]);
+  });
+
+  it('a failed collaborator read still writes the rows, with only the owner as team', async () => {
+    dbMock.dbRead.appCollaborator.findMany.mockRejectedValue(new Error('engine down'));
+    sessionStore.session = { user: { id: ACCEPTED_COLLABORATOR } };
+    const delta = await outcomeDelta(() => post({ events: [event()] }));
+    sessionStore.session = { user: { id: APP_OWNER } };
+    await post({ events: [event()] });
+    expect(insertedRows().map((r) => [r.userId, r.isOwner])).toEqual([
+      [7001, 0],
+      [6611, 1],
+    ]);
+    expect(delta).toEqual({ accepted: 1 });
   });
 
   it('resolves the session once per request, however many rows', async () => {

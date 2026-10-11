@@ -8289,7 +8289,7 @@ export const blocksRouter = router({
 
   /**
    * The Custom events card on the owner analytics panel (`appBlockEvents`, ClickHouse). Its own
-   * procedure so the card's owner toggle and event selection re-run only these reads. Same
+   * procedure so the card's team-activity toggle and event selection re-run only these reads. Same
    * scope, flag gate and ownership resolution as `getMyAppAnalytics`, and the same range
    * resolution, so its buckets line up with the panel's charts.
    */

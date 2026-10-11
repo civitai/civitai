@@ -335,8 +335,8 @@ function CustomEventsCard({ appBlockId }: { appBlockId: string | null }) {
         {appSelected && (
           <Switch
             size="sm"
-            label="Include owner activity"
-            description="Events sent while the app owner was signed in. Collaborators' activity is always counted."
+            label="Include team activity"
+            description="Events sent while the app owner or an accepted collaborator was signed in."
             checked={includeOwner}
             onChange={(e) => setIncludeOwner(e.currentTarget.checked)}
             maw={340}

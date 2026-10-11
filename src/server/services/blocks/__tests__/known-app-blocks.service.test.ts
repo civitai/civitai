@@ -3,12 +3,15 @@ import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import {
   boundAppBlockIdLabel,
   getApprovedAppBlockAnalytics,
+  isAppTeamMember,
   isConfirmedNonApprovedAppBlockId,
   isKnownAppBlockId,
   _internalsForTests,
 } from '../known-app-blocks.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindMany = dbMock.dbRead.appBlock.findMany;
+const mockListingFindMany = dbMock.dbRead.appListing.findMany;
+const mockSeatFindMany = dbMock.dbRead.appCollaborator.findMany;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -116,7 +119,11 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
     expect(props.get('assisted')).toEqual({ type: 'boolean' });
     expect(analytics!.events.get('menu_opened')!.size).toBe(0);
     expect(JSON.stringify([...analytics!.events])).not.toContain('not projected');
-    expect(Object.keys(analytics!).sort()).toEqual(['events', 'ownerUserId']);
+    expect(Object.keys(analytics!).sort()).toEqual([
+      'collaboratorUserIds',
+      'events',
+      'ownerUserId',
+    ]);
   });
 
   it('answers null for an id outside the approved set', async () => {
@@ -149,7 +156,11 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
   ])('declares nothing for %s', async (_label, value) => {
     mockFindMany.mockResolvedValue([{ id: 'apb_plain', manifest: value, app: { userId: 6611 } }]);
     const analytics = await getApprovedAppBlockAnalytics('apb_plain');
-    expect(analytics).toEqual({ ownerUserId: 6611, events: new Map() });
+    expect(analytics).toEqual({
+      ownerUserId: 6611,
+      collaboratorUserIds: new Set(),
+      events: new Map(),
+    });
   });
 
   it('has no owner when the row carries none', async () => {
@@ -157,6 +168,7 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
     expect((await getApprovedAppBlockAnalytics('apb_orphan'))?.ownerUserId).toBeNull();
     expect(await getApprovedAppBlockAnalytics('apb_bare')).toEqual({
       ownerUserId: null,
+      collaboratorUserIds: new Set(),
       events: new Map(),
     });
   });
@@ -230,6 +242,153 @@ describe('getApprovedAppBlockAnalytics — owner and declared events of an appro
       vi.setSystemTime(T0 + 16_000);
       expect((await getApprovedAppBlockAnalytics('apb_declares'))?.ownerUserId).toBe(6611);
       expect(mockFindMany).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+describe('getApprovedAppBlockAnalytics — the app team (owner and accepted collaborators)', () => {
+  const OWNER = 6611;
+  const COLLABORATOR = 7001;
+  const SECOND_COLLABORATOR = 7005;
+  const STRANGER = 9102;
+
+  beforeEach(() => {
+    mockFindMany.mockResolvedValue([
+      { id: 'apb_team', manifest: null, app: { userId: OWNER } },
+      { id: 'apb_solo', manifest: null, app: { userId: 6622 } },
+    ]);
+    mockListingFindMany.mockResolvedValue([
+      { id: 'lst_team', appBlockId: 'apb_team' },
+      { id: 'lst_solo', appBlockId: 'apb_solo' },
+    ]);
+    mockSeatFindMany.mockResolvedValue([
+      { appListingId: 'lst_team', userId: COLLABORATOR },
+      { appListingId: 'lst_team', userId: SECOND_COLLABORATOR },
+    ]);
+  });
+
+  it('projects each app its own accepted collaborators, as user ids only', async () => {
+    expect((await getApprovedAppBlockAnalytics('apb_team'))?.collaboratorUserIds).toEqual(
+      new Set([COLLABORATOR, SECOND_COLLABORATOR])
+    );
+    expect((await getApprovedAppBlockAnalytics('apb_solo'))?.collaboratorUserIds).toEqual(
+      new Set()
+    );
+  });
+
+  it('isAppTeamMember: the owner and accepted collaborators, nobody else', async () => {
+    const team = (await getApprovedAppBlockAnalytics('apb_team'))!;
+    expect(isAppTeamMember(team, OWNER)).toBe(true);
+    expect(isAppTeamMember(team, COLLABORATOR)).toBe(true);
+    expect(isAppTeamMember(team, SECOND_COLLABORATOR)).toBe(true);
+    expect(isAppTeamMember(team, STRANGER)).toBe(false);
+    // A collaborator of one app is not on another's team.
+    const solo = (await getApprovedAppBlockAnalytics('apb_solo'))!;
+    expect(isAppTeamMember(solo, COLLABORATOR)).toBe(false);
+    expect(isAppTeamMember(solo, 6622)).toBe(true);
+  });
+
+  it('isAppTeamMember: an app with no owner has only its collaborators', () => {
+    const ownerless = {
+      ownerUserId: null,
+      collaboratorUserIds: new Set([COLLABORATOR]),
+      events: new Map(),
+    };
+    expect(isAppTeamMember(ownerless, COLLABORATOR)).toBe(true);
+    expect(isAppTeamMember(ownerless, STRANGER)).toBe(false);
+  });
+
+  it('loads the collaborator set once per refresh', async () => {
+    await Promise.all([1, 2, 3].map(() => getApprovedAppBlockAnalytics('apb_team')));
+    await getApprovedAppBlockAnalytics('apb_solo');
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
+    expect(mockListingFindMany).toHaveBeenCalledTimes(1);
+    expect(mockSeatFindMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the seat read when no approved app has an on-site listing', async () => {
+    mockListingFindMany.mockResolvedValue([]);
+    expect((await getApprovedAppBlockAnalytics('apb_team'))?.collaboratorUserIds).toEqual(
+      new Set()
+    );
+    expect(mockSeatFindMany).not.toHaveBeenCalled();
+  });
+
+  describe('when the collaborator read fails', () => {
+    const T0 = Date.UTC(2031, 2, 14, 12, 0, 0);
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(T0);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      [
+        'the listing read',
+        () => mockListingFindMany.mockRejectedValueOnce(new Error('engine down')),
+      ],
+      ['the seat read', () => mockSeatFindMany.mockRejectedValueOnce(new Error('engine down'))],
+    ])('%s failing keeps the app known with its owner, and no collaborators', async (_l, fail) => {
+      fail();
+      const team = await getApprovedAppBlockAnalytics('apb_team');
+      expect(team?.ownerUserId).toBe(OWNER);
+      expect(team?.collaboratorUserIds).toEqual(new Set());
+      expect(isAppTeamMember(team!, OWNER)).toBe(true);
+      expect(isAppTeamMember(team!, COLLABORATOR)).toBe(false);
+    });
+
+    it('is retried after 15 seconds, not five minutes', async () => {
+      mockSeatFindMany.mockRejectedValueOnce(new Error('engine down'));
+      await getApprovedAppBlockAnalytics('apb_team');
+      vi.setSystemTime(T0 + 14_000);
+      expect((await getApprovedAppBlockAnalytics('apb_team'))?.collaboratorUserIds.size).toBe(0);
+      expect(mockSeatFindMany).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(T0 + 16_000);
+      expect((await getApprovedAppBlockAnalytics('apb_team'))?.collaboratorUserIds).toEqual(
+        new Set([COLLABORATOR, SECOND_COLLABORATOR])
+      );
+      expect(mockSeatFindMany).toHaveBeenCalledTimes(2);
+    });
+
+    it('a missing collaborator table reads as no collaborators for the full five minutes', async () => {
+      // The manual migration not yet applied is a state, not an outage: nothing to retry.
+      mockSeatFindMany.mockRejectedValueOnce(
+        Object.assign(new Error('missing'), { code: 'P2021' })
+      );
+      expect((await getApprovedAppBlockAnalytics('apb_team'))?.collaboratorUserIds).toEqual(
+        new Set()
+      );
+      vi.setSystemTime(T0 + 16_000);
+      await getApprovedAppBlockAnalytics('apb_team');
+      expect(mockSeatFindMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a collaborator added or removed is picked up on the next refresh', () => {
+    const T0 = Date.UTC(2031, 2, 14, 12, 0, 0);
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(T0);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('within five minutes the old set stands; after, the new one', async () => {
+      await getApprovedAppBlockAnalytics('apb_team');
+      mockSeatFindMany.mockResolvedValue([
+        { appListingId: 'lst_team', userId: SECOND_COLLABORATOR },
+      ]);
+      vi.setSystemTime(T0 + 299_000);
+      expect(isAppTeamMember((await getApprovedAppBlockAnalytics('apb_team'))!, COLLABORATOR)).toBe(
+        true
+      );
+      vi.setSystemTime(T0 + 301_000);
+      expect(isAppTeamMember((await getApprovedAppBlockAnalytics('apb_team'))!, COLLABORATOR)).toBe(
+        false
+      );
     });
   });
 });

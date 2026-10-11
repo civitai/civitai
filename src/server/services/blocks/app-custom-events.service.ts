@@ -12,8 +12,9 @@ import { parseManifestAnalytics } from '~/shared/constants/block-analytics.const
  * Owner read of `appBlockEvents`; the table contract (signed-in-only viewers, `viewerKey = 0` for
  * signed-out, `mapContains` gating) is in `2026-10-10-app-block-events.sql`.
  *
- * - Owner rows are excluded unless asked for, and that exclusion must also cover the
- *   `__undeclared__` drop count: the owner's dev-tunnel testing of unpublished events lands there.
+ * - Team rows (`isOwner = 1`: the owner or an accepted collaborator was signed in) are excluded
+ *   unless asked for, and that exclusion must also cover the `__undeclared__` drop count: the
+ *   team's dev-tunnel testing of unpublished events lands there.
  * - Never throws: any failure, including the timeout, degrades to `unavailable` for the whole
  *   section. The queries of one call succeed or fail together (the card lets the owner clear a
  *   selected event whose read keeps failing).
@@ -68,6 +69,7 @@ export type CustomEventPropertyBreakdown =
 export type AppCustomEvents = {
   /** What the app's manifest declares, so declared-but-unsent events still show. */
   declared: CustomEventDeclaration[];
+  /** Team rows (`isOwner = 1`: owner or accepted collaborator) are included. */
   includeOwner: boolean;
   /** One row per declared event, zeros included, most-sent first. */
   topEvents: CustomEventTotals[];

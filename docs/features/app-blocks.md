@@ -445,7 +445,11 @@ hand before the route deploys).
 - **Identity is the server's.** The body carries the app id, the block instance
   id, the event name and its properties, and nothing else is read from it. The
   viewer comes from the session, the time from the server clock, and `isOwner`
-  from comparing the viewer with the app's owner. A block instance id that is
+  from whether the viewer is on the app's team: its owner or an accepted
+  collaborator (the same seats that can open the app's analytics panel). The
+  team is cached for up to five minutes per process, so a collaborator who was
+  just added or removed is reflected after that; rows already written keep the
+  flag they were written with. A block instance id that is
   not shaped like a platform id (for a page, not that app's own page id) is
   stored empty.
 - **Unique viewers are signed-in viewers only.** Each row carries a `viewerKey`:
@@ -472,8 +476,8 @@ hand before the route deploys).
 **The owner panel.** The app analytics panel (`AppAnalyticsPanel.tsx`) has a
 "Custom events" card, read by its own procedure, `blocks.getMyAppCustomEvents`, for
 one app (`src/server/services/blocks/app-custom-events.service.ts`). It has the same
-scope, flag gate, ownership check and date range as `getMyAppAnalytics`. Owners see
-aggregates only, never rows:
+scope, flag gate, ownership check and date range as `getMyAppAnalytics`. The team
+(owner and accepted collaborators) sees aggregates only, never rows:
 
 - every event the app's manifest declares, including ones never sent, with its
   event count, **signed-in viewers** (distinct signed-in viewers only; signed-out
@@ -485,11 +489,14 @@ aggregates only, never rows:
 - a banner when events arrived under names the approved manifest does not
   declare (`__undeclared__` rows).
 
-The owner's own activity (rows with `isOwner`, including dev-tunnel testing) is
-excluded by default, from the drop count too; an "Include owner activity" toggle
-adds it. Collaborators' activity is always counted. Counts are exact (there is no
-small-count suppression) and are lower bounds, since client-side drops are never
-recorded. A ClickHouse failure shows "couldn't load", never a zero.
+The team's own activity (rows with `isOwner`: the owner or an accepted
+collaborator was signed in, including dev-tunnel testing) is excluded by
+default, from the drop count too; an "Include team activity" toggle adds it.
+Rows written before collaborators were counted are flagged for the owner only,
+so a collaborator's earlier activity still shows with the toggle off. Counts are
+exact (there is no small-count suppression) and are lower bounds, since
+client-side drops are never recorded. A ClickHouse failure shows "couldn't
+load", never a zero.
 
 ### Buzz and per-account spend
 
