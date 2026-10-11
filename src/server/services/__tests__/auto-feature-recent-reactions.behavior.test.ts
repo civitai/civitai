@@ -53,9 +53,14 @@ beforeAll(async () => {
       (${SOURCE}, ${REVIVED}, 'ACCEPTED', now() - interval '40 days', now() - interval '1 hour'),
       (${SOURCE}, ${FRESH}, 'ACCEPTED', now() - interval '2 hours', NULL);
 
-    -- REVIVED: 200 reactions from a month ago, 3 since it was curated.
+    -- REVIVED: 200 reactions from a month ago, 5 inside the candidate window but before it was
+    -- curated (a cutoff of "the last N days" would wrongly count these), one at the exact moment
+    -- of curation (the boundary is inclusive), and 3 since.
     INSERT INTO "ImageReaction" ("imageId", "createdAt")
       SELECT ${REVIVED}, now() - interval '30 days' FROM generate_series(1, 200);
+    INSERT INTO "ImageReaction" ("imageId", "createdAt")
+      SELECT ${REVIVED}, now() - interval '2 hours' FROM generate_series(1, 5);
+    INSERT INTO "ImageReaction" ("imageId", "createdAt") VALUES (${REVIVED}, now() - interval '1 hour');
     INSERT INTO "ImageReaction" ("imageId", "createdAt")
       SELECT ${REVIVED}, now() - interval '30 minutes' FROM generate_series(1, 3);
     -- FRESH: 20 reactions, all after it was curated.
@@ -104,7 +109,7 @@ describe('auto-feature candidates count only reactions since curation', () => {
   it('counts each image’s reactions from its curatedAt, not over its whole life', async () => {
     const byId = new Map((await fetchCandidates()).map((c) => [c.imageId, c.reactions]));
 
-    expect(Object.fromEntries(byId)).toEqual({ [REVIVED]: 3, [FRESH]: 20 });
+    expect(Object.fromEntries(byId)).toEqual({ [REVIVED]: 4, [FRESH]: 20 });
   });
 
   it('does not let a re-curated old image outrank a new one on its old reactions', async () => {
