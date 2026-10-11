@@ -136,6 +136,8 @@ export default function ChatShareModal(props: { message: string }) {
   return (
     // The content is capped at the viewport; flexing the body down into it keeps the
     // list the only scroller, so Message and Send stay on screen at short heights.
+    // Everything but the list is shrink-0: Button is overflow:hidden, so it would
+    // otherwise shrink to nothing once the list fills the cap.
     <Modal
       {...dialog}
       title="Send Chat"
@@ -146,7 +148,7 @@ export default function ChatShareModal(props: { message: string }) {
       }}
     >
       <Stack gap={0} className="min-h-0 flex-1">
-        <Box p="sm" pt={0}>
+        <Box p="sm" pt={0} className="shrink-0">
           <TextInput
             leftSection={<IconSearch size={16} />}
             placeholder="Filter by user"
@@ -164,7 +166,7 @@ export default function ChatShareModal(props: { message: string }) {
             }
           />
         </Box>
-        <Divider />
+        <Divider className="shrink-0" />
         <Box mah={500} className="min-h-0 flex-auto overflow-y-auto">
           {isLoading ? (
             <Center h="100%">
@@ -252,15 +254,16 @@ export default function ChatShareModal(props: { message: string }) {
             </Stack>
           )}
         </Box>
-        <Divider />
-        <Group py="sm">
+        <Divider className="shrink-0" />
+        <Group py="sm" className="shrink-0">
           <Badge>Message:</Badge>
           <Text size="sm" fs="italic">
             {props.message}
           </Text>
         </Group>
-        <Divider />
+        <Divider className="shrink-0" />
         <Button
+          className="shrink-0"
           loading={isSending}
           disabled={!selectedChat}
           leftSection={<IconSend />}
