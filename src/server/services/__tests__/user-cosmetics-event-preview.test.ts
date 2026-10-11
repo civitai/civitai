@@ -143,6 +143,15 @@ describe('user-level cosmetic reads carry no event hats', () => {
     );
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
+
+  it('still equips any other cosmetic', async () => {
+    dbMock.dbRead.userCosmetic.findMany.mockResolvedValue([
+      { obtainedAt: new Date(), cosmetic: { type: 'Badge', data: { url: 'b.png' } } },
+    ] as never);
+
+    await equipCosmetic({ userId: OWNER, cosmeticId: 1 });
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('the profile shows event hats only to viewers the event is open to', () => {
@@ -170,10 +179,42 @@ describe('the profile shows event hats only to viewers the event is open to', ()
     expect(profile.cosmetics.map((x) => x.cosmetic.id)).toEqual([1]);
   });
 
-  it('shows them to a tester, a moderator and the owner', async () => {
+  it('shows them to a tester and a moderator', async () => {
     expect(await profileHats({ sessionUserId: TESTER })).toHaveLength(2);
     expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(2);
+  });
+
+  it("gives the owner no exception: their own hats follow the flag like anyone else's", async () => {
+    testerFlag.reset({ testers: [TESTER] });
+    expect(await profileHats({ sessionUserId: OWNER })).toHaveLength(0);
+    testerFlag.reset({ testers: [OWNER] });
     expect(await profileHats({ sessionUserId: OWNER })).toHaveLength(2);
+  });
+
+  it('hides them from everyone, testers and moderators too, once the launch is armed', async () => {
+    testerFlag.reset({ public: true, testers: [TESTER] });
+    expect(await profileHats({})).toHaveLength(0);
+    expect(await profileHats({ sessionUserId: TESTER })).toHaveLength(0);
+    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(0);
+  });
+
+  it('hides them from everyone when the flag cannot be read', async () => {
+    testerFlag.reset({ readable: false, testers: [TESTER] });
+    expect(await profileHats({ sessionUserId: TESTER })).toHaveLength(0);
+    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(0);
+  });
+
+  it('after the start, the kill switch hides them from all but the flag audience', async () => {
+    vi.setSystemTime(c.BIRTHDAY_2026_STARTS_AT);
+    expect(await profileHats({})).toHaveLength(0);
+    expect(await profileHats({ sessionUserId: 99 })).toHaveLength(0);
+    expect(await profileHats({ sessionUserId: TESTER })).toHaveLength(2);
+  });
+
+  it('keeps showing them after the event ends', async () => {
+    testerFlag.reset({ public: true });
+    vi.setSystemTime(new Date(c.BIRTHDAY_2026_ENDS_AT.getTime() + 24 * 60 * 60 * 1000));
+    expect(await profileHats({})).toHaveLength(2);
   });
 
   it('shows them to everyone once the flag is public and the event has started', async () => {

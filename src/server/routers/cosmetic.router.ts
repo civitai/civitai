@@ -31,7 +31,10 @@ import {
 } from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { GetSearchEventDecorationsInput } from '~/server/schema/cosmetic.schema';
-import { getVisibleDecorationEvents } from '~/server/events/event-decoration-access';
+import {
+  getVisibleDecorationEvents,
+  withoutHiddenEventDecorations,
+} from '~/server/events/event-decoration-access';
 import { edgeCacheIt, noEdgeCache, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -71,8 +74,12 @@ export const cosmeticRouter = router({
   getById: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
-    .query(({ input }) => {
-      return getCosmeticDetail(input);
+    .query(async ({ input, ctx }) => {
+      const cosmetic = await getCosmeticDetail(input);
+      if (!cosmetic) return cosmetic;
+      // An event decoration the viewer may not see yet reads as missing, like an unknown id.
+      const [visible] = await withoutHiddenEventDecorations([{ cosmetic }], ctx.user);
+      return visible ? cosmetic : null;
     }),
   getSticker: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
