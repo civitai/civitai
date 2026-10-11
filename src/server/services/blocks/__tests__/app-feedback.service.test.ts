@@ -331,9 +331,7 @@ describe('resolveAppFeedbackTarget', () => {
     }
   });
 
-  // 🔴 OPERATOR DECISION (2026-10-11): the owner and accepted collaborators may send feedback on
-  // their own app like anyone else; the row lands in their own inbox. A role gate re-added to the
-  // resolver fails these.
+  // Pins the 2026-10-11 decision in resolveAppFeedbackTarget: a role gate re-added there fails these.
   const PARENT_TARGET = {
     appListingId: PARENT,
     appName: 'Cool App',
@@ -416,6 +414,15 @@ describe('resolveAppFeedbackTarget', () => {
     expect(mocks.throwIfBlockedByOwners).toHaveBeenCalledWith({
       userId: REPORTER,
       ownerIds: [OWNER],
+      isModerator: false,
+    });
+  });
+
+  it('an off-site listing checks blocks against the listing-column owner, not the block app owner', async () => {
+    await resolveAppFeedbackTarget(user(REPORTER), { slug: 'far-away' });
+    expect(mocks.throwIfBlockedByOwners).toHaveBeenCalledWith({
+      userId: REPORTER,
+      ownerIds: [OFFSITE_OWNER],
       isModerator: false,
     });
   });

@@ -122,16 +122,16 @@ export async function resolveAppFeedbackTarget(
   ]);
   if (!listing) return refuse('not_found');
 
-  // Before the status check, so a caller whose store scope hides this kind cannot tell
-  // "not approved" and "does not exist" apart.
+  // Before the status and block checks. Every refusal after it reads as NOT_FOUND today
+  // (`refusalError`); keeping scope ahead of them means a distinguishable refusal added later
+  // still tells a caller whose store scope hides this kind nothing about the listing.
   const scope = narrowStoreScope(rawScope);
   if (!scopeAdmitsListingKind(scope, access.kind as StoreListingKind)) return refuse('scope');
 
-  // 🔴 `access.role` is DELIBERATELY not consulted. Operator decision, 2026-10-11: the listing's
-  // owner and accepted collaborators may send feedback like anyone else, and the row lands in their
-  // own inbox. The owner digest already skips the owner's own rows, and a status change does not
-  // notify the person who made it about their own row (`notifyReporterOfOwnerStatus`). Pinned by
-  // the "owner and accepted collaborator" tests in app-feedback.service.test.ts.
+  // 🔴 `access.role` is DELIBERATELY not consulted. Operator decision, 2026-10-11: the owner and
+  // accepted collaborators may send feedback like anyone else; it lands in their own inbox.
+  // Pinned by the "admits the canonical owner" / "admits an accepted collaborator" tests.
+  //
   // 🔴 `status` ONLY — the per-listing `visibility` level (private / moderators / testers) is
   // DELIBERATELY not consulted. Operator decision, 2026-10-08: an approved app that is unlisted
   // or tester-only is still runnable by slug, and the people running it are exactly the ones
