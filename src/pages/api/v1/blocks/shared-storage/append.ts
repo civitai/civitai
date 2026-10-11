@@ -28,9 +28,9 @@ import { appendSharedRow, sharedValueInput } from '~/server/routers/apps-shared.
  *     the fail-closed kill-switch, the ANON REFUSAL (401), and
  *     `assertSharedWriteTrust` (account age / paid tier / verified email or a
  *     linked OAuth account).
- *   - the per-(user, app) DAILY append bucket, taken BEFORE the content-safety
- *     belt and before any pooled connection, so a flood costs neither external
- *     moderation calls nor a connection.
+ *   - the per-(user, app) write budget (shared with update), reserved BEFORE the
+ *     content-safety belt and before any pooled connection, so a flood costs
+ *     neither external moderation calls nor a connection.
  *   - the BLOCKING content-safety belt on `title`/`body`, the whole-value byte
  *     cap, the per-user row cap and the per-app byte/row quota.
  *

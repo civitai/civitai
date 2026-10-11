@@ -78,7 +78,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: vi.fn(async () => ({ allowed: true })),
+  reserveSharedWrite: vi.fn(async () => ({ allowed: true, release: async () => undefined })),
   checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({

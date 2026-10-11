@@ -72,11 +72,12 @@ import {
   type SharedTextHit,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import {
-  checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
   checkSharedWithdrawRateLimit,
+  reserveSharedWrite,
 } from '~/server/utils/shared-storage-rate-limit';
 import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
@@ -708,30 +709,59 @@ export interface SharedValueInput {
   data?: unknown;
 }
 
+type SharedWriteContext = SharedContext & { uid: number };
+
+/**
+ * Runs an append/update against the (user, app) write budget: a token is reserved before
+ * moderation and given back unless the write calls `markLanded` — so only landed writes spend
+ * the budget, while moderation stays bounded per landed write. A caller-fault refusal (4xx)
+ * after the reserve is also charged to the rejection bucket.
+ */
+async function withSharedWriteBudget<T>(
+  ctx: SharedWriteContext,
+  write: (markLanded: () => void) => Promise<T>
+): Promise<T> {
+  const budget = await reserveSharedWrite(ctx.uid, ctx.appBlockId);
+  if (!budget.allowed)
+    throwSharedRateLimited(budget, `Too many submissions — retry in ${budget.retryAfterSeconds}s`);
+  let landed = false;
+  try {
+    return await write(() => {
+      landed = true;
+    });
+  } catch (err) {
+    if (!landed) {
+      const rejected = err instanceof TRPCError && getHTTPStatusCodeFromError(err) < 500;
+      await budget.release({ rejected });
+    }
+    throw err;
+  }
+}
+
 /**
  * Create a shared row (a "request"). The server GENERATES a ULID key (C1: never
  * accept a client key on create → user B can't overwrite user A's row).
  * INSERT-only; author = the token subject. Runs the BLOCKING content-safety belt
  * (C2/C3/M1) synchronously, the per-user + per-app row caps + byte quota, and the
- * per-(user,app) daily rate limit — all before the row lands.
+ * per-(user,app) write budget — all before the row lands.
  */
 export async function appendSharedRow(
   blockToken: string,
   value: SharedValueInput
 ): Promise<{ key: string }> {
-  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
-    blockToken,
-    'append'
-  );
+  const ctx = await resolveSharedContext(blockToken, 'append');
   // userId is non-null (trust gate ran in the resolver).
-  const uid = userId as number;
+  const writeCtx = { ...ctx, uid: ctx.userId as number };
+  return withSharedWriteBudget(writeCtx, (markLanded) =>
+    appendWithinBudget(writeCtx, value, markLanded)
+  );
+}
 
-  // Rate limit FIRST — bounds a flood AND the external-moderation cost the
-  // safety belt would otherwise incur per attempt.
-  const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-  if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many submissions — retry in ${rl.retryAfterSeconds}s`);
-
+async function appendWithinBudget(
+  { uid, subjectUser, slug, schema, appBlockId }: SharedWriteContext,
+  value: SharedValueInput,
+  markLanded: () => void
+): Promise<{ key: string }> {
   // BLOCKING content safety (belt on title/body) + serialize-guard + whole-value
   // byte cap → RAW, store-ready serialized JSON. Shared verbatim with `update`
   // (see assertSharedValueSafeAndSerialize): a policy-violating edit and a create
@@ -816,6 +846,7 @@ export async function appendSharedRow(
       [key]
     );
     await client.query('COMMIT');
+    markLanded();
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -851,26 +882,27 @@ export async function appendSharedRow(
  * the write. The write is IN PLACE: value + updated_at (+ the generated size_bytes,
  * which the shared_kv UPDATE quota trigger folds into used_bytes) change; the key,
  * author_user_id, created_at, and the row's votes/counters/reports are PRESERVED.
- * Shares append's daily rate-limit bucket so an edit isn't an unbounded write.
+ * Shares append's write budget so an edit isn't an unbounded write.
  */
 export async function updateSharedRow(
   blockToken: string,
   key: string,
   value: SharedValueInput
 ): Promise<{ ok: true }> {
-  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
-    blockToken,
-    'update'
-  );
+  const ctx = await resolveSharedContext(blockToken, 'update');
   // userId is non-null (trust gate ran in the resolver).
-  const uid = userId as number;
+  const writeCtx = { ...ctx, uid: ctx.userId as number };
+  return withSharedWriteBudget(writeCtx, (markLanded) =>
+    updateWithinBudget(writeCtx, key, value, markLanded)
+  );
+}
 
-  // Same daily bucket as append (design H4) so repeated edits can't become an
-  // unbounded write — AND it bounds the external-moderation cost the belt incurs.
-  const rl = await checkSharedAppendRateLimit(uid, appBlockId);
-  if (!rl.allowed)
-    throwSharedRateLimited(rl, `Too many submissions — retry in ${rl.retryAfterSeconds}s`);
-
+async function updateWithinBudget(
+  { uid, subjectUser, slug, schema, appBlockId }: SharedWriteContext,
+  key: string,
+  value: SharedValueInput,
+  markLanded: () => void
+): Promise<{ ok: true }> {
   const pool = requireAppsDb();
 
   // Resolve the target row in THIS app's schema (schema is server-derived from the
@@ -1035,6 +1067,7 @@ export async function updateSharedRow(
     );
     updated = result.rowCount ?? 0;
     await client.query('COMMIT');
+    if (updated > 0) markLanded();
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -1149,7 +1182,7 @@ export async function withdrawSharedRow(
   // This op had NO bucket while every other write on the surface had one — a
   // gap worth closing on its own terms, and one a REST ingress would widen.
   // Own per-minute bucket; the window/ceiling rationale (and why it is NOT the
-  // append daily bucket and NOT the shared vote bucket) lives beside the
+  // report daily bucket and NOT the shared vote bucket) lives beside the
   // constants in shared-storage-rate-limit.ts.
   const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
   if (!rl.allowed)

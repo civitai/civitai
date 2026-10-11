@@ -163,7 +163,7 @@ vi.mock('~/server/services/block-revocation.service', () => ({
   },
 }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: async () => ({ allowed: true }),
+  reserveSharedWrite: async () => ({ allowed: true, release: async () => undefined }),
   checkSharedVoteRateLimit: async () => ({ allowed: true }),
   checkSharedReportRateLimit: async () => ({ allowed: true }),
   checkSharedWithdrawRateLimit: async () => ({ allowed: true }),

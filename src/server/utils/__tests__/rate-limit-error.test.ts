@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
-import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
+import { rateLimitMetaOf, throwSharedRateLimited } from '~/server/utils/rate-limit-error';
 
 // Distinct from any production window.
 const NOW = Date.parse('2030-02-03T04:05:06.000Z');
@@ -39,6 +39,23 @@ describe('throwSharedRateLimited', () => {
       retryAfterSeconds: RETRY_AFTER,
       retryAt: '2030-02-03T04:05:23.000Z',
     });
+  });
+
+  it('rateLimitMetaOf forwards only retryAfterSeconds and retryAt, as a copy', () => {
+    const rateLimit = {
+      retryAfterSeconds: RETRY_AFTER,
+      retryAt: '2030-02-03T04:05:23.000Z',
+      bucketKey: 'internal:4127',
+    };
+    const err = new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'wait', cause: { rateLimit } });
+
+    const meta = rateLimitMetaOf(err);
+
+    expect(meta).toStrictEqual({
+      retryAfterSeconds: RETRY_AFTER,
+      retryAt: '2030-02-03T04:05:23.000Z',
+    });
+    expect(meta).not.toBe(rateLimit);
   });
 
   it('carries the hour and second for a wait over an hour (3601s)', () => {

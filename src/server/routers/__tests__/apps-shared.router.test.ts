@@ -21,7 +21,8 @@ const {
   mockPool,
   mockClient,
   mockGetSessionUser,
-  mockCheckAppendRl,
+  mockReserveWrite,
+  mockReleaseWrite,
   mockCheckVoteRl,
   mockCheckReportRl,
   mockCheckWithdrawRl,
@@ -81,7 +82,10 @@ const {
     mockPool,
     mockClient,
     mockGetSessionUser: vi.fn(),
-    mockCheckAppendRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    // The write budget, in the fixed-window shape the sibling buckets use; the factory below
+    // turns `{ allowed: true }` into a reservation whose release is `mockReleaseWrite`.
+    mockReserveWrite: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockReleaseWrite: vi.fn<(opts: { rejected: boolean }) => Promise<void>>(async () => undefined),
     mockCheckVoteRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
     mockCheckReportRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
     mockCheckWithdrawRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
@@ -139,8 +143,10 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
 // second shape, and it accounted for 8 of this file's remaining type errors. Each
 // forward below declares what its real callee is actually called with.
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: (userId: number, appBlockId: string) =>
-    mockCheckAppendRl(userId, appBlockId),
+  reserveSharedWrite: async (userId: number, appBlockId: string) => {
+    const r = await mockReserveWrite(userId, appBlockId);
+    return r.allowed ? { allowed: true, release: mockReleaseWrite } : r;
+  },
   checkSharedVoteRateLimit: (userId: number, appBlockId: string) =>
     mockCheckVoteRl(userId, appBlockId),
   checkSharedReportRateLimit: (userId: number, appBlockId: string) =>
@@ -265,7 +271,7 @@ beforeEach(() => {
   mockDbRead.account.count.mockResolvedValue(0);
   mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
   mockClient.query.mockResolvedValue({ rows: [], rowCount: 0 });
-  mockCheckAppendRl.mockResolvedValue({ allowed: true });
+  mockReserveWrite.mockResolvedValue({ allowed: true });
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
   mockCheckReportRl.mockResolvedValue({ allowed: true });
   mockCheckWithdrawRl.mockResolvedValue({ allowed: true });
@@ -933,9 +939,9 @@ describe('FIX 1 abuse observability (alert emits)', () => {
 });
 
 describe('H4 rate limits', () => {
-  it('append over the daily cap → TOO_MANY_REQUESTS', async () => {
+  it('append over the write budget → TOO_MANY_REQUESTS', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockCheckAppendRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    mockReserveWrite.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
     await expect(
       caller().append({ blockToken: 't', value: { title: 'idea' } })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
@@ -976,7 +982,7 @@ describe('H4 rate limits', () => {
     await caller().withdraw({ blockToken: 't', key: 'k' });
     // Keyed on (subject user, appBlockId) exactly like every sibling bucket.
     expect(mockCheckWithdrawRl).toHaveBeenCalledWith(42, 'apb_test');
-    expect(mockCheckAppendRl).not.toHaveBeenCalled();
+    expect(mockReserveWrite).not.toHaveBeenCalled();
     expect(mockCheckVoteRl).not.toHaveBeenCalled();
   });
 
@@ -2168,13 +2174,13 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('shares append’s daily rate-limit bucket (over cap → TOO_MANY_REQUESTS, no row lookup)', async () => {
+  it('shares append’s write budget (refused → TOO_MANY_REQUESTS, no row lookup)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockCheckAppendRl.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
+    mockReserveWrite.mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 });
     await expect(
       caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'x' } })
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(mockCheckAppendRl).toHaveBeenCalledTimes(1);
+    expect(mockReserveWrite).toHaveBeenCalledTimes(1);
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
@@ -2250,15 +2256,15 @@ describe('REST entry shape — the six exported write functions carry the full l
     name: string;
     call: () => Promise<unknown>;
     /** The bucket this op MUST spend, and the two it must not. */
-    bucket: () => typeof mockCheckAppendRl;
-    otherBuckets: () => Array<typeof mockCheckAppendRl>;
+    bucket: () => typeof mockReserveWrite;
+    otherBuckets: () => Array<typeof mockReserveWrite>;
     retryAfter: number;
     tooManyMessage: string;
   }> = [
     {
       name: 'appendSharedRow',
       call: () => appendSharedRow('tok_seam', VALUE),
-      bucket: () => mockCheckAppendRl,
+      bucket: () => mockReserveWrite,
       otherBuckets: () => [mockCheckVoteRl, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 11,
       tooManyMessage: 'Too many submissions — retry in 11s',
@@ -2266,7 +2272,7 @@ describe('REST entry shape — the six exported write functions carry the full l
     {
       name: 'updateSharedRow',
       call: () => updateSharedRow('tok_seam', KEY, VALUE),
-      bucket: () => mockCheckAppendRl,
+      bucket: () => mockReserveWrite,
       otherBuckets: () => [mockCheckVoteRl, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 13,
       tooManyMessage: 'Too many submissions — retry in 13s',
@@ -2275,7 +2281,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'voteSharedRow',
       call: () => voteSharedRow('tok_seam', KEY),
       bucket: () => mockCheckVoteRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckReportRl, mockCheckWithdrawRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 19,
       tooManyMessage: 'Too many votes — retry in 19s',
     },
@@ -2283,7 +2289,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'unvoteSharedRow',
       call: () => unvoteSharedRow('tok_seam', KEY),
       bucket: () => mockCheckVoteRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckReportRl, mockCheckWithdrawRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckReportRl, mockCheckWithdrawRl],
       retryAfter: 23,
       tooManyMessage: 'Too many votes — retry in 23s',
     },
@@ -2291,7 +2297,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'withdrawSharedRow',
       call: () => withdrawSharedRow('tok_seam', KEY),
       bucket: () => mockCheckWithdrawRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckVoteRl, mockCheckReportRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckVoteRl, mockCheckReportRl],
       retryAfter: 29,
       tooManyMessage: 'Too many withdrawals — retry in 29s',
     },
@@ -2299,7 +2305,7 @@ describe('REST entry shape — the six exported write functions carry the full l
       name: 'reportSharedRow',
       call: () => reportSharedRow('tok_seam', KEY, REASON),
       bucket: () => mockCheckReportRl,
-      otherBuckets: () => [mockCheckAppendRl, mockCheckVoteRl, mockCheckWithdrawRl],
+      otherBuckets: () => [mockReserveWrite, mockCheckVoteRl, mockCheckWithdrawRl],
       retryAfter: 31,
       tooManyMessage: 'Too many reports — retry in 31s',
     },
@@ -2881,19 +2887,19 @@ describe('rate-limit refusals carry machine-readable retry metadata', () => {
   const OPS: Array<{
     name: string;
     call: () => Promise<unknown>;
-    bucket: () => typeof mockCheckAppendRl;
+    bucket: () => typeof mockReserveWrite;
     message: string;
   }> = [
     {
       name: 'append',
       call: () => appendSharedRow('tok_rl', VALUE),
-      bucket: () => mockCheckAppendRl,
+      bucket: () => mockReserveWrite,
       message: 'Too many submissions — retry in 17s',
     },
     {
       name: 'update',
       call: () => updateSharedRow('tok_rl', KEY, VALUE),
-      bucket: () => mockCheckAppendRl,
+      bucket: () => mockReserveWrite,
       message: 'Too many submissions — retry in 17s',
     },
     {
