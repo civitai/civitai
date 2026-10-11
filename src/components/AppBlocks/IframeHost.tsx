@@ -65,6 +65,7 @@ import {
 import { IframeInitController, shouldStartInit } from './iframeInitController';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
+import type { BlockHostSurface } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -374,6 +375,7 @@ export function AppBlockChrome({
   modelId,
   modelName,
   slotId,
+  hostSurface,
   canOpenPage = false,
 }: {
   blockInstanceId: string;
@@ -420,6 +422,9 @@ export function AppBlockChrome({
    *  prop hides the menu rather than offering guaranteed-404 links.
    */
   canOpenPage?: boolean;
+  /** The host that mounted this chrome. Decides whether it offers app feedback
+   *  (`APP_FEEDBACK_HOST_SURFACES`); omitted → no Feedback button. */
+  hostSurface?: BlockHostSurface;
 }) {
   // Gate the platform-nav "Review" item with the SAME greppable predicate the
   // /apps/review page + its server gate use (isAppReviewer), so the run-nav
@@ -883,6 +888,7 @@ export function AppBlockChrome({
             labelled. */}
           <ChromeFeedbackButton
             request={feedbackRequest}
+            hostSurface={hostSurface}
             labelled={!geometry.compact}
             onOpenFeedback={setFeedbackTarget}
           />
@@ -3235,6 +3241,7 @@ export function IframeHost({
         modelId={modelCtx.modelId}
         modelName={modelCtx.modelName}
         slotId={slotId}
+        hostSurface="model-slot"
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP — the model-slot half, which did not

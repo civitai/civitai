@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   APP_FEEDBACK_GENERIC_ERROR_MESSAGE,
@@ -6,6 +8,7 @@ import {
   APP_FEEDBACK_SENT_MESSAGE,
   APP_FEEDBACK_PRIVATE_NOTICE,
   APP_FEEDBACK_SIGNED_OUT_MESSAGE,
+  APP_FEEDBACK_HOST_SURFACES,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
   appFeedbackSentWithLine,
@@ -14,6 +17,7 @@ import {
   canSubmitAppFeedback,
   resolveAppFeedbackRequest,
 } from '~/components/AppBlocks/appFeedbackChrome';
+import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentGate';
 import {
   appFeedbackStatusMessage,
   isReporterNotifiedOwnerStatus,
@@ -67,29 +71,88 @@ describe('resolveAppFeedbackRequest — what each host sends', () => {
 
 describe('appFeedbackEntryRequest — the client-side gates before eligibility is asked', () => {
   const request = { target: { slug: 'my-app' }, context: { surface: 'page' as const } };
+  const gates = { isSignedIn: true, hasStoreAccess: true, hostSurface: 'page-run' as const };
 
   it('signed in with store access → the request', () => {
-    expect(appFeedbackEntryRequest({ isSignedIn: true, hasStoreAccess: true, request })).toBe(
-      request
-    );
+    expect(appFeedbackEntryRequest({ ...gates, request })).toBe(request);
   });
 
   it('signed out → null', () => {
-    expect(
-      appFeedbackEntryRequest({ isSignedIn: false, hasStoreAccess: true, request })
-    ).toBeNull();
+    expect(appFeedbackEntryRequest({ ...gates, isSignedIn: false, request })).toBeNull();
   });
 
   it('no store access → null', () => {
-    expect(
-      appFeedbackEntryRequest({ isSignedIn: true, hasStoreAccess: false, request })
-    ).toBeNull();
+    expect(appFeedbackEntryRequest({ ...gates, hasStoreAccess: false, request })).toBeNull();
   });
 
   it('no request → null', () => {
-    expect(
-      appFeedbackEntryRequest({ isSignedIn: true, hasStoreAccess: true, request: null })
-    ).toBeNull();
+    expect(appFeedbackEntryRequest({ ...gates, request: null })).toBeNull();
+  });
+});
+
+describe('appFeedbackEntryRequest — which host surfaces offer feedback', () => {
+  const request = { target: { slug: 'my-app' }, context: { surface: 'page' as const } };
+  const ask = (hostSurface: BlockHostSurface | undefined) =>
+    appFeedbackEntryRequest({ isSignedIn: true, hasStoreAccess: true, hostSurface, request });
+
+  it('the published-app surfaces (model slot, page run, private run) → the request', () => {
+    for (const surface of ['model-slot', 'page-run', 'private-run'] as const)
+      expect(ask(surface), surface).toBe(request);
+  });
+
+  // The dev tunnel runs the author's UNPUBLISHED code, but the server stamps the listing's
+  // published version — and since owners and collaborators became eligible, its viewer would be.
+  it('🔴 the author dev tunnel → null', () => {
+    expect(ask('dev-tunnel')).toBeNull();
+  });
+
+  it('🔴 moderator review preview (a pending version) → null', () => {
+    expect(ask('review-preview')).toBeNull();
+  });
+
+  it('a host that names no surface → null (fails closed)', () => {
+    expect(ask(undefined)).toBeNull();
+  });
+
+  it('the surface table is exactly this — a new member must be decided, not defaulted', () => {
+    expect(APP_FEEDBACK_HOST_SURFACES).toEqual({
+      'model-slot': true,
+      'page-run': true,
+      'private-run': true,
+      'dev-tunnel': false,
+      'review-preview': false,
+    });
+  });
+});
+
+/**
+ * The SEAM: the surface table above only helps if every host that mounts the chrome tells it which
+ * surface it is. `PageBlockHost` serves four surfaces (page run, private run, review, dev tunnel)
+ * from one mount, so it must forward its own `surface` — a hardcoded literal there would give the
+ * dev tunnel the button back with every behavioural test above still green. The mounters are
+ * DISCOVERED, so a new one fails here until it is added to the ledger.
+ */
+describe('every chrome mount names its host surface', () => {
+  const SRC = join(process.cwd(), 'src');
+  const walk = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) return e.name === '__tests__' ? [] : walk(full);
+      return /\.tsx$/.test(e.name) && !/\.test\.tsx$/.test(e.name) ? [full] : [];
+    });
+  const mounts = walk(SRC).flatMap((file) => {
+    const code = readFileSync(file, 'utf8');
+    return [...code.matchAll(/<AppBlockChrome\b[\s\S]*?\/>/g)].map((m) => ({
+      file: relative(SRC, file),
+      hostSurface: /hostSurface=(\{surface\}|"[a-z-]+")/.exec(m[0])?.[1] ?? null,
+    }));
+  });
+
+  it('the ledger: exactly these mounts, each forwarding the right surface', () => {
+    expect(mounts).toEqual([
+      { file: 'components/AppBlocks/IframeHost.tsx', hostSurface: '"model-slot"' },
+      { file: 'components/AppBlocks/PageBlockHost.tsx', hostSurface: '{surface}' },
+    ]);
   });
 });
 
@@ -227,13 +290,13 @@ describe('appFeedbackSubmitErrorMessage — every server refusal reads as a sent
     );
   });
 
-  it('self / muted / collection off (FORBIDDEN): the server text', () => {
+  it('muted / collection off (FORBIDDEN): the server text', () => {
     expect(
       appFeedbackSubmitErrorMessage({
-        message: 'You cannot send feedback to your own app',
+        message: 'Your account cannot send feedback right now',
         data: { code: 'FORBIDDEN' },
       })
-    ).toBe('You cannot send feedback to your own app');
+    ).toBe('Your account cannot send feedback right now');
   });
 
   it('not eligible (NOT_FOUND): one neutral sentence, not "App not found"', () => {

@@ -69,7 +69,6 @@ const {
   APP_FEEDBACK_CAP_MESSAGE,
   APP_FEEDBACK_NO_ACCESS_MESSAGE,
   APP_FEEDBACK_NOT_FOUND_MESSAGE,
-  APP_FEEDBACK_SELF_MESSAGE,
   APP_FEEDBACK_STALE_MESSAGE,
   countNewAppFeedbackForMyListings,
   createAppFeedback,
@@ -332,23 +331,47 @@ describe('resolveAppFeedbackTarget', () => {
     }
   });
 
-  it('refuses the canonical owner, not whoever the stale listing column names', async () => {
+  // Pins the 2026-10-11 decision in resolveAppFeedbackTarget: a role gate re-added there fails these.
+  const PARENT_TARGET = {
+    appListingId: PARENT,
+    appName: 'Cool App',
+    appBlockVersion: '1.4.2',
+    appBlockSha: 'sha-parent-91c',
+  };
+
+  it('admits the canonical owner (page and slot surfaces)', async () => {
     expect(await resolveAppFeedbackTarget(user(OWNER), page)).toEqual({
-      ok: false,
-      reason: 'self',
-    });
-    expect(await resolveAppFeedbackTarget(user(STALE_DENORM_OWNER), page)).toMatchObject({
       ok: true,
+      target: PARENT_TARGET,
+    });
+    expect(await resolveAppFeedbackTarget(user(OWNER), { appBlockId: 'blk_parent' })).toEqual({
+      ok: true,
+      target: PARENT_TARGET,
     });
   });
 
-  it('refuses an accepted editor, but not a pending invitee', async () => {
+  it('admits an accepted collaborator, and a pending invitee', async () => {
     expect(await resolveAppFeedbackTarget(user(EDITOR), page)).toEqual({
-      ok: false,
-      reason: 'self',
+      ok: true,
+      target: PARENT_TARGET,
     });
     SEATS = [{ appListingId: PARENT, userId: EDITOR, status: 'pending' }];
-    expect(await resolveAppFeedbackTarget(user(EDITOR), page)).toMatchObject({ ok: true });
+    expect(await resolveAppFeedbackTarget(user(EDITOR), page)).toEqual({
+      ok: true,
+      target: PARENT_TARGET,
+    });
+  });
+
+  it('the owner is still refused by the other gates (status, muted)', async () => {
+    expect(await resolveAppFeedbackTarget(user(OWNER, { muted: true }), page)).toEqual({
+      ok: false,
+      reason: 'muted',
+    });
+    STATUS[PARENT] = { ...STATUS[PARENT], status: 'removed' };
+    expect(await resolveAppFeedbackTarget(user(OWNER), page)).toEqual({
+      ok: false,
+      reason: 'not_approved',
+    });
   });
 
   // 🔴 OPERATOR DECISION (2026-10-08), not an oversight: an APPROVED app whose per-listing
@@ -395,25 +418,32 @@ describe('resolveAppFeedbackTarget', () => {
     });
   });
 
+  it('an off-site listing checks blocks against the listing-column owner, not the block app owner', async () => {
+    await resolveAppFeedbackTarget(user(REPORTER), { slug: 'far-away' });
+    expect(mocks.throwIfBlockedByOwners).toHaveBeenCalledWith({
+      userId: REPORTER,
+      ownerIds: [OFFSITE_OWNER],
+      isModerator: false,
+    });
+  });
+
   it('does not swallow an unexpected error from the block check', async () => {
     mocks.throwIfBlockedByOwners.mockRejectedValue(new Error('db down'));
     await expect(resolveAppFeedbackTarget(user(REPORTER), page)).rejects.toThrow('db down');
   });
 
-  it('resolves an off-site owner from the listing column and stamps no version', async () => {
-    expect(await resolveAppFeedbackTarget(user(OFFSITE_OWNER), { slug: 'far-away' })).toEqual({
-      ok: false,
-      reason: 'self',
-    });
-    expect(await resolveAppFeedbackTarget(user(REPORTER), { slug: 'far-away' })).toEqual({
-      ok: true,
-      target: {
-        appListingId: OFFSITE,
-        appName: 'Far Away',
-        appBlockVersion: null,
-        appBlockSha: null,
-      },
-    });
+  it('admits an off-site listing, its owner included, and stamps no version', async () => {
+    const target = {
+      appListingId: OFFSITE,
+      appName: 'Far Away',
+      appBlockVersion: null,
+      appBlockSha: null,
+    };
+    for (const id of [REPORTER, OFFSITE_OWNER])
+      expect(await resolveAppFeedbackTarget(user(id), { slug: 'far-away' })).toEqual({
+        ok: true,
+        target,
+      });
   });
 });
 
@@ -476,12 +506,24 @@ describe('createAppFeedback', () => {
     expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
   });
 
-  it('refuses the owner with FORBIDDEN', async () => {
-    await expect(createAppFeedback({ user: user(OWNER), input })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: APP_FEEDBACK_SELF_MESSAGE,
+  it.each([
+    ['the owner', OWNER],
+    ['an accepted collaborator', EDITOR],
+  ])('%s can create — the row lands on their own seat listing', async (_label, id) => {
+    await expect(createAppFeedback({ user: user(id), input })).resolves.toEqual({ id: 555 });
+    expect(dbMock.dbWrite.feedback.create).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.feedback.create.mock.calls[0][0]).toEqual({
+      data: {
+        userId: id,
+        area: 'app-block',
+        message: 'the export button does nothing',
+        context: { surface: 'page', modelId: 4242 },
+        appListingId: PARENT,
+        appBlockVersion: '1.4.2',
+        appBlockSha: 'sha-parent-91c',
+      },
+      select: { id: true },
     });
-    expect(dbMock.dbWrite.feedback.create).not.toHaveBeenCalled();
   });
 
   it('runs the comment content check on the message, exempting moderators like comments do', async () => {
@@ -903,6 +945,18 @@ describe('reporter notification on an owner status change', () => {
       select: { userId: true, appListing: { select: { name: true, slug: true } } },
     });
     expect(dbMock.dbRead.feedback.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a team member closing their OWN feedback is not notified about it', async () => {
+    // The editor (the actor in `set`) filed row 901 themselves.
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue({ ...REPORTER_ROW, userId: EDITOR });
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+    // Control: the OWNER's row, closed by the editor, still notifies the owner.
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue({ ...REPORTER_ROW, userId: OWNER });
+    await set('wont_fix');
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.createNotification.mock.calls[0][0].userId).toBe(OWNER);
   });
 
   it('🔴 a row hidden from the developer sends nothing', async () => {

@@ -75,7 +75,8 @@ export function appFeedbackDigestMessage(details: Partial<AppFeedbackDigestDetai
  * New counts run, so the digest cannot announce a row the inbox it links to would not show. On top
  * of those, a row must be:
  *   - not from someone the owner blocked or hid, or who blocked the owner;
- *   - not the owner's own (submission already refuses that; ownership can change afterwards).
+ *   - not the owner's own (an owner may file feedback on their own app, and it lands in their
+ *     inbox; announcing it back to them would be noise).
  *
  * Recipient: the canonical, kind-aware owner via `APP_LISTING_OWNER_SQL`, never
  * `app_listings.user_id` alone, and never a shadow revision's frozen copy. Editors are not

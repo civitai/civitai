@@ -5019,6 +5019,7 @@ export function PageBlockHost({
         // hang the store popover on.
         slug={slug}
         slotId={PAGE_SLOT_ID}
+        hostSurface={surface}
         canOpenPage={canOpenPage}
       />
       {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP. Every term of the decision, and the
