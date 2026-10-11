@@ -21,6 +21,7 @@ import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
 import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
+  IconChartBar,
   IconCheck,
   IconCoin,
   IconExternalLink,
@@ -51,6 +52,10 @@ import {
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  parseManifestAnalytics,
+  type DeclaredEventProperty,
+} from '~/shared/constants/block-analytics.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
@@ -1220,6 +1225,9 @@ const HANDLED_MANIFEST_KEYS = new Set([
   'targets',
   'iframe',
   'settings',
+  // `ManifestAnalytics` renders a valid declaration completely (the parser rejects
+  // unknown keys). If the contract gains a field, render it there or remove this.
+  'analytics',
 ]);
 
 export function ManifestView({
@@ -1264,6 +1272,7 @@ export function ManifestView({
           nothing at all when the manifest declares no `goods`, which is every app
           approved to date. */}
       <ManifestGoods manifest={manifest} />
+      <ManifestAnalytics manifest={manifest} />
       {includeScopes && <ManifestScopes manifest={manifest} />}
       <ManifestTargets manifest={manifest} />
       <ManifestSettings manifest={manifest} />
@@ -1765,6 +1774,129 @@ function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
         )}
       </Stack>
     </Card>
+  );
+}
+
+/**
+ * Read only through `parseManifestAnalytics`, the parser submit and the ingest cache
+ * use, so the card cannot list an event ingest would refuse.
+ */
+function ManifestAnalytics({ manifest }: { manifest: Record<string, unknown> }) {
+  // `undefined` only: the parser rejects `analytics: null`, so it must show as an error.
+  if (manifest.analytics === undefined) return null;
+  const { events, errors } = parseManifestAnalytics(manifest);
+  const entries = [...events.entries()];
+
+  return (
+    <Card withBorder p="sm" data-testid="apps-review-analytics">
+      <Stack gap="xs">
+        <Group gap={6}>
+          <IconChartBar size={14} />
+          <Text size="sm" fw={600}>
+            Analytics events
+          </Text>
+          <Tooltip
+            multiline
+            w={280}
+            label="Custom events the app may send about how viewers use it. Only the event names, properties and enum values declared here are recorded: an undeclared property or value is dropped, and an undeclared event is counted without its name. A change needs a new version and another review."
+          >
+            <ThemeIcon size="xs" variant="subtle" color="gray">
+              <IconInfoCircle size={13} />
+            </ThemeIcon>
+          </Tooltip>
+        </Group>
+
+        {errors.length > 0 ? (
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="orange"
+            variant="light"
+            // No count: past the cap the parser appends a summary line, so `errors.length`
+            // would be wrong.
+            title="Analytics declaration does not validate"
+          >
+            <Stack gap={2}>
+              <Text size="xs">
+                This declaration is invalid, so the submission can&apos;t be approved until the
+                author fixes it.
+              </Text>
+              {errors.map((error) => (
+                <Text
+                  key={error}
+                  size="xs"
+                  c="orange"
+                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+                >
+                  {error}
+                </Text>
+              ))}
+            </Stack>
+          </Alert>
+        ) : entries.length === 0 ? (
+          <Text size="xs" c="dimmed">
+            Declares analytics but no events.
+          </Text>
+        ) : (
+          <>
+            <Text size="xs" c="dimmed">
+              {entries.length === 1 ? '1 event declared' : `${entries.length} events declared`}. The
+              app can record only these names and enum values — no free text — but number properties
+              are unbounded.
+            </Text>
+            <Stack gap={8}>
+              {entries.map(([name, event]) => (
+                <Stack key={name} gap={2} data-testid="apps-review-analytics-event">
+                  <Code fw={600} style={{ alignSelf: 'flex-start', wordBreak: 'break-all' }}>
+                    {name}
+                  </Code>
+                  {event.description && (
+                    <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
+                      {event.description}
+                    </Text>
+                  )}
+                  {event.properties.size === 0 ? (
+                    <Text size="xs" c="dimmed" fs="italic">
+                      No properties
+                    </Text>
+                  ) : (
+                    <Stack gap={2} pl="sm">
+                      {[...event.properties.entries()].map(([propName, prop]) => (
+                        <AnalyticsPropertyRow key={propName} name={propName} property={prop} />
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              ))}
+            </Stack>
+          </>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function AnalyticsPropertyRow({
+  name,
+  property,
+}: {
+  name: string;
+  property: DeclaredEventProperty;
+}) {
+  return (
+    <Group gap={6} wrap="wrap" align="center" data-testid="apps-review-analytics-property">
+      <Code style={{ wordBreak: 'break-all' }}>{name}</Code>
+      <Badge size="xs" variant="light" color="gray">
+        {property.type}
+      </Badge>
+      {property.type === 'enum' &&
+        property.values.map((value) => (
+          // Quoted and `pre-wrap`, so whitespace is visible: "a", "a " and "a  b" are
+          // distinct declared values.
+          <Code key={value} c="blue" style={{ wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+            {JSON.stringify(value)}
+          </Code>
+        ))}
+    </Group>
   );
 }
 

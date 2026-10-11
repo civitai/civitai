@@ -414,6 +414,10 @@ The events an app may send are declared in the manifest's optional
 `analytics.events` and validated at submit by `parseManifestAnalytics`
 (`src/shared/constants/block-analytics.constants.ts`). A property is an `enum`
 of declared string values, a `number` or a `boolean`; there is no free-text type.
+The moderator review screen shows the declaration in an "Analytics events" card
+(`ManifestAnalytics` in `src/components/Apps/OnsiteReviewModal.tsx`): every
+event with its description, properties, types and enum values, or the parser's errors if it
+does not validate.
 
 `POST /api/track/block-event` (`src/pages/api/track/block-event.ts`,
 `src/server/services/blocks/block-event-ingest.service.ts`) records them in the
