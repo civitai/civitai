@@ -471,11 +471,37 @@ describe('namesIdentifier and callsImported', () => {
       );
     expect(check(`${imported}\nif (!requireFullScopeSession(req, res)) return;`)).toBe(true);
     expect(check(`${imported}\n// requireFullScopeSession(req, res)`)).toBe(false);
+    expect(
+      check(
+        `import { requireFullScopeSession as gate } from '~/server/utils/require-full-scope-session';\ngate(req, res);`
+      )
+    ).toBe(true);
+    expect(
+      check(
+        `import { requireFullScopeSession } from '~/elsewhere';\nrequireFullScopeSession(req, res);`
+      )
+    ).toBe(false);
     expect(check(`const requireFullScopeSession = () => true;\nrequireFullScopeSession();`)).toBe(
       false
     );
   });
 });
+
+/**
+ * Every route under `src/pages/api` that calls `requireFullScopeSession` directly, moderator-only
+ * or not, so a route gaining or losing the call has to be listed here on purpose. Routes that get
+ * the rule through a wrapper (`ModEndpoint`, `defineModeratorEndpoint`) are not listed, and this
+ * checks only that the call exists; per-route behaviour is pinned in the
+ * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
+ */
+const FULL_SCOPE_SESSION_ROUTES = [
+  'auth/freshdesk',
+  'media/ingest/[mediaId]',
+  'testing/model3d-seed',
+  'training-studio/host',
+  'user/orchestrator-key',
+  'v1/block-tokens/index',
+];
 
 describe('routes under src/pages/api outside the moderator wrappers', () => {
   const files = routeFiles(API_ROUTES).filter((f) => /\.tsx?$/.test(f));
@@ -514,6 +540,21 @@ describe('routes under src/pages/api outside the moderator wrappers', () => {
         '~/server/utils/require-full-scope-session'
       )
     ).toBe(true);
+  });
+
+  it('that call requireFullScopeSession directly match the ledger', () => {
+    const guarded = [...sources]
+      .filter(([route, source]) =>
+        callsImported(
+          route,
+          source,
+          'requireFullScopeSession',
+          '~/server/utils/require-full-scope-session'
+        )
+      )
+      .map(([route]) => route)
+      .sort();
+    expect(guarded).toEqual(FULL_SCOPE_SESSION_ROUTES);
   });
 
   it.each(APP_BLOCKS_CLI_ROUTES)('%s is an App Blocks CLI route', (route) => {
