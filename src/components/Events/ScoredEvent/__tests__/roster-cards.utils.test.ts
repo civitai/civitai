@@ -28,11 +28,20 @@ describe('rosterRanks', () => {
     expect(rosterRanks(items, 'hats')).toEqual([1, 2, 2, 4]);
   });
 
-  it('ranks by the active sort only', () => {
-    // Same hats, different points: tied on hats, not on points.
-    const items = [member(3, 90), member(3, 40)];
-    expect(rosterRanks(items, 'hats')).toEqual([1, 1]);
+  it('does not share a rank when the rest of the key breaks the tie', () => {
+    // The reported Team Blue pair: 1 hat each, 4,006 and 953 points. Distinct on every sort.
+    const items = [member(1, 4006), member(1, 953)];
+    expect(rosterRanks(items, 'hats')).toEqual([1, 2]);
     expect(rosterRanks(items, 'points')).toEqual([1, 2]);
+    // Same hats and points: the join time breaks it.
+    expect(rosterRanks([member(1, 5, 2000), member(1, 5, 1000)], 'hats')).toEqual([1, 2]);
+  });
+
+  it('shares a rank only when every standing in the key ties', () => {
+    expect(rosterRanks([member(2, 5, 1000), member(2, 5, 1000)], 'hats')).toEqual([1, 1]);
+    expect(rosterRanks([member(2, 5, 1000), member(2, 5, 1000)], 'points')).toEqual([1, 1]);
+    // Newest is join time then points: hats are not in it.
+    expect(rosterRanks([member(9, 5, 1000), member(1, 5, 1000)], 'newest')).toEqual([1, 1]);
   });
 
   it('ties newest only on the same join instant', () => {
@@ -133,9 +142,33 @@ describe('orderRoster', () => {
     expect(ids).toEqual([3, 1, 2]);
   });
 
-  it('keeps the server order among tied members', () => {
-    const ids = orderRoster([m(5, 8), m(2, 8), m(9, 8)], 'points').map((x) => x.user.id);
-    expect(ids).toEqual([5, 2, 9]);
+  const order = (items: ReturnType<typeof m>[], sort: 'hats' | 'points' | 'newest') =>
+    orderRoster(items, sort).map((x) => x.user.id);
+  const at2 = (id: number, hatCount: number, points: number, joinedMs: number) => ({
+    user: { id },
+    ...member(hatCount, points, joinedMs),
+  });
+
+  it('breaks a hats tie by points, then the newest join, then the lower id', () => {
+    expect(order([at2(1, 1, 953, 0), at2(2, 1, 4006, 0)], 'hats')).toEqual([2, 1]);
+    expect(order([at2(1, 1, 5, 1000), at2(2, 1, 5, 2000)], 'hats')).toEqual([2, 1]);
+    expect(order([at2(9, 1, 5, 0), at2(2, 1, 5, 0), at2(5, 1, 5, 0)], 'hats')).toEqual([2, 5, 9]);
+  });
+
+  it('breaks a points tie by hats, then the newest join, then the lower id', () => {
+    expect(order([at2(1, 1, 50, 0), at2(2, 3, 50, 0)], 'points')).toEqual([2, 1]);
+    expect(order([at2(1, 2, 50, 1000), at2(2, 2, 50, 2000)], 'points')).toEqual([2, 1]);
+    expect(order([at2(9, 2, 50, 0), at2(2, 2, 50, 0)], 'points')).toEqual([2, 9]);
+  });
+
+  it('breaks a newest tie by points, then the lower id, ignoring hats', () => {
+    expect(order([at2(1, 9, 1, 1000), at2(2, 0, 2, 1000)], 'newest')).toEqual([2, 1]);
+    expect(order([at2(9, 9, 1, 1000), at2(2, 0, 1, 1000)], 'newest')).toEqual([2, 9]);
+  });
+
+  it('orders the same members the same way whatever order they arrive in', () => {
+    const items = [at2(9, 1, 5, 0), at2(2, 1, 5, 0), at2(5, 1, 5, 0)];
+    expect(order([...items].reverse(), 'hats')).toEqual(order(items, 'hats'));
   });
 
   it('keeps one card per member when a later page repeats one', () => {

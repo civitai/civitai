@@ -234,9 +234,79 @@ describe('team roster', () => {
     await syncRosterMembersWith(EVENT, [1, 2, 3], s.deps);
     const ids = async (sort: 'hats' | 'points' | 'newest') =>
       (await s.read(sort)).rows.map((r) => r.userId);
-    expect(await ids('hats')).toEqual([2, 3, 1]);
+    // 1 and 3 hold a hat each: 1's 90 points put it ahead.
+    expect(await ids('hats')).toEqual([2, 1, 3]);
     expect(await ids('points')).toEqual([1, 3, 2]);
     expect(await ids('newest')).toEqual([3, 1, 2]);
+  });
+
+  // Redis orders equal scores by member string, which is not a standing: REV puts "9" above "10"
+  // and "100" above "10". Each page comes back in the full key the client ranks by.
+  it('breaks a tie on the sort score by the rest of the full key, then the lower id', async () => {
+    const same = new Date(PREVIEW_NOW.getTime() - 60_000);
+    const oneHat = [{ id: 1, worn: true, price: null }];
+    const twoHats = [...oneHat, { id: 2, worn: false, price: 500 }];
+    const ids = async (
+      states: RosterMemberState[],
+      points: Record<number, number>,
+      sort: 'hats' | 'points' | 'newest'
+    ) => {
+      const s = setup(states, PREVIEW_NOW, points);
+      await syncRosterMembersWith(
+        EVENT,
+        states.map((x) => x.userId),
+        s.deps
+      );
+      return (await s.read(sort)).rows.map((r) => r.userId);
+    };
+    // Most hats: 1 hat each, so points decide (the reported Team Blue pair), then join time.
+    expect(
+      await ids(
+        [member(9, { hats: oneHat }), member(10, { hats: oneHat })],
+        { 9: 953, 10: 4006 },
+        'hats'
+      )
+    ).toEqual([10, 9]);
+    expect(
+      await ids(
+        [
+          member(9, { hats: oneHat, joinedAt: same }),
+          member(10, { hats: oneHat, joinedAt: new Date(same.getTime() + 1) }),
+        ],
+        {},
+        'hats'
+      )
+    ).toEqual([10, 9]);
+    // Most points: tied points, so hats decide.
+    expect(
+      await ids(
+        [member(9, { hats: oneHat }), member(10, { hats: twoHats })],
+        { 9: 50, 10: 50 },
+        'points'
+      )
+    ).toEqual([10, 9]);
+    // Newest: same join instant, so points decide; hats are not in this key.
+    expect(
+      await ids(
+        [
+          member(9, { hats: twoHats, joinedAt: same }),
+          member(10, { hats: oneHat, joinedAt: same }),
+        ],
+        { 9: 1, 10: 2 },
+        'newest'
+      )
+    ).toEqual([10, 9]);
+    // Everything equal: the lower id first, not the member string.
+    expect(
+      await ids(
+        [
+          member(10, { hats: oneHat, joinedAt: same }),
+          member(100, { hats: oneHat, joinedAt: same }),
+        ],
+        {},
+        'hats'
+      )
+    ).toEqual([10, 100]);
   });
 
   // The decision this whole store rests on: a member is hidden unless they opted in. Whatever a

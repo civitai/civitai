@@ -204,6 +204,30 @@ describe('TeamRoster cards', () => {
     expect(grid(el)).toBeNull();
   });
 
+  // The reported pair: 1 hat each, so "Most hats" was a shared gold #1 on cards at two heights.
+  it('ranks two members tied on hats #1 and #2 by points', () => {
+    const el = render([
+      member(1, { hatCount: 1, points: 953 }),
+      member(2, { hatCount: 1, points: 4006 }),
+    ]);
+    expect(ranksIn(podium(el))).toEqual(['1', '2']);
+    expect(all(podium(el)!, 'roster-podium-card')[0].textContent).toContain('user2');
+  });
+
+  it.each([1, 2])('stands %i members in a centred row in rank order, with no step', (count) => {
+    const el = render(Array.from({ length: count }, (_, i) => member(i + 1)));
+    expect(podium(el)!.className).toContain('@sm:justify-center');
+    expect(podium(el)!.className).not.toContain('@sm:grid-cols-3');
+    expect(podium(el)!.className).not.toContain('@sm:pt-4');
+    for (const card of all(podium(el)!, 'roster-podium-card')) {
+      expect(card.className).not.toMatch(/-mt-4|order-/);
+      expect(card.className).toContain('@sm:w-[calc((100%-1.5rem)/3)]');
+    }
+    // Alone, the card takes the phone row; two share it.
+    const first = all(podium(el)!, 'roster-podium-card')[0];
+    expect(first.className.split(' ').includes('col-span-2')).toBe(count === 1);
+  });
+
   it("drops the viewer's own card once they opt out, and ranks the rest with no gap", () => {
     state.user = { id: 1 };
     state.status = { optedIn: false, listedTeam: null };
@@ -446,11 +470,12 @@ describe('TeamRoster cards', () => {
 
   it('badges a member who joined in the last 24 hours as NEW, on every sort position', () => {
     const el = render([
-      member(1, { joinedAgoMs: 23 * HOUR }),
-      member(2, { joinedAgoMs: 25 * HOUR }),
-      member(3),
-      member(4, { joinedAgoMs: HOUR }),
-      member(5, { joinedAgoMs: 24 * HOUR }),
+      // Hats fix the order, so join time cannot: NEW cards land on both the podium and the grid.
+      member(1, { hatCount: 5, joinedAgoMs: 23 * HOUR }),
+      member(2, { hatCount: 4, joinedAgoMs: 25 * HOUR }),
+      member(3, { hatCount: 3 }),
+      member(4, { hatCount: 2, joinedAgoMs: HOUR }),
+      member(5, { hatCount: 1, joinedAgoMs: 24 * HOUR }),
     ]);
     const cards = [...all(podium(el)!, 'roster-podium-card'), ...all(grid(el)!, 'roster-card')];
     expect(cards.map((c) => all(c, 'roster-new').length)).toEqual([1, 0, 0, 1, 0]);
