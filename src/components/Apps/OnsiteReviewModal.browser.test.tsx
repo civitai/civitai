@@ -598,6 +598,11 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
       .map((el) => el.querySelector('code')?.textContent);
     expect(eventNames).toEqual(['level_complete', 'share_clicked']);
     await expect.element(page.getByText('A viewer finished a level')).toBeInTheDocument();
+    // The harness loads no Mantine CSS, so clipping can't be observed here; pin the
+    // wrap rule that keeps a long unbroken description inside the overflow-hidden Card.
+    expect(page.getByText('A viewer finished a level').element().style.overflowWrap).toBe(
+      'anywhere'
+    );
     await expect.element(page.getByText('No properties')).toBeInTheDocument();
 
     expect(propertyRowParts('difficulty')).toEqual([
@@ -658,7 +663,18 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
     await expect
       .element(page.getByText(/^analytics\.events key "BadName" must be lowercase snake_case/))
       .toBeInTheDocument();
-    await expect.element(page.getByText(/declaring nothing/)).toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(
+          "This declaration is invalid, so the submission can't be approved until the author fixes it.",
+          { exact: true }
+        )
+      )
+      .toBeInTheDocument();
+    // Long unbroken error paths must wrap rather than overflow (see the description note).
+    expect(page.getByText(/^analytics\.events key "BadName"/).element().style.overflowWrap).toBe(
+      'anywhere'
+    );
     // Parser invariant (all-or-nothing), not card logic: any error empties `events`.
     expect(page.getByTestId('apps-review-analytics-event').elements()).toHaveLength(0);
     expect(page.getByText(/events declared/).elements()).toHaveLength(0);

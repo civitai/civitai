@@ -1817,11 +1817,16 @@ function ManifestAnalytics({ manifest }: { manifest: Record<string, unknown> }) 
           >
             <Stack gap={2}>
               <Text size="xs">
-                Ingest treats a declaration with any error as declaring nothing, so none of this
-                app&apos;s custom events would be recorded by name.
+                This declaration is invalid, so the submission can&apos;t be approved until the
+                author fixes it.
               </Text>
               {errors.map((error) => (
-                <Text key={error} size="xs" c="orange" style={{ whiteSpace: 'pre-wrap' }}>
+                <Text
+                  key={error}
+                  size="xs"
+                  c="orange"
+                  style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}
+                >
                   {error}
                 </Text>
               ))}
@@ -1845,7 +1850,7 @@ function ManifestAnalytics({ manifest }: { manifest: Record<string, unknown> }) 
                     {name}
                   </Code>
                   {event.description && (
-                    <Text size="xs" c="dimmed">
+                    <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
                       {event.description}
                     </Text>
                   )}
