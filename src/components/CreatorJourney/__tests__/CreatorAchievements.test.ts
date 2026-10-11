@@ -6,7 +6,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import { CreatorAchievements, measureHref } from '~/components/CreatorJourney/CreatorAchievements';
 import { buildActivityProgress } from '~/server/services/creator-journey.service';
-import { formatDate } from '~/utils/date-helpers';
 
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -137,19 +136,23 @@ describe('Achievements section', () => {
 
   // Testers read a passed rung at 60% opacity with no counter as a bug ("10k locked at 47k").
   it('tells a pending tile when it unlocks, in local time, at full opacity', () => {
+    // Not UTC, so a label in UTC (or a run computed in local time) reads differently.
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/Denver';
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
+      expect(new Date('2026-10-11T01:20:00Z').getHours()).toBe(19);
       // The job runs at 01:20 UTC, so at 01:00 UTC the next update is twenty minutes away.
       vi.setSystemTime(new Date('2026-10-11T01:00:00Z'));
-      const nextRun = formatDate(new Date('2026-10-11T01:20:00Z'), 'h:mm A');
       const el = render(new Map(), 150);
       const pending = tile(el, '100 Followers');
-      expect(pending?.textContent).toMatch(new RegExp(`Unlocks at the next update, ${nextRun}$`));
+      expect(pending?.textContent).toMatch(/Unlocks at the next update, 7:20 PM$/);
       // Class-level only: component tests load no stylesheet, so nothing here measures opacity.
       expect(pending?.className.split(' ')).not.toContain('opacity-60');
       expect(tile(el, '1k Followers')?.textContent).not.toContain('Unlocks');
     } finally {
       vi.useRealTimers();
+      process.env.TZ = tz;
     }
   });
 
