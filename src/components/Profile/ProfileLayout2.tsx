@@ -124,6 +124,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
       : user?.image && user.image.startsWith('http')
       ? user.image
       : undefined;
+  const ogEndpoint = user ? milestoneOgEndpoint(user.id, milestone, milestoneShareable) : undefined;
+  // A shared milestone link previews its card. Telegram takes the JSON-LD page image over og:image
+  // (the profile link previewed the avatar there), so the schema names the card as well.
+  const pageImage = ogEndpoint
+    ? `${env.NEXT_PUBLIC_BASE_URL as string}${ogEndpoint}`
+    : userMetaImage;
   const metaSchema =
     user && user.username
       ? {
@@ -133,12 +139,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           description: `Learn more about ${user.username} on Civitai.`,
           primaryImageOfPage: {
             '@type': 'ImageObject',
-            contentUrl: userMetaImage,
+            contentUrl: pageImage,
           },
           mainEntity: {
             '@type': 'Person',
             name: user.username,
-            image: userMetaImage,
+            image: pageImage,
             url: `${env.NEXT_PUBLIC_BASE_URL as string}/user/${username}`,
             interactionStatistic: stats
               ? [
@@ -170,7 +176,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           title={`${user.username} Creator Profile | Civitai`}
           description={metaDescription}
           images={user.profilePicture}
-          ogEndpoint={milestoneOgEndpoint(user.id, milestone, milestoneShareable)}
+          ogEndpoint={ogEndpoint}
           canonical={pathname}
           schema={metaSchema}
           deIndex={deIndex}
