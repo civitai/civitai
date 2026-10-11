@@ -120,6 +120,7 @@ beforeEach(() => {
     meta: {},
     settings: {},
     publicSettings: {},
+    cosmetics: [],
     profile: { userId: 1, message: null, coverImage: null },
   });
   mockDb.user.findUnique.mockResolvedValue({ id: 1 });
