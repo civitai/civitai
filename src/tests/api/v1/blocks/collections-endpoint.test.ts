@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as GatedImagesLogic from '~/server/services/blocks/block-gated-images.logic';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 
 /**
@@ -93,9 +94,9 @@ vi.mock('~/server/services/collection.service', () => ({
   getUserCollectionsWithPermissions: mockUserCollections,
 }));
 vi.mock('~/server/services/blocks/block-collections.service', async () => {
-  const { classifyGatedImageForViewer } = await vi.importActual<
-    typeof import('~/server/services/blocks/block-gated-images.logic')
-  >('~/server/services/blocks/block-gated-images.logic');
+  const { classifyGatedImageForViewer } = await vi.importActual<typeof GatedImagesLogic>(
+    '~/server/services/blocks/block-gated-images.logic'
+  );
   return {
     hydrateBlockSubject: mockHydrate,
     getFollowedCollectionIds: mockFollowed,

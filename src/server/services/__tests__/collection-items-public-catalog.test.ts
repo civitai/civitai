@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageService from '~/server/services/image.service';
 
 /**
  * `getCollectionItemsByCollectionId({ imagesAsPublicCatalog: true })` must read its image
@@ -10,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockGetAllImages } = vi.hoisted(() => ({ mockGetAllImages: vi.fn() }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/services/image.service')>()),
+  ...(await importOriginal<typeof ImageService>()),
   getAllImages: mockGetAllImages,
 }));
 
