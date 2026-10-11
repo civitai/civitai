@@ -47,7 +47,7 @@ export function useNavBannersDismissed() {
         id
       )
     );
-  const restore = (id: string) => save(current().filter((x) => x !== id));
+  const restore = (...ids: string[]) => save(current().filter((x) => !ids.includes(x)));
 
   return { dismissed, dismiss, restore };
 }

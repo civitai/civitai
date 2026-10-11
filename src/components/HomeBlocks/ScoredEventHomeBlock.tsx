@@ -177,7 +177,8 @@ export function ScoredEventHomeBlock({
 
   return (
     <div
-      className={clsx(styles.party, 'grid rounded-[18px]', layout.grid)}
+      // Capped so the stretching column cannot leave a wide empty band on large screens.
+      className={clsx(styles.party, 'mx-auto grid max-w-[1400px] rounded-[18px]', layout.grid)}
       data-testid="event-home-block"
     >
       <HeroBulbs colors={colors} count={22} />
@@ -392,17 +393,14 @@ function Column({
       )}
     >
       {label && (
-        <Text
-          size="xs"
-          fw={700}
-          tt="uppercase"
-          lts={0.5}
-          c="gray.5"
-          mb={8}
-          className="flex justify-between"
-        >
+        <Text size="xs" fw={700} tt="uppercase" lts={0.5} c="gray.5" mb={8} className="flex gap-2">
           <span>{label}</span>
-          {aside}
+          {aside && (
+            <>
+              <span aria-hidden>·</span>
+              {aside}
+            </>
+          )}
         </Text>
       )}
       {children}
@@ -509,7 +507,7 @@ function HatTiles({
             </div>
           )}
           <div className="px-2 pb-1.5 pt-1">
-            <Text size="11px" fw={700} truncate>
+            <Text size="11px" fw={700} truncate title={hat.name}>
               {hat.name}
             </Text>
             <Text size="sm" fw={800} c={hat.placedOn ? color : 'gray.5'}>
