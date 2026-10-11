@@ -12,6 +12,8 @@ type MasonryCardProps = CardProps &
     uniform?: boolean;
     frameDecoration?: ContentDecorationCosmetic | null;
     eventDecoration?: EventDecorationData | null;
+    /** The card's width in px, for a card narrower than a feed card: the hat shrinks to match. */
+    cardWidth?: number;
     onClick?: () => void;
   };
 
@@ -25,6 +27,7 @@ export const MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
       uniform,
       frameDecoration,
       eventDecoration,
+      cardWidth,
       className,
       onClick,
       withBorder,
@@ -34,7 +37,11 @@ export const MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
     ref
   ) => {
     return (
-      <TwCosmeticWrapper cosmetic={frameDecoration?.data} eventDecoration={eventDecoration}>
+      <TwCosmeticWrapper
+        cosmetic={frameDecoration?.data}
+        eventDecoration={eventDecoration}
+        cardWidth={cardWidth}
+      >
         {/* <CosmeticLights frameDecoration={frameDecoration} /> */}
         <TwCard
           ref={ref as any}

@@ -6,6 +6,7 @@ import {
   BIRTHDAY_2026_EVENT,
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 // The placement of an event decoration is one hand-written UPDATE that also enforces the move
 // cooldown. The unit test pins its shape; this runs the statement the service actually builds
@@ -43,6 +44,9 @@ vi.mock('~/server/search-index', () => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 
 const { equipCosmeticToEntity } = await import('~/server/services/cosmetic.service');
 
@@ -110,6 +114,7 @@ function equip(claimKey: string, imageId: number, staleData: unknown = null) {
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(DURING);
+  testerFlag.reset({ public: true });
   await holder.db.exec(`DELETE FROM "UserCosmetic"`);
   db.image.findUnique.mockResolvedValue({ userId: OWNER });
   db.userCosmetic.findMany.mockResolvedValue([]);

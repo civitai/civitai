@@ -6,11 +6,15 @@ import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-
 import {
   DEFAULT_HAT_PLACEMENT,
   getHatLayout,
+  HAT_PLAIN_CARD_NUDGE,
+  hatShiftCss,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import type {
   EventDecorationData,
   EventDecorationFit,
 } from '~/shared/constants/event-decoration.constants';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import { WornHatPopover } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import styles from './EventDecorationOverlay.module.scss';
 
 /**
@@ -21,12 +25,31 @@ import styles from './EventDecorationOverlay.module.scss';
 export function EventDecorationOverlay({
   decoration,
   placement = DEFAULT_HAT_PLACEMENT,
+  framed = false,
+  cardWidth,
+  wornOn,
 }: {
   decoration: EventDecorationData;
   placement?: HatPlacement;
+  /** Inside a frame, whose padding already carries the hat out past the picture. */
+  framed?: boolean;
+  /** The card's width in px; on a card narrower than a feed card the hat shrinks to match. */
+  cardWidth?: number;
+  /** The content wearing it. A click then also opens its stats; without, it only bursts. */
+  wornOn?: EventDecorationEntity;
 }) {
   if (decoration.type === 'hat')
-    return <CardHat url={decoration.url} fit={decoration.fit} placement={placement} />;
+    return (
+      <CardHat
+        url={decoration.url}
+        fit={decoration.fit}
+        placement={placement}
+        framed={framed}
+        cardWidth={cardWidth}
+        event={decoration.event}
+        wornOn={wornOn}
+      />
+    );
   return null;
 }
 
@@ -37,35 +60,61 @@ function CardHat({
   url,
   fit,
   placement,
+  framed,
+  cardWidth,
+  event,
+  wornOn,
 }: {
   url: string;
   fit?: EventDecorationFit;
   placement: HatPlacement;
+  framed: boolean;
+  cardWidth?: number;
+  event: string;
+  wornOn?: EventDecorationEntity;
 }) {
-  const layout = getHatLayout(placement, fit);
   const [burst, setBurst] = useState(0);
+  const [opened, setOpened] = useState(false);
+  const layout =
+    placement === 'corner'
+      ? getHatLayout(placement, fit, Infinity, framed ? 0 : HAT_PLAIN_CARD_NUDGE, cardWidth)
+      : getHatLayout(placement, fit, undefined, 0, cardWidth);
+  // Moved into the card only as far as its container's room requires, which only CSS knows.
+  const fitInto = (at: number, reach: number) =>
+    placement === 'corner' ? `calc(${at}px + ${hatShiftCss(reach)})` : at;
+  const box = {
+    left: fitInto(layout.left, layout.reach.left),
+    top: fitInto(layout.top, layout.reach.top),
+    width: layout.width,
+    height: layout.height,
+    transform: `rotate(${layout.tilt}deg)`,
+    transformOrigin: layout.origin,
+    '--hat-grow': layout.grow,
+  } as CSSProperties;
+  const grows = placement === 'corner' && styles.grows;
 
-  return (
+  const hat = (
     <button
       type="button"
       aria-label="Party hat"
       data-event-decoration="hat"
-      className={clsx(styles.hat, placement === 'top' && styles.centred)}
-      style={{
-        left: placement === 'top' ? undefined : layout.left,
-        top: layout.top,
-        width: layout.width,
-        height: layout.height,
-        transform: `rotate(${layout.tilt}deg)`,
-        transformOrigin: layout.origin,
-        ...(placement === 'top' && { marginLeft: -layout.width / 2 }),
-      }}
+      className={clsx(styles.hat, grows)}
+      style={box}
       onClick={(e) => {
         // The card underneath is a link.
         e.preventDefault();
         e.stopPropagation();
         setBurst((x) => x + 1);
+        if (wornOn) setOpened((x) => !x);
       }}
+      onKeyDown={(e) => {
+        // The popover's own Escape handler sits on its dropdown, but a click leaves focus here.
+        if (e.key !== 'Escape' || !opened) return;
+        e.stopPropagation();
+        setOpened(false);
+      }}
+      // A Mantine Modal around the card closes on Escape from a window listener unless told not to.
+      data-mantine-stop-propagation={opened || undefined}
     >
       <EdgeMedia
         src={url}
@@ -77,26 +126,43 @@ function CardHat({
         className={styles.art}
         optimized
       />
+      {/* Takes the clicks in the hat's shape; clipping the button would cut its shadow and ring. */}
+      <span className={styles.hit} style={{ clipPath: layout.hitArea }} />
+    </button>
+  );
+
+  return (
+    <>
+      {wornOn ? (
+        <WornHatPopover event={event} wornOn={wornOn} opened={opened} onChange={setOpened}>
+          {hat}
+        </WornHatPopover>
+      ) : (
+        hat
+      )}
       {burst > 0 && (
-        <span key={burst} className={styles.confetti} aria-hidden>
-          {Array.from({ length: CONFETTI_PIECES }, (_, i) => {
-            const angle = (i / CONFETTI_PIECES) * Math.PI * 2;
-            const distance = 26 + (i % 3) * 8;
-            return (
-              <span
-                key={i}
-                style={
-                  {
-                    '--dx': `${Math.cos(angle) * distance}px`,
-                    '--dy': `${Math.sin(angle) * distance - 10}px`,
-                    background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-                  } as CSSProperties
-                }
-              />
-            );
-          })}
+        // Beside the button rather than in it, so the hat's clip does not cut the burst short.
+        <span key={burst} className={clsx(styles.burst, grows)} style={box} aria-hidden>
+          <span className={styles.confetti}>
+            {Array.from({ length: CONFETTI_PIECES }, (_, i) => {
+              const angle = (i / CONFETTI_PIECES) * Math.PI * 2;
+              const distance = 26 + (i % 3) * 8;
+              return (
+                <span
+                  key={i}
+                  style={
+                    {
+                      '--dx': `${Math.cos(angle) * distance}px`,
+                      '--dy': `${Math.sin(angle) * distance - 10}px`,
+                      background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+                    } as CSSProperties
+                  }
+                />
+              );
+            })}
+          </span>
         </span>
       )}
-    </button>
+    </>
   );
 }

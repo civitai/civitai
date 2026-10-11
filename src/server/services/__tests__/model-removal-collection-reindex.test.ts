@@ -68,6 +68,12 @@ vi.mock('~/server/search-index', () => ({
   imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
 }));
+vi.mock('~/server/search-index/collections.search-index', () => ({
+  collectionsSearchIndex: { queueUpdate: mockCollectionsQueueUpdate },
+}));
+vi.mock('~/server/search-index/models.search-index', () => ({
+  modelsSearchIndex: { queueUpdate: mockModelsQueueUpdate },
+}));
 vi.mock('~/server/services/auction.service', () => ({
   deleteBidsForModel: mockDeleteBidsForModel,
   getLastAuctionReset: vi.fn(),

@@ -60,6 +60,11 @@ export const listAppFeedbackForListingSchema = z.object({
 });
 export type ListAppFeedbackForListingInput = z.infer<typeof listAppFeedbackForListingSchema>;
 
+export const hasAnyAppFeedbackForListingSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+});
+export type HasAnyAppFeedbackForListingInput = z.infer<typeof hasAnyAppFeedbackForListingSchema>;
+
 export const setAppFeedbackOwnerStatusSchema = z.object({
   id: z.number().int().positive(),
   appListingId: z.string().min(1).max(64),

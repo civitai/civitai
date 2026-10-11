@@ -34,6 +34,8 @@ import { resolveAppFeedbackRequest } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
+import { BRIDGE_NACK_NO_TOKEN } from './bridgeLabels';
+import { handleEstimateBatch } from './estimateBatchGate';
 import { failureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
@@ -52,6 +54,7 @@ import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
 import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { createBlockEventRecorder } from './blockEventBeacon';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -1944,6 +1947,15 @@ export function IframeHost({
     return off;
   }, [onMessage]);
 
+  useEffect(() => {
+    const record = createBlockEventRecorder({
+      appBlockId: install.appBlockId,
+      blockInstanceId: install.blockInstanceId,
+    });
+    const off = onMessage<unknown>('TRACK_EVENT', record);
+    return off;
+  }, [onMessage, install.appBlockId, install.blockInstanceId]);
+
   // Anonymous conversion: the block (rendered for a logged-out viewer from the
   // scope-free BLOCK_INIT context) asks the host to start the civitai login
   // flow when the user clicks an action that needs auth/money (e.g. Generate).
@@ -2499,6 +2511,29 @@ export function IframeHost({
   const trpcUtils = trpc.useUtils();
   const storageSetMutation = trpc.apps.storage.set.useMutation();
   const storageDeleteMutation = trpc.apps.storage.delete.useMutation();
+
+  // ESTIMATE_WORKFLOW_BATCH → ESTIMATE_BATCH_RESULT. The batch twin of
+  // ESTIMATE_WORKFLOW above: a list of bodies in, one snapshot per body plus a
+  // run total out. Estimate only — nothing is submitted. Decision + reply live in
+  // `estimateBatchGate.ts`, shared with the page host so the two cannot answer
+  // the same message differently. There is no review preview on a model slot, so
+  // `refusal` is always null here.
+  useEffect(() => {
+    const off = onMessage<unknown>('ESTIMATE_WORKFLOW_BATCH', (raw) => {
+      void handleEstimateBatch({
+        raw,
+        refusal: null,
+        token,
+        estimateBatch: (input) => trpcUtils.client.blocks.estimateWorkflowBatch.mutate(input),
+        send,
+        onNoToken: (requestId) => {
+          reportNoToken('ESTIMATE_WORKFLOW_BATCH');
+          send('ESTIMATE_BATCH_RESULT', { requestId, error: BRIDGE_NACK_NO_TOKEN });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils, reportNoToken]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(

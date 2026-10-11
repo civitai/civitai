@@ -20,6 +20,8 @@ import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/erro
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
   GENERIC_CLIENT_ERROR_BY_STATUS,
@@ -494,22 +496,7 @@ export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
     }
   }
 
-  if (hasNonEmpty((req.query as Record<string, unknown> | undefined)?.token)) return true;
-
-  // Same fallback rationale as the raw `Cookie` header above: `req.query` is
-  // Next's parse, and `getServerAuthSession` reads `req.url` directly, so the two
-  // reads must both be covered or the predicate can silently narrow.
-  const queryString = req.url?.split('?')[1];
-  if (queryString && hasNonEmpty(new URLSearchParams(queryString).get('token'))) return true;
-
-  return false;
-}
-
-/** Truthy for a non-empty string, or an array containing one. */
-function hasNonEmpty(value: unknown): boolean {
-  if (typeof value === 'string') return value.length > 0;
-  if (Array.isArray(value)) return value.some((v) => typeof v === 'string' && v.length > 0);
-  return false;
+  return requestCarriesQueryToken(req);
 }
 
 export function PublicEndpoint(
@@ -683,6 +670,7 @@ export function ModEndpoint(
     const session = await getServerAuthSession({ req, res });
     if (!session || !session.user?.isModerator || !!session.user.bannedAt)
       return res.status(401).json({ error: 'Unauthorized' });
+    if (!requireFullScopeSession(req, res)) return;
 
     await handler(req, res, session.user);
   });

@@ -774,7 +774,7 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
       BANKABLE_CUTOVER,
       'MMMM D, YYYY',
       true
-    )}, you can Bank the Buzz you held on that date plus what you earn from your work afterwards: licensing fees, Early Access and paid access, tips from other users, donations, shop sales, bounties, App author fees, and sticker, remix and promotion fees. Generation compensation, including generator tips, is still paid to you but no longer counts toward what you can Bank.`,
+    )}, you can Bank the Buzz you held on that date plus what you earn from your work afterwards: licensing fees, Early Access and paid access, tips from other users, generator tips, donations, shop sales, bounties, App author fees, and sticker, remix and promotion fees. Generation compensation is still paid to you but no longer counts toward what you can Bank.`,
   },
   {
     q: 'Do I need an active membership to Bank Buzz?',

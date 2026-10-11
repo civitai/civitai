@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { BlocklistType } from '~/server/common/enums';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
@@ -9,7 +10,15 @@ import type * as BlockCheck from '~/server/services/block-check.service';
 import type * as ListingVisibility from '~/server/services/blocks/app-listing-visibility.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as FeedbackService from '~/server/services/feedback.service';
+import type * as NotificationService from '~/server/services/notification.service';
 import type { SessionUser } from '~/types/session';
+import type { PGlite } from '@electric-sql/pglite';
+// The moderator spoke's harness: the REAL `Feedback` migrations (the manual-apply app-block one
+// included) applied to an in-process Postgres. Relative, because `~` does not reach `apps/`.
+import {
+  freshAppFeedbackDb,
+  seedUser,
+} from '../../../../../apps/moderator/src/lib/server/__tests__/feedback-pglite.harness';
 
 /**
  * Private per-app feedback — the server half.
@@ -27,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   throwOnBlockedCommentContent: vi.fn(),
   readListingVisibility: vi.fn(),
   readListingVisibilityMany: vi.fn(),
+  createNotification: vi.fn(),
 }));
 
 vi.mock('~/server/services/feedback.service', async (importOriginal) => ({
@@ -46,6 +56,10 @@ vi.mock('~/server/services/blocks/app-listing-visibility.service', async (import
   readListingVisibility: mocks.readListingVisibility,
   readListingVisibilityMany: mocks.readListingVisibilityMany,
 }));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: mocks.createNotification,
+}));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Blocklist>()),
   throwOnBlockedCommentContent: mocks.throwOnBlockedCommentContent,
@@ -61,6 +75,7 @@ const {
   createAppFeedback,
   flagAppFeedbackAbusive,
   getAppFeedbackEligibility,
+  hasAnyAppFeedbackForListing,
   listAppFeedbackForListing,
   modCountFlaggedAppFeedback,
   modListAppFeedback,
@@ -222,6 +237,7 @@ beforeEach(() => {
   dbMock.dbWrite.feedback.count.mockResolvedValue(0);
   dbMock.dbWrite.feedback.create.mockResolvedValue({ id: 555 });
   dbMock.dbWrite.feedback.updateMany.mockResolvedValue({ count: 1 });
+  mocks.createNotification.mockResolvedValue(undefined);
 });
 
 const page = { slug: 'cool-app' };
@@ -706,10 +722,10 @@ describe('listAppFeedbackForListing', () => {
     const q = lastQuery();
     const where = norm(q.sql).match(/WHERE (.*?) ORDER BY/)![1];
     expect(where).toBe(
-      'f.area = ? AND f."appListingId" IN (?) AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL'
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?)`
     );
     expect(norm(q.sql)).toMatch(/ORDER BY f\."createdAt" DESC, f\.id DESC LIMIT \?$/);
-    expect(q.values.slice(0, 2)).toEqual(['app-block', PARENT]);
+    expect(q.values.slice(0, 1)).toEqual([PARENT]);
   });
 
   it('maps the owner-status filter, `new` meaning NULL', async () => {
@@ -722,15 +738,7 @@ describe('listAppFeedbackForListing', () => {
     expect(norm(lastQuery().sql)).toContain(
       'AND f."ownerStatus" = ? AND (f."createdAt", f.id) < (SELECT c."createdAt", c.id FROM "Feedback" c WHERE c.id = ? AND c.area = ? AND c."appListingId" = ?) ORDER BY'
     );
-    expect(lastQuery().values).toEqual([
-      'app-block',
-      PARENT,
-      'wont_fix',
-      77,
-      'app-block',
-      PARENT,
-      51,
-    ]);
+    expect(lastQuery().values).toEqual([PARENT, 'wont_fix', 77, 'app-block', PARENT, 51]);
   });
 
   it('pages with one look-ahead row', async () => {
@@ -838,6 +846,102 @@ describe('owner writes', () => {
   });
 });
 
+describe('reporter notification on an owner status change', () => {
+  const REPORTER_ROW = { userId: REPORTER, appListing: { name: 'Cool App', slug: 'cool-app' } };
+  const set = (ownerStatus: 'acknowledged' | 'resolved' | 'wont_fix') =>
+    setAppFeedbackOwnerStatus({
+      userId: EDITOR,
+      input: { id: 901, appListingId: SHADOW, ownerStatus, expectedOwnerStatus: null },
+    });
+
+  beforeEach(() => {
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(REPORTER_ROW);
+  });
+
+  it('resolved → one notification to the reporter, keyed per (feedback, status) — literal', async () => {
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.createNotification).toHaveBeenCalledWith({
+      userId: REPORTER,
+      category: 'Update',
+      type: 'app-feedback-status',
+      key: 'app-feedback-status:901:resolved',
+      details: {
+        feedbackId: 901,
+        ownerStatus: 'resolved',
+        appName: 'Cool App',
+        appSlug: 'cool-app',
+      },
+    });
+  });
+
+  it("wont_fix → its own key, so it is not swallowed by an earlier 'resolved'", async () => {
+    await set('wont_fix');
+    expect(mocks.createNotification.mock.calls[0][0].key).toBe('app-feedback-status:901:wont_fix');
+  });
+
+  it('🔴 acknowledged sends nothing — and does not even look the reporter up', async () => {
+    await expect(set('acknowledged')).resolves.toEqual({ id: 901, ownerStatus: 'acknowledged' });
+    expect(dbMock.dbWrite.feedback.findFirst).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('🔴 re-reads the reporter on the primary under the owner-visibility predicate and the new status', async () => {
+    // The seat listing (the editor wrote via the SHADOW id), not hidden, reporter not banned, and
+    // still at the status just written. A moderator who hid the row since — or another writer who
+    // moved its status on — makes this read come back empty.
+    await set('resolved');
+    expect(dbMock.dbWrite.feedback.findFirst).toHaveBeenCalledWith({
+      where: {
+        area: 'app-block',
+        appListingId: PARENT,
+        hiddenFromOwnerAt: null,
+        user: { bannedAt: null },
+        id: 901,
+        ownerStatus: 'resolved',
+      },
+      select: { userId: true, appListing: { select: { name: true, slug: true } } },
+    });
+    expect(dbMock.dbRead.feedback.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('🔴 a row hidden from the developer sends nothing', async () => {
+    // The visibility predicate is what hides it, so the re-read finds no row.
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(null);
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('a refused write (0 rows — e.g. already hidden) sends nothing', async () => {
+    dbMock.dbWrite.feedback.updateMany.mockResolvedValue({ count: 0 });
+    await expect(set('resolved')).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(dbMock.dbWrite.feedback.findFirst).not.toHaveBeenCalled();
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
+  it('a failure to notify never fails the committed status change, and is logged', async () => {
+    loggingMock.logToAxiom.mockClear();
+    dbMock.dbWrite.feedback.findFirst.mockRejectedValue(new Error('primary blip'));
+    await expect(set('resolved')).resolves.toEqual({ id: 901, ownerStatus: 'resolved' });
+    dbMock.dbWrite.feedback.findFirst.mockResolvedValue(REPORTER_ROW);
+    mocks.createNotification.mockRejectedValue(new Error('notifications down'));
+    await expect(set('wont_fix')).resolves.toEqual({ id: 901, ownerStatus: 'wont_fix' });
+    const logged = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { name?: string; details?: unknown; message?: string })
+      .filter((entry) => entry.name === 'app-feedback-status-notify-failed');
+    expect(logged).toEqual([
+      expect.objectContaining({
+        details: { feedbackId: 901, ownerStatus: 'resolved' },
+        message: 'primary blip',
+      }),
+      expect.objectContaining({
+        details: { feedbackId: 901, ownerStatus: 'wont_fix' },
+        message: 'notifications down',
+      }),
+    ]);
+  });
+});
+
 describe('countNewAppFeedbackForMyListings', () => {
   it('runs no query for a user with no listings', async () => {
     expect(await countNewAppFeedbackForMyListings(REPORTER)).toEqual({});
@@ -854,9 +958,9 @@ describe('countNewAppFeedbackForMyListings', () => {
     expect(await countNewAppFeedbackForMyListings(OWNER)).toEqual({ [PARENT]: 4, [OFFSITE]: 1 });
     const q = lastQuery();
     expect(norm(q.sql).match(/WHERE (.*) GROUP BY/)![1]).toBe(
-      'f.area = ? AND f."appListingId" IN (?,?) AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."ownerStatus" IS NULL'
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?,?) AND f."ownerStatus" IS NULL`
     );
-    expect(q.values).toEqual(['app-block', PARENT, OFFSITE]);
+    expect(q.values).toEqual([PARENT, OFFSITE]);
   });
 });
 
@@ -898,11 +1002,12 @@ describe('moderator procedures', () => {
     ]);
   });
 
-  it('modCountFlagged counts flagged rows no moderator has hidden', async () => {
+  it('modCountFlagged counts flagged rows no moderator has hidden, on the primary', async () => {
     await modCountFlaggedAppFeedback();
-    expect(dbMock.dbRead.feedback.count).toHaveBeenCalledWith({
+    expect(dbMock.dbWrite.feedback.count).toHaveBeenCalledWith({
       where: { area: 'app-block', ownerFlaggedAt: { not: null }, hiddenFromOwnerAt: null },
     });
+    expect(dbMock.dbRead.feedback.count).not.toHaveBeenCalled();
   });
 
   /** A transaction client distinct from `dbWrite`, so a write that escapes the tx shows. */
@@ -974,8 +1079,17 @@ describe('moderator procedures', () => {
     reporterId: REPORTER,
   };
 
+  /** modList reads the primary, so the list refetched after a hide/unhide shows the write. */
+  const lastModListQuery = () => dbMock.dbWrite.$queryRaw.mock.calls.at(-1)![0] as Prisma.Sql;
+
+  it('modList reads the primary, never a replica', async () => {
+    await modListAppFeedback({ limit: 2, hidden: 'all' });
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
   it('modList sanitises context, drops the raw column, and pages with a look-ahead', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
       { ...modRow, context: { surface: 'page', modelId: 31337, smuggled: 'x' } },
       { ...modRow, id: 702, context: { surface: 'javascript:alert(1)', modelId: 1.5 } },
       { ...modRow, id: 603, context: null },
@@ -986,7 +1100,7 @@ describe('moderator procedures', () => {
       { ...modRow, id: 702, surface: null, modelId: null },
     ]);
     expect(res.nextCursor).toBe(702);
-    const q = lastQuery();
+    const q = lastModListQuery();
     expect(norm(q.sql)).toMatch(
       /WHERE f\.area = \? AND \(f\."createdAt", f\.id\) < \(SELECT c\."createdAt", c\.id FROM "Feedback" c WHERE c\.id = \? AND c\.area = \?\) ORDER BY f\."createdAt" DESC, f\.id DESC LIMIT \?$/
     );
@@ -998,7 +1112,177 @@ describe('moderator procedures', () => {
   });
 
   it('modList: a full last page has no next cursor', async () => {
-    dbMock.dbRead.$queryRaw.mockResolvedValueOnce([{ ...modRow, context: {} }]);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ ...modRow, context: {} }]);
     expect((await modListAppFeedback({ limit: 1, hidden: 'all' })).nextCursor).toBeUndefined();
+  });
+});
+
+/**
+ * `hasAnyForListing` decides whether the editor offers the Feedback tab at all (operator decision,
+ * 2026-10-09). Its contract is PARITY with `listForListing`: same authorization, same visibility,
+ * so the tab appears exactly when the list it opens would return a row.
+ */
+describe('hasAnyAppFeedbackForListing — authz parity with listForListing', () => {
+  const callers = {
+    hasAny: (userId: number, appListingId: string) =>
+      hasAnyAppFeedbackForListing({ userId, input: { appListingId } }),
+    list: (userId: number, appListingId: string) =>
+      listAppFeedbackForListing({ userId, input: { appListingId, limit: 50 } }),
+  };
+
+  for (const [name, call] of Object.entries(callers)) {
+    it(`${name}: a stranger, a missing listing and a pending invitee get the SAME refusal, before any query`, async () => {
+      for (const [uid, id] of [
+        [REPORTER, PARENT],
+        [OWNER, 'apl_missing'],
+      ] as const) {
+        await expect(call(uid, id), `${name}/${uid}/${id}`).rejects.toMatchObject({
+          code: 'FORBIDDEN',
+          message: APP_FEEDBACK_NO_ACCESS_MESSAGE,
+        });
+      }
+      SEATS = [{ appListingId: PARENT, userId: EDITOR, status: 'pending' }];
+      await expect(call(EDITOR, PARENT)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: APP_FEEDBACK_NO_ACCESS_MESSAGE,
+      });
+      expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it(`${name}: admits the owner and an accepted editor`, async () => {
+      dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+      await call(OWNER, PARENT);
+      await call(EDITOR, PARENT);
+      expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+  }
+
+  it("the WHERE is the list's own visibility clause, keyed on the SEAT listing", async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    await hasAnyAppFeedbackForListing({ userId: OWNER, input: { appListingId: SHADOW } });
+    const hasAnyQ = lastQuery();
+    await listAppFeedbackForListing({ userId: OWNER, input: { appListingId: SHADOW, limit: 50 } });
+    const listQ = lastQuery();
+    const hasAnyWhere = norm(hasAnyQ.sql).match(/WHERE (.*?) \) AS "hasAny"/)![1];
+    expect(hasAnyWhere).toBe(norm(listQ.sql).match(/WHERE (.*?) ORDER BY/)![1]);
+    // The shared owner-visibility SQL (app-feedback-visibility.ts), the same text the digest reads:
+    // its values are code constants inlined in the text, so only the seat listing id is bound.
+    expect(hasAnyWhere).toBe(
+      `f.area = 'app-block' AND f."hiddenFromOwnerAt" IS NULL AND u."bannedAt" IS NULL AND f."appListingId" IN (?)`
+    );
+    expect(hasAnyQ.values).toEqual([PARENT]);
+    // Selects a constant, never a column, and stops at the first match.
+    expect(norm(hasAnyQ.sql)).toMatch(/^SELECT EXISTS \( SELECT 1 FROM "Feedback" f JOIN/);
+  });
+
+  it('answers false on an empty result rather than throwing', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([]);
+    expect(
+      await hasAnyAppFeedbackForListing({ userId: OWNER, input: { appListingId: PARENT } })
+    ).toEqual({ hasAny: false });
+  });
+});
+
+/**
+ * The same two functions against REAL rows: `freshAppFeedbackDb()` applies the actual `Feedback`
+ * migrations to PGlite, and `$queryRaw` runs each `Prisma.Sql` as the parameterised statement the
+ * driver would send. Access resolution stays on the db mock above (only the raw SQL is under test).
+ */
+describe('hasAnyAppFeedbackForListing — real SQL on PGlite, against listForListing', () => {
+  let pg: PGlite;
+  let reporter: number;
+  let banned: number;
+
+  beforeEach(async () => {
+    pg = await freshAppFeedbackDb();
+    // The harness's stand-in `User` has only id + username; the visibility predicate reads
+    // `bannedAt`, which the real table has.
+    await pg.exec('ALTER TABLE "User" ADD COLUMN "bannedAt" TIMESTAMP(3)');
+    // Prisma would send this exact text and these values; nothing is interpolated client-side.
+    dbMock.dbRead.$queryRaw.mockImplementation(
+      (async (q: Prisma.Sql) => (await pg.query(q.text, q.values)).rows) as never
+    );
+    reporter = await seedUser(pg, 'reporter');
+    banned = await seedUser(pg, 'banned');
+    await pg.query('UPDATE "User" SET "bannedAt" = $1 WHERE id = $2', [
+      '2026-09-01T00:00:00.000Z',
+      banned,
+    ]);
+    for (const id of [PARENT, OFFSITE]) {
+      await pg.query('INSERT INTO "app_listings" ("id") VALUES ($1)', [id]);
+    }
+  });
+
+  afterEach(async () => {
+    await pg.close();
+  });
+
+  async function seedAppFeedback(row: {
+    userId: number;
+    appListingId: string;
+    hiddenFromOwnerAt?: string;
+  }) {
+    await pg.query(
+      `INSERT INTO "Feedback" ("area", "userId", "message", "context", "appListingId", "hiddenFromOwnerAt")
+       VALUES ('app-block', $1, 'the grid jumps', '{}'::jsonb, $2, $3)`,
+      [row.userId, row.appListingId, row.hiddenFromOwnerAt ?? null]
+    );
+  }
+
+  /** Both answers for one listing, as the owner, through the requested id. */
+  async function read(appListingId: string) {
+    const { hasAny } = await hasAnyAppFeedbackForListing({
+      userId: OWNER,
+      input: { appListingId },
+    });
+    const { items } = await listAppFeedbackForListing({
+      userId: OWNER,
+      input: { appListingId, limit: 50 },
+    });
+    return { hasAny, listed: items.length };
+  }
+
+  it('no rows: false (and the list is empty)', async () => {
+    expect(await read(PARENT)).toEqual({ hasAny: false, listed: 0 });
+  });
+
+  it('one visible row: true (positive control — the probe can say yes)', async () => {
+    await seedAppFeedback({ userId: reporter, appListingId: PARENT });
+    expect(await read(PARENT)).toEqual({ hasAny: true, listed: 1 });
+  });
+
+  it('🔴 a row HIDDEN from the owner does not count', async () => {
+    await seedAppFeedback({
+      userId: reporter,
+      appListingId: PARENT,
+      hiddenFromOwnerAt: '2026-09-02T00:00:00.000Z',
+    });
+    expect(await read(PARENT)).toEqual({ hasAny: false, listed: 0 });
+  });
+
+  it('🔴 a row from a BANNED reporter does not count', async () => {
+    await seedAppFeedback({ userId: banned, appListingId: PARENT });
+    expect(await read(PARENT)).toEqual({ hasAny: false, listed: 0 });
+  });
+
+  it('🔴 a row on ANOTHER listing does not count', async () => {
+    await seedAppFeedback({ userId: reporter, appListingId: OFFSITE });
+    expect(await read(PARENT)).toEqual({ hasAny: false, listed: 0 });
+  });
+
+  it("a draft revision id reads its seat listing's feedback", async () => {
+    await seedAppFeedback({ userId: reporter, appListingId: PARENT });
+    expect(await read(SHADOW)).toEqual({ hasAny: true, listed: 1 });
+  });
+
+  it('one visible row among excluded ones is enough', async () => {
+    await seedAppFeedback({
+      userId: reporter,
+      appListingId: PARENT,
+      hiddenFromOwnerAt: '2026-09-02T00:00:00.000Z',
+    });
+    await seedAppFeedback({ userId: banned, appListingId: PARENT });
+    await seedAppFeedback({ userId: reporter, appListingId: PARENT });
+    expect(await read(PARENT)).toEqual({ hasAny: true, listed: 1 });
   });
 });

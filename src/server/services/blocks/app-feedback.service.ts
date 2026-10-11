@@ -2,6 +2,11 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  appFeedbackStatusKey,
+  isReporterNotifiedOwnerStatus,
+} from '~/server/notifications/app-feedback.notifications';
 import { APP_LISTING_OWNER_SQL } from '~/server/notifications/comment.notifications';
 import type {
   AppFeedbackOwnerStatusFilter,
@@ -9,6 +14,7 @@ import type {
   AppFeedbackTarget,
   CreateAppFeedbackInput,
   FlagAppFeedbackInput,
+  HasAnyAppFeedbackForListingInput,
   ListAppFeedbackForListingInput,
   ModListAppFeedbackInput,
   ModSetAppFeedbackHiddenInput,
@@ -23,6 +29,11 @@ import {
   resolveAccessibleListingIds,
   resolveListingAccess,
 } from '~/server/services/blocks/app-access.service';
+import { notifyAppFeedbackReporter } from '~/server/services/blocks/app-feedback-notify';
+import {
+  OWNER_NEW_FEEDBACK_SQL,
+  OWNER_VISIBLE_FEEDBACK_SQL,
+} from '~/server/services/blocks/app-feedback-visibility';
 import { isFeedbackAreaEnabled } from '~/server/services/feedback.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { throwRateLimitError } from '~/server/utils/errorHandling';
@@ -279,7 +290,8 @@ async function resolveInboxListingId(
 /**
  * Which rows an owner may see or act on: this listing's app feedback, minus rows a moderator hid
  * and rows from a reporter who has since been banned. The write paths use the same predicate, so
- * an owner can never change a row they cannot see.
+ * an owner can never change a row they cannot see. Prisma's form of `OWNER_VISIBLE_FEEDBACK_SQL`
+ * (the raw reads' and the digest's); a test holds the two to the same rules.
  */
 export function ownerVisibleWhere(seatListingId: string): Prisma.FeedbackWhereInput {
   return {
@@ -290,13 +302,14 @@ export function ownerVisibleWhere(seatListingId: string): Prisma.FeedbackWhereIn
   };
 }
 
-/** The SQL twin of {@link ownerVisibleWhere} for the raw reads; `f` = Feedback, `u` = reporter. */
+/**
+ * {@link ownerVisibleWhere} for the raw reads, from the shared {@link OWNER_VISIBLE_FEEDBACK_SQL}
+ * that the owner digest also reads; `f` = Feedback, `u` = reporter.
+ */
 function ownerVisibleSql(seatListingIds: string[]): Prisma.Sql[] {
   return [
-    Prisma.sql`f.area = ${APP_BLOCK_FEEDBACK_AREA}`,
+    Prisma.raw(OWNER_VISIBLE_FEEDBACK_SQL),
     Prisma.sql`f."appListingId" IN (${Prisma.join(seatListingIds)})`,
-    Prisma.sql`f."hiddenFromOwnerAt" IS NULL`,
-    Prisma.sql`u."bannedAt" IS NULL`,
   ];
 }
 
@@ -315,9 +328,10 @@ function cursorSql(cursor: number | undefined, seatListingId?: string): Prisma.S
   ];
 }
 
+/** The owner-status filter of the inbox and the moderator list; `new` is the digest's too. */
 function ownerStatusSql(filter: AppFeedbackOwnerStatusFilter | undefined): Prisma.Sql[] {
   if (!filter) return [];
-  if (filter === 'new') return [Prisma.sql`f."ownerStatus" IS NULL`];
+  if (filter === 'new') return [Prisma.raw(OWNER_NEW_FEEDBACK_SQL)];
   return [Prisma.sql`f."ownerStatus" = ${filter}`];
 }
 
@@ -411,6 +425,34 @@ export async function listAppFeedbackForListing({
   };
 }
 
+/**
+ * Does this listing have ANY row its owner may see? Decides whether the editor offers a Feedback
+ * tab at all (operator decision, 2026-10-09: no tab, and no empty inbox, until the first row).
+ *
+ * Same authorization as {@link listAppFeedbackForListing} (`resolveInboxListingId`, so a caller
+ * with no role gets the same FORBIDDEN and learns nothing about the listing) and the same
+ * visibility predicate ({@link ownerVisibleSql}), so the tab appears exactly when the list it
+ * opens would return a row. `EXISTS` stops at the first match.
+ */
+export async function hasAnyAppFeedbackForListing({
+  userId,
+  input,
+}: {
+  userId: number;
+  input: HasAnyAppFeedbackForListingInput;
+}): Promise<{ hasAny: boolean }> {
+  const seatListingId = await resolveInboxListingId(input.appListingId, userId);
+  const rows = await dbRead.$queryRaw<Array<{ hasAny: boolean }>>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1
+      FROM "Feedback" f
+      JOIN "User" u ON u.id = f."userId"
+      WHERE ${Prisma.join(ownerVisibleSql([seatListingId]), ' AND ')}
+    ) AS "hasAny"
+  `);
+  return { hasAny: rows[0]?.hasAny === true };
+}
+
 export async function setAppFeedbackOwnerStatus({
   userId,
   input,
@@ -429,7 +471,47 @@ export async function setAppFeedbackOwnerStatus({
     data: { ownerStatus: input.ownerStatus, ownerStatusAt: new Date(), ownerStatusById: userId },
   });
   if (count === 0) throw new TRPCError({ code: 'CONFLICT', message: APP_FEEDBACK_STALE_MESSAGE });
+  if (isReporterNotifiedOwnerStatus(input.ownerStatus))
+    await notifyReporterOfOwnerStatus(seatListingId, input.id, input.ownerStatus);
   return { id: input.id, ownerStatus: input.ownerStatus };
+}
+
+/**
+ * Tell the reporter the developer marked their feedback `resolved` / `wont_fix`. Best-effort, after
+ * the UPDATE commits: a failure is logged and never fails the status change. Re-read on the
+ * primary under `ownerVisibleWhere` plus the status just written, so a row hidden, or moved to
+ * another status, since the write sends nothing.
+ */
+async function notifyReporterOfOwnerStatus(
+  seatListingId: string,
+  feedbackId: number,
+  ownerStatus: FeedbackOwnerStatus
+) {
+  try {
+    const row = await dbWrite.feedback.findFirst({
+      where: { ...ownerVisibleWhere(seatListingId), id: feedbackId, ownerStatus },
+      select: { userId: true, appListing: { select: { name: true, slug: true } } },
+    });
+    if (!row) return;
+    await notifyAppFeedbackReporter({
+      userId: row.userId,
+      key: appFeedbackStatusKey(feedbackId, ownerStatus),
+      details: {
+        feedbackId,
+        ownerStatus,
+        appName: row.appListing?.name ?? null,
+        appSlug: row.appListing?.slug ?? null,
+      },
+    });
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({
+      type: 'warning',
+      name: 'app-feedback-status-notify-failed',
+      details: { feedbackId, ownerStatus },
+      message: error.message,
+    }).catch(() => undefined);
+  }
 }
 
 export async function flagAppFeedbackAbusive({
@@ -520,8 +602,10 @@ function readContext(context: unknown): {
 
 export async function modListAppFeedback(input: ModListAppFeedbackInput) {
   const conditions = [...modListConditions(input), ...cursorSql(input.cursor)];
+  // The PRIMARY, not a replica: the moderator tab refetches this right after a hide/unhide and must
+  // read its own write. Moderator-only, over a small table.
   // LEFT joins from the listing on, so a row whose listing was deleted still lists.
-  const rows = await dbRead.$queryRaw<ModFeedbackRow[]>(Prisma.sql`
+  const rows = await dbWrite.$queryRaw<ModFeedbackRow[]>(Prisma.sql`
     SELECT
       f.id,
       f.message,
@@ -576,9 +660,12 @@ export async function modListAppFeedback(input: ModListAppFeedbackInput) {
   };
 }
 
-/** The tab badge: reports a developer flagged that no moderator has hidden yet. */
+/**
+ * The tab badge: reports a developer flagged that no moderator has hidden yet. The primary, for the
+ * same read-your-writes reason as `modListAppFeedback` — a hide changes this count.
+ */
 export async function modCountFlaggedAppFeedback(): Promise<number> {
-  return dbRead.feedback.count({
+  return dbWrite.feedback.count({
     where: {
       area: APP_BLOCK_FEEDBACK_AREA,
       ownerFlaggedAt: { not: null },

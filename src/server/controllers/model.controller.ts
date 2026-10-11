@@ -631,6 +631,8 @@ export const getModelsInfiniteHandler = async ({
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
+        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+        eventDecorationViewer: ctx.user,
       });
       if (result.isPrivate) isPrivate = true;
       results.push(...result.items);
@@ -659,6 +661,8 @@ export const getModelsInfiniteHandler = async ({
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
+        // model.getAll never edge-caches a signed-in response (skipEdgeCache).
+        eventDecorationViewer: ctx.user,
       });
       if (fallback.isPrivate) isPrivate = true;
       if (isPrivate) ctx.cache.canCache = false;

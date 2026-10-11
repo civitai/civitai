@@ -45,15 +45,15 @@ export const MAX_THREAD_CHAIN_DEPTH = 100;
  * while notifications keep arriving, or the reverse.
  *
  * Climbs `Thread.commentId -> CommentV2.threadId` ONLY, the same edge `throwIfThreadChainLocked`
- * uses, and deliberately NOT `Thread.parentThreadId`. That column is written from client input on
- * the first reply, so trusting it would let a commenter steer their own reply into a chain the
+ * uses, and deliberately NOT `Thread.parentThreadId`. Older rows took that column from client
+ * input on the first reply, so trusting it would let a commenter steer their own reply into a chain the
  * recipient has muted and have the notification dropped — a suppression chosen by the person being
  * replied to about. Dropping the edge fails the other way: a mute is not recognised and the
  * notification arrives anyway. Measured on production 2026-08-27, that costs 3,110 of 254,368
  * orphaned threads (1.2% of orphans, 0.057% of all threads) whose only surviving upward link is the
  * `parentThreadId` their deleted parent comment left behind. An unrecognised mute is noise; a
  * suppressed notification is a control someone else operates on your behalf. (Justin's fleet lead,
- * 2026-08-31. Deriving `parentThreadId` server-side is filed separately.)
+ * 2026-08-31.)
  *
  * `UNION ALL`, and the DEPTH CAP is what bounds this — not the dedupe. An earlier version claimed
  * `UNION` made a corrupted cycle converge: measured on Postgres 16 with a deliberate 2-cycle, both

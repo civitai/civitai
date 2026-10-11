@@ -4,20 +4,25 @@ import dynamic from 'next/dynamic';
 import { useEquipContentDecoration } from '~/components/Cosmetics/cosmetics.util';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import type { Props as CardDecorationModalProps } from '~/components/Modals/CardDecorationModal';
-import { getLiveEventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
+import { usePlayableEventDecoration } from '~/components/Decorations/usePlayableEventDecoration';
+import type { EventDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 
-const CardDecorationModal = dynamic(() => import('~/components/Modals/CardDecorationModal'), {
+const EventHatPickerModal = dynamic(() => import('~/components/Decorations/EventHatPickerModal'), {
   ssr: false,
 });
-const openCardDecorationModal = createDialogTrigger(CardDecorationModal);
+const openEventHatPicker = createDialogTrigger(EventHatPickerModal);
 
 /**
  * Puts on or takes off this entity's event decoration (a party hat during the birthday event).
- * Renders nothing while no running event lets this kind of content wear one.
+ * Renders nothing unless an event lets this viewer put one on this kind of content now.
  */
-export function AddEventDecorationMenuItem(props: Omit<CardDecorationModalProps, 'kind'>) {
+export function AddEventDecorationMenuItem(
+  props: Omit<CardDecorationModalProps, 'currentCosmetic'> & {
+    currentCosmetic?: Pick<EventDecorationCosmetic, 'id'> | null;
+  }
+) {
   const { unequip } = useEquipContentDecoration();
-  const definition = getLiveEventDecorationDefinition(props.entityType);
+  const definition = usePlayableEventDecoration(props.entityType);
   if (!definition) return null;
 
   const currentCosmetic = props.currentCosmetic;
@@ -27,10 +32,10 @@ export function AddEventDecorationMenuItem(props: Omit<CardDecorationModalProps,
         equippedToId: props.entityId,
         equippedToType: props.entityType,
         cosmeticId: currentCosmetic.id,
-        claimKey: currentCosmetic.claimKey,
       }).catch(() => null); // error is handled in the custom hook
     } else {
-      openCardDecorationModal({ props: { ...props, kind: 'event' } });
+      const { entityType, entityId, image } = props;
+      openEventHatPicker({ props: { entityType, entityId, image, event: definition.event } });
     }
   };
 

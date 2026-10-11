@@ -1,140 +1,166 @@
-import { Button, Card, Group, Progress, Stack, Text, Title } from '@mantine/core';
-import { IconChevronRight } from '@tabler/icons-react';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { Button, Stack } from '@mantine/core';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { useMutateEvent, useTeamColor } from '~/components/Events/events.utils';
+import { EventRules } from '~/components/Events/ScoredEvent/EventRules';
+import {
+  MyHatsLivePoints,
+  TopHatsLivePoints,
+  useEventTeamsLivePoints,
+} from '~/components/Events/ScoredEvent/event-points-live';
+import { HatCatalogPreview } from '~/components/Events/ScoredEvent/HatCatalogPreview';
+import { MyEventHats } from '~/components/Events/ScoredEvent/MyEventHats';
+import { ScoredEventHero } from '~/components/Events/ScoredEvent/ScoredEventHero';
+import { TeamHatShelf } from '~/components/Events/ScoredEvent/TeamHatShelf';
+import { TeamStandings, TopHats } from '~/components/Events/ScoredEvent/TeamStandings';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { useInView } from '~/hooks/useInView';
+import type { RouterOutput } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import type { ReactNode } from 'react';
+import { Fragment } from 'react';
+import type { ScoredSection } from '~/components/Events/ScoredEvent/scored-event.utils';
+import { scoredSectionOrder } from '~/components/Events/ScoredEvent/scored-event.utils';
 
-// Team standings, the viewer's own points and cosmetics, and the top-scoring cosmetics. Scores are
-// recomputed hourly by the event engine; everything here reads that snapshot.
-export function ScoredEventSections({
-  event,
-  joined,
-  ended,
-}: {
-  event: string;
-  joined: boolean;
-  ended: boolean;
-}) {
+type EventData = RouterOutput['event']['getData'];
+
+// The rank-1 team, as the end-of-event job decides it: ranks are unique, so a tie on points still
+// has one winner, and the page must not announce a result the prize payout contradicts.
+function winnerOf(teams?: { team: string; rank: number }[]) {
+  return teams?.find((t) => t.rank === 1)?.team;
+}
+
+/**
+ * The page of a scored event: what it is, where the teams stand, the viewer's hats and what they
+ * earned, and the shop's event items. Everything event-specific comes from the event definition
+ * (`page`, `scoring`, its decoration), so another scored event gets this page by defining one.
+ */
+export function ScoredEventSections({ event, data }: { event: string; data: EventData }) {
   const currentUser = useCurrentUser();
   const teamColor = useTeamColor();
-  const { data: standings } = trpc.event.getStandings.useQuery({ event });
-  const { data: mine } = trpc.event.getMyCosmeticScores.useQuery(
+  const utils = trpc.useUtils();
+  const now = new Date();
+  const ended = data.endDate < now;
+
+  const { data: eventCosmetic } = trpc.event.getCosmetic.useQuery(
     { event },
-    { enabled: !!currentUser && joined }
+    { enabled: !!currentUser }
+  );
+  const joined = !!eventCosmetic?.obtained;
+  const team = joined
+    ? (eventCosmetic?.cosmetic?.data as { team?: string } | undefined)?.team
+    : undefined;
+
+  const { data: standings } = trpc.event.getStandings.useQuery({ event });
+  // Each section that shows points is live only while it is in view (event-points-live.tsx).
+  const heroView = useInView();
+  const standingsView = useInView();
+  const hatsView = useInView();
+  const topHatsView = useInView();
+  // Frozen once ended: the winner the page names must be the settled one the payout uses.
+  useEventTeamsLivePoints(
+    event,
+    standings?.teamsTopicId,
+    !ended && (heroView.inView || standingsView.inView)
+  );
+  // Scores take late data until finalAt, and the standings snapshot is hourly: the result is final
+  // only once a snapshot taken after finalAt is on the page.
+  const finalizing =
+    ended &&
+    !!data.finalAt &&
+    (now < data.finalAt || (!!standings && standings.updatedAt < data.finalAt));
+  const { data: hats = [], dataUpdatedAt: hatsFetchedAt } = trpc.event.getMyHats.useQuery(
+    { event },
+    { enabled: joined }
   );
   const { activateCosmetic, equipping } = useMutateEvent();
 
   const handleJoin = async () => {
     try {
       await activateCosmetic({ event });
+      await utils.event.getMyHats.invalidate({ event });
     } catch (e) {
       showErrorNotification({ title: 'Unable to join', error: e as Error });
     }
   };
 
-  const total = standings?.teams.reduce((sum, t) => sum + t.score, 0) ?? 0;
+  const color = (team && teamColor(team)) ?? 'var(--mantine-color-blue-5)';
+  const myStanding = team ? standings?.teams.find((t) => t.team === team) : undefined;
+  const points = hats.reduce((sum, h) => sum + h.points, 0);
+
+  const sections: Record<ScoredSection, ReactNode> = {
+    standings: standings && (
+      <div ref={standingsView.ref}>
+        <TeamStandings
+          standings={standings}
+          myTeam={team}
+          startDate={data.startDate}
+          preview={data.preview}
+        />
+        {data.joinable && (
+          <div className="mt-3 flex justify-end">
+            <Button component={NextLink} href={`/events/${event}/team`} variant="light" size="sm">
+              See who&apos;s on each team
+            </Button>
+          </div>
+        )}
+      </div>
+    ),
+    hats: joined && hats.length > 0 && (
+      <div ref={hatsView.ref}>
+        <MyHatsLivePoints
+          event={event}
+          topicIds={hats.map((h) => h.topicId)}
+          inView={hatsView.inView}
+        />
+        <MyEventHats
+          event={event}
+          hats={hats}
+          fetchedAt={hatsFetchedAt}
+          teamColor={color}
+          ended={ended}
+        />
+      </div>
+    ),
+    shop: team ? (
+      <TeamHatShelf event={event} team={team} />
+    ) : (
+      <HatCatalogPreview event={event} onJoin={handleJoin} joining={equipping} />
+    ),
+    topHats: standings && (
+      <div ref={topHatsView.ref}>
+        <TopHatsLivePoints
+          event={event}
+          topicIds={standings.topCosmetics.slice(0, 10).map((c) => c.topicId)}
+          // Frozen with the team totals once ended: the page names the settled result.
+          inView={topHatsView.inView && !ended}
+        />
+        <TopHats standings={standings} />
+      </div>
+    ),
+    rules: <EventRules data={data} />,
+  };
 
   return (
-    <Stack gap="xl">
-      {!joined && !ended && (
-        <LoginRedirect reason="perform-action">
-          <Button
-            radius="xl"
-            size="lg"
-            rightSection={!equipping ? <IconChevronRight /> : undefined}
-            onClick={handleJoin}
-            loading={equipping}
-            fullWidth
-          >
-            {equipping ? 'Assigning team...' : 'Join and get your hat'}
-          </Button>
-        </LoginRedirect>
-      )}
-
-      <Card radius="lg" p="lg" className="bg-gray-0 dark:bg-dark-6">
-        <Stack gap="md">
-          <Title order={3}>Team standings</Title>
-          {standings?.teams.map((t) => (
-            <Stack key={t.team} gap={4}>
-              <Group justify="space-between">
-                <Text fw={600} c={teamColor(t.team)}>
-                  #{t.rank} {t.team}
-                </Text>
-                <Text fw={600}>{numberWithCommas(t.score)}</Text>
-              </Group>
-              <Progress
-                value={total ? (t.score / total) * 100 : 0}
-                color={t.team.toLowerCase()}
-                radius="xl"
-              />
-            </Stack>
-          ))}
-          {standings && (
-            <Text size="xs" c="dimmed">
-              Updated hourly. Last update {standings.updatedAt.toLocaleTimeString()}.
-            </Text>
-          )}
-        </Stack>
-      </Card>
-
-      {mine && (
-        <Card radius="lg" p="lg" className="bg-gray-0 dark:bg-dark-6">
-          <Stack gap="md">
-            <Group justify="space-between">
-              <Title order={3}>Your hats</Title>
-              <Text fw={700} fz="xl">
-                {numberWithCommas(mine.points)} points
-              </Text>
-            </Group>
-            {mine.cosmetics.length === 0 ? (
-              <Text c="dimmed">Put a hat on your images, models or articles to start scoring.</Text>
-            ) : (
-              mine.cosmetics.map((c) => (
-                <Group key={`${c.cosmeticId}:${c.claimKey}`} justify="space-between">
-                  <Text c={teamColor(c.team)}>{c.name ?? 'Hat'}</Text>
-                  <Text size="sm">
-                    {numberWithCommas(c.points)} points ·{' '}
-                    {numberWithCommas(c.impressions + c.anonImpressions)} views ·{' '}
-                    {numberWithCommas(c.reactions)} reactions
-                  </Text>
-                </Group>
-              ))
-            )}
-          </Stack>
-        </Card>
-      )}
-
-      {!!standings?.topCosmetics.length && (
-        <Card radius="lg" p="lg" className="bg-gray-0 dark:bg-dark-6">
-          <Stack gap="md">
-            <Title order={3}>Top hats</Title>
-            {standings.topCosmetics.map((c, i) => (
-              <Group key={`${c.userId}:${c.cosmeticId}:${c.claimKey}`} justify="space-between">
-                <Group gap="sm">
-                  <Text fw={600} w={32}>
-                    {i + 1}
-                  </Text>
-                  <UserAvatar
-                    userId={c.userId}
-                    user={standings.users[c.userId]}
-                    indicatorProps={{ color: c.team.toLowerCase() }}
-                    avatarSize="sm"
-                    withUsername
-                    linkToProfile
-                  />
-                </Group>
-                <Text fw={600} c={teamColor(c.team)}>
-                  {numberWithCommas(c.points)}
-                </Text>
-              </Group>
-            ))}
-          </Stack>
-        </Card>
-      )}
+    <Stack gap={56}>
+      <div ref={heroView.ref}>
+        <ScoredEventHero
+          data={data}
+          team={team}
+          rank={myStanding?.rank}
+          teamPoints={myStanding?.score}
+          points={points}
+          ended={ended}
+          finalizing={finalizing}
+          winner={ended && !finalizing ? winnerOf(standings?.teams) : undefined}
+          teamHats={standings?.teamHats}
+          onJoin={handleJoin}
+          joining={equipping}
+        />
+      </div>
+      {scoredSectionOrder({ joined, ended }).map((key) => (
+        <Fragment key={key}>{sections[key]}</Fragment>
+      ))}
     </Stack>
   );
 }

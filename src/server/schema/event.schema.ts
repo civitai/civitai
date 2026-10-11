@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 
 export const eventSchema = z.object({
   event: z.string(),
@@ -23,3 +24,28 @@ export const eventCosmeticScoresSchema = eventSchema.extend({
     )
     .max(100),
 });
+
+// Live topics a client has on screen: hat topic ids (16 hex) or 'teams'. Anything else is dropped
+// by the service; the bounds here only keep an oversized request out.
+export type WatchEventPointsInput = z.infer<typeof watchEventPointsSchema>;
+export const watchEventPointsSchema = eventSchema.extend({
+  topics: z.array(z.string().max(32)).min(1).max(50),
+});
+
+export type WornEventHatInput = z.infer<typeof wornEventHatSchema>;
+export const wornEventHatSchema = eventSchema.extend({
+  entityType: z.enum(CosmeticEntity),
+  entityId: z.number().int().positive(),
+});
+
+export type TeamRosterInput = z.infer<typeof teamRosterSchema>;
+export const teamRosterSchema = eventSchema.extend({
+  team: z.string().max(32),
+  sort: z.enum(['hats', 'points', 'newest']).default('hats'),
+  // An offset into the sorted roster.
+  cursor: z.number().int().min(0).max(100_000).optional(),
+  limit: z.number().int().min(1).max(48).default(24),
+});
+
+export type RosterOptInInput = z.infer<typeof rosterOptInSchema>;
+export const rosterOptInSchema = eventSchema.extend({ optIn: z.boolean() });

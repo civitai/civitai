@@ -88,10 +88,11 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
     () => data.images.find((i) => isDefined(i.cosmetic))?.cosmetic,
     [data.images]
   );
-  const eventDecoration = useMemo(
-    () => data.images.find((i) => isDefined(i.eventDecoration))?.eventDecoration?.data,
+  const hatted = useMemo(
+    () => data.images.find((i) => isDefined(i.eventDecoration)),
     [data.images]
   );
+  const eventDecoration = hatted?.eventDecoration?.data;
   const cosmeticData = useMemo(() => {
     if (!cosmetic?.data && !pinned) return undefined;
     return {
@@ -115,6 +116,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
       className="w-full"
       cosmetic={cosmeticData}
       eventDecoration={eventDecoration}
+      eventDecorationOn={hatted && { entityType: 'Image', entityId: hatted.id }}
       style={cosmeticData ? { height } : undefined}
     >
       <>

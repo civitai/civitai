@@ -1,11 +1,17 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
 import { LinkedText } from '~/components/CreatorJourney/journey-links';
-import { accentVar, HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
+import {
+  accentVar,
+  HEXAGON,
+  HEXAGON_ASPECT,
+  TierBadge,
+} from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
 } from '~/components/SpotlightCard/SpotlightBorderCard';
+import { ACHIEVEMENT_TRACK_STYLES } from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -13,17 +19,18 @@ import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 type Activity = RouterOutput['creatorJourney']['getMine']['activity'];
 type Milestone = Activity['milestones'][number];
 type Measure = Milestone['measure'];
+type WinBreakdown = Activity['winBreakdown'];
 
-const tracks = [
-  { key: 'create', title: 'Create', accent: '#12b886', measures: ['models', 'articles'] },
+export const achievementTracks = [
+  { key: 'create', ...ACHIEVEMENT_TRACK_STYLES.create, measures: ['models', 'articles'] },
   {
     key: 'reach',
-    title: 'Reach',
-    accent: '#f59f00',
+    ...ACHIEVEMENT_TRACK_STYLES.reach,
     measures: ['downloads', 'followers', 'reactions'],
   },
-  { key: 'earn', title: 'Earn', accent: '#7950f2', measures: ['revenue'] },
-  { key: 'community', title: 'Community', accent: '#228be6', measures: ['votes'] },
+  { key: 'earn', ...ACHIEVEMENT_TRACK_STYLES.earn, measures: ['revenue'] },
+  { key: 'community', ...ACHIEVEMENT_TRACK_STYLES.community, measures: ['votes'] },
+  { key: 'compete', ...ACHIEVEMENT_TRACK_STYLES.compete, measures: ['wins'] },
 ] as const satisfies ReadonlyArray<{
   key: string;
   title: string;
@@ -43,8 +50,8 @@ const measureCopy: Record<
   },
   downloads: {
     label: 'Downloads',
-    current: (n) => `top model ${numberWithCommas(n)}`,
-    unit: 'downloads on one model',
+    current: (n) => `${numberWithCommas(n)} total`,
+    unit: 'downloads',
   },
   followers: { label: 'Followers', current: (n) => numberWithCommas(n), unit: 'followers' },
   reactions: { label: 'Reactions', current: (n) => numberWithCommas(n), unit: 'reactions' },
@@ -58,11 +65,13 @@ const measureCopy: Record<
     current: (n) => `${numberWithCommas(n)} cast`,
     unit: 'votes',
   },
+  wins: { label: 'Wins', current: (n) => numberWithCommas(n), unit: 'wins' },
 };
 
 /** Where a measure's work happens. Followers, downloads and reactions have no page of their own. */
 export function measureHref(measure: Measure, username?: string) {
   if (measure === 'votes') return '/crucibles';
+  if (measure === 'wins') return '/challenges';
   if (!username) return undefined;
   if (measure === 'models') return `/user/${username}/models`;
   if (measure === 'articles') return `/user/${username}/articles`;
@@ -71,11 +80,12 @@ export function measureHref(measure: Measure, username?: string) {
 }
 
 const accentOf = (measure: Measure) =>
-  tracks.find((track) => (track.measures as readonly Measure[]).includes(measure))?.accent ??
-  tracks[0].accent;
+  achievementTracks.find((track) => (track.measures as readonly Measure[]).includes(measure))
+    ?.accent ?? achievementTracks[0].accent;
 
 export function earnedLabel(achievedAt: Date | null) {
-  return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned';
+  // Undated means granted at launch to someone already past the bar: no real date was observed.
+  return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned before launch';
 }
 
 export function CreatorAchievements({
@@ -94,7 +104,7 @@ export function CreatorAchievements({
         Achievements
       </Title>
       {closestNext && <ClosestNext milestone={closestNext} />}
-      {tracks.map((track, index) => (
+      {achievementTracks.map((track, index) => (
         <Stack key={track.key} gap="xs" style={accentVar(track.accent)}>
           {index > 0 && <SpotlightDivider className="my-1" />}
           <Text size="xs" tt="uppercase" c="dimmed" fw={700} className="tracking-wider">
@@ -107,6 +117,7 @@ export function CreatorAchievements({
               milestones={activity.milestones.filter((m) => m.measure === measure)}
               next={nextOf(activity.milestones, measure)}
               href={measureHref(measure, username)}
+              winBreakdown={measure === 'wins' ? activity.winBreakdown : undefined}
             />
           ))}
         </Stack>
@@ -155,26 +166,29 @@ function MeasureRow({
   milestones,
   next,
   href,
+  winBreakdown,
 }: {
   measure: Measure;
   milestones: Milestone[];
   next: Milestone | undefined;
   href?: string;
+  winBreakdown?: WinBreakdown;
 }) {
   if (milestones.length === 0) return null;
   const copy = measureCopy[measure];
 
+  // The label sits above the tiles so a five-rung ladder fits on one row.
   return (
-    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[96px_1fr] sm:gap-3">
-      <div className="sm:pt-2">
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-x-2">
         <Text size="sm" fw={600}>
           {href ? <LinkedText text={copy.label} links={[{ href }]} /> : copy.label}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
-          {copy.current(milestones[0].current)}
+          {winBreakdown ? describeWins(winBreakdown) : copy.current(milestones[0].current)}
         </Text>
       </div>
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-5">
         {milestones.map((milestone) => (
           <MilestoneTile
             key={milestone.key}
@@ -185,6 +199,12 @@ function MeasureRow({
       </div>
     </div>
   );
+}
+
+const plural = (n: number, word: string) => `${numberWithCommas(n)} ${word}${n === 1 ? '' : 's'}`;
+
+export function describeWins({ challenges, crucibles }: WinBreakdown) {
+  return `${plural(challenges, 'challenge win')} · ${plural(crucibles, 'Crucible win')}`;
 }
 
 type TileState = 'earned' | 'progress' | 'locked';
@@ -204,7 +224,8 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
     >
       <MilestoneBadge milestone={milestone} state={state} size={48} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <Text size="sm" fw={700} truncate>
+        {/* Five tiles share a row, so a long name wraps rather than losing its end. */}
+        <Text size="sm" fw={700} lineClamp={2}>
           {milestone.name}
         </Text>
         <Text size="xs" c="dimmed" className="tabular-nums">
@@ -252,7 +273,8 @@ export function Hexagon({ label, state, size }: { label: string; state: TileStat
         state === 'locked' && 'bg-gray-3 text-gray-6 dark:bg-dark-4 dark:text-dark-2'
       )}
       style={{
-        width: size,
+        // A regular pointy-top hexagon is √3/2 as wide as it is tall, like the badge art.
+        width: Math.round(size * HEXAGON_ASPECT),
         height: size,
         clipPath: HEXAGON,
         fontSize: size * 0.32,

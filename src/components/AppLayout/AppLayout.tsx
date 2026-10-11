@@ -17,7 +17,7 @@ import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
-import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
+import { NavAnnouncementSlot } from '~/components/AppLayout/NavAnnouncementSlot/NavAnnouncementSlot';
 import { VerifyEmailBanner } from '~/components/User/VerifyEmailBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
@@ -146,14 +146,14 @@ export function MainContent({
         {subNav || pageNav ? (
           <SubNav>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
             {subNav}
             {pageNav}
           </SubNav>
         ) : (
           <>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
           </>
         )}
         {announcements && <Announcements className="mb-3" />}
@@ -167,14 +167,14 @@ export function MainContent({
         {subNav || pageNav ? (
           <SubNav>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
             {subNav}
             {pageNav}
           </SubNav>
         ) : (
           <>
             <VerifyEmailBanner />
-            <RewardsBonusBanner />
+            <NavAnnouncementSlot />
           </>
         )}
         {children}

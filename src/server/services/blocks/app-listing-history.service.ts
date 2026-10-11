@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbRead } from '~/server/db/client';
+import { latestBuildAttemptSignals } from '~/server/services/blocks/build-attempts.service';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import {
   canonicalOwnerWhereBranches,
   resolveListingAccess,
@@ -88,6 +90,12 @@ export type ListingHistoryEntry = {
    * `listApprovedRequests`) do not select it.
    */
   deployDetail: string | null;
+  /**
+   * The failed step and failure class of the version's latest build attempt, under the same
+   * approved + failed rule as `deployDetail`; `null` elsewhere, and when the attempt history
+   * is unavailable. Structured values the server derived, not build output.
+   */
+  buildSignals: BuildAttemptSignals | null;
   /**
    * May THIS caller withdraw this request?
    *
@@ -215,7 +223,12 @@ export function authorFailureDetail(row: {
   deployState: string | null;
   deployDetail: string | null;
 }): string | null {
-  return row.status === 'approved' && row.deployState === 'failed' ? row.deployDetail : null;
+  return isAuthorFailure(row) ? row.deployDetail : null;
+}
+
+/** An approved version whose build or deploy failed: the one row the failure fields describe. */
+function isAuthorFailure(row: { status: string; deployState: string | null }): boolean {
+  return row.status === 'approved' && row.deployState === 'failed';
 }
 
 /**
@@ -288,6 +301,16 @@ export async function listListingHistory(opts: {
       : Promise.resolve([]),
   ]);
 
+  // Best-effort and AFTER the main reads: an empty map (no attempts yet, or the attempts
+  // table not applied) leaves every entry on the text fallback.
+  const failedVersions = blockRequests
+    .filter((r: { status: string; deployState: string | null }) => isAuthorFailure(r))
+    .map((r: { id: string; deployUpdatedAt: Date | null }) => ({
+      id: r.id,
+      deployUpdatedAt: r.deployUpdatedAt,
+    }));
+  const signalsById = await latestBuildAttemptSignals(failedVersions);
+
   const entries: ListingHistoryEntry[] = [
     ...listingRequests.map(
       (r: {
@@ -311,6 +334,7 @@ export async function listListingHistory(opts: {
         changelog: r.changelog,
         deployState: null,
         deployDetail: null,
+        buildSignals: null,
         deployUpdatedAt: null,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })
@@ -340,6 +364,7 @@ export async function listListingHistory(opts: {
         changelog: null,
         deployState: r.deployState,
         deployDetail: authorFailureDetail(r),
+        buildSignals: isAuthorFailure(r) ? signalsById.get(r.id) ?? null : null,
         deployUpdatedAt: r.deployUpdatedAt,
         canWithdraw: canWithdrawRequest(r.status, r.submittedByUserId, opts.userId),
       })

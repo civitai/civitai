@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as SearchIndex from '~/server/search-index';
 import type * as HomeBlockCache from '~/server/services/home-block-cache.service';
+import type * as ModelService from '~/server/services/model.service';
+import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import { AUTO_FEATURE_NOTE_PREFIX } from '~/server/common/auto-feature';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDbRead = dbMock.dbRead;
@@ -19,6 +21,16 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 vi.mock('~/server/services/home-block-cache.service', async (importOriginal) => ({
   ...(await importOriginal<typeof HomeBlockCache>()),
   homeBlockCacheBust: vi.fn(),
+}));
+
+const { mockBustFeaturedModelsCache } = vi.hoisted(() => ({
+  mockBustFeaturedModelsCache: vi.fn(),
+}));
+// collection.service loads model.service at the call site (it would otherwise close the image.service
+// import cycle), so this pins that the lazy call still happens.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModelService>()),
+  bustFeaturedModelsCache: mockBustFeaturedModelsCache,
 }));
 
 const { saveItemInCollections } = await import('~/server/services/collection.service');
@@ -461,5 +473,45 @@ describe('saveItemInCollections with an existing featured membership', () => {
     await expect(saveFeatured()).rejects.toThrow(/already in a contest collection/i);
     expect(featuredProbeRan()).toBe(true);
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('saveItemInCollections into the featured-models collection', () => {
+  const saveTo = (collectionId: number) => {
+    vi.clearAllMocks();
+    mockDbRead.collection.findMany.mockResolvedValue([
+      collectionRow({ id: collectionId, name: 'Target' }),
+    ]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    mockDbRead.collectionItem.count.mockResolvedValue(0);
+    mockDbRead.user.findUnique.mockResolvedValue({ id: USER_ID, meta: {} });
+    mockDbRead.model.findMany.mockResolvedValue([{ id: MODEL_ID, userId: USER_ID }]);
+    mockDbRead.modelVersion.findMany.mockResolvedValue([]);
+    mockDbRead.$queryRaw.mockImplementation(async (strings: unknown) =>
+      isFeaturedContestProbe(strings)
+        ? []
+        : [{ id: collectionId, userId: USER_ID, write: 'Private', read: 'Public', type: 'Model' }]
+    );
+    mockDbWrite.$executeRaw.mockReturnValue('insert' as never);
+    mockDbWrite.$transaction.mockResolvedValue([]);
+    return saveItemInCollections({
+      input: {
+        modelId: MODEL_ID,
+        type: 'Model',
+        userId: USER_ID,
+        collections: [{ collectionId }],
+        removeFromCollectionIds: [],
+      },
+    } as never);
+  };
+
+  it('busts the featured-models cache', async () => {
+    await saveTo(FEATURED_MODEL_COLLECTION_ID);
+    expect(mockBustFeaturedModelsCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves it alone for any other collection', async () => {
+    await saveTo(OWN_COLLECTION_ID);
+    expect(mockBustFeaturedModelsCache).not.toHaveBeenCalled();
   });
 });

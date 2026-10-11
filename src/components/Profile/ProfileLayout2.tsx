@@ -29,18 +29,18 @@ import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.c
 import { isBlobUrl } from '~/utils/type-guards';
 import {
   milestoneOgEndpoint,
-  parseScoreTierSlug,
+  parseMilestoneShareToken,
 } from '~/shared/constants/creator-journey.constants';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { username } = router.query as { username: string };
-  const milestone = parseScoreTierSlug(router.query.milestone);
+  const milestone = parseMilestoneShareToken(router.query.milestone);
 
   const { isInitialLoading, data: user } = trpc.userProfile.get.useQuery({ username });
   const { data: milestoneShareable } = trpc.creatorJourney.isMilestoneShareable.useQuery(
-    { userId: user?.id ?? 0, slug: milestone ?? 'spark' },
+    { userId: user?.id ?? 0, milestone: milestone ?? 'spark' },
     { enabled: !!user && !!milestone }
   );
   const blockedByThem = !!(user && 'blockedByThem' in user && user.blockedByThem);
@@ -124,6 +124,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
       : user?.image && user.image.startsWith('http')
       ? user.image
       : undefined;
+  const ogEndpoint = user ? milestoneOgEndpoint(user.id, milestone, milestoneShareable) : undefined;
+  // A shared milestone link previews its card. Telegram takes the JSON-LD page image over og:image
+  // (the profile link previewed the avatar there), so the schema names the card as well.
+  const pageImage = ogEndpoint
+    ? `${env.NEXT_PUBLIC_BASE_URL as string}${ogEndpoint}`
+    : userMetaImage;
   const metaSchema =
     user && user.username
       ? {
@@ -133,12 +139,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           description: `Learn more about ${user.username} on Civitai.`,
           primaryImageOfPage: {
             '@type': 'ImageObject',
-            contentUrl: userMetaImage,
+            contentUrl: pageImage,
           },
           mainEntity: {
             '@type': 'Person',
             name: user.username,
-            image: userMetaImage,
+            image: pageImage,
             url: `${env.NEXT_PUBLIC_BASE_URL as string}/user/${username}`,
             interactionStatistic: stats
               ? [
@@ -170,7 +176,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           title={`${user.username} Creator Profile | Civitai`}
           description={metaDescription}
           images={user.profilePicture}
-          ogEndpoint={milestoneOgEndpoint(user.id, milestone, milestoneShareable)}
+          ogEndpoint={ogEndpoint}
           canonical={pathname}
           schema={metaSchema}
           deIndex={deIndex}

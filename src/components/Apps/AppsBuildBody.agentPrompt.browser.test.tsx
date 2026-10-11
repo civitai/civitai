@@ -107,6 +107,12 @@ const WORKBENCH_CTA = 'apps-build-new-app';
 const RESOURCES = 'apps-build-resources';
 const RESOURCES_TOGGLE = 'apps-build-resources-toggle';
 const SKELETON = 'apps-build-skeleton';
+const CREATE_FIRST = 'apps-build-create-first';
+// Literal on purpose, like the handles above: importing them from `ManualSetupCollapse`
+// would let a rename pass unnoticed.
+const MANUAL_TOGGLE = 'apps-manual-setup-toggle';
+const MANUAL_REGION = 'apps-manual-setup';
+const NPM_INSTALL = 'npm install -g @civitai/cli';
 
 /**
  * 🔴 RENDER BARRIER — required before every "renders nothing" assertion. `render()` commits
@@ -146,6 +152,10 @@ const headingsIn = (el: Element): string[] =>
 
 const writeText = () => vi.mocked(navigator.clipboard.writeText);
 
+/** True when `b` comes after `a` in document order. */
+const follows = (a: Element, b: Element) =>
+  Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
 beforeEach(() => {
   mocks.isClient = true;
   mocks.isFetched = false;
@@ -170,7 +180,7 @@ describe('the agent card renders in ALL THREE states', () => {
     expect(card.element().closest(`[data-testid="${PITCH}"]`)).not.toBeNull();
   });
 
-  test('B · first-app — the card sits beside the three CLI commands, not in a collapse', async () => {
+  test('🔴 B · first-app — the card leads, open, ahead of the manual commands', async () => {
     mocks.isFetched = true;
     mocks.navSummary = { ...EMPTY_SUMMARY };
     await renderBody();
@@ -179,9 +189,74 @@ describe('the agent card renders in ALL THREE states', () => {
     const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
     await expect.element(card).toBeVisible();
     expect(card.element().closest(`[data-testid="${FIRST_APP}"]`)).not.toBeNull();
-    // State B has no "Developer resources" collapse at all, so this also pins that the
-    // card did not get demoted here by a copy-paste from the workbench branch.
+    // The card itself is never behind a toggle in this state: not the workbench strip (which
+    // state B does not have) and not the manual-setup collapse.
     expect(seen(RESOURCES)).toBe(0);
+    expect(card.element().closest(`[data-testid="${MANUAL_REGION}"]`)).toBeNull();
+
+    // Collapsed children stay mounted, so the command text is in the DOM while closed.
+    const install = page.getByText(`$ ${NPM_INSTALL}`);
+    await expect.element(install).toBeInTheDocument();
+    expect(follows(card.element(), install.element()), 'the card must precede the commands').toBe(
+      true
+    );
+  });
+
+  test('🔴 B · the manual setup is CLOSED by default and the toggle opens it', async () => {
+    mocks.isFetched = true;
+    mocks.navSummary = { ...EMPTY_SUMMARY };
+    await renderBody();
+
+    const toggle = page.getByTestId(MANUAL_TOGGLE);
+    const region = page.getByTestId(MANUAL_REGION);
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
+    // On the collapse region, not the commands: see the workbench test below for why.
+    await expect.element(region).not.toBeVisible();
+
+    await toggle.click();
+    await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect.element(region).toBeVisible();
+    await expect.element(page.getByText(`$ ${NPM_INSTALL}`)).toBeVisible();
+  });
+
+  test.for([
+    { label: 'B · manual setup', toggle: MANUAL_TOGGLE, region: MANUAL_REGION, arrange: 'B' },
+    { label: 'C · developer resources', toggle: RESOURCES_TOGGLE, region: RESOURCES, arrange: 'C' },
+  ] as const)(
+    '$label: the toggle names the region it controls',
+    async ({ toggle, region, arrange }) => {
+      mocks.isFetched = true;
+      mocks.navSummary = arrange === 'B' ? { ...EMPTY_SUMMARY } : { ...SUMMARY_WITH_APPS };
+      await renderBody();
+
+      await expect.element(page.getByTestId(toggle)).toBeInTheDocument();
+      const controls = page.getByTestId(toggle).element().getAttribute('aria-controls');
+      expect(controls).toBeTruthy();
+      expect(page.getByTestId(region).element().id).toBe(controls);
+    }
+  );
+
+  test('B · "Create your first app" survives as a secondary action after the manual setup', async () => {
+    mocks.isFetched = true;
+    mocks.navSummary = { ...EMPTY_SUMMARY };
+    await renderBody();
+
+    const create = page.getByTestId(CREATE_FIRST);
+    await expect.element(create).toBeVisible();
+    expect(create.element().getAttribute('href')).toBe('/apps/submit');
+    // "Secondary" is the `default` variant, which Mantine reflects onto the root as
+    // `data-variant`. Without the prop the attribute is absent (null) and the button
+    // falls back to the theme's default (primary-action) variant.
+    expect(create.element().getAttribute('data-variant')).toBe('default');
+    expect(follows(page.getByTestId(MANUAL_TOGGLE).element(), create.element())).toBe(true);
+
+    mocks.tracked = [];
+    // The click would navigate the test page away; the funnel event is what is asserted.
+    create.element().addEventListener('click', (event) => event.preventDefault());
+    await create.click();
+    expect(mocks.tracked).toEqual([
+      { type: 'AppsBuild_Action', details: { action: 'create_entry', state: 'first-app' } },
+    ]);
   });
 
   test('🔴 C · workbench — the card is INSIDE the collapsed strip, not in the main flow', async () => {
@@ -205,7 +280,7 @@ describe('the agent card renders in ALL THREE states', () => {
     // `Collapse` renders a `height: 0; opacity: 0` WRAPPER; the browser matcher ignores the
     // wrapper's opacity and a clipped child keeps its own bounding box, so
     // `expect(card).not.toBeVisible()` FAILS against a correctly-collapsed panel — measured
-    // here, and already recorded in `GetStartedBody.browser.test.tsx` for the quickstart
+    // here, and already recorded in `GetStartedBody.browser.test.tsx` for the manual-setup
     // commands. The zero-height wrapper is the thing with an observable collapsed state.
     const region = page.getByTestId(RESOURCES);
     await expect.element(region).not.toBeVisible();
@@ -213,6 +288,28 @@ describe('the agent card renders in ALL THREE states', () => {
     await page.getByTestId(RESOURCES_TOGGLE).click();
     await expect.element(region).toBeVisible();
     await expect.element(page.getByTestId(AGENT_PROMPT_TESTID)).toBeVisible();
+  });
+
+  test('🔴 C · inside the strip the card comes BEFORE the commands, with no nested toggle', async () => {
+    mocks.isFetched = true;
+    mocks.navSummary = { ...SUMMARY_WITH_APPS };
+    await renderBody();
+
+    const region = page.getByTestId(RESOURCES);
+    await expect.element(region).toBeInTheDocument();
+    const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
+    const install = page.getByText(`$ ${NPM_INSTALL}`);
+    await expect.element(install).toBeInTheDocument();
+    expect(install.element().closest(`[data-testid="${RESOURCES}"]`)).not.toBeNull();
+    expect(follows(card.element(), install.element()), 'the card must precede the commands').toBe(
+      true
+    );
+    // One click reveals both routes: the strip does not nest the manual-setup collapse.
+    expect(seen(MANUAL_TOGGLE)).toBe(0);
+
+    await page.getByTestId(RESOURCES_TOGGLE).click();
+    await expect.element(region).toBeVisible();
+    await expect.element(install).toBeVisible();
   });
 
   test('🔴 C · the workbench card is STATIC — the collapsed strip stays cheap', async () => {
@@ -262,8 +359,7 @@ describe('the agent card renders in ALL THREE states', () => {
    * own tone, which was equally unpinned: `GetStartedBody` flipping to `inline` would have
    * been invisible too.
    *
-   * State B is deliberately not asserted here: it passes `tone="inline"` like C, so it could
-   * only ever restate C's claim.
+   * State B is asserted separately below: it leads with the card too.
    */
   test('POSITIVE CONTROL: the state-A pitch card IS the prominent tone — it has a heading', async () => {
     mocks.flags = { appBlocks: true, appBlocksAuthor: false };
@@ -274,8 +370,18 @@ describe('the agent card renders in ALL THREE states', () => {
     expect(headingsIn(card.element())).toEqual(['H3']);
   });
 
+  test('🔴 B · the first-app card is the PROMINENT tone', async () => {
+    mocks.isFetched = true;
+    mocks.navSummary = { ...EMPTY_SUMMARY };
+    await renderBody();
+
+    const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
+    await expect.element(card).toBeInTheDocument();
+    expect(headingsIn(card.element())).toEqual(['H3']);
+  });
+
   /**
-   * 🔴 POSITIVE CONTROL FOR THE ASSERTION ABOVE, AND THIS FILE HAD NONE. `data-motion` never
+   * 🔴 POSITIVE CONTROL FOR THE WORKBENCH'S `data-motion="off"`, AND THIS FILE HAD NONE. `data-motion` never
    * took the value `'on'` anywhere here, so the workbench's `'off'` was a reader nobody had
    * watched move — and `'off'` is also the component's first-render default, which is the
    * other half of why that assertion needed propping up (see `renderBody`). State B passes no
@@ -348,20 +454,54 @@ describe('the `agent_prompt_copy` funnel step', () => {
     ]);
   });
 
-  test('🔴 POSITIVE CONTROL: a CLI copy still posts `cli_copy`, not the agent step', async () => {
-    // Without this, every `agent_prompt_copy` assertion above could be satisfied by a
-    // component that posts that action for EVERY copy on the page — the two routes would be
-    // indistinguishable in the rollup, which is the exact thing the split exists to prevent.
-    mocks.isFetched = true;
-    mocks.navSummary = { ...EMPTY_SUMMARY };
-    await renderBody();
+  /**
+   * 🔴 ALSO THE POSITIVE CONTROL for every `agent_prompt_copy` assertion above. Without it they
+   * could be satisfied by a component that posts that action for EVERY copy on the page, and
+   * the two routes would be indistinguishable in the rollup.
+   */
+  test.for([
+    {
+      label: 'A · pitch',
+      state: 'pitch',
+      toggle: MANUAL_TOGGLE,
+      arrange: () => {
+        mocks.flags = { appBlocks: true, appBlocksAuthor: false };
+      },
+    },
+    {
+      label: 'B · first-app',
+      state: 'first-app',
+      toggle: MANUAL_TOGGLE,
+      arrange: () => {
+        mocks.isFetched = true;
+        mocks.navSummary = { ...EMPTY_SUMMARY };
+      },
+    },
+    {
+      label: 'C · workbench',
+      state: 'workbench',
+      toggle: RESOURCES_TOGGLE,
+      arrange: () => {
+        mocks.isFetched = true;
+        mocks.navSummary = { ...SUMMARY_WITH_APPS };
+      },
+    },
+  ])(
+    '🔴 $label: a CLI copy from the collapse posts ONE `cli_copy`, not the agent step',
+    async ({ state, toggle, arrange }) => {
+      arrange();
+      await renderBody();
 
-    await expect.element(page.getByTestId(FIRST_APP)).toBeInTheDocument();
-    mocks.tracked = [];
-    await page.getByRole('button', { name: 'Copy command: npm install -g @civitai/cli' }).click();
+      await page.getByTestId(toggle).click();
+      const copy = page.getByRole('button', { name: `Copy command: ${NPM_INSTALL}` });
+      await expect.element(copy).toBeVisible();
+      mocks.tracked = [];
+      await copy.click();
 
-    expect(mocks.tracked).toEqual([
-      { type: 'AppsBuild_Action', details: { action: 'cli_copy', state: 'first-app' } },
-    ]);
-  });
+      expect(mocks.tracked).toEqual([
+        { type: 'AppsBuild_Action', details: { action: 'cli_copy', state } },
+      ]);
+      expect(writeText()).toHaveBeenCalledWith(NPM_INSTALL);
+    }
+  );
 });

@@ -6,6 +6,7 @@ import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
   GetPaginatedCosmeticsInput,
+  UnequipCosmeticInput,
 } from '~/server/schema/cosmetic.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -103,7 +104,7 @@ export const useEquipContentDecoration = () => {
   const queryUtils = trpc.useUtils();
 
   const sharedMutationOptions = {
-    async onSuccess(_: { count: number }, payload: EquipCosmeticInput) {
+    async onSuccess(_: { count: number }, payload: UnequipCosmeticInput) {
       const { equippedToType } = payload;
 
       await queryUtils.user.getCosmetics.invalidate();
@@ -148,7 +149,7 @@ export const useEquipContentDecoration = () => {
     return equipMutation.mutateAsync(data);
   };
 
-  const handleUnequipContentDecoration = (data: EquipCosmeticInput) => {
+  const handleUnequipContentDecoration = (data: UnequipCosmeticInput) => {
     return unequipMutation.mutateAsync(data);
   };
 

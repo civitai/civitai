@@ -22,6 +22,7 @@ import {
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
+  CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_MAX_START_LEAD_DAYS,
   CRUCIBLE_NAME_MAX_LENGTH,
@@ -477,7 +478,7 @@ export const getJudgeStatsSchema = z.object({
 export type GetJudgingSuggestionsSchema = z.infer<typeof getJudgingSuggestionsSchema>;
 export const getJudgingSuggestionsSchema = baseQuerySchema.extend({
   excludeCrucibleId: z.number().optional(),
-  limit: z.number().int().min(1).max(12).default(4),
+  limit: z.number().int().min(1).max(CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES).default(4),
 });
 
 // Judge stats response type

@@ -50,6 +50,7 @@ import { useMutateEvent, useQueryEvent, useTeamColor } from '~/components/Events
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
 import { ScoredEventSections } from '~/components/Events/ScoredEvent/ScoredEventSections';
+import { donationEventSections } from '~/components/Events/event-page-sections';
 import { HeroCard } from '~/components/HeroCard/HeroCard';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
@@ -73,12 +74,19 @@ export const getServerSideProps = createServerSideProps({
 
     const { event } = result.data;
     if (ssg) {
-      await Promise.all([
-        ssg.event.getTeamScores.prefetch({ event }),
-        ssg.event.getTeamScoreHistory.prefetch({ event }),
+      // The event's type decides which reads its page makes; the cosmetic is read either way.
+      const [data] = await Promise.all([
+        ssg.event.getData.fetch({ event }).catch(() => undefined),
         ssg.event.getCosmetic.prefetch({ event }),
-        ssg.event.getData.prefetch({ event }),
       ]);
+      await Promise.all(
+        data?.scored
+          ? [ssg.event.getStandings.prefetch({ event })]
+          : [
+              ssg.event.getTeamScores.prefetch({ event }),
+              ssg.event.getTeamScoreHistory.prefetch({ event }),
+            ]
+      );
     }
 
     return { props: { event } };
@@ -159,11 +167,21 @@ export default function EventPageDetails({
 
   if (loading) return <PageLoader />;
   if (!eventData) return <NotFound />;
+  if (eventData.scored)
+    return (
+      <>
+        <Meta title={`${eventData.title} | Civitai`} canonical={`/events/${event}`} />
+        <Container size="lg">
+          <ScoredEventSections event={event} data={eventData} />
+        </Container>
+      </>
+    );
 
   const handleFocusDonateInput = () => inputRef.current?.focus();
 
-  const equipped = eventCosmetic?.obtained && eventCosmetic?.equipped;
+  const equipped = !!(eventCosmetic?.obtained && eventCosmetic?.equipped);
   const ended = eventData.endDate < new Date();
+  const sections = donationEventSections({ scored: eventData.scored, equipped, ended });
 
   return (
     <>
@@ -222,13 +240,10 @@ export default function EventPageDetails({
               {formatDate(eventData.endDate, 'MMMM D, YYYY')}
             </Text>
           </Stack>
-          {eventData.scored && (
-            <ScoredEventSections event={event} joined={!!eventCosmetic?.obtained} ended={ended} />
-          )}
-          {!eventData.scored && !equipped && !ended && (
+          {sections.welcome && (
             <WelcomeCard event={event} about={aboutText} learnMore={learnMore} />
           )}
-          {!eventData.scored && (
+          {sections.donation && (
             <>
               <CharitySection visible={!equipped && !ended} partners={partners} />
               <Grid gutter={48}>
@@ -515,7 +530,7 @@ export default function EventPageDetails({
               <EventContributors event={event} endDate={eventData.endDate} />
             </>
           )}
-          {(equipped || ended) && (
+          {sections.about && (
             <>
               <Divider w="80px" mx="auto" />
               <Stack gap={20}>

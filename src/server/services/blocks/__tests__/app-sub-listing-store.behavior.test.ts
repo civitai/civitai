@@ -161,6 +161,21 @@ const MIGRATION = path.resolve(
   __dirname,
   '../../../../../packages/civitai-db-schema/prisma/migrations/20261010120000_app_sub_listings/migration.sql'
 );
+const CATALOG_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../../packages/civitai-db-schema/prisma/migrations/20261015120000_app_sub_listing_catalog_sync/migration.sql'
+);
+const GAME = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2G';
+const TEMPLATE = 'https://games.example.com/?game={id}';
+
+/** An approved child of the off-site listing, with an enabled parent row (no template yet). */
+async function seedOffsiteChild() {
+  await holder.db.exec(`
+    INSERT INTO app_sub_listing_parents (parent_listing_id, enabled) VALUES ('${OFFSITE}', true);
+    INSERT INTO app_sub_listings (id, parent_listing_id, item_key, author_user_id, title, sub_path, status, approved_at) VALUES
+      ('${GAME}', '${OFFSITE}', 'neon-drift', ${AUTHOR}, 'Neon Drift', 'neon-drift', 'approved', now());
+  `);
+}
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -645,5 +660,101 @@ describe('store catalog with sub-listings, executed', () => {
       })
     ).resolves.toMatchObject({ status: 'approved' });
     expect(childIds(await page()).sort()).toEqual([CHILD_A, CHILD_B]);
+  });
+});
+
+describe('an off-site parent before the link_template migration', () => {
+  it('serves on-site children as before and no off-site child', async () => {
+    await seedOffsiteChild();
+    const items = await page();
+    expect(childIds(items).sort()).toEqual([CHILD_A, CHILD_B]);
+    expect(ids(items)).toContain(OFFSITE);
+    const viewer = { redCapable: false };
+    expect((await hydrateSubListingCards(dbMock.dbRead, [GAME], viewer)).size).toBe(0);
+  });
+});
+
+describe('an off-site parent with a link template', () => {
+  beforeAll(async () => {
+    const sql = readFileSync(CATALOG_MIGRATION, 'utf8');
+    await holder.db.exec(sql);
+    // Idempotent: a re-run is a no-op.
+    await holder.db.exec(sql);
+  });
+
+  const setTemplate = (id: string, template: string | null) =>
+    holder.db.query(
+      'UPDATE app_sub_listing_parents SET link_template = $1 WHERE parent_listing_id = $2',
+      [template, id]
+    );
+
+  it('shows its approved child, linked out through the template', async () => {
+    await seedOffsiteChild();
+    await setTemplate(OFFSITE, TEMPLATE);
+    const items = await page();
+    expect(childIds(items).sort()).toEqual([CHILD_A, CHILD_B, GAME]);
+    expect(items.find((i) => i.id === GAME)).toMatchObject({
+      cardType: 'sub-listing',
+      name: 'Neon Drift',
+      kind: 'offsite',
+      runHref: 'https://games.example.com/?game=neon-drift',
+      external: true,
+      parent: { id: OFFSITE, slug: 'zeta-offsite' },
+    });
+    // On-site children keep their run-route link and are not marked external.
+    const onsite = items.find((i) => i.id === CHILD_A) as Record<string, unknown>;
+    expect(onsite.runHref).toBe(`/apps/run/custom-generators/g/A?sl=${CHILD_A}`);
+    expect(onsite).not.toHaveProperty('external');
+  });
+
+  it('hides the child while the parent has no template', async () => {
+    await seedOffsiteChild();
+    expect(childIds(await page()).sort()).toEqual([CHILD_A, CHILD_B]);
+  });
+
+  it('a child of a parent without a template takes no slot on the page', async () => {
+    await seedOffsiteChild();
+    const all = ids(await page());
+    expect(all).not.toContain(GAME);
+    const res = await listAvailableListings(
+      { kind: 'all', sort: 'name', limit: all.length - 1 },
+      BASE_OPTS
+    );
+    expect(ids(res.items)).toEqual(all.slice(0, -1));
+    // Positive control: with a template the same page does give the child a slot.
+    await setTemplate(OFFSITE, TEMPLATE);
+    const withTemplate = await listAvailableListings(
+      { kind: 'all', sort: 'name', limit: all.length - 1 },
+      BASE_OPTS
+    );
+    expect(ids(withTemplate.items)).toContain(GAME);
+  });
+
+  it('hides the child when the parent switch is off, even with a template', async () => {
+    await seedOffsiteChild();
+    await setTemplate(OFFSITE, TEMPLATE);
+    await holder.db.exec(
+      `UPDATE app_sub_listing_parents SET enabled = false WHERE parent_listing_id = '${OFFSITE}'`
+    );
+    expect(childIds(await page()).sort()).toEqual([CHILD_A, CHILD_B]);
+  });
+
+  it('still hides an on-site child whose block is not approved, even with a template set', async () => {
+    await seedOffsiteChild();
+    await setTemplate(OFFSITE, TEMPLATE);
+    await setTemplate(PARENT, TEMPLATE);
+    await holder.db.exec(`UPDATE app_blocks SET status = 'suspended' WHERE id = 'ab_PARENT'`);
+    // Positive control in the same page: the off-site child is served.
+    expect(childIds(await page())).toEqual([GAME]);
+  });
+
+  it.each([
+    ['http, not https', 'http://games.example.com/?game={id}'],
+    ['no placeholder', 'https://games.example.com/'],
+    ['two placeholders', 'https://games.example.com/{id}?g={id}'],
+    ['a placeholder in the host', 'https://{id}.example.com/'],
+  ])('the column refuses a template with %s', async (_name, template) => {
+    await seedOffsiteChild();
+    await expect(setTemplate(OFFSITE, template)).rejects.toThrow(/link_template_check/);
   });
 });

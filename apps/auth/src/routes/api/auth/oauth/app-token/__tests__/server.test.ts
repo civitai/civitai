@@ -142,3 +142,17 @@ describe('oauth/app-token +server', () => {
     );
   });
 });
+
+describe('oauth/app-token +server — client_credentials-only scopes', () => {
+  it('400 invalid_scope for AppStoreCatalogWrite, even with a ceiling and consent carrying it', async () => {
+    const scope = TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+    h.rows = {
+      OauthClient: { allowedScopes: scope, accessMode: 'open' },
+      OauthConsent: { scope },
+    };
+    const res = await call({ ...body, scope });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+  });
+});

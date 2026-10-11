@@ -1,4 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
+import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
@@ -56,6 +57,7 @@ import {
 // invariant that module documents holds on all write paths — not just the
 // build-callback's.
 import { sanitizeBuildFailureReason } from './build-failure-reason';
+import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -391,21 +393,17 @@ export function detectImageType(
   buf: Buffer,
   claimedExt: ScreenshotExtension
 ): ScreenshotExtension | null {
-  const isPng =
-    buf.length >= 8 &&
-    buf[0] === 0x89 &&
-    buf[1] === 0x50 &&
-    buf[2] === 0x4e &&
-    buf[3] === 0x47 &&
-    buf[4] === 0x0d &&
-    buf[5] === 0x0a &&
-    buf[6] === 0x1a &&
-    buf[7] === 0x0a;
-  const isJpeg = buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-  const isWebp =
-    buf.length >= 12 &&
-    buf.toString('ascii', 0, 4) === 'RIFF' &&
-    buf.toString('ascii', 8, 12) === 'WEBP';
+  // Shared sniffer ({@link sniffImageFormat}) under this caller's rules: full 8-byte PNG
+  // signature, no GIF, no minimum length beyond each signature's own. The WebP markers ignore the
+  // high bit only because this function's original `toString('ascii')` comparison did.
+  const format = sniffImageFormat(buf, {
+    formats: ['png', 'jpeg', 'webp'],
+    pngSignature: 'full',
+    webpFourCcIgnoresHighBit: true,
+  });
+  const isPng = format === 'png';
+  const isJpeg = format === 'jpeg';
+  const isWebp = format === 'webp';
 
   // The bytes must match the claimed extension's family. `.jpg`/`.jpeg` are the
   // same format → both require the JPEG signature and normalise to `jpg`.
@@ -2231,10 +2229,18 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
   const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
+  const buildSignals = await failedBuildSignals(
+    items
+      .filter((r: (typeof rows)[number]) => r.deployState === 'failed')
+      .map((r: (typeof rows)[number]) => ({ id: r.id, deployUpdatedAt: r.deployUpdatedAt }))
+  );
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
       ...listingFacts(r.id),
+      // The latest build attempt's failed step + class, on failed rows: structured values
+      // the server derived, the moderator-safe counterpart of the excerpt not selected above.
+      buildSignals: buildSignals.get(r.id) ?? null,
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
@@ -3383,6 +3389,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     /\/$/,
     ''
   )}/api/internal/blocks/build-callback`;
+  let buildRun: { name: string } | undefined;
   try {
     await setCommitStatus({
       slug: request.slug,
@@ -3391,7 +3398,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       context: 'civitai/build',
       description: 'Build queued',
     }).catch(() => undefined);
-    await triggerBuild({
+    buildRun = await triggerBuild({
       slug: request.slug,
       sha: forgejoCommitSha,
       appBlockId,
@@ -3415,6 +3422,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // /apps/my-submissions. triggerBuild succeeded above (the catch re-throws),
   // so the build is now queued: mark the request 'building'. build-callback
   // advances it deploying → live, or flips it to failed.
+  await recordRunTriggered('build', request.id, request.slug, forgejoCommitSha, buildRun?.name);
   await markRequestDeployState(request.slug, forgejoCommitSha, 'building');
 
   // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up while
@@ -3493,6 +3501,49 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   };
 }
 
+/**
+ * The latest build attempt's signals for each of these request ids. Never throws: the
+ * import is inside the `try`, and the read itself already degrades to an empty map.
+ */
+async function failedBuildSignals(
+  requests: Array<{ id: string; deployUpdatedAt: Date | null }>
+): Promise<Map<string, BuildAttemptSignals>> {
+  try {
+    const { latestBuildAttemptSignals } = await import('./build-attempts.service');
+    return await latestBuildAttemptSignals(requests);
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Record the run a trigger just started, for the build callbacks' stale-run guard.
+ *
+ * Best-effort, like every write to the attempts table, AND the import is inside the `try`:
+ * by the time this runs the build is already triggered, so nothing here may throw out of
+ * the caller. A missing table or a failed import only leaves the
+ * guard inactive for this run.
+ */
+async function recordRunTriggered(
+  mode: 'build' | 'review',
+  publishRequestId: string,
+  slug: string,
+  sha: string,
+  runName: string | undefined
+): Promise<void> {
+  try {
+    const { recordBuildTriggered } = await import('./build-attempts.service');
+    await recordBuildTriggered({ mode, publishRequestId, slug, sha, runName });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[recordRunTriggered] skipped (id=${publishRequestId}): ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
 /** Build/deploy lifecycle states surfaced on /apps/my-submissions (Phase 2). */
 export type DeployState = 'building' | 'deploying' | 'live' | 'failed';
 
@@ -3501,10 +3552,10 @@ export type DeployState = 'building' | 'deploying' | 'live' | 'failed';
  * request for `(slug, sha)`. Keyed on `forgejo_commit_sha` (unique per approved
  * version; parked unreviewed requests carry an empty sha so they never match)
  * + `status='approved'`. Best-effort — a status-write failure must never break
- * the approve flow or the build-callback, so errors are swallowed. The build is
- * triggered only by approveRequest, so this is the single source of these
- * transitions: approveRequest sets 'building'; build-callback sets
- * 'deploying'/'live'/'failed'.
+ * the approve flow or the build-callback, so errors are swallowed. Writers:
+ * approveRequest and retriggerBuild set 'building'; build-callback sets
+ * 'deploying'/'live'/'failed' (but skips a failure from a superseded run);
+ * retriggerBuild also sets 'failed' when its trigger cannot be sent.
  */
 export async function markRequestDeployState(
   slug: string,
@@ -3808,8 +3859,9 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
     description: 'Build re-queued by a moderator',
   }).catch(() => undefined);
 
+  let buildRun: { name: string };
   try {
-    await triggerBuild({ slug: request.slug, sha, appBlockId, callbackUrl });
+    buildRun = await triggerBuild({ slug: request.slug, sha, appBlockId, callbackUrl });
   } catch (err) {
     // Free the single-flight slot so the moderator can retry immediately rather
     // than waiting out the TTL after a visible failure.
@@ -3872,6 +3924,12 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
       'The build re-trigger could not be sent to the build service. The request is now marked failed; try again once the build service is reachable.'
     );
   }
+
+  // The run this retrigger started is now the version's CURRENT run, so a late failure
+  // callback from the run before it is recognised as stale by the build callback.
+  // Recorded BEFORE the 'building' write below, so there is no instant at which the row
+  // reads 'building' while the old run still looks current.
+  await recordRunTriggered('build', request.id, request.slug, sha, buildRun.name);
 
   // Build is queued — advance the lifecycle exactly as approveRequest does, with
   // an attributable detail so the mod queue shows who re-fired it and when.
@@ -4356,6 +4414,7 @@ export async function previewRequest(params: PreviewRequestParams): Promise<Prev
     });
     throw new Error(`could not start review build: ${(err as Error).message}`);
   }
+  await recordRunTriggered('review', request.id, request.slug, sha, run.name);
 
   return {
     publishRequestId: request.id,

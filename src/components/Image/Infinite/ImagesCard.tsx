@@ -101,6 +101,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
     <TwCosmeticWrapper
       cosmetic={cosmetic}
       eventDecoration={image.eventDecoration?.data}
+      eventDecorationOn={{ entityType: 'Image', entityId: image.id }}
       style={cosmetic ? { height } : undefined}
     >
       <ElementInView

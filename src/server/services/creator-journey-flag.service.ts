@@ -1,7 +1,10 @@
 import { chunk } from 'lodash-es';
 import type { AugmentedPool } from '~/server/db/db-helpers';
-import { ensureFliptInitialized, getFliptClientSync, isFlipt } from '~/server/flipt/client';
-import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
+import {
+  isFliptFlagReadable,
+  isFliptOnForTesters,
+  isFliptPublic,
+} from '~/server/flipt/tester-segment';
 import {
   milestoneGrantableUserSql,
   owedScoreTierSql,
@@ -22,34 +25,17 @@ export function isCreatorJourneyOnFor(user: { id: number; isModerator: boolean }
   return isFliptOnForTesters(fliptKey(), user);
 }
 
-/**
- * Whether a "no" from the flag is a real answer. Every evaluation fails closed to false until the
- * Flipt client has initialised (after which it keeps evaluating from its last config even if Flipt
- * goes away), and `isFlipt` also turns an evaluation error, such as the flag missing from that
- * config, into false. So the client must exist and the flag must evaluate without throwing.
- */
-export async function isCreatorJourneyFlagReadable() {
-  await ensureFliptInitialized();
-  const client = getFliptClientSync();
-  if (!client) return false;
-  try {
-    client.evaluateBoolean({
-      flagKey: fliptKey(),
-      entityId: '0',
-      context: { userId: '0', isModerator: 'false' },
-    });
-    return true;
-  } catch {
-    return false;
-  }
+/** Whether a "no" from the flag is a real answer; see `isFliptFlagReadable`. */
+export function isCreatorJourneyFlagReadable() {
+  return isFliptFlagReadable(fliptKey());
 }
 
 /**
  * True only once the flag answers true for someone in no segment, i.e. it has gone public. A
  * percentage rollout could put entity '0' in its bucket early, so launch by setting `enabled`.
  */
-export async function isCreatorJourneyPublic() {
-  return isFlipt(fliptKey(), '0', { userId: '0', isModerator: 'false' });
+export function isCreatorJourneyPublic() {
+  return isFliptPublic(fliptKey());
 }
 
 /**

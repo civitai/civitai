@@ -321,6 +321,13 @@ const GATE_LEDGER: Record<string, string> = {
     '(b) the isSelfPurchase / isSelfSpend business-logic branch for revenue share. No ' +
     'caller is being authorised. 🔴 The stamp is deliberately never rewritten by an ' +
     'ownership transfer — see the money-invariance decision.',
+  'src/server/services/blocks/known-app-blocks.service.ts':
+    'NOT a gate — listed so the population stays closed. getApprovedAppBlockAnalytics ' +
+    'reads `app.userId` so the custom-events ingest can LABEL a row `isOwner` when the ' +
+    'viewer is the app owner; nobody is authorised or refused by it. Owner only, and ' +
+    'deliberately NOT widened to ACCEPTED collaborators here: whether a collaborator’s ' +
+    'own test events should also be excludable is a decision for the read path that ' +
+    'consumes the flag, and widening the label later only changes new rows.',
   'src/server/services/blocks/publish-request.service.ts':
     'NOT a caller-identity gate: both sites STAMP the owner (the approve path minting ' +
     'the listing via mapAppBlockToListing, and the backfill attributing a synthetic ' +

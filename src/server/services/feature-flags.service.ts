@@ -415,6 +415,11 @@ const featureFlags = createFeatureFlags({
   // The journey page, its entry points and the tier pointer in score refusals, plus tier badge grants
   // and their notifications (see creator-journey-flag.service.ts for the off-session evaluation).
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
+  // Civitai's 4th Birthday (Team Hats). Only the Flipt key is used, by the event engine's access
+  // rule (src/server/events/event-access.ts), which adds the preview and launch windows. Do not gate
+  // UI on `features.birthday2026`: it knows nothing of the dates, the preview or arming. Ask
+  // `event.getAccess` (usePlayableEventDecoration) instead.
+  birthday2026: { availability: ['mod'], fliptKey: 'birthday-2026' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -755,6 +760,9 @@ const featureFlags = createFeatureFlags({
   // cohort is opened. isFliptSync answers false for an unknown flag or an
   // unreachable Flipt, so an absent flag is deny-by-default.
   resourceIntentJev: { availability: [], fliptKey: 'resource-intent-jev' },
+  // Serves the co-occurrence POOL_MERGE list instead of HYBRID_10. Read only behind
+  // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
+  resourceIntentPoolMerge: { availability: [], fliptKey: 'resource-intent-pool-merge' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

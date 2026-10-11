@@ -8,6 +8,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // PageBlockHostWorkflow's `mocks.balance`). The other bridges stay inert
 // throwaway fns — only GET_BUZZ_BALANCE is behaviorally exercised here.
 const mocks = vi.hoisted(() => ({
+  estimate: vi.fn(),
   balance: vi.fn(),
 }));
 
@@ -73,7 +74,7 @@ vi.mock('~/utils/trpc', () => ({
       // here — the block never sends SUBMIT/ESTIMATE/POLL/SET_USER_SETTINGS in
       // these beacon tests).
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      estimateWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      estimateWorkflow: { useMutation: () => ({ mutateAsync: mocks.estimate }) },
       pollWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       updateUserSettings: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -428,5 +429,43 @@ describe('IframeHost readiness announce (BLOCK_HELLO)', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(helloSpy).not.toHaveBeenCalled();
     helloSpy.mockRestore();
+  });
+});
+
+// Invariant guard: this host's ESTIMATE handler is a copy of PageBlockHost's, not
+// shared code, so the page-host test says nothing about `cost.authorFee` here.
+describe('IframeHost ESTIMATE_WORKFLOW → ESTIMATE_RESULT (model.sidebar_top)', () => {
+  beforeEach(() => {
+    mocks.estimate.mockReset();
+  });
+
+  test.each([
+    ['a fee', { total: 49, authorFee: 37 }],
+    ['no fee (0 is a value, not an absence)', { total: 12, authorFee: 0 }],
+  ])('cost.authorFee reaches the iframe — %s', async (_label, cost) => {
+    const snapshot = { workflowId: 'wf_fee', status: 'pending', cost };
+    mocks.estimate.mockResolvedValue({ snapshot });
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('ESTIMATE_WORKFLOW', { requestId: 'rq_fee', body: { prompt: 'cat' } });
+
+    await vi.waitFor(() => {
+      expect(mocks.estimate).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        body: { prompt: 'cat' },
+      });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('ESTIMATE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      const posted = (r.payload as { snapshot: { cost: { total: number; authorFee?: number } } })
+        .snapshot.cost;
+      expect(Object.keys(posted).sort()).toEqual(['authorFee', 'total']);
+      expect(posted.total).toBe(cost.total);
+      expect(posted.authorFee).toBe(cost.authorFee);
+    });
+    replies.stop();
   });
 });

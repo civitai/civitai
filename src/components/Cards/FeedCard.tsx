@@ -3,6 +3,7 @@ import { useMergedRef } from '@mantine/hooks';
 import React, { forwardRef } from 'react';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
@@ -48,6 +49,7 @@ export const FeedCard = forwardRef<HTMLElement, Props>(
       className,
       frameDecoration,
       eventDecoration,
+      eventDecorationOn,
       onClick,
       impressions,
     },
@@ -62,6 +64,7 @@ export const FeedCard = forwardRef<HTMLElement, Props>(
       <CosmeticCard
         cosmetic={frameDecoration?.data}
         eventDecoration={eventDecoration}
+        eventDecorationOn={eventDecorationOn}
         cosmeticStyle={frameDecoration?.data ? wrapperStyle : undefined}
         ref={mergedRef}
         style={!frameDecoration?.data ? { aspectRatio: stringRatio } : undefined}
@@ -85,6 +88,8 @@ type Props = CardProps & {
   useCSSAspectRatio?: boolean;
   frameDecoration?: ContentDecorationCosmetic | null;
   eventDecoration?: EventDecorationData | null;
+  /** The content wearing the event decoration, so a click on it can open its stats. */
+  eventDecorationOn?: EventDecorationEntity;
   /** Entities this card presents, reported once it has been half visible for a second. */
   impressions?: ImpressionTarget[];
 };

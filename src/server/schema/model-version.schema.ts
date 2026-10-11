@@ -6,7 +6,7 @@ import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donatio
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { baseModels } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageInputSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -306,7 +306,7 @@ export const modelVersionUpsertSchema = z.object({
   steps: z.coerce.number().min(0).nullish(),
   epochs: z.coerce.number().min(0).max(100000).nullish(),
   images: z
-    .array(imageSchema)
+    .array(imageInputSchema)
     .min(1, 'At least one example image must be uploaded')
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),

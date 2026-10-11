@@ -24,7 +24,7 @@ describe('when the event registry cannot be loaded', () => {
       assertEventShopItemPurchasable({ userId: 1, data: eventItem, payWith: 'default' })
     ).rejects.toThrow('This item is not available right now');
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ level: 'error', message: 'event-shop-item: events load failed' })
+      expect.objectContaining({ level: 'error', message: 'events: lazy load failed' })
     );
   });
 
@@ -42,7 +42,7 @@ describe('when the event registry cannot be loaded', () => {
     await visible(eventItem);
 
     const loadFailures = loggingMock.logToAxiom.mock.calls.filter(
-      ([arg]) => (arg as { message?: string }).message === 'event-shop-item: events load failed'
+      ([arg]) => (arg as { message?: string }).message === 'events: lazy load failed'
     );
     expect(loadFailures).toHaveLength(2);
   });

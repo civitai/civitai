@@ -118,6 +118,32 @@ describe('Approved tab — the Deploy column exposes a stranded approval', () =>
   });
 });
 
+describe('Approved tab — a failed build names its step and class (structured, no excerpt)', () => {
+  test('the chip reads "failed · security scan · unknown"', async () => {
+    renderApproved({
+      row: onsiteRow({
+        deployState: 'failed',
+        deployUpdatedAt: JUST_NOW,
+        buildSignals: { failedStep: 'scan', failureClass: 'unknown' },
+      }),
+      onRetrigger: vi.fn(),
+    });
+    await expect
+      .element(page.getByTestId(DEPLOY_CHIP))
+      .toHaveTextContent('failed · security scan · unknown');
+  });
+
+  test('without signals the chip is the bare state, as before', async () => {
+    renderApproved({
+      row: onsiteRow({ deployState: 'failed', deployUpdatedAt: JUST_NOW, buildSignals: null }),
+      onRetrigger: vi.fn(),
+    });
+    const chip = page.getByTestId(DEPLOY_CHIP);
+    await expect.element(chip).toBeInTheDocument();
+    expect(chip.element().textContent).toBe('failed');
+  });
+});
+
 describe('Approved tab — the Retrigger control follows the server gate', () => {
   test('ENABLED for a stranded (null-state) approval', async () => {
     renderApproved({ row: onsiteRow(), onRetrigger: vi.fn() });

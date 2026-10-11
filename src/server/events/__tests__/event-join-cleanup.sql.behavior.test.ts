@@ -9,14 +9,14 @@ import {
   BIRTHDAY_2026_EVENT,
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * The join grant and the end-of-event unequip, executed as written against an in-process Postgres
- * that also carries the placement trigger. Both are money-adjacent (a hat is a scored slot), and
- * their correctness lives in the SQL (NOT EXISTS, the RETURNING of pre-update values), which a
- * mocked client cannot see.
+ * The join grant, executed as written against an in-process Postgres that also carries the
+ * placement trigger. It is money-adjacent (a hat is a scored slot), and its correctness lives in the
+ * SQL (NOT EXISTS), which a mocked client cannot see.
  */
 
 vi.mock('~/server/redis/caches', () => ({
@@ -29,11 +29,11 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/buzz.service', () => ({}));
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 vi.mock('~/server/integrations/discord', () => ({ discord: {} }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 
 const { eventEngine } = await import('~/server/events/index');
-const { unequipEventCosmetics } = await import(
-  '~/server/events/scoring/cosmetic-placement.service'
-);
 
 const MIGRATION = path.resolve(
   __dirname,
@@ -76,6 +76,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  testerFlag.reset({ public: true });
   await db.pg.exec(`
     TRUNCATE "UserCosmetic", "Cosmetic", "Image", "Model", "Article", "EventCosmeticPlacement";
     INSERT INTO "Cosmetic" VALUES
@@ -109,7 +110,7 @@ describe('join grant', () => {
   it('grants one unequipped team hat however many times it is called (sequentially)', async () => {
     const results = [];
     for (let i = 0; i < 3; i++)
-      results.push(await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT));
+      results.push(await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT));
 
     expect(await hats(7)).toEqual([[HATS.Blue, 'claimed']]);
     expect(results.map((r) => r.joined)).toEqual([true, false, false]);
@@ -118,9 +119,9 @@ describe('join grant', () => {
   });
 
   it('grants nothing more after a manual team reassignment', async () => {
-    await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
+    await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
     redisMock.sysRedis.hGetAll.mockResolvedValue({ '7': 'Pink' });
-    const again = await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
+    const again = await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
 
     expect(again).toEqual({ team: 'Blue', cosmeticId: HATS.Blue, joined: false });
     expect(await hats(7)).toEqual([[HATS.Blue, 'claimed']]);
@@ -130,42 +131,12 @@ describe('join grant', () => {
     await db.pg.exec(
       `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey") VALUES (7, ${HATS.Blue}, 'txn-1')`
     );
-    const res = await eventEngine.join(BIRTHDAY_2026_EVENT, 7, BIRTHDAY_2026_STARTS_AT);
+    const res = await eventEngine.join(BIRTHDAY_2026_EVENT, { id: 7 }, BIRTHDAY_2026_STARTS_AT);
 
     expect(res.joined).toBe(true);
     expect(await hats(7)).toEqual([
       [HATS.Blue, 'claimed'],
       [HATS.Blue, 'txn-1'],
     ]);
-  });
-});
-
-describe('end-of-event unequip', () => {
-  it("clears only this event's placed cosmetics, reports where they were, and closes their intervals", async () => {
-    await db.pg.exec(`
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "equippedToId", "equippedToType", "equippedAt") VALUES
-        (7, ${HATS.Blue}, 'claimed', 1, 'Image', now()),
-        (7, ${HATS.Blue}, 'txn-1', 4, 'Model', now()),
-        (7, ${HATS.Blue}, 'txn-2', NULL, NULL, NULL),
-        (7, ${FRAME}, 'claimed', 2, 'Image', now()),
-        (8, ${OTHER_EVENT_HAT}, 'claimed', 3, 'Image', now());
-    `);
-
-    const entities = await unequipEventCosmetics(BIRTHDAY_2026_EVENT);
-
-    expect(
-      entities.map((e) => [e.entityType, e.entityId]).sort((a, b) => Number(a[1]) - Number(b[1]))
-    ).toEqual([
-      ['Image', 1],
-      ['Model', 4],
-    ]);
-    const left = await db.pg.query<{ cosmeticId: number; equippedToId: number | null }>(
-      `SELECT "cosmeticId", "equippedToId" FROM "UserCosmetic" WHERE "equippedToId" IS NOT NULL ORDER BY "cosmeticId"`
-    );
-    expect(left.rows.map((r) => r.cosmeticId)).toEqual([FRAME, OTHER_EVENT_HAT]);
-    const open = await db.pg.query<{ event: string }>(
-      `SELECT event FROM "EventCosmeticPlacement" WHERE "endedAt" IS NULL ORDER BY event`
-    );
-    expect(open.rows.map((r) => r.event)).toEqual(['another']);
   });
 });

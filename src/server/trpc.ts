@@ -35,7 +35,10 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { Flags } from '~/shared/utils/flags';
-import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
+import {
+  assertSessionOrFullUserKey,
+  runEnforceTokenScope,
+} from '~/server/services/oauth/enforce-token-scope';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { errorFormatter } from '~/server/trpc/error-formatter';
 import type { Context } from './createContext';
@@ -80,6 +83,11 @@ export interface TRPCMeta {
    * to the orchestrator.
    */
   blockApiKeys?: boolean;
+  /**
+   * When true, a token-based request must be a full-scope personal API key
+   * (`isFullScopeUserKey`); session auth is unaffected.
+   */
+  requireFullUserCredential?: boolean;
 }
 
 const t = initTRPC
@@ -230,13 +238,14 @@ const applyDomainFeature = t.middleware(async (options) => {
 
 /**
  * Token scope enforcement middleware (fail-safe).
- * - Session auth (no apiKeyId) is always allowed through unless blockApiKeys is set.
+ * - Session auth (no apiKeyId) always passes.
  * - Procedures without `.meta({ requiredScope })` implicitly require `TokenScope.Full`.
  *   Scoped tokens are denied on un-annotated endpoints; session and full-access keys
  *   pass through (subject to the blockApiKeys gate below).
  * - blockApiKeys: when set, the procedure is forbidden for any API-key/OAuth-token
- *   request regardless of scope. Used for buzz-spending operations that the
- *   orchestrator owns; tokens have no business spending buzz on Civitai's side.
+ *   request regardless of scope (session auth only).
+ * - requireFullUserCredential: when set, a token-based request must be a full-scope
+ *   personal API key; OAuth tokens and other key types are forbidden.
  */
 // `enforceTokenScope`'s body lives in a light standalone module so the OAuth
 // scope-verification + unified scope-usage audit wiring is unit-testable without
@@ -422,6 +431,7 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
       code: 'FORBIDDEN',
       message: 'You do not have permission to perform this action',
     });
+  assertSessionOrFullUserKey(ctx);
   return next({
     ctx: { ...ctx, user, acceptableOrigin },
   });
@@ -455,7 +465,8 @@ const isOnboarded = t.middleware(({ ctx, next }) => {
 export const protectedProcedure = publicProcedure.use(isAuthed);
 
 /**
- * Moderator procedure
+ * Moderator procedure. A token-based request must be a full-scope personal API key, whatever
+ * `requiredScope` the procedure declares.
  **/
 export const moderatorProcedure = protectedProcedure.use(isMod);
 

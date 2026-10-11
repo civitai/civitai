@@ -3,6 +3,8 @@ import {
   APP_FEEDBACK_GENERIC_ERROR_MESSAGE,
   APP_FEEDBACK_INVALID_MESSAGE,
   APP_FEEDBACK_NOT_AVAILABLE_MESSAGE,
+  APP_FEEDBACK_SENT_MESSAGE,
+  APP_FEEDBACK_PRIVATE_NOTICE,
   APP_FEEDBACK_SIGNED_OUT_MESSAGE,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
@@ -12,7 +14,12 @@ import {
   canSubmitAppFeedback,
   resolveAppFeedbackRequest,
 } from '~/components/AppBlocks/appFeedbackChrome';
+import {
+  appFeedbackStatusMessage,
+  isReporterNotifiedOwnerStatus,
+} from '~/server/notifications/app-feedback.notifications';
 import { createAppFeedbackSchema } from '~/server/schema/app-feedback.schema';
+import { FEEDBACK_OWNER_STATUSES } from '~/shared/constants/feedback.constants';
 
 describe('resolveAppFeedbackRequest — what each host sends', () => {
   it('page host (slug + app.page): targets the slug, surface page, no modelId', () => {
@@ -172,6 +179,31 @@ describe('modal copy', () => {
   });
 });
 
+describe('the confirmation after sending', () => {
+  it("promises a notification on resolved or won't fix (WHOLE string)", () => {
+    expect(APP_FEEDBACK_SENT_MESSAGE).toBe(
+      "Sent to the developer. You'll get a notification if they mark it resolved or won't fix."
+    );
+  });
+
+  it('🔴 promises exactly the statuses the server notifies on — no more, no fewer', () => {
+    // A RELATIONSHIP between the copy and `setAppFeedbackOwnerStatus`'s gate, checked in both
+    // directions: a status the server starts notifying on that the sentence does not name, or one
+    // the sentence names that the server stopped notifying on, fails here. Each status is looked for
+    // under the label the reporter's own notification uses for it.
+    const label = (status: (typeof FEEDBACK_OWNER_STATUSES)[number]) =>
+      appFeedbackStatusMessage({ ownerStatus: status, appName: 'X' })?.message.match(
+        /marked your feedback as (.+)\.$/
+      )?.[1];
+    const promised = FEEDBACK_OWNER_STATUSES.filter((status) =>
+      APP_FEEDBACK_SENT_MESSAGE.includes(label(status) ?? status)
+    );
+    expect(promised).toEqual(FEEDBACK_OWNER_STATUSES.filter(isReporterNotifiedOwnerStatus));
+    // Positive control: the comparison is not between two empty lists.
+    expect(promised).toEqual(['resolved', 'wont_fix']);
+  });
+});
+
 describe('appFeedbackSubmitErrorMessage — every server refusal reads as a sentence', () => {
   it('per-app cap and global rate limit: the server text', () => {
     expect(
@@ -228,6 +260,17 @@ describe('appFeedbackSubmitErrorMessage — every server refusal reads as a sent
     );
     expect(appFeedbackSubmitErrorMessage({ message: 'boom', data: null })).toBe(
       APP_FEEDBACK_GENERIC_ERROR_MESSAGE
+    );
+  });
+});
+
+describe('the privacy notice the sender reads, pinned literally', () => {
+  it('names the collaborators, who read the inbox alongside the developer', () => {
+    // The whole string, not a keyword: a reword that drops a reader (it said only "this app's
+    // developer and Civitai moderators" until accepted collaborators were shown to read the
+    // inbox) must fail here. The inbox's own note is pinned in `appFeedbackInbox.test.ts`.
+    expect(APP_FEEDBACK_PRIVATE_NOTICE).toBe(
+      "Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
     );
   });
 });

@@ -474,18 +474,20 @@ export function revocationNamespaceLabel(blockInstanceId: unknown): AppBlockRevo
 }
 
 /**
- * The two post-from-app doors whose shared preamble can refuse an unhydratable
- * token subject: `blocks.createPostFromApp` (the write) and
- * `blocks.previewPostFromApp` (the read-only dry run).
+ * The post-from-app doors whose shared preamble can refuse an unhydratable
+ * token subject: `blocks.createPostFromApp` (the write),
+ * `blocks.previewPostFromApp` (the read-only dry run), and `upload` — the
+ * persist of an app's `bytes` upload, `blocks.persistAppUploadImage`.
  *
- * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Both procs run the identical
- * preamble, so a combined number would leave an operator unable to say whether a
- * spike cost anyone a real post. A refused `create` is a post the viewer intended
- * to make and did not get; a refused `preview` cost them a dialog. Those warrant
+ * 🔴 THE SPLIT IS LOAD-BEARING AND NOT COSMETIC. Every one of these runs the
+ * identical preamble, so a combined number would leave an operator unable to say
+ * whether a spike cost anyone a real post. A refused `create` is a post the viewer
+ * intended to make and did not get; a refused `preview` cost them a dialog; a
+ * refused `upload` cost them an image the app made, before any post. Those warrant
  * different urgency, and the label is the only thing that can tell them apart —
  * there is no per-request log to fall back on for this deployment.
  */
-export const APP_BLOCK_POST_SURFACES = ['preview', 'create'] as const;
+export const APP_BLOCK_POST_SURFACES = ['preview', 'create', 'upload'] as const;
 export type AppBlockPostSurface = (typeof APP_BLOCK_POST_SURFACES)[number];
 
 export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
@@ -677,6 +679,7 @@ type Bundle = {
   requestDurationSeconds: Histogram<string>;
   rendersTotal: Counter<string>;
   bridgeMessagesTotal: Counter<string>;
+  customEventsTotal: Counter<string>;
   customComfyActualBuzz: Histogram<string>;
   customComfyWallclockSeconds: Histogram<string>;
   capLimitsDegradedTotal: Counter<string>;
@@ -867,15 +870,17 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // it (the bare-count trap the `step_price_check` counter's `quoted`/`absent` pair
   // above exists to avoid). Alert on a RATIO.
   //
-  // 🔴 `no_handler` IS NOT UNIFORMLY A BUG — read it WITH `host`. A page-only
-  // message arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`,
-  // `OPEN_IMAGE_UPLOAD`, …) is an EXPECTED refusal that the parity inventory
-  // declares N/A for `IframeHost`; the same type unhandled on `PageBlockHost` is a
-  // real missing bridge. The `host` label values are the parity inventory's own
-  // file names precisely so the series joins to `INVENTORY[type][host]` with no
-  // mapping table in between.
+  // 🔴 AN UNHANDLED MESSAGE IS SPLIT BY THE PARITY INVENTORY, NOT LEFT TO THE
+  // READER. Where `INVENTORY[type][host]` is an N/A rationale — a page-only message
+  // arriving at the model slot (`GET_VIEWER`, `GET_IMAGES_BY_IDS`, …), or
+  // `RESIZE_IFRAME` on the full-viewport page host — the dispatcher reports
+  // `not_applicable`. `no_handler` is left for a type declared `'required'` on that
+  // host (a real missing bridge) or one the inventory does not declare. Split
+  // because a by-design drop counted as `no_handler` is indistinguishable from a
+  // missing handler and buries it. The `host` label values are still the parity
+  // inventory's own file names, so either series joins to `INVENTORY[type][host]`.
   //
-  // Cardinality: (A+1) x (47+1) x 2 x 6 ~= 29,376 at A=50 approved apps, where
+  // Cardinality: (A+1) x (49+1) x 2 x 7 = 35,700 at A=50 approved apps, where
   // `boundAppBlockIdLabel` adds exactly one extra value, 'other' (it returns the
   // id or 'other', nothing else — do not copy the '+2' the launch histograms use,
   // which is wrong for the same reason). That is the largest App
@@ -892,7 +897,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const bridgeMessagesTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_bridge_messages_total',
-    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for the type, so a REQUEST-style message would hang to its SDK timeout (30s default / 120s workflow / 600s human-in-the-loop) — READ IT WITH `host`, because a page-only message refused by IframeHost is the DECLARED design (see hostHandlerParity INVENTORY) while the same type unhandled on PageBlockHost is a missing bridge; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
+    "App Block host<-block postMessage bridge dispatch outcomes by app, message type, host, and outcome. handled = at least one registered handler was invoked (THE DENOMINATOR — read every other value as a ratio against it, never as a bare count); no_handler = this host registers no handler for a type the hostHandlerParity INVENTORY declares 'required' on this host, or a type the INVENTORY does not declare — the missing-bridge signal (a REQUEST-style one is NACKed where the protocol defines an error reply, within a per-second NACK budget; otherwise it hangs to its SDK timeout); not_applicable = this host registers no handler and the INVENTORY declares the type N/A for this host (e.g. a page-only message on IframeHost, RESIZE_IFRAME on the full-viewport PageBlockHost) — the declared design, answered on the wire exactly as no_handler is, and counted separately so it cannot bury a real no_handler; rate_limited = the 30 msg/sec inbound budget was exhausted; deduped = the same requestId arrived twice inside the 5s dedup window; no_token = a handler ran and refused because the block credential was falsy; validator_rejected = the BLOCK refused OUR reply at its own trust boundary and dropped it, so its request hangs to the SDK timeout — self-REPORTED by the block over BLOCK_MESSAGE_REJECTED, because this host cannot observe it (the SDK validator runs in the iframe after we have already replied, so we counted the same exchange `handled`), its `type` is the block->host REQUEST left hanging rather than the rejected *_RESULT reply — EXCEPT type='other', which is OVERLOADED on this outcome and reachable four ways: the SDK rejected a host PUSH (nothing hangs); the SDK could not attribute the reply to one of its pending requests; the block named a type this host's inventory does not declare, or named nothing; or the SDK clamped an undeclared requestType while a request genuinely DOES hang. So 'other' is the one value here you cannot read in EITHER direction — neither as 'a request is hanging' nor as 'nothing is hanging', and it is NOT undercounted — the SDK carries no emit budget, so magnitude on this outcome is unbounded exactly as it is for no_handler and deduped. READ A ZERO PER-APP, NEVER FLEET-WIDE: the emitter ships inside each block's own bundle, so for a given app_block_id a zero means 'no rejections' OR 'this app has not shipped a carrying @civitai/blocks-react', and the series cannot tell you which. Other apps reporting does NOT settle it — the counter goes non-zero the moment the first rebuilt app hits a rejection, so a non-zero total is not evidence any OTHER app's zero is health. `type` is clamped to the code-owned protocol inventory (unknown -> 'other') and `app_block_id` to the approved-app set (unknown -> 'other'); this beacon is public and browser-reachable, so neither is ever taken raw from the body. NOT comparable to civitai_app_block_renders_total, which fires once per MOUNT and is structurally blind to everything after BLOCK_READY",
     ['app_block_id', 'type', 'host', 'outcome']
   );
 
@@ -1327,11 +1332,21 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     APP_BLOCK_LAUNCH_INIT_POST_BUCKETS
   );
 
+  // No `app_block_id` label on purpose: the per-app breakdown is the table's job, and this route
+  // is public, so the label set must not grow with anything a caller sends.
+  const customEventsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_custom_events_total',
+    'App Blocks custom-event rows received by POST /api/track/block-event, by outcome. Dispositions (one per row that passed the request schema): accepted = written as the declared event; undeclared_event = written as one `__undeclared__` row because the approved manifest does not declare the event; non_prod_skipped = validated but not written because this deployment identifies as non-production; insert_failed = the write threw, timed out, was shed because too many writes were already in flight, or no ClickHouse client is configured; rate_limited = over the per-process budget for one client address and app; unknown_app = the app is not in the approved set (which is every app while the approved-app lookup is failing); session_failed = the session could not be resolved; private_run = the viewer is privately running an app that left the approved set within the last cache lifetime. Flags (at most one of each per row, in addition to its disposition): undeclared_prop = at least one property the event does not declare was stripped; invalid_value = at least one declared property was stripped for a wrong type or an undeclared enum value; invalid_instance_id = the block instance id was not shaped like a platform id (or, for a page, was not the page id of that app) and was stored empty; unattested_address = a row of an approved app whose request carried no edge-attested client address, so it was budgeted under the one shared fallback budget; counted whether or not the budget then admitted it (the address is used for rate limiting only and is never stored). Flags are counted whether or not the row is then written, so do not sum all outcomes into a row total. accepted counts rows handed to an asynchronous insert that does not wait for the server, so it is not proof the rows were stored.',
+    ['outcome']
+  );
+
   return {
     requestsTotal,
     requestDurationSeconds,
     rendersTotal,
     bridgeMessagesTotal,
+    customEventsTotal,
     customComfyActualBuzz,
     customComfyWallclockSeconds,
     capLimitsDegradedTotal,
@@ -1674,7 +1689,13 @@ export function recordConsentStrip(
  * there and forgetting it here yields a type error at the call site rather than a silent
  * mislabel.
  */
-export type AppBlockRateLimitBucket = 'catalog' | 'publish' | 'post' | 'post-app' | 'poll';
+export type AppBlockRateLimitBucket =
+  | 'catalog'
+  | 'publish'
+  | 'post'
+  | 'post-app'
+  | 'poll'
+  | 'estimate-cells';
 
 /**
  * Fail-soft emit of ONE bridge rate-limit refusal.
@@ -1794,5 +1815,37 @@ export function observeCustomComfyWallclockSeconds(
     customComfyWallclockSeconds.observe({ engine, recipe }, seconds);
   } catch {
     /* instrument-only — never let a metrics error touch the settle path */
+  }
+}
+
+/**
+ * Every value of the `outcome` label on `civitai_app_block_custom_events_total`. A closed list:
+ * the emitter takes this type, so a caller cannot mint a label from request data. The counter's
+ * help text says what each means and which are per-row dispositions and which are flags.
+ */
+export const APP_BLOCK_CUSTOM_EVENT_OUTCOMES = [
+  'accepted',
+  'undeclared_event',
+  'undeclared_prop',
+  'invalid_value',
+  'invalid_instance_id',
+  'rate_limited',
+  'unknown_app',
+  'session_failed',
+  'unattested_address',
+  'private_run',
+  'non_prod_skipped',
+  'insert_failed',
+] as const;
+export type AppBlockCustomEventOutcome = (typeof APP_BLOCK_CUSTOM_EVENT_OUTCOMES)[number];
+
+/** Fail-soft emit of `count` custom-event rows with one outcome. Never throws. */
+export function recordBlockCustomEvents(outcome: AppBlockCustomEventOutcome, count = 1): void {
+  if (count <= 0) return;
+  try {
+    const { customEventsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    customEventsTotal.inc({ outcome }, count);
+  } catch {
+    /* instrument-only */
   }
 }

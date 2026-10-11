@@ -721,6 +721,7 @@ export interface User {
   crucibleEntries?: CrucibleEntry[];
   crucibleEngagements?: CrucibleEngagement[];
   prizes?: Prize[];
+  gameFrameGames?: GameFrameGame[];
 }
 
 export interface CustomerSubscription {
@@ -1312,6 +1313,8 @@ export interface Report {
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
   crucible?: CrucibleReport | null;
+  gameFrameGame?: GameFrameGameReport | null;
+  gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
 export interface ResourceReviewReport {
@@ -2187,6 +2190,20 @@ export interface AppBlockPublishRequest {
   updatedAt: Date;
 }
 
+export interface AppBlockBuildAttempt {
+  id: number;
+  publishRequestId: string | null;
+  slug: string;
+  sha: string;
+  runId: string | null;
+  mode: string;
+  status: string;
+  failedStep: string | null;
+  failedReason: string | null;
+  failureClass: string | null;
+  createdAt: Date;
+}
+
 export interface AppListing {
   id: string;
   serialId: number;
@@ -2336,6 +2353,7 @@ export interface AppSubListingParent {
   parentListing?: AppListing;
   enabled: boolean;
   maxPerAuthor: number;
+  linkTemplate: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -3127,6 +3145,10 @@ export interface EventCosmeticScoreDaily {
   impressions: number;
   anonImpressions: number;
   reactions: number;
+  comments: number;
+  stickers: number;
+  remixes: number;
+  modelLikes: number;
   points: number;
   updatedAt: Date;
 }
@@ -3136,6 +3158,7 @@ export interface CreatorMilestone {
   track: string;
   threshold: number | null;
   hidden: boolean;
+  unlisted: boolean;
   hint: string | null;
   name: string;
   description: string | null;
@@ -3252,6 +3275,17 @@ export interface UserCosmeticShopPurchases {
   refunded: boolean;
   meta: JsonValue | null;
   components?: UserCosmeticShopPurchaseCosmetic[];
+}
+
+export interface CosmeticShopPurchaseClaim {
+  transactionId: string;
+  userId: number;
+  shopItemId: number;
+  amount: number;
+  status: string;
+  attempts: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface UserCosmeticShopPurchaseCosmetic {
@@ -5965,6 +5999,36 @@ export interface CrucibleReport {
   crucible?: Crucible;
   reportId: number;
   report?: Report;
+}
+
+export interface GameFrameGame {
+  id: number;
+  slug: string;
+  title: string;
+  userId: number | null;
+  user?: User | null;
+  official: boolean;
+  visibility: string;
+  url: string;
+  coverUrl: string | null;
+  stateAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  reports?: GameFrameGameReport[];
+}
+
+export interface GameFrameGameReport {
+  gameFrameGameId: number;
+  gameFrameGame?: GameFrameGame;
+  reportId: number;
+  report?: Report;
+}
+
+export interface GameFrameReportReceipt {
+  gfReportId: string;
+  reportId: number;
+  report?: Report;
+  createdAt: Date;
 }
 
 export interface CrucibleEntry {

@@ -42,6 +42,15 @@ export const SITE_BUG_REPORT_AREA: FeedbackArea = 'site-bug-report';
 export const APP_BLOCK_FEEDBACK_AREA: FeedbackArea = 'app-block';
 
 /**
+ * Who can read an `app-block` report, as user-facing copy. ONE phrase for both ends: the send
+ * dialog's privacy notice and the developer's inbox both interpolate it, so the reporter is never
+ * told a narrower audience than the inbox actually admits. Accepted collaborators (editor seats)
+ * read the inbox alongside the owner — `resolveInboxListingId` in `app-feedback.service.ts`.
+ */
+export const APP_FEEDBACK_READERS =
+  "this app's developer, their collaborators and Civitai moderators";
+
+/**
  * The developer's status on an `app-block` report. NULL in the column means "new to the developer".
  *
  * Deliberately a SEPARATE vocabulary from the moderator triage `status` ('new' | 'reviewed' |

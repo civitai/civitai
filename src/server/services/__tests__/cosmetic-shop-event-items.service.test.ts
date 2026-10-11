@@ -14,6 +14,7 @@ const { mocks } = vi.hoisted(() => {
     createBuzzTransaction: vi.fn(),
     createMultiTx: vi.fn(),
     refundMultiTx: vi.fn(),
+    listMultiTx: vi.fn(),
     getBlockedPairIds: vi.fn(),
     sectionFindMany: vi.fn(),
     getUserTeam: vi.fn(),
@@ -31,6 +32,8 @@ vi.mock('~/server/events', async () => {
         name: c.BIRTHDAY_2026_EVENT,
         startDate: c.BIRTHDAY_2026_STARTS_AT,
         endDate: c.BIRTHDAY_2026_ENDS_AT,
+        featureFlag: 'birthday2026',
+        previewFrom: c.BIRTHDAY_2026_PREVIEW_FROM,
         teams: [...c.BIRTHDAY_2026_TEAMS],
         getUserTeam: (userId: number, opts?: { strict?: boolean }) =>
           mocks.getUserTeam(userId, opts) as Promise<string>,
@@ -51,6 +54,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: mocks.createMultiTx,
   refundMultiAccountTransaction: mocks.refundMultiTx,
   refundTransaction: vi.fn(),
+  getMultiAccountTransactionsByPrefix: mocks.listMultiTx,
 }));
 vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(),
@@ -60,16 +64,27 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({
   getBlockedPairIds: mocks.getBlockedPairIds,
 }));
+vi.mock('~/server/flipt/tester-segment', async () => {
+  return (await import('~/test-utils/testerFlagFake')).testerFlagModule;
+});
 
 import { getShopSectionsWithItems, purchaseCosmeticShopItem } from '../cosmetic-shop.service';
+import { PURCHASE_STATE_UNKNOWN_MESSAGE } from '../shop-purchase-charge';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
 import { soldCountsFake } from '~/test-utils/soldCountsFake';
 import {
   BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
   BIRTHDAY_2026_TEAMS,
 } from '~/shared/constants/birthday2026.constants';
+import { testerFlag } from '~/test-utils/testerFlagFake';
 
 const fwd =
   (fn: (...a: unknown[]) => unknown) =>
@@ -83,12 +98,19 @@ dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockImplementation(
   fwd(mocks.purchasesFindUnique)
 );
 dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation(fwd(mocks.purchasesUpdate));
+let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-    userCosmetic: { create: mocks.userCosmeticCreate },
-  })
+  claims.rollbackOnThrow(() =>
+    fn({
+      userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      userCosmetic: { create: mocks.userCosmeticCreate },
+      cosmeticShopPurchaseClaim: claims.txDelegate,
+    })
+  )
 );
+beforeEach(() => {
+  claims = installShopPurchaseClaimFake();
+});
 
 const BUYER_ID = 1;
 const SHOP_ITEM_ID = 42;
@@ -152,6 +174,7 @@ describe('buying an event-gated item (team hat)', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(DURING_EVENT);
+    testerFlag.reset({ public: true });
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.shopItemFindUnique.mockResolvedValue(hatRow());
     mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
@@ -161,6 +184,8 @@ describe('buying an event-gated item (team hat)', () => {
       chargeResponse(fromAccountTypes[0])
     );
     mocks.getBlockedPairIds.mockResolvedValue([]);
+    // Money under a seeded claim's prefix: an earlier attempt charged.
+    mocks.listMultiTx.mockResolvedValue([{ transactionId: 'earlier', amount: PRICE }]);
   });
 
   it("buying your own team's colour charges only the domain currency and grants the hat", async () => {
@@ -241,8 +266,8 @@ describe('buying an event-gated item (team hat)', () => {
     expect(mocks.createMultiTx).toHaveBeenCalledTimes(2);
     expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(2);
     const [first, second] = mocks.userCosmeticCreate.mock.calls.map(([arg]) => arg.data.claimKey);
-    expect(first).toMatch(/^cosmetic-purchase-1-42-/);
-    expect(second).toMatch(/^cosmetic-purchase-1-42-/);
+    expect(first).toMatch(/^cosmetic-purchase-v2-1-42-/);
+    expect(second).toMatch(/^cosmetic-purchase-v2-1-42-/);
     expect(second).not.toBe(first);
   });
 
@@ -251,6 +276,90 @@ describe('buying an event-gated item (team hat)', () => {
 
     await expect(purchase()).rejects.toThrow('This item is not available');
     expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  // A retry of a purchase that charged before the end: the event's window is a
+  // sale window, checked when the claim was made. The team, paid-Buzz-only and
+  // registration rules still apply, and a claim nothing was charged under
+  // vouches for nothing.
+  describe('a retry of a pending claim after the end', () => {
+    const KEY = '55555555-5555-4555-8555-555555555555';
+    const TX = `cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${KEY}`;
+    const retry = (payWith?: 'default' | 'blue-first') =>
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        idempotencyKey: KEY,
+        payWith,
+        buzzType: 'green',
+      });
+    const expectUnknown = async (p: Promise<unknown>) => {
+      await expect(p).rejects.toMatchObject({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: PURCHASE_STATE_UNKNOWN_MESSAGE,
+      });
+      const reasons = loggingMock.logToAxiom.mock.calls
+        .map(([arg]) => arg as Record<string, unknown>)
+        .filter((arg) => arg.name === 'shop-purchase-state-unknown')
+        .map((arg) => arg.reason);
+      expect(reasons).toEqual(['refused while a claim is pending']);
+      expect(mocks.createMultiTx).not.toHaveBeenCalled();
+      expect(claims.rows.get(TX)).toMatchObject({ status: 'pending', attempts: 1 });
+    };
+
+    beforeEach(() => {
+      loggingMock.logToAxiom.mockReset();
+      claims.rows.set(TX, {
+        transactionId: TX,
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        amount: PRICE,
+        attempts: 1,
+        status: 'pending',
+      });
+      vi.setSystemTime(AFTER_EVENT);
+    });
+
+    it('resumes a claim that was charged', async () => {
+      await retry();
+      expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toBe(TX);
+      expect(claims.rows.get(TX)?.status).toBe('paid');
+    });
+
+    it('a claim nothing was charged under is unknown, and not charged', async () => {
+      mocks.listMultiTx.mockResolvedValue([]);
+      await expectUnknown(retry());
+    });
+
+    it("another team's colour is still unknown, and not charged", async () => {
+      mocks.getUserTeam.mockResolvedValue(BLUE_TEAM);
+      await expectUnknown(retry());
+    });
+
+    it('Blue Buzz is still unknown, and not charged', async () => {
+      await expectUnknown(retry('blue-first'));
+    });
+
+    it('an event that is no longer registered is still unknown, and not charged', async () => {
+      mocks.shopItemFindUnique.mockResolvedValue(hatRow({ event: UNREGISTERED_EVENT }));
+      await expectUnknown(retry());
+    });
+
+    // Teamless, so nothing after the event lookup would refuse it either.
+    it('a teamless item of an event no longer registered is still unknown, and not charged', async () => {
+      const row = hatRow({ event: UNREGISTERED_EVENT });
+      mocks.shopItemFindUnique.mockResolvedValue({
+        ...row,
+        cosmetic: { ...row.cosmetic, data: hatData(undefined, UNREGISTERED_EVENT) },
+      });
+      await expectUnknown(retry());
+    });
+
+    // The flag is the kill switch: a retry does not outlive it.
+    it('with the flag off for the buyer, still unknown, and not charged', async () => {
+      testerFlag.reset({ testers: [] });
+      await expectUnknown(retry());
+    });
   });
 
   it('sells in the last instant before the end', async () => {
@@ -329,6 +438,7 @@ describe('the shop lists event-gated items per viewer', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(DURING_EVENT);
+    testerFlag.reset({ public: true });
     Object.values(mocks).forEach((m) => m.mockReset());
     mocks.getBlockedPairIds.mockResolvedValue([]);
     mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
@@ -345,32 +455,119 @@ describe('the shop lists event-gated items per viewer', () => {
     ]);
   });
 
-  it("a signed-in viewer sees only their own team's colour, and a section left empty disappears", async () => {
-    expect(await listedIds({ userId: BUYER_ID })).toEqual([
-      { section: 10, items: [PINK, ORDINARY, TEAMLESS] },
+  // Justin, 2026-10-09: hats are bought only on the event page. The shop (and the homepage blocks
+  // that read it) lists no event item to anyone, moderators included, while the event runs or
+  // after. The items stay in a published section: the event page's shelf reads them from there.
+  it.each([
+    ['a signed-in viewer', { userId: BUYER_ID }],
+    ['an anonymous viewer', {}],
+    ['a moderator', { userId: BUYER_ID, isModerator: true }],
+  ])(
+    'the full shop lists %s no event items, and drops the sections they emptied',
+    async (_, args) => {
+      expect(await listedIds(args)).toEqual([{ section: 10, items: [ORDINARY] }]);
+      expect(mocks.getUserTeam).not.toHaveBeenCalled();
+    }
+  );
+
+  // The event page's shelf: only that event's items, still per viewer, empty sections dropped.
+  it("asked for one event, lists a signed-in viewer only their own team's colour", async () => {
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK, TEAMLESS] },
     ]);
     // One team lookup per event per request, not one per item.
     expect(mocks.getUserTeam).toHaveBeenCalledTimes(1);
+    expect(await listedIds({ event: UNREGISTERED_EVENT })).toEqual([]);
   });
 
-  it('an anonymous viewer sees every colour, but not items of an unregistered event', async () => {
-    expect(await listedIds({})).toEqual([
-      { section: 10, items: [PINK, BLUE, ORDINARY, TEAMLESS] },
+  it('asked for one event, lists an anonymous viewer every colour', async () => {
+    expect(await listedIds({ event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK, BLUE, TEAMLESS] },
       { section: 20, items: [BLUE + 10] },
     ]);
     expect(mocks.getUserTeam).not.toHaveBeenCalled();
   });
 
-  it('hides event items once the event has ended, and the sections they emptied', async () => {
+  it('asked for one event, lists nothing once the event has ended', async () => {
     vi.setSystemTime(AFTER_EVENT);
-
-    expect(await listedIds({})).toEqual([{ section: 10, items: [ORDINARY] }]);
+    expect(await listedIds({ event: BIRTHDAY_2026_EVENT })).toEqual([]);
   });
 
-  it('a moderator sees everything unfiltered', async () => {
-    expect(await listedIds({ userId: BUYER_ID, isModerator: true })).toEqual([
-      { section: 10, items: [PINK, BLUE, UNKNOWN_EVENT, ORDINARY, TEAMLESS] },
-      { section: 20, items: [BLUE + 10] },
+  // A community-hub section is kept in the shop even when empty (its feed is queried separately),
+  // so asking for one event's items must drop it by name, not by emptiness.
+  // The full shop shows a moderator every colour; the event page's shelf is their own team's.
+  it('asked for one event, a moderator sees their own colour only', async () => {
+    expect(
+      await listedIds({ userId: BUYER_ID, isModerator: true, event: BIRTHDAY_2026_EVENT })
+    ).toEqual([{ section: 10, items: [PINK, TEAMLESS] }]);
+  });
+
+  it('asked for one event, leaves out the community hub; the full shop keeps it', async () => {
+    mocks.sectionFindMany.mockResolvedValue([
+      section(10, [listedItem(PINK, hatData(PINK_TEAM))]),
+      { ...section(30, []), meta: { communityHub: true } },
     ]);
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([
+      { section: 10, items: [PINK] },
+    ]);
+    expect(await listedIds({ userId: BUYER_ID })).toEqual([{ section: 30, items: [] }]);
+  });
+});
+
+// Justin, 2026-10-09: before launch the event, the shop's hats included, is for testers and
+// moderators only (the `birthday2026` flag). See event-access.test.ts for the rule.
+describe('before launch, behind the flag', () => {
+  const PREVIEW = new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000);
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(PREVIEW);
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.shopItemFindUnique.mockResolvedValue(hatRow());
+    mocks.getUserTeam.mockResolvedValue(PINK_TEAM);
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.userCosmeticCreate.mockImplementation(async ({ data }) => data);
+    mocks.createMultiTx.mockImplementation(async ({ fromAccountTypes }) =>
+      chargeResponse(fromAccountTypes[0])
+    );
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    dbMock.dbRead.$queryRaw.mockImplementation(soldCountsFake({}));
+    mocks.sectionFindMany.mockResolvedValue([section(10, [listedItem(PINK, hatData(PINK_TEAM))])]);
+  });
+
+  it('sells a hat to a tester during the preview', async () => {
+    testerFlag.reset({ testers: [BUYER_ID] });
+    await purchase();
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses everyone else before any charge, and the tester once it is armed', async () => {
+    testerFlag.reset({ testers: [] });
+    await expect(purchase()).rejects.toThrow('This item is not available');
+    testerFlag.reset({ public: true, testers: [BUYER_ID] });
+    await expect(purchase()).rejects.toThrow('This item is not available');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  // A moderator plays the preview without being a tester (as the page and purchase already allow),
+  // so their event shelf must not come back empty.
+  it('asked for one event, lists a moderator their own colour during the preview', async () => {
+    testerFlag.reset({ testers: [] });
+    mocks.sectionFindMany.mockResolvedValue([
+      section(10, [listedItem(PINK, hatData(PINK_TEAM)), listedItem(BLUE, hatData(BLUE_TEAM))]),
+    ]);
+    expect(
+      await listedIds({ userId: BUYER_ID, isModerator: true, event: BIRTHDAY_2026_EVENT })
+    ).toEqual([{ section: 10, items: [PINK] }]);
+    // The same viewer without the moderator flag sees nothing: the preview is closed to them.
+    expect(await listedIds({ userId: BUYER_ID, event: BIRTHDAY_2026_EVENT })).toEqual([]);
+  });
+
+  it('asked for one event, lists the hats to a tester and to nobody else, signed out included', async () => {
+    testerFlag.reset({ testers: [BUYER_ID] });
+    const shelf = (userId?: number) => listedIds({ userId, event: BIRTHDAY_2026_EVENT });
+    expect(await shelf(BUYER_ID)).toEqual([{ section: 10, items: [PINK] }]);
+    expect(await shelf(BUYER_ID + 1)).toEqual([]);
+    expect(await shelf()).toEqual([]);
   });
 });

@@ -18,11 +18,8 @@ import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
-import {
-  getEventDecorationDefinition,
-  isEventDecorationData,
-  isEventDecorationLive,
-} from '~/shared/constants/event-decoration.constants';
+import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
 const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
@@ -33,7 +30,6 @@ export default function CardDecorationModal({
   entityId,
   image,
   currentCosmetic,
-  kind = 'frame',
 }: Props) {
   const dialog = useDialogContext();
   const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
@@ -92,10 +88,8 @@ export default function CardDecorationModal({
     userCosmetics?.contentDecorations.filter(
       ({ data, forId, forType }) =>
         (data.url || data.cssFrame) &&
-        // A frame and an event decoration are worn side by side, so each picker lists only its own.
-        (kind === 'event'
-          ? isWearableEventDecoration(data, entityType)
-          : !isEventDecorationData(data)) &&
+        // An event decoration is worn beside a frame and has its own picker.
+        !isEventDecorationData(data) &&
         // Ensure we only show cosmetics available for this item.
         (!forId || (forId && forType && forId === entityId && forType === entityType))
     ) ?? [];
@@ -107,7 +101,7 @@ export default function CardDecorationModal({
     <Modal
       {...dialog}
       onClose={handleClose}
-      title={kind === 'event' ? 'Event Decorations' : 'Content Decorations'}
+      title="Content Decorations"
       closeButtonProps={{
         'aria-label': 'Close content decorations modal',
       }}
@@ -182,7 +176,9 @@ export default function CardDecorationModal({
                     </Paper>
                   </Group>
                 )}
-              <PreviewCard image={image} decoration={selectedItem} kind={kind} />
+              <div className="pt-4">
+                <PreviewCard image={image} decoration={selectedItem} />
+              </div>
               <Button
                 radius="xl"
                 type="submit"
@@ -207,23 +203,21 @@ export type Props = {
   entityId: number;
   image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'name' | 'type' | 'thumbnailUrl'>;
   currentCosmetic?: WithClaimKey<Pick<ContentDecorationCosmetic, 'id'>> | null;
-  /** Frames and event decorations are worn side by side; each has its own picker. */
-  kind?: 'frame' | 'event';
 };
-
-function isWearableEventDecoration(data: unknown, entityType: CosmeticEntity) {
-  if (!isEventDecorationData(data)) return false;
-  const definition = getEventDecorationDefinition(data.event);
-  return (
-    !!definition && isEventDecorationLive(definition) && definition.entityTypes.includes(entityType)
-  );
-}
 
 export const PreviewCard = ({
   image,
   decoration,
-  kind = 'frame',
-}: Pick<Props, 'image' | 'kind'> & { decoration?: ContentDecorationCosmetic }) => {
+  hat,
+  width,
+}: Pick<Props, 'image'> & {
+  /** A frame. */
+  decoration?: ContentDecorationCosmetic;
+  /** An event decoration, worn beside any frame. */
+  hat?: EventDecorationData;
+  /** Card width in px; a feed card's by default. */
+  width?: number;
+}) => {
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const imageWidth =
     originalAspectRatio > 1
@@ -233,15 +227,14 @@ export const PreviewCard = ({
   if (!image) return null;
 
   const heightRatio = image.height && image.width ? image.height / image.width : 1;
-  const cardHeight = heightRatio * constants.cardSizes.image;
+  const cardHeight = heightRatio * (width ?? constants.cardSizes.image);
 
-  return (
+  const card = (
     <MasonryCard
       height={cardHeight}
-      frameDecoration={kind === 'frame' ? decoration : undefined}
-      eventDecoration={
-        kind === 'event' && isEventDecorationData(decoration?.data) ? decoration?.data : undefined
-      }
+      frameDecoration={decoration}
+      eventDecoration={hat}
+      cardWidth={width}
     >
       <EdgeMedia2
         src={image.url}
@@ -255,4 +248,5 @@ export const PreviewCard = ({
       />
     </MasonryCard>
   );
+  return width ? <div style={{ width }}>{card}</div> : card;
 };

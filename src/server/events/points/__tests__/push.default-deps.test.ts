@@ -1,0 +1,385 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as SignalClient from '~/utils/signal-client';
+
+/**
+ * The pusher with its default deps: the real reads over sysRedis and the real topicSend wiring. Only
+ * the signals client and the kill switch's reading are faked. The pusher's other tests inject every
+ * dep.
+ */
+
+const { topicSend } = vi.hoisted(() => ({
+  topicSend: vi.fn(async (..._a: unknown[]) => undefined),
+}));
+vi.mock('~/utils/signal-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof SignalClient>()),
+  signalClient: { topicSend },
+}));
+
+const engine = vi.hoisted(() => ({ on: true }));
+vi.mock('~/server/events/points/enabled', () => ({
+  isEventPointsEnabled: async () => engine.on,
+  isEventPointsEnabledSync: () => engine.on,
+  onEventPointsSwitchOn: () => () => undefined,
+}));
+// The engine's self-heal runs the reconcile and settle: tested in self-heal.test.ts, not here.
+vi.mock('~/server/events/points/self-heal', () => ({ healEventPoints: vi.fn() }));
+
+const { logToAxiom } = await import('~/server/logging/client');
+const { drainEventPointsPush, markEventPointsDirty } = await import('~/server/events/points/push');
+const { eventRosterKeys } = await import('~/server/events/points/roster');
+const {
+  COUNT_BASE_MARK,
+  countField,
+  eventPointKeys,
+  eventPointSeason,
+  eventSeasonKeys,
+  hatField,
+  hatTopicId,
+  previewTopicId,
+  seasonOwnerTopicId,
+} = await import('~/server/events/points/keys');
+
+// HMGET over a table, by key and field: a read of the wrong key, scope or field reads nothing.
+const serveHashes = (table: Record<string, Record<string, string>>) => {
+  const sys = redisMock.sysRedis;
+  sys.get.mockResolvedValue(null);
+  sys.hmGet.mockImplementation(async (key: string, fields: string[]) =>
+    fields.map((f) => table[key]?.[f] ?? null)
+  );
+};
+
+const event = {
+  name: 'birthday2026',
+  startDate: new Date('2026-01-01'),
+  endDate: new Date('2999-01-01'),
+  teams: ['Blue', 'Pink'],
+};
+const HAT = { ownerId: 10, cosmeticId: 7, claimKey: 'claimed' };
+
+// The interest set, as ZMSCORE reads it: topic -> when its mark lapses (ms).
+const watch = new Map<string, number>();
+const zmScore = () => redisMock.sysRedis.zmScore;
+const markAll = (lapse = Date.now() + 60_000) => {
+  watch.set(hatTopicId(HAT), lapse);
+  watch.set('teams', lapse);
+};
+
+beforeEach(() => {
+  topicSend.mockClear();
+  watch.clear();
+  // The team push lease: free unless a test holds it.
+  redisMock.sysRedis.set.mockReset();
+  redisMock.sysRedis.set.mockResolvedValue('OK');
+  zmScore().mockReset();
+  zmScore().mockImplementation(async (key: string, members: string[]) =>
+    key === eventPointKeys(event.name).watch ? members.map((m) => watch.get(m) ?? null) : []
+  );
+});
+
+const totals = () => {
+  const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
+  serveHashes({
+    [keys.base('hat')]: { [hatField(HAT)]: '30' },
+    [keys.base('team')]: { Blue: '100', Pink: '50' },
+    [keys.base('count')]: {
+      [COUNT_BASE_MARK]: '1',
+      [countField('view', HAT)]: '12',
+      [countField('reaction', HAT)]: '3',
+      [countField('remix', HAT)]: '1',
+    },
+  });
+};
+
+describe('the pusher with its default deps', () => {
+  it('reads the kill switch: off, an award marks and sends nothing', async () => {
+    engine.on = false;
+    try {
+      markEventPointsDirty(event, HAT, new Date());
+      expect(await drainEventPointsPush()).toEqual({ left: 0 });
+      expect(topicSend).not.toHaveBeenCalled();
+    } finally {
+      engine.on = true;
+    }
+  });
+
+  it('sends nothing for topics nobody watches, or whose mark has lapsed', async () => {
+    totals();
+    markEventPointsDirty(event, HAT, new Date());
+    expect(await drainEventPointsPush()).toEqual({ left: 0 });
+    // Nor takes the team push lease for nobody.
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+    markAll(Date.now() - 1);
+    markEventPointsDirty(event, HAT, new Date());
+    expect(await drainEventPointsPush()).toEqual({ left: 0 });
+    expect(topicSend).not.toHaveBeenCalled();
+    // One interest-set read per flush, for the hat, its owner's roster card and the teams together.
+    const owner = seasonOwnerTopicId(event.name, HAT.ownerId, 'live');
+    expect(zmScore().mock.calls).toEqual([
+      [eventPointKeys(event.name).watch, [hatTopicId(HAT), owner, 'teams']],
+      [eventPointKeys(event.name).watch, [hatTopicId(HAT), owner, 'teams']],
+    ]);
+  });
+
+  it('fails closed: an interest-set read error sends nothing', async () => {
+    totals();
+    markAll();
+    zmScore().mockRejectedValue(new Error('redis down'));
+    vi.mocked(logToAxiom).mockClear();
+    markEventPointsDirty(event, HAT, new Date());
+    expect(await drainEventPointsPush()).toEqual({ left: 0 });
+    expect(topicSend).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(logToAxiom).mock.calls.map(([e]) => (e as { message?: string }).message)
+    ).toEqual(['interest set read failed']);
+  });
+
+  it('leases the team push for one window on sysRedis, and sends no teams without it', async () => {
+    totals();
+    markAll();
+    markEventPointsDirty(event, HAT, new Date());
+    try {
+      await drainEventPointsPush();
+      expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(1);
+      expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+        eventPointKeys(event.name).teamsPushLease,
+        '1',
+        { NX: true, PX: 1_000 }
+      );
+
+      topicSend.mockClear();
+      redisMock.sysRedis.set.mockResolvedValue(null);
+      markEventPointsDirty(event, HAT, new Date());
+      // Teams another server holds the lease for are its to send: no timed-out drain.
+      vi.mocked(logToAxiom).mockClear();
+      expect(await drainEventPointsPush()).toEqual({ left: 0 });
+      expect(vi.mocked(logToAxiom)).not.toHaveBeenCalled();
+      expect(topicSend.mock.calls.map(([s]) => (s as { target: string }).target)).toEqual([
+        'event-points:hat',
+      ]);
+
+      // A lease error fails closed too.
+      topicSend.mockClear();
+      redisMock.sysRedis.set.mockRejectedValue(new Error('redis down'));
+      vi.mocked(logToAxiom).mockClear();
+      markEventPointsDirty(event, HAT, new Date());
+      await drainEventPointsPush();
+      markEventPointsDirty(event, HAT, new Date());
+      await drainEventPointsPush();
+      expect(topicSend.mock.calls.map(([s]) => (s as { target: string }).target)).toEqual([
+        'event-points:hat',
+        'event-points:hat',
+      ]);
+      // Logged once, not once a window.
+      expect(
+        vi
+          .mocked(logToAxiom)
+          .mock.calls.filter(
+            ([e]) => (e as { message?: string }).message === 'team push lease failed'
+          )
+      ).toHaveLength(1);
+    } finally {
+      // The teams it could not send stay dirty on this module's pusher; let them out so the next
+      // test starts clean, whatever failed above.
+      redisMock.sysRedis.set.mockResolvedValue('OK');
+      await drainEventPointsPush();
+      topicSend.mockClear();
+    }
+  });
+
+  it('pushes only the watched topic', async () => {
+    totals();
+    watch.set('teams', Date.now() + 60_000);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(topicSend.mock.calls.map(([s]) => (s as { target: string }).target)).toEqual([
+      'event-points:teams',
+    ]);
+  });
+
+  it('reads the watched totals and sends them through the signals client', async () => {
+    totals();
+    markAll();
+    markEventPointsDirty(event, HAT, new Date());
+    expect(await drainEventPointsPush()).toEqual({ left: 0 });
+
+    const topicId = hatTopicId(HAT);
+    expect(topicSend.mock.calls).toEqual([
+      [
+        {
+          topic: 'event-points:birthday2026:teams',
+          target: 'event-points:teams',
+          data: { event: 'birthday2026', teams: { Blue: 100, Pink: 50 } },
+        },
+      ],
+      [
+        {
+          topic: `event-points:birthday2026:hat:${topicId}`,
+          target: 'event-points:hat',
+          data: {
+            event: 'birthday2026',
+            topicId,
+            points: 30,
+            counts: { impressions: 12, reactions: 3, comments: 0, stickers: 0, remixes: 1 },
+          },
+        },
+      ],
+    ]);
+  });
+});
+
+// In the preview, a tester who was handed the keyed ids (and marked them) gets the preview season's
+// totals pushed to the keyed topics; nothing goes to the public ones, and the key never leaves.
+describe('roster card pushes with the default deps', () => {
+  const owner = () => seasonOwnerTopicId(event.name, HAT.ownerId, 'live');
+  const serve = (listed: boolean) => {
+    const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
+    serveHashes({
+      [keys.base('hat')]: { [hatField(HAT)]: '30' },
+      [keys.base('owner')]: { [String(HAT.ownerId)]: '77' },
+      // The roster's topic map names only members listed now (roster.ts).
+      [eventRosterKeys(event.name).topics]: listed ? { [owner()]: String(HAT.ownerId) } : {},
+      // ...and the gate decides who is listed.
+      [eventRosterKeys(event.name).members]: listed ? { [String(HAT.ownerId)]: 'Blue' } : {},
+    });
+  };
+  const ownerSends = () =>
+    topicSend.mock.calls
+      .map(([s]) => s as { target: string; topic: string; data: unknown })
+      .filter((s) => s.target === 'event-points:owner');
+
+  it("pushes a listed owner's total to their card's topic while it is watched", async () => {
+    serve(true);
+    watch.set(owner(), Date.now() + 60_000);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([
+      {
+        topic: `event-points:${event.name}:owner:${owner()}`,
+        target: 'event-points:owner',
+        data: { event: event.name, topicId: owner(), points: 77 },
+      },
+    ]);
+  });
+
+  it('pushes nothing for a listed owner whose card nobody has on screen', async () => {
+    serve(true);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([]);
+  });
+
+  // A topic entry a failed unlisting left behind: the topic map still names them, the gate does not.
+  it('pushes nothing for an owner the topic map names but the gate has hidden', async () => {
+    const keys = eventSeasonKeys(event.name, eventPointSeason(event.startDate, new Date()));
+    serveHashes({
+      [keys.base('hat')]: { [hatField(HAT)]: '30' },
+      [keys.base('owner')]: { [String(HAT.ownerId)]: '77' },
+      [eventRosterKeys(event.name).topics]: { [owner()]: String(HAT.ownerId) },
+      [eventRosterKeys(event.name).members]: { [String(HAT.ownerId)]: 'x:1760000000000' },
+    });
+    watch.set(owner(), Date.now() + 60_000);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([]);
+  });
+
+  // An owner who left the roster after a card marked them: the mark is still live, they are not.
+  it('pushes nothing for a watched owner who is no longer listed', async () => {
+    serve(false);
+    watch.set(owner(), Date.now() + 60_000);
+    markEventPointsDirty(event, HAT, new Date());
+    await drainEventPointsPush();
+    expect(ownerSends()).toEqual([]);
+  });
+});
+
+describe('the pusher in the preview', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const preview = {
+    ...event,
+    previewFrom: new Date(Date.now() - DAY),
+    startDate: new Date(Date.now() + DAY),
+  };
+  const keyedHat = previewTopicId(preview.name, hatField(HAT));
+  const keyedTeams = previewTopicId(preview.name, 'teams');
+  const previewTotals = () => {
+    const keys = eventSeasonKeys(preview.name, 'preview');
+    const live = eventSeasonKeys(preview.name, 'live');
+    serveHashes({
+      [keys.base('hat')]: { [hatField(HAT)]: '7' },
+      [keys.base('team')]: { Blue: '3', Pink: '4' },
+      [keys.base('count')]: { [COUNT_BASE_MARK]: '1', [countField('comment', HAT)]: '2' },
+      // The live season's counts, which a preview push must not read.
+      [live.base('count')]: { [COUNT_BASE_MARK]: '1', [countField('comment', HAT)]: '99' },
+    });
+  };
+
+  it("pushes the preview season's totals to the keyed topics that are watched", async () => {
+    previewTotals();
+    watch.set(keyedHat, Date.now() + 60_000);
+    watch.set(keyedTeams, Date.now() + 60_000);
+    expect(markEventPointsDirty(preview, HAT, new Date())).toBe(true);
+    expect(await drainEventPointsPush()).toEqual({ left: 0 });
+    expect(zmScore().mock.calls).toEqual([
+      [
+        eventPointKeys(preview.name).watch,
+        [keyedHat, seasonOwnerTopicId(preview.name, HAT.ownerId, 'preview'), keyedTeams],
+      ],
+    ]);
+    expect(topicSend.mock.calls).toEqual([
+      [
+        {
+          topic: `event-points:birthday2026:teams:${keyedTeams}`,
+          target: 'event-points:teams',
+          data: { event: 'birthday2026', teams: { Blue: 3, Pink: 4 } },
+        },
+      ],
+      [
+        {
+          topic: `event-points:birthday2026:hat:${keyedHat}`,
+          target: 'event-points:hat',
+          data: {
+            event: 'birthday2026',
+            topicId: keyedHat,
+            points: 7,
+            counts: { impressions: 0, reactions: 0, comments: 2, stickers: 0, remixes: 0 },
+          },
+        },
+      ],
+    ]);
+  });
+
+  it('sends nothing in the preview to marks under the public ids', async () => {
+    previewTotals();
+    watch.set(hatTopicId(HAT), Date.now() + 60_000);
+    watch.set('teams', Date.now() + 60_000);
+    markEventPointsDirty(preview, HAT, new Date());
+    await drainEventPointsPush();
+    expect(topicSend).not.toHaveBeenCalled();
+  });
+
+  it('marks nothing before the preview opens', () => {
+    const early = { ...preview, previewFrom: new Date(Date.now() + 60_000) };
+    expect(markEventPointsDirty(early, HAT, new Date())).toBe(false);
+  });
+
+  it('puts the key in no payload and no log line, even when a send fails', async () => {
+    const { env } = await import('~/env/server');
+    expect(env.NEXTAUTH_SECRET.length).toBeGreaterThan(0);
+    previewTotals();
+    watch.set(keyedHat, Date.now() + 60_000);
+    watch.set(keyedTeams, Date.now() + 60_000);
+    vi.mocked(logToAxiom).mockClear();
+    topicSend.mockRejectedValueOnce(new Error('signals down'));
+    markEventPointsDirty(preview, HAT, new Date());
+    await drainEventPointsPush();
+    const wire = JSON.stringify(topicSend.mock.calls);
+    const logs = JSON.stringify(vi.mocked(logToAxiom).mock.calls);
+    // The control: both were written to, and the keyed ids did go out.
+    expect(wire).toContain(keyedHat);
+    expect(logs).toContain('signals sends failed');
+    expect(wire).not.toContain(env.NEXTAUTH_SECRET);
+    expect(logs).not.toContain(env.NEXTAUTH_SECRET);
+  });
+});

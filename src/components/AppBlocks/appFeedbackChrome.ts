@@ -3,7 +3,10 @@ import type {
   AppFeedbackTarget,
   CreateAppFeedbackInput,
 } from '~/server/schema/app-feedback.schema';
-import { FEEDBACK_MESSAGE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
+import {
+  APP_FEEDBACK_READERS,
+  FEEDBACK_MESSAGE_MAX_LENGTH,
+} from '~/shared/constants/feedback.constants';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 
@@ -77,6 +80,13 @@ export function canSubmitAppFeedback(message: string): boolean {
   return length > 0 && length <= FEEDBACK_MESSAGE_MAX_LENGTH;
 }
 
+/**
+ * The send dialog's privacy notice, after its bold "Private." lead. Names the same readers as the
+ * developer's inbox (one shared phrase), collaborators included, since an accepted collaborator
+ * reads the inbox too.
+ */
+export const APP_FEEDBACK_PRIVATE_NOTICE = `Only ${APP_FEEDBACK_READERS} can read this. It won't appear on the app's page. They will see your username.`;
+
 export function appFeedbackModalTitle(appName: string | null | undefined): string {
   const name = sanitizeAppChromeName(appName);
   return name
@@ -102,6 +112,10 @@ export function appFeedbackSentWithLine(
     ? `Sent with: ${parts.join(' and ')}. Nothing else is collected.`
     : 'Nothing else is collected with your message.';
 }
+
+/** The second sentence is held to the server's notified statuses by appFeedbackChrome.test.ts. */
+export const APP_FEEDBACK_SENT_MESSAGE =
+  "Sent to the developer. You'll get a notification if they mark it resolved or won't fix.";
 
 export const APP_FEEDBACK_NOT_AVAILABLE_MESSAGE =
   "This app isn't accepting feedback from you right now.";

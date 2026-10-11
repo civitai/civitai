@@ -4,7 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
-import { CreatorAchievements } from '~/components/CreatorJourney/CreatorAchievements';
+import { CreatorAchievements, measureHref } from '~/components/CreatorJourney/CreatorAchievements';
 import { buildActivityProgress } from '~/server/services/creator-journey.service';
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -24,6 +24,9 @@ const definitions = [
   definition('create:models-1', 1, 'First Model'),
   definition('create:models-5', 5, '5 Models'),
   definition('create:models-25', 25, '25 Models'),
+  definition('reach:downloads-1000', 1000, '1k Downloads'),
+  definition('reach:downloads-10000', 10000, '10k Downloads'),
+  definition('reach:downloads-100000', 100000, '100k Downloads'),
   definition('reach:followers-100', 100, '100 Followers'),
   definition('reach:followers-1000', 1000, '1k Followers'),
   definition('earn:shop-sales-100000', 100000, '100k Sales'),
@@ -32,6 +35,9 @@ const definitions = [
   definition('community:crucible-votes-500', 500, '500 Votes'),
   definition('community:crucible-votes-1000', 1000, '1k Votes'),
   definition('community:crucible-votes-5000', 5000, '5k Votes'),
+  definition('compete:wins-1', 1, 'First Win'),
+  definition('compete:wins-5', 5, '5 Wins'),
+  definition('compete:wins-10', 10, '10 Wins'),
 ];
 
 let root: Root | undefined;
@@ -42,17 +48,24 @@ function render(
   followers = 87,
   models = 3,
   revenue = 0,
-  votes = 0
+  votes = 0,
+  wins = 0,
+  winBreakdown = { challenges: wins, crucibles: 0 },
+  downloads = 0
 ) {
-  const activity = buildActivityProgress(definitions, held, {
-    models,
-    articles: 0,
-    downloads: 0,
-    followers,
-    reactions: 0,
-    revenue,
-    votes,
-  });
+  const activity = {
+    ...buildActivityProgress(definitions, held, {
+      models,
+      articles: 0,
+      downloads,
+      followers,
+      reactions: 0,
+      revenue,
+      votes,
+      wins,
+    }),
+    winBreakdown,
+  };
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -96,9 +109,10 @@ describe('Achievements section', () => {
     expect(tile(el, '1k Followers')?.dataset.state).toBe('locked');
   });
 
-  it('shows an undated grant as plain Earned', () => {
+  // A grant with no observed moment was made at launch to someone already past the bar.
+  it('says an undated grant was earned before launch', () => {
     const el = render(new Map([['create:models-1', null]]));
-    expect(tile(el, 'First Model')?.textContent).toMatch(/Earned$/);
+    expect(tile(el, 'First Model')?.textContent).toMatch(/Earned before launch$/);
   });
 
   // A creator who unpublished after the grant keeps the badge; the next tier up is still the target.
@@ -133,6 +147,17 @@ describe('Shop track', () => {
   });
 });
 
+describe('Downloads', () => {
+  it("shows the creator's total downloads against each threshold", () => {
+    const el = render(new Map([['reach:downloads-1000', null]]), 87, 3, 0, 0, 0, undefined, 1200);
+    expect(el.textContent).toContain('Downloads1,200 total');
+    expect(tile(el, '1k Downloads')?.dataset.state).toBe('earned');
+    expect(tile(el, '10k Downloads')?.dataset.state).toBe('progress');
+    expect(tile(el, '10k Downloads')?.textContent).toContain('1,200 / 10,000');
+    expect(tile(el, '100k Downloads')?.textContent).toContain('100,000 downloads');
+  });
+});
+
 describe('Community track', () => {
   it('shows Crucible votes cast against each judge rank, under its own header', () => {
     const el = render(new Map([['community:crucible-votes-500', null]]), 87, 3, 0, 640);
@@ -149,18 +174,43 @@ describe('Community track', () => {
   });
 });
 
+describe('Compete track', () => {
+  it('shows wins against each rung, under its own header, linked to the challenges', () => {
+    const el = render(new Map([['compete:wins-1', null]]), 87, 3, 0, 0, 3, {
+      challenges: 2,
+      crucibles: 1,
+    });
+    const header = [...el.querySelectorAll<HTMLElement>('*')].find(
+      (node) => node.childElementCount === 0 && node.textContent === 'Compete'
+    );
+    const competeTrack = header?.parentElement;
+    expect(competeTrack && tile(competeTrack, '5 Wins')).toBeTruthy();
+    // A bare total read as an unexplained number; the split says what counts.
+    expect(competeTrack?.textContent).toContain('Wins2 challenge wins · 1 Crucible win');
+    expect(tile(el, 'First Win')?.dataset.state).toBe('earned');
+    expect(tile(el, '5 Wins')?.dataset.state).toBe('progress');
+    expect(tile(el, '5 Wins')?.textContent).toContain('3 / 5');
+    expect(tile(el, '10 Wins')?.textContent).toContain('10 wins');
+    expect(measureHref('wins')).toBe('/challenges');
+  });
+});
+
 describe('Achievements badge art', () => {
   it('shows the milestone art once it has some, the numbered hex until then', () => {
     const withArt = [{ ...definitions[0], cosmetic: { data: { url: 'first-model-art' } } }];
-    const activity = buildActivityProgress(withArt, new Map([['create:models-1', null]]), {
-      models: 3,
-      articles: 0,
-      downloads: 0,
-      followers: 0,
-      reactions: 0,
-      revenue: 0,
-      votes: 0,
-    });
+    const activity = {
+      ...buildActivityProgress(withArt, new Map([['create:models-1', null]]), {
+        models: 3,
+        articles: 0,
+        downloads: 0,
+        followers: 0,
+        reactions: 0,
+        revenue: 0,
+        votes: 0,
+        wins: 0,
+      }),
+      winBreakdown: { challenges: 0, crucibles: 0 },
+    };
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -181,5 +231,42 @@ describe('Achievements badge art', () => {
     const plain = render(new Map([['create:models-1', null]]));
     expect(tile(plain, 'First Model')?.querySelector('img')).toBeNull();
     expect(tile(plain, 'First Model')?.textContent).toContain('1First Model');
+  });
+});
+
+// Ladders have five rungs. With the label in a column beside four tiles per row, the fifth wrapped
+// onto a line of its own (Ellie's review, 2026-10-09); the label now heads the row instead.
+describe('Ladder row layout', () => {
+  it('puts the label above the tiles and fits five tiles on a desktop row', () => {
+    const el = render(new Map([['create:models-1', null]]));
+    const grid = tile(el, 'First Model')?.parentElement;
+    expect(grid?.className.split(' ')).toContain('md:grid-cols-5');
+    const row = grid?.parentElement;
+    expect(row?.firstElementChild?.textContent).toBe('Models3 published');
+    expect(row?.className.split(' ')).toContain('flex-col');
+  });
+});
+
+describe('Artless milestone hexagon', () => {
+  it('is a regular hexagon, √3/2 as wide as it is tall, not a square box', () => {
+    const el = render(new Map([['create:models-1', null]]));
+    const hex = tile(el, 'First Model')?.querySelector<HTMLElement>('[aria-hidden]');
+    expect({ width: hex?.style.width, height: hex?.style.height }).toEqual({
+      width: '42px',
+      height: '48px',
+    });
+  });
+});
+
+// Truncating cut off the badge name, which is the point of the tile (lead review, 2026-10-09).
+describe('Ladder tile names', () => {
+  it('wraps a long name onto a second line instead of truncating it', () => {
+    const el = render(new Map([['create:models-1', null]]));
+    const name = [...(tile(el, '25 Models')?.querySelectorAll<HTMLElement>('*') ?? [])].find(
+      (node) => node.textContent === '25 Models'
+    );
+    expect(name?.className).not.toMatch(/truncate/);
+    expect(name?.getAttribute('data-line-clamp')).toBe('true');
+    expect(name?.style.getPropertyValue('--text-line-clamp')).toBe('2');
   });
 });

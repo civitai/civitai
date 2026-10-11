@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { countJudgedPairs, countRemainingPairs } from '~/server/services/crucible.service';
+import {
+  countJudgedPairs,
+  countRemainingPairs,
+  countUnjudgedRemainingPairs,
+} from '~/server/services/crucible.service';
 
 const CAP = 5;
 const count = (
@@ -129,5 +133,25 @@ describe('countJudgedPairs', () => {
 
   it('is zero when nothing was voted', () => {
     expect(countJudgedPairs({ entryIds: [1, 2], votedPairKeys: [] })).toBe(0);
+  });
+});
+
+describe('countUnjudgedRemainingPairs', () => {
+  it('matches countRemainingPairs with no votes', () => {
+    for (const maxVotesPerEntry of [1, 2, 5]) {
+      for (let n = 0; n <= 30; n++) {
+        const expected = countRemainingPairs({
+          entryIds: Array.from({ length: n }, (_, i) => i + 1),
+          judgeEntryVotes: {},
+          votedPairKeys: [],
+          maxVotesPerEntry,
+        });
+        expect([n, maxVotesPerEntry, countUnjudgedRemainingPairs(n, maxVotesPerEntry)]).toEqual([
+          n,
+          maxVotesPerEntry,
+          expected,
+        ]);
+      }
+    }
   });
 });

@@ -265,7 +265,7 @@ describe('opening the modal', () => {
     await expect
       .element(page.getByTestId('app-feedback-private-notice'))
       .toHaveTextContent(
-        "Private. Only this app's developer and Civitai moderators can read this."
+        "Private. Only this app's developer, their collaborators and Civitai moderators can read this. It won't appear on the app's page. They will see your username."
       );
     await expect
       .element(page.getByTestId('app-feedback-sent-with'))
@@ -298,7 +298,9 @@ describe('submitting', () => {
     await typeAndSend('  the export button 404s  ');
     await expect
       .element(page.getByTestId('app-feedback-sent'))
-      .toHaveTextContent('Sent to the developer.');
+      .toHaveTextContent(
+        "Sent to the developer. You'll get a notification if they mark it resolved or won't fix."
+      );
     expect(mocks.createInputs).toStrictEqual([
       { target: { slug: SLUG }, message: 'the export button 404s', context: { surface: 'page' } },
     ]);

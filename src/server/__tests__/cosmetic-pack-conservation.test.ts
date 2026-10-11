@@ -5,19 +5,28 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { isConsumableCosmeticType } from '~/server/schema/creator-shop.schema';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
+
+let claims = shopPurchaseClaimFake();
 dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
-  fn({
-    $executeRaw: (...a: unknown[]) => executeRaw(...a),
-    userCosmetic: {
-      findMany: (...a: unknown[]) => ownedFindMany(...a),
-      createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
-    },
-    userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
-    userCosmeticShopPurchaseCosmetic: {
-      createMany: (...a: unknown[]) => createManyComponents(...a),
-    },
-    cosmeticShopItem: { update: vi.fn() },
-  })
+  claims.rollbackOnThrow(() =>
+    fn({
+      cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: (...a: unknown[]) => executeRaw(...a),
+      userCosmetic: {
+        findMany: (...a: unknown[]) => ownedFindMany(...a),
+        createMany: (...a: unknown[]) => createManyUserCosmetic(...a),
+      },
+      userCosmeticShopPurchases: { create: (...a: unknown[]) => purchaseCreate(...a) },
+      userCosmeticShopPurchaseCosmetic: {
+        createMany: (...a: unknown[]) => createManyComponents(...a),
+      },
+      cosmeticShopItem: { update: vi.fn() },
+    })
+  )
 );
 
 /**
@@ -337,6 +346,7 @@ const SHAPES: Shape[] = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  claims = installShopPurchaseClaimFake();
   ownedFindMany.mockResolvedValue([]);
   // Distinct per call, as the real service returns: a takedown reverses payouts
   // by refunding each recorded transaction id, so a regression recording one id

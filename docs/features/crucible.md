@@ -57,6 +57,14 @@ Prizes are plain Buzz. A winner claims theirs from the link in their results not
 
 The crucible welcome panel shows each entrant their Avg Finish and Prizes Won. Avg Finish is the mean placement percentile ("Top X%") over completed crucibles where they placed and at least 5 entrants placed, ranked by their best entry; crucibles where they did not place are left out, and it shows a dash until 3 crucibles count. Prizes Won counts only places that paid Buzz.
 
+## Leaderboards
+
+Three boards rank crucible activity over the last 30 days, refreshed nightly:
+
+- **Crucible Judges:** each crucible you judge adds 10 × √(your votes in it), counting up to 50 votes per crucible, so judging many crucibles beats piling votes into one.
+- **Crucible Competitors:** in each completed crucible with at least 5 placed entrants, 1 point for every entrant your best entry finished above.
+- **Crucible Hosts:** each of your completed crucibles adds 10 × √(its entrants), counting entrants whose account was at least 30 days old when they entered.
+
 ## Judging
 
 - Judges never see their own entries, and never see the same pair twice.

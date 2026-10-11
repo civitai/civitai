@@ -1,7 +1,8 @@
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import {
-  BIRTHDAY_2026_ENDS_AT,
   BIRTHDAY_2026_EVENT,
+  BIRTHDAY_2026_PREVIEW_FROM,
   BIRTHDAY_2026_STARTS_AT,
 } from '~/shared/constants/birthday2026.constants';
 
@@ -16,9 +17,15 @@ export type EventDecorationDefinition = {
   event: string;
   /** What the decoration is called in menus, e.g. "Party Hat". */
   label: string;
+  /** The event's name where a worn decoration is clicked; the same as its event page's title. */
+  eventTitle: string;
+  /** The button from a worn decoration to its event's page. */
+  eventLinkLabel: string;
   startsAt: Date;
-  /** Exclusive. */
-  endsAt: Date;
+  /** Flagged users may wear it from here; whether a viewer may is the server's call. */
+  previewFrom?: Date;
+  /** The event's own `featureFlag`, the one that lets a viewer into its preview. */
+  featureFlag?: FeatureFlagKey;
   /** What it can be worn on. */
   entityTypes: readonly CosmeticEntity[];
   /** How soon one decoration may be placed again after it was last placed. */
@@ -29,8 +36,11 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
   {
     event: BIRTHDAY_2026_EVENT,
     label: 'Party Hat',
+    eventTitle: "Civitai's 4th Birthday",
+    eventLinkLabel: 'See the birthday event',
     startsAt: BIRTHDAY_2026_STARTS_AT,
-    endsAt: BIRTHDAY_2026_ENDS_AT,
+    previewFrom: BIRTHDAY_2026_PREVIEW_FROM,
+    featureFlag: 'birthday2026',
     entityTypes: [CosmeticEntity.Image, CosmeticEntity.Model, CosmeticEntity.Article],
     moveCooldownMs: 10 * 60 * 1000,
   },
@@ -43,13 +53,38 @@ export const EVENT_DECORATION_DEFINITIONS: readonly EventDecorationDefinition[] 
 export type EventDecorationFit = {
   /** [width, height] of the image file. */
   canvas?: [number, number];
-  /** [left, top, right, bottom] of the visible pixels. The hat rests on the bottom-centre. */
+  /** [left, top, right, bottom] of the visible pixels. */
   bounds?: [number, number, number, number];
-  /** Longer side of the visible pixels on a card, in CSS px. */
+  /** [left, right, y] of the brim, the widest row the hat rests on. Defaults to the bounds' bottom edge. */
+  brim?: [number, number, number];
+  /** Convex outline of the visible pixels, as [x, y] points in ring order (it is drawn as a polygon). Defaults to the bounds. */
+  outline?: [number, number][];
+  /** Brim width on a card, in CSS px. */
   size?: number;
-  /** Degrees; negative leans left. Ignored where the placement stands the hat upright. */
+  /** Degrees; negative leans left. */
   tilt?: number;
+  /** Share of the hat's height (brim to top) worn on the card. */
+  depth?: number;
+  /** Hover scale. */
+  grow?: number;
+  /** [x, y] in CSS px from where the hat would sit; positive is right and down, onto the card. */
+  offset?: [number, number];
 };
+
+/**
+ * The range each hat's own fit may set. A value outside it is pulled to the nearest end when the
+ * hat is drawn, so a mistyped cosmetic cannot fling its hat across the card; whatever writes a fit
+ * should refuse it instead. The container's room still applies on top, so no setting here moves a
+ * hat past the room above or left of its card.
+ */
+export const HAT_FIT_LIMITS = {
+  size: [24, 64],
+  tilt: [-80, 0],
+  depth: [0.2, 0.8],
+  grow: [1, 1.6],
+  /** Each of x and y. */
+  offset: [-12, 12],
+} as const satisfies Record<string, readonly [number, number]>;
 
 export type EventDecorationData = {
   type: string;
@@ -71,22 +106,32 @@ export function getEventDecorationDefinition(event: string) {
   return EVENT_DECORATION_DEFINITIONS.find((x) => x.event === event);
 }
 
-export function isEventDecorationLive(definition: EventDecorationDefinition, now = new Date()) {
-  return now >= definition.startsAt && now < definition.endsAt;
+/**
+ * Whether someone could wear this event's decorations now: from its preview or start, with no end,
+ * because decorations are kept after their event. Who actually may is the server's call
+ * (src/server/events/event-access.ts).
+ */
+export function isEventDecorationReleased(definition: EventDecorationDefinition, now = new Date()) {
+  return now >= (definition.previewFrom ?? definition.startsAt);
 }
 
-/** The live event, if any, whose decorations can be worn on this entity type. */
-export function getLiveEventDecorationDefinition(entityType: CosmeticEntity, now = new Date()) {
+/** The event, if any, whose decorations someone could wear on this entity type now. */
+export function getReleasedEventDecoration(entityType: CosmeticEntity, now = new Date()) {
   return EVENT_DECORATION_DEFINITIONS.find(
-    (x) => isEventDecorationLive(x, now) && x.entityTypes.includes(entityType)
+    (x) => isEventDecorationReleased(x, now) && x.entityTypes.includes(entityType)
   );
 }
 
-/** Entity types that any live event lets a decoration be worn on. Empty between events. */
-export function getLiveEventDecorationEntityTypes(now = new Date()) {
-  return new Set(
-    EVENT_DECORATION_DEFINITIONS.filter((x) => isEventDecorationLive(x, now)).flatMap(
-      (x) => x.entityTypes
-    )
+/**
+ * The decoration on this entity type that is in its preview now: released to flagged viewers, not
+ * yet to everyone. From `startsAt` a shared, viewer-less read carries it, so nothing needs this.
+ */
+export function getPreviewEventDecoration(entityType: CosmeticEntity, now = new Date()) {
+  return EVENT_DECORATION_DEFINITIONS.find(
+    (x) =>
+      !!x.previewFrom &&
+      now >= x.previewFrom &&
+      now < x.startsAt &&
+      x.entityTypes.includes(entityType)
   );
 }

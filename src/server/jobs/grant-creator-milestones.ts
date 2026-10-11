@@ -6,6 +6,7 @@ import { runActivityGroup } from '~/server/services/creator-milestone-activity.s
 import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
 import {
   activityDetectorGroups,
+  competeWinGroups,
   judgeVoteGroups,
 } from '~/server/services/creator-milestone-detectors';
 import type { QueryClickhouse } from '~/server/services/creator-milestone-stored';
@@ -122,9 +123,14 @@ export const grantCreatorMilestones = createJob(
     );
 
     const stored = await storedGroups();
-    // Judge votes are also found row by row, so a group's shape cannot say it came from a row.
+    // Judge votes and wins are also found row by row, so a group's shape cannot say it came from a row.
     const storedIds = new Set(stored.map((group) => group.id));
-    const groups = [...activityDetectorGroups(), ...judgeVoteGroups(queryClickhouse), ...stored];
+    const groups = [
+      ...activityDetectorGroups(),
+      ...judgeVoteGroups(queryClickhouse),
+      ...competeWinGroups(queryClickhouse),
+      ...stored,
+    ];
     for (const group of groups) {
       jobContext.checkIfCanceled();
       const startedAt = Date.now();
