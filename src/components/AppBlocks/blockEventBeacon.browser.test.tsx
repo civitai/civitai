@@ -183,7 +183,7 @@ describe('request splitting', () => {
     const payload = payloadOfBytes(Math.floor(BLOCK_EVENT_MAX_BODY_BYTES * 0.4), '€');
     for (let i = 0; i < 5; i++) record(payload);
     flushBlockEvents();
-    const sent = beaconSpy.mock.calls.map((call: unknown[]) => call[1] as Blob);
+    const sent: Blob[] = beaconSpy.mock.calls.map((call: unknown[]) => call[1] as Blob);
     expect(sent.map((blob) => blob.size).every((n) => n <= BLOCK_EVENT_MAX_BODY_BYTES)).toBe(true);
     expect((await beaconBodies()).map((b) => b.events.length)).toEqual([2, 2, 1]);
     expect(fetchSpy).not.toHaveBeenCalled();
