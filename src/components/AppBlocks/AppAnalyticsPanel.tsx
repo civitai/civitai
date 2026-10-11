@@ -31,6 +31,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
+import { AppsTableColgroup, APPS_CUSTOM_EVENTS_COLUMNS } from '~/components/Apps/appsWideLayout';
 import {
   endpointBucketLabel,
   scopeBucketLabel,
@@ -247,12 +248,6 @@ function PropertyBreakdown({ property }: { property: CustomEventPropertyBreakdow
         </Text>
       ) : property.type === 'enum' ? (
         <Table>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Value</Table.Th>
-              <Table.Th ta="right">Events</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
           <Table.Tbody>
             {property.values.map((v) => (
               <Table.Tr key={v.value}>
@@ -400,6 +395,7 @@ function CustomEventsCard({
                   )}
                   <Table.ScrollContainer minWidth={420}>
                     <Table>
+                      <AppsTableColgroup columns={APPS_CUSTOM_EVENTS_COLUMNS} />
                       <Table.Thead>
                         <Table.Tr>
                           <Table.Th>Event</Table.Th>
