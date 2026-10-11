@@ -69,8 +69,13 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache, metadata: HomeBloc
 // a red-scoped board rendered onto civitai.com.
 const domainSegment = (domain?: DomainColor) => domain ?? 'unscoped';
 
-export async function getHomeBlockCached(homeBlock: HomeBlockForCache, domain?: DomainColor) {
-  const metadata = await (await homeBlockService()).resolveHomeBlockMetadata(homeBlock);
+export async function getHomeBlockCached(
+  homeBlock: HomeBlockForCache,
+  domain?: DomainColor,
+  resolvedMetadata?: HomeBlockMetaSchema
+) {
+  const metadata =
+    resolvedMetadata ?? (await (await homeBlockService()).resolveHomeBlockMetadata(homeBlock));
   const identifier = getHomeBlockIdentifier(homeBlock, metadata);
 
   if (!identifier) return null;
