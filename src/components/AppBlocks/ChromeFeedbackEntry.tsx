@@ -103,11 +103,11 @@ function ChromeFeedbackButtonBody({
         variant="subtle"
         color="gray"
         // `sm` like every other icon button in the bar: it keeps the row at its pinned resting
-        // height (`CHROME_BAR_PX`), and `flexShrink: 0` stops a long app name squeezing it.
+        // height (`CHROME_BAR_PX`). No `flexShrink: 0` needed: Mantine gives an ActionIcon
+        // `min-width: var(--ai-size)`, so a long app name cannot squeeze it.
         size="sm"
         aria-label={APP_FEEDBACK_BUTTON_LABEL}
         data-testid="app-block-feedback-button"
-        style={{ flexShrink: 0 }}
         onClick={() => onOpenFeedback({ request, appName, appBlockVersion })}
       >
         <IconMessage2 size={16} stroke={1.5} />

@@ -28,6 +28,10 @@ const mocks = vi.hoisted(() => ({
   user: { id: 7, username: 'viewer', isModerator: false } as unknown,
   eligibility: null as unknown,
   eligibilityInputs: [] as unknown[],
+  /** When set, `getEligibility` waits on this before answering — holds the query pending. */
+  eligibilityGate: null as Promise<void> | null,
+  /** When set, `getEligibility` rejects (e.g. the procedure refused an un-onboarded viewer). */
+  eligibilityError: false,
   createInputs: [] as unknown[],
   createResult: { kind: 'ok' } as { kind: 'ok' } | { kind: 'error'; message: string; code: string },
   /** When set, `create` waits on this before settling — holds the mutation pending. */
@@ -56,6 +60,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               queryKey: [['appFeedback', 'getEligibility'], { input, type: 'query' }],
               queryFn: async () => {
                 mocks.eligibilityInputs.push(input);
+                if (mocks.eligibilityGate) await mocks.eligibilityGate;
+                if (mocks.eligibilityError)
+                  throw Object.assign(new Error('Forbidden'), { data: { code: 'FORBIDDEN' } });
                 return mocks.eligibility;
               },
               ...opts,
@@ -148,7 +155,10 @@ const SLOT_PROPS = { appBlockId: APP_BLOCK_ID, slotId: 'model.sidebar_top', mode
  * has arrived yet. It shares the key, so it adds no request.
  */
 function EligibilityProbe({ target }: { target: Record<string, string> }) {
-  const { data } = trpc.appFeedback.getEligibility.useQuery({ target } as never, { retry: false });
+  const { data, isError } = trpc.appFeedback.getEligibility.useQuery({ target } as never, {
+    retry: false,
+  });
+  if (isError) return <span data-testid="eligibility-probe-errored" />;
   return data ? <span data-testid="eligibility-probe-resolved" /> : null;
 }
 
@@ -209,6 +219,8 @@ beforeEach(async () => {
   mocks.user = { id: 7, username: 'viewer', isModerator: false };
   mocks.eligibility = eligible();
   mocks.eligibilityInputs = [];
+  mocks.eligibilityGate = null;
+  mocks.eligibilityError = false;
   mocks.createInputs = [];
   mocks.createResult = { kind: 'ok' };
   mocks.createGate = null;
@@ -262,6 +274,42 @@ describe('the bar button', () => {
     expect(page.getByRole('tooltip').elements()).toHaveLength(0);
     await feedbackButton().hover();
     await expect.element(page.getByRole('tooltip')).toHaveTextContent('Send feedback to developer');
+  });
+
+  test('keyboard focus also shows the tooltip', async () => {
+    renderChrome();
+    await expect.element(feedbackButton()).toBeVisible();
+    expect(page.getByRole('tooltip').elements()).toHaveLength(0);
+    // Park the pointer off the button first: the previous test hovered this exact spot, and a
+    // pointer left there opens the tooltip by hover, which would pass this test for the wrong
+    // reason (measured: it did, with `focus: false`).
+    await menuTrigger().hover();
+    await new Promise((r) => setTimeout(r, 400)); // past the 300ms openDelay
+    expect(page.getByRole('tooltip').elements()).toHaveLength(0);
+    (feedbackButton().element() as HTMLElement).focus();
+    await expect.element(page.getByRole('tooltip')).toHaveTextContent('Send feedback to developer');
+  });
+
+  test('absent while the eligibility answer is still in flight', async () => {
+    let release: () => void = () => undefined;
+    mocks.eligibilityGate = new Promise<void>((r) => {
+      release = r;
+    });
+    renderChrome();
+    await vi.waitFor(() => expect(mocks.eligibilityInputs).toHaveLength(1));
+    await expect.element(menuTrigger()).toBeInTheDocument();
+    expect(feedbackButton().elements()).toHaveLength(0);
+    // CONTROL: the same render shows it once the answer lands.
+    release();
+    await expect.element(feedbackButton()).toBeVisible();
+  });
+
+  test('absent when the eligibility query fails (e.g. the procedure refuses the viewer)', async () => {
+    mocks.eligibilityError = true;
+    renderChrome(PAGE_PROPS, { slug: SLUG });
+    await expect.element(page.getByTestId('eligibility-probe-errored')).toBeInTheDocument();
+    expect(mocks.eligibilityInputs).toHaveLength(1);
+    expect(feedbackButton().elements()).toHaveLength(0);
   });
 
   test('hidden when the server says not eligible (owner/editor, flag off, …)', async () => {
@@ -504,9 +552,14 @@ describe('narrow bars', () => {
     expect((feedbackButton().element() as HTMLElement).nextElementSibling).toBe(
       menuTrigger().element()
     );
-    // The sheet no longer carries the item.
+    const b = rectOf(feedbackButton().element());
+    const t = rectOf(menuTrigger().element());
+    expect(t.left - b.right).toBeLessThanOrEqual(8);
+    // The sheet no longer carries the item, under any testid.
     await openOverflow();
     expect(feedbackMenuItem().elements()).toHaveLength(0);
+    const sheet = page.getByTestId('app-block-menu-dropdown').element();
+    expect(sheet.textContent).not.toContain('Send feedback to developer');
     await userEvent.keyboard('{Escape}');
     await expect.element(page.getByTestId('app-block-menu-dropdown')).not.toBeInTheDocument();
     await feedbackButton().click();
@@ -535,4 +588,33 @@ describe('narrow bars', () => {
     expect(t.right).toBeLessThanOrEqual(bar.right);
     expect([b.width, b.height]).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
   });
+
+  const LONG_NAME =
+    'An Extraordinarily Long Application Name That Would Happily Fill The Whole Bar';
+
+  test.each([
+    ['320px model sidebar', SLOT_PROPS, 320],
+    ['375px compact page shell', PAGE_PROPS, 375],
+  ] as const)(
+    // INVARIANT GUARD, not regression coverage: Mantine's ActionIcon `min-width` already holds
+    // 22px (removing every `flexShrink: 0` here stays green). It pins the outcome, whatever holds it.
+    'INVARIANT GUARD — a long app name cannot squeeze the button or ⋮ (%s)',
+    async (_label, props, width) => {
+      await page.viewport(width, 720);
+      render(
+        <div style={{ width }}>
+          <AppBlockChrome blockInstanceId="inst-fb" appName={LONG_NAME} {...props} />
+        </div>,
+        { wrapper: ProdishProviders }
+      );
+      await expect.element(feedbackButton()).toBeVisible();
+      expectStyledOneLineBar();
+      const bar = rectOf(chromeBar());
+      for (const id of ['app-block-feedback-button', 'app-block-menu-trigger']) {
+        const r = rectOf(page.getByTestId(id).element());
+        expect([r.width, r.height], id).toEqual([RESTING_ICON_PX, RESTING_ICON_PX]);
+        expect(r.right, id).toBeLessThanOrEqual(bar.right);
+      }
+    }
+  );
 });

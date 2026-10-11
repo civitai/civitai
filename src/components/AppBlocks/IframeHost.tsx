@@ -880,10 +880,10 @@ export function AppBlockChrome({
             onOpenReview={setReviewListingId}
           />
         )}
-        {/* The trailing cluster: the feedback button, then the ⋮ trigger, as one non-shrinking
-          unit with a tighter gap than the bar's own, so the pair reads as one group of app
-          actions. The button renders its own gates and may be null. */}
-        <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+        {/* The trailing cluster: the feedback button, then the ⋮ trigger, with a tighter gap
+          than the bar's own so the pair reads as one group of app actions. The button renders
+          its own gates and may be null. */}
+        <Group gap={4} wrap="nowrap">
           <ChromeFeedbackButton request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
           {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
             was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
