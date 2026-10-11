@@ -13,6 +13,7 @@ import {
   Text,
   Title,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
 import type { ChartOptions } from 'chart.js';
@@ -316,8 +317,11 @@ function CustomEventsCard({
 
   const selectEvent = (eventName: string | null) => {
     onSelectEvent(eventName);
-    // In one column (the modal) the detail sits below the whole table.
-    if (eventName) detailRef.current?.scrollIntoView?.({ block: 'start' });
+    // In one column (the modal) the detail sits below the whole table, often off-screen.
+    const detail = detailRef.current;
+    if (eventName && detail && detail.getBoundingClientRect().top > window.innerHeight) {
+      detail.scrollIntoView?.({ block: 'start' });
+    }
   };
 
   return (
@@ -435,9 +439,16 @@ function CustomEventsCard({
                   </Table.ScrollContainer>
                 </div>
                 <div ref={detailRef}>
+                  <VisuallyHidden aria-live="polite">
+                    {selected
+                      ? `Showing ${selected.eventName}`
+                      : selectedEvent && !refreshing
+                      ? `Details unavailable for ${selectedEvent}`
+                      : ''}
+                  </VisuallyHidden>
                   {selected ? (
                     <Stack gap="sm">
-                      <Text size="sm" fw={600} aria-live="polite">
+                      <Text size="sm" fw={600}>
                         {selected.eventName} over time
                       </Text>
                       <MiniLineChart points={selected.series} granularity={granularity} />

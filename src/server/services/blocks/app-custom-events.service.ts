@@ -241,7 +241,10 @@ export async function getAppCustomEvents({
     // A failing detail (a heavy event over the memory cap, say) must not take the table with it:
     // the owner could then never deselect the event that keeps failing.
     const detail = Promise.all([seriesQuery, scalarQuery, enumQuery]).catch((error: unknown) => {
-      logReadFailure(error, 'appBlockEvents selected-event read failed');
+      // A timeout is logged once, by the outer catch.
+      if (!controller.signal.aborted) {
+        logReadFailure(error, 'appBlockEvents selected-event read failed');
+      }
       return null;
     });
     const [topRows, detailRows] = await Promise.all([topQuery, detail]);
@@ -316,5 +319,7 @@ export async function getAppCustomEvents({
     return unavailableCustomEvents(declared, includeOwner);
   } finally {
     clearTimeout(timer);
+    // A failed top query must not leave the detail queries running.
+    controller.abort();
   }
 }

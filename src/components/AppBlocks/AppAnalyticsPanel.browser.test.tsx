@@ -837,6 +837,9 @@ describe('AppAnalyticsPanel — custom events', () => {
       )
       .toBeInTheDocument();
     await expect.element(page.getByText('true 6 · false 1', { exact: true })).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Showing generate_clicked', { exact: true }))
+      .toHaveAttribute('aria-live', 'polite');
     expect(card().querySelectorAll('[data-testid="chart"]')).toHaveLength(1);
   });
 
@@ -850,6 +853,9 @@ describe('AppAnalyticsPanel — custom events', () => {
     await expect
       .element(page.getByText("Couldn't load the details for share_clicked.", { exact: true }))
       .toBeInTheDocument();
+    await expect
+      .element(page.getByText('Details unavailable for share_clicked', { exact: true }))
+      .toHaveAttribute('aria-live', 'polite');
     expect(page.getByText('generate_clicked over time').elements()).toHaveLength(0);
   });
 
