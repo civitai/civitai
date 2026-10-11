@@ -109,7 +109,10 @@ describe('BlockImageUploadModal — a pick the photo picker made unreadable', ()
     mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
     restoreReads = makeUnreadableFilesFail();
   });
-  afterEach(() => restoreReads());
+  afterEach(() => {
+    restoreReads();
+    vi.restoreAllMocks();
+  });
 
   test('an unreadable pick offers the Files chooser: no preview, no upload, reported once', async () => {
     const onAccepted = vi.fn();
@@ -163,6 +166,8 @@ describe('BlockImageUploadModal — a pick the photo picker made unreadable', ()
     await chooseFiles(fileInputEl(), [corrupt]);
 
     await expect.element(page.getByText(PREP_MESSAGE, { exact: true })).toBeVisible();
+    // A readable pick keeps its preview: the control for the `previewEl()` null check above.
+    expect(previewEl()).not.toBeNull();
     expect(mocks.uploadToCF).not.toHaveBeenCalled();
     expect(onAccepted).not.toHaveBeenCalled();
   });
@@ -198,6 +203,7 @@ describe('BlockImageUploadModal — a pick the photo picker made unreadable', ()
     await vi.waitFor(() => expect(mocks.uploadToCF).toHaveBeenCalledTimes(1));
 
     useDialogStore.getState().closeAll();
+    await vi.waitFor(() => expect(document.querySelector('input[type="file"]')).toBeNull());
     finishUpload({ id: 'cf-key' });
     await new Promise((r) => setTimeout(r, 100));
 

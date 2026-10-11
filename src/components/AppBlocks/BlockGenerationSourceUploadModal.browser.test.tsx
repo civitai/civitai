@@ -305,7 +305,10 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
     mocks.imageToJpegBlob.mockReset().mockResolvedValue(JPEG_BLOB);
     restoreReads = makeUnreadableFilesFail();
   });
-  afterEach(() => restoreReads());
+  afterEach(() => {
+    restoreReads();
+    vi.restoreAllMocks();
+  });
 
   test('an unreadable pick offers the Files chooser: no preview, no resize, no upload, reported once', async () => {
     const onResolved = vi.fn();
@@ -419,6 +422,8 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
     await chooseFiles(fileInputEl(), [makeImageFile('photo-0.jpg', 'image/jpeg')]);
 
     await expect.element(page.getByText(PREP_MESSAGE, { exact: true })).toBeVisible();
+    // A readable pick keeps its preview: the control for the `previewEl()` null checks above.
+    expect(previewEl()).not.toBeNull();
     expect(document.body.textContent).not.toContain('complete=');
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
     expect(onResolved).not.toHaveBeenCalled();
@@ -449,6 +454,7 @@ describe('BlockGenerationSourceUploadModal — a pick the photo picker made unre
     await vi.waitFor(() => expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(1));
 
     useDialogStore.getState().closeAll();
+    await vi.waitFor(() => expect(document.querySelector('input[type="file"]')).toBeNull());
     finishUpload({ url: BLOB_URL });
     await new Promise((r) => setTimeout(r, 100));
 
