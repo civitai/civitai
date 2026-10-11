@@ -1,4 +1,14 @@
-import { Alert, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Group,
+  Modal,
+  Stack,
+  Text,
+  Textarea,
+  Tooltip,
+} from '@mantine/core';
 import { IconLock, IconMessage2 } from '@tabler/icons-react';
 import { useState } from 'react';
 
@@ -19,18 +29,19 @@ import {
   buildAppFeedbackCreateInput,
   canSubmitAppFeedback,
 } from './appFeedbackChrome';
-import { ChromeSurfaceItem } from './ChromeSurface';
 
 /**
  * "Send feedback to developer": private, text-only feedback from a running App Block to its
- * developer (their collaborators and moderators read it too). Mirrors the F4 review entry in
- * `ChromeReviewEntry.tsx`: the ⋮ item hands what it resolved UP to `AppBlockChrome`, which mounts
- * the modal outside every floating surface, because Mantine unmounts a closed dropdown or sheet
- * together with anything inside it.
+ * developer (their collaborators and moderators read it too). The entry point is an icon button in
+ * the chrome bar itself, beside the ⋮ trigger, on every surface (page host and model slot, desktop
+ * bar and compact shell) — it used to be a ⋮ menu item, which buried the one action whose whole
+ * point is to be reached while the app is in front of you. It hands what it resolved UP to
+ * `AppBlockChrome`, which owns the modal, so the modal's lifetime does not depend on where the
+ * trigger lives (the ⋮ surface unmounts its children on close).
  */
 
 /**
- * Everything the modal needs, captured when the item is clicked. The request is part of the
+ * Everything the modal needs, captured when the button is clicked. The request is part of the
  * snapshot, not re-derived from the chrome's props: the page host can be reused across apps
  * without remounting, and a modal titled for app A must not submit to app B.
  */
@@ -40,7 +51,19 @@ export type AppFeedbackModalTarget = {
   appBlockVersion: string | null;
 };
 
-export function ChromeFeedbackMenuItem({
+export const APP_FEEDBACK_BUTTON_LABEL = 'Send feedback to developer';
+
+/** Hover for a pointer, focus so a keyboard user also sees the label (Mantine's default is hover only). */
+const TOOLTIP_EVENTS = { hover: true, focus: true, touch: false };
+
+/**
+ * The chrome-bar button. Renders `null` for a viewer the server would refuse.
+ *
+ * Split in two for the same reason as `ChromeReviewMenuItem`: the eligibility query is mounted
+ * only once the cheap synchronous gates (`appFeedbackEntryRequest`) have passed, so a signed-out
+ * viewer or one without store access never issues it.
+ */
+export function ChromeFeedbackButton({
   request,
   onOpenFeedback,
 }: {
@@ -55,18 +78,19 @@ export function ChromeFeedbackMenuItem({
     request,
   });
   if (!entry) return null;
-  return <ChromeFeedbackMenuItemBody request={entry} onOpenFeedback={onOpenFeedback} />;
+  return <ChromeFeedbackButtonBody request={entry} onOpenFeedback={onOpenFeedback} />;
 }
 
-function ChromeFeedbackMenuItemBody({
+function ChromeFeedbackButtonBody({
   request,
   onOpenFeedback,
 }: {
   request: AppFeedbackRequest;
   onOpenFeedback: (target: AppFeedbackModalTarget) => void;
 }) {
-  // `getEligibility` runs the same predicate as `appFeedback.create`, so the item is never offered
-  // where the submit would be refused.
+  // `getEligibility` runs the same predicate as `appFeedback.create`, so the button is never
+  // offered where the submit would be refused. Unlike the old ⋮ item this query runs when the
+  // chrome mounts rather than when a menu opens: a visible button has to know up front.
   const { data } = trpc.appFeedback.getEligibility.useQuery(
     { target: request.target },
     { retry: false }
@@ -74,13 +98,21 @@ function ChromeFeedbackMenuItemBody({
   if (!data?.eligible) return null;
   const { appName, appBlockVersion } = data;
   return (
-    <ChromeSurfaceItem
-      leftSection={<IconMessage2 size={14} stroke={1.5} />}
-      onClick={() => onOpenFeedback({ request, appName, appBlockVersion })}
-      data-testid="app-block-feedback-menu-item"
-    >
-      Send feedback to developer
-    </ChromeSurfaceItem>
+    <Tooltip label={APP_FEEDBACK_BUTTON_LABEL} withArrow openDelay={300} events={TOOLTIP_EVENTS}>
+      <ActionIcon
+        variant="subtle"
+        color="gray"
+        // `sm` like every other icon button in the bar: it keeps the row at its pinned resting
+        // height (`CHROME_BAR_PX`), and `flexShrink: 0` stops a long app name squeezing it.
+        size="sm"
+        aria-label={APP_FEEDBACK_BUTTON_LABEL}
+        data-testid="app-block-feedback-button"
+        style={{ flexShrink: 0 }}
+        onClick={() => onOpenFeedback({ request, appName, appBlockVersion })}
+      >
+        <IconMessage2 size={16} stroke={1.5} />
+      </ActionIcon>
+    </Tooltip>
   );
 }
 

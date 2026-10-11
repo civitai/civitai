@@ -29,7 +29,7 @@ import {
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
-import { AppFeedbackModal, ChromeFeedbackMenuItem } from './ChromeFeedbackEntry';
+import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
 import { resolveAppFeedbackRequest } from './appFeedbackChrome';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
@@ -452,8 +452,9 @@ export function AppBlockChrome({
   // only when there is something to review: an id is what the entry point resolved
   // and handed up, so there is no window in which the modal exists without one.
   const [reviewListingId, setReviewListingId] = useState<string | null>(null);
-  // The feedback modal's target, `null` while closed — owned here for the same reason as
-  // `reviewListingId`.
+  // The feedback modal's target, `null` while closed. Owned here beside `reviewListingId` so the
+  // chrome's modals all mount in one place, outside the bar; the entry point (a bar button) hands
+  // up the snapshot it took at click time.
   const [feedbackTarget, setFeedbackTarget] = useState<AppFeedbackModalTarget | null>(null);
   const feedbackRequest = resolveAppFeedbackRequest({ slug, appBlockId, slotId, modelId });
 
@@ -742,8 +743,9 @@ export function AppBlockChrome({
           store subnav must also list.
 
           Placed directly under "Manage apps" so the whole-app actions about the
-          running app (rate it, send feedback, see what it can do) sit together
-          above the dismissal, and "Hide app" stays last.
+          running app (rate it, see what it can do) sit together above the
+          dismissal, and "Hide app" stays last. Sending feedback is not here: it is its
+          own button in the bar, beside this menu's trigger.
 
           🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
           only to a viewer the server would accept: signed in, not the owner,
@@ -755,9 +757,6 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
-      {/* Private feedback to the developer. Unlike the review item it also works on the model
-          slot (no slug there): eligibility is asked of the server by AppBlock id. */}
-      <ChromeFeedbackMenuItem request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -841,9 +840,10 @@ export function AppBlockChrome({
             >
               <IconChevronLeft size={16} stroke={1.5} />
             </ActionIcon>
-            {/* The centered app name. `flex: 1 1 auto` between two 22px icon buttons is
-              what centers it, and `minWidth: 0` is what lets the name truncate rather
-              than push a control off the row.
+            {/* The centered app name. `flex: 1 1 auto` between the back chevron and the
+              trailing cluster is what centers it — exactly when only ⋮ trails, slightly left
+              of true center when the feedback button renders too — and `minWidth: 0` is
+              what lets the name truncate rather than push a control off the row.
 
               The provenance icon rides along rather than being dropped with the
               platform-nav trigger it used to live in. That trigger is GONE on this
@@ -880,50 +880,56 @@ export function AppBlockChrome({
             onOpenReview={setReviewListingId}
           />
         )}
-        {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
-          was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
-          because the mobile bar has no second trigger to hang that behind — the
-          operator's call, and the reason `platformNavItems` is authored as a fragment
-          rather than inline in its own dropdown.
+        {/* The trailing cluster: the feedback button, then the ⋮ trigger, as one non-shrinking
+          unit with a tighter gap than the bar's own, so the pair reads as one group of app
+          actions. The button renders its own gates and may be null. */}
+        <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+          <ChromeFeedbackButton request={feedbackRequest} onOpenFeedback={setFeedbackTarget} />
+          {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
+            was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
+            because the mobile bar has no second trigger to hang that behind — the
+            operator's call, and the reason `platformNavItems` is authored as a fragment
+            rather than inline in its own dropdown.
 
-          Order: the running app's own actions first (that is what ⋮ has always
-          meant), then the platform destinations. The back chevron already covers the
-          most common of those, so the folded-in nav is the secondary half of the
-          sheet, not its headline. */}
-        <ChromeSurface
-          compact={compact}
-          kind="menu"
-          control={overflowMenu}
-          title="App menu"
-          width={180}
-          position="bottom-end"
-          dropdownTestId="app-block-menu-dropdown"
-          target={
-            /* `data-testid` alongside the accessible name: the sibling controls in
-             this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
-             are all addressable that way, and a test reaching this trigger by
-             accessible name alone breaks on a copy change that is not a behaviour
-             change. */
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size="sm"
-              aria-label="App menu"
-              data-testid="app-block-menu-trigger"
-              // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
-              // Without this the ⋯ trigger is a shrinkable flex item and a long name
-              // at a narrow width can squeeze it below its resting `ActionIcon
-              // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
-              // has carried `flexShrink: 0` all along.
-              style={{ flexShrink: 0 }}
-            >
-              <IconDots size={16} stroke={1.5} />
-            </ActionIcon>
-          }
-        >
-          {appMenuItems}
-          {compact && platformNavItems}
-        </ChromeSurface>
+            Order: the running app's own actions first (that is what ⋮ has always
+            meant), then the platform destinations. The back chevron already covers the
+            most common of those, so the folded-in nav is the secondary half of the
+            sheet, not its headline. */}
+          <ChromeSurface
+            compact={compact}
+            kind="menu"
+            control={overflowMenu}
+            title="App menu"
+            width={180}
+            position="bottom-end"
+            dropdownTestId="app-block-menu-dropdown"
+            target={
+              /* `data-testid` alongside the accessible name: the sibling controls in
+               this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
+               are all addressable that way, and a test reaching this trigger by
+               accessible name alone breaks on a copy change that is not a behaviour
+               change. */
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                aria-label="App menu"
+                data-testid="app-block-menu-trigger"
+                // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
+                // Without this the ⋯ trigger is a shrinkable flex item and a long name
+                // at a narrow width can squeeze it below its resting `ActionIcon
+                // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
+                // has carried `flexShrink: 0` all along.
+                style={{ flexShrink: 0 }}
+              >
+                <IconDots size={16} stroke={1.5} />
+              </ActionIcon>
+            }
+          >
+            {appMenuItems}
+            {compact && platformNavItems}
+          </ChromeSurface>
+        </Group>
       </Group>
       {/* Per-app transparency drawer (Part B). Rendered only when the caller
         threaded an appBlockId; the body's queries fire only once opened. */}
