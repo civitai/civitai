@@ -53,6 +53,9 @@ const REFUSED = {
   noPost: { post: null },
 } as const;
 
+/** A ceiling that admits mature levels: PG | PG13 | R | X | XXX. */
+const ALL_LEVELS = 31;
+
 type Row = typeof CLEAN | Record<string, unknown>;
 const lit = (v: unknown) =>
   v === null ? 'NULL' : typeof v === 'string' ? `'${v}'` : String(v as number | boolean);
@@ -72,12 +75,12 @@ async function insertImage(id: number, row: Row) {
   }
   await holder.db.exec(`
     INSERT INTO "Image" (id, url, type, "postId", "nsfwLevel", ingestion, "needsReview", poi, minor,
-      "acceptableMinor", "tosViolation", "blockedFor")
+      "acceptableMinor", "tosViolation", "blockedFor", "modelRestricted")
     VALUES (${id}, 'img-${id}', 'image', ${post === null ? 'NULL' : id}, ${lit(r.nsfwLevel)}, ${lit(
     r.ingestion
   )},
       ${lit(r.needsReview)}, ${lit(r.poi)}, ${lit(r.minor)}, ${lit(r.acceptableMinor)},
-      ${lit(r.tosViolation)}, ${lit(r.blockedFor)});
+      ${lit(r.tosViolation)}, ${lit(r.blockedFor)}, ${lit(r.modelRestricted ?? false)});
   `);
 }
 
@@ -117,7 +120,8 @@ beforeAll(async () => {
       minor boolean NOT NULL DEFAULT false,
       "acceptableMinor" boolean NOT NULL DEFAULT false,
       "tosViolation" boolean NOT NULL DEFAULT false,
-      "blockedFor" text
+      "blockedFor" text,
+      "modelRestricted" boolean DEFAULT false
     );
     CREATE TABLE "CollectionItem" (
       id serial PRIMARY KEY,
@@ -178,5 +182,23 @@ describe('getFallbackCoverImages against Postgres', () => {
     const map = await getFallbackCoverImages([10], SFW);
     expect(map.has(10)).toBe(false);
     expect(map.size).toBe(0);
+  });
+
+  describe('restricted base model', () => {
+    it('skips a newest mature item on a restricted base model at a mature ceiling', async () => {
+      await insertImage(1, { nsfwLevel: 4 });
+      await insertImage(2, { nsfwLevel: 4, modelRestricted: true });
+      await insertItem(10, 1, '2026-01-01');
+      await insertItem(10, 2, '2026-01-02');
+      expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-1');
+    });
+
+    it('keeps a newest SFW item on a restricted base model', async () => {
+      await insertImage(1, {});
+      await insertImage(2, { modelRestricted: true });
+      await insertItem(10, 1, '2026-01-01');
+      await insertItem(10, 2, '2026-01-02');
+      expect((await getFallbackCoverImages([10], ALL_LEVELS)).get(10)?.url).toBe('img-2');
+    });
   });
 });

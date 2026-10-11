@@ -26,6 +26,7 @@ import { dbRead } from '~/server/db/client';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 
@@ -238,6 +239,8 @@ export async function getFallbackCoverImages(
       AND i."blockedFor" IS NULL
       AND p."publishedAt" < now()
       AND p."availability" != 'Private'
+      -- Same restricted-base-model condition getAllImages applies to every row.
+      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
     ORDER BY ci."collectionId", ci."createdAt" DESC
   `;
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();
