@@ -11,7 +11,9 @@ import {
 } from '~/components/AppBlocks/blockEventBeacon';
 
 /**
- * The batcher's request bodies against the MERGED ingest's own batch schema and body limit.
+ * The batcher's request bodies against the MERGED ingest's own batch schema and body limit. The
+ * schema leaves `eventName` and `properties` unchecked (the ingest filters them against the
+ * manifest), so it pins the identity fields and the row count.
  * Node has no `window`, so the browser globals the batcher touches are stubbed; the request is
  * captured from the stubbed `fetch` and never sent.
  */
@@ -53,14 +55,17 @@ describe('blockEventBeacon request bodies satisfy the ingest contract', () => {
 
     const bodies = sentBodies();
     expect(bodies).toHaveLength(1);
-    const parsed = blockEventBatchSchema.safeParse(bodies[0]);
-    expect(parsed.success).toBe(true);
-    expect(parsed.data?.events).toEqual([
+    const expected = [
       { ...page, eventName: 'run_started', properties: { mode: 'fast', n: 2 } },
       { ...page, eventName: 'run_finished', properties: { ok: true } },
       { ...slot, eventName: 'opened' },
       { ...slot, eventName: 'Not Declared!', properties: { x: null } },
-    ]);
+    ];
+    // The raw body, before zod strips unknown keys: nothing beyond the four fields is sent.
+    expect(bodies[0]).toEqual({ events: expected });
+    const parsed = blockEventBatchSchema.safeParse(bodies[0]);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.events).toEqual(expected);
   });
 
   test('a full flush of 120 events is sent as bodies that each parse', () => {

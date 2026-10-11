@@ -113,6 +113,14 @@ describe('App Blocks host↔SDK handler parity (gotcha-#73 "spins forever" guard
             expect(typeof req).toBe('string');
             expect((req as string).length).toBeGreaterThan(10);
           });
+          // The other direction: an entry left N/A for a type the host handles takes that handler
+          // out of the 'required' guard above, so its removal would go unnoticed.
+          it(`registers no handler for exempted '${type}'`, () => {
+            expect(
+              handlesMessage(HOST_SRC[host], type),
+              `${host} registers onMessage('${type}') but INVENTORY declares it N/A`
+            ).toBe(false);
+          });
         }
       }
     });

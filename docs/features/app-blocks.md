@@ -423,14 +423,14 @@ hand before the route deploys).
 
 - **The hosts forward them.** `IframeHost` and `PageBlockHost` handle
   `TRACK_EVENT` and queue one row per event in `blockEventBeacon.ts`, stamping
-  `appBlockId` and `blockInstanceId` from their own props (`page_<appBlockId>`
-  on the page host, the install's instance id in a model slot); the block's
+  `appBlockId` and `blockInstanceId` from their own props (the page's `page_…`
+  id on the page host, the install's instance id in a model slot); the block's
   payload supplies only `eventName` and `properties`, and property values that
   are not primitives are dropped. The queue flushes every 10 s, at 50 rows, and
   on `pagehide` / `visibilitychange` (hidden), in POSTs of at most 50 rows and
-  60 KiB; a single row larger than that is dropped. A block instance may send
-  about 10 events a second and a page session 500 in all; the excess is
-  dropped. A moderator's review preview forwards nothing. Nothing is retried.
+  32 KiB; an event larger than that is dropped. A block instance may send 10
+  events a second and each app 500 per page session; the excess is dropped. A
+  moderator's review preview forwards nothing. Nothing is retried.
 
 - **Declared events only.** A row is checked against the app's APPROVED manifest.
   An event the manifest does not declare is stored as one `__undeclared__` row

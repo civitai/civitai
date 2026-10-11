@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   BLOCK_EVENT_MAX_BODY_BYTES,
-  BLOCK_EVENT_SESSION_CAP,
+  BLOCK_EVENT_SESSION_CAP_PER_APP,
   buildBlockEventBodies,
   flushBlockEvents,
   recordBlockEvent,
@@ -76,13 +76,23 @@ describe('recordBlockEvent', () => {
 });
 
 describe('flushing', () => {
-  test('flushes 10 s after the first queued event, not before', async () => {
+  test('flushes 10 s after the FIRST queued event; later events do not push it back', async () => {
     recordBlockEvent(SLOT, { eventName: 'a' });
-    vi.advanceTimersByTime(9_999);
+    vi.advanceTimersByTime(5_000);
+    recordBlockEvent(SLOT, { eventName: 'b' });
+    vi.advanceTimersByTime(4_999);
     expect(beaconSpy).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(beaconSpy).toHaveBeenCalledTimes(1);
-    expect(await beaconBodies()).toEqual([{ events: [{ ...SLOT, eventName: 'a' }] }]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await beaconBodies()).toEqual([
+      {
+        events: [
+          { ...SLOT, eventName: 'a' },
+          { ...SLOT, eventName: 'b' },
+        ],
+      },
+    ]);
     expect(_internalsForTests.queued()).toEqual([]);
   });
 
@@ -100,6 +110,7 @@ describe('flushing', () => {
     recordBlockEvent(SLOT, { eventName: 'leaving' });
     window.dispatchEvent(new Event('pagehide'));
     expect(beaconSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(await beaconBodies()).toEqual([{ events: [{ ...SLOT, eventName: 'leaving' }] }]);
   });
 
@@ -189,12 +200,20 @@ describe('request splitting', () => {
     }
   });
 
-  test('a flush counts the oversize row it dropped', () => {
+  test('an event too large for one body is dropped when recorded, and counted', () => {
     recordBlockEvent(SLOT, rowOfBytes(BLOCK_EVENT_MAX_BODY_BYTES + 10));
     recordBlockEvent(SLOT, { eventName: 'small' });
-    flushBlockEvents();
+    expect(_internalsForTests.queued()).toEqual([{ ...SLOT, eventName: 'small' }]);
     expect(_internalsForTests.dropped().oversize).toBe(1);
-    expect(beaconSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('a flush sends every body when the queue needs more than one', async () => {
+    const row = rowOfBytes(Math.floor(BLOCK_EVENT_MAX_BODY_BYTES * 0.4), '€');
+    for (let i = 0; i < 3; i++) recordBlockEvent(SLOT, row);
+    flushBlockEvents();
+    const bodies = await beaconBodies();
+    expect(bodies.map((b) => b.events.length)).toEqual([2, 1]);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -207,17 +226,22 @@ describe('client budget', () => {
 
     vi.advanceTimersByTime(1_000);
     recordBlockEvent(SLOT, { eventName: 'later' });
+    expect(_internalsForTests.queued()).toHaveLength(12);
     expect(_internalsForTests.dropped().rate_limited).toBe(5);
   });
 
-  test('accepts at most 500 events per page session', async () => {
+  test('accepts at most 500 events per app per page session, without starving other apps', async () => {
     for (let second = 0; second < 60; second++) {
       for (let i = 0; i < 10; i++) recordBlockEvent(SLOT, { eventName: 'tick' });
       vi.advanceTimersByTime(1_000);
     }
+    recordBlockEvent({ appBlockId: 'apb_2', blockInstanceId: 'mbi_x' }, { eventName: 'quiet' });
     flushBlockEvents();
-    const sent = (await beaconBodies()).reduce((n, body) => n + body.events.length, 0);
-    expect(sent).toBe(BLOCK_EVENT_SESSION_CAP);
-    expect(_internalsForTests.dropped().session_cap).toBe(600 - BLOCK_EVENT_SESSION_CAP);
+    const rows = (await beaconBodies()).flatMap((body) => body.events);
+    expect(rows.filter((r) => r.appBlockId === SLOT.appBlockId)).toHaveLength(
+      BLOCK_EVENT_SESSION_CAP_PER_APP
+    );
+    expect(rows.filter((r) => r.appBlockId === 'apb_2')).toHaveLength(1);
+    expect(_internalsForTests.dropped().session_cap).toBe(600 - BLOCK_EVENT_SESSION_CAP_PER_APP);
   });
 });

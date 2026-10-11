@@ -1725,8 +1725,8 @@ export function PageBlockHost({
 
   useEffect(() => {
     const off = onMessage<unknown>('TRACK_EVENT', (raw) => {
-      // A review preview runs unreviewed code under a moderator; its events would be
-      // recorded against the approved app.
+      // A review preview runs unreviewed code; its events would be recorded against the
+      // approved app.
       if (reviewMode) return;
       recordBlockEvent({ appBlockId, blockInstanceId }, raw);
     });

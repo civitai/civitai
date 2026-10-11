@@ -7,7 +7,7 @@
  * Identity (`appBlockId`, `blockInstanceId`) is supplied by the host from its own props; the
  * block's payload contributes only `eventName` and `properties`.
  *
- * Fire-and-forget: nothing here throws to the host, and a failed POST is not retried.
+ * Fire-and-forget: never throws to the host; failed POSTs are not retried.
  */
 
 export type BlockEventIdentity = { appBlockId: string; blockInstanceId: string };
@@ -25,12 +25,13 @@ export const BLOCK_EVENT_FLUSH_INTERVAL_MS = 10_000;
 /** The ingest schema's `BLOCK_EVENT_BATCH_MAX`; the contract test pins the two together. */
 export const BLOCK_EVENT_BATCH_ROWS = 50;
 /**
- * Below the route's 64 kb body limit, with headroom: the browser's keepalive quota (about 64 KiB
- * in flight per document) is shared with the other beacons flushing on the same `pagehide`.
+ * Half the route's 64 kb body limit: the browser's keepalive quota (about 64 KiB in flight per
+ * document) is shared with the other beacons flushing on the same `pagehide`.
  */
-export const BLOCK_EVENT_MAX_BODY_BYTES = 60 * 1024;
+export const BLOCK_EVENT_MAX_BODY_BYTES = 32 * 1024;
 export const BLOCK_EVENT_RATE_PER_INSTANCE_PER_SECOND = 10;
-export const BLOCK_EVENT_SESSION_CAP = 500;
+/** Per app, so one chatty app cannot use up the budget of the other apps on the page. */
+export const BLOCK_EVENT_SESSION_CAP_PER_APP = 500;
 
 type DropReason = 'invalid' | 'rate_limited' | 'session_cap' | 'oversize';
 
@@ -42,7 +43,7 @@ const dropped: Record<DropReason, number> = {
   session_cap: 0,
   oversize: 0,
 };
-let sessionAccepted = 0;
+const acceptedByApp = new Map<string, number>();
 let timer: ReturnType<typeof setTimeout> | null = null;
 let listenersBound = false;
 
@@ -54,11 +55,16 @@ function byteLength(s: string): number {
   return encoder ? encoder.encode(s).length : s.length * 3;
 }
 
+const FRAME_BYTES = byteLength(BODY_PREFIX) + byteLength(BODY_SUFFIX);
+
+function fitsInOneBody(rowBytes: number): boolean {
+  return FRAME_BYTES + rowBytes <= BLOCK_EVENT_MAX_BODY_BYTES;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Keeps only primitive values; nested objects, arrays, bigints and functions are dropped. */
 function primitiveProperties(raw: unknown): Record<string, PropertyValue> | undefined {
   if (!isPlainObject(raw)) return undefined;
   const out: Record<string, PropertyValue> = {};
@@ -87,13 +93,19 @@ function withinRate(instanceKey: string, now: number): boolean {
   return true;
 }
 
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') flushBlockEvents();
+}
+
+function onPageHide() {
+  flushBlockEvents();
+}
+
 function bindLifecycleListeners() {
   if (listenersBound) return;
   listenersBound = true;
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flushBlockEvents();
-  });
-  window.addEventListener('pagehide', () => flushBlockEvents());
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('pagehide', onPageHide);
 }
 
 function post(body: string): void {
@@ -105,9 +117,7 @@ function post(body: string): void {
     ) {
       return;
     }
-  } catch {
-    // fall through to fetch
-  }
+  } catch {}
   try {
     void fetch(ENDPOINT, {
       method: 'POST',
@@ -131,19 +141,18 @@ export function buildBlockEventBodies(rows: BlockEventRow[]): {
 } {
   const bodies: string[] = [];
   let oversize = 0;
-  const frameBytes = byteLength(BODY_PREFIX) + byteLength(BODY_SUFFIX);
   let current: string[] = [];
-  let currentBytes = frameBytes;
+  let currentBytes = FRAME_BYTES;
   const close = () => {
     if (current.length === 0) return;
     bodies.push(BODY_PREFIX + current.join(',') + BODY_SUFFIX);
     current = [];
-    currentBytes = frameBytes;
+    currentBytes = FRAME_BYTES;
   };
   for (const row of rows) {
     const json = JSON.stringify(row);
     const rowBytes = byteLength(json);
-    if (frameBytes + rowBytes > BLOCK_EVENT_MAX_BODY_BYTES) {
+    if (!fitsInOneBody(rowBytes)) {
       oversize += 1;
       continue;
     }
@@ -161,7 +170,6 @@ export function buildBlockEventBodies(rows: BlockEventRow[]): {
   return { bodies, oversize };
 }
 
-/** Send everything queued now. No-op when the queue is empty. */
 export function flushBlockEvents(): void {
   if (timer !== null) {
     clearTimeout(timer);
@@ -174,8 +182,8 @@ export function flushBlockEvents(): void {
 }
 
 /**
- * Queue one `TRACK_EVENT` payload under the host's identity. Malformed payloads and events over
- * the per-instance rate or the per-page-session cap are dropped.
+ * Queue one `TRACK_EVENT` payload under the host's identity; malformed, oversize, over-rate and
+ * over-cap payloads are dropped.
  */
 export function recordBlockEvent(identity: BlockEventIdentity, payload: unknown): void {
   if (typeof window === 'undefined') return;
@@ -183,7 +191,20 @@ export function recordBlockEvent(identity: BlockEventIdentity, payload: unknown)
     dropped.invalid += 1;
     return;
   }
-  if (sessionAccepted >= BLOCK_EVENT_SESSION_CAP) {
+  const properties = primitiveProperties(payload.properties);
+  const row: BlockEventRow = {
+    appBlockId: identity.appBlockId,
+    blockInstanceId: identity.blockInstanceId,
+    eventName: payload.eventName,
+    ...(properties ? { properties } : {}),
+  };
+  // Measured here as well as at flush, so an oversize row is never held in the queue.
+  if (!fitsInOneBody(byteLength(JSON.stringify(row)))) {
+    dropped.oversize += 1;
+    return;
+  }
+  const accepted = acceptedByApp.get(identity.appBlockId) ?? 0;
+  if (accepted >= BLOCK_EVENT_SESSION_CAP_PER_APP) {
     dropped.session_cap += 1;
     return;
   }
@@ -192,16 +213,9 @@ export function recordBlockEvent(identity: BlockEventIdentity, payload: unknown)
     dropped.rate_limited += 1;
     return;
   }
-  sessionAccepted += 1;
+  acceptedByApp.set(identity.appBlockId, accepted + 1);
   bindLifecycleListeners();
-
-  const properties = primitiveProperties(payload.properties);
-  queue.push({
-    appBlockId: identity.appBlockId,
-    blockInstanceId: identity.blockInstanceId,
-    eventName: payload.eventName,
-    ...(properties ? { properties } : {}),
-  });
+  queue.push(row);
   if (queue.length >= BLOCK_EVENT_BATCH_ROWS) {
     flushBlockEvents();
     return;
@@ -218,7 +232,12 @@ export const _internalsForTests = {
   reset(): void {
     queue.length = 0;
     recentByInstance.clear();
-    sessionAccepted = 0;
+    acceptedByApp.clear();
+    if (listenersBound) {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', onPageHide);
+      listenersBound = false;
+    }
     for (const reason of Object.keys(dropped) as DropReason[]) dropped[reason] = 0;
     if (timer !== null) {
       clearTimeout(timer);

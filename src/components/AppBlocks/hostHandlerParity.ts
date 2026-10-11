@@ -175,8 +175,8 @@ export const INVENTORY = {
   TRACK_EVENT: {
     request: false,
     reply: '',
-    // Both real hosts forward it to /api/track/block-event via `blockEventBeacon.ts`,
-    // stamping the app and instance ids from their own props.
+    // Forwarded to /api/track/block-event by `blockEventBeacon.ts`; identity comes from
+    // host props, never the payload.
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,

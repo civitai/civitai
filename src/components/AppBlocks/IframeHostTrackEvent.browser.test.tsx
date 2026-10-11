@@ -135,15 +135,18 @@ async function mountAndReady() {
 }
 
 let beaconSpy: ReturnType<typeof vi.spyOn>;
+let fetchSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   events.reset();
   bridge.reset();
   beaconSpy = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true);
+  fetchSpy = vi.spyOn(window, 'fetch').mockRejectedValue(new Error('no network in tests'));
 });
 afterEach(() => {
   events.reset();
   bridge.reset();
   beaconSpy.mockRestore();
+  fetchSpy.mockRestore();
 });
 
 describe('IframeHost forwards TRACK_EVENT', () => {
@@ -173,11 +176,14 @@ describe('IframeHost forwards TRACK_EVENT', () => {
     const replies = await mountAndReady();
     const before = replies.all().length;
     postFromBlock('TRACK_EVENT', { eventName: 'opened' });
+    // Ordering control: a request the host always answers, posted after the event. Replies
+    // arrive in order, so anything the host sent for TRACK_EVENT lands before this one.
+    postFromBlock('REQUEST_TOKEN', { requestId: 'rq_order' });
     await vi.waitFor(() => {
-      if (events.queued().length === 0) throw new Error('nothing queued yet');
+      if (!replies.all().includes('TOKEN_REFRESH_RESPONSE')) throw new Error('no control reply');
     });
-    await new Promise((r) => setTimeout(r, 100));
-    expect(replies.all().slice(before)).toEqual([]);
+    expect(events.queued()).toHaveLength(1);
+    expect(replies.all().slice(before)).toEqual(['TOKEN_REFRESH_RESPONSE']);
     replies.stop();
   });
 
