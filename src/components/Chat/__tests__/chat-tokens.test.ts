@@ -21,16 +21,25 @@ const referenced = (css: string) =>
 describe('chat tokens outside the chat window', () => {
   const scss = read('Chat.module.scss');
 
-  it('the .tokens rule declares every --chat-* var the chat list rows paint with', () => {
+  it('the .tokens rule declares every --chat-* var the share modal paints with', () => {
     const tokens = declaredIn(scss, '.tokens');
-    const used = referenced(read('ChatList.module.css'));
+    const used = new Set([
+      ...referenced(read('ChatList.module.css')),
+      ...referenced(read('ChatShareModal.tsx')),
+    ]);
 
     expect(used.size).toBeGreaterThan(0);
     expect([...used].filter((v) => !tokens.has(v))).toEqual([]);
   });
 
-  it('.tokens carries the same palette as .surface', () => {
-    expect(declaredIn(scss, '.tokens')).toEqual(declaredIn(scss, '.surface'));
+  it('.tokens shares the .surface rule, so the two palettes cannot drift', () => {
+    const selectors = (rule: string) => rule.split(',').map((s) => s.trim());
+    const uncommented = scss.replace(/\/\*[\s\S]*?\*\//g, '');
+    const owner = [...uncommented.matchAll(/([^{}]+)\{/g)]
+      .map(([, s]) => selectors(s))
+      .find((list) => list.includes('.tokens'));
+
+    expect(owner).toContain('.surface');
   });
 
   it('ChatShareModal, which portals outside the window, puts its rows under .tokens', () => {
