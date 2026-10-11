@@ -83,6 +83,7 @@ import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/ca
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { formatDate } from '~/utils/date-helpers';
 import {
   cancelAllPaddleSubscriptions,
@@ -223,7 +224,7 @@ export const getUserCreator = async ({
           },
         },
         cosmetics: {
-          where: { equippedAt: { not: null } },
+          where: { equippedAt: { not: null }, equippedToId: null },
           select: {
             data: true,
             cosmetic: {
@@ -2950,9 +2951,13 @@ export async function equipCosmetic({
 
   const userCosmetics = await dbRead.userCosmetic.findMany({
     where: { userId, cosmeticId: { in: cosmeticId } },
-    select: { obtainedAt: true, cosmetic: { select: { type: true } } },
+    select: { obtainedAt: true, cosmetic: { select: { type: true, data: true } } },
   });
   if (!userCosmetics.length) throw new Error("You don't have that cosmetic");
+  // An event decoration is placed on content, never worn by the user: equipped here it would show
+  // on every user-level read, none of which applies the event's preview gate.
+  if (userCosmetics.some((x) => isEventDecorationData(x.cosmetic.data)))
+    throw new Error('Event decorations are placed on content, not equipped');
 
   const types = [...new Set(userCosmetics.map((x) => x.cosmetic.type))];
   // Stickers are owned, not equipped — everything you own is already in the

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
 import type {
   GetUserProfileSchema,
@@ -167,6 +168,10 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
+      cosmetics: await withoutHiddenEventDecorations(user.cosmetics, {
+        id: sessionUserId,
+        isModerator,
+      }),
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,

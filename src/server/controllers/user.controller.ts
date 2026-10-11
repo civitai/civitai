@@ -1150,7 +1150,7 @@ export const getLeaderboardHandler = async ({ input }: { input: GetAllSchema }) 
           },
         },
         cosmetics: {
-          where: { equippedAt: { not: null } },
+          where: { equippedAt: { not: null }, equippedToId: null },
           select: {
             cosmetic: {
               select: {
