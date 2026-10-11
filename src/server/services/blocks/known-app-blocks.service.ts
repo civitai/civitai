@@ -253,7 +253,7 @@ async function loadApprovedAppBlockAnalytics(): Promise<{
     const { dbRead } = await import('~/server/db/client');
     // `loadCollaboratorsByApp` never rejects, and must start only after this import settles: its
     // module imports the same client, and two concurrent first imports make the shared test db
-    // mock hand out the real client. Nothing tests this ordering.
+    // mock hand out the real client (the team cases in `block-event.test.ts` go red).
     const [rows, collaborators] = await Promise.all([
       dbRead.appBlock.findMany({
         where: { status: 'approved' },
@@ -293,8 +293,9 @@ async function loadApprovedAppBlockAnalytics(): Promise<{
  * custom-events ingest asks, and a failure of this wider query cannot empty the id set the other
  * beacons clamp their labels with. Same TTL and single-flight; while the app read is failing every
  * id answers `null`, which for an ingest means dropping events rather than storing ones nobody
- * could check (a failed collaborator read only shortens the TTL; see `loadCollaboratorsByApp`). The two reads refresh on their own clocks, so for up to one TTL they can disagree
- * about an app whose status just changed.
+ * could check. A failed collaborator read does not drop events: only owners count as team, for the
+ * failure TTL (see `loadCollaboratorsByApp`). The two reads refresh on their own clocks, so for up
+ * to one TTL they can disagree about an app whose status just changed.
  */
 export async function getApprovedAppBlockAnalytics(
   appBlockId: string
