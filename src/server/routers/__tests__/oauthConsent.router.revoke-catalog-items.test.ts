@@ -84,6 +84,15 @@ describe('oauthConsent.revokeApp', () => {
     );
   });
 
+  it('expires the revoked tokens in the auth cache before withdrawing the items', async () => {
+    await caller.revokeApp({ clientId: CLIENT_ID });
+    expect(invalidateMock).toHaveBeenCalledWith({ userId: USER_ID });
+    expect(withdrawMock).toHaveBeenCalledTimes(1);
+    expect(invalidateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      withdrawMock.mock.invocationCallOrder[0]
+    );
+  });
+
   it('still revokes when the withdraw fails, and reports it as null', async () => {
     withdrawMock.mockRejectedValueOnce(new Error('store down'));
     await expect(caller.revokeApp({ clientId: CLIENT_ID })).resolves.toEqual({

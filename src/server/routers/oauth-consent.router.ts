@@ -122,16 +122,6 @@ export const oauthConsentRouter = router({
         where: { userId_clientId: { userId: ctx.user.id, clientId: input.clientId } },
       });
 
-      // After the deletes, so the store never holds up revoking access. `null` = it failed; the
-      // client tells the user to withdraw the items from account settings instead.
-      const catalogItemsWithdrawn = await import(
-        '~/server/services/blocks/oauth-consent-sync.service'
-      )
-        .then(({ withdrawCatalogItemsOnConsentRevoke }) =>
-          withdrawCatalogItemsOnConsentRevoke({ userId: ctx.user.id, clientId: input.clientId })
-        )
-        .catch(() => null);
-
       // Best-effort: tell the orchestrator the OAuth subject is gone so its
       // stored spend record doesn't linger after the user revokes the app.
       deleteAuthSubject({
@@ -148,6 +138,17 @@ export const oauthConsentRouter = router({
       // Expire the revoked tokens in the orchestrator's auth cache so they
       // stop authenticating immediately instead of lingering until TTL.
       await invalidateCivitaiUser({ userId: ctx.user.id });
+
+      // Last, after the tokens, consent and auth cache are gone, so neither a slow nor a failed
+      // withdraw delays or blocks revoking access. `null` = it failed; the client tells the user
+      // to withdraw the items from account settings instead.
+      const catalogItemsWithdrawn = await import(
+        '~/server/services/blocks/oauth-consent-sync.service'
+      )
+        .then(({ withdrawCatalogItemsOnConsentRevoke }) =>
+          withdrawCatalogItemsOnConsentRevoke({ userId: ctx.user.id, clientId: input.clientId })
+        )
+        .catch(() => null);
 
       logOAuthEvent({
         type: 'authorization.denied',
