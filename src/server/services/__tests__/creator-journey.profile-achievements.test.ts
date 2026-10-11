@@ -103,6 +103,7 @@ describe('getProfileAchievements', () => {
       hint: null,
       badgeUrl: 'art-3001',
       achievedAt: OBSERVED,
+      spotlit: false,
     });
     const payload = JSON.stringify(result);
     expect(payload).not.toContain('Night Owl');
@@ -128,9 +129,9 @@ describe('getProfileAchievements', () => {
     expect(result.achievements.find((a) => a.key === 'create:models-25')?.hint).toBeNull();
   });
 
-  // A visitor who opened a shared special's link holds its key from the link; that card is keyed by
-  // it, so the tab can ring it. Nothing else about it, or about any other secret, changes.
-  it('keys the secret a shared link named by that key, and only that one', async () => {
+  // A visitor who opened a shared special's link gets that card marked, so the tab can ring it. Its
+  // key stays masked, and nothing else about it, or about any other secret, changes.
+  it('marks the secret a shared link named, and only that one, without its key', async () => {
     const other = row({
       key: 'hidden:early-bird',
       track: 'hidden',
@@ -145,26 +146,51 @@ describe('getProfileAchievements', () => {
       spotlight: 'hidden:night-owl',
     });
     expect(result.achievements).toEqual([
-      expect.objectContaining({ key: 'create:models-25' }),
+      expect.objectContaining({ key: 'create:models-25', spotlit: false }),
       {
-        key: 'hidden:night-owl',
+        key: 'secret:1',
         track: 'secret',
         name: null,
         description: null,
         hint: null,
         badgeUrl: 'art-3001',
         achievedAt: OBSERVED,
+        spotlit: true,
       },
-      expect.objectContaining({ key: 'secret:2', name: null }),
+      expect.objectContaining({ key: 'secret:2', name: null, spotlit: false }),
     ]);
     const payload = JSON.stringify(result);
+    expect(payload).not.toContain('night-owl');
     expect(payload).not.toContain('Night Owl');
     expect(payload).not.toContain('2am');
     expect(payload).not.toContain('midnight oil');
     expect(payload).not.toContain('early-bird');
   });
 
-  it('keys nothing differently for a link naming a secret the creator does not hold', async () => {
+  // A hidden tier is linked by its slug, which names its key through the tier list.
+  it('marks a hidden tier a shared link named by its slug', async () => {
+    const hiddenTier = row({
+      key: 'score:legend',
+      track: 'score',
+      threshold: 5000000,
+      hidden: true,
+      name: 'Legend',
+      cosmeticId: 4000,
+    });
+    given([MODELS, hiddenTier]);
+    const result = await getProfileAchievements({
+      userId: OWNER,
+      viewerId: VISITOR,
+      spotlight: 'legend',
+    });
+    expect(result.tiers).toEqual([]);
+    expect(result.achievements.map((a) => [a.key, a.name, a.spotlit])).toEqual([
+      ['create:models-25', '25 Models', false],
+      ['secret:1', null, true],
+    ]);
+  });
+
+  it('marks nothing for a link naming a secret the creator does not hold', async () => {
     const plain = await getProfileAchievements({ userId: OWNER, viewerId: VISITOR });
     const guessed = await getProfileAchievements({
       userId: OWNER,
@@ -199,6 +225,7 @@ describe('getProfileAchievements', () => {
         'hint',
         'key',
         'name',
+        'spotlit',
         'track',
       ]);
   });

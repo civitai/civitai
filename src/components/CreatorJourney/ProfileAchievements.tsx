@@ -158,14 +158,18 @@ export function milestoneCardId(token: string) {
 /** A card a shared link named, ringed; any other card as it is. */
 function Spotlit({
   milestoneKey,
+  spotlit,
   spotlight,
   children,
 }: {
   milestoneKey: string;
+  /** A secret the server matched to the link, whose key a visitor is never sent. */
+  spotlit?: boolean;
   spotlight?: string | null;
   children: ReactNode;
 }) {
-  if (!spotlight || milestoneKeyOfShareToken(spotlight) !== milestoneKey) return <>{children}</>;
+  if (!spotlight || (!spotlit && milestoneKeyOfShareToken(spotlight) !== milestoneKey))
+    return <>{children}</>;
   return (
     <div
       id={milestoneCardId(spotlight)}
@@ -199,7 +203,8 @@ export function ProfileAchievementsList({
   const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
   const spotlit =
     !!spotlightKey &&
-    [...data.tiers, ...data.achievements].some((milestone) => milestone.key === spotlightKey);
+    (data.tiers.some((tier) => tier.key === spotlightKey) ||
+      data.achievements.some((a) => a.spotlit || a.key === spotlightKey));
   useEffect(() => {
     if (!spotlit || !spotlight) return;
     // A frame later: the app's scroll area resets to the top in its own effect, which runs after
@@ -287,7 +292,12 @@ export function AchievementGrid({
   return (
     <div className={className}>
       {achievements.map((achievement) => (
-        <Spotlit key={achievement.key} milestoneKey={achievement.key} spotlight={spotlight}>
+        <Spotlit
+          key={achievement.key}
+          milestoneKey={achievement.key}
+          spotlit={achievement.spotlit}
+          spotlight={spotlight}
+        >
           <AchievementCard achievement={achievement} action={action?.(achievement)} />
         </Spotlit>
       ))}

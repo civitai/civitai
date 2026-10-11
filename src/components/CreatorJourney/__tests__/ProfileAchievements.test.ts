@@ -394,6 +394,44 @@ describe('achievements tab', () => {
     }
   });
 
+  // A visitor's special is keyed by its place in the list; the server marks the one the link named.
+  it("rings and scrolls to a visitor's secret the server marked for the link", async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    const secret = (key: string, spotlit: boolean) => ({
+      key,
+      track: 'secret',
+      name: null,
+      description: null,
+      badgeUrl: null,
+      achievedAt: EARNED,
+      spotlit,
+    });
+    try {
+      const el = mount(
+        React.createElement(ProfileAchievementsList, {
+          data: { tiers: [], achievements: [secret('secret:0', false), secret('secret:1', true)] },
+          userId: OWNER,
+          spotlight: 'hidden:night-owl',
+        })
+      );
+      const spotlit = [...el.querySelectorAll<HTMLElement>('[data-spotlight]')];
+      expect(spotlit.map((node) => node.id)).toEqual(['achievement-hidden:night-owl']);
+      expect(spotlit[0].textContent).toContain(SECRET_ACHIEVEMENT_LABEL);
+      const cards = [...el.querySelectorAll<HTMLElement>('div')].find(
+        (div) => div.className === BADGE_CARD_GRID
+      )?.children;
+      expect(cards?.[1]).toBe(spotlit[0]);
+      await nextFrame();
+      expect(scrolled).toEqual([spotlit[0]]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   // Landing from the profile, the list mounts with the page (the profile cached its data), and the
   // app's scroll area resets to the top in its own effect, after the list's. Scrolling in the list's
   // effect lost to that reset; the scroll must come after every effect of the commit.

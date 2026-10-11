@@ -425,15 +425,16 @@ export async function getProfileAchievements({
       const { milestone } = row;
       const secret = milestone.hidden && !isOwner;
       return {
-        // Keys can name the milestone, so a secret one is keyed by its place in this list, except the
-        // one a shared link named: the visitor already holds that key, from the link.
-        key: secret && milestone.key !== spotlightKey ? `secret:${index}` : milestone.key,
+        // Keys can name the milestone, so a secret one is keyed by its place in this list.
+        key: secret ? `secret:${index}` : milestone.key,
         track: milestone.hidden ? 'secret' : milestone.track,
         name: secret ? null : milestone.name,
         description: secret ? null : milestone.description,
         hint: milestone.hidden && !secret ? milestone.hint : null,
         badgeUrl: badgeArtUrl(milestone.cosmetic),
         achievedAt: achievedAtIsObserved(row) ? row.achievedAt : null,
+        // The secret a shared link named, so the tab can ring it without its key.
+        spotlit: secret && milestone.key === spotlightKey,
       };
     });
 
