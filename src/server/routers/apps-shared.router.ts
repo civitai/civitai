@@ -717,8 +717,8 @@ type SharedWriteContext = SharedContext & { uid: number };
 /**
  * Runs an append/update against the (user, app) write budget: a token is reserved before
  * moderation and given back unless the write calls `markLanded` — so only landed writes spend
- * the budget, while moderation stays bounded per landed write. A caller-fault refusal (4xx)
- * after the reserve is also charged to the rejection bucket.
+ * the budget, while moderation stays bounded per landed write. A caller-fault refusal (a 4xx
+ * not escalated to a server fault) after the reserve is also charged to the rejection bucket.
  */
 async function withSharedWriteBudget<T>(
   ctx: SharedWriteContext,

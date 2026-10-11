@@ -4,7 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import type * as FliptClientModule from '~/server/flipt/client';
 import type * as RateLimitModule from '~/server/utils/shared-storage-rate-limit';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { dbMock, redisMock, resetSharedMocks } from '~/__tests__/mocks';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { clientTransformer } from '~/shared/utils/trpc-union-transformer';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -20,7 +20,6 @@ import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lu
 
 const {
   mockVerifyBlockToken,
-  mockDbRead,
   mockPool,
   mockClient,
   mockGetSessionUser,
@@ -38,7 +37,6 @@ const {
   };
   return {
     mockVerifyBlockToken: vi.fn(),
-    mockDbRead: { appBlock: { findUnique: vi.fn() }, account: { count: vi.fn() } },
     mockPool: {
       connect: vi.fn(async () => mockClient),
       query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
@@ -57,7 +55,6 @@ vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: (token: string) => mockVerifyBlockToken(token),
   parseSubjectUserId: (sub: string) => Number(sub.split(':')[1]),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksSharedStorageEnabled: async () => true,
 }));
@@ -91,7 +88,6 @@ vi.mock('~/server/services/block-revocation.service', () => ({
     isRevoked: (blockInstanceId: string, sub?: string) => mockIsRevoked(blockInstanceId, sub),
   },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: async () => undefined }));
 vi.mock('~/server/services/blocks/app-sub-listing.service', () => ({
   syncSubListingForSharedRow: async () => undefined,
 }));
@@ -117,6 +113,7 @@ let lua: LuaRedis;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetSharedMocks();
   lua = createLuaRedis(T0);
   redisMock.redis.eval.mockImplementation(
     (script: string, options: { keys: string[]; arguments: string[] }) => lua.eval(script, options)
@@ -144,8 +141,8 @@ beforeEach(() => {
     emailVerified: new Date('2020-01-01'),
     createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
   });
-  mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
-  mockDbRead.account.count.mockResolvedValue(0);
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+  dbMock.dbRead.account.count.mockResolvedValue(0);
   mockIsFlipt.mockResolvedValue(false);
   mockFindBlocked.mockResolvedValue([]);
   mockWritePath({});
