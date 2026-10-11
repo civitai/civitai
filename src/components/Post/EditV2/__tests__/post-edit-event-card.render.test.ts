@@ -99,7 +99,9 @@ function render(node: React.ReactElement) {
 }
 
 const card = (props: Partial<React.ComponentProps<typeof PostEditEventCard>> = {}) =>
-  render(React.createElement(PostEditEventCard, { coverImage: COVER, published: false, ...props }));
+  render(
+    React.createElement(PostEditEventCard, { coverImage: COVER, showDraftNote: true, ...props })
+  );
 const text = (el: HTMLElement) => el.textContent ?? '';
 
 describe('post editor event card', () => {
@@ -126,12 +128,13 @@ describe('post editor event card', () => {
 
   it('drops the draft note once published, and the hat button without an image', () => {
     h.banners = [BIRTHDAY];
-    const el = card({ published: true, coverImage: undefined });
+    const el = card({ showDraftNote: false, coverImage: undefined });
     expect(text(el)).toContain('Civitai turns 4.');
     expect(text(el)).not.toContain('publish to start earning');
     expect(text(el)).not.toContain('Put on a Party Hat');
   });
 
+  // Must stay the last card case: the dismissed-strip store it writes is module scope.
   it('hides for this event when closed', () => {
     h.banners = [BIRTHDAY];
     const el = card();

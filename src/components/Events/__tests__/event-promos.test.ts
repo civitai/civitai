@@ -48,6 +48,7 @@ describe('event entry points, from the gated answer', () => {
       roster: teamRosterHref(promos, 'birthday2026'),
       hints: banners.map((b) => dismissHint(b, banners)).filter(Boolean),
       postEditor: postEditorPromo(promos, [])?.event,
+      editorCopy: !!postEditorPromo(promos, [])?.postEditor?.body,
     };
   };
 
@@ -58,6 +59,7 @@ describe('event entry points, from the gated answer', () => {
         roster: undefined,
         hints: [],
         postEditor: undefined,
+        editorCopy: false,
       });
   });
 
@@ -67,6 +69,7 @@ describe('event entry points, from the gated answer', () => {
       roster: '/events/birthday2026/team',
       hints: ["Find Civitai's 4th Birthday in your menu any time."],
       postEditor: 'birthday2026',
+      editorCopy: true,
     });
   });
 
@@ -77,6 +80,7 @@ describe('event entry points, from the gated answer', () => {
       roster: undefined,
       hints: [],
       postEditor: undefined,
+      editorCopy: false,
     });
   });
 });

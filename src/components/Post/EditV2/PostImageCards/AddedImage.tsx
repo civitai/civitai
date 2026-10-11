@@ -1244,6 +1244,8 @@ function PostImage() {
   const { image, isBlocked, onDelete, isDeleting, onEditMetaClick, needsReview, isMinor } =
     useAddedImageContext();
   const { metadata, url, type, id, nsfwLevel, poi } = image;
+  // Only the owner can hat their images; a moderator editing this post would be refused.
+  const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
   const imageFlag = isMinor ? 'Minor' : !needsReview && poi ? 'POI' : undefined;
   return (
     <div className={`relative`}>
@@ -1301,7 +1303,7 @@ function PostImage() {
                 Edit image
               </Menu.Item>
             )}
-            {!isBlocked && image.id > 0 && (
+            {!isBlocked && isOwner && image.id > 0 && (
               <AddEventDecorationMenuItem
                 entityType={CosmeticEntity.Image}
                 entityId={image.id}

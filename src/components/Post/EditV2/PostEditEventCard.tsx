@@ -19,10 +19,10 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
  */
 export function PostEditEventCard({
   coverImage,
-  published,
+  showDraftNote,
 }: {
   coverImage?: CardDecorationModalProps['image'];
-  published: boolean;
+  showDraftNote: boolean;
 }) {
   const { dismissed, dismiss } = useNavBannersDismissed();
   const promo = postEditorPromo(useEventPromos(), dismissed);
@@ -85,7 +85,7 @@ export function PostEditEventCard({
             {hatLabel}
           </Button>
         )}
-        {!published && draftNote && (
+        {showDraftNote && draftNote && (
           <Text size="xs" c="yellow.4">
             {draftNote}
           </Text>
