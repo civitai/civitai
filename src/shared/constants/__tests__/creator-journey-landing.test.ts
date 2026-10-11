@@ -15,6 +15,12 @@ describe('where a shared tier link lands', () => {
     expect(landing()).toBe('/user/JustMaier/achievements?milestone=supernova');
   });
 
+  it('sends a shareable achievement there too, naming it by its key', () => {
+    expect(landing({ milestone: 'reach:downloads-10000' })).toBe(
+      '/user/JustMaier/achievements?milestone=reach:downloads-10000'
+    );
+  });
+
   it.each([
     ['not shareable', { shareable: false }],
     ['not yet known to be shareable', { shareable: undefined }],

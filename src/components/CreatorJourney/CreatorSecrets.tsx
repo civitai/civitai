@@ -3,12 +3,15 @@ import clsx from 'clsx';
 import { earnedLabel, Hexagon } from '~/components/CreatorJourney/CreatorAchievements';
 import { accentVar, TierBadge } from '~/components/CreatorJourney/tier-badge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { HIDDEN_ACHIEVEMENT_PLACEHOLDER } from '~/shared/constants/creator-journey.constants';
+import {
+  HIDDEN_ACHIEVEMENT_PLACEHOLDER,
+  SPECIAL_ACCENT,
+} from '~/shared/constants/creator-journey.constants';
 import type { RouterOutput } from '~/types/router';
 
 type Secret = RouterOutput['creatorJourney']['getMine']['secrets'][number];
 
-export const SECRET_ACCENT = '#7950f2';
+export const SECRET_ACCENT = SPECIAL_ACCENT;
 
 export function CreatorSecrets({ secrets }: { secrets: Secret[] }) {
   if (secrets.length === 0) return null;

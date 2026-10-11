@@ -83,7 +83,18 @@ describe('a shared tier link opened on the profile', () => {
     ]);
     // The layout's key and `enabled`: the server render prefetched exactly this.
     expect(mocks.shareQueries.at(-1)).toEqual({
-      input: { userId: OWNER.id, slug: 'supernova' },
+      input: { userId: OWNER.id, milestone: 'supernova' },
+      enabled: true,
+    });
+  });
+
+  it('moves on with a shared achievement, asking about that achievement', () => {
+    visit({ query: { username: 'JustMaier', milestone: 'reach:downloads-10000' } });
+    expect(mocks.replace.mock.calls).toEqual([
+      ['/user/JustMaier/achievements?milestone=reach:downloads-10000'],
+    ]);
+    expect(mocks.shareQueries.at(-1)).toEqual({
+      input: { userId: OWNER.id, milestone: 'reach:downloads-10000' },
       enabled: true,
     });
   });

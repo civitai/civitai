@@ -1,6 +1,5 @@
 import * as z from 'zod';
-import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants';
-import { SCORE_TIERS } from '~/shared/constants/creator-journey.constants';
+import { parseMilestoneShareToken } from '~/shared/constants/creator-journey.constants';
 
 export type LegendStatusInput = z.infer<typeof legendStatusSchema>;
 export const legendStatusSchema = z.object({ userId: z.number().int().positive() });
@@ -11,7 +10,8 @@ export const profileAchievementsSchema = z.object({ userId: z.number().int().pos
 export type MilestoneShareInput = z.infer<typeof milestoneShareSchema>;
 export const milestoneShareSchema = z.object({
   userId: z.number().int().positive(),
-  slug: z.enum(SCORE_TIERS.map((tier) => tier.slug) as [ScoreTierSlug, ...ScoreTierSlug[]]),
+  /** A tier slug or an achievement key, as a share link names it. */
+  milestone: z.string().refine((value) => parseMilestoneShareToken(value) !== null),
 });
 
 export type FirstPublishCardInput = z.infer<typeof firstPublishCardSchema>;
