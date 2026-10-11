@@ -163,6 +163,27 @@ describe('forceSysReconnect — bounded (F4)', () => {
     expect(client.connect).toHaveBeenCalledTimes(2);
   });
 
+  it('a late teardown whose chained connect() never settles does not block later heals', async () => {
+    // RedisSentinel's connect() can wait forever on its reserved-lease pool from a client's second
+    // reconnect on; the skip guard must not outlive the teardown it covers.
+    let finishDestroy!: () => void;
+    const client = {
+      destroy: vi.fn(() => new Promise<void>((resolve) => (finishDestroy = resolve))),
+      connect: vi.fn(never),
+    };
+    track(forceSysReconnect([client], 50));
+    await vi.advanceTimersByTimeAsync(50);
+    finishDestroy();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(client.connect).toHaveBeenCalledTimes(1); // and it hangs
+
+    client.destroy.mockImplementation(async () => undefined);
+    const later = track(forceSysReconnect([client], 50));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(later.state).toBe('resolved');
+    expect(client.destroy).toHaveBeenCalledTimes(2); // not skipped
+  });
+
   it('a destroy() that REJECTS still reconnects at once', async () => {
     const client = {
       destroy: vi.fn(async () => {

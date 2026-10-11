@@ -643,7 +643,10 @@ export async function forceSysReconnect(
     if (!client) continue;
     if (lateSysReconnects.has(client)) {
       // An earlier heal's teardown of this client has not finished; its reconnect is already
-      // chained onto it. A second destroy()+connect() would only queue another one behind it.
+      // chained onto it. A second destroy() would wait on the same in-progress discovery and
+      // only queue another connect() behind it. If that teardown never settles (the discovery
+      // it waits on cannot finish), this client stays skipped — a second destroy() would hang
+      // on the same thing, so nothing is lost.
       log('Sys self-heal: skipping a client whose previous teardown is still running');
       continue;
     }
@@ -691,10 +694,15 @@ export async function forceSysReconnect(
       // trigger to ever see. Reconnect when the teardown finishes instead, in the background.
       const pending = teardown;
       lateSysReconnects.add(client);
+      // The guard covers the pending TEARDOWN only, and is released the moment it settles — not
+      // after connect(). RedisSentinel (5.8.3, reserveClient) takes a reserved lease from a pool of
+      // masterPoolSize (2) on every connect() and destroy() never returns it, so from a client's
+      // second reconnect on, connect() can wait forever on that pool even though the client works;
+      // holding the guard across connect() would skip this client in every later heal.
       void pending
         .catch(() => undefined)
-        .then(() => client.connect())
         .finally(() => lateSysReconnects.delete(client))
+        .then(() => client.connect())
         .then(
           () => log('Sys self-heal: reconnected after a late teardown'),
           (err: unknown) =>
