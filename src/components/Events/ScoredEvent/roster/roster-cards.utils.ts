@@ -1,4 +1,7 @@
-export type RosterSort = 'hats' | 'points' | 'newest';
+import type { RosterSort } from '~/shared/utils/roster-order';
+import { compareStanding, rosterComparator } from '~/shared/utils/roster-order';
+
+export type { RosterSort };
 
 /** How long after joining a member wears the NEW badge. */
 export const ROSTER_NEW_MS = 24 * 60 * 60 * 1000;
@@ -6,16 +9,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 type Rankable = { hatCount: number; points: number; joinedAt: Date };
 
-function sortValue(item: Rankable, sort: RosterSort) {
-  if (sort === 'hats') return item.hatCount;
-  if (sort === 'points') return item.points;
-  return item.joinedAt.getTime();
-}
-
 /**
  * The loaded members in the sort's order, each once. Live points move totals in the cache without
  * re-sorting it, and pages are read by offset from an edge cache, so a later page can repeat a
- * member an earlier one held. The sort is stable: members the server ordered as tied keep its order.
+ * member an earlier one held. Ordered by the sort's full key, as the server orders each page.
  */
 export function orderRoster<T extends Rankable & { user: { id: number } }>(
   items: T[],
@@ -23,17 +20,18 @@ export function orderRoster<T extends Rankable & { user: { id: number } }>(
 ) {
   const seen = new Set<number>();
   const once = items.filter((item) => !seen.has(item.user.id) && !!seen.add(item.user.id));
-  return once.sort((a, b) => sortValue(b, sort) - sortValue(a, sort));
+  return once.sort(rosterComparator(sort, (item) => item.user.id));
 }
 
 /**
- * Each member's rank in a list already in the sort's order. Ties share the better rank, as the team
- * positions do (`teamPositionsOverTime`), so two members on 4 hats behind one on 5 are both #2.
+ * Each member's rank in a list already in the sort's order. Members share a rank only when every
+ * standing in the sort's key ties, join time to the millisecond, as the team positions do
+ * (`teamPositionsOverTime`); the id that orders them is not a standing.
  */
 export function rosterRanks(items: Rankable[], sort: RosterSort) {
   const ranks: number[] = [];
   items.forEach((item, i) => {
-    const tied = i > 0 && sortValue(items[i - 1], sort) === sortValue(item, sort);
+    const tied = i > 0 && compareStanding(items[i - 1], item, sort) === 0;
     ranks.push(tied ? ranks[i - 1] : i + 1);
   });
   return ranks;

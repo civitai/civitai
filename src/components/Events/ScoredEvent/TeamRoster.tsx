@@ -29,6 +29,9 @@ const PAGE_SIZE = 24;
 const PODIUM_SIZE = 3;
 // Wide podium order: #2, #1, #3, so the leader stands in the middle. On a phone #1 comes first.
 const PODIUM_ORDER = ['@sm:order-2 @sm:-mt-4', '@sm:order-1', '@sm:order-3'];
+// One or two members have no steps to stand on: a centred row in rank order, each a podium card's
+// width (a third of the row less its gaps).
+const SHORT_PODIUM_CARD = '@sm:w-[calc((100%-1.5rem)/3)]';
 
 /**
  * A scored event's team rosters: one team at a time, the members who chose to be listed. The top
@@ -111,6 +114,7 @@ export function TeamRoster({
   const teamHatUrl = standings?.teamHats?.find((h) => h.team === team)?.url;
   const podium = items.slice(0, PODIUM_SIZE);
   const grid = items.slice(PODIUM_SIZE);
+  const fullPodium = podium.length === PODIUM_SIZE;
 
   return (
     <div className="flex flex-col gap-4 @container">
@@ -147,7 +151,10 @@ export function TeamRoster({
       ) : items.length ? (
         <>
           <div
-            className="grid grid-cols-2 items-stretch gap-3 @sm:grid-cols-3 @sm:pt-4"
+            className={clsx(
+              'grid grid-cols-2 items-stretch gap-3',
+              fullPodium ? '@sm:grid-cols-3 @sm:pt-4' : '@sm:flex @sm:justify-center'
+            )}
             data-testid="roster-podium"
           >
             {podium.map((item, i) => (
@@ -157,7 +164,11 @@ export function TeamRoster({
                 rank={ranks[i]}
                 ctx={ctx}
                 teamHatUrl={teamHatUrl}
-                className={clsx(PODIUM_ORDER[i], i === 0 && 'col-span-2 @sm:col-span-1')}
+                className={
+                  fullPodium
+                    ? clsx(PODIUM_ORDER[i], i === 0 && 'col-span-2 @sm:col-span-1')
+                    : clsx(SHORT_PODIUM_CARD, podium.length === 1 && 'col-span-2')
+                }
               />
             ))}
           </div>

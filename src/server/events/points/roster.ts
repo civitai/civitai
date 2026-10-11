@@ -1,5 +1,6 @@
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { EventPointSeason } from '~/server/events/points/keys';
+import { rosterComparator } from '~/shared/utils/roster-order';
 
 // A team's roster: the members who chose to be listed, sortable by hats, points and join date. All
 // of it in sysRedis, so a page reads no Postgres. Written by roster-sync.ts (opt-in, opt-out, a hat
@@ -82,7 +83,9 @@ function parseHats(value: string | null | undefined): RosterHat[] {
 }
 
 // One page of a team's roster, highest first. `total` is the sorted set's size, so it can count a
-// row the gate then drops; a page can come back shorter than `limit` for the same reason.
+// row the gate then drops; a page can come back shorter than `limit` for the same reason. The set
+// orders only by the sort's own score (ties by member string), so the page is re-sorted by the full
+// key the client ranks by (roster-order.ts).
 export async function readRosterPage(
   {
     event,
@@ -131,6 +134,7 @@ export async function readRosterPage(
       joinedAt: new Date(Number(joined[i] ?? 0)),
     });
   });
+  listed.sort(rosterComparator(sort, (row) => row.userId));
   const nextOffset = from + rows.length < Number(total) ? from + rows.length : undefined;
   return { rows: listed, total: Number(total), nextOffset };
 }
