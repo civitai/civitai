@@ -216,15 +216,9 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
   };
 
   return (
-    <Modal
-      {...dialog}
-      size="xl"
-      withCloseButton={false}
-      radius="lg"
-      classNames={{ body: 'p-0', content: 'overflow-hidden' }}
-    >
+    <Modal {...dialog} size="xl" withCloseButton={false} radius="lg" classNames={{ body: 'p-0' }}>
       <Grid classNames={{ inner: 'my-0' }}>
-        <Grid.Col span={{ base: 12, md: 5 }} p="lg">
+        <Grid.Col span={{ base: 12, md: 5 }} p="lg" pb={0}>
           <Stack gap="lg" px="md" h="100%">
             <Group justify="space-between" wrap="nowrap">
               <Text className="text-black dark:text-white" size="sm">
@@ -235,91 +229,102 @@ export const CosmeticShopItemPreviewModal = ({ shopItem, viaShopUserId }: Props)
             <Center my="auto" h={250}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
             </Center>
-            <Text className="text-black dark:text-white" mt="auto" fw="bold" size="lg">
-              {shopItem.title}
-            </Text>
-            {/* A sticker is sold by the use, so how many you get is the offer —
-                without it the price has nothing to be judged against. */}
-            {stickerTerms && (
-              <Text size="sm" c="dimmed">
-                {stickerTerms.usesLabel}
-                {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
+            {/* A tall preview image makes the modal taller than the viewport, and
+                the modal scrolls: pinning this block to its bottom edge keeps the
+                price and Purchase button on screen without scrolling to them. */}
+            <Stack
+              gap="lg"
+              mt="auto"
+              pb="lg"
+              className="sticky bottom-0 z-10"
+              bg="var(--mantine-color-body)"
+            >
+              <Text className="text-black dark:text-white" fw="bold" size="lg">
+                {shopItem.title}
               </Text>
-            )}
-            {isLoading && (
-              <Center>
-                <Loader type="bars" />
-              </Center>
-            )}
-            {!isLoading && (
-              <>
-                {isResale && (
-                  <Paper withBorder radius="md" p="sm">
-                    <Text size="xs" c="dimmed" mb={4}>
-                      You&apos;re buying from a reseller — this sale splits:
-                    </Text>
-                    <Group justify="space-between">
-                      <Text size="xs">Reseller earns</Text>
-                      <Text size="xs" fw={600}>
-                        {numberWithCommas(resellerAmount)} Buzz
+              {/* A sticker is sold by the use, so how many you get is the offer —
+                without it the price has nothing to be judged against. */}
+              {stickerTerms && (
+                <Text size="sm" c="dimmed">
+                  {stickerTerms.usesLabel}
+                  {stickerTerms.extraUseLabel ? ` · ${stickerTerms.extraUseLabel}` : ''}
+                </Text>
+              )}
+              {isLoading && (
+                <Center>
+                  <Loader type="bars" />
+                </Center>
+              )}
+              {!isLoading && (
+                <>
+                  {isResale && (
+                    <Paper withBorder radius="md" p="sm">
+                      <Text size="xs" c="dimmed" mb={4}>
+                        You&apos;re buying from a reseller — this sale splits:
                       </Text>
-                    </Group>
-                    <Group justify="space-between">
-                      <Text size="xs">Original creator earns</Text>
-                      <Text size="xs" fw={600}>
-                        {numberWithCommas(creatorAmount)} Buzz
-                      </Text>
-                    </Group>
-                  </Paper>
-                )}
-                {canPurchase ? (
-                  <Stack gap={6}>
-                    {acceptsBlue && isAvailable && (
-                      <PayWithSelector
-                        value={payWith}
-                        onChange={setPayWith}
-                        domainType={domainType}
+                      <Group justify="space-between">
+                        <Text size="xs">Reseller earns</Text>
+                        <Text size="xs" fw={600}>
+                          {numberWithCommas(resellerAmount)} Buzz
+                        </Text>
+                      </Group>
+                      <Group justify="space-between">
+                        <Text size="xs">Original creator earns</Text>
+                        <Text size="xs" fw={600}>
+                          {numberWithCommas(creatorAmount)} Buzz
+                        </Text>
+                      </Group>
+                    </Paper>
+                  )}
+                  {canPurchase ? (
+                    <Stack gap={6}>
+                      {acceptsBlue && isAvailable && (
+                        <PayWithSelector
+                          value={payWith}
+                          onChange={setPayWith}
+                          domainType={domainType}
+                        />
+                      )}
+                      <BuzzTransactionButton
+                        disabled={purchasingShopItem || !isAvailable}
+                        loading={purchasingShopItem}
+                        buzzAmount={shopItem.unitAmount}
+                        radius="xl"
+                        onPerformTransaction={handlePurchaseShopItem}
+                        label="Purchase"
+                        accountTypes={accountTypes}
+                        showTypePct={acceptsBlue && payWith === 'blue-first'}
                       />
-                    )}
-                    <BuzzTransactionButton
-                      disabled={purchasingShopItem || !isAvailable}
-                      loading={purchasingShopItem}
-                      buzzAmount={shopItem.unitAmount}
-                      radius="xl"
-                      onPerformTransaction={handlePurchaseShopItem}
-                      label="Purchase"
-                      accountTypes={accountTypes}
-                      showTypePct={acceptsBlue && payWith === 'blue-first'}
-                    />
-                  </Stack>
-                ) : cosmetic.type === CosmeticType.Sticker ? (
-                  <Text size="sm" align="center" c="dimmed">
-                    You already own this sticker — it&apos;s in your sticker picker.
-                  </Text>
-                ) : (
-                  <Stack gap={4}>
-                    <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
-                      Equip now
-                    </Button>
+                    </Stack>
+                  ) : cosmetic.type === CosmeticType.Sticker ? (
                     <Text size="sm" align="center" c="dimmed">
-                      You already own this cosmetic
+                      You already own this sticker — it&apos;s in your sticker picker.
                     </Text>
-                  </Stack>
-                )}
-              </>
-            )}
-            {cosmetic.type === CosmeticType.ContentDecoration && (
-              <Group gap="xs" wrap="nowrap">
-                <Text c="yellow">
-                  <IconAlertTriangleFilled />
-                </Text>
+                  ) : (
+                    <Stack gap={4}>
+                      <Button radius="xl" onClick={handleEquipDecoration} loading={isEquipping}>
+                        Equip now
+                      </Button>
+                      <Text size="sm" align="center" c="dimmed">
+                        You already own this cosmetic
+                      </Text>
+                    </Stack>
+                  )}
+                </>
+              )}
+              {cosmetic.type === CosmeticType.ContentDecoration && (
+                <Group gap="xs" wrap="nowrap">
+                  <Text c="yellow">
+                    <IconAlertTriangleFilled />
+                  </Text>
 
-                <Text size="xs" c="yellow" lh={1.3}>
-                  This cosmetic is an <u>equippable</u>. It can only be applied to <u>one</u> piece
-                  of content at a time.
-                </Text>
-              </Group>
-            )}
+                  <Text size="xs" c="yellow" lh={1.3}>
+                    This cosmetic is an <u>equippable</u>. It can only be applied to <u>one</u>{' '}
+                    piece of content at a time.
+                  </Text>
+                </Group>
+              )}
+            </Stack>
           </Stack>
         </Grid.Col>
         <Grid.Col span={{ base: 12, md: 7 }} p="lg" className="  bg-gray-0 dark:bg-dark-8">
