@@ -1,4 +1,4 @@
-import type { RosterSort } from '~/shared/utils/roster-order';
+import { MINUTE_MS, type RosterSort } from '~/shared/utils/roster-order';
 
 // A roster sort's whole key packed into one sorted-set score, so Redis pages in the same order the
 // page and the client rank by (roster-order.ts), across page boundaries. Every field is a whole
@@ -19,7 +19,6 @@ export const JOIN_BITS = 18;
 export const MAX_HATS = 2 ** HAT_BITS - 1;
 export const MAX_POINTS = 2 ** POINT_BITS - 1;
 const MAX_JOIN = 2 ** JOIN_BITS - 1;
-const MINUTE_MS = 60 * 1000;
 const JOIN_HALF_RANGE_MS = 2 ** (JOIN_BITS - 1) * MINUTE_MS;
 
 // What one point adds to each sort's score: the award's increment per sort.

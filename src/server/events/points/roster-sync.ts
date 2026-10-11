@@ -8,6 +8,8 @@ import {
   eventRosterKeys,
   gateTeam,
   LISTED_SEPARATOR,
+  RANK_PENDING,
+  RANK_READY,
   ROSTER_SORTS,
   TOMBSTONE_PREFIX,
   type RosterHat,
@@ -121,7 +123,7 @@ export async function loadRosterMemberStates(
 
 export type RosterWriteRedis = Pick<
   typeof sysRedis,
-  'hmGet' | 'hSet' | 'hDel' | 'zAdd' | 'zRem' | 'eval' | 'set'
+  'hmGet' | 'hSet' | 'hDel' | 'zAdd' | 'zRem' | 'eval' | 'get' | 'set'
 >;
 
 // What an unlisted member's gate entry holds for a while: never a team, so no read lists them, and
@@ -471,8 +473,7 @@ export async function reconcileEventRosters(
         listed += r.listed;
         removed += r.removed;
       }
-      // Every listed member's rank scores are written: pages can read them (roster.ts).
-      if (visitedAll) await deps.redis.set(eventRosterKeys(event.name).rankReady, '1');
+      if (visitedAll) await markRankPass(event, deps);
       if (removed)
         logRoster('warning', 'reconcileEventRosters', { event: event.name, listed, removed });
     } catch (error) {
@@ -505,8 +506,18 @@ export async function rebuildEventRoster(
   let listed = 0;
   for (const batch of chunk(ids, RECONCILE_BATCH))
     listed += (await syncRosterMembersWith(event, batch, deps)).listed;
-  await deps.redis.set(eventRosterKeys(event.name).rankReady, '1');
+  await markRankPass(event, deps);
   return { optedIn: ids.length, listed };
+}
+
+// A complete pass has written every listed member's rank scores. The first after a deploy can run
+// while pods on the previous release still serve, and they list members and add grants without
+// writing rank scores; so pages switch to the rank sets (roster.ts) only after a second complete
+// pass, an hour on.
+async function markRankPass(event: RosterEvent, deps: RosterSyncDeps) {
+  const key = eventRosterKeys(event.name).rankReady;
+  const previous = await deps.redis.get(key);
+  await deps.redis.set(key, previous ? RANK_READY : RANK_PENDING);
 }
 
 function logRoster(type: 'warning' | 'error', fn: string, extra: object) {

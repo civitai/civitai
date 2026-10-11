@@ -12,7 +12,7 @@ const STANDING_KEYS: Record<RosterSort, StandingField[]> = {
   newest: ['joined', 'points'],
 };
 
-const MINUTE_MS = 60 * 1000;
+export const MINUTE_MS = 60 * 1000;
 const fieldValue = (item: Standing, field: StandingField) =>
   field === 'joined' ? Math.floor(item.joinedAt.getTime() / MINUTE_MS) : item[field];
 

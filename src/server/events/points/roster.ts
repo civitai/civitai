@@ -34,11 +34,14 @@ export function eventRosterKeys(event: string) {
     // per team, sort and season: userId scored by the sort's whole key, packed (roster-score.ts)
     rank: (team: string, sort: RosterSort, season: EventPointSeason) =>
       `${root}:${team}:rank:${sort}:${season}` as const,
-    // Set once a full reconcile or rebuild has written every listed member's rank scores; until
-    // then pages are read from the single-score sets above.
+    // RANK_PENDING after one complete reconcile or rebuild, RANK_READY after the next (roster-sync.ts
+    // markRankPass). Pages read the rank sets only once it is RANK_READY.
     rankReady: `${root}:rank-ready` as const,
   } as const;
 }
+
+export const RANK_PENDING = 'pending';
+export const RANK_READY = 'ready';
 
 export type RosterRedis = Pick<
   typeof sysRedis,
@@ -115,7 +118,7 @@ export async function readRosterPage(input: RosterPageInput, redis: RosterRedis 
     redis.zRangeWithScores(rankKey, from, from + take - 1, { REV: true }),
     redis.zCard(rankKey),
   ]);
-  if (!ready) return readSingleScorePage(input, redis);
+  if (ready !== RANK_READY) return readSingleScorePage(input, redis);
   const ids = rows.map((r) => r.value);
   if (!ids.length) return { rows: [] as RosterRow[], total: Number(total), nextOffset: undefined };
 

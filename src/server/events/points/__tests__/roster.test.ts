@@ -130,7 +130,10 @@ function fakeRedis() {
         const [member, hats, join, given] = args;
         const points =
           given === ''
-            ? Math.floor((z(evalKeys[1]).get(member) ?? 0) / POINT_STEP.points)
+            ? Math.min(
+                Math.floor((z(evalKeys[1]).get(member) ?? 0) / POINT_STEP.points),
+                MAX_POINTS
+              )
             : Number(given);
         const standing = { hats: Number(hats), points, joinMinute: Number(join) };
         (['hats', 'points', 'newest'] as const).forEach((sort, i) =>
@@ -195,7 +198,7 @@ function setup(
   { rankReady = true }: { rankReady?: boolean } = {}
 ) {
   const fake = fakeRedis();
-  if (rankReady) fake.strings.set(keys.rankReady, '1');
+  if (rankReady) fake.strings.set(keys.rankReady, 'ready');
   const db = new Map(states.map((s) => [s.userId, s]));
   const deps: RosterSyncDeps = {
     redis: fake.redis as unknown as RosterSyncDeps['redis'],
@@ -1164,9 +1167,17 @@ describe('team roster rank scores', () => {
       [2, 9],
       [1, 5],
     ]);
+    // One complete pass is not enough: pods on the previous release may still be serving.
     await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT]);
-    expect(s.strings.get(keys.rankReady)).toBe('1');
-    // The reconcile rewrote the planted score, and pages now come from the rank sets.
+    expect(s.strings.get(keys.rankReady)).toBe('pending');
+    expect((await s.read('points')).rows.map((r) => [r.userId, r.points])).toEqual([
+      [2, 9],
+      [1, 5],
+    ]);
+    s.zsets.get(keys.rank('Blue', 'points', 'preview'))?.set('1', 2 ** 52);
+    await reconcileEventRosters({ ...s.deps, gate: gateOf(s) }, [EVENT]);
+    expect(s.strings.get(keys.rankReady)).toBe('ready');
+    // The second pass rewrote the planted score, and pages now come from the rank sets.
     s.zsets.get(keys.points('Blue', 'preview'))?.set('1', 1_000);
     expect((await s.read('points')).rows.map((r) => [r.userId, r.points])).toEqual([
       [2, 9],
@@ -1184,10 +1195,12 @@ describe('team roster rank scores', () => {
     expect(s.strings.has(keys.rankReady)).toBe(false);
   });
 
-  it('marks the rank sets ready after a rebuild', async () => {
+  it('counts a rebuild as a complete pass', async () => {
     const s = setup([member(1)], PREVIEW_NOW, {}, { rankReady: false });
     await rebuildEventRoster(EVENT, { ...s.deps, optedInUserIds: async () => [1] });
-    expect(s.strings.get(keys.rankReady)).toBe('1');
+    expect(s.strings.get(keys.rankReady)).toBe('pending');
+    await rebuildEventRoster(EVENT, { ...s.deps, optedInUserIds: async () => [1] });
+    expect(s.strings.get(keys.rankReady)).toBe('ready');
   });
 
   it('adds a grant to every rank set, so the order follows live points', async () => {
