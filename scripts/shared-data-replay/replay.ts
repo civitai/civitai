@@ -132,10 +132,8 @@ ORDER BY key
 LIMIT $2`;
 
 /**
- * A counter's key is user-chosen only when its anchor `shared_kv` row is the bare `{}` the
- * increment path inserts. A counter seeded by an append carries that row's server-generated key,
- * which no live scan ever reads. Both are scanned; `anchor` marks each CSV row and gets its own
- * tally (`userChosenCounters`), so the rate the enforce flip would see can be read on its own.
+ * Every counter key is scanned. `anchor` (the counter's `shared_kv` row is still the bare `{}` the
+ * increment path inserts) is one input to `isUserChosenCounterKey`; see there for the rule.
  */
 export const countersPageSql = (slug: string, joinSharedKv: boolean) =>
   joinSharedKv
@@ -166,6 +164,31 @@ interface CounterRow {
   hidden: boolean;
 }
 
+/** `newUlid()`'s output: 26 uppercase Crockford base32 characters (no I, L, O, U). */
+const SERVER_GENERATED_KEY = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/**
+ * Whether a counter's key is app-chosen text, i.e. a key a live increment scans when it creates it.
+ *
+ * Only two paths create `shared_kv` rows: append, whose key is always `newUlid()`, and the increment
+ * that creates a counter, whose key is the app's and whose anchor row starts as `{}`. The anchor
+ * alone is not enough: the author can later rewrite it through `updateSharedRow`, which checks only
+ * key, author and not-hidden. So a key counts as user-chosen when its anchor is still `{}` OR it is
+ * not ULID-shaped (no append could have made it). The key's shape survives an edit; the anchor does not.
+ *
+ * 🔴 RESIDUAL: an app-chosen key that happens to be ULID-shaped AND whose anchor was edited counts as
+ * NOT user-chosen, so the user-chosen tally can undercount by exactly those keys. They are still
+ * scanned, counted in the overall counter tally and written to the CSV. `formatSummary` says so.
+ */
+export const isUserChosenCounterKey = (key: string, anchor: boolean | null) =>
+  anchor === true || !SERVER_GENERATED_KEY.test(key);
+
+/** Printed under every summary, where the user-chosen numbers are read. */
+export const USER_CHOSEN_NOTE =
+  "note: userChosen = anchor row still '{}' OR key not ULID-shaped. An app-chosen ULID-shaped " +
+  'counter key whose anchor row was edited counts as NOT user-chosen (it is still in counter hits, ' +
+  'the overall would-block count and the CSV), so the user-chosen figures can undercount by those keys.';
+
 export type ReplaySurface = 'data' | 'counter';
 
 export interface ReplayCsvRow {
@@ -179,7 +202,10 @@ export interface ReplayCsvRow {
   matched: string;
   leafLength: number;
   leaf: string;
-  /** Counter rows: whether the key is user-chosen (see `countersPageSql`). Data rows: null. */
+  /**
+   * Counter rows: whether the key is user-chosen (`isUserChosenCounterKey`: anchor still `{}` OR key
+   * not ULID-shaped; an app-chosen ULID-shaped key with an edited anchor reads `false`). Data rows: null.
+   */
   userChosenCounter: boolean | null;
   /**
    * `blockingHit` would reject this row/counter under enforce. A `pattern` hit does NOT block: live
@@ -262,7 +288,7 @@ export interface AppTally {
   /** Distinct leaves classified across all `data` blobs (an overflowed blob contributes 0). */
   dataLeaves: number;
   counterKeys: number;
-  /** …of which are user-chosen (the anchor row is `{}`), i.e. the ones a live increment scans. */
+  /** …of which are user-chosen (`isUserChosenCounterKey`), i.e. the ones a live increment scans. */
   counterKeysUserChosen: number;
   hits: { data: CategoryCounts; counter: CategoryCounts };
   /** Rows / counter keys `blockingHit` would reject under enforce (a `pattern` hit does not block). */
@@ -348,7 +374,7 @@ export async function replayApp(
       for (const row of page) {
         const scan = await scanners.scanCounter(row.key);
         tally.counterKeys += 1;
-        const userChosenCounter = row.anchor === true;
+        const userChosenCounter = isUserChosenCounterKey(row.key, row.anchor);
         if (userChosenCounter) tally.counterKeysUserChosen += 1;
         countScan(tally, 'counter', scan, userChosenCounter);
         const ctx = {
@@ -406,7 +432,7 @@ const countsText = (counts: CategoryCounts) =>
     .map(([category, n]) => `${category}=${n}`)
     .join(' ');
 
-/** One block per app with any rows or counters, then the total. */
+/** One block per app with any rows or counters, then the total, then `USER_CHOSEN_NOTE`. */
 export function formatSummary(tallies: AppTally[]): string {
   const lines: string[] = [];
   const block = (t: AppTally) => {
@@ -422,6 +448,7 @@ export function formatSummary(tallies: AppTally[]): string {
   };
   for (const t of tallies) if (t.rows || t.counterKeys) block(t);
   block(totalTally(tallies));
+  lines.push(USER_CHOSEN_NOTE);
   return lines.join('\n');
 }
 

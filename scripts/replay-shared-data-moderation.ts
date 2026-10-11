@@ -22,8 +22,12 @@
  *   --page-size <n>    Rows per keyset page (default 500).
  *
  * Environment (the app's server env, loaded the usual `tsscript` way):
- *   APPS_DATABASE_URL  The App Blocks storage database. Required; read inside a READ ONLY
- *                      transaction, so the database refuses any write.
+ *   APPS_DATABASE_URL  The App Blocks storage database. Required; read inside one REPEATABLE READ,
+ *                      READ ONLY transaction, so the database refuses any write. That transaction
+ *                      sets `idle_in_transaction_session_timeout` to 4 hours
+ *                      (`IDLE_IN_TRANSACTION_TIMEOUT_MS`): an idle gap longer than that between two
+ *                      statements (e.g. a hung Redis read) ends the run instead of pinning the
+ *                      snapshot, which would hold back vacuum in every app schema.
  *   REDIS_URL (+ the rest of the app's Redis env)  The cache the blocklists are read from (and,
  *                      on a miss, written back to — see below).
  *   DATABASE_URL       The main database: a blocklist read falls back to it when its cache key is
@@ -52,6 +56,13 @@
  * run, not on the day it expires: each run prints the expiry date and the `rm` command to use if no
  * further run is coming. A CSV written elsewhere with `--out` is never swept, and the script says so
  * and by when to delete it by hand.
+ *
+ * Reading the numbers — `userChosenCounter` (CSV) and the summary's user-chosen figures: a counter
+ * key counts as user-chosen when its anchor row is still `{}` OR the key is not ULID-shaped (every
+ * append key is a server ULID). An app-chosen key that is ULID-shaped AND whose anchor row the author
+ * later edited reads as NOT user-chosen, so those figures can undercount by exactly such keys. Every
+ * counter key is still scanned and appears in the overall counter tally and the CSV. The summary
+ * prints this note too.
  *
  * Detectors that need I/O: only the blocklist-backed two (link domains, message patterns) and the
  * benign-phrase list the audit strips first. Every other detector is code bundled in the app. Before
@@ -209,6 +220,12 @@ interface ReadOnlyPool {
 }
 
 /**
+ * The longest the session may sit idle inside the replay transaction between two statements. Finite
+ * so a hung Redis read cannot hold the snapshot (and so vacuum, across every app schema) open forever.
+ */
+export const IDLE_IN_TRANSACTION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
+
+/**
  * Run `fn` inside one REPEATABLE READ, READ ONLY transaction (one consistent snapshot, and the
  * database rejects any write), always ending in ROLLBACK.
  */
@@ -219,9 +236,12 @@ export async function withReadOnlyTransaction<T>(
   const client = await pool.connect();
   try {
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    // The session sits idle in this transaction while each page is classified; a role-level idle
-    // timeout would otherwise kill a long run part-way. Transaction-local, so it ends with it.
-    await client.query('SET LOCAL idle_in_transaction_session_timeout = 0');
+    // The session sits idle in this transaction while each page is classified; a short role-level
+    // idle timeout could kill the run part-way. The bound applies to each idle gap, not the whole
+    // run. Plain integer = milliseconds. Transaction-local, so it ends with the transaction.
+    await client.query(
+      `SET LOCAL idle_in_transaction_session_timeout = ${IDLE_IN_TRANSACTION_TIMEOUT_MS}`
+    );
     const query: Query = async <R>(sql: string, params?: unknown[]) =>
       (await client.query(sql, params)).rows as R[];
     return await fn(query);

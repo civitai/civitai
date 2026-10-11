@@ -34,6 +34,7 @@ import {
   csvHeader,
   csvRowLine,
   formatSummary,
+  isUserChosenCounterKey,
   LIST_APP_SCHEMAS_SQL,
   replayApp,
   replayCsvRows,
@@ -44,6 +45,7 @@ import {
   type Query,
   type ReplayCsvRow,
 } from '../shared-data-replay/replay';
+import { newUlid } from '~/server/utils/app-block-ids';
 import {
   assertNoSinks,
   defaultReplayDir,
@@ -63,6 +65,8 @@ import {
 
 const MINOR = '13 year old girl';
 const POI = 'emma watson';
+/** A ULID-shaped key, as append seeds a counter with (`newUlid()`). */
+const SEEDED = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -128,7 +132,7 @@ describe('replayApp — the scan path (positive control)', () => {
         { key: 'r2', data: { tags: { [POI]: 1 } }, hidden: true },
         { key: 'r3' },
       ],
-      [{ key: MINOR, anchor: true }, { key: 'r1' }]
+      [{ key: MINOR, anchor: true }, { key: SEEDED }]
     );
     expect(
       rows.map(
@@ -181,7 +185,7 @@ describe('replayApp — the scan path (positive control)', () => {
         { key: 'r2', data: { tags: { landscape: 1 } } },
         { key: 'r3' },
       ],
-      [{ key: 'likes', anchor: true }, { key: 'r1' }]
+      [{ key: 'likes', anchor: true }, { key: SEEDED }]
     );
     expect(rows).toEqual([]);
     expect(tally).toMatchObject({ rows: 3, rowsWithData: 2, counterKeys: 2 });
@@ -190,18 +194,33 @@ describe('replayApp — the scan path (positive control)', () => {
     expect(Object.values(tally.hits.data).every((n) => n === 0)).toBe(true);
   });
 
-  it('a bad key whose anchor is NOT user-chosen is reported, but kept out of the user-chosen tally', async () => {
+  it('an app-chosen bad key whose anchor row was EDITED (no longer {}) still counts as user-chosen', async () => {
     const { rows, tally } = await run([], [{ key: MINOR, anchor: false, hidden: true }]);
     expect(rows.map((r) => [r.userChosenCounter, r.hidden])).toEqual([
-      [false, true],
-      [false, true],
+      [true, true],
+      [true, true],
     ]);
     expect(tally.blocked.counter).toBe(1);
-    expect(tally.counterKeysUserChosen).toBe(0);
+    expect(tally.counterKeysUserChosen).toBe(1);
     expect(tally.userChosenCounters).toEqual({
-      hits: { minor: 0, poi: 0, link: 0, pattern: 0, audit_regex: 0, overflow: 0 },
-      blocked: 0,
+      hits: { minor: 1, poi: 0, link: 0, pattern: 0, audit_regex: 1, overflow: 0 },
+      blocked: 1,
     });
+  });
+
+  it('RESIDUAL: a ULID-shaped key with an edited anchor is scanned and reported, but kept out of the user-chosen tally', async () => {
+    mockFindBlocked.mockImplementation(async (values) =>
+      (values as string[]).flatMap((v, index) =>
+        v === SEEDED ? [{ kind: 'pattern' as const, index, matched: SEEDED }] : []
+      )
+    );
+    const { rows, tally } = await run([], [{ key: SEEDED, anchor: false }]);
+    expect(rows.map((r) => [r.rowKey, r.category, r.userChosenCounter])).toEqual([
+      [SEEDED, 'pattern', false],
+    ]);
+    expect(tally).toMatchObject({ counterKeys: 1, counterKeysUserChosen: 0 });
+    expect(tally.hits.counter.pattern).toBe(1);
+    expect(tally.userChosenCounters.hits.pattern).toBe(0);
   });
 
   it('a pattern-only hit is reported but does NOT block (user-content-pattern-enforce is absent), on data and on a user-chosen counter', async () => {
@@ -252,7 +271,8 @@ describe('replayApp — the scan path (positive control)', () => {
     expect(countersOnly.sent).toHaveLength(1);
     expect(countersOnly.sent[0].sql).toBe(countersPageSql('demo', false));
     expect(countersOnly.sent[0].sql).not.toContain('shared_kv');
-    expect(countersOnly.tally).toMatchObject({ rows: 0, counterKeys: 1, counterKeysUserChosen: 0 });
+    // No anchor to read, so the key's shape alone decides: `k1` is not a ULID, so it is user-chosen.
+    expect(countersOnly.tally).toMatchObject({ rows: 0, counterKeys: 1, counterKeysUserChosen: 1 });
 
     const sharedOnly = await run([{ key: 'r1', data: { a: 'x' } }], [{ key: 'k1' }], 500, {
       ...APP,
@@ -267,6 +287,31 @@ describe('replayApp — the scan path (positive control)', () => {
     expect(countersPageSql('demo', true)).toContain('LEFT JOIN "app_demo".shared_kv s');
     expect(() => sharedKvPageSql('demo"; drop')).toThrow(/invalid app slug/);
     expect(() => countersPageSql('Demo', false)).toThrow(/invalid app slug/);
+  });
+});
+
+describe('isUserChosenCounterKey', () => {
+  it('anchor still {} decides alone; otherwise only a ULID-shaped key is server-generated', () => {
+    const cases: Array<[string, boolean | null, boolean]> = [
+      [SEEDED, true, true], // app-chosen ULID-shaped key, anchor untouched
+      [SEEDED, false, false], // the RESIDUAL: indistinguishable from an append-seeded counter
+      [SEEDED, null, false],
+      ['likes', false, true], // edited anchor, non-ULID key
+      ['likes', null, true],
+      [`playcount:${SEEDED}`, false, true], // a ULID inside a longer key is not a ULID key
+      [`${SEEDED}x`, false, true],
+      [SEEDED.toLowerCase(), false, true], // newUlid() emits uppercase only
+      [`${SEEDED.slice(0, 25)}I`, false, true], // I/L/O/U are not Crockford digits
+      [`${SEEDED.slice(0, 25)}U`, false, true],
+    ];
+    expect(cases.map(([key, anchor]) => isUserChosenCounterKey(key, anchor))).toEqual(
+      cases.map(([, , expected]) => expected)
+    );
+  });
+
+  it('every key the live append path generates reads as server-generated', () => {
+    const keys = Array.from({ length: 200 }, () => newUlid());
+    expect(keys.filter((key) => isUserChosenCounterKey(key, false))).toEqual([]);
   });
 });
 
@@ -443,6 +488,10 @@ describe('summary', () => {
         '  user-chosen counter hits: minor=0 poi=0 link=0 pattern=0 audit_regex=0 overflow=0',
         '  would block under enforce (pattern hits do not block): data=1 counter=0',
         '  user-chosen counters that would block: 0',
+        "note: userChosen = anchor row still '{}' OR key not ULID-shaped. An app-chosen ULID-shaped " +
+          'counter key whose anchor row was edited counts as NOT user-chosen (it is still in counter ' +
+          'hits, the overall would-block count and the CSV), so the user-chosen figures can undercount ' +
+          'by those keys.',
       ].join('\n')
     );
   });
@@ -759,7 +808,8 @@ describe('entry-script guards', () => {
     };
     const OPEN = [
       ['BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY', undefined],
-      ['SET LOCAL idle_in_transaction_session_timeout = 0', undefined],
+      // 4 hours in ms, literally: finite, so a hung read cannot pin the snapshot forever.
+      ['SET LOCAL idle_in_transaction_session_timeout = 14400000', undefined],
     ];
 
     it('success: READ ONLY first, params forwarded, rows returned, ROLLBACK last, released', async () => {
