@@ -51,7 +51,7 @@ const mocks = vi.hoisted(() => {
         }
       : null,
   });
-  const state = { tail: [] as ReturnType<typeof image>[] };
+  const state = { tail: [] as ReturnType<typeof image>[], swipeGalleryCards: false };
   const getInfiniteUseQuery = vi.fn((_input: any, opts: any) =>
     opts?.enabled
       ? { data: { items: state.tail, nextCursor: undefined }, isError: false }
@@ -71,7 +71,7 @@ vi.mock('~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider', () => ({
     hiddenImageIds: [],
     hiddenTags: [],
     hiddenUsers: [],
-    swipeGalleryCards: false,
+    swipeGalleryCards: mocks.state.swipeGalleryCards,
     source: { kind: 'model', model: { id: 1, user: { id: 9 } } },
     modelVersions: [],
   }),
@@ -138,6 +138,8 @@ vi.mock('~/components/TrackView/track.utils', () => ({
   useTrackEvent: () => ({ trackAction: vi.fn().mockResolvedValue(undefined) }),
 }));
 
+// The app's stylesheet: the swipe carousel only clips its neighbours with its utility classes.
+import '~/styles/globals.css';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 
@@ -157,10 +159,24 @@ const shownId = () =>
   document.querySelector('[data-testid="slide"]')?.getAttribute('data-image-id');
 // The image the hat is worn by, prefixed 'card:' when it is drawn on the card rather than the media.
 const hatOn = () => {
-  const hat = document.querySelector('button[data-event-decoration="hat"]');
+  const hats = document.querySelectorAll('button[data-event-decoration="hat"]');
+  if (hats.length > 1) return `${hats.length} hats`;
+  const hat = hats[0];
   if (!hat) return null;
   const id = hat.closest('[data-worn-on]')?.getAttribute('data-worn-on') ?? '?';
   return hat.closest('.flex-1.overflow-hidden') ? id : `card:${id}`;
+};
+// The images whose hats are in view: embla mounts its neighbours too, and only the viewport's
+// clipping keeps their hats off the shown slide.
+const hatsInView = () => {
+  const media = document.querySelector('.flex-1.overflow-hidden')!.getBoundingClientRect();
+  return Array.from(document.querySelectorAll('button[data-event-decoration="hat"]'))
+    .filter((hat) => {
+      const r = hat.getBoundingClientRect();
+      const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+      return x > media.left && x < media.right && y > media.top && y < media.bottom;
+    })
+    .map((hat) => hat.closest('[data-worn-on]')?.getAttribute('data-worn-on'));
 };
 const clickNext = () => userEvent.click(document.querySelector<HTMLElement>('button.right-3')!);
 
@@ -175,6 +191,7 @@ function renderCard(data: any) {
 beforeEach(() => {
   mocks.getInfiniteUseQuery.mockClear();
   mocks.state.tail = [];
+  mocks.state.swipeGalleryCards = false;
 });
 
 describe('a gallery post card wears a hat only on the slide that wears it', () => {
@@ -222,5 +239,18 @@ describe('a gallery post card wears a hat only on the slide that wears it', () =
     for (let i = 0; i < 6; i++) await clickNext();
     await vi.waitFor(() => expect(shownId()).toBe('7'));
     expect(hatOn()).toBe('7');
+  });
+
+  test("swipe carousel: only the shown slide's hat is in view", async () => {
+    mocks.state.swipeGalleryCards = true;
+    renderCard(post(images(3, 2)));
+    await vi.waitFor(() => expect(document.querySelectorAll('.transform-3d').length).toBe(3));
+    await vi.waitFor(() => expect(hatsInView()).toEqual([]));
+
+    await clickNext();
+    await vi.waitFor(() => expect(hatsInView()).toEqual(['2']));
+
+    await clickNext();
+    await vi.waitFor(() => expect(hatsInView()).toEqual([]));
   });
 });
