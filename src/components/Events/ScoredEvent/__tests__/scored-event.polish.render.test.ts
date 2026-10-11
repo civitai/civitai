@@ -147,7 +147,7 @@ describe('PlaceHatModal older posts', () => {
   it('points to the menu item on each post for older posts', () => {
     placeable = [{ entityType: 'Image', entityId: 500, title: null, image: null }];
     expect(modal().querySelector('[data-testid="older-posts-hint"]')?.textContent).toBe(
-      'Looking for an older post? Open it and use Add Party Hat from its ⋮ menu.'
+      'Looking for an older post? Find it on your profile and use Add Party Hat from the ⋮ menu on its card.'
     );
   });
 

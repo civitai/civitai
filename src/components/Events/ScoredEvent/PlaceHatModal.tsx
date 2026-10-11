@@ -115,11 +115,12 @@ export default function PlaceHatModal({
             })}
           </SimpleGrid>
         )}
-        {/* Only the newest posts of each type are listed; an older one takes a hat from its own menu. */}
+        {/* Only the newest posts of each type are listed. An older one takes a hat from the menu on its
+            card (a profile or feed): a model's or article's own page has no such item. */}
         {!isLoading && (
           <Text size="xs" c="dimmed" ta="center" data-testid="older-posts-hint">
-            Looking for an older post? Open it and use Add{' '}
-            {getEventDecorationDefinition(event)?.label ?? 'Party Hat'} from its ⋮ menu.
+            Looking for an older post? Find it on your profile and use Add{' '}
+            {getEventDecorationDefinition(event)?.label ?? 'Party Hat'} from the ⋮ menu on its card.
           </Text>
         )}
       </Stack>
