@@ -30,8 +30,7 @@ export function useNavBannersDismissed() {
   const local = useDismissedStore((s) => s.dismissed);
   const dismissed = local ?? seeded ?? [];
 
-  const dismiss = (id: string) => {
-    const next = addNavBannerDismissed(useDismissedStore.getState().dismissed ?? dismissed, id);
+  const save = (next: string[]) => {
     useDismissedStore.setState({ dismissed: next });
     setCookie(NAV_BANNERS_DISMISSED_COOKIE, JSON.stringify(next), {
       maxAge: COOKIE_MAX_AGE_SECONDS,
@@ -39,6 +38,9 @@ export function useNavBannersDismissed() {
       sameSite: 'lax',
     });
   };
+  const current = () => useDismissedStore.getState().dismissed ?? dismissed;
+  const dismiss = (id: string) => save(addNavBannerDismissed(current(), id));
+  const restore = (id: string) => save(current().filter((x) => x !== id));
 
-  return { dismissed, dismiss };
+  return { dismissed, dismiss, restore };
 }

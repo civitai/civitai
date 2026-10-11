@@ -149,3 +149,9 @@ export function settledWinner(
   if (data.endDate >= now || isFinalizing(data, standings, now)) return undefined;
   return standings?.teams.find((t) => t.rank === 1)?.team;
 }
+
+// "0:42", "1:24". The shared formatDuration pads a minute-less length to "00:42".
+export function filmLength(seconds: number) {
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}

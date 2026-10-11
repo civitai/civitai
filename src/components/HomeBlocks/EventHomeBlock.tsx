@@ -8,7 +8,11 @@ import { Lightbulb } from '~/components/Decorations/Lightbulb';
 import { useQueryEvent } from '~/components/Events/events.utils';
 import { useNavBannersDismissed } from '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
-import { eventHomeBlockDismissId } from '~/components/HomeBlocks/scored-event-home-block.utils';
+import {
+  eventHomeBlockCollapseId,
+  eventHomeBlockDismissId,
+  eventHomeBlockDisplay,
+} from '~/components/HomeBlocks/scored-event-home-block.utils';
 import { ScoredEventHomeBlock } from '~/components/HomeBlocks/ScoredEventHomeBlock';
 import { useInView } from '~/hooks/useInView';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -18,15 +22,22 @@ import { trpc } from '~/utils/trpc';
 
 export function EventHomeBlock({ showAds, ...props }: Props) {
   const event = props.metadata.event;
-  const { dismissed, dismiss } = useNavBannersDismissed();
-  if (!event || dismissed.includes(eventHomeBlockDismissId(event))) return null;
+  const { dismissed, dismiss, restore } = useNavBannersDismissed();
+  if (!event) return null;
+  const display = eventHomeBlockDisplay(event, dismissed);
+  if (display === 'hidden') return null;
+  const collapsed = display === 'collapsed';
 
   return (
-    <HomeBlockWrapper py={32}>
+    <HomeBlockWrapper py={collapsed ? 16 : 32}>
       <EventHomeBlockBody
         event={event}
         metadata={props.metadata}
-        onDismiss={() => dismiss(eventHomeBlockDismissId(event))}
+        collapsed={collapsed}
+        onClose={() =>
+          dismiss(collapsed ? eventHomeBlockDismissId(event) : eventHomeBlockCollapseId(event))
+        }
+        onExpand={() => restore(eventHomeBlockCollapseId(event))}
       />
     </HomeBlockWrapper>
   );
@@ -36,11 +47,13 @@ export function EventHomeBlock({ showAds, ...props }: Props) {
 function EventHomeBlockBody({
   event,
   metadata,
-  onDismiss,
+  ...controls
 }: {
   event: string;
   metadata: HomeBlockMetaSchema;
-  onDismiss: () => void;
+  collapsed: boolean;
+  onClose: () => void;
+  onExpand: () => void;
 }) {
   const { ref, inView } = useInView();
   const [seen, setSeen] = useState(false);
@@ -50,9 +63,9 @@ function EventHomeBlockBody({
   const { data } = trpc.event.getData.useQuery({ event }, { enabled: seen });
 
   return (
-    <div ref={ref} className="min-h-40">
+    <div ref={ref} className={data ? undefined : 'min-h-14'}>
       {data?.scored ? (
-        <ScoredEventHomeBlock event={event} data={data} onDismiss={onDismiss} />
+        <ScoredEventHomeBlock event={event} data={data} {...controls} />
       ) : data ? (
         <EventHomeBlockContent metadata={metadata} />
       ) : null}

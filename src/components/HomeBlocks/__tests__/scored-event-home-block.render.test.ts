@@ -17,11 +17,11 @@ const h = vi.hoisted(() => ({
   banners: [] as NavBanner[],
   cosmetic: undefined as unknown,
   standings: undefined as unknown,
-  hats: [] as { placedOn?: unknown; cosmeticId: number }[],
-  join: vi.fn(async () => undefined),
-  trigger: vi.fn(),
+  hats: [] as unknown[],
   eventData: undefined as unknown,
   dismissed: [] as string[],
+  join: vi.fn(async () => undefined),
+  trigger: vi.fn(),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
@@ -61,8 +61,16 @@ vi.mock('~/components/Events/ScoredEvent/JoinEventButton', () => ({
   JoinEventButton: ({ onClick }: { onClick: () => void }) =>
     React.createElement('button', { onClick }, 'Join and get your free hat'),
 }));
-
-// Layout only, and it needs the feed's masonry context.
+// Media and the feed-card thumb need the CDN and image guard; their src is what matters here.
+vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  EdgeMedia: ({ src, alt }: { src: string; alt?: string }) =>
+    React.createElement('img', { 'data-src': src, alt }),
+}));
+vi.mock('~/components/Events/ScoredEvent/EventContentThumb', () => ({
+  EventContentThumb: ({ hat }: { hat: { url: string } }) =>
+    React.createElement('div', { 'data-testid': 'thumb', 'data-hat': hat.url }),
+}));
 vi.mock('~/components/HomeBlocks/HomeBlockWrapper', () => ({
   HomeBlockWrapper: ({ children }: { children: React.ReactNode }) =>
     React.createElement('div', null, children),
@@ -79,6 +87,8 @@ vi.mock('cookies-next', async (importOriginal) => ({
 
 const { ScoredEventHomeBlock } = await import('~/components/HomeBlocks/ScoredEventHomeBlock');
 const { EventHomeBlock } = await import('~/components/HomeBlocks/EventHomeBlock');
+const PlaceHatModal = (await import('~/components/Events/ScoredEvent/PlaceHatModal')).default;
+const EventVideoModal = (await import('~/components/Events/ScoredEvent/EventVideoModal')).default;
 
 const NOW = new Date('2026-11-10T00:00:00Z');
 const data = {
@@ -90,7 +100,14 @@ const data = {
   joinable: true,
   scored: true,
   teams: ['Blue', 'Pink'],
-  page: { headline: 'Civitai turns 4.' },
+  page: {
+    headline: 'Civitai turns 4.',
+    headlineAccent: 'Pick up a hat.',
+    heroImage: 'hero-id',
+    heroVideo: { id: 'film', title: 'Hats On', duration: 42.4 },
+    prize: { title: 'Champion badge', body: 'For the winners.' },
+    prizeBadge: { Blue: { animated: 'blue-anim', static: 'blue-static' } },
+  },
 } as unknown as React.ComponentProps<typeof ScoredEventHomeBlock>['data'];
 const BANNER: NavBanner = {
   id: 'event:birthday2026',
@@ -102,12 +119,10 @@ const BANNER: NavBanner = {
     event: 'birthday2026',
     menuLabel: "Civitai's 4th Birthday",
     menuIcon: 'confetti',
-    teamHref: '/events/birthday2026/team',
     homeBlock: {
       eyebrow: "Civitai's 4th Birthday",
       title: 'Civitai turns 4.',
       body: 'Four colour teams.',
-      cta: 'See the event',
     },
   },
 };
@@ -117,22 +132,37 @@ const STANDINGS = {
     { team: 'Blue', rank: 1, score: 1200 },
     { team: 'Pink', rank: 2, score: 800 },
   ],
+  teamHats: [
+    { team: 'Blue', url: 'cap-blue' },
+    { team: 'Pink', url: 'cap-pink' },
+  ],
 };
+const placed = (n: number, points: number) => ({
+  cosmeticId: n,
+  claimKey: 'k',
+  name: `Hat ${n}`,
+  points,
+  data: { url: `hat-${n}` },
+  placedOn: { entityType: 'Image', entityId: 100 + n, image: { id: 100 + n } },
+});
+const unplaced = (n: number) => ({ ...placed(n, 0), placedOn: null });
 
 let root: ReturnType<typeof createRoot> | undefined;
 let host: HTMLElement | undefined;
-const onDismiss = vi.fn();
+const onClose = vi.fn();
+const onExpand = vi.fn();
 beforeEach(() => {
   h.user = null;
   h.banners = [BANNER];
   h.cosmetic = undefined;
   h.standings = STANDINGS;
   h.hats = [];
-  h.join.mockClear();
   h.eventData = data;
   h.dismissed = [];
+  h.join.mockClear();
   h.trigger.mockClear();
-  onDismiss.mockClear();
+  onClose.mockClear();
+  onExpand.mockClear();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
 });
@@ -142,115 +172,172 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function render() {
+function mount(node: React.ReactElement) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
-  act(() =>
-    root!.render(
-      React.createElement(
-        MantineProvider,
-        null,
-        React.createElement(ScoredEventHomeBlock, { event: 'birthday2026', data, onDismiss })
-      )
-    )
-  );
+  act(() => root!.render(React.createElement(MantineProvider, null, node)));
   return host;
 }
-const text = (el: HTMLElement) => el.textContent ?? '';
+const block = (collapsed = false) =>
+  mount(
+    React.createElement(ScoredEventHomeBlock, {
+      event: 'birthday2026',
+      data,
+      collapsed,
+      onClose,
+      onExpand,
+    })
+  );
+const text = (el: Element | null) => el?.textContent ?? '';
 const button = (el: HTMLElement, label: string) =>
   [...el.querySelectorAll('button')].find((b) => text(b).includes(label));
 const hrefs = (el: HTMLElement) => [...el.querySelectorAll('a')].map((a) => a.getAttribute('href'));
-
+const srcs = (el: Element | null) =>
+  [...(el?.querySelectorAll('img') ?? [])].map((i) => i.getAttribute('data-src'));
 const joinAs = (team: string) => {
   h.user = { id: 1 };
   h.cosmetic = { obtained: true, cosmetic: { data: { team } } };
 };
 
-describe('scored event home block', () => {
-  it('shows the promo copy and the standings, and asks a signed-out viewer to join', () => {
-    const el = render();
-    expect(text(el)).toContain("Civitai's 4th Birthday");
+describe('not joined', () => {
+  it('shows the headline, the team caps and Join, and no standings', () => {
+    const el = block();
+    expect(text(el)).toContain('Civitai turns 4. Pick up a hat.');
     expect(text(el)).toContain('Four colour teams.');
-    const rows = el.querySelector('[data-testid="event-home-block-standings"]');
-    expect(text(rows as HTMLElement)).toMatch(/#1Blue1\.2k.*#2Pink800/);
+    expect(srcs(el.querySelector('[data-testid="event-home-block-caps"]'))).toEqual([
+      'cap-blue',
+      'cap-pink',
+    ]);
+    expect(el.querySelector('[data-testid="event-home-block-standings"]')).toBeNull();
     act(() => button(el, 'Join and get your free hat')!.click());
     expect(h.join).toHaveBeenCalledWith({ event: 'birthday2026' });
-    expect(text(el)).not.toContain('Team rosters');
   });
 
-  it('a joined viewer sees their team line, hats to place and the roster link', () => {
-    joinAs('Pink');
-    h.hats = [{ cosmeticId: 1, placedOn: { entityId: 9 } }, { cosmeticId: 2 }];
-    const el = render();
-    expect(text(el)).toContain('Team Pink · #2 · 1 of 2 hats placed');
-    expect(button(el, 'Join')).toBeUndefined();
-    expect(hrefs(el)).toContain('/events/birthday2026/team');
+  it('plays the film with a join offer under it', () => {
+    const el = block();
+    const play = el.querySelector<HTMLButtonElement>(
+      'button[aria-label="Watch the Hats On video"]'
+    )!;
+    expect(text(play)).toContain('Watch · 0:42');
+    act(() => play.click());
+    const [[arg]] = h.trigger.mock.calls as [[{ component: unknown; props: { onJoin?: unknown } }]];
+    expect(arg.component).toBe(EventVideoModal);
+    expect(arg.props.onJoin).toBeTypeOf('function');
+  });
+});
 
-    act(() => button(el, 'Hat your work')!.click());
-    const [[arg]] = h.trigger.mock.calls as [[{ props: { hat: { cosmeticId: number } } }]];
+describe('joined', () => {
+  it('shows your team, the standings with yours lit, and your hat with its points', () => {
+    joinAs('Pink');
+    h.hats = [placed(1, 512)];
+    const el = block();
+    expect(text(el)).toContain("You're onTeam Pink");
+    expect(button(el, 'Join')).toBeUndefined();
+    const mine = el.querySelector('[data-testid="event-home-block-standings"] [data-mine]');
+    expect(text(mine)).toContain('Pink');
+    expect(text(el)).toContain('512 points');
+    const tiles = el.querySelectorAll('[data-testid="event-home-block-hat"]');
+    expect(tiles).toHaveLength(1);
+    expect(text(tiles[0])).toContain('+512');
+    expect(el.querySelector('[data-testid="event-home-block-get-hat"]')?.getAttribute('href')).toBe(
+      '/events/birthday2026#team-hats'
+    );
+  });
+
+  it('offers Place it on an unplaced hat, and counts the hats that do not fit', () => {
+    joinAs('Pink');
+    h.hats = [placed(1, 10), unplaced(2), placed(3, 5), placed(4, 1)];
+    const el = block();
+    expect(el.querySelectorAll('[data-testid="event-home-block-hat"]')).toHaveLength(3);
+    expect(text(el)).toContain('+1 more');
+    expect(text(el)).toContain('16 points');
+    expect(el.querySelector('[data-testid="event-home-block-get-hat"]')).toBeNull();
+
+    act(() => button(el, 'Place it')!.click());
+    const [[arg]] = h.trigger.mock.calls as [
+      [{ component: unknown; props: { hat: { cosmeticId: number } } }]
+    ];
+    expect(arg.component).toBe(PlaceHatModal);
     expect(arg.props.hat.cosmeticId).toBe(2);
   });
 
-  it('offers no hat button once every hat is placed', () => {
-    joinAs('Blue');
-    h.hats = [{ cosmeticId: 1, placedOn: { entityId: 9 } }];
-    const el = render();
-    expect(text(el)).toContain('1 of 1 hat placed');
-    expect(button(el, 'Hat your work')).toBeUndefined();
+  it('the film offers no join once you are on a team', () => {
+    joinAs('Pink');
+    const el = block();
+    act(() => el.querySelector<HTMLButtonElement>('button[aria-label^="Watch"]')!.click());
+    const [[arg]] = h.trigger.mock.calls as [[{ props: { onJoin?: unknown } }]];
+    expect(arg.props.onJoin).toBeUndefined();
   });
+});
 
-  it('after the end, names the settled winner and links the results, with no join', () => {
+describe('ended', () => {
+  it('names the settled winner with the prize and the final standings, and offers no join', () => {
     vi.setSystemTime(new Date('2026-12-05T00:00:00Z'));
-    h.banners = []; // promos stop once the event is not playable
+    h.banners = [];
     h.standings = { ...STANDINGS, updatedAt: new Date('2026-12-04T00:00:00Z') };
-    const el = render();
-    expect(text(el)).toContain('Civitai turns 4.');
-    expect(text(el)).toContain('Team Blue won.');
-    expect(text(el)).toContain('See the results');
+    const el = block();
+    expect(text(el)).toContain('Team Blue wins.');
+    expect(text(el)).toContain('Champion badge');
+    expect(srcs(el)).toContain('blue-anim');
+    expect(
+      text(el.querySelector('[data-testid="event-home-block-standings"] [data-mine]'))
+    ).toContain('Blue');
+    expect(hrefs(el)).toContain('/events/birthday2026');
     expect(button(el, 'Join')).toBeUndefined();
   });
+});
 
-  it('closes through its own dismiss', () => {
-    const el = render();
+describe('collapsed', () => {
+  it('is one line with Show and a close', () => {
+    joinAs('Pink');
+    h.hats = [placed(1, 512)];
+    const el = block(true);
+    expect(el.querySelector('[data-testid="event-home-block"]')).toBeNull();
+    expect(text(el.querySelector('[data-testid="event-home-block-collapsed"]'))).toContain(
+      'Team Pink is #2 · your hat has earned 512'
+    );
+    act(() => button(el, 'Show')!.click());
+    expect(onExpand).toHaveBeenCalledTimes(1);
     act(() => el.querySelector<HTMLButtonElement>('button[aria-label="Hide this event"]')!.click());
-    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('the Event home block row', () => {
-  const block = () => {
-    host = document.createElement('div');
-    document.body.appendChild(host);
-    root = createRoot(host);
-    act(() =>
-      root!.render(
-        React.createElement(
-          MantineProvider,
-          null,
-          React.createElement(EventHomeBlock, { metadata: { event: 'birthday2026' } })
-        )
-      )
-    );
-    return host;
-  };
+  const row = () =>
+    mount(React.createElement(EventHomeBlock, { metadata: { event: 'birthday2026' } }));
+  const full = (el: HTMLElement) => el.querySelector('[data-testid="event-home-block"]');
+  const bar = (el: HTMLElement) => el.querySelector('[data-testid="event-home-block-collapsed"]');
 
-  it('renders the scored block for a scored event', () => {
-    expect(block().querySelector('[data-testid="event-home-block"]')).not.toBeNull();
-  });
-
-  it('renders nothing once this block was dismissed, while the strip id alone does not hide it', () => {
+  it('reads its state from the dismiss cookie, apart from the strip', () => {
     h.dismissed = ['event:birthday2026'];
-    expect(block().querySelector('[data-testid="event-home-block"]')).not.toBeNull();
+    let el = row();
+    expect(full(el)).not.toBeNull();
     act(() => root?.unmount());
-    h.dismissed = ['home:event:birthday2026'];
-    expect(block().querySelector('[data-testid="event-home-block"]')).toBeNull();
+    h.dismissed = ['home:event:birthday2026:collapsed'];
+    el = row();
+    expect(bar(el)).not.toBeNull();
+    act(() => root?.unmount());
+    h.dismissed = ['home:event:birthday2026:collapsed', 'home:event:birthday2026'];
+    el = row();
+    expect(full(el)).toBeNull();
+    expect(bar(el)).toBeNull();
   });
 
   // Must stay last: the dismissed store it writes is module scope.
-  it('closing it hides it', () => {
-    const el = block();
+  it('the first close collapses it, Show brings it back, and the bar close hides it', () => {
+    const el = row();
+    const collapse = () =>
+      el.querySelector<HTMLButtonElement>('button[aria-label="Collapse this event"]')!.click();
+    act(collapse);
+    expect(full(el)).toBeNull();
+    expect(bar(el)).not.toBeNull();
+    act(() => button(el, 'Show')!.click());
+    expect(full(el)).not.toBeNull();
+    act(collapse);
     act(() => el.querySelector<HTMLButtonElement>('button[aria-label="Hide this event"]')!.click());
-    expect(el.querySelector('[data-testid="event-home-block"]')).toBeNull();
+    expect(full(el)).toBeNull();
+    expect(bar(el)).toBeNull();
   });
 });
