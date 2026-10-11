@@ -1,13 +1,30 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import type * as AppListingService from '~/server/services/blocks/app-listing.service';
 
-const { bustCatalog } = vi.hoisted(() => ({ bustCatalog: vi.fn(async () => undefined) }));
+const { bustCatalog, resolveCalls } = vi.hoisted(() => ({
+  bustCatalog: vi.fn(async () => undefined),
+  /** Every argument the service handed the resolver, which still runs for real. */
+  resolveCalls: [] as Array<{ declared: string | null; stored: string | null }>,
+}));
 vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppListingService>()),
   bustAppListingCatalogCache: () => bustCatalog(),
 }));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => {
+  const actual = await importOriginal<typeof AppListingRating>();
+  return {
+    ...actual,
+    resolveReDerivedListingRating: (
+      args: Parameters<typeof actual.resolveReDerivedListingRating>[0]
+    ) => {
+      resolveCalls.push({ declared: args.declared, stored: args.stored });
+      return actual.resolveReDerivedListingRating(args);
+    },
+  };
+});
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -277,6 +294,7 @@ beforeEach(() => {
   lockStatements = [];
   ops = [];
   failUpdateFor = null;
+  resolveCalls.length = 0;
   seedMisScanned();
   installStore();
   vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -439,6 +457,38 @@ describe('lowering after a moderator corrects a mis-scanned image', () => {
 
     expect(ratingOf('apl_a')).toBe('r');
     expect(events).toEqual([]);
+  });
+});
+
+/**
+ * The floor the resolver is handed. Only the backing app's rating is a declaration here: the
+ * display helper's pre-approval fallback to the listing's own rating would make the stored
+ * value its own floor. The outcome tests above cannot see that difference (the resolver's
+ * result happens to coincide), so the argument itself is pinned.
+ */
+describe('the declared rating handed to the resolver', () => {
+  it('an on-site listing declares through its backing app', async () => {
+    seedMisScanned({ declared: 'pg13', contentRating: 'x' });
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(resolveCalls).toEqual([{ declared: 'pg13', stored: 'x' }]);
+  });
+
+  it('an off-site listing declares nothing, even with an app attached', async () => {
+    seedMisScanned({ kind: 'offsite', declared: 'pg13', contentRating: 'x' });
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(resolveCalls).toEqual([{ declared: null, stored: 'x' }]);
+  });
+
+  it('an on-site listing with no backing app declares nothing — not its stored rating', async () => {
+    seedMisScanned({ declared: undefined, contentRating: 'x' });
+
+    await moderatorRerates(SHOT, NsfwLevel.PG);
+
+    expect(resolveCalls).toEqual([{ declared: null, stored: 'x' }]);
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  appDeclaredListingRating,
   assetRating,
   declaredListingRating,
   describeRatingAssets,
@@ -181,6 +182,21 @@ describe('listingRatingAssetsFromView', () => {
       { kind: 'screenshot', position: 1, nsfwLevel: NsfwLevel.PG },
       { kind: 'screenshot', position: 2, nsfwLevel: NsfwLevel.R },
     ]);
+  });
+});
+
+describe('appDeclaredListingRating', () => {
+  it('an on-site listing declares through its app row', () => {
+    expect(appDeclaredListingRating({ kind: 'onsite', appRating: 'pg13' })).toBe('pg13');
+  });
+
+  it('an on-site listing with no app row declares nothing', () => {
+    expect(appDeclaredListingRating({ kind: 'onsite', appRating: null })).toBe(null);
+    expect(appDeclaredListingRating({ kind: 'onsite', appRating: undefined })).toBe(null);
+  });
+
+  it('an off-site listing declares nothing, even with an app row', () => {
+    expect(appDeclaredListingRating({ kind: 'offsite', appRating: 'pg13' })).toBe(null);
   });
 });
 
