@@ -16,6 +16,7 @@ export const config = {
   },
 };
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getTrustedClientIp } from '~/server/utils/client-ip';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
@@ -110,6 +111,9 @@ function resolveEffectiveBrowsingLevel(args: {
  * Anon viewers receive a token with `sub: "anon"`. Scopes requiring an
  * authenticated subject (buzz:read:self, social:tip:self, user:read:self)
  * are rejected downstream by the block-scope middleware.
+ *
+ * A bearer credential must be a full-access personal API key
+ * (`requireFullScopeSession`); any other bearer credential gets 403.
  *
  * CSRF posture: SAME-ORIGIN ONLY with EXACT host equality. The host page on
  * civitai.com fetches the token here and passes it into the iframe via
@@ -1119,6 +1123,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   const session = await getServerAuthSession({ req, res });
+  if (!requireFullScopeSession(req, res)) return;
   const userId = session?.user?.id ?? null;
 
   // Graduation gate: who may mint a block token is governed by the `appBlocks`
