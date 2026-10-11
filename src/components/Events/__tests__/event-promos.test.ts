@@ -12,9 +12,15 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 });
 
 const { getNavBanners } = await import('~/server/services/nav-banner.service');
-const { dismissHint, eventMenuEntries, eventPromosFrom, teamRosterHref } = await import(
-  '~/components/Events/event-promos'
-);
+const {
+  dismissHint,
+  eventMenuEntries,
+  eventPromosFrom,
+  hatButtonLabel,
+  postEditorCardId,
+  postEditorPromo,
+  teamRosterHref,
+} = await import('~/components/Events/event-promos');
 const { visibleNavBanners } = await import(
   '~/components/AppLayout/NavAnnouncementSlot/nav-banners-dismissed'
 );
@@ -41,12 +47,20 @@ describe('event entry points, from the gated answer', () => {
       menu: eventMenuEntries(promos).map((e) => e.href),
       roster: teamRosterHref(promos, 'birthday2026'),
       hints: banners.map((b) => dismissHint(b, banners)).filter(Boolean),
+      postEditor: postEditorPromo(promos, [])?.event,
+      editorCopy: !!postEditorPromo(promos, [])?.postEditor?.body,
     };
   };
 
   it('shows nothing to a signed-in viewer without the flag, or a signed-out one, in the preview', async () => {
     for (const viewer of [PUBLIC_USER, ANON])
-      expect(await surfaces(viewer)).toEqual({ menu: [], roster: undefined, hints: [] });
+      expect(await surfaces(viewer)).toEqual({
+        menu: [],
+        roster: undefined,
+        hints: [],
+        postEditor: undefined,
+        editorCopy: false,
+      });
   });
 
   it('shows the menu entry, roster link and dismiss hint to a tester in the preview', async () => {
@@ -54,6 +68,8 @@ describe('event entry points, from the gated answer', () => {
       menu: ['/events/birthday2026'],
       roster: '/events/birthday2026/team',
       hints: ["Find Civitai's 4th Birthday in your menu any time."],
+      postEditor: 'birthday2026',
+      editorCopy: true,
     });
   });
 
@@ -63,6 +79,8 @@ describe('event entry points, from the gated answer', () => {
       menu: [],
       roster: undefined,
       hints: [],
+      postEditor: undefined,
+      editorCopy: false,
     });
   });
 });
@@ -124,5 +142,31 @@ describe('teamRosterHref', () => {
     expect(teamRosterHref(promos, 'a')).toBe('/events/a/team');
     expect(teamRosterHref(promos, 'b')).toBeUndefined();
     expect(teamRosterHref(promos, 'c')).toBeUndefined();
+  });
+});
+
+describe('postEditorPromo', () => {
+  const editor = { title: 'T', body: 'B' };
+
+  it('is the first event with editor copy that the viewer has not hidden', () => {
+    const promos = [
+      promo('a'),
+      promo('b', { postEditor: editor }),
+      promo('c', { postEditor: editor }),
+    ];
+    expect(postEditorPromo(promos, [])?.event).toBe('b');
+    expect(postEditorPromo(promos, [postEditorCardId('b')])?.event).toBe('c');
+    expect(postEditorPromo([promo('a')], [])).toBeUndefined();
+  });
+
+  it("is not hidden by dismissing the event's strip", () => {
+    expect(postEditorPromo([promo('b', { postEditor: editor })], ['event:b'])?.event).toBe('b');
+  });
+});
+
+describe('hatButtonLabel', () => {
+  it('names the decoration for an event whose hats sit on images, and nothing otherwise', () => {
+    expect(hatButtonLabel('birthday2026')).toBe('Put on a Party Hat');
+    expect(hatButtonLabel('no-such-event')).toBeUndefined();
   });
 });
