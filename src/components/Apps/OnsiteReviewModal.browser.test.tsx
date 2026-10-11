@@ -552,13 +552,8 @@ describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
 });
 
 describe('OnsiteReviewModal — declared analytics events are shown to the mod', () => {
-  /**
-   * Approval is what lets an app record custom events: ingest accepts only the names
-   * and enum values the approved manifest declares. So the moderator must see the
-   * declaration on the review screen, and see clearly when it does not validate.
-   * Every name and value below is distinct from every other and from the card's
-   * own copy, so each assertion can only be satisfied by the field it names.
-   */
+  // Every name and value below is distinct from every other and from the card's own
+  // copy, so each assertion can only be satisfied by the field it names.
   const VALID_ANALYTICS = {
     events: {
       level_complete: {
@@ -585,7 +580,6 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
     );
   }
 
-  /** The text of each part (name, type badge, enum values) of one property row. */
   function propertyRowParts(name: string): string[] {
     const rows = page.getByTestId('apps-review-analytics-property').elements();
     const row = rows.find((el) => el.querySelector('code')?.textContent === name);
@@ -609,15 +603,14 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
     expect(propertyRowParts('difficulty')).toEqual([
       'difficulty',
       'enum',
-      'casual_tier',
-      'brutal_tier',
+      '"casual_tier"',
+      '"brutal_tier"',
     ]);
     expect(propertyRowParts('score')).toEqual(['score', 'number']);
     expect(propertyRowParts('used_hint')).toEqual(['used_hint', 'boolean']);
 
     // INLINE, not inside the collapsed disclosure. Mantine keeps a collapsed panel
-    // mounted under `aria-hidden`, so presence alone cannot tell the two apart (see the
-    // goods suite above for the same check and its positive control).
+    // mounted under `aria-hidden`, so presence alone cannot tell the two apart.
     const card = page.getByTestId('apps-review-analytics').element();
     expect(card.closest('[aria-hidden="true"]')).toBeNull();
     // Positive control for that discriminator: the raw-JSON disclosure's own content
@@ -640,37 +633,46 @@ describe('OnsiteReviewModal — declared analytics events are shown to the mod',
       .toBeInTheDocument();
   });
 
-  test('a malformed declaration shows its errors and NO event list', async () => {
-    // `level_complete` is valid on its own; `asked_prompt` declares a free-text
-    // property. The parser is all-or-nothing, so the card must not list either event.
+  test('a malformed declaration shows every error and NO event list', async () => {
+    // `level_complete` is valid on its own; `asked_prompt` declares a free-text property
+    // and `BadName` breaks the naming rule — two errors, so a list truncated to one is
+    // caught.
     renderWithAnalytics({
       events: {
         level_complete: VALID_ANALYTICS.events.level_complete,
         asked_prompt: { properties: { prompt: { type: 'string' } } },
+        BadName: {},
       },
     });
     await expect
-      .element(page.getByText('Analytics declaration does not validate (1)'))
+      .element(page.getByText('Analytics declaration does not validate', { exact: true }))
       .toBeInTheDocument();
     await expect
       .element(
         page.getByText(/^analytics\.events\.asked_prompt\.properties\.prompt\.type must be one of/)
       )
       .toBeInTheDocument();
+    await expect
+      .element(page.getByText(/^analytics\.events key "BadName" must be lowercase snake_case/))
+      .toBeInTheDocument();
     await expect.element(page.getByText(/declaring nothing/)).toBeInTheDocument();
+    // Parser invariant (all-or-nothing), not card logic: any error empties `events`.
     expect(page.getByTestId('apps-review-analytics-event').elements()).toHaveLength(0);
     expect(page.getByText(/events declared/).elements()).toHaveLength(0);
     expect(page.getByText('Declares analytics but no events.').elements()).toHaveLength(0);
   });
 
   test('`analytics: null` is an error, not an absent key', async () => {
-    // The parser rejects null, so ingest records nothing for it. Hiding the card here
-    // would make a broken declaration look like no declaration.
     renderWithAnalytics(null);
     await expect
-      .element(page.getByText('Analytics declaration does not validate (1)'))
+      .element(page.getByText('Analytics declaration does not validate', { exact: true }))
       .toBeInTheDocument();
     await expect.element(page.getByText('analytics must be an object')).toBeInTheDocument();
+  });
+
+  test('a single event is counted in the singular', async () => {
+    renderWithAnalytics({ events: { share_clicked: {} } });
+    await expect.element(page.getByText(/^1 event declared\./)).toBeInTheDocument();
   });
 
   test('a valid declaration with no events says so', async () => {
