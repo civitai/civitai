@@ -27,6 +27,7 @@ describe('postEditEventCard', () => {
     const note = (over: Partial<typeof base> & { publishedAt?: Date | null }) =>
       postEditEventCard({ ...base, ...over })?.showDraftNote;
     expect(note({ publishedAt: new Date('2026-11-01T00:00:00Z') })).toBe(false);
+    expect(note({ publishedAt: NOW })).toBe(false);
     expect(note({ publishedAt: new Date('2026-11-09T00:00:00Z') })).toBe(true);
     expect(note({ unpublishedByParent: true })).toBe(false);
   });
