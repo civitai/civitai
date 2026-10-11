@@ -5,7 +5,14 @@ export type LegendStatusInput = z.infer<typeof legendStatusSchema>;
 export const legendStatusSchema = z.object({ userId: z.number().int().positive() });
 
 export type ProfileAchievementsInput = z.infer<typeof profileAchievementsSchema>;
-export const profileAchievementsSchema = z.object({ userId: z.number().int().positive() });
+export const profileAchievementsSchema = z.object({
+  userId: z.number().int().positive(),
+  /** The share token a link to the tab named, so a secret card it names can be told apart. */
+  spotlight: z
+    .string()
+    .refine((value) => parseMilestoneShareToken(value) !== null)
+    .optional(),
+});
 
 export type MilestoneShareInput = z.infer<typeof milestoneShareSchema>;
 export const milestoneShareSchema = z.object({

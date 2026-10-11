@@ -158,19 +158,25 @@ export function milestoneCardId(token: string) {
 /** A card a shared link named, ringed; any other card as it is. */
 function Spotlit({
   milestoneKey,
+  spotlit,
   spotlight,
   children,
 }: {
   milestoneKey: string;
+  /** A secret the server matched to the link, whose key a visitor is never sent. */
+  spotlit?: boolean;
   spotlight?: string | null;
   children: ReactNode;
 }) {
-  if (!spotlight || milestoneKeyOfShareToken(spotlight) !== milestoneKey) return <>{children}</>;
+  if (!spotlight || (!spotlit && milestoneKeyOfShareToken(spotlight) !== milestoneKey))
+    return <>{children}</>;
   return (
     <div
       id={milestoneCardId(spotlight)}
       data-spotlight
-      className="scroll-mt-24 rounded-lg ring-2 ring-yellow-5 ring-offset-2 ring-offset-white dark:ring-offset-dark-7"
+      // A one-cell grid: this is the grid item that stretches to the row, and its card stretches with
+      // it. Same radius as the card, so the ring follows its corners.
+      className="grid scroll-mt-24 rounded-md ring-2 ring-yellow-5 ring-offset-2 ring-offset-white dark:ring-offset-dark-7"
     >
       {children}
     </div>
@@ -197,12 +203,18 @@ export function ProfileAchievementsList({
   const spotlightKey = spotlight ? milestoneKeyOfShareToken(spotlight) : undefined;
   const spotlit =
     !!spotlightKey &&
-    [...data.tiers, ...data.achievements].some((milestone) => milestone.key === spotlightKey);
+    (data.tiers.some((tier) => tier.key === spotlightKey) ||
+      data.achievements.some((a) => a.spotlit || a.key === spotlightKey));
   useEffect(() => {
     if (!spotlit || !spotlight) return;
-    document
-      .getElementById(milestoneCardId(spotlight))
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // A frame later: the app's scroll area resets to the top in its own effect, which runs after
+    // this one when the list mounts with the page (data already cached by the profile).
+    const frame = requestAnimationFrame(() =>
+      document
+        .getElementById(milestoneCardId(spotlight))
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    );
+    return () => cancelAnimationFrame(frame);
   }, [spotlit, spotlight]);
   const thresholds = new Map(ladder?.tiers.map((tier) => [tier.key, tier.threshold]));
   const highest = data.tiers.at(-1);
@@ -280,7 +292,12 @@ export function AchievementGrid({
   return (
     <div className={className}>
       {achievements.map((achievement) => (
-        <Spotlit key={achievement.key} milestoneKey={achievement.key} spotlight={spotlight}>
+        <Spotlit
+          key={achievement.key}
+          milestoneKey={achievement.key}
+          spotlit={achievement.spotlit}
+          spotlight={spotlight}
+        >
           <AchievementCard achievement={achievement} action={action?.(achievement)} />
         </Spotlit>
       ))}

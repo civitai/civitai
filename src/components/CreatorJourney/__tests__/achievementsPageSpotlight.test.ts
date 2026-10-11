@@ -10,16 +10,16 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 const mocks = vi.hoisted(() => ({
   query: {} as Record<string, string>,
   listProps: [] as Record<string, unknown>[],
+  hookArgs: [] as unknown[][],
 }));
 vi.mock('next/router', () => ({ useRouter: () => ({ query: mocks.query }) }));
 vi.mock('~/server/utils/server-side-helpers', () => ({ createServerSideProps: () => undefined }));
 vi.mock('~/components/Profile/ProfileLayout2', () => ({ UserProfileLayout: () => null }));
 vi.mock('~/components/CreatorJourney/useProfileAchievements', () => ({
-  useProfileAchievements: () => ({
-    data: { tiers: [], achievements: [] },
-    count: 1,
-    isLoading: false,
-  }),
+  useProfileAchievements: (...args: unknown[]) => {
+    mocks.hookArgs.push(args);
+    return { data: { tiers: [], achievements: [] }, count: 1, isLoading: false };
+  },
 }));
 vi.mock('~/components/CreatorJourney/ProfileAchievements', () => ({
   ProfileAchievementsList: (props: Record<string, unknown>) => {
@@ -47,6 +47,7 @@ function open(query: Record<string, string>) {
   act(() => root?.unmount());
   container?.remove();
   mocks.listProps = [];
+  mocks.hookArgs = [];
   mocks.query = query;
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -76,6 +77,12 @@ describe('the Achievements tab opened from a shared tier link', () => {
     expect(open({ username: 'JustMaier', milestone: 'reach:downloads-10000' })?.spotlight).toBe(
       'reach:downloads-10000'
     );
+  });
+
+  // The server keys a secret card by the link's token only when it is asked with it.
+  it('asks for the achievements with the token the link named', () => {
+    open({ username: 'JustMaier', milestone: 'hidden:night-owl' });
+    expect(mocks.hookArgs.at(-1)).toEqual([7, 'hidden:night-owl']);
   });
 
   it('picks out nothing without a tier, or for something that is not one', () => {
