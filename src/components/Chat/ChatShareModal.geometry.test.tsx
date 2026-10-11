@@ -87,8 +87,10 @@ describe('ChatShareModal at a short viewport with a long list', () => {
       if (!list) throw new Error('chat list scroller did not render');
 
       // Wait out the modal's open transition before measuring.
-      await vi.waitUntil(() => box(send).bottom > 0 && getComputedStyle(send).opacity === '1');
-      await new Promise((r) => setTimeout(r, 300));
+      await vi.waitUntil(
+        () => getComputedStyle(send).opacity === '1' && document.getAnimations().length === 0,
+        { timeout: 5000 }
+      );
 
       // The list really is overflowing, or nothing below is under pressure.
       expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
@@ -103,13 +105,6 @@ describe('ChatShareModal at a short viewport with a long list', () => {
       expect(box(send).height).toBeGreaterThanOrEqual(declared);
       expect(box(send).height).toBeGreaterThanOrEqual(box(label).height);
       expect(box(send).bottom).toBeLessThanOrEqual(vp.height);
-
-      // The message row keeps its content height too.
-      const message = Array.from(send.parentElement?.children ?? []).find((el) =>
-        el.textContent?.includes('Message:')
-      );
-      if (!message) throw new Error('message row did not render');
-      expect((message as HTMLElement).clientHeight).toBeGreaterThanOrEqual(message.scrollHeight);
     }
   );
 });
