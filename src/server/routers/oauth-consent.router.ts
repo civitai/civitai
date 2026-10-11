@@ -122,6 +122,16 @@ export const oauthConsentRouter = router({
         where: { userId_clientId: { userId: ctx.user.id, clientId: input.clientId } },
       });
 
+      // After the deletes, so the store never holds up revoking access. `null` = it failed; the
+      // client tells the user to withdraw the items from account settings instead.
+      const catalogItemsWithdrawn = await import(
+        '~/server/services/blocks/oauth-consent-sync.service'
+      )
+        .then(({ withdrawCatalogItemsOnConsentRevoke }) =>
+          withdrawCatalogItemsOnConsentRevoke({ userId: ctx.user.id, clientId: input.clientId })
+        )
+        .catch(() => null);
+
       // Best-effort: tell the orchestrator the OAuth subject is gone so its
       // stored spend record doesn't linger after the user revokes the app.
       deleteAuthSubject({
@@ -146,7 +156,7 @@ export const oauthConsentRouter = router({
         metadata: { action: 'revoked_by_user' },
       });
 
-      return { success: true };
+      return { success: true, catalogItemsWithdrawn };
     }),
 
   // (the limit-set audit fire is added on `setBuzzLimit` below)
