@@ -193,7 +193,10 @@ function Stats({
 }) {
   const days = daysOnTeam(item.joinedAt, ctx.now);
   return (
-    <div className="grid grid-cols-3 rounded-md bg-gray-1 dark:bg-dark-8">
+    <div
+      className="grid grid-cols-3 rounded-md bg-gray-1 dark:bg-dark-8"
+      data-testid="roster-stats"
+    >
       <Stat
         label={item.hatCount === 1 ? 'hat' : 'hats'}
         active={ctx.sort === 'hats'}
@@ -380,6 +383,8 @@ export const RosterShelfCard = memo(function RosterShelfCard({
           <WearingAvatar item={item} size={56} hatUrl={worn?.url} />
           <Username item={item} ctx={ctx} extra={isNew && <NewBadge />} />
         </div>
+        {/* The score sits at the same height on every card; the shelf below varies. */}
+        <Stats item={item} ctx={ctx} inView={inView} />
         {hats.length ? (
           <HatRow
             hats={hats}
@@ -405,7 +410,6 @@ export const RosterShelfCard = memo(function RosterShelfCard({
             </Text>
           </div>
         )}
-        <Stats item={item} ctx={ctx} inView={inView} />
       </div>
     </Paper>
   );

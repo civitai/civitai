@@ -371,6 +371,36 @@ describe('TeamRoster cards', () => {
     expect(all(card, 'roster-more')).toHaveLength(0);
   });
 
+  // Justin: the score in one place on every card, whatever its hats. On a shelf card it sits under
+  // the name, above the shelf (one row, two rows, or none); on a podium card, above the mini row.
+  it('puts the score above the hats on every card', () => {
+    const el = render(
+      [
+        member(1, { hats: [hat(1, { worn: true }), hat(2), hat(3)] }),
+        ...[2, 3].map((id) => member(id, { hatCount: 3 })),
+        member(4, { hats: [hat(4)] }),
+        member(5, { hats: Array.from({ length: 9 }, (_, i) => hat(10 + i)) }),
+        member(6),
+      ].sort((a, b) => b.hatCount - a.hatCount)
+    );
+    const cards = [...all(podium(el)!, 'roster-podium-card'), ...all(grid(el)!, 'roster-card')];
+    expect(cards).toHaveLength(6);
+    for (const card of cards) {
+      const stats = card.querySelector('[data-testid="roster-stats"]')!;
+      const hats = card.querySelector(
+        '[data-testid="roster-hat-row"], [data-testid="roster-no-hats"]'
+      );
+      if (!hats) continue;
+      expect(stats.compareDocumentPosition(hats) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // Every grid card has a shelf or the empty tile to compare against.
+    expect(
+      all(grid(el)!, 'roster-card').every((c) =>
+        c.querySelector('[data-testid="roster-hat-row"], [data-testid="roster-no-hats"]')
+      )
+    ).toBe(true);
+  });
+
   it('says "No hats yet" on a shelf card with no hats', () => {
     const el = render([member(1), member(2), member(3), member(4)]);
     const card = all(grid(el)!, 'roster-card')[0];
