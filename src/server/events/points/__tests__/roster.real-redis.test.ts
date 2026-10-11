@@ -221,4 +221,30 @@ describe.skipIf(!url)('team roster rank scores on a real Redis', () => {
     ).rows;
     expect(row.points).toBe(1234);
   });
+
+  // The Lua packs what it is given, so the sync must clamp: a total past the field would carry
+  // into hats and order this member above everyone.
+  it('clamps a sync total past the points field before it reaches the Lua', async () => {
+    await clearTeam();
+    const { d } = deps(
+      [member(1), member(2, { hats: [...oneHat, ...oneHat] })],
+      {
+        1: MAX_POINTS + 5,
+        2: 0,
+      },
+      LIVE_NOW
+    );
+    await syncRosterMembersWith(EVENT, [1, 2], d);
+    await redis.set(keys.rankReady, '1');
+    const rows = (
+      await readRosterPage(
+        { ...PAGE, sort: 'hats', season: 'live', offset: 0, limit: 2 },
+        redis as never
+      )
+    ).rows;
+    expect(rows.map((r) => [r.userId, r.hatCount, r.points])).toEqual([
+      [2, 2, 0],
+      [1, 1, MAX_POINTS],
+    ]);
+  });
 });
