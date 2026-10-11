@@ -50,12 +50,15 @@ const oauthToken = (tokenScope: number) => ({
   buzzLimit: null,
 });
 
-async function call({ authorization }: { authorization?: string } = {}) {
+async function call({
+  authorization,
+  queryToken,
+}: { authorization?: string; queryToken?: string } = {}) {
   const req = {
     method: 'GET',
-    url: '/api/auth/freshdesk?nonce=n&state=s',
+    url: `/api/auth/freshdesk?nonce=n&state=s${queryToken ? `&token=${queryToken}` : ''}`,
     headers: { host: 'civitai.com', ...(authorization ? { authorization } : {}) },
-    query: { nonce: 'n', state: 's' },
+    query: { nonce: 'n', state: 's', ...(queryToken ? { token: queryToken } : {}) },
     cookies: {},
   } as unknown as NextApiRequest;
   let statusCode = 200;
@@ -144,6 +147,14 @@ describe('GET /api/auth/freshdesk credential requirements', () => {
       expect(status, `OAuth token with scope ${scope}`).toBe(403);
       expect(body).toEqual(REFUSED);
     }
+    expect(createFreshdeskToken).not.toHaveBeenCalled();
+  });
+
+  it('refuses a token passed in the query string, even a full-scope personal key', async () => {
+    bearerSession.mockResolvedValue(personalKey(TokenScope.Full));
+    const { status, body } = await call({ queryToken: 'personal-full' });
+    expect(status).toBe(403);
+    expect(body).toEqual(REFUSED);
     expect(createFreshdeskToken).not.toHaveBeenCalled();
   });
 });

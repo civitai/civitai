@@ -522,3 +522,37 @@ describe('routes under src/pages/api outside the moderator wrappers', () => {
     expect(namesIdentifier(route, source, 'AppBlocksSubmit')).toBe(true);
   });
 });
+
+/**
+ * Every route under `src/pages/api` that calls `requireFullScopeSession` directly, moderator-only
+ * or not, so a route gaining or losing the call has to be listed here on purpose. Routes that get
+ * the rule through a wrapper (`ModEndpoint`, `defineModeratorEndpoint`) are not listed, and this
+ * checks only that the call exists; per-route behaviour is pinned in the
+ * `src/server/__tests__/*credential-requirements.test.ts` and `*session-scope.test.ts` files.
+ */
+const FULL_SCOPE_SESSION_ROUTES = [
+  'auth/freshdesk',
+  'media/ingest/[mediaId]',
+  'testing/model3d-seed',
+  'training-studio/host',
+  'user/orchestrator-key',
+  'v1/block-tokens/index',
+];
+
+describe('routes under src/pages/api that call requireFullScopeSession directly', () => {
+  it('match the ledger', () => {
+    const files = routeFiles(API_ROUTES).filter((f) => /\.tsx?$/.test(f));
+    const guarded = files
+      .filter((file) =>
+        callsImported(
+          file,
+          fs.readFileSync(file, 'utf8'),
+          'requireFullScopeSession',
+          '~/server/utils/require-full-scope-session'
+        )
+      )
+      .map(routeName)
+      .sort();
+    expect(guarded).toEqual(FULL_SCOPE_SESSION_ROUTES);
+  });
+});

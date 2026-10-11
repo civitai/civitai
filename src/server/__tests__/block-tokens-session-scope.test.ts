@@ -56,15 +56,18 @@ const oauthToken = (tokenScope: number) => ({
   buzzLimit: null,
 });
 
-async function call({ authorization }: { authorization?: string } = {}) {
+async function call({
+  authorization,
+  queryToken,
+}: { authorization?: string; queryToken?: string } = {}) {
   const req = {
     method: 'POST',
-    url: '/api/v1/block-tokens',
+    url: queryToken ? `/api/v1/block-tokens?token=${queryToken}` : '/api/v1/block-tokens',
     headers: {
       origin: env.NEXTAUTH_URL as string,
       ...(authorization ? { authorization } : {}),
     },
-    query: {},
+    query: queryToken ? { token: queryToken } : {},
     cookies: {},
     body: { blockInstanceId: 'inst_1', slotContext: { modelId: 1, slotId: 'model.sidebar_top' } },
     socket: { remoteAddress: '127.0.0.1' },
@@ -109,20 +112,20 @@ describe('POST /api/v1/block-tokens credential requirements', () => {
     hubSession.current = { user: USER };
     const { status } = await call();
     expect(status).toBe(429);
-    expect(checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(checkRateLimit).toHaveBeenCalledWith(USER.id, 'inst_1', expect.anything());
   });
 
   it('serves an anonymous viewer', async () => {
     const { status } = await call();
     expect(status).toBe(429);
-    expect(checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(checkRateLimit).toHaveBeenCalledWith(null, 'inst_1', expect.anything());
   });
 
   it('serves a personal API key holding the full scope', async () => {
     bearerSession.mockResolvedValue(personalKey(TokenScope.Full));
     const { status } = await call({ authorization: 'Bearer personal-full' });
     expect(status).toBe(429);
-    expect(checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(checkRateLimit).toHaveBeenCalledWith(USER.id, 'inst_1', expect.anything());
   });
 
   it('refuses a personal API key with a reduced scope', async () => {
@@ -148,6 +151,14 @@ describe('POST /api/v1/block-tokens credential requirements', () => {
       expect(status, `OAuth token with scope ${scope}`).toBe(403);
       expect(body).toEqual(REFUSED);
     }
+    expect(checkRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('refuses a token passed in the query string, even a full-scope personal key', async () => {
+    bearerSession.mockResolvedValue(personalKey(TokenScope.Full));
+    const { status, body } = await call({ queryToken: 'personal-full' });
+    expect(status).toBe(403);
+    expect(body).toEqual(REFUSED);
     expect(checkRateLimit).not.toHaveBeenCalled();
   });
 });
