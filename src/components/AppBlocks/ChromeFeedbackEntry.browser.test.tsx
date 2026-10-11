@@ -639,28 +639,28 @@ describe('narrow bars', () => {
     expectIconOnly();
   });
 
-  test.each([
-    [767, false],
-    [768, true],
-  ] as const)(
-    'the label switches at the `sm` bar width: %ipx model area → labelled=%s',
-    async (width, labelled) => {
-      await page.viewport(1280, 720);
-      render(
-        <div style={{ width }}>
-          <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...SLOT_PROPS} />
-        </div>,
-        { wrapper: ProdishProviders }
-      );
-      await expect.element(feedbackButton()).toBeVisible();
-      await vi.waitFor(() => expect(Math.round(rectOf(chromeBar()).width)).toBe(width));
-      await vi.waitFor(() =>
-        expect(feedbackButton().element().getAttribute('data-labelled')).toBe(String(labelled))
-      );
-      if (labelled) expectLabelled();
-      else expectIconOnly();
-    }
-  );
+  test('the label switches at the `sm` bar width: 767px icon-only, resized to 768px labelled', async () => {
+    // One mounted tree, resized across the boundary. Starting at 767 means the labelled state at
+    // 768 is OBSERVED as a flip from a measured icon-only bar — not the unmeasured first render,
+    // which is labelled too and would pass a 768-only check without any measurement.
+    await page.viewport(1280, 720);
+    const at = (width: number) => (
+      <div style={{ width }}>
+        <AppBlockChrome blockInstanceId="inst-fb" appName={APP_NAME} {...SLOT_PROPS} />
+      </div>
+    );
+    const view = await render(at(767), { wrapper: ProdishProviders });
+    await expect.element(feedbackButton()).toBeVisible();
+    await waitForIconOnly();
+    expect(Math.round(rectOf(chromeBar()).width)).toBe(767);
+    expectIconOnly();
+    await view.rerender(at(768));
+    await vi.waitFor(() =>
+      expect(feedbackButton().element().getAttribute('data-labelled')).toBe('true')
+    );
+    expect(Math.round(rectOf(chromeBar()).width)).toBe(768);
+    expectLabelled();
+  });
 
   test('the icon-only form keeps the tooltip', async () => {
     render(
