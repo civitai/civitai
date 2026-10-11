@@ -122,6 +122,10 @@ export type ReviewedRequestCommon = {
   /** CDN URLs for the app's store listing media, joined on slug by the same reads. */
   iconUrl?: string | null;
   coverUrl?: string | null;
+  /** Id of the slug-joined store listing; `null` when the request has none of its own. */
+  appListingId?: string | null;
+  /** Set when approving re-rates a listing from its imagery, starting from `declared`. */
+  approveRating?: { listingId: string; declared: string | null } | null;
 };
 
 export type PendingRequest = ReviewedRequestCommon;

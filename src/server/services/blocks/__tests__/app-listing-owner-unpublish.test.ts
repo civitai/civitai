@@ -143,6 +143,9 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       // `WHERE` but never assigns it — so this event must never displace the one that
       // explains a removal.
       'set-visibility',
+      // Writes `content_rating` only, and is recorded right after a go-live's own status
+      // event — so it is routinely the newest event and must not displace that one.
+      'rating-change',
     ]);
   });
 

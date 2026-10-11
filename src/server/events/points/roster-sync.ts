@@ -8,9 +8,19 @@ import {
   eventRosterKeys,
   gateTeam,
   LISTED_SEPARATOR,
+  RANK_PENDING,
+  RANK_READY,
+  RANK_SETTLE_MS,
+  ROSTER_SORTS,
   TOMBSTONE_PREFIX,
   type RosterHat,
 } from '~/server/events/points/roster';
+import {
+  joinMinute,
+  MAX_HATS,
+  MAX_POINTS,
+  WRITE_STANDING,
+} from '~/server/events/points/roster-score';
 import { logToAxiom } from '~/server/logging/client';
 import { sysRedis } from '~/server/redis/client';
 
@@ -114,7 +124,7 @@ export async function loadRosterMemberStates(
 
 export type RosterWriteRedis = Pick<
   typeof sysRedis,
-  'hmGet' | 'hSet' | 'hDel' | 'zAdd' | 'zRem' | 'eval'
+  'hmGet' | 'hSet' | 'hDel' | 'zAdd' | 'zRem' | 'eval' | 'get' | 'set'
 >;
 
 // What an unlisted member's gate entry holds for a while: never a team, so no read lists them, and
@@ -274,7 +284,20 @@ export async function syncRosterMembersWith(
     const wasTeam = rosterTeam(previous.get(s.userId));
     if (wasTeam && wasTeam !== team)
       await Promise.all(teamKeys(keys, wasTeam).map((k) => deps.redis.zRem(k, member)));
+    const total = Math.max(0, Math.floor(points[member] ?? 0));
+    if (total > MAX_POINTS)
+      logRoster('error', 'scoreOverflow', { event: event.name, userId: s.userId, via: 'sync' });
+    const hats = String(Math.min(s.hats.length, MAX_HATS));
+    const join = String(joinMinute(s.joinedAt ?? now, event.startDate));
     await Promise.all([
+      // Each season's rank scores in one step (roster-score.ts): the current season's with its exact
+      // total, a later season's keeping the points the award gave it (0 until it starts).
+      ...seasonsFrom(event, now).map((x) =>
+        deps.redis.eval(WRITE_STANDING, {
+          keys: ROSTER_SORTS.map((sort) => keys.rank(team, sort, x)),
+          arguments: [member, hats, join, x === season ? String(Math.min(total, MAX_POINTS)) : ''],
+        })
+      ),
       deps.redis.zAdd(keys.joined(team), {
         score: (s.joinedAt ?? now).getTime(),
         value: member,
@@ -326,6 +349,9 @@ const teamKeys = (keys: ReturnType<typeof eventRosterKeys>, team: string) => [
   keys.hats(team),
   keys.points(team, 'preview'),
   keys.points(team, 'live'),
+  ...(['preview', 'live'] as const).flatMap((season) =>
+    ROSTER_SORTS.map((sort) => keys.rank(team, sort, season))
+  ),
 ];
 
 const allTopicIds = (event: RosterEvent, userId: number) =>
@@ -438,15 +464,17 @@ export async function reconcileEventRosters(
         .map(([id]) => Number(id));
       let listed = 0;
       let removed = 0;
+      let visitedAll = true;
       for (const batch of chunk(ids, RECONCILE_BATCH)) {
         if (deps.now().getTime() >= deadline) {
-          complete = false;
+          visitedAll = complete = false;
           break;
         }
         const r = await syncRosterMembersWith(event, batch, deps);
         listed += r.listed;
         removed += r.removed;
       }
+      if (visitedAll) await markRankPass(event, deps);
       if (removed)
         logRoster('warning', 'reconcileEventRosters', { event: event.name, listed, removed });
     } catch (error) {
@@ -479,7 +507,24 @@ export async function rebuildEventRoster(
   let listed = 0;
   for (const batch of chunk(ids, RECONCILE_BATCH))
     listed += (await syncRosterMembersWith(event, batch, deps)).listed;
+  await markRankPass(event, deps);
   return { optedIn: ids.length, listed };
+}
+
+// A complete pass has written every listed member's rank scores. The first after a deploy can run
+// while pods on the previous release still serve, and they list members and add grants without
+// writing rank scores; so pages switch to the rank sets (roster.ts) only after a complete pass
+// RANK_SETTLE_MS or more after the first.
+async function markRankPass(event: RosterEvent, deps: RosterSyncDeps) {
+  const key = eventRosterKeys(event.name).rankReady;
+  const previous = await deps.redis.get(key);
+  if (previous === RANK_READY) return;
+  const now = deps.now().getTime();
+  const since = previous?.startsWith(`${RANK_PENDING}:`)
+    ? Number(previous.slice(RANK_PENDING.length + 1))
+    : NaN;
+  if (!Number.isFinite(since)) await deps.redis.set(key, `${RANK_PENDING}:${now}`);
+  else if (now - since >= RANK_SETTLE_MS) await deps.redis.set(key, RANK_READY);
 }
 
 function logRoster(type: 'warning' | 'error', fn: string, extra: object) {

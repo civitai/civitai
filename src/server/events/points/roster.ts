@@ -1,5 +1,8 @@
 import { REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { EventPointSeason } from '~/server/events/points/keys';
+import { joinDate, POINT_STEP, unpackPointsScore } from '~/server/events/points/roster-score';
+import { logToAxiom } from '~/server/logging/client';
+import { rosterComparator } from '~/shared/utils/roster-order';
 
 // A team's roster: the members who chose to be listed, sortable by hats, points and join date. All
 // of it in sysRedis, so a page reads no Postgres. Written by roster-sync.ts (opt-in, opt-out, a hat
@@ -28,12 +31,23 @@ export function eventRosterKeys(event: string) {
     hats: (team: string) => `${root}:${team}:hats` as const,
     // per team and season: userId scored by the owner's points
     points: (team: string, season: EventPointSeason) => `${root}:${team}:points:${season}` as const,
+    // per team, sort and season: userId scored by the sort's whole key, packed (roster-score.ts)
+    rank: (team: string, sort: RosterSort, season: EventPointSeason) =>
+      `${root}:${team}:rank:${sort}:${season}` as const,
+    // `pending:<ms>` after a complete reconcile or rebuild, RANK_READY after one at least
+    // RANK_SETTLE_MS later (roster-sync.ts markRankPass). Pages read the rank sets only once ready.
+    rankReady: `${root}:rank-ready` as const,
   } as const;
 }
 
+export const RANK_PENDING = 'pending';
+export const RANK_READY = 'ready';
+// Longer than a rollout, so no pod on the previous release still serves once pages switch.
+export const RANK_SETTLE_MS = 30 * 60 * 1000;
+
 export type RosterRedis = Pick<
   typeof sysRedis,
-  'zRangeWithScores' | 'zCard' | 'zmScore' | 'hmGet' | 'zAddIncr'
+  'zRangeWithScores' | 'zCard' | 'zmScore' | 'hmGet' | 'zAddIncr' | 'get'
 >;
 
 // One hat a member holds, as the card shows it: whether it is on their content now, and its shop
@@ -81,25 +95,68 @@ function parseHats(value: string | null | undefined): RosterHat[] {
   }
 }
 
+type RosterPageInput = {
+  event: string;
+  team: string;
+  sort: RosterSort;
+  season: EventPointSeason;
+  // The event's start, which join minutes count from (roster-score.ts).
+  startDate: Date;
+  offset: number;
+  limit: number;
+};
+
 // One page of a team's roster, highest first. `total` is the sorted set's size, so it can count a
-// row the gate then drops; a page can come back shorter than `limit` for the same reason.
-export async function readRosterPage(
-  {
-    event,
-    team,
-    sort,
-    season,
-    offset,
-    limit,
-  }: {
-    event: string;
-    team: string;
-    sort: RosterSort;
-    season: EventPointSeason;
-    offset: number;
-    limit: number;
-  },
-  redis: RosterRedis = sysRedis
+// row the gate then drops; a page can come back shorter than `limit` for the same reason. Each rank
+// set scores its sort's whole key (roster-score.ts), so a tie is split the same way on every page.
+export async function readRosterPage(input: RosterPageInput, redis: RosterRedis = sysRedis) {
+  const { event, team, sort, season, startDate } = input;
+  const keys = eventRosterKeys(event);
+  const take = Math.max(1, Math.min(input.limit, ROSTER_PAGE_MAX));
+  const from = Math.max(0, input.offset);
+  const rankKey = keys.rank(team, sort, season);
+  const [ready, rows, total] = await Promise.all([
+    redis.get(keys.rankReady),
+    redis.zRangeWithScores(rankKey, from, from + take - 1, { REV: true }),
+    redis.zCard(rankKey),
+  ]);
+  if (ready !== RANK_READY) return readSingleScorePage(input, redis);
+  const ids = rows.map((r) => r.value);
+  if (!ids.length) return { rows: [] as RosterRow[], total: Number(total), nextOffset: undefined };
+
+  // The points rank score holds all three fields, so one read gives the card its numbers.
+  const [teams, hatLists, standings] = await Promise.all([
+    redis.hmGet(keys.members, ids),
+    redis.hmGet(keys.hatList, ids),
+    redis.zmScore(keys.rank(team, 'points', season), ids),
+  ]);
+  const listed: RosterRow[] = [];
+  let overflow = false;
+  ids.forEach((id, i) => {
+    if (gateTeam(teams[i]) !== team) return;
+    const userId = Number(id);
+    if (!Number.isInteger(userId) || userId <= 0) return;
+    const unpacked = unpackPointsScore(Number(standings[i] ?? 0));
+    overflow ||= unpacked.overflow;
+    listed.push({
+      userId,
+      hats: parseHats(hatLists[i]),
+      hatCount: unpacked.standing.hats,
+      points: unpacked.standing.points,
+      joinedAt: joinDate(unpacked.standing.joinMinute, startDate),
+    });
+  });
+  if (overflow) logScoreOverflow({ event, team, season, via: 'read' });
+  const nextOffset = from + rows.length < Number(total) ? from + rows.length : undefined;
+  return { rows: listed, total: Number(total), nextOffset };
+}
+
+// Pages from the single-score sets, for the window between a deploy and the first full reconcile
+// that writes the rank sets. Those order ties by member string only, so each page is re-sorted by
+// the full key, and a tie across two pages is cut by member string. Goes with them in a cleanup.
+async function readSingleScorePage(
+  { event, team, sort, season, offset, limit }: RosterPageInput,
+  redis: RosterRedis
 ) {
   const keys = eventRosterKeys(event);
   const take = Math.max(1, Math.min(limit, ROSTER_PAGE_MAX));
@@ -131,14 +188,16 @@ export async function readRosterPage(
       joinedAt: new Date(Number(joined[i] ?? 0)),
     });
   });
+  listed.sort(rosterComparator(sort, (row) => row.userId));
   const nextOffset = from + rows.length < Number(total) ? from + rows.length : undefined;
   return { rows: listed, total: Number(total), nextOffset };
 }
 
-// Adds a grant to the owner's roster points. XX: only a member already listed is touched, so the
-// award never needs to know who opted in and can never list anyone. Returns the new score, or null
+// Adds a grant to the owner's roster points: the single-score points set and each sort's rank set,
+// sent together so they pipeline. XX: only a member already listed is touched, so the award never
+// needs to know who opted in and can never list anyone. Returns the new single-score total, or null
 // when the owner is not listed.
-export function addRosterPoints(
+export async function addRosterPoints(
   redis: Pick<RosterRedis, 'zAddIncr'>,
   event: string,
   team: string,
@@ -146,10 +205,26 @@ export function addRosterPoints(
   ownerId: number,
   grant: number
 ) {
-  return redis.zAddIncr(
-    eventRosterKeys(event).points(team, season),
-    { score: grant, value: String(ownerId) },
-    { condition: 'XX' }
+  const keys = eventRosterKeys(event);
+  const value = String(ownerId);
+  const incr = (key: string, score: number) =>
+    redis.zAddIncr(key, { score, value }, { condition: 'XX' });
+  const [total, , pointsScore] = await Promise.all([
+    incr(keys.points(team, season), grant),
+    incr(keys.rank(team, 'hats', season), grant * POINT_STEP.hats),
+    incr(keys.rank(team, 'points', season), grant * POINT_STEP.points),
+    incr(keys.rank(team, 'newest', season), grant * POINT_STEP.newest),
+  ]);
+  if (pointsScore != null && unpackPointsScore(Number(pointsScore)).overflow)
+    logScoreOverflow({ event, team, season, ownerId, via: 'award' });
+  return total;
+}
+
+// Points past their packed field (roster-score.ts MAX_POINTS) carry into the next field and
+// mis-order the rank sets until the reconcile rewrites them clamped.
+function logScoreOverflow(extra: object) {
+  void logToAxiom({ type: 'error', name: 'event-roster', fn: 'scoreOverflow', ...extra }).catch(
+    () => undefined
   );
 }
 

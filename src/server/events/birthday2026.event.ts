@@ -93,6 +93,12 @@ export const birthday2026 = createEvent(name, {
     // The hero art's backdrop, so the strip runs on seamlessly to the left of the image.
     background: '#1c1a30',
   },
+  promo: {
+    postEditor: {
+      body: 'Put a party hat on an image in this post. Its views and reactions score for your team.',
+      draftNote: 'Scores as people see it, so publish to start earning.',
+    },
+  },
   // Copies: consumers must never be able to mutate the shared constants.
   startDate: new Date(BIRTHDAY_2026_STARTS_AT.getTime()),
   endDate: new Date(BIRTHDAY_2026_ENDS_AT.getTime()),

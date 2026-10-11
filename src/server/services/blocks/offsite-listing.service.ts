@@ -57,6 +57,7 @@ import {
   resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
 import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import {
   isOwnerUnpublishedListing,
   readLastModerationAction,
@@ -66,6 +67,7 @@ import {
 // TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
 // a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
 import type { AppRole } from '~/server/services/blocks/app-access.service';
+import { declaredListingRating } from '~/shared/utils/listing-rating-display';
 import {
   computeListingProblems,
   type ListingProblemKind,
@@ -2342,6 +2344,8 @@ export type GetMyListingForAppResult = {
    * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
    */
   shadowId: string | null;
+  /** The rating the author declared, which approval may have raised `contentRating` above. */
+  declaredContentRating: string | null;
   /**
    * The id the client hands to the asset procs: `shadowId` when a shadow already
    * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
@@ -2434,9 +2438,11 @@ export async function getMyListingForApp(opts: {
   // an access check is an invitation to compare against it again.
   const entrySelect = {
     id: true,
+    kind: true,
     status: true,
     contentRating: true,
     revisionOfId: true,
+    appBlock: { select: { contentRating: true } },
   } as const;
   let listing = appBlockId
     ? await dbRead.appListing.findUnique({
@@ -2575,6 +2581,11 @@ export async function getMyListingForApp(opts: {
     // Nullable column; fall back to the safest rating so the asset step's scan
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
+    declaredContentRating: declaredListingRating({
+      kind: listing.kind,
+      appRating: listing.appBlock?.contentRating,
+      listingRating: listing.contentRating,
+    }),
     hasPendingRevision: !!pendingRevisionReq,
     shadowId,
     editTargetId: effectiveId,
@@ -3176,7 +3187,7 @@ export async function approveExternalRequest(opts: {
 
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
-  await dbWrite.$transaction(async (tx) => {
+  const rating = await dbWrite.$transaction(async (tx) => {
     // AUTHORITATIVE asset gate — re-read from the PRIMARY (`tx`), not the replica.
     // The sibling asset mutators (add/reorder/removeListingScreenshot,
     // setListingIcon/Cover) deliberately read+write dbWrite to avoid replica-lag
@@ -3398,6 +3409,13 @@ export async function approveExternalRequest(opts: {
       },
       data: { status: 'withdrawn' },
     });
+    return { before: primaryListing.contentRating, after: finalRating };
+  });
+  await recordListingRatingChangeAfterCommit({
+    appListingId,
+    slug: listing.slug,
+    ...rating,
+    actorUserId: reviewerUserId,
   });
 
   // Post-commit, best-effort: notify the listing OWNER their app went live. Emitted
@@ -3460,7 +3478,7 @@ async function applyApprovedRevision(opts: {
   // asset columns and leaves name/tagline/description/category/contentRating untouched.
   const parent = await dbRead.appListing.findUnique({
     where: { id: parentId },
-    select: { id: true, slug: true, status: true, kind: true },
+    select: { id: true, slug: true, status: true, kind: true, contentRating: true },
   });
   if (!parent) {
     throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
@@ -3489,7 +3507,9 @@ async function applyApprovedRevision(opts: {
   // of this path rather than merely intended.
   const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
 
-  await dbWrite.$transaction(async (tx) => {
+  const appliedRating = await dbWrite.$transaction(async (tx) => {
+    // Set by the off-site branch only; the on-site one leaves the rating alone.
+    let appliedOffsiteRating: OffsiteContentRating | null = null;
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
     // gate could pass on stale-complete state — re-assert here.
@@ -3688,6 +3708,7 @@ async function applyApprovedRevision(opts: {
         coverId: shadow.coverId,
         override: opts.contentRating,
       });
+      appliedOffsiteRating = finalRating;
       await tx.appListing.update({
         where: { id: parentId },
         data: {
@@ -3741,7 +3762,17 @@ async function applyApprovedRevision(opts: {
     await tx.appListing.deleteMany({
       where: { id: shadowId, revisionOfId: { not: null } },
     });
+    return appliedOffsiteRating;
   });
+  if (appliedRating != null) {
+    await recordListingRatingChangeAfterCommit({
+      appListingId: parentId,
+      slug: parent.slug,
+      before: parent.contentRating ?? null,
+      after: appliedRating,
+      actorUserId: reviewerUserId,
+    });
+  }
 
   // 🔴 Catalog bust. THIS PATH IS NOT COVERED BY THE ONE IN `approveExternalRequest` —
   // that caller `return`s into this function BEFORE reaching its bust, and it does so
@@ -4057,6 +4088,7 @@ const mySubmissionSelect = {
        * read); the mod queues that spread the base `submissionSelect` are untouched.
        */
       kind: true,
+      appBlock: { select: { contentRating: true } },
       iconId: true,
       coverId: true,
       description: true,
@@ -4344,6 +4376,13 @@ export async function listMySubmissions(opts: { userId: number } & ListOffsiteRe
           tagline: r.appListing.tagline,
           category: r.appListing.category,
           assetScans: assetScansFor(r.appListing),
+          status: r.appListing.status,
+          contentRating: r.appListing.contentRating,
+          declaredContentRating: declaredListingRating({
+            kind: r.appListing.kind ?? 'offsite',
+            appRating: r.appListing.appBlock?.contentRating,
+            listingRating: r.appListing.contentRating,
+          }),
         }).problems
       : [],
   }));
