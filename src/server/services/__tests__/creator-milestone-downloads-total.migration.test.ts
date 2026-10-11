@@ -41,7 +41,7 @@ async function before() {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY);
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, name text, description text, "createdById" int);
   `);
   for (const dir of earlier) await db.exec(read(dir));
   for (const [id, n] of BADGES)
@@ -50,13 +50,14 @@ async function before() {
       `Hidden Achievement Badge ${n}`,
       OLD_BADGE,
     ]);
-  // Names that only contain the old one, and an unrelated cosmetic.
+  // Names that only contain the old one, a creator's own cosmetic, and an unrelated one.
   await db.exec(`
-    INSERT INTO "Cosmetic" (id, name, description) VALUES
-      (10, 'Hidden Achievement Badge', '${OLD_BADGE}'),
-      (11, 'Old Hidden Achievement Badge 1', '${OLD_BADGE}'),
-      (12, 'Hidden Achievement Badge 1 copy', '${OLD_BADGE}'),
-      (100, 'Downloads Art', 'One of your models reached 100 downloads.');
+    INSERT INTO "Cosmetic" (id, name, description, "createdById") VALUES
+      (10, 'Hidden Achievement Badge', '${OLD_BADGE}', NULL),
+      (11, 'Old Hidden Achievement Badge 1', '${OLD_BADGE}', NULL),
+      (12, 'Hidden Achievement Badge 1 copy', '${OLD_BADGE}', NULL),
+      (13, 'Hidden Achievement Badge 3', '${OLD_BADGE}', 7),
+      (100, 'Downloads Art', 'One of your models reached 100 downloads.', NULL);
   `);
 }
 
@@ -114,6 +115,7 @@ describe(DOWNLOADS_TOTAL, () => {
       { id: 10, name: 'Hidden Achievement Badge', description: OLD_BADGE },
       { id: 11, name: 'Old Hidden Achievement Badge 1', description: OLD_BADGE },
       { id: 12, name: 'Hidden Achievement Badge 1 copy', description: OLD_BADGE },
+      { id: 13, name: 'Hidden Achievement Badge 3', description: OLD_BADGE },
       { id: 100, name: 'Downloads Art', description: 'One of your models reached 100 downloads.' },
     ]);
   });
