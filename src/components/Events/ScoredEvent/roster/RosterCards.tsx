@@ -343,7 +343,7 @@ export function RosterShelfCard({
       ref={ref}
       withBorder
       radius="md"
-      className={clsx('@container relative overflow-hidden', EVENT_CARD_SURFACE)}
+      className={clsx('relative overflow-hidden @container', EVENT_CARD_SURFACE)}
       data-testid="roster-card"
     >
       <div
@@ -413,7 +413,7 @@ export function RosterPodiumCard({
     <div
       ref={ref}
       className={clsx(
-        '@container flex flex-col gap-3 rounded-lg p-3 [--card-bg:white] dark:[--card-bg:var(--mantine-color-dark-6)]',
+        'flex flex-col gap-3 rounded-lg p-3 @container [--card-bg:white] dark:[--card-bg:var(--mantine-color-dark-6)]',
         className
       )}
       style={foilStyle(ctx.color ?? ctx.glow)}

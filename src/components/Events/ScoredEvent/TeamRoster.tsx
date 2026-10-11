@@ -101,7 +101,7 @@ export function TeamRoster({
   const grid = items.slice(PODIUM_SIZE);
 
   return (
-    <div className="@container flex flex-col gap-4">
+    <div className="flex flex-col gap-4 @container">
       <div className="flex flex-col gap-1">
         <Title order={1}>Teams</Title>
         <Text c="dimmed">Members who chose to show their hats.</Text>

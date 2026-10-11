@@ -55,9 +55,14 @@ vi.mock('~/components/Events/ScoredEvent/event-points-live', () => ({
   MyHatsLivePoints: () => null,
   TopHatsLivePoints: () => null,
 }));
-let heroProps: Record<string, any> = {};
+type HeroProps = {
+  onJoin: () => Promise<void>;
+  rosterOnJoin?: { checked: boolean; onChange: (checked: boolean) => void };
+  rosterSwitch?: React.ReactNode;
+};
+let heroProps = {} as HeroProps;
 vi.mock('~/components/Events/ScoredEvent/ScoredEventHero', () => ({
-  ScoredEventHero: (props: Record<string, any>) => {
+  ScoredEventHero: (props: HeroProps) => {
     heroProps = props;
     return props.rosterSwitch ?? null;
   },
