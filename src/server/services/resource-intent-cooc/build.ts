@@ -502,7 +502,12 @@ export async function deserializeCoocCounts(payload: Uint8Array): Promise<CoocCo
 
 /**
  * The counts plus the optional checkpoint section, still encoded (`undefined` when the payload
- * predates it); `decodeCheckpointAttachSection` validates it.
+ * has no 12th element); `decodeCheckpointAttachSection` validates it.
+ *
+ * Elements after the 12th (none of which this code knows) are ignored rather than refused, so a
+ * payload written by a later build still serves the counts here. (Decoders before the checkpoint
+ * section required exactly 11 and refuse any payload carrying it: see the section-writer flag in
+ * `pipeline.ts`.)
  */
 export async function deserializeCoocPayload(
   payload: Uint8Array
@@ -511,7 +516,7 @@ export async function deserializeCoocPayload(
     throw new Error(`cooc payload ${payload.length} bytes exceeds ${COOC_MAX_PAYLOAD_BYTES}`);
   const raw = await brotliDecompress(payload, { maxOutputLength: COOC_MAX_INFLATED_BYTES });
   const v = packr.unpack(raw) as unknown[];
-  if (!Array.isArray(v) || (v.length !== 11 && v.length !== 12) || v[0] !== COOC_PAYLOAD_FORMAT)
+  if (!Array.isArray(v) || v.length < 11 || v[0] !== COOC_PAYLOAD_FORMAT)
     throw new Error('cooc payload: unknown format');
   const [, N, vocab, mids, typeTable, codes, nTb, nMb, ptrb, midxb, cb, checkpointSection] = v as [
     string,

@@ -7,6 +7,7 @@ import * as z from 'zod';
 // value the day the vendor's limit moves.
 import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
 import { CHECKPOINT_ARMS } from '~/server/services/resource-intent-checkpoint';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -189,12 +190,17 @@ const distributionShape = z.record(z.string(), z.number().min(0).max(1));
 
 /**
  * `kind`: `'addon'` (the default, and what an absent `kind` means) asks for add-on resources;
- * `'checkpoint'` asks for checkpoints, needs `baseModel` (the caller's ecosystem), makes no vendor
- * call and does not read the prompt for ranking (`resource-intent-checkpoint.ts`). The block route
- * accepts `'checkpoint'` only behind `resourceIntentCheckpoint`.
+ * `'checkpoint'` asks for checkpoints, needs `baseModel` (the caller's ecosystem, one of the known
+ * base-model names), makes no vendor call and does not read the prompt for ranking
+ * (`resource-intent-checkpoint.ts`). The block route accepts `'checkpoint'` only behind
+ * `resourceIntentCheckpoint`.
  */
 export const RESOURCE_INTENT_KINDS = ['addon', 'checkpoint'] as const;
-export const RESOURCE_INTENT_CHECKPOINT_MAX_BASE_MODEL_LENGTH = 100;
+/**
+ * Every known base-model name: the set `modelVersionUpsertSchema` accepts for a version's
+ * `baseModel`, so it covers every value a checkpoint can carry.
+ */
+const knownBaseModels = new Set(baseModels);
 
 export const resourceIntentInputSchema = z
   .object({
@@ -211,13 +217,13 @@ export const resourceIntentInputSchema = z
         path: ['baseModel'],
         message: "baseModel is required when kind is 'checkpoint'",
       });
-    } else if (input.baseModel.length > RESOURCE_INTENT_CHECKPOINT_MAX_BASE_MODEL_LENGTH) {
+    } else if (!knownBaseModels.has(input.baseModel)) {
       // The baseModel is the only caller-chosen term of this mode's cache key (the prompt is not
-      // one), so its length is bounded here; the add-on path is left exactly as it was.
+      // one), so only known names are admitted; the add-on path is left exactly as it was.
       ctx.addIssue({
         code: 'custom',
         path: ['baseModel'],
-        message: `baseModel is at most ${RESOURCE_INTENT_CHECKPOINT_MAX_BASE_MODEL_LENGTH} characters when kind is 'checkpoint'`,
+        message: "baseModel must be a known base model when kind is 'checkpoint'",
       });
     }
   });
@@ -290,10 +296,12 @@ export const resourceIntentResponseSchema = z.strictObject({
    * hydration throws.
    *
    * 🔴 Deliberately NOT folded into `degraded`. `degraded` means the vendor path
-   * failed, and the invariants built on it — "fail closed, fail empty" in the
+   * failed (in checkpoint mode, which has none, the search or hydration), and the
+   * invariants built on it — "fail closed, fail empty" in the
    * contract doc's hard rule 2, so `suggestions: []`, `intent`/`criteria` `null`,
-   * `model: 'jev-unavailable'` — all hold together. A label-read failure produces
-   * a complete, gate-passing response with a real intent and real suggestions, so
+   * `model: 'jev-unavailable'` (`'checkpoint-unavailable'` in checkpoint mode) —
+   * all hold together. A label-read failure produces a complete, gate-passing
+   * response with a real intent and real suggestions, so
    * marking it `degraded` would break that invariant for every consumer.
    *
    * It would also corrupt both shadow queries that read the flag, in opposite

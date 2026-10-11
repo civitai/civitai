@@ -15,8 +15,8 @@
 --   coocSpecHash        RESOURCE_INTENT_COOC_SPEC_HASH on attach_bm; '' on base_bm.
 --   poolMergeSpecHash   ''.
 --   coocFallback        1 when attach_bm had no servable section and the list is BASE_BM's.
---   coocFallbackReason  no_snapshot, load_failed, spec_mismatch (includes a snapshot built before
---                       the checkpoint section existed), snapshot_unservable or loading.
+--   coocFallbackReason  no_snapshot, load_failed, spec_mismatch (includes a snapshot with no
+--                       checkpoint section), snapshot_unservable or loading.
 -- and, since no question spec runs: specHash '', stage3SpecHash '', specVersion 0, role /
 -- styleFamily / contentType '', model 'none' (undegraded).
 --

@@ -18,6 +18,7 @@ export const buildResourceIntentCoocJob = createJob(
       seed: RESOURCE_INTENT_COOC_SPEC.defaultSeed,
       pinnedUntil: null,
       dryRun: false,
+      checkpointSection: await isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_COOC_CHECKPOINT_SECTION),
     });
   },
   // A concurrent second build would repeat the whole replica draw (normally ending 'duplicate');

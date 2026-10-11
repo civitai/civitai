@@ -383,7 +383,8 @@ async function writeShadowEvent(event: ShadowEvent): Promise<void> {
 
 function degradedResponse(
   insightFallback: boolean,
-  armFields: Pick<ResourceIntentResponse, 'coocFallback' | 'kind' | 'checkpointArm'>
+  armFields: Pick<ResourceIntentResponse, 'coocFallback' | 'kind' | 'checkpointArm'>,
+  model: string = DEGRADED_MODEL
 ): ResourceIntentResponse {
   return {
     degraded: true,
@@ -393,7 +394,7 @@ function degradedResponse(
     criteria: null,
     suggestions: [],
     noneProbability: null,
-    model: DEGRADED_MODEL,
+    model,
     criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
   };
 }
@@ -689,6 +690,11 @@ export async function getResourceIntent(
 
 /** The `model` of an undegraded checkpoint-mode response: no vendor model produced it. */
 export const CHECKPOINT_MODEL = 'none';
+/**
+ * The `model` of a degraded checkpoint-mode response. Not the add-on path's `'jev-unavailable'`:
+ * no vendor call is made in this mode, so its degrades must not read as vendor failures.
+ */
+export const CHECKPOINT_DEGRADED_MODEL = 'checkpoint-unavailable';
 
 /**
  * Checkpoint mode's cache key. The prompt is NOT a term: neither arm reads it, so keying on it
@@ -734,11 +740,13 @@ export function checkpointIntentCacheKey(input: {
  *
  * - `attach_bm` with no servable snapshot section serves BASE_BM's list instead, flagged
  *   `coocFallback` with the holder's reason, for 60 s — the POOL_MERGE fallback contract. A
- *   snapshot built before the checkpoint section existed (or under another section build hash)
- *   reports `spec_mismatch`.
+ *   snapshot with no checkpoint section (built before it existed, or with the section-writer flag
+ *   off) or one under another section build hash reports `spec_mismatch`.
  * - Study mode (`ctx.coocSnapshotId`, `attach_bm`) fails closed, uncached, like POOL_MERGE's.
- * - A search or hydration failure degrades (`degraded: true`, `model: 'jev-unavailable'`, the
- *   contract every degraded response keeps, although no vendor is involved here).
+ * - A search or hydration failure degrades (`degraded: true`, empty suggestions, `intent` and
+ *   `criteria` `null`, as every degraded response). This mode's degrades, the study fail-closed
+ *   included, report `model: 'checkpoint-unavailable'` (`CHECKPOINT_DEGRADED_MODEL`), never the
+ *   add-on path's vendor label.
  */
 async function getCheckpointIntent(
   input: ResourceIntentInput,
@@ -789,8 +797,8 @@ async function getCheckpointIntent(
   if (studyFailure) {
     // Fails closed without the cache, as POOL_MERGE's study mode does.
     degradedReason = 'cooc_study_snapshot';
-    response = degradedResponse(false, armFields);
-    logDegraded(degradedReason, studyFailure.error, DEGRADED_MODEL);
+    response = degradedResponse(false, armFields, CHECKPOINT_DEGRADED_MODEL);
+    logDegraded(degradedReason, studyFailure.error, CHECKPOINT_DEGRADED_MODEL);
   } else {
     try {
       // Before the cache read: it is part of this mode's key.
@@ -841,8 +849,8 @@ async function getCheckpointIntent(
       }
     } catch (error) {
       degradedReason = 'checkpoint_error';
-      response = degradedResponse(false, armFields);
-      logDegraded(degradedReason, error, DEGRADED_MODEL);
+      response = degradedResponse(false, armFields, CHECKPOINT_DEGRADED_MODEL);
+      logDegraded(degradedReason, error, CHECKPOINT_DEGRADED_MODEL);
     }
     if (coocFallback && !cachedHit) {
       logToAxiom(

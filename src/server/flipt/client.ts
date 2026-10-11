@@ -190,6 +190,15 @@ export enum FLIPT_FEATURE_FLAGS {
   // run fails at the insert. Boolean only.
   RESOURCE_INTENT_COOC_BUILD = 'resource-intent-cooc-build',
 
+  // Whether a co-occurrence build (the weekly job AND scripts/build-resource-intent-cooc.ts)
+  // writes checkpoint mode's attachment section into the snapshot payload. DEFAULT-OFF: off, an
+  // unknown flag or an unreachable Flipt writes the 11-element payload older decoders read.
+  // 🔴 Turn it on only after the release carrying the section reader has fully rolled out AND its
+  // rollback window has passed: a decoder from before that release refuses a payload carrying
+  // the section, so a rolled-back pod would find the production snapshot unservable.
+  // Boolean only.
+  RESOURCE_INTENT_COOC_CHECKPOINT_SECTION = 'resource-intent-cooc-checkpoint-section',
+
   // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
   // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).
   //

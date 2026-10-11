@@ -1,3 +1,7 @@
+import { createHash } from 'crypto';
+import { promisify } from 'util';
+import zlib from 'zlib';
+import { Packr } from 'msgpackr';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -28,6 +32,7 @@ import {
 import {
   beginCoocBuild,
   completeCoocBuild,
+  coocContentHash,
   loadCoocSnapshot,
   type CoocSql,
 } from '~/server/services/resource-intent-cooc/store';
@@ -48,6 +53,10 @@ beforeEach(() => {
 });
 
 const DAY = 86_400_000;
+// The payload's own msgpack options and brotli, to inspect and re-pack its elements.
+const packr = new Packr({ useRecords: false, mapsAsObjects: true });
+const inflate = promisify(zlib.brotliDecompress);
+const deflate = promisify(zlib.brotliCompress);
 const ck = (modelId: number, versionId: number) => ({
   modelId,
   versionId,
@@ -133,6 +142,15 @@ describe('the section encoding', () => {
 
   it('🔴 without a section the payload is the 11-element format it always was, and still decodes', async () => {
     const plain = await serializeCoocCounts(coocCounts());
+    // Frozen: the sha256 of the uncompressed bytes `main`'s serializer (before the section
+    // existed) produced for this fixture, taken once from `origin/main`'s build.ts. The compressed
+    // payload was identical too; the raw bytes are pinned so a brotli upgrade cannot move this.
+    expect(
+      createHash('sha256')
+        .update(await inflate(plain))
+        .digest('hex')
+    ).toBe('ed16853bf524c24ce68876dfbf64498331ce21f8f3dd1105e91b4094657a24b7');
+    expect((packr.unpack(await inflate(plain)) as unknown[]).length).toBe(11);
     expect((await deserializeCoocPayload(plain)).checkpointSection).toBeUndefined();
     expect(await deserializeCoocCounts(plain)).toEqual(coocCounts());
     // The section changes the bytes, so a snapshot carrying one has a different content hash.
@@ -141,6 +159,25 @@ describe('the section encoding', () => {
       encodeCheckpointAttachSection(sectionCounts())
     );
     expect(withSection.equals(plain)).toBe(false);
+  });
+
+  it('🔴 elements after the ones this decoder knows are ignored, not refused', async () => {
+    const section = encodeCheckpointAttachSection(sectionCounts());
+    const raw = packr.unpack(
+      await inflate(await serializeCoocCounts(coocCounts(), section))
+    ) as unknown[];
+    expect(raw.length).toBe(12);
+    const later = await deflate(packr.pack([...raw, ['a later section'], 7]));
+    const decoded = await deserializeCoocPayload(later);
+    expect(decoded.counts).toEqual(coocCounts());
+    expect(decodeCheckpointAttachSection(decoded.checkpointSection)).toEqual({
+      buildHash: CHECKPOINT_ATTACH_BUILD_HASH,
+      counts: sectionCounts(),
+    });
+    // Fewer than 11 is still refused.
+    await expect(
+      deserializeCoocPayload(await deflate(packr.pack(raw.slice(0, 10))))
+    ).rejects.toThrow('unknown format');
   });
 
   // Each case is built to reach ONE guard; the asserted reason names it.
@@ -340,7 +377,7 @@ describe('loading and serving the section', () => {
   });
 });
 
-describe('the build pipeline writes the section', () => {
+describe('the build pipeline writes the section only when asked', () => {
   it('🔴 a production build counts every training image’s checkpoint under its version’s baseModel', async () => {
     const { sql } = await freshDb();
     const trainEnd = new Date('2026-09-30T00:00:00.000Z');
@@ -355,6 +392,7 @@ describe('the build pipeline writes the section', () => {
       seed: RESOURCE_INTENT_COOC_SPEC.defaultSeed,
       pinnedUntil: null,
       dryRun: false,
+      checkpointSection: true,
       now: new Date('2026-10-01T12:34:56.789Z'),
       query: async (q) => {
         if (q.sql.includes('"baseModel" FROM "ModelVersion"')) asked.push(q.values[0] as number[]);
@@ -362,7 +400,7 @@ describe('the build pipeline writes the section', () => {
       },
       sql,
     });
-    expect([s.checkpointBaseModels, s.checkpointPairs]).toEqual([1, 1]);
+    expect([s.checkpointSection, s.checkpointBaseModels, s.checkpointPairs]).toEqual([true, 1, 1]);
     const { checkpoints } = await loadCoocSnapshot(sql, s.contentHash, {
       kind: 'production',
       now: new Date('2026-10-01T12:34:56.789Z'),
@@ -374,6 +412,44 @@ describe('the build pipeline writes the section', () => {
     });
     // One baseModel lookup, for the checkpoint version only (the LORA versions are never asked).
     expect(asked).toEqual([[9900]]);
+  });
+
+  it('🔴 with checkpointSection off the payload is exactly the no-section one, and nothing is looked up', async () => {
+    const { sql } = await freshDb();
+    const trainEnd = new Date('2026-09-30T00:00:00.000Z');
+    const now = new Date('2026-10-01T12:34:56.789Z');
+    const images = fakeImageDb({
+      trainStart: new Date(trainEnd.getTime() - RESOURCE_INTENT_COOC_SPEC.trainDays * DAY),
+      trainEnd,
+      images: 900,
+    });
+    const asked: number[][] = [];
+    const s = await buildCoocSnapshot({
+      kind: 'production',
+      seed: RESOURCE_INTENT_COOC_SPEC.defaultSeed,
+      pinnedUntil: null,
+      dryRun: false,
+      checkpointSection: false,
+      now,
+      query: async (q) => {
+        if (q.sql.includes('"baseModel" FROM "ModelVersion"')) asked.push(q.values[0] as number[]);
+        return images.query(q);
+      },
+      sql,
+    });
+    expect([s.checkpointSection, s.checkpointBaseModels, s.checkpointPairs]).toEqual([
+      false,
+      null,
+      null,
+    ]);
+    expect(asked).toEqual([]);
+    const { counts, checkpoints } = await loadCoocSnapshot(sql, s.contentHash, {
+      kind: 'production',
+      now,
+    });
+    expect(checkpoints).toBeNull();
+    // The stored bytes hash to what the section-less serializer gives for the same counts.
+    expect(s.contentHash).toBe(coocContentHash('production', await serializeCoocCounts(counts)));
   });
 });
 

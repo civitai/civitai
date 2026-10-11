@@ -253,9 +253,10 @@ function decodeSectionOrNull(contentHash: string, raw: unknown): CheckpointAttac
  * a study snapshot whose pin has passed (even if retention has not yet run). An allocation failure
  * while decoding is rethrown as it is, not as `CoocSnapshotCorruptError`.
  *
- * `checkpoints` is the payload's checkpoint-attachment section, or `null` for a snapshot built
- * before it existed — or one whose section does not decode: that only takes checkpoint mode to its
- * fallback (`spec_mismatch`), and never the co-occurrence counts POOL_MERGE serves.
+ * `checkpoints` is the payload's checkpoint-attachment section, or `null` for a snapshot without
+ * one (built before it existed, or with the section-writer flag off) — or one whose section does
+ * not decode: that only takes checkpoint mode to its fallback (`spec_mismatch`), and never the
+ * co-occurrence counts POOL_MERGE serves.
  */
 export async function loadCoocSnapshot(
   sql: CoocSql,

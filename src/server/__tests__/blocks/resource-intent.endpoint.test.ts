@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 
 import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
 
@@ -260,15 +261,27 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     expect(ok.res.statusCode).toBe(200);
   });
 
-  it('checkpoint mode caps the baseModel at 100 characters (the add-on path does not)', async () => {
+  it('🔴 checkpoint mode admits only a known base model (the add-on path does not check)', async () => {
     mockGetFeatureFlags.mockReturnValue({
       resourceIntentJev: true,
       resourceIntentCheckpoint: true,
     });
-    const long = { prompt: 'p', kind: 'checkpoint', baseModel: 'x'.repeat(101) };
-    expect((await call({ body: long })).res.statusCode).toBe(400);
+    for (const baseModel of ['NotABaseModel', 'sdxl 1.0', 'SDXL 1.0 ', 'x'.repeat(101)]) {
+      const { res } = await call({ body: { prompt: 'p', kind: 'checkpoint', baseModel } });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.stringify(res.body)).toContain(
+        "baseModel must be a known base model when kind is 'checkpoint'"
+      );
+    }
     expect(mockGetResourceIntent).not.toHaveBeenCalled();
-    expect((await call({ body: { ...long, baseModel: 'x'.repeat(100) } })).res.statusCode).toBe(
+    for (const baseModel of ['SDXL 1.0', 'Illustrious', 'Pony']) {
+      expect(baseModels).toContain(baseModel);
+      const { res } = await call({ body: { prompt: 'p', kind: 'checkpoint', baseModel } });
+      expect(res.statusCode).toBe(200);
+    }
+    expect(mockGetResourceIntent).toHaveBeenCalledTimes(3);
+    // The add-on path takes an unknown baseModel as before.
+    expect((await call({ body: { prompt: 'p', baseModel: 'NotABaseModel' } })).res.statusCode).toBe(
       200
     );
     expect((await call({ body: { prompt: 'p', baseModel: 'x'.repeat(101) } })).res.statusCode).toBe(

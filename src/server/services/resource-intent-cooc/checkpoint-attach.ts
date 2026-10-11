@@ -18,7 +18,8 @@ import { fromU32le, u32le } from './build';
  * already reads, so one build, one content hash, one retention rule and one holder serve both. The
  * section is NOT part of `RESOURCE_INTENT_COOC_SPEC_HASH` (that fingerprint hashes the cooc counts
  * only), so adding it leaves every existing snapshot servable for POOL_MERGE. A snapshot built
- * before this code has no section; checkpoint mode treats it as `spec_mismatch`. The section
+ * before this code, or while the section-writer flag is off (`pipeline.ts`), has no section;
+ * checkpoint mode treats it as `spec_mismatch`. The section
  * carries its own `CHECKPOINT_ATTACH_BUILD_HASH`, and a section built under another one is ignored
  * the same way.
  */

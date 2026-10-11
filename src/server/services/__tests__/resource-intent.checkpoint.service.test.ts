@@ -393,6 +393,16 @@ describe('BASE_BM (the comparator arm)', () => {
       })
     );
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 3600 });
+    await flush();
+    // The migration's contract: a base_bm row reads no snapshot and carries no cooc spec.
+    expect(shadowRow()).toMatchObject({
+      arm: 'base_bm',
+      kind: 'checkpoint',
+      coocSnapshotHash: '',
+      coocSpecHash: '',
+      coocFallback: 0,
+      coocFallbackReason: '',
+    });
   });
 });
 
@@ -443,7 +453,7 @@ describe('🔴 study mode (ATTACH_BM)', () => {
       criteria: null,
       suggestions: [],
       noneProbability: null,
-      model: 'jev-unavailable',
+      model: 'checkpoint-unavailable',
       criteriaVersion: 2,
     });
     expect(mockCheckpoint).not.toHaveBeenCalled();
@@ -455,6 +465,7 @@ describe('🔴 study mode (ATTACH_BM)', () => {
       expect.objectContaining({
         type: 'resource-intent-degraded',
         degradedReason: 'cooc_study_snapshot',
+        model: 'checkpoint-unavailable',
       }),
       'temp-search'
     );
@@ -479,11 +490,23 @@ describe('checkpoint degrade and cache hit', () => {
       suggestions: [],
       kind: 'checkpoint',
       coocFallback: false,
-      model: 'jev-unavailable',
+      model: 'checkpoint-unavailable',
     });
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'resource-intent-degraded',
+        degradedReason: 'checkpoint_error',
+        model: 'checkpoint-unavailable',
+      }),
+      'temp-search'
+    );
     await flush();
-    expect(shadowRow()).toMatchObject({ degraded: 1, degradedReason: 'checkpoint_error' });
+    expect(shadowRow()).toMatchObject({
+      degraded: 1,
+      degradedReason: 'checkpoint_error',
+      model: 'checkpoint-unavailable',
+    });
   });
 
   it('a cache hit serves the entry with no search and no write; the row keeps its arm', async () => {

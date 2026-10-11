@@ -106,8 +106,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
 
   try {
-    // Coverage is resolved INSIDE the service, on the cache-miss path only —
-    // a Flipt eval on every cache hit would be pure waste.
+    // Coverage is resolved INSIDE the service: in add-on mode on the cache-miss
+    // path only (a Flipt eval on every hit would be waste); in checkpoint mode
+    // before the cache read, because it is a term of that mode's cache key.
     const result = await getResourceIntent(parsed.data, {
       browsingLevel,
       poolMerge: !!features.resourceIntentPoolMerge,

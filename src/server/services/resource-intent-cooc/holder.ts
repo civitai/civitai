@@ -50,8 +50,9 @@ export type CoocFallbackReason =
   | 'loading';
 /**
  * `checkpoints`: checkpoint mode's ATTACH_BM candidates from the same snapshot, or `null` when the
- * snapshot has no checkpoint section (built before it existed) or one built under another
- * `CHECKPOINT_ATTACH_BUILD_HASH`. POOL_MERGE serves the snapshot either way.
+ * snapshot has no checkpoint section (built before it existed, or with the section-writer flag
+ * off) or one built under another `CHECKPOINT_ATTACH_BUILD_HASH`. POOL_MERGE serves the snapshot
+ * either way.
  */
 export type ServedCooc = {
   contentHash: string;
