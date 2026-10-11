@@ -1,6 +1,7 @@
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown } from '@trpc/server';
 import * as z from 'zod';
+import { BLOCK_ANALYTICS_NAME_RE } from '~/shared/constants/block-analytics.constants';
 import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
   isLaunchSlot,
@@ -8248,6 +8249,11 @@ export const blocksRouter = router({
         appBlockId: z.string().min(1).max(64).optional(),
         from: z.string().datetime().optional(),
         to: z.string().datetime().optional(),
+        withCustomEvents: z.boolean().optional(),
+        includeOwner: z.boolean().optional(),
+        // The declared-name shape, which `__undeclared__` cannot match; the service only
+        // queries a name the app's manifest declares.
+        event: z.string().regex(BLOCK_ANALYTICS_NAME_RE).optional(),
       })
     )
     .query(async ({ ctx, input }) => {
@@ -8267,6 +8273,9 @@ export const blocksRouter = router({
         appBlockId: input.appBlockId,
         from,
         to,
+        withCustomEvents: input.withCustomEvents,
+        includeOwner: input.includeOwner,
+        event: input.event,
       });
     }),
 

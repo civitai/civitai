@@ -10,6 +10,10 @@ import type { BlockEventBatchInput } from '~/server/schema/track.schema';
 import type { SessionUser } from '~/types/session';
 import { blockEventRateLimiter } from '~/server/services/blocks/block-event-rate-limit';
 import {
+  APP_BLOCK_EVENTS_TABLE,
+  UNDECLARED_EVENT_NAME,
+} from '~/server/services/blocks/block-event-table';
+import {
   ANONYMOUS_VIEWER_KEY,
   rateLimitAddressKey,
   signedInViewerKey,
@@ -21,15 +25,6 @@ import {
 } from '~/server/services/blocks/known-app-blocks.service';
 import { isPrivateRunImpression } from '~/server/services/blocks/private-run-impression.service';
 import { getEdgeAttestedClientIp } from '~/server/utils/client-ip';
-
-export const APP_BLOCK_EVENTS_TABLE = 'appBlockEvents';
-
-/**
- * Stored in place of an event name the approved manifest does not declare, so the owner sees a
- * drop count while the caller-chosen name is never written. Declared names cannot collide with
- * it: they must start with a letter.
- */
-export const UNDECLARED_EVENT_NAME = '__undeclared__';
 
 /** One `appBlockEvents` row, in JSONEachRow shape. Pinned to the DDL by a parity test. */
 export type AppBlockEventRow = {

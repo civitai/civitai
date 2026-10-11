@@ -5,6 +5,7 @@ import {
   PRIVATE_RUN_INVOCATION_SOURCE,
 } from '~/server/services/blocks/scope-activity-predicate';
 import { hasInstallSlot, type InstallSlotManifest } from '~/shared/constants/slot-registry';
+import { type AppCustomEvents, getAppCustomEvents } from './app-custom-events.service';
 import { type AppViews, emptyViews, getAppViews, unavailableViews } from './app-views.service';
 
 /**
@@ -284,6 +285,12 @@ export type AppAnalytics = {
    * `./app-views.service`.
    */
   views: AppViews;
+  /**
+   * The app's declared custom events (`appBlockEvents`, ClickHouse). Present only when ONE owned
+   * app was requested with `withCustomEvents`, so the per-row inline stat does not pay for it.
+   * Carries its own `unavailable` flag, like `views`.
+   */
+  customEvents?: AppCustomEvents;
 };
 
 export function emptyAnalytics(
@@ -455,12 +462,20 @@ export async function getMyAppAnalytics({
   from,
   to,
   now,
+  withCustomEvents = false,
+  includeOwner = false,
+  event,
 }: {
   appBlockId?: string;
   userId: number;
   from?: Date;
   to?: Date;
   now?: Date;
+  withCustomEvents?: boolean;
+  /** Count rows sent while the app's owner was the viewer (excluded by default). */
+  includeOwner?: boolean;
+  /** The custom event whose series and property breakdown to return. */
+  event?: string;
 }): Promise<AppAnalytics> {
   const range = resolveRange({ from, to, now });
   const ownedApps = await getOwnedAppBlocks({ ownerUserId: userId, appBlockId });
@@ -499,6 +514,7 @@ export async function getMyAppAnalytics({
     topScopes,
     topEndpoints,
     views,
+    customEvents,
   ] = await Promise.all([
     // INSTALLS — block_user_subscriptions. Total & active are all-time
     // (an author cares about their current install base), the series is
@@ -668,6 +684,18 @@ export async function getMyAppAnalytics({
     // down the whole panel. (It is bounded rather than merely try/caught
     // because this Promise.all is on a per-app-row fan-out path.)
     getAppViews({ appBlockIds: ownedIds, from: range.from, to: range.to }),
+
+    // Never throws either. Single-app only: `appBlockId` set and the fail-closed check above
+    // guarantees `ownedApps` is exactly that app.
+    appBlockId && withCustomEvents
+      ? getAppCustomEvents({
+          appBlockId,
+          manifest: ownedApps[0].manifest,
+          range,
+          includeOwner,
+          event,
+        })
+      : undefined,
   ]);
 
   const apiCalls = invocationsAgg;
@@ -721,5 +749,6 @@ export async function getMyAppAnalytics({
       })),
     },
     views,
+    ...(customEvents ? { customEvents } : {}),
   };
 }

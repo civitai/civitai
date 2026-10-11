@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppCustomEventsModule from '../app-custom-events.service';
 
 /**
  * Coverage for the Phase 0 author-analytics service. The security-critical
@@ -41,6 +42,15 @@ const { mockGetAppViews } = vi.hoisted(() => ({ mockGetAppViews: vi.fn() }));
 vi.mock('../app-views.service', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../app-views.service')>();
   return { ...actual, getAppViews: (...args: unknown[]) => mockGetAppViews(...args) };
+});
+
+const { mockGetAppCustomEvents } = vi.hoisted(() => ({ mockGetAppCustomEvents: vi.fn() }));
+vi.mock('../app-custom-events.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof AppCustomEventsModule>();
+  return {
+    ...actual,
+    getAppCustomEvents: (...args: unknown[]) => mockGetAppCustomEvents(...args),
+  };
 });
 
 // `Prisma.sql` / `Prisma.join` are used by the service to build the raw
@@ -683,5 +693,78 @@ describe('getMyAppAnalytics (installs applicability wiring)', () => {
     const notEntitled = emptyAnalytics(range, false, 'notEntitled');
     expect(notEntitled.unavailable).toBe('notEntitled');
     expect('notApplicable' in notEntitled.installs).toBe(false);
+  });
+});
+
+describe('getMyAppAnalytics (custom events wiring)', () => {
+  const CUSTOM_MANIFEST = { analytics: { events: { generate_clicked: {} } } };
+  const SECTION = {
+    declared: [{ name: 'generate_clicked', properties: [] }],
+    includeOwner: true,
+    topEvents: [
+      { eventName: 'generate_clicked', count: 31, signedInViewers: 6, anonymousEvents: 17 },
+    ],
+    undeclaredDrops: 2,
+  };
+
+  beforeEach(() => {
+    mockDbRead.appBlock.findMany.mockResolvedValue([
+      { id: OWNED_ID, manifest: CUSTOM_MANIFEST },
+      { id: OWNED_ID_2, manifest: MODEL_MANIFEST },
+    ]);
+    mockGetAppCustomEvents.mockResolvedValue(SECTION);
+  });
+
+  it('one owned app with withCustomEvents: reads THAT app with its manifest, range and options', async () => {
+    const result = await getMyAppAnalytics({
+      userId: OWNER_ID,
+      appBlockId: OWNED_ID,
+      withCustomEvents: true,
+      includeOwner: true,
+      event: 'generate_clicked',
+      now: new Date('2026-07-31T00:00:00.000Z'),
+    });
+
+    expect(mockGetAppCustomEvents).toHaveBeenCalledTimes(1);
+    expect(mockGetAppCustomEvents).toHaveBeenCalledWith({
+      appBlockId: OWNED_ID,
+      manifest: CUSTOM_MANIFEST,
+      range: {
+        from: new Date('2026-07-01T00:00:00.000Z'),
+        to: new Date('2026-07-31T00:00:00.000Z'),
+        granularity: 'day',
+      },
+      includeOwner: true,
+      event: 'generate_clicked',
+    });
+    expect(result.customEvents).toBe(SECTION);
+  });
+
+  it('defaults to excluding the owner', async () => {
+    await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID, withCustomEvents: true });
+    expect(mockGetAppCustomEvents.mock.calls[0][0].includeOwner).toBe(false);
+  });
+
+  it('without withCustomEvents (the per-row inline stat): no read and no key', async () => {
+    const result = await getMyAppAnalytics({ userId: OWNER_ID, appBlockId: OWNED_ID });
+    expect(mockGetAppCustomEvents).not.toHaveBeenCalled();
+    expect('customEvents' in result).toBe(false);
+  });
+
+  it('"All my apps": no read and no key, even when asked', async () => {
+    const result = await getMyAppAnalytics({ userId: OWNER_ID, withCustomEvents: true });
+    expect(mockGetAppCustomEvents).not.toHaveBeenCalled();
+    expect('customEvents' in result).toBe(false);
+  });
+
+  it('a foreign app: no read', async () => {
+    const result = await getMyAppAnalytics({
+      userId: OWNER_ID,
+      appBlockId: FOREIGN_ID,
+      withCustomEvents: true,
+    });
+    expect(result.unavailable).toBe('notOwned');
+    expect(mockGetAppCustomEvents).not.toHaveBeenCalled();
+    expect('customEvents' in result).toBe(false);
   });
 });

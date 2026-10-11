@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Card,
   Group,
@@ -7,11 +8,13 @@ import {
   Select,
   SimpleGrid,
   Stack,
+  Switch,
   Table,
   Text,
   Title,
   Tooltip,
 } from '@mantine/core';
+import { keepPreviousData } from '@tanstack/react-query';
 import type { ChartOptions } from 'chart.js';
 import {
   CategoryScale,
@@ -32,6 +35,10 @@ import {
   scopeBucketLabel,
 } from '~/components/AppBlocks/analytics-bucket-labels';
 import { trpc } from '~/utils/trpc';
+import type {
+  AppCustomEvents,
+  CustomEventPropertyBreakdown,
+} from '~/server/services/blocks/app-custom-events.service';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip, Filler);
 
@@ -93,7 +100,11 @@ type AnalyticsData = {
     anonCount: number;
     unavailable?: boolean;
   };
+  /** Optional for the same rolling-deploy reason as `views`: absent renders like unavailable. */
+  customEvents?: AppCustomEvents;
 };
+
+const MANIFEST_DOCS_URL = 'https://developer.civitai.com/apps/reference/manifest';
 
 type MyApp = {
   id: string;
@@ -207,6 +218,226 @@ function MiniLineChart({
   );
 }
 
+function formatStat(n: number | null): string {
+  return n === null ? '—' : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function PropertyBreakdown({ property }: { property: CustomEventPropertyBreakdown }) {
+  return (
+    <Stack gap={4}>
+      <Group gap="xs">
+        <Text size="sm" fw={600}>
+          {property.name}
+        </Text>
+        <Badge variant="light" color="gray" size="xs">
+          {property.type}
+        </Badge>
+      </Group>
+      {property.type === 'enum' && (
+        <Table>
+          <Table.Tbody>
+            {property.values.map((v) => (
+              <Table.Tr key={v.value}>
+                <Table.Td>
+                  <Text size="sm" lineClamp={1}>
+                    {v.value}
+                  </Text>
+                </Table.Td>
+                <Table.Td ta="right">{v.count.toLocaleString()}</Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      )}
+      {property.type === 'number' && (
+        <Text size="sm" c={property.count === 0 ? 'dimmed' : undefined}>
+          {property.count === 0
+            ? 'Not set on any event in this range.'
+            : `Set on ${property.count.toLocaleString()} event${
+                property.count === 1 ? '' : 's'
+              } · sum ${formatStat(property.sum)} · avg ${formatStat(
+                property.avg
+              )} · median ${formatStat(property.p50)} · p95 ${formatStat(property.p95)}`}
+        </Text>
+      )}
+      {property.type === 'boolean' && (
+        <Text size="sm">
+          true {property.trueCount.toLocaleString()} · false {property.falseCount.toLocaleString()}
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * 🔴 An unavailable OR absent `customEvents` (ClickHouse down, or an old pod that omits the key)
+ * must never render a count: "0 events" there is a fabricated zero, as on the App loads card.
+ */
+function CustomEventsCard({
+  customEvents,
+  appSelected,
+  granularity,
+  includeOwner,
+  onIncludeOwnerChange,
+  selectedEvent,
+  onSelectEvent,
+  refreshing,
+}: {
+  customEvents: AppCustomEvents | undefined;
+  appSelected: boolean;
+  granularity: 'day' | 'week';
+  includeOwner: boolean;
+  onIncludeOwnerChange: (include: boolean) => void;
+  selectedEvent: string | null;
+  onSelectEvent: (eventName: string | null) => void;
+  refreshing: boolean;
+}) {
+  const measured = customEvents && !customEvents.unavailable ? customEvents : undefined;
+  const selected =
+    measured?.selected && measured.selected.eventName === selectedEvent
+      ? measured.selected
+      : undefined;
+  const nothingRecorded = measured ? measured.topEvents.every((e) => e.count === 0) : false;
+
+  return (
+    <Card padding="md" radius="md" withBorder>
+      <Group justify="space-between" align="flex-start" gap="xs">
+        <Group gap="xs">
+          <Title order={5}>Custom events</Title>
+          <Tooltip
+            label="Events your app sends with useBlockAnalytics().track(), for the event names and properties its approved manifest declares."
+            position="top"
+            multiline
+            maw={280}
+          >
+            <IconInfoCircle size={14} />
+          </Tooltip>
+          {refreshing && <Loader size="xs" />}
+        </Group>
+        {appSelected && (
+          <Switch
+            size="sm"
+            label="Include owner activity"
+            description="Events sent while the app's owner was signed in, such as dev-tunnel testing"
+            checked={includeOwner}
+            onChange={(e) => onIncludeOwnerChange(e.currentTarget.checked)}
+            maw={320}
+          />
+        )}
+      </Group>
+
+      {!appSelected ? (
+        <Text c="dimmed" size="sm" mt="sm">
+          Choose an app to see its custom events.
+        </Text>
+      ) : !measured ? (
+        <Text c="dimmed" size="sm" mt="sm">
+          Couldn&apos;t load custom events right now. This is not a report of zero events; the other
+          metrics on this page are unaffected.
+        </Text>
+      ) : (
+        <Stack gap="sm" mt="sm">
+          {measured.undeclaredDrops > 0 && (
+            <Alert variant="light" color="yellow" icon={<IconInfoCircle size={16} />}>
+              <Text size="sm">
+                {measured.undeclaredDrops.toLocaleString()}{' '}
+                {measured.undeclaredDrops === 1
+                  ? 'event was sent with a name'
+                  : 'events were sent with names'}{' '}
+                your approved manifest doesn&apos;t declare, so{' '}
+                {measured.undeclaredDrops === 1 ? 'it was' : 'they were'} not recorded by name.
+                Declare an event in your manifest and resubmit to see it here.
+              </Text>
+            </Alert>
+          )}
+
+          {measured.declared.length === 0 ? (
+            <Text size="sm">
+              This app doesn&apos;t declare any custom events.{' '}
+              <Anchor href={MANIFEST_DOCS_URL} target="_blank" rel="noopener noreferrer">
+                Declare events in your manifest
+              </Anchor>{' '}
+              to see what people do inside your app.
+            </Text>
+          ) : (
+            <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
+              <div>
+                {nothingRecorded && (
+                  <Text c="dimmed" size="sm">
+                    No declared events were recorded in this range.
+                  </Text>
+                )}
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Event</Table.Th>
+                      <Table.Th ta="right">Events</Table.Th>
+                      <Table.Th ta="right">Signed-in viewers</Table.Th>
+                      <Table.Th ta="right">Signed-out events</Table.Th>
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {measured.topEvents.map((e) => (
+                      <Table.Tr key={e.eventName}>
+                        <Table.Td>
+                          <Anchor
+                            component="button"
+                            type="button"
+                            size="sm"
+                            fw={e.eventName === selectedEvent ? 700 : undefined}
+                            aria-pressed={e.eventName === selectedEvent}
+                            onClick={() =>
+                              onSelectEvent(e.eventName === selectedEvent ? null : e.eventName)
+                            }
+                          >
+                            {e.eventName}
+                          </Anchor>
+                        </Table.Td>
+                        <Table.Td ta="right">{e.count.toLocaleString()}</Table.Td>
+                        <Table.Td ta="right">{e.signedInViewers.toLocaleString()}</Table.Td>
+                        <Table.Td ta="right">{e.anonymousEvents.toLocaleString()}</Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </div>
+              <div>
+                {selected ? (
+                  <Stack gap="sm">
+                    <Text size="sm" fw={600}>
+                      {selected.eventName} over time
+                    </Text>
+                    <MiniLineChart points={selected.series} granularity={granularity} />
+                    {selected.properties.length === 0 ? (
+                      <Text c="dimmed" size="sm">
+                        This event declares no properties.
+                      </Text>
+                    ) : (
+                      selected.properties.map((p) => (
+                        <PropertyBreakdown key={p.name} property={p} />
+                      ))
+                    )}
+                  </Stack>
+                ) : (
+                  <Text c="dimmed" size="sm">
+                    Select an event to see it over time and its property breakdown.
+                  </Text>
+                )}
+              </div>
+            </SimpleGrid>
+          )}
+
+          <Text c="dimmed" size="xs">
+            Counts are lower bounds: an app&apos;s host stops sending events past its per-page
+            budget, and those are never recorded. Signed-in viewers counts each signed-in person
+            once; signed-out activity is counted as events only.
+          </Text>
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
 /**
  * @param scopedAppBlockId When supplied, the panel is locked to a single app
  *   (the per-app picker is hidden) — used when the panel is opened in a modal
@@ -222,14 +453,33 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
   const apps = (appsRaw as MyApp[] | undefined) ?? [];
   const [pickedAppBlockId, setPickedAppBlockId] = useState<string | null>(null);
   const appBlockId = scoped ? scopedAppBlockId : pickedAppBlockId;
+  const [includeOwner, setIncludeOwner] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
 
   const {
     data: analyticsRaw,
     isLoading: analyticsLoading,
+    isPlaceholderData,
     error,
-  } = trpc.blocks.getMyAppAnalytics.useQuery({
-    appBlockId: appBlockId ?? undefined,
-  });
+  } = trpc.blocks.getMyAppAnalytics.useQuery(
+    appBlockId
+      ? {
+          appBlockId,
+          withCustomEvents: true,
+          includeOwner,
+          ...(selectedEvent ? { event: selectedEvent } : {}),
+        }
+      : {},
+    {
+      // Keep the panel up while a toggle or an event selection refetches, but never show one
+      // app's numbers under another app's name while the picker's new app loads.
+      placeholderData: (previous, previousQuery) =>
+        (previousQuery?.queryKey[1] as { input?: { appBlockId?: string } } | undefined)?.input
+          ?.appBlockId === (appBlockId ?? undefined)
+          ? keepPreviousData(previous)
+          : undefined,
+    }
+  );
   const analytics = analyticsRaw as AnalyticsData | undefined;
   const unavailable = analytics?.unavailable;
 
@@ -249,7 +499,10 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             label="App"
             data={appOptions}
             value={pickedAppBlockId ?? ''}
-            onChange={(v) => setPickedAppBlockId(v ? v : null)}
+            onChange={(v) => {
+              setPickedAppBlockId(v ? v : null);
+              setSelectedEvent(null);
+            }}
             disabled={appsLoading}
             w={260}
             comboboxProps={{ withinPortal: true }}
@@ -515,6 +768,19 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
                 </Table>
               )}
             </Card>
+          </SimpleGrid>
+
+          <SimpleGrid type="container" cols={{ base: 1 }} spacing="md">
+            <CustomEventsCard
+              customEvents={analytics.customEvents}
+              appSelected={appBlockId != null}
+              granularity={analytics.range.granularity}
+              includeOwner={includeOwner}
+              onIncludeOwnerChange={setIncludeOwner}
+              selectedEvent={selectedEvent}
+              onSelectEvent={setSelectedEvent}
+              refreshing={!!isPlaceholderData}
+            />
           </SimpleGrid>
         </>
       )}
