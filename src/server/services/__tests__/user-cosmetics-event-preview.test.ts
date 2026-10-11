@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import * as c from '~/shared/constants/birthday2026.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { testerFlag } from '~/test-utils/testerFlagFake';
 
 const { load } = vi.hoisted(() => ({ load: vi.fn() }));
@@ -14,6 +15,7 @@ vi.mock('~/server/flipt/tester-segment', async () => {
 const { getUserCreator, equipCosmetic } = await import('~/server/services/user.service');
 const { getLeaderboardHandler } = await import('~/server/controllers/user.controller');
 const { getUserWithProfile } = await import('~/server/services/user-profile.service');
+const { getUserProfileHandler } = await import('~/server/controllers/user-profile.controller');
 const { modelWithDetailsSelect } = await import('~/server/selectors/model.selector');
 
 /**
@@ -189,6 +191,22 @@ describe('the profile shows event hats only to viewers the event is open to', ()
     expect(await profileHats({ sessionUserId: OWNER })).toHaveLength(0);
     testerFlag.reset({ testers: [OWNER] });
     expect(await profileHats({ sessionUserId: OWNER })).toHaveLength(2);
+  });
+
+  it("treats a moderator's scoped token as the user alone", async () => {
+    const hatsFor = async (bearer: object) =>
+      hatsIn(
+        (
+          (await getUserProfileHandler({
+            input: { username: 'owner' },
+            ctx: { user: { id: 99, isModerator: true }, ...bearer },
+          } as never)) as { cosmetics: Row[] }
+        ).cosmetics
+      );
+    const key = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
+    expect(await hatsFor({})).toHaveLength(2);
+    expect(await hatsFor({ ...key, tokenScope: TokenScope.Full })).toHaveLength(2);
+    expect(await hatsFor({ ...key, tokenScope: TokenScope.UserRead })).toHaveLength(0);
   });
 
   it('hides them from everyone, testers and moderators too, once the launch is armed', async () => {

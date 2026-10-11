@@ -45,7 +45,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Search hits come from the index, which carries no hats, so the grid asks for them. From launch
@@ -77,12 +77,10 @@ export const cosmeticRouter = router({
     .input(getByIdSchema)
     .query(async ({ input, ctx }) => {
       const cosmetic = await getCosmeticDetail(input);
-      // As for moderatorProcedure, a scoped token does not carry the moderator's access.
-      const isModerator = !!ctx.user.isModerator && isSessionOrFullUserKey(ctx);
+      const viewer = eventViewerOf(ctx);
       // Moderators edit event decorations in every state, armed launch included.
-      if (!cosmetic || isModerator) return cosmetic;
+      if (!cosmetic || viewer.isModerator) return cosmetic;
       // An event decoration the viewer may not see yet reads as missing, like an unknown id.
-      const viewer = { id: ctx.user.id, isModerator };
       const [visible] = await withoutHiddenEventDecorations([{ cosmetic }], viewer);
       return visible ? cosmetic : null;
     }),

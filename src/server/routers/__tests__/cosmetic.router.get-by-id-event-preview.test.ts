@@ -90,25 +90,37 @@ describe('cosmetic.getById', () => {
     expect(await callerFor({ id: 99, isModerator: true }).getById({ id: hat.id })).toEqual(hat);
   });
 
+  const personalKey = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
+  const scopedKey = { ...personalKey, tokenScope: TokenScope.CollectionsRead };
+  const fullKey = { ...personalKey, tokenScope: TokenScope.Full };
+  // An OAuth grant can be issued on a User-type key; the subject is what tells it apart.
+  const oauth = {
+    apiKeyId: 2,
+    apiKeyType: 'User',
+    subject: { type: 'oauth', id: 'client' },
+    tokenScope: TokenScope.Full,
+  };
+  const moderator = { id: 99, isModerator: true };
+
   it.each([
-    ['preview', {}],
-    ['armed', { public: true }],
-  ])("gives a moderator's scoped token no moderator access (%s)", async (_state, flag) => {
-    stored(hat);
-    testerFlag.reset({ testers: [TESTER], ...flag });
-    const moderator = { id: 99, isModerator: true };
-    const personalKey = { apiKeyId: 1, apiKeyType: 'User', subject: { type: 'apiKey', id: 1 } };
-    const oauth = { apiKeyId: 2, subject: { type: 'oauth', id: 'client' } };
-    for (const bearer of [
-      { ...personalKey, tokenScope: TokenScope.CollectionsRead },
-      { ...oauth, tokenScope: TokenScope.Full },
-    ])
+    ['preview', 'scoped key', {}, scopedKey],
+    ['preview', 'OAuth token', {}, oauth],
+    ['armed', 'scoped key', { public: true }, scopedKey],
+    ['armed', 'OAuth token', { public: true }, oauth],
+  ])(
+    "gives a moderator's %s-state %s no moderator access",
+    async (_state, _credential, flag, bearer) => {
+      stored(hat);
+      testerFlag.reset({ testers: [TESTER], ...flag });
       expect(await callerFor(moderator, bearer).getById({ id: hat.id })).toBeNull();
-    expect(
-      await callerFor(moderator, { ...personalKey, tokenScope: TokenScope.Full }).getById({
-        id: hat.id,
-      })
-    ).toEqual(hat);
+      expect(await callerFor(moderator, fullKey).getById({ id: hat.id })).toEqual(hat);
+    }
+  );
+
+  it('still answers a tester on a scoped token as a tester', async () => {
+    stored(hat);
+    expect(await callerFor({ id: TESTER }, scopedKey).getById({ id: hat.id })).toEqual(hat);
+    expect(await callerFor({ id: 99 }, scopedKey).getById({ id: hat.id })).toBeNull();
   });
 
   it('returns it to everyone once the event is open', async () => {
