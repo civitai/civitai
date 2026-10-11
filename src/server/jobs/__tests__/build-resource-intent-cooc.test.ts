@@ -68,7 +68,27 @@ describe('build-resource-intent-cooc job', () => {
     await run(buildResourceIntentCoocJob);
     expect(mockBuild).toHaveBeenCalledTimes(1);
     const opts = mockBuild.mock.calls[0][0];
-    expect(opts).toEqual({ kind: 'production', seed: 20261008, pinnedUntil: null, dryRun: false });
+    expect(opts).toEqual({
+      kind: 'production',
+      seed: 20261008,
+      pinnedUntil: null,
+      dryRun: false,
+      checkpointSection: true,
+    });
+  });
+
+  it('🔴 writes the checkpoint section only while its own flag is on', async () => {
+    for (const sectionOn of [false, true]) {
+      mockBuild.mockClear();
+      mockIsFlipt.mockImplementation(async (flag: string) =>
+        flag === FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_COOC_CHECKPOINT_SECTION ? sectionOn : true
+      );
+      await run(buildResourceIntentCoocJob);
+      expect(mockBuild.mock.calls[0][0].checkpointSection).toBe(sectionOn);
+    }
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_COOC_CHECKPOINT_SECTION
+    );
   });
 
   it('runs weekly with a 90-minute lock held across a scheduler disconnect', () => {

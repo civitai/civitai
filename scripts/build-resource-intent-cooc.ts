@@ -14,6 +14,11 @@ import { runScriptAndExit } from './lib/run-as-script';
  * `resource_intent_cooc_snapshot` migration to the environment first; only a build `--dry-run`
  * runs without it. `--release` deletes one study snapshot and is run when that study's report is
  * committed; with `--dry-run` it only reports the row.
+ *
+ * A build writes checkpoint mode's attachment section only while the Flipt flag
+ * `resource-intent-cooc-checkpoint-section` is on, the same flag the weekly job reads; there is no
+ * CLI switch to write it otherwise. Off (or Flipt unreachable) it writes the 11-element payload.
+ * The summary's `checkpointSection` says which was written.
  */
 
 export type CoocScriptCommand =
@@ -99,12 +104,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   }
   const { buildCoocSnapshot } = await import('~/server/services/resource-intent-cooc/pipeline');
   const { RESOURCE_INTENT_COOC_SPEC } = await import('~/server/services/resource-intent-cooc/spec');
+  const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
   const summary = await buildCoocSnapshot({
     kind: cmd.kind,
     trainEnd: cmd.trainEnd,
     pinnedUntil: cmd.pinnedUntil,
     seed: cmd.seed ?? RESOURCE_INTENT_COOC_SPEC.defaultSeed,
     dryRun: cmd.dryRun,
+    checkpointSection: await isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_COOC_CHECKPOINT_SECTION),
   });
   console.log(`[build-resource-intent-cooc] ${JSON.stringify(summary)}`);
 }

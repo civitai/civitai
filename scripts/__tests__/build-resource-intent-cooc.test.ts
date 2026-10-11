@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as Pipeline from '~/server/services/resource-intent-cooc/pipeline';
 import type * as Store from '~/server/services/resource-intent-cooc/store';
 
-const { mockRelease, mockBuild } = vi.hoisted(() => ({
+const { mockRelease, mockBuild, mockIsFlipt } = vi.hoisted(() => ({
   mockRelease: vi.fn(),
   mockBuild: vi.fn(),
+  mockIsFlipt: vi.fn(),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: mockIsFlipt,
 }));
 vi.mock('~/server/services/resource-intent-cooc/store', async (importOriginal) => ({
   ...(await importOriginal<typeof Store>()),
@@ -16,6 +22,7 @@ vi.mock('~/server/services/resource-intent-cooc/pipeline', async (importOriginal
 }));
 
 import { main, parseCoocScriptArgs } from '../build-resource-intent-cooc';
+import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 
 const HASH = 'a'.repeat(64);
 
@@ -122,6 +129,7 @@ describe('build-resource-intent-cooc flags', () => {
       vi.clearAllMocks();
       mockRelease.mockResolvedValue({ id: 'row', deleted: false });
       mockBuild.mockResolvedValue({ contentHash: 'h' });
+      mockIsFlipt.mockResolvedValue(false);
       vi.spyOn(console, 'log').mockImplementation(() => undefined);
     });
 
@@ -146,13 +154,29 @@ describe('build-resource-intent-cooc flags', () => {
         pinnedUntil: null,
         seed: 20261008,
         dryRun: true,
+        checkpointSection: false,
       });
       expect(mockRelease).not.toHaveBeenCalled();
+    });
+
+    it('🔴 a build writes the checkpoint section only while the section flag is on; no switch overrides it', async () => {
+      for (const sectionOn of [false, true]) {
+        mockBuild.mockClear();
+        mockIsFlipt.mockImplementation(async (flag: string) =>
+          flag === FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_COOC_CHECKPOINT_SECTION ? sectionOn : false
+        );
+        await main(['--kind', 'production']);
+        expect(mockBuild.mock.calls[0][0].checkpointSection).toBe(sectionOn);
+      }
+      expect(() => parseCoocScriptArgs(['--kind', 'production', '--checkpoint-section'])).toThrow(
+        /Unknown option/
+      );
     });
   });
 
   it('a study build passes its kind, train end, pin and seed through unchanged', async () => {
     mockBuild.mockResolvedValue({ contentHash: 'h' });
+    mockIsFlipt.mockResolvedValue(false);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await main([
       '--kind',
@@ -170,6 +194,7 @@ describe('build-resource-intent-cooc flags', () => {
       pinnedUntil: new Date('2026-11-20T00:00:00Z'),
       seed: 7,
       dryRun: false,
+      checkpointSection: false,
     });
   });
 });

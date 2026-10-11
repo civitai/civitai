@@ -2,7 +2,7 @@ import { brotliCompressSync } from 'zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CoocCountAccumulator,
-  deserializeCoocCounts,
+  deserializeCoocPayload,
   serializeCoocCounts,
   serializeTrainImageIds,
 } from '~/server/services/resource-intent-cooc/build';
@@ -36,7 +36,7 @@ import { asFixtureWriter, freshDb } from './resource-intent-cooc.harness';
 // The real decoder, which one test makes fail once the way it would out of memory.
 vi.mock('~/server/services/resource-intent-cooc/build', async (importOriginal) => {
   const actual = await importOriginal<typeof CoocBuild>();
-  return { ...actual, deserializeCoocCounts: vi.fn(actual.deserializeCoocCounts) };
+  return { ...actual, deserializeCoocPayload: vi.fn(actual.deserializeCoocPayload) };
 });
 
 /** The serving holder over the real migration (PGlite) and the real store. Synthetic data only. */
@@ -279,7 +279,7 @@ describe('CoocSnapshotHolder (production)', () => {
         onLoadFailure: (_reason, error) => errors.push(error),
       });
       const error = failure();
-      vi.mocked(deserializeCoocCounts).mockRejectedValueOnce(error);
+      vi.mocked(deserializeCoocPayload).mockRejectedValueOnce(error);
       expect(await holder.resolve()).toEqual({ snapshot: null, fallbackReason: 'load_failed' });
       // The allocation error itself, not a corrupt-payload refusal wrapping it.
       expect(errors).toEqual([error]);

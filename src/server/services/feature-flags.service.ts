@@ -763,6 +763,9 @@ const featureFlags = createFeatureFlags({
   // Serves the co-occurrence POOL_MERGE list instead of HYBRID_10. Read only behind
   // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
   resourceIntentPoolMerge: { availability: [], fliptKey: 'resource-intent-pool-merge' },
+  // Admits `kind: 'checkpoint'` (ATTACH_BM checkpoint lists). Read only behind
+  // `resourceIntentJev`, so it changes nothing while that is off. Dark like it.
+  resourceIntentCheckpoint: { availability: [], fliptKey: 'resource-intent-checkpoint' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

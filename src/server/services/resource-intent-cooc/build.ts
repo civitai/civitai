@@ -209,6 +209,29 @@ export async function fetchVersionText(
   return out;
 }
 
+const VERSION_BASE_MODEL_CHUNK = 10_000;
+
+/** The baseModel of each given version (the checkpoint screen's lookup, chunked as it was). */
+export async function fetchVersionBaseModels(
+  query: CoocRawQuery,
+  versionIds: readonly number[],
+  retryDelayMs?: number
+): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  for (let i = 0; i < versionIds.length; i += VERSION_BASE_MODEL_CHUNK) {
+    const chunk = versionIds.slice(i, i + VERSION_BASE_MODEL_CHUNK);
+    const vs = (await coocRetry(
+      () =>
+        query(
+          Prisma.sql`SELECT id, "baseModel" FROM "ModelVersion" WHERE id = ANY(${chunk}::int[])`
+        ),
+      retryDelayMs
+    )) as { id: number; baseModel: string }[];
+    for (const v of vs) out.set(v.id, v.baseModel);
+  }
+  return out;
+}
+
 export type CoocCountParams = {
   /** Model types that are indexed; every other attachment is ignored. */
   addonTypes: readonly string[];
@@ -416,12 +439,12 @@ const brotliCompress = promisify(zlib.brotliCompress);
 const brotliDecompress = promisify(zlib.brotliDecompress);
 const BROTLI_QUALITY = 9;
 
-function u32le(a: Uint32Array): Buffer {
+export function u32le(a: Uint32Array): Buffer {
   const out = Buffer.allocUnsafe(a.length * 4);
   for (let i = 0; i < a.length; i++) out.writeUInt32LE(a[i], i * 4);
   return out;
 }
-function fromU32le(b: Uint8Array, what: string): Uint32Array {
+export function fromU32le(b: Uint8Array, what: string): Uint32Array {
   if (b.length % 4 !== 0) throw new Error(`cooc payload: ${what} is not a uint32 array`);
   const buf = Buffer.from(b.buffer, b.byteOffset, b.byteLength);
   const out = new Uint32Array(b.length / 4);
@@ -440,7 +463,15 @@ async function compress(raw: Buffer) {
   });
 }
 
-export async function serializeCoocCounts(counts: CoocCounts): Promise<Buffer> {
+/**
+ * `checkpointSection` (checkpoint mode's attachment counts, `encodeCheckpointAttachSection` in
+ * `./checkpoint-attach`) rides as an optional 12th element. Without it the bytes are exactly what
+ * they were before the section existed.
+ */
+export async function serializeCoocCounts(
+  counts: CoocCounts,
+  checkpointSection?: unknown[]
+): Promise<Buffer> {
   const typeTable = [...new Set(counts.modelTypes)].sort(compareCodeUnits);
   const typeCode = new Map(typeTable.map((t, i) => [t, i]));
   const codes = Buffer.from(counts.modelTypes.map((t) => typeCode.get(t) as number));
@@ -456,6 +487,7 @@ export async function serializeCoocCounts(counts: CoocCounts): Promise<Buffer> {
     u32le(counts.ptr),
     u32le(counts.modelIdx),
     u32le(counts.c),
+    ...(checkpointSection ? [checkpointSection] : []),
   ]);
   const payload = await compress(raw);
   if (payload.length > COOC_MAX_PAYLOAD_BYTES)
@@ -465,13 +497,28 @@ export async function serializeCoocCounts(counts: CoocCounts): Promise<Buffer> {
 
 /** Decode and structurally validate a payload. Does NOT check its hash; the store does. */
 export async function deserializeCoocCounts(payload: Uint8Array): Promise<CoocCounts> {
+  return (await deserializeCoocPayload(payload)).counts;
+}
+
+/**
+ * The counts plus the optional checkpoint section, still encoded (`undefined` when the payload
+ * has no 12th element); `decodeCheckpointAttachSection` validates it.
+ *
+ * Elements after the 12th (none of which this code knows) are ignored rather than refused, so a
+ * payload written by a later build still serves the counts here. (Decoders before the checkpoint
+ * section required exactly 11 and refuse any payload carrying it: see the section-writer flag in
+ * `pipeline.ts`.)
+ */
+export async function deserializeCoocPayload(
+  payload: Uint8Array
+): Promise<{ counts: CoocCounts; checkpointSection: unknown }> {
   if (payload.length > COOC_MAX_PAYLOAD_BYTES)
     throw new Error(`cooc payload ${payload.length} bytes exceeds ${COOC_MAX_PAYLOAD_BYTES}`);
   const raw = await brotliDecompress(payload, { maxOutputLength: COOC_MAX_INFLATED_BYTES });
   const v = packr.unpack(raw) as unknown[];
-  if (!Array.isArray(v) || v.length !== 11 || v[0] !== COOC_PAYLOAD_FORMAT)
+  if (!Array.isArray(v) || v.length < 11 || v[0] !== COOC_PAYLOAD_FORMAT)
     throw new Error('cooc payload: unknown format');
-  const [, N, vocab, mids, typeTable, codes, nTb, nMb, ptrb, midxb, cb] = v as [
+  const [, N, vocab, mids, typeTable, codes, nTb, nMb, ptrb, midxb, cb, checkpointSection] = v as [
     string,
     number,
     string[],
@@ -482,7 +529,8 @@ export async function deserializeCoocCounts(payload: Uint8Array): Promise<CoocCo
     Uint8Array,
     Uint8Array,
     Uint8Array,
-    Uint8Array
+    Uint8Array,
+    unknown
   ];
   const modelIds = [...fromU32le(mids, 'modelIds')];
   const counts: CoocCounts = {
@@ -501,7 +549,7 @@ export async function deserializeCoocCounts(payload: Uint8Array): Promise<CoocCo
     c: fromU32le(cb, 'c'),
   };
   validateCoocCounts(counts);
-  return counts;
+  return { counts, checkpointSection };
 }
 
 export function validateCoocCounts(x: CoocCounts) {

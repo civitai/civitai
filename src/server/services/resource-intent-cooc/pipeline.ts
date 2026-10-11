@@ -3,12 +3,14 @@ import {
   CoocCountAccumulator,
   COOC_STATEMENT_TIMEOUT_MS,
   drawTrainingRows,
+  fetchVersionBaseModels,
   fetchVersionText,
   serializeCoocCounts,
   serializeTrainImageIds,
   timedCoocQuery,
   type CoocRawQuery,
 } from './build';
+import { CheckpointAttachAccumulator, encodeCheckpointAttachSection } from './checkpoint-attach';
 import { RESOURCE_INTENT_COOC_SPEC, RESOURCE_INTENT_COOC_SPEC_HASH } from './spec';
 import {
   assertCoocPin,
@@ -33,6 +35,13 @@ export type CoocBuildOptions = {
   seed: number;
   pinnedUntil: Date | null;
   dryRun: boolean;
+  /**
+   * Write checkpoint mode's attachment section (the 12th payload element). Callers pass the
+   * `resource-intent-cooc-checkpoint-section` Flipt flag. Off, the payload is the 11-element one
+   * that decoders from before the section can read; on, those decoders refuse it, so the flag
+   * opens only once no such decoder can serve (see that flag in `~/server/flipt/client`).
+   */
+  checkpointSection: boolean;
   now?: Date;
   query?: CoocRawQuery;
   sql?: CoocSql;
@@ -57,6 +66,11 @@ export type CoocBuildSummary = {
   keptPairs: number;
   /** Rows attaching a model under another type than its first one (it keeps the first). */
   typeConflicts: number;
+  /** Whether the payload carries checkpoint mode's attachment section. */
+  checkpointSection: boolean;
+  /** The section's baseModels and (baseModel, checkpoint) pairs; `null` when it is not written. */
+  checkpointBaseModels: number | null;
+  checkpointPairs: number | null;
   payloadBytes: number;
   dryRun: boolean;
   created: boolean;
@@ -122,6 +136,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
       ).id;
   try {
     const acc = new CoocCountAccumulator(spec.addonTypes);
+    const ckpt = opts.checkpointSection ? new CheckpointAttachAccumulator() : null;
     const versionText = new Map<number, CoocModelText>();
     const imageIds: number[] = [];
     let createdMin = Infinity;
@@ -147,6 +162,7 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
           const models = new Map<number, string>();
           for (const a of r.att) models.set(a.modelId, a.modelType);
           acc.add(coocTrainingTokens(r.prompt, own), [...models]);
+          ckpt?.add(r.att);
           imageIds.push(r.imageId);
           const ts = new Date(r.createdAt).getTime();
           createdMin = Math.min(createdMin, ts);
@@ -160,7 +176,14 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
       throw new Error('a training row lies outside the training window');
 
     const { rawPairs, rawVocab, typeConflicts, ...counts } = acc.finalize(spec);
-    const payload = await serializeCoocCounts(counts);
+    // The checkpoint screen read every version's baseModel once, after its draw; so does this.
+    const checkpointCounts = ckpt
+      ? ckpt.finalize(await fetchVersionBaseModels(query, ckpt.versionIds()))
+      : null;
+    const payload = await serializeCoocCounts(
+      counts,
+      checkpointCounts ? encodeCheckpointAttachSection(checkpointCounts) : undefined
+    );
     const summary: CoocBuildSummary = {
       rowId,
       contentHash: coocContentHash(opts.kind, payload),
@@ -178,6 +201,11 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
       rawPairs,
       keptPairs: counts.modelIdx.length,
       typeConflicts,
+      checkpointSection: checkpointCounts !== null,
+      checkpointBaseModels: checkpointCounts?.size ?? null,
+      checkpointPairs: checkpointCounts
+        ? [...checkpointCounts.values()].reduce((n, m) => n + m.size, 0)
+        : null,
       payloadBytes: payload.length,
       dryRun: opts.dryRun,
       created: false,

@@ -1,6 +1,11 @@
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import {
+  CHECKPOINT_ATTACH_BUILD_HASH,
+  checkpointAttachIndex,
+  type CheckpointAttachIndex,
+} from './checkpoint-attach';
 import { loadScores, type CoocScores } from './score';
 import { RESOURCE_INTENT_COOC_SPEC, RESOURCE_INTENT_COOC_SPEC_HASH } from './spec';
 import {
@@ -43,7 +48,17 @@ export type CoocFallbackReason =
   | 'spec_mismatch'
   | 'snapshot_unservable'
   | 'loading';
-export type ServedCooc = { contentHash: string; scores: CoocScores };
+/**
+ * `checkpoints`: checkpoint mode's ATTACH_BM candidates from the same snapshot, or `null` when the
+ * snapshot has no checkpoint section (built before it existed, or with the section-writer flag
+ * off) or one built under another `CHECKPOINT_ATTACH_BUILD_HASH`. POOL_MERGE serves the snapshot
+ * either way.
+ */
+export type ServedCooc = {
+  contentHash: string;
+  scores: CoocScores;
+  checkpoints: CheckpointAttachIndex | null;
+};
 export type CoocServing =
   | { snapshot: ServedCooc; fallbackReason: null }
   | { snapshot: null; fallbackReason: CoocFallbackReason };
@@ -63,12 +78,16 @@ async function loadServable(
   kind: CoocSnapshotKind,
   now: Date
 ): Promise<Loaded> {
-  const { meta, counts } = await loadCoocSnapshot(sql, contentHash, { kind, now });
+  const { meta, counts, checkpoints } = await loadCoocSnapshot(sql, contentHash, { kind, now });
   if (meta.specHash !== RESOURCE_INTENT_COOC_SPEC_HASH)
     throw new CoocSpecMismatchError(contentHash);
   return {
     contentHash,
     scores: loadScores(counts, { beta: RESOURCE_INTENT_COOC_SPEC.beta }),
+    checkpoints:
+      checkpoints?.buildHash === CHECKPOINT_ATTACH_BUILD_HASH
+        ? checkpointAttachIndex(checkpoints.counts)
+        : null,
     pinnedUntil: meta.pinnedUntil,
   };
 }
@@ -186,14 +205,14 @@ export class CoocSnapshotHolder {
         this.reason = 'no_snapshot';
       } else if (latest !== this.served?.contentHash && latest !== this.rejected) {
         loading = latest;
-        const { contentHash, scores } = await loadServable(
+        const { contentHash, scores, checkpoints } = await loadServable(
           sql,
           latest,
           'production',
           new Date(startedAt)
         );
         if (gen !== this.generation) return;
-        this.served = { contentHash, scores };
+        this.served = { contentHash, scores, checkpoints };
         this.rejected = null;
       }
       this.nextCheckAt = this.pollAfter(startedAt);
@@ -229,7 +248,11 @@ export class CoocStudySnapshots {
     const loaded = await loading;
     if (!loaded.pinnedUntil || loaded.pinnedUntil.getTime() <= now.getTime())
       throw new CoocSnapshotExpiredError(`cooc study snapshot ${contentHash}: pin has passed`);
-    return { contentHash: loaded.contentHash, scores: loaded.scores };
+    return {
+      contentHash: loaded.contentHash,
+      scores: loaded.scores,
+      checkpoints: loaded.checkpoints,
+    };
   }
 }
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 
 import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
 
@@ -206,5 +207,98 @@ describe('the auth/clamp mirror with generation-resources.ts', () => {
     const { res } = await call({});
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ degraded: true, suggestions: [] });
+  });
+});
+
+describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
+  const CHECKPOINT_BODY = { ...VALID_BODY, kind: 'checkpoint' };
+
+  it('🔴 flag off: a checkpoint request is a 400 before the rate limit; the service never runs', async () => {
+    for (const flags of [
+      { resourceIntentJev: true },
+      { resourceIntentJev: true, resourceIntentCheckpoint: false },
+    ]) {
+      mockGetFeatureFlags.mockReturnValue(flags);
+      const { res } = await call({ body: CHECKPOINT_BODY });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toEqual({ error: "kind 'checkpoint' is not enabled" });
+    }
+    expect(mockCheckBlockLLMRateLimit).not.toHaveBeenCalled();
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
+  it('flag off: add-on requests (no kind, or kind addon) are served exactly as before', async () => {
+    await call({});
+    await call({ body: { ...VALID_BODY, kind: 'addon' } });
+    expect(mockGetResourceIntent).toHaveBeenCalledTimes(2);
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(VALID_BODY);
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual({ browsingLevel: 31, poolMerge: false });
+    expect(mockGetResourceIntent.mock.calls[1][0]).toEqual({ ...VALID_BODY, kind: 'addon' });
+  });
+
+  it('flag on: the request reaches the service with its kind; the route picks no arm (ATTACH_BM)', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentJev: true,
+      resourceIntentCheckpoint: true,
+    });
+    const { res } = await call({ body: CHECKPOINT_BODY });
+    expect(res.statusCode).toBe(200);
+    expect(mockGetResourceIntent.mock.calls[0][0]).toEqual(CHECKPOINT_BODY);
+    expect(mockGetResourceIntent.mock.calls[0][1]).toEqual({ browsingLevel: 31, poolMerge: false });
+  });
+
+  it('🔴 checkpoint mode requires baseModel: 400 even with the flag on', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentJev: true,
+      resourceIntentCheckpoint: true,
+    });
+    const { res } = await call({ body: { prompt: 'p', kind: 'checkpoint' } });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.body)).toContain("baseModel is required when kind is 'checkpoint'");
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+    // The add-on path still accepts a request without one.
+    const ok = await call({ body: { prompt: 'p' } });
+    expect(ok.res.statusCode).toBe(200);
+  });
+
+  it('🔴 checkpoint mode admits only a known base model (the add-on path does not check)', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentJev: true,
+      resourceIntentCheckpoint: true,
+    });
+    for (const baseModel of ['NotABaseModel', 'sdxl 1.0', 'SDXL 1.0 ', 'x'.repeat(101)]) {
+      const { res } = await call({ body: { prompt: 'p', kind: 'checkpoint', baseModel } });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.stringify(res.body)).toContain(
+        "baseModel must be a known base model when kind is 'checkpoint'"
+      );
+    }
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+    for (const baseModel of ['SDXL 1.0', 'Illustrious', 'Pony']) {
+      expect(baseModels).toContain(baseModel);
+      const { res } = await call({ body: { prompt: 'p', kind: 'checkpoint', baseModel } });
+      expect(res.statusCode).toBe(200);
+    }
+    expect(mockGetResourceIntent).toHaveBeenCalledTimes(3);
+    // The add-on path takes an unknown baseModel as before.
+    expect((await call({ body: { prompt: 'p', baseModel: 'NotABaseModel' } })).res.statusCode).toBe(
+      200
+    );
+    expect((await call({ body: { prompt: 'p', baseModel: 'x'.repeat(101) } })).res.statusCode).toBe(
+      200
+    );
+  });
+
+  it('an unknown kind is a 400', async () => {
+    const { res } = await call({ body: { ...VALID_BODY, kind: 'lora' } });
+    expect(res.statusCode).toBe(400);
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+  });
+
+  it('resourceIntentCheckpoint alone does not open the route', async () => {
+    mockGetFeatureFlags.mockReturnValue({ resourceIntentCheckpoint: true });
+    const { res } = await call({ body: CHECKPOINT_BODY });
+    expect(res.statusCode).toBe(404);
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
   });
 });
