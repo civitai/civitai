@@ -31,7 +31,10 @@ import {
 } from '~/server/services/sticker.service';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { GetSearchEventDecorationsInput } from '~/server/schema/cosmetic.schema';
-import { getVisibleDecorationEvents } from '~/server/events/event-decoration-access';
+import {
+  getVisibleDecorationEvents,
+  withoutHiddenEventDecorations,
+} from '~/server/events/event-decoration-access';
 import { edgeCacheIt, noEdgeCache, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
@@ -42,6 +45,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Search hits come from the index, which carries no hats, so the grid asks for them. From launch
@@ -71,8 +75,14 @@ export const cosmeticRouter = router({
   getById: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
-    .query(({ input }) => {
-      return getCosmeticDetail(input);
+    .query(async ({ input, ctx }) => {
+      const cosmetic = await getCosmeticDetail(input);
+      const viewer = eventViewerOf(ctx);
+      // Moderators edit event decorations in every state, armed launch included.
+      if (!cosmetic || viewer.isModerator) return cosmetic;
+      // An event decoration the viewer may not see yet reads as missing, like an unknown id.
+      const [visible] = await withoutHiddenEventDecorations([{ cosmetic }], viewer);
+      return visible ? cosmetic : null;
     }),
   getSticker: publicProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })

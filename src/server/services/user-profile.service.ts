@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { EventViewer } from '~/server/events/event-access';
+import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
 import type {
   GetUserProfileSchema,
@@ -83,11 +85,14 @@ export const getUserWithProfile = async ({
   tx,
   isModerator,
   sessionUserId,
+  eventViewer = { id: sessionUserId, isModerator },
   domain,
 }: GetUserProfileSchema & {
   tx?: Prisma.TransactionClient;
   isModerator?: boolean;
   sessionUserId?: number;
+  /** Who the event preview gate is asked about; the request's `eventViewerOf` where there is one. */
+  eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {
   const dbClient = tx ?? dbWrite;
@@ -167,6 +172,7 @@ export const getUserWithProfile = async ({
 
     return {
       ...user,
+      cosmetics: await withoutHiddenEventDecorations(user.cosmetics, eventViewer),
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,

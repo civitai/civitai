@@ -5,6 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { EventDecorationDefinition } from '~/shared/constants/event-decoration.constants';
 import {
   EVENT_DECORATION_DEFINITIONS,
+  isEventDecorationData,
   isEventDecorationReleased,
 } from '~/shared/constants/event-decoration.constants';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
@@ -35,10 +36,45 @@ export async function getVisibleDecorationEvents(
   viewer: EventViewer,
   now = new Date()
 ) {
-  const visible = new Set<string>();
-  const candidates = EVENT_DECORATION_DEFINITIONS.filter(
-    (d) => d.entityTypes.includes(entityType) && isEventDecorationReleased(d, now)
+  return visibleAmong(
+    EVENT_DECORATION_DEFINITIONS.filter((d) => d.entityTypes.includes(entityType)),
+    viewer,
+    now
   );
+}
+
+/**
+ * A user's cosmetics, less the event decorations this viewer does not see yet: the holdings a
+ * profile lists include hats nobody may see before launch. Fails closed with the same rule.
+ */
+export async function withoutHiddenEventDecorations<T extends { cosmetic: { data: unknown } }>(
+  cosmetics: T[],
+  viewer: EventViewer,
+  now = new Date()
+) {
+  const events = new Set(
+    cosmetics.flatMap(({ cosmetic }) =>
+      isEventDecorationData(cosmetic.data) ? [cosmetic.data.event] : []
+    )
+  );
+  if (!events.size) return cosmetics;
+  const visible = await visibleAmong(
+    EVENT_DECORATION_DEFINITIONS.filter((d) => events.has(d.event)),
+    viewer,
+    now
+  );
+  return cosmetics.filter(
+    ({ cosmetic }) => !isEventDecorationData(cosmetic.data) || visible.has(cosmetic.data.event)
+  );
+}
+
+async function visibleAmong(
+  definitions: readonly EventDecorationDefinition[],
+  viewer: EventViewer,
+  now: Date
+) {
+  const visible = new Set<string>();
+  const candidates = definitions.filter((d) => isEventDecorationReleased(d, now));
   for (const definition of candidates) {
     try {
       if (await isEventDecorationWearable(definition, viewer, now)) visible.add(definition.event);

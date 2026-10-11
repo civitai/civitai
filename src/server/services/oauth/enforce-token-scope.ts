@@ -44,17 +44,19 @@ export function auditStatusFromError(error: unknown): number {
   return 500;
 }
 
-/**
- * Throws FORBIDDEN unless the request came from a session or carries a bearer credential
- * `isFullScopeUserKey` accepts.
- */
-export function assertSessionOrFullUserKey(
-  ctx: BearerCredential & { apiKeyId?: number | null }
-): void {
+/** Whether the request came from a session or carries a bearer credential `isFullScopeUserKey` accepts. */
+export function isSessionOrFullUserKey(ctx: BearerCredential & { apiKeyId?: number | null }) {
   // Unlike req.context, createContext defaults tokenScope to Full for sessions,
   // so it is not a bearer marker.
   const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
-  if (presentedBearer && !isFullScopeUserKey(ctx)) {
+  return !presentedBearer || isFullScopeUserKey(ctx);
+}
+
+/** Throws FORBIDDEN unless `isSessionOrFullUserKey`. */
+export function assertSessionOrFullUserKey(
+  ctx: BearerCredential & { apiKeyId?: number | null }
+): void {
+  if (!isSessionOrFullUserKey(ctx)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'This action requires a signed-in session or a full-access personal API key.',
