@@ -57,7 +57,7 @@ describe('useProfileAchievements', () => {
   });
 
   it('asks without one otherwise', () => {
-    expect(inputFor(null)).toEqual({ userId: 7 });
-    expect(inputFor(undefined)).toEqual({ userId: 7 });
+    expect(inputFor(null)).toStrictEqual({ userId: 7 });
+    expect(inputFor(undefined)).toStrictEqual({ userId: 7 });
   });
 });

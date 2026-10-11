@@ -462,6 +462,24 @@ describe('achievements tab', () => {
     }
   });
 
+  it('does not scroll once the list is gone before the frame', async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      mount(
+        React.createElement(ProfileAchievementsList, { data, userId: OWNER, spotlight: 'blaze' })
+      );
+      act(() => root?.unmount());
+      await nextFrame();
+      expect(scrolled).toEqual([]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   // The ring is drawn by the wrapper, which is the grid item: it must fill its cell and the card
   // must fill it, with the card's own radius. Pinned by class (component tests load no stylesheet).
   it('rings the card with a wrapper its card fills, at the card radius', () => {
