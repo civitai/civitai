@@ -168,11 +168,10 @@ export async function checkSubListingSyncRateLimit(
 
 // ── WRITE BUDGET (append + update, one shared budget per (user, app)) ─────────
 //
-// Token buckets, so a write budget comes back continuously instead of all at once after a
-// 24h window, and only writes that LAND spend it: the caller reserves a write token before
-// moderation and releases it if the write never lands (civitai/civitai-app-starters#597).
-// Writes that fail as the caller's fault are charged to a separate rejection bucket instead,
-// which caps how much moderation a user can make us run for writes that never land.
+// Token buckets: the budget refills continuously, and only writes that LAND spend it — the
+// caller reserves a token before moderation and releases it if the write never lands
+// (civitai/civitai-app-starters#597). Writes refused as the caller's fault are charged to a
+// separate rejection bucket, capping moderation spent on writes that never land.
 
 export type TokenBucketParams = { capacity: number; refillIntervalMs: number };
 export type SharedWriteBudgetParams = {
@@ -184,10 +183,10 @@ export type SharedWriteBudgetParams = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const SHARED_WRITE_BUDGET: SharedWriteBudgetParams = {
-  // 10 covers a normal session or a verification walk without waiting; one back every 6 min.
+  // 10 covers a normal session or a verification walk without waiting.
   burst: { capacity: 10, refillIntervalMs: 6 * 60 * 1000 },
-  // Matches the 50-row per-user cap. It refills continuously (one every ~29 min), so
-  // exhausting it costs ~29 min, not up to 24h as the old fixed window did.
+  // Matches the 50-row per-user cap (SHARED_KV_PER_USER_ROW_CAP). It refills continuously
+  // (one every ~29 min), so exhausting it costs ~29 min, not up to 24h.
   daily: { capacity: 50, refillIntervalMs: DAY_MS / 50 },
   // Writes refused after the reserve (moderation block, row cap, quota, NOT_FOUND, …).
   rejections: { capacity: 10, refillIntervalMs: 30 * 60 * 1000 },

@@ -459,7 +459,7 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    *
    * No other control stands in the way: the row population never moves (these are all
    * updates, so neither APP_ROW_LIMIT nor SHARED_KV_PER_USER_ROW_CAP is consulted),
-   * and the rate limiter is the same daily bucket an honest editor uses. The app byte
+   * and the rate limiter is the same write budget an honest editor uses. The app byte
    * ceiling is the only thing between this and 3.0 MB of unbudgeted storage per
    * write.
    *

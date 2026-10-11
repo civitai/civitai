@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
+import { TRPCError } from '@trpc/server';
 import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import type * as FliptClientModule from '~/server/flipt/client';
 import type * as RateLimitModule from '~/server/utils/shared-storage-rate-limit';
@@ -24,6 +25,8 @@ const {
   mockClient,
   mockGetSessionUser,
   mockIsRevoked,
+  mockIsFlipt,
+  mockFindBlocked,
 } = vi.hoisted(() => {
   type QueryFn = (
     sql: string,
@@ -45,6 +48,8 @@ const {
     mockIsRevoked: vi.fn<(blockInstanceId: string, sub?: string) => Promise<boolean>>(
       async () => false
     ),
+    mockIsFlipt: vi.fn<(flag: string) => Promise<boolean>>(async () => false),
+    mockFindBlocked: vi.fn<() => Promise<unknown[]>>(async () => []),
   };
 });
 
@@ -69,12 +74,12 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: async () => undefined,
-  findBlockedUserContent: async () => [],
+  findBlockedUserContent: () => mockFindBlocked(),
   stripBenignPhrases: async (text: string) => text,
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClientModule>()),
-  isFlipt: async () => false,
+  isFlipt: (flag: string) => mockIsFlipt(flag),
   getFliptBoolean: async () => false,
 }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { insert: async () => undefined } }));
@@ -141,6 +146,8 @@ beforeEach(() => {
   });
   mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
   mockDbRead.account.count.mockResolvedValue(0);
+  mockIsFlipt.mockResolvedValue(false);
+  mockFindBlocked.mockResolvedValue([]);
   mockWritePath({});
 });
 
@@ -231,6 +238,39 @@ describe('write budget: only landed writes spend it', () => {
     expect(budget()).toEqual([0, 0, 0]);
   });
 
+  it('an update whose COMMIT fails refunds the write token and charges no rejection', async () => {
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql === 'COMMIT') throw new Error('connection reset');
+      if (sql.trim().startsWith('UPDATE')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(updateSharedRow('tok', 'ROW-1', CLEAN)).rejects.toThrow('connection reset');
+    expect(budget()).toEqual([0, 0, 0]);
+  });
+
+  it('a 5xx TRPCError before the write lands refunds without charging a rejection', async () => {
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('INSERT INTO')) {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'insert failed' });
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    expect(await codeOf(appendSharedRow('tok', CLEAN))).toBe('INTERNAL_SERVER_ERROR');
+    expect(budget()).toEqual([0, 0, 0]);
+  });
+
+  it('a 4xx that is our outage (the enforced data scan failing) charges no rejection', async () => {
+    mockIsFlipt.mockImplementation(async (flag: string) => flag.endsWith('enforce'));
+    mockFindBlocked.mockRejectedValue(new Error('blocklist down'));
+    await expect(
+      appendSharedRow('tok', { ...CLEAN, data: { note: 'a calm lake' } })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Content could not be reviewed right now. Please try again.',
+    });
+    expect(budget()).toEqual([0, 0, 0]);
+  });
+
   it('a write that LANDED and then threw keeps its token spent', async () => {
     // After COMMIT the only code that can still throw is the connection release.
     mockClient.release.mockImplementationOnce(() => {
@@ -278,7 +318,7 @@ describe('write budget: refusals', () => {
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
 
-  // civitai/civitai-app-starters#597: a create→withdraw loop used to exhaust a 24h window.
+  // civitai/civitai-app-starters#597
   it('a create→withdraw loop is throttled to the refill rate, not locked out for a day', async () => {
     let landed = 0;
     let refusal: { message?: string } | undefined;

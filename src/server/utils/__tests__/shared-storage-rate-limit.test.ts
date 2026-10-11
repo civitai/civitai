@@ -14,7 +14,7 @@ import {
 
 /**
  * INVARIANT GUARDS: the refusal's retryAfterSeconds and the fail-open contract, across the three
- * fixed-window shared buckets (append/update moved to the token-bucket write budget).
+ * fixed-window shared buckets.
  */
 
 // Fixtures deliberately unlike any production window or cap.

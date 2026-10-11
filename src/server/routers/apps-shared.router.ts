@@ -44,7 +44,10 @@ import { newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import { logToAxiom } from '~/server/logging/client';
-import { escalateToServerFault } from '~/server/logging/server-fault-override';
+import {
+  escalateToServerFault,
+  isEscalatedServerFault,
+} from '~/server/logging/server-fault-override';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-flag';
 import {
@@ -731,7 +734,11 @@ async function withSharedWriteBudget<T>(
     });
   } catch (err) {
     if (!landed) {
-      const rejected = err instanceof TRPCError && getHTTPStatusCodeFromError(err) < 500;
+      // A 4xx that is our outage (e.g. the `data` scan failing) is not the caller's fault.
+      const rejected =
+        err instanceof TRPCError &&
+        getHTTPStatusCodeFromError(err) < 500 &&
+        !isEscalatedServerFault(err);
       await budget.release({ rejected });
     }
     throw err;
@@ -1179,11 +1186,8 @@ export async function withdrawSharedRow(
   const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'withdraw');
   const uid = userId as number;
 
-  // This op had NO bucket while every other write on the surface had one — a
-  // gap worth closing on its own terms, and one a REST ingress would widen.
-  // Own per-minute bucket; the window/ceiling rationale (and why it is NOT the
-  // report daily bucket and NOT the shared vote bucket) lives beside the
-  // constants in shared-storage-rate-limit.ts.
+  // Own per-minute bucket; why it is neither the report daily bucket nor the vote
+  // bucket lives beside the constants in shared-storage-rate-limit.ts.
   const rl = await checkSharedWithdrawRateLimit(uid, appBlockId);
   if (!rl.allowed)
     throwSharedRateLimited(rl, `Too many withdrawals — retry in ${rl.retryAfterSeconds}s`);
