@@ -191,6 +191,9 @@ describe('TeamRoster cards', () => {
 
   it('puts the leader in the middle of a wide podium and first on a phone', () => {
     const el = render([member(1), member(2), member(3)]);
+    expect(podium(el)!.className).toContain('@sm:grid-cols-3');
+    expect(podium(el)!.className).toContain('@sm:pt-4');
+    expect(podium(el)!.className).not.toContain('@sm:justify-center');
     const cards = all(podium(el)!, 'roster-podium-card');
     expect(cards[0].className).toContain('@sm:order-2');
     expect(cards[0].className).toContain('col-span-2');
@@ -224,8 +227,10 @@ describe('TeamRoster cards', () => {
       expect(card.className).toContain('@sm:w-[calc((100%-1.5rem)/3)]');
     }
     // Alone, the card takes the phone row; two share it.
-    const first = all(podium(el)!, 'roster-podium-card')[0];
-    expect(first.className.split(' ').includes('col-span-2')).toBe(count === 1);
+    const spans = all(podium(el)!, 'roster-podium-card').map((c) =>
+      c.className.split(' ').includes('col-span-2')
+    );
+    expect(spans).toEqual(count === 1 ? [true] : [false, false]);
   });
 
   it("drops the viewer's own card once they opt out, and ranks the rest with no gap", () => {

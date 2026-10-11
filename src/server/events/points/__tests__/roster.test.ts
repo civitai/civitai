@@ -277,10 +277,32 @@ describe('team roster', () => {
         'hats'
       )
     ).toEqual([10, 9]);
+    // Points outrank join time even when the later joiner has fewer points.
+    expect(
+      await ids(
+        [
+          member(9, { hats: oneHat, joinedAt: new Date(same.getTime() + 1) }),
+          member(10, { hats: oneHat, joinedAt: same }),
+        ],
+        { 9: 50, 10: 100 },
+        'hats'
+      )
+    ).toEqual([10, 9]);
     // Most points: tied points, so hats decide.
     expect(
       await ids(
         [member(9, { hats: oneHat }), member(10, { hats: twoHats })],
+        { 9: 50, 10: 50 },
+        'points'
+      )
+    ).toEqual([10, 9]);
+    // Hats outrank join time even when the later joiner has fewer hats.
+    expect(
+      await ids(
+        [
+          member(9, { hats: oneHat, joinedAt: new Date(same.getTime() + 1) }),
+          member(10, { hats: twoHats, joinedAt: same }),
+        ],
         { 9: 50, 10: 50 },
         'points'
       )

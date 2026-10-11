@@ -161,6 +161,14 @@ describe('orderRoster', () => {
     expect(order([at2(9, 2, 50, 0), at2(2, 2, 50, 0)], 'points')).toEqual([2, 9]);
   });
 
+  // Later fields disagree with each other: only the key's own priority decides.
+  it('puts points before join time for hats, and hats before join time for points', () => {
+    expect(order([at2(1, 1, 50, 2000), at2(2, 1, 100, 1000)], 'hats')).toEqual([2, 1]);
+    expect(order([at2(1, 1, 50, 2000), at2(2, 3, 50, 1000)], 'points')).toEqual([2, 1]);
+    // Newest: points before id.
+    expect(order([at2(1, 0, 1, 1000), at2(2, 0, 2, 1000)], 'newest')).toEqual([2, 1]);
+  });
+
   it('breaks a newest tie by points, then the lower id, ignoring hats', () => {
     expect(order([at2(1, 9, 1, 1000), at2(2, 0, 2, 1000)], 'newest')).toEqual([2, 1]);
     expect(order([at2(9, 9, 1, 1000), at2(2, 0, 1, 1000)], 'newest')).toEqual([2, 9]);
