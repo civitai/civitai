@@ -107,11 +107,27 @@ export function listingRatingAssetLabel(asset: ListingRatingDisplayAsset): strin
 }
 
 /**
+ * The rating an on-site listing's backing app declares, kept apart from the listing's own
+ * stored rating; `null` for an off-site listing (even one with an app attached) or an
+ * on-site one with no app row.
+ *
+ * This is the declaration a rating FLOOR may rest on: it never falls back to the stored
+ * rating, which would make the stored value its own floor.
+ */
+export function appDeclaredListingRating(input: {
+  kind: string;
+  appRating: string | null | undefined;
+}): string | null {
+  return input.kind === 'onsite' ? input.appRating ?? null : null;
+}
+
+/**
  * The rating the author declared for a listing, or `null` when none survives to compare.
  *
- * An on-site app declares it in its manifest, kept on the app row; before the first
- * approval there is no app row and the listing still carries the submitted value. An
- * off-site listing has no separate declaration: approval overwrites the author's rating.
+ * An on-site app declares it in its manifest, kept on the app row
+ * (`appDeclaredListingRating`); before the first approval there is no app row and the
+ * listing still carries the submitted value. An off-site listing has no separate
+ * declaration: approval overwrites the author's rating.
  */
 export function declaredListingRating(input: {
   kind: string;
@@ -119,7 +135,7 @@ export function declaredListingRating(input: {
   listingRating: string | null | undefined;
 }): string | null {
   if (input.kind !== 'onsite') return null;
-  return input.appRating ?? input.listingRating ?? null;
+  return appDeclaredListingRating(input) ?? input.listingRating ?? null;
 }
 
 /** The per-asset levels of one listing, as `appListings.getAssets` returns them. */

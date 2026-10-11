@@ -9,6 +9,7 @@ import {
 } from '~/server/services/blocks/app-listing-rating';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
+import { appDeclaredListingRating } from '~/shared/utils/listing-rating-display';
 
 export type ListingRatingReDerive = {
   appListingId: string;
@@ -91,7 +92,10 @@ export async function reDeriveListingRatingInTx(
 
   const after = resolveReDerivedListingRating({
     stored: listing.contentRating,
-    declared: listing.kind === 'onsite' ? listing.appBlock?.contentRating ?? null : null,
+    declared: appDeclaredListingRating({
+      kind: listing.kind,
+      appRating: listing.appBlock?.contentRating,
+    }),
     assets,
     reratedImageId: args.imageId,
     previousNsfwLevel: args.previousNsfwLevel,
