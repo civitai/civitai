@@ -176,12 +176,10 @@ function screenLists(attachByBm: Map<string, Map<number, number>>) {
   async function gateEntries(cands: readonly number[], bm: string | null): Promise<Entry[]> {
     if (!cands.length) return [];
     const res = await retry(() =>
-      d
-        .searchClient!.index(d.MODELS_SEARCH_INDEX)
-        .search('', {
-          filter: d.mf.and(filterOf(bm), d.mf.inArray('id', [...cands])) ?? undefined,
-          limit: cands.length,
-        } as never)
+      d.searchClient!.index(d.MODELS_SEARCH_INDEX).search('', {
+        filter: d.mf.and(filterOf(bm), d.mf.inArray('id', [...cands])) ?? undefined,
+        limit: cands.length,
+      } as never)
     );
     const rank = new Map(cands.map((id, i) => [id, i]));
     const docs = [...(res.hits as never[])].sort(
@@ -197,13 +195,11 @@ function screenLists(attachByBm: Map<string, Map<number, number>>) {
   const deepList = (bm: string | null) =>
     once(`deep:${bm}`, async () => {
       const res = await retry(() =>
-        d
-          .searchClient!.index(d.MODELS_SEARCH_INDEX)
-          .search('', {
-            filter: filterOf(bm) ?? undefined,
-            sort: ['metrics.thumbsUpCount:desc'],
-            limit: CK.deepLimit,
-          } as never)
+        d.searchClient!.index(d.MODELS_SEARCH_INDEX).search('', {
+          filter: filterOf(bm) ?? undefined,
+          sort: ['metrics.thumbsUpCount:desc'],
+          limit: CK.deepLimit,
+        } as never)
       );
       return {
         ids: d.matcher
@@ -287,7 +283,12 @@ function drawRows(): DrawRow[] {
         { modelId: 7000 + k, modelType: 'Checkpoint', versionId: versionId(k, i % versionsOf(k)) },
       ];
       if (i % 3 === 1 && versionsOf(k) > 1)
-        att.push({ modelId: 7000 + k, modelType: 'Checkpoint', versionId: versionId(k, 1) });
+        // A second, different version of the same model (both under SynthA, except model 3's v2).
+        att.push({
+          modelId: 7000 + k,
+          modelType: 'Checkpoint',
+          versionId: versionId(k, (i + 1) % versionsOf(k)),
+        });
       if (i % 7 === 2) att.push({ modelId: 9000 + i, modelType: 'LORA', versionId: 99_000 + i });
       if (i % 11 === 5)
         att.push({

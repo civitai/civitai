@@ -57,7 +57,6 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
 
 const {
   getResourceIntent,
-  resourceIntentCacheKey,
   checkpointIntentCacheKey,
   COOC_FALLBACK_SNAPSHOT_KEY,
   CHECKPOINT_MODEL,
@@ -67,6 +66,10 @@ const { RESOURCE_INTENT_CHECKPOINT_SPEC_HASH } = await import(
 );
 const { CHECKPOINT_ATTACH_BUILD_HASH } = await import(
   '~/server/services/resource-intent-cooc/checkpoint-attach'
+);
+const { RESOURCE_INTENT_SPEC_HASH } = await import('~/server/schema/resource-intent.schema');
+const { RESOURCE_INTENT_STAGE3_SPEC_HASH } = await import(
+  '~/server/services/resource-intent-stage3'
 );
 const { RESOURCE_INTENT_COOC_SPEC_HASH } = await import(
   '~/server/services/resource-intent-cooc/spec'
@@ -274,8 +277,9 @@ describe('🔴 add-on mode is untouched', () => {
         'model',
         'criteriaVersion',
       ]);
+      // Literal terms, not the key function: the add-on key must not gain a checkpoint term.
       expect(redisMock.redis.packed.set.mock.calls[0][0]).toBe(
-        resourceIntentCacheKey({ prompt: PROMPT, baseModel: BM, browsingLevel: 3, cap: 50 })
+        keyOf([PROMPT, BM, '3', '50', RESOURCE_INTENT_SPEC_HASH, RESOURCE_INTENT_STAGE3_SPEC_HASH])
       );
       expect(Object.keys(shadowRow())).not.toContain('kind');
       expect(Object.keys(shadowRow())).not.toContain('checkpointSpecHash');

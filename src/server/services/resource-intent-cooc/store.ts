@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 
 import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocPayload, type CoocCounts } from './build';
+import { logToAxiom } from '~/server/logging/client';
 import { decodeCheckpointAttachSection, type CheckpointAttachSection } from './checkpoint-attach';
 
 /**
@@ -229,6 +230,23 @@ function isAllocationFailure(e: unknown): boolean {
   );
 }
 
+function decodeSectionOrNull(contentHash: string, raw: unknown): CheckpointAttachSection | null {
+  if (raw === undefined) return null;
+  try {
+    return decodeCheckpointAttachSection(raw);
+  } catch (e) {
+    logToAxiom(
+      {
+        type: 'resource-intent-checkpoint-section-invalid',
+        contentHash,
+        error: e instanceof Error ? e.message : String(e),
+      },
+      'temp-search'
+    ).catch(() => undefined);
+    return null;
+  }
+}
+
 /**
  * Load a ready snapshot by content hash, refusing bytes whose hash does not match, a row of another
  * kind than the caller asked for, a payload that does not decode (`CoocSnapshotCorruptError`), and
@@ -236,7 +254,8 @@ function isAllocationFailure(e: unknown): boolean {
  * while decoding is rethrown as it is, not as `CoocSnapshotCorruptError`.
  *
  * `checkpoints` is the payload's checkpoint-attachment section, or `null` for a snapshot built
- * before it existed. A section that is present but malformed fails the whole load as corrupt.
+ * before it existed — or one whose section does not decode: that only takes checkpoint mode to its
+ * fallback (`spec_mismatch`), and never the co-occurrence counts POOL_MERGE serves.
  */
 export async function loadCoocSnapshot(
   sql: CoocSql,
@@ -269,10 +288,7 @@ export async function loadCoocSnapshot(
   try {
     const decoded = await deserializeCoocPayload(payload);
     counts = decoded.counts;
-    checkpoints =
-      decoded.checkpointSection === undefined
-        ? null
-        : decodeCheckpointAttachSection(decoded.checkpointSection);
+    checkpoints = decodeSectionOrNull(contentHash, decoded.checkpointSection);
   } catch (e) {
     // Out of memory, not bad bytes: a later read of the same row can pass, so not unservable.
     if (isAllocationFailure(e)) throw e;

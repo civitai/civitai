@@ -156,6 +156,37 @@ const INSIGHT_FALLBACK_CACHE_TTL_SECONDS = 60;
 /** A POOL_MERGE response served without a snapshot is retried as soon as one may have loaded. */
 const COOC_FALLBACK_CACHE_TTL_SECONDS = 60;
 
+/**
+ * The cache lifetime of a response, for both modes (checkpoint responses never carry
+ * `insightFallback`, so the ladder is the same for them).
+ *
+ * Read off the RESPONSE, not the locals, so what is cached and what sets
+ * its lifetime are the same two fields — including on a path that rebuilt
+ * the response object. `degraded` is checked first because a degraded
+ * response carries no suggestions whatever the label read did.
+ * 🔴 THIS PRECEDENCE IS NOT PINNED BY ANY TEST, and while both constants
+ * are 60 the swap is a SEMANTIC NO-OP — the two orderings agree on all
+ * four (degraded, insightFallback) states, so no test anywhere can kill
+ * it, and none covers the `degraded && insightFallback` state where the
+ * order would start to matter. That overlap state IS reachable: a failed
+ * label read followed by a later-stage failure produces it. So the moment
+ * you give the two paths different values this ordering becomes
+ * behaviourally load-bearing with no guard on it — pin it in the same
+ * change that diverges them. (Same class as the promote/demote constant
+ * swap the F1 test docstring discloses. The earlier mutation sweep on
+ * this branch did not cover it; its own wording scoped itself to a re-run
+ * after the fixes, so the gap is in what was swept, not in the claim.)
+ */
+function responseCacheTtl(response: ResourceIntentResponse): number {
+  return response.degraded
+    ? DEGRADED_CACHE_TTL_SECONDS
+    : response.insightFallback
+    ? INSIGHT_FALLBACK_CACHE_TTL_SECONDS
+    : response.coocFallback
+    ? COOC_FALLBACK_CACHE_TTL_SECONDS
+    : CACHE_TTL_SECONDS;
+}
+
 export type ResourceIntentArm = 'hybrid_10' | 'pool_merge';
 
 /** The snapshot term of a POOL_MERGE cache key when no snapshot is served. */
@@ -591,29 +622,7 @@ export async function getResourceIntent(
   if (!cachedHit && !studyFailure) {
     try {
       await redis.packed.set(resourceIntentCacheKey(cacheInput), response, {
-        // Read off the RESPONSE, not the locals, so what is cached and what sets
-        // its lifetime are the same two fields — including on a path that rebuilt
-        // the response object. `degraded` is checked first because a degraded
-        // response carries no suggestions whatever the label read did.
-        // 🔴 THIS PRECEDENCE IS NOT PINNED BY ANY TEST, and while both constants
-        // are 60 the swap is a SEMANTIC NO-OP — the two orderings agree on all
-        // four (degraded, insightFallback) states, so no test anywhere can kill
-        // it, and none covers the `degraded && insightFallback` state where the
-        // order would start to matter. That overlap state IS reachable: a failed
-        // label read followed by a later-stage failure produces it. So the moment
-        // you give the two paths different values this ordering becomes
-        // behaviourally load-bearing with no guard on it — pin it in the same
-        // change that diverges them. (Same class as the promote/demote constant
-        // swap the F1 test docstring discloses. The earlier mutation sweep on
-        // this branch did not cover it; its own wording scoped itself to a re-run
-        // after the fixes, so the gap is in what was swept, not in the claim.)
-        EX: response.degraded
-          ? DEGRADED_CACHE_TTL_SECONDS
-          : response.insightFallback
-          ? INSIGHT_FALLBACK_CACHE_TTL_SECONDS
-          : response.coocFallback
-          ? COOC_FALLBACK_CACHE_TTL_SECONDS
-          : CACHE_TTL_SECONDS,
+        EX: responseCacheTtl(response),
       });
     } catch {
       // A cache write failure never fails the request.
@@ -850,13 +859,7 @@ async function getCheckpointIntent(
 
   if (cacheKey && !cachedHit) {
     try {
-      await redis.packed.set(cacheKey, response, {
-        EX: response.degraded
-          ? DEGRADED_CACHE_TTL_SECONDS
-          : response.coocFallback
-          ? COOC_FALLBACK_CACHE_TTL_SECONDS
-          : CACHE_TTL_SECONDS,
-      });
+      await redis.packed.set(cacheKey, response, { EX: responseCacheTtl(response) });
     } catch {
       // A cache write failure never fails the request.
     }

@@ -118,14 +118,16 @@ export function decodeCheckpointAttachSection(raw: unknown): CheckpointAttachSec
     fail('baseModels');
   const bms = baseModels as string[];
   for (let i = 1; i < bms.length; i++) if (!(bms[i - 1] < bms[i])) fail('baseModel order');
-  if (!Array.isArray(ids) || !Array.isArray(ns) || ids.length !== bms.length)
-    fail('per-baseModel arrays');
-  if ((ns as unknown[]).length !== bms.length) fail('per-baseModel arrays');
+  if (!Array.isArray(ids) || ids.length !== bms.length) fail('modelIds per baseModel');
+  if (!Array.isArray(ns) || ns.length !== bms.length) fail('counts per baseModel');
+  const u32 = (b: unknown, what: string) =>
+    b instanceof Uint8Array && b.length % 4 === 0 ? fromU32le(b, what) : fail(what);
   const counts: CheckpointAttachCounts = new Map();
   bms.forEach((bm, i) => {
-    const mids = fromU32le((ids as Uint8Array[])[i], 'checkpoint modelIds');
-    const cs = fromU32le((ns as Uint8Array[])[i], 'checkpoint counts');
-    if (!mids.length || mids.length !== cs.length) fail('model arrays');
+    const mids = u32((ids as unknown[])[i], 'modelIds bytes');
+    const cs = u32((ns as unknown[])[i], 'counts bytes');
+    if (!mids.length) fail('empty baseModel');
+    if (mids.length !== cs.length) fail('model/count lengths');
     const m = new Map<number, number>();
     for (let k = 0; k < mids.length; k++) {
       if (k > 0 && mids[k] <= mids[k - 1]) fail('model order');

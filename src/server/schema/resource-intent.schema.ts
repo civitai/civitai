@@ -194,6 +194,7 @@ const distributionShape = z.record(z.string(), z.number().min(0).max(1));
  * accepts `'checkpoint'` only behind `resourceIntentCheckpoint`.
  */
 export const RESOURCE_INTENT_KINDS = ['addon', 'checkpoint'] as const;
+export const RESOURCE_INTENT_CHECKPOINT_MAX_BASE_MODEL_LENGTH = 100;
 
 export const resourceIntentInputSchema = z
   .object({
@@ -203,11 +204,20 @@ export const resourceIntentInputSchema = z
     kind: z.enum(RESOURCE_INTENT_KINDS).optional(),
   })
   .superRefine((input, ctx) => {
-    if (input.kind === 'checkpoint' && !input.baseModel) {
+    if (input.kind !== 'checkpoint') return;
+    if (!input.baseModel) {
       ctx.addIssue({
         code: 'custom',
         path: ['baseModel'],
         message: "baseModel is required when kind is 'checkpoint'",
+      });
+    } else if (input.baseModel.length > RESOURCE_INTENT_CHECKPOINT_MAX_BASE_MODEL_LENGTH) {
+      // The baseModel is the only caller-chosen term of this mode's cache key (the prompt is not
+      // one), so its length is bounded here; the add-on path is left exactly as it was.
+      ctx.addIssue({
+        code: 'custom',
+        path: ['baseModel'],
+        message: `baseModel is at most ${RESOURCE_INTENT_CHECKPOINT_MAX_BASE_MODEL_LENGTH} characters when kind is 'checkpoint'`,
       });
     }
   });

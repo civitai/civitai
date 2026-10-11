@@ -260,6 +260,22 @@ describe("kind: 'checkpoint' behind resourceIntentCheckpoint", () => {
     expect(ok.res.statusCode).toBe(200);
   });
 
+  it('checkpoint mode caps the baseModel at 100 characters (the add-on path does not)', async () => {
+    mockGetFeatureFlags.mockReturnValue({
+      resourceIntentJev: true,
+      resourceIntentCheckpoint: true,
+    });
+    const long = { prompt: 'p', kind: 'checkpoint', baseModel: 'x'.repeat(101) };
+    expect((await call({ body: long })).res.statusCode).toBe(400);
+    expect(mockGetResourceIntent).not.toHaveBeenCalled();
+    expect((await call({ body: { ...long, baseModel: 'x'.repeat(100) } })).res.statusCode).toBe(
+      200
+    );
+    expect((await call({ body: { prompt: 'p', baseModel: 'x'.repeat(101) } })).res.statusCode).toBe(
+      200
+    );
+  });
+
   it('an unknown kind is a 400', async () => {
     const { res } = await call({ body: { ...VALID_BODY, kind: 'lora' } });
     expect(res.statusCode).toBe(400);
