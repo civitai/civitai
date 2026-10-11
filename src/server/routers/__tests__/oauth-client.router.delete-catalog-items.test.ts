@@ -10,7 +10,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * parents. The withdraw itself is executed on real rows in
  * `src/server/services/blocks/__tests__/app-sub-listing-catalog-creator.behavior.test.ts`; this
  * pins that the delete reads the parents before the client is gone, withdraws only after the
- * delete succeeded, and is never blocked by the store.
+ * delete succeeded, and is not blocked by a failed withdraw.
  */
 
 const { findParentsMock, withdrawMock, invalidateMock } = vi.hoisted(() => ({
@@ -85,11 +85,13 @@ describe('oauthClient.delete', () => {
     expect(invalidateMock).toHaveBeenCalledWith({ userId: 7170 });
   });
 
-  it('still deletes when the parent lookup fails, and then withdraws nothing', async () => {
+  // Once the delete unlinks the parents nothing can find them, so a failed lookup must fail the
+  // delete (a safe retry) rather than strand the items.
+  it('does not delete when the parent lookup fails', async () => {
     findParentsMock.mockRejectedValueOnce(new Error('store down'));
-    await expect(caller.delete({ id: CLIENT_ID })).resolves.toEqual({ success: true });
-    expect(dbMock.dbWrite.oauthClient.delete).toHaveBeenCalledTimes(1);
-    expect(withdrawMock).toHaveBeenCalledWith({ parentListingIds: [] });
+    await expect(caller.delete({ id: CLIENT_ID })).rejects.toThrow('store down');
+    expect(dbMock.dbWrite.oauthClient.delete).not.toHaveBeenCalled();
+    expect(withdrawMock).not.toHaveBeenCalled();
   });
 
   it('touches nothing for a client the caller does not own', async () => {

@@ -620,6 +620,59 @@ describe('withdrawCatalogSubListingsForDeletedClient', () => {
     expect(mockBust).toHaveBeenCalledTimes(1);
   });
 
+  it('sums across several parents, sparing each parent its own owner', async () => {
+    // A second off-site parent on the same client, owned by someone else: there OWNER is just
+    // another author, and OTHER_AUTHOR's item is the owner's own.
+    const PARENT_A2 = 'apl_ALPHA_TWO';
+    const [A2_BY_OWNER, A2_BY_ITS_OWNER, A2_PENDING] = [
+      'asl_01JA0000000000000000000D01',
+      'asl_01JA0000000000000000000D02',
+      'asl_01JA0000000000000000000D03',
+    ];
+    await holder.db.exec(`
+      INSERT INTO app_listings (id, kind, slug, name, status, connect_client_id, user_id) VALUES
+        ('${PARENT_A2}', 'offsite', 'alpha-two', 'Alpha Two', 'approved', '${CLIENT_A}', ${OTHER_AUTHOR});
+      INSERT INTO app_sub_listing_parents (parent_listing_id, enabled, link_template) VALUES
+        ('${PARENT_A2}', true, '${TEMPLATE_A}');
+      INSERT INTO app_sub_listings
+        (id, parent_listing_id, item_key, author_user_id, title, sub_path, status, approved_at,
+         created_at, updated_at) VALUES
+        ('${A2_BY_OWNER}', '${PARENT_A2}', 'two-a', ${OWNER}, 'Two A', 'two-a', 'approved', now(),
+         now(), '2026-10-01T00:00:00Z'),
+        ('${A2_BY_ITS_OWNER}', '${PARENT_A2}', 'two-b', ${OTHER_AUTHOR}, 'Two B', 'two-b', 'approved', now(),
+         now(), '2026-10-01T00:00:00Z'),
+        ('${A2_PENDING}', '${PARENT_A2}', 'two-c', ${CREATOR}, 'Two C', 'two-c', 'pending', NULL,
+         now(), '2026-10-01T00:00:00Z');
+    `);
+    await expect(deleteClient(CLIENT_A)).resolves.toBe(5);
+    expect(await statuses()).toEqual({
+      ...SEEDED_STATUSES,
+      [A_LIVE]: 'withdrawn',
+      [A_PENDING]: 'withdrawn',
+      [A_OTHER]: 'withdrawn',
+      [A2_BY_OWNER]: 'withdrawn',
+      [A2_BY_ITS_OWNER]: 'approved',
+      [A2_PENDING]: 'withdrawn',
+    });
+  });
+
+  it('skips a parent whose owner changed after it was read', async () => {
+    const parentListingIds = await findCatalogParentIdsForClient(CLIENT_A);
+    await unlinkClient(CLIENT_A);
+    // The listing changes hands to CREATOR between the withdraw's parent read and its updates.
+    const read = dbMock.dbWrite.appListing.findMany.getMockImplementation()!;
+    dbMock.dbWrite.appListing.findMany.mockImplementationOnce(async (a) => {
+      const result = await read(a);
+      await holder.db.query('UPDATE app_listings SET user_id = $1 WHERE id = $2', [
+        CREATOR,
+        PARENT_A,
+      ]);
+      return result;
+    });
+    await expect(withdrawCatalogSubListingsForDeletedClient({ parentListingIds })).resolves.toBe(0);
+    expect(await statuses()).toEqual(SEEDED_STATUSES);
+  });
+
   it("keeps the parent owner's own items live", async () => {
     await deleteClient(CLIENT_A);
     expect((await rows())[A_OWNERS]).toMatchObject({ status: 'approved' });

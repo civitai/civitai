@@ -1147,9 +1147,11 @@ async function withdrawPlatformListedItems(args: {
     let withdrawn = 0;
     for (const parent of parents) {
       if (args.authorUserId === parent.userId) continue;
+      // The parent must still have the owner read above, so an ownership change in between
+      // skips the parent rather than withdrawing the new owner's own items.
       const where = {
         parentListingId: parent.id,
-        parentListing,
+        parentListing: { ...parentListing, userId: parent.userId },
         authorUserId: args.authorUserId ?? { not: parent.userId },
       } satisfies Prisma.AppSubListingWhereInput;
       withdrawn += await transitionActive({
