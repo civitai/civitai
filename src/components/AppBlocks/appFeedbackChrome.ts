@@ -50,7 +50,7 @@ export function resolveAppFeedbackRequest({
 }
 
 /**
- * The request to ask eligibility for, or `null` when the item must not mount at all. Both terms
+ * The request to ask eligibility for, or `null` when the button must not mount at all. Both terms
  * only ever hide: a signed-out viewer is refused by the procedure, and without store access the
  * server's store scope is `none`, which admits no listing kind.
  */
