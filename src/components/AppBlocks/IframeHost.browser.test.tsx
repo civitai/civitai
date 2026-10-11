@@ -2,6 +2,11 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import {
+  RATE_LIMIT,
+  RATE_LIMITED_OPS,
+  rateLimitedClientError,
+} from '../../../test/fixtures/shared-storage-rate-limit';
 
 // Per-test-controllable balance mutation impl. `vi.mock` is hoisted, so the fn
 // must live in a hoisted block the factory can close over (mirrors
@@ -10,6 +15,12 @@ import { renderWithProviders } from '../../../test/component-setup';
 const mocks = vi.hoisted(() => ({
   estimate: vi.fn(),
   balance: vi.fn(),
+  append: vi.fn(),
+  update: vi.fn(),
+  vote: vi.fn(),
+  unvote: vi.fn(),
+  withdraw: vi.fn(),
+  report: vi.fn(),
 }));
 
 // IframeHost drives two tRPC queries at render (getEffectiveCheckpoint +
@@ -82,12 +93,12 @@ vi.mock('~/utils/trpc', () => ({
     },
     apps: {
       shared: {
-        append: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        update: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        append: { useMutation: () => ({ mutateAsync: mocks.append }) },
+        update: { useMutation: () => ({ mutateAsync: mocks.update }) },
+        vote: { useMutation: () => ({ mutateAsync: mocks.vote }) },
+        unvote: { useMutation: () => ({ mutateAsync: mocks.unvote }) },
+        withdraw: { useMutation: () => ({ mutateAsync: mocks.withdraw }) },
+        report: { useMutation: () => ({ mutateAsync: mocks.report }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -465,6 +476,52 @@ describe('IframeHost ESTIMATE_WORKFLOW → ESTIMATE_RESULT (model.sidebar_top)',
       expect(Object.keys(posted).sort()).toEqual(['authorFee', 'total']);
       expect(posted.total).toBe(cost.total);
       expect(posted.authorFee).toBe(cost.authorFee);
+    });
+    replies.stop();
+  });
+});
+
+describe('IframeHost shared-storage rate-limit refusals (model.sidebar_top)', () => {
+  beforeEach(() => {
+    for (const { mock } of RATE_LIMITED_OPS) mocks[mock].mockReset();
+  });
+
+  test.each(RATE_LIMITED_OPS)(
+    '$type rate-limit refusal posts error + rateLimit (no hang)',
+    async ({ type, mock, payload, message, reply }) => {
+      mocks[mock].mockRejectedValue(rateLimitedClientError(message));
+      renderWithProviders(<IframeHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock(type, { requestId: `rq_rl_${type}`, ...payload });
+
+      await vi.waitFor(() => {
+        const r = replies.last(`${type}_RESULT`);
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({
+          requestId: `rq_rl_${type}`,
+          ...reply,
+          error: message,
+          rateLimit: RATE_LIMIT,
+        });
+      });
+      replies.stop();
+    }
+  );
+
+  test('INVARIANT GUARD: a non-rate-limit refusal posts the error alone', async () => {
+    mocks.vote.mockRejectedValue(new Error('request not found'));
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_VOTE', { requestId: 'rq_vote_err', key: 'missing' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_VOTE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_vote_err', error: 'request not found' });
     });
     replies.stop();
   });

@@ -64,7 +64,15 @@ async function callThroughTrpc(thrown: unknown) {
     onError: ({ error }) => loggedRefs.push(getClientSafeError(error)?.errorRef),
   });
   const body = (await res.json()) as {
-    error: { message: string; data: { errorRef?: string; httpStatus: number } };
+    error: {
+      message: string;
+      data: {
+        errorRef?: string;
+        httpStatus: number;
+        softBlock?: boolean;
+        rateLimit?: unknown;
+      } & Record<string, unknown>;
+    };
   };
   return { status: res.status, error: body.error, loggedRefs };
 }
@@ -104,5 +112,86 @@ describe('trpc errorFormatter — server faults, through a real tRPC handler', (
     expect(error.message).toBe('That slug is already taken');
     expect(error.data.errorRef).toBeUndefined();
     expect(loggedRefs).toEqual([undefined]);
+  });
+});
+
+const RATE_LIMIT = {
+  code: 'RATE_LIMITED',
+  retryAfterSeconds: 17,
+  retryAt: '2031-04-05T06:07:08.000Z',
+};
+const REFUSAL = 'Too many votes — retry in 17s';
+
+function rateLimited(
+  cause: unknown,
+  code: 'TOO_MANY_REQUESTS' | 'FORBIDDEN' = 'TOO_MANY_REQUESTS'
+) {
+  return new TRPCError({ code, message: REFUSAL, cause });
+}
+
+describe('trpc errorFormatter — rate-limit retry metadata, through a real tRPC handler', () => {
+  it('lifts a valid cause.rateLimit onto data.rateLimit and keeps the message', async () => {
+    const { status, error } = await callThroughTrpc(rateLimited({ rateLimit: RATE_LIMIT }));
+
+    expect(status).toBe(429);
+    expect(error.message).toBe(REFUSAL);
+    expect(error.data.rateLimit).toEqual(RATE_LIMIT);
+    expect(error.data).toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      httpStatus: 429,
+      path: 'create',
+    });
+  });
+
+  it('copies only the known fields of rateLimit', async () => {
+    const { error } = await callThroughTrpc(
+      rateLimited({ rateLimit: { ...RATE_LIMIT, internalKey: 'bucket:apb:42' } })
+    );
+    expect(error.data.rateLimit).toEqual(RATE_LIMIT);
+  });
+
+  it('merges with the softBlock branch instead of returning before it', async () => {
+    const { error } = await callThroughTrpc(
+      rateLimited({ softBlock: true, rateLimit: RATE_LIMIT })
+    );
+    expect(error.data.softBlock).toBe(true);
+    expect(error.data.rateLimit).toEqual(RATE_LIMIT);
+  });
+
+  it.each([
+    ['a non-RATE_LIMITED code', { ...RATE_LIMIT, code: 'SLOW_DOWN' }],
+    ['a string retryAfterSeconds', { ...RATE_LIMIT, retryAfterSeconds: '17' }],
+    ['a zero retryAfterSeconds', { ...RATE_LIMIT, retryAfterSeconds: 0 }],
+    ['a fractional retryAfterSeconds', { ...RATE_LIMIT, retryAfterSeconds: 1.5 }],
+    ['a missing retryAt', { code: 'RATE_LIMITED', retryAfterSeconds: 17 }],
+    ['an unparseable retryAt', { ...RATE_LIMIT, retryAt: 'soon' }],
+    ['a string', 'retry later'],
+    ['null', null],
+  ])('INVARIANT GUARD: drops a malformed rateLimit (%s)', async (_label, rateLimit) => {
+    const { status, error } = await callThroughTrpc(rateLimited({ rateLimit }));
+    expect(status).toBe(429);
+    expect(error.message).toBe(REFUSAL);
+    expect('rateLimit' in error.data).toBe(false);
+  });
+
+  it('INVARIANT GUARD: ignores a rateLimit cause on a non-429 error', async () => {
+    const { status, error } = await callThroughTrpc(
+      rateLimited({ rateLimit: RATE_LIMIT }, 'FORBIDDEN')
+    );
+    expect(status).toBe(403);
+    expect('rateLimit' in error.data).toBe(false);
+  });
+
+  it('INVARIANT GUARD: a non-rate-limit error has no rateLimit key and an unchanged data shape', async () => {
+    const { error } = await callThroughTrpc(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'That slug is already taken' })
+    );
+    expect(Object.keys(error.data).sort()).toEqual(['code', 'httpStatus', 'path', 'stack'].sort());
+  });
+
+  it('INVARIANT GUARD: a masked 500 still carries errorRef and no rateLimit', async () => {
+    const { error } = await callThroughTrpc(new Error('Query read timeout'));
+    expect(error.data.errorRef).toMatch(/^[0-9a-f]{12}$/);
+    expect('rateLimit' in error.data).toBe(false);
   });
 });

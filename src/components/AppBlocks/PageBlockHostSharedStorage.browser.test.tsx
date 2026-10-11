@@ -5,6 +5,11 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import {
+  RATE_LIMIT,
+  RATE_LIMITED_OPS,
+  rateLimitedClientError,
+} from '../../../test/fixtures/shared-storage-rate-limit';
+import {
   SAVE_BYTES_MAX_PER_WINDOW,
   SAVE_BYTES_WINDOW_MS,
   SAVE_IMAGE_MAX_CONCURRENT,
@@ -517,8 +522,8 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
-  test('SHARED_APPEND error path posts { requestId, error } (no hang)', async () => {
-    mocks.append.mockRejectedValue(new Error('Too many submissions — retry in 30s'));
+  test('SHARED_APPEND error path posts { requestId, error } (no hang, no rateLimit)', async () => {
+    mocks.append.mockRejectedValue(new Error('Content flagged for review'));
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
@@ -528,10 +533,7 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     await vi.waitFor(() => {
       const r = replies.last('SHARED_APPEND_RESULT');
       if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({
-        requestId: 'rq_app_err',
-        error: 'Too many submissions — retry in 30s',
-      });
+      expect(r.payload).toEqual({ requestId: 'rq_app_err', error: 'Content flagged for review' });
     });
     replies.stop();
   });
@@ -648,25 +650,6 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
-  test('SHARED_UNVOTE error path posts { requestId, error } (no hang)', async () => {
-    mocks.unvote.mockRejectedValue(new Error('Too many votes — retry in 10s'));
-    renderWithProviders(<PageBlockHost {...baseProps} />);
-    await driveToReady();
-    const replies = listenForReply();
-
-    postFromBlock('SHARED_UNVOTE', { requestId: 'rq_unvote_err', key: '01ABC' });
-
-    await vi.waitFor(() => {
-      const r = replies.last('SHARED_UNVOTE_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({
-        requestId: 'rq_unvote_err',
-        error: 'Too many votes — retry in 10s',
-      });
-    });
-    replies.stop();
-  });
-
   // ── SHARED_WITHDRAW ──────────────────────────────────────────────────────────
   test('SHARED_WITHDRAW forwards key + host token and posts SHARED_WITHDRAW_RESULT', async () => {
     mocks.withdraw.mockResolvedValue({ ok: true, deleted: true });
@@ -706,6 +689,33 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
     replies.stop();
   });
+
+  // ── rate-limit refusals carry structured retry metadata ─────────────────────
+  // A real TRPCClientError with `data.rateLimit`, the shape the tRPC error formatter produces;
+  // a plain Error has no `data`, so it could never show whether the host forwards it.
+  test.each(RATE_LIMITED_OPS)(
+    '$type rate-limit refusal posts error + rateLimit (no hang)',
+    async ({ type, mock, payload, message, reply }) => {
+      mocks[mock].mockRejectedValue(rateLimitedClientError(message));
+      renderWithProviders(<PageBlockHost {...baseProps} />);
+      await driveToReady();
+      const replies = listenForReply();
+
+      postFromBlock(type, { requestId: `rq_rl_${type}`, ...payload });
+
+      await vi.waitFor(() => {
+        const r = replies.last(`${type}_RESULT`);
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({
+          requestId: `rq_rl_${type}`,
+          ...reply,
+          error: message,
+          rateLimit: RATE_LIMIT,
+        });
+      });
+      replies.stop();
+    }
+  );
 
   // ── item 3: viewerVoted passes through SHARED_LIST ───────────────────────────
   test('SHARED_LIST passes the per-viewer viewerVoted flag through to the block', async () => {

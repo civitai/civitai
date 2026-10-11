@@ -704,6 +704,10 @@ function rememberWarnedOrigin(origin: string) {
  * /api/v1/models/[id] (which set ACAO: * in PublicEndpoint) for browser
  * integrations doing CORS preflight from origins outside our allowlist.
  */
+// A cross-origin block can read only CORS-safelisted response headers unless they are exposed;
+// `Retry-After` is not safelisted, and a 429 needs it readable to show the wait.
+const BLOCK_CORS_EXPOSE_HEADERS = 'Retry-After';
+
 async function setBlockCors(
   req: NextApiRequest,
   res: NextApiResponse,
@@ -723,6 +727,7 @@ async function setBlockCors(
     // be "*", and we want that flexibility on the wrapped handler's path.
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return 'handled';
@@ -742,6 +747,7 @@ async function setBlockCors(
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', BLOCK_CORS_EXPOSE_HEADERS);
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return 'handled';

@@ -64,7 +64,7 @@ const {
   type RateLimitFn = (
     userId: number,
     appBlockId: string
-  ) => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
+  ) => Promise<{ allowed: boolean; retryAfterSeconds?: number; retryAt?: string }>;
   const mockClient = {
     query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
     release: vi.fn(),
@@ -190,6 +190,7 @@ import {
   appendSharedRow,
   appsModRouter,
   appsSharedRouter,
+  incrementSharedCounter,
   reportSharedRow,
   unvoteSharedRow,
   updateSharedRow,
@@ -2862,4 +2863,91 @@ describe('shared `data` local moderation', () => {
       expect(mockFindBlocked).not.toHaveBeenCalled();
     });
   });
+});
+
+// civitai/civitai-app-starters#597: a refusal must carry its wait as data, not only as prose.
+describe('rate-limit refusals carry machine-readable retry metadata', () => {
+  // Not any production window, and a retryAt that is NOT now + 17s: the router must forward the
+  // limiter's instant, never recompute its own.
+  const RETRY_AFTER = 17;
+  const RETRY_AT = '2031-04-05T06:07:08.000Z';
+  const KEY = 'k-rl-417';
+  const VALUE = { title: 'rl title 433' };
+
+  const OPS: Array<{
+    name: string;
+    call: () => Promise<unknown>;
+    bucket: () => typeof mockCheckAppendRl;
+    message: string;
+  }> = [
+    {
+      name: 'append',
+      call: () => appendSharedRow('tok_rl', VALUE),
+      bucket: () => mockCheckAppendRl,
+      message: 'Too many submissions — retry in 17s',
+    },
+    {
+      name: 'update',
+      call: () => updateSharedRow('tok_rl', KEY, VALUE),
+      bucket: () => mockCheckAppendRl,
+      message: 'Too many submissions — retry in 17s',
+    },
+    {
+      name: 'vote',
+      call: () => voteSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckVoteRl,
+      message: 'Too many votes — retry in 17s',
+    },
+    {
+      name: 'unvote',
+      call: () => unvoteSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckVoteRl,
+      message: 'Too many votes — retry in 17s',
+    },
+    {
+      name: 'withdraw',
+      call: () => withdrawSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckWithdrawRl,
+      message: 'Too many withdrawals — retry in 17s',
+    },
+    {
+      name: 'report',
+      call: () => reportSharedRow('tok_rl', KEY),
+      bucket: () => mockCheckReportRl,
+      message: 'Too many reports — retry in 17s',
+    },
+    {
+      name: 'increment',
+      call: () => incrementSharedCounter('tok_rl', 'playcount:417'),
+      bucket: () => mockCheckVoteRl,
+      message: 'Too many increments — retry in 17s',
+    },
+  ];
+
+  it.each(OPS)(
+    '$name: TOO_MANY_REQUESTS with cause.rateLimit and the prose message unchanged',
+    async ({ call, bucket, message }) => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      bucket().mockResolvedValueOnce({
+        allowed: false,
+        retryAfterSeconds: RETRY_AFTER,
+        retryAt: RETRY_AT,
+      });
+
+      const err = await call().then(
+        () => undefined,
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(TRPCError);
+      const trpcError = err as TRPCError;
+      expect(trpcError.code).toBe('TOO_MANY_REQUESTS');
+      expect(trpcError.message).toBe(message);
+      expect((trpcError.cause as { rateLimit?: unknown } | undefined)?.rateLimit).toEqual({
+        code: 'RATE_LIMITED',
+        retryAfterSeconds: RETRY_AFTER,
+        retryAt: RETRY_AT,
+      });
+    }
+  );
 });

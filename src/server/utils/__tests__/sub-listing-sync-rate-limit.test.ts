@@ -47,6 +47,7 @@ describe('checkSubListingSyncRateLimit', () => {
     await expect(checkSubListingSyncRateLimit('apl_A')).resolves.toEqual({
       allowed: false,
       retryAfterSeconds: 42,
+      retryAt: expect.any(String),
     });
     // Another parent keeps its own budget.
     await expect(checkSubListingSyncRateLimit('apl_B')).resolves.toEqual({ allowed: true });

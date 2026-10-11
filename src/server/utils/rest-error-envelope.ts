@@ -1,3 +1,5 @@
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
+
 /**
  * The ONE error-envelope contract for the public `/api/v1/*` REST surface.
  *
@@ -101,6 +103,8 @@ export type RestErrorBody = {
   error: unknown;
   message: string;
   code: RestErrorCode;
+  /** Present only on a 429 whose refusal carries retry metadata (alongside `Retry-After`). */
+  rateLimit?: RateLimitMeta;
 };
 
 /**
