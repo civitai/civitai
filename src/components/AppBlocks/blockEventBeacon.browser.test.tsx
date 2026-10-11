@@ -89,6 +89,15 @@ describe('the recorder', () => {
     expect(_internalsForTests.queued()).toEqual([{ ...SLOT, eventName: 'fine' }]);
   });
 
+  test("keeps only the serialised row, not the block's properties object", () => {
+    const record = createBlockEventRecorder(SLOT);
+    record({ eventName: 'buffer', properties: { buf: new ArrayBuffer(20 * 1024 * 1024) } });
+    expect(_internalsForTests.entryKeys()).toEqual([['json', 'bytes']]);
+    expect(_internalsForTests.queued()).toEqual([
+      { ...SLOT, eventName: 'buffer', properties: { buf: {} } },
+    ]);
+  });
+
   test('drops an event too large for one body', () => {
     const record = createBlockEventRecorder(SLOT);
     record(payloadOfBytes(BLOCK_EVENT_MAX_BODY_BYTES + 10));
@@ -252,6 +261,20 @@ describe('budget per host mount', () => {
     vi.advanceTimersByTime(1_000);
     record({ eventName: 'later' });
     expect(_internalsForTests.queued()).toHaveLength(12);
+  });
+
+  test('oversize events spend the budget before they are serialised', () => {
+    const record = createBlockEventRecorder(SLOT);
+    const oversize = payloadOfBytes(BLOCK_EVENT_MAX_BODY_BYTES + 10);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      for (let i = 0; i < 50; i++) record(oversize);
+      expect(stringify).toHaveBeenCalledTimes(10);
+    } finally {
+      stringify.mockRestore();
+    }
+    record({ eventName: 'valid_after_flood' });
+    expect(_internalsForTests.queued()).toEqual([]);
   });
 
   test('caps a mount at 500 events; a remount of the same app starts fresh', async () => {

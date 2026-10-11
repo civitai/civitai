@@ -33,8 +33,11 @@ export const BLOCK_EVENT_MAX_BODY_BYTES = 32 * 1024;
 export const BLOCK_EVENT_RATE_PER_SECOND = 10;
 export const BLOCK_EVENT_CAP_PER_MOUNT = 500;
 
-/** A row and its serialised form, measured once when it is recorded. */
-type QueuedRow = { row: BlockEventRow; json: string; bytes: number };
+/**
+ * A row's serialised form, measured once when it is recorded. Only the string is kept: holding the
+ * row would keep the block's `properties` object (which may hold a large buffer) alive until flush.
+ */
+type QueuedRow = { json: string; bytes: number };
 
 const queue: QueuedRow[] = [];
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -143,18 +146,22 @@ function enqueue(entry: QueuedRow): void {
  * The recorder for ONE host mount. Its budget ({@link BLOCK_EVENT_RATE_PER_SECOND} events a
  * second, {@link BLOCK_EVENT_CAP_PER_MOUNT} in all) belongs to that mount, so a new page or app
  * starts fresh and two mounts of one app do not share it; it is released with the mount.
+ * Every well-shaped event spends budget BEFORE it is serialised, including one later dropped as
+ * oversize or unserialisable, so the budget also bounds the serialisation work a block can cause.
  * Malformed, oversize and over-budget events are dropped.
  */
 export function createBlockEventRecorder(identity: BlockEventIdentity): (payload: unknown) => void {
-  let accepted = 0;
+  let spent = 0;
   let recent: number[] = [];
   return (payload) => {
     if (typeof window === 'undefined') return;
     if (!isPlainObject(payload) || typeof payload.eventName !== 'string') return;
-    if (accepted >= BLOCK_EVENT_CAP_PER_MOUNT) return;
+    if (spent >= BLOCK_EVENT_CAP_PER_MOUNT) return;
     const now = Date.now();
     recent = recent.filter((t) => now - t < 1000);
     if (recent.length >= BLOCK_EVENT_RATE_PER_SECOND) return;
+    spent += 1;
+    recent.push(now);
 
     const row: BlockEventRow = {
       appBlockId: identity.appBlockId,
@@ -172,9 +179,7 @@ export function createBlockEventRecorder(identity: BlockEventIdentity): (payload
     const bytes = byteLength(json);
     if (FRAME_BYTES + bytes > BLOCK_EVENT_MAX_BODY_BYTES) return;
 
-    accepted += 1;
-    recent.push(now);
-    enqueue({ row, json, bytes });
+    enqueue({ json, bytes });
   };
 }
 
@@ -192,7 +197,10 @@ export const _internalsForTests = {
     }
   },
   queued(): BlockEventRow[] {
-    return queue.map(({ row }) => ({ ...row }));
+    return queue.map(({ json }) => JSON.parse(json) as BlockEventRow);
+  },
+  entryKeys(): string[][] {
+    return queue.map((entry) => Object.keys(entry));
   },
   timerArmed(): boolean {
     return timer !== null;
