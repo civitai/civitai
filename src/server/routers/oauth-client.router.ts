@@ -6,6 +6,10 @@ import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import {
+  findCatalogParentsBeforeClientDelete,
+  withdrawCatalogItemsOnClientDelete,
+} from '~/server/services/blocks/oauth-consent-sync.service';
+import {
   createOauthClientSchema,
   deleteOauthClientSchema,
   deriveAllowedOriginsFromRedirectUris,
@@ -264,6 +268,10 @@ export const oauthClientRouter = router({
         distinct: ['userId'],
       });
 
+      // Read before the delete: it unlinks the client's store catalog parents (SetNull), after
+      // which nothing can find them by client.
+      const catalogParentIds = await findCatalogParentsBeforeClientDelete(input.id);
+
       // Cascade delete handles tokens and consents
       await dbWrite.oauthClient.delete({ where: { id: input.id } });
 
@@ -274,6 +282,12 @@ export const oauthClientRouter = router({
       // each affected user's cache so revocation takes effect immediately.
       // Best-effort: invalidateCivitaiUser swallows its own errors.
       await Promise.all(tokenHolders.map(({ userId }) => invalidateCivitaiUser({ userId })));
+
+      // The platform is gone, so the items it listed in the store go with it. Never throws.
+      await withdrawCatalogItemsOnClientDelete({
+        clientId: input.id,
+        parentListingIds: catalogParentIds,
+      });
 
       return { success: true };
     }),

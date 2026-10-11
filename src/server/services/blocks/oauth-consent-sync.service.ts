@@ -223,6 +223,53 @@ export async function withdrawCatalogItemsOnConsentRevoke(opts: {
   }
 }
 
+/**
+ * `oauthClient.delete` runs this BEFORE deleting the client: the ids of the client's catalog
+ * parents, which the delete unlinks. Never throws, so it cannot hold up the delete; a failure is
+ * logged and yields no ids (nothing is withdrawn).
+ */
+export async function findCatalogParentsBeforeClientDelete(clientId: string): Promise<string[]> {
+  try {
+    const { findCatalogParentIdsForClient } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    return await findCatalogParentIdsForClient(clientId);
+  } catch (err) {
+    logToAxiom({
+      type: 'oauth.withdraw-catalog-items.failed',
+      message: `catalog parent lookup failed before deleting oauth client ${clientId}`,
+      error: safeError(err),
+    }).catch(() => undefined);
+    return [];
+  }
+}
+
+/**
+ * `oauthClient.delete` runs this AFTER the delete succeeds: it withdraws the store items the
+ * client's platform listed under its catalog parents, for every author but each parent's owner.
+ * It never throws; a failure is logged and returned as `null`.
+ */
+export async function withdrawCatalogItemsOnClientDelete(opts: {
+  clientId: string;
+  parentListingIds: string[];
+}): Promise<number | null> {
+  try {
+    const { withdrawCatalogSubListingsForDeletedClient } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    return await withdrawCatalogSubListingsForDeletedClient({
+      parentListingIds: opts.parentListingIds,
+    });
+  } catch (err) {
+    logToAxiom({
+      type: 'oauth.withdraw-catalog-items.failed',
+      message: `catalog item withdraw failed for deleted oauth client ${opts.clientId}`,
+      error: safeError(err),
+    }).catch(() => undefined);
+    return null;
+  }
+}
+
 export async function revokeOauthConsentForBlock(opts: {
   userId: number;
   appBlockId: string;
