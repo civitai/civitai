@@ -5,7 +5,10 @@ import Link from 'next/link';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import type { AppSubListingStatus } from '~/shared/constants/app-sub-listing.constants';
+import {
+  isActiveSubListingStatus,
+  type AppSubListingStatus,
+} from '~/shared/constants/app-sub-listing.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import type { RouterOutput } from '~/types/router';
@@ -20,9 +23,9 @@ const STATUS: Record<AppSubListingStatus, { label: string; color: string }> = {
 
 /** Only an item in the store or waiting for review can be withdrawn. */
 export const canWithdrawCatalogItem = (status: AppSubListingStatus) =>
-  status === 'pending' || status === 'approved';
+  isActiveSubListingStatus(status);
 
-type CatalogItem = RouterOutput['appListings']['listMyCatalogSubListings']['items'][number];
+export type CatalogItem = RouterOutput['appListings']['listMyCatalogSubListings']['items'][number];
 
 /** Mark the matching active items withdrawn in the cached list, after a write that did so. */
 export function markCatalogItemsWithdrawn(

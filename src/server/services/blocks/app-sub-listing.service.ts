@@ -23,6 +23,7 @@ import {
   checkSubListingWriteRateLimit,
 } from '~/server/utils/shared-storage-rate-limit';
 import {
+  APP_SUB_LISTING_ACTIVE_STATUSES,
   APP_SUB_LISTING_CONTENT_RATINGS,
   APP_SUB_LISTING_ITEM_KEY_MAX,
   APP_SUB_LISTING_TAGLINE_MAX,
@@ -973,12 +974,14 @@ export type MyCatalogSubListing = {
   updatedAt: Date;
   /** Where the item opens on its platform; null while the parent has no valid link template. */
   href: string | null;
-  parent: { id: string; slug: string; name: string; clientId: string | null };
+  /** `isYours`: the caller owns the parent listing, so revoking the client leaves the item. */
+  parent: { id: string; slug: string; name: string; clientId: string | null; isYours: boolean };
 };
 
 /**
- * The items off-site platforms have listed under `userId`'s name, newest first, withdrawn ones
- * included. Only the caller's own rows: the author filter is the whole access rule.
+ * The items off-site platforms have listed under `userId`'s name, withdrawn and hidden ones
+ * included: pending and approved first (so the cap never hides one the user can withdraw), each
+ * group newest first. Only the caller's own rows: the author filter is the whole access rule.
  */
 export async function listMyCatalogSubListings(
   userId: number
@@ -997,17 +1000,20 @@ export async function listMyCatalogSubListings(
         parent_slug: string;
         parent_name: string;
         client_id: string | null;
+        parent_is_yours: boolean;
         link_template: string | null;
       }[]
     >(Prisma.sql`
       SELECT s.id, s.item_key, s.title, s.status, s.pending_submitted_at, s.status_reason,
              s.updated_at, al.id AS parent_id, al.slug AS parent_slug, al.name AS parent_name,
-             al.connect_client_id AS client_id, ${PARENT_LINK_TEMPLATE_SQL} AS link_template
+             al.connect_client_id AS client_id, al.user_id = ${userId} AS parent_is_yours,
+             ${PARENT_LINK_TEMPLATE_SQL} AS link_template
       FROM app_sub_listings s
       JOIN app_listings al ON al.id = s.parent_listing_id
       LEFT JOIN app_sub_listing_parents sp ON sp.parent_listing_id = al.id
       WHERE s.author_user_id = ${userId} AND al.kind = ${CATALOG_PARENT_KIND}
-      ORDER BY s.created_at DESC, s.id DESC
+      ORDER BY s.status IN (${Prisma.join([...APP_SUB_LISTING_ACTIVE_STATUSES])}) DESC,
+               s.created_at DESC, s.id DESC
       LIMIT ${MY_CATALOG_SUB_LISTINGS_LIMIT}
     `);
     return {
@@ -1025,6 +1031,7 @@ export async function listMyCatalogSubListings(
           slug: r.parent_slug,
           name: r.parent_name,
           clientId: r.client_id,
+          isYours: r.parent_is_yours === true,
         },
       })),
     };
@@ -1068,9 +1075,10 @@ export async function withdrawMyCatalogSubListing(args: {
 /**
  * When `userId` revokes their consent to `clientId`, withdraw what that client's platform listed
  * under their name. Pending and approved items are withdrawn. A hidden item stays hidden but
- * loses its approval, so a restore sends it back to review, as the platform's DELETE does. Other
- * authors' items, and items under listings linked to other clients, are not touched. Returns the
- * number withdrawn; 0 while the tables are absent.
+ * loses its approval, so a restore sends it back to review, as the platform's DELETE does. Not
+ * touched: other authors' items, items under listings linked to other clients, and items under a
+ * listing `userId` owns (the owner's own items never needed the consent). Returns the number
+ * withdrawn; 0 while the tables are absent.
  *
  * Callers run it after the consent is deleted, so a sync that starts afterwards is refused; a
  * sync that read the consent just before can still land, as a `pending` item for review.
@@ -1081,7 +1089,11 @@ export async function withdrawCatalogSubListingsForRevokedConsent(args: {
 }): Promise<number> {
   const where = {
     authorUserId: args.userId,
-    parentListing: { connectClientId: args.clientId, kind: CATALOG_PARENT_KIND },
+    parentListing: {
+      connectClientId: args.clientId,
+      kind: CATALOG_PARENT_KIND,
+      userId: { not: args.userId },
+    },
   } satisfies Prisma.AppSubListingWhereInput;
   try {
     const withdrawn = await transitionActive({

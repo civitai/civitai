@@ -52,6 +52,7 @@ vi.mock('~/server/auth/session-client', () => ({
 
 const {
   listMyCatalogSubListings,
+  moderateSubListing,
   SubListingError,
   upsertCatalogSubListing,
   withdrawCatalogSubListingsForRevokedConsent,
@@ -85,6 +86,10 @@ function whereSql(where: Record<string, unknown>, values: unknown[]): string {
     if (v && typeof v === 'object' && !(v instanceof Date)) {
       return Object.entries(v as Record<string, unknown>).map(([op, bound]) => {
         if (op === 'not' && bound === null) return `${col} IS NOT NULL`;
+        if (op === 'not') {
+          values.push(bound);
+          return `${col} <> $${values.length}`;
+        }
         if (op === 'in') {
           values.push(bound);
           return `${col} = ANY($${values.length})`;
@@ -166,6 +171,13 @@ const A_OTHER = 'asl_01JA0000000000000000000A06';
 const B_LIVE = 'asl_01JA0000000000000000000B01';
 // An on-site parent, same creator.
 const ON_LIVE = 'asl_01JA0000000000000000000C01';
+// Hidden after approval, outside the CREATOR + CLIENT_A scope: a revoke must keep their approval.
+const A_OTHER_HIDDEN = 'asl_01JA0000000000000000000A07';
+const B_HIDDEN = 'asl_01JA0000000000000000000B02';
+const ON_HIDDEN = 'asl_01JA0000000000000000000C02';
+// The parent's owner's own item (authored without any consent).
+const A_OWNERS = 'asl_01JA0000000000000000000A08';
+const NOBODY = 4505;
 
 const MIGRATIONS = [
   '20261010120000_app_sub_listings',
@@ -223,14 +235,29 @@ async function seed() {
       ('${B_LIVE}', '${PARENT_B}', 'beta-run', ${CREATOR}, 'Beta Run', 'beta-run', 'approved', now(),
        NULL, NULL, NULL, now() - interval '2 days', '2026-10-01T00:00:00Z'),
       ('${ON_LIVE}', '${ONSITE}', 'gen-x', ${CREATOR}, 'Gen X', 'g/x', 'approved', now(),
-       NULL, NULL, NULL, now() - interval '1 day', '2026-10-01T00:00:00Z');
+       NULL, NULL, NULL, now() - interval '1 day', '2026-10-01T00:00:00Z'),
+      ('${A_OTHER_HIDDEN}', '${PARENT_A}', 'not-mine-2', ${OTHER_AUTHOR}, 'Not Mine 2', 'not-mine-2', 'hidden', now(),
+       NULL, NULL, NULL, now() - interval '10 days', '2026-10-01T00:00:00Z'),
+      ('${B_HIDDEN}', '${PARENT_B}', 'beta-bad', ${CREATOR}, 'Beta Bad', 'beta-bad', 'hidden', now(),
+       NULL, NULL, NULL, now() - interval '11 days', '2026-10-01T00:00:00Z'),
+      ('${ON_HIDDEN}', '${ONSITE}', 'gen-bad', ${CREATOR}, 'Gen Bad', 'g/bad', 'hidden', now(),
+       NULL, NULL, NULL, now() - interval '12 days', '2026-10-01T00:00:00Z'),
+      ('${A_OWNERS}', '${PARENT_A}', 'house-game', ${OWNER}, 'House Game', 'house-game', 'approved', now(),
+       NULL, NULL, NULL, now() - interval '13 days', '2026-10-01T00:00:00Z');
   `);
 }
 
-type Row = { status: string; approved_at: Date | null; pending_submitted_at: Date | null };
+type Row = {
+  status: string;
+  approved_at: Date | null;
+  pending_title: string | null;
+  pending_sub_path: string | null;
+  pending_submitted_at: Date | null;
+};
 async function rows(): Promise<Record<string, Row>> {
   const { rows } = await holder.db.query<Row & { id: string }>(
-    'SELECT id, status, approved_at, pending_submitted_at FROM app_sub_listings'
+    `SELECT id, status, approved_at, pending_title, pending_sub_path, pending_submitted_at
+     FROM app_sub_listings`
   );
   return Object.fromEntries(rows.map(({ id, ...r }) => [id, r]));
 }
@@ -246,6 +273,30 @@ const SEEDED_STATUSES = {
   [A_OTHER]: 'approved',
   [B_LIVE]: 'approved',
   [ON_LIVE]: 'approved',
+  [A_OTHER_HIDDEN]: 'hidden',
+  [B_HIDDEN]: 'hidden',
+  [ON_HIDDEN]: 'hidden',
+  [A_OWNERS]: 'approved',
+};
+/** Which rows carry an approval (what a moderator restore keys on). */
+async function approvals(): Promise<Record<string, boolean>> {
+  return Object.fromEntries(
+    Object.entries(await rows()).map(([id, r]) => [id, r.approved_at != null])
+  );
+}
+const SEEDED_APPROVALS = {
+  [A_LIVE]: true,
+  [A_PENDING]: false,
+  [A_HIDDEN_WAS_LIVE]: true,
+  [A_HIDDEN_NEVER_LIVE]: false,
+  [A_WITHDRAWN]: false,
+  [A_OTHER]: true,
+  [B_LIVE]: true,
+  [ON_LIVE]: true,
+  [A_OTHER_HIDDEN]: true,
+  [B_HIDDEN]: true,
+  [ON_HIDDEN]: true,
+  [A_OWNERS]: true,
 };
 
 async function expectError(p: Promise<unknown>, status: number, code: string) {
@@ -269,15 +320,16 @@ beforeEach(async () => {
 });
 
 describe('listMyCatalogSubListings', () => {
-  it("lists only the caller's own items under off-site parents, newest first", async () => {
+  it("lists only the caller's own items under off-site parents, active first, then newest", async () => {
     const { items } = await listMyCatalogSubListings(CREATOR);
     expect(items.map((i) => i.id)).toEqual([
       B_LIVE,
+      A_PENDING,
+      A_LIVE,
       A_WITHDRAWN,
       A_HIDDEN_NEVER_LIVE,
       A_HIDDEN_WAS_LIVE,
-      A_PENDING,
-      A_LIVE,
+      B_HIDDEN,
     ]);
     expect(items.find((i) => i.id === A_LIVE)).toEqual({
       id: A_LIVE,
@@ -288,7 +340,13 @@ describe('listMyCatalogSubListings', () => {
       statusReason: null,
       updatedAt: new Date('2026-10-01T00:00:00Z'),
       href: 'https://alpha.example.com/?game=neon-drift',
-      parent: { id: PARENT_A, slug: 'alpha-games', name: 'Alpha Games', clientId: CLIENT_A },
+      parent: {
+        id: PARENT_A,
+        slug: 'alpha-games',
+        name: 'Alpha Games',
+        clientId: CLIENT_A,
+        isYours: false,
+      },
     });
     expect(items.find((i) => i.id === B_LIVE)).toMatchObject({
       href: 'https://beta.example.com/play/beta-run',
@@ -300,11 +358,16 @@ describe('listMyCatalogSubListings', () => {
     const mine = (await listMyCatalogSubListings(CREATOR)).items.map((i) => i.id);
     expect(mine).not.toContain(A_OTHER);
     const theirs = (await listMyCatalogSubListings(OTHER_AUTHOR)).items.map((i) => i.id);
-    expect(theirs).toEqual([A_OTHER]);
+    expect(theirs).toEqual([A_OTHER, A_OTHER_HIDDEN]);
   });
 
   it('is empty for a user with no items', async () => {
-    expect((await listMyCatalogSubListings(OWNER)).items).toEqual([]);
+    expect((await listMyCatalogSubListings(NOBODY)).items).toEqual([]);
+  });
+
+  it("marks the parent listing as the caller's own when they own it", async () => {
+    const { items } = await listMyCatalogSubListings(OWNER);
+    expect(items.map((i) => [i.id, i.parent.isYours])).toEqual([[A_OWNERS, true]]);
   });
 });
 
@@ -315,7 +378,13 @@ describe('withdrawMyCatalogSubListing', () => {
       withdrawn: true,
     });
     const after = await rows();
-    expect(after[A_LIVE]).toMatchObject({ status: 'withdrawn', pending_submitted_at: null });
+    expect(after[A_LIVE]).toEqual({
+      status: 'withdrawn',
+      approved_at: expect.any(Date),
+      pending_title: null,
+      pending_sub_path: null,
+      pending_submitted_at: null,
+    });
     expect(await statuses()).toEqual({ ...SEEDED_STATUSES, [A_LIVE]: 'withdrawn' });
     // An approved row left the store: the cached page is busted.
     expect(mockBust).toHaveBeenCalledTimes(1);
@@ -411,20 +480,52 @@ describe('withdrawCatalogSubListingsForRevokedConsent', () => {
       [A_PENDING]: 'withdrawn',
     });
     const after = await rows();
-    expect(after[A_LIVE].pending_submitted_at).toBeNull();
-    // Untouched: another author under the same client, the same creator under another client,
-    // and the same creator under an on-site listing linked to the same client.
-    expect(after[A_OTHER].approved_at).not.toBeNull();
-    expect(after[B_LIVE].approved_at).not.toBeNull();
-    expect(after[ON_LIVE].approved_at).not.toBeNull();
+    expect(after[A_LIVE]).toMatchObject({
+      pending_title: null,
+      pending_sub_path: null,
+      pending_submitted_at: null,
+    });
+    // Only CREATOR's hidden item under CLIENT_A loses its approval. Untouched: another author
+    // under the same client, the same creator under another client, and the same creator under
+    // an on-site listing linked to the same client.
+    expect(await approvals()).toEqual({ ...SEEDED_APPROVALS, [A_HIDDEN_WAS_LIVE]: false });
     expect(mockBust).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps hidden items hidden, removing the approval a restore would otherwise reuse', async () => {
+  it('keeps hidden items hidden; a moderator restore then sends one back to review', async () => {
     await withdrawCatalogSubListingsForRevokedConsent({ userId: CREATOR, clientId: CLIENT_A });
     const after = await rows();
     expect(after[A_HIDDEN_WAS_LIVE]).toMatchObject({ status: 'hidden', approved_at: null });
     expect(after[A_HIDDEN_NEVER_LIVE]).toMatchObject({ status: 'hidden', approved_at: null });
+
+    // The real moderator restore, on the row as the revoke left it.
+    dbMock.dbRead.appListing.findUnique.mockResolvedValue({ kind: 'offsite', appBlock: null });
+    const { rows: v } = await holder.db.query<{ updated_at: Date }>(
+      'SELECT updated_at FROM app_sub_listings WHERE id = $1',
+      [A_HIDDEN_WAS_LIVE]
+    );
+    await expect(
+      moderateSubListing({
+        input: { id: A_HIDDEN_WAS_LIVE, action: 'restore', version: v[0].updated_at.toISOString() },
+        moderatorId: OWNER,
+      })
+    ).resolves.toMatchObject({ status: 'pending' });
+    expect((await rows())[A_HIDDEN_WAS_LIVE].status).toBe('pending');
+  });
+
+  it('a moderator restore of a hidden item the revoke did not reach goes straight back (control)', async () => {
+    await withdrawCatalogSubListingsForRevokedConsent({ userId: CREATOR, clientId: CLIENT_A });
+    dbMock.dbRead.appListing.findUnique.mockResolvedValue({ kind: 'offsite', appBlock: null });
+    const { rows: v } = await holder.db.query<{ updated_at: Date }>(
+      'SELECT updated_at FROM app_sub_listings WHERE id = $1',
+      [B_HIDDEN]
+    );
+    await expect(
+      moderateSubListing({
+        input: { id: B_HIDDEN, action: 'restore', version: v[0].updated_at.toISOString() },
+        moderatorId: OWNER,
+      })
+    ).resolves.toMatchObject({ status: 'approved' });
   });
 
   it("revoking the other client withdraws only that client's item", async () => {
@@ -432,7 +533,7 @@ describe('withdrawCatalogSubListingsForRevokedConsent', () => {
       withdrawCatalogSubListingsForRevokedConsent({ userId: CREATOR, clientId: CLIENT_B })
     ).resolves.toBe(1);
     expect(await statuses()).toEqual({ ...SEEDED_STATUSES, [B_LIVE]: 'withdrawn' });
-    expect((await rows())[A_HIDDEN_WAS_LIVE].approved_at).not.toBeNull();
+    expect(await approvals()).toEqual({ ...SEEDED_APPROVALS, [B_HIDDEN]: false });
   });
 
   it("another author's revoke touches none of the creator's items", async () => {
@@ -440,6 +541,15 @@ describe('withdrawCatalogSubListingsForRevokedConsent', () => {
       withdrawCatalogSubListingsForRevokedConsent({ userId: OTHER_AUTHOR, clientId: CLIENT_A })
     ).resolves.toBe(1);
     expect(await statuses()).toEqual({ ...SEEDED_STATUSES, [A_OTHER]: 'withdrawn' });
+    expect(await approvals()).toEqual({ ...SEEDED_APPROVALS, [A_OTHER_HIDDEN]: false });
+  });
+
+  it("the listing owner's revoke leaves the owner's own items (they never needed consent)", async () => {
+    await expect(
+      withdrawCatalogSubListingsForRevokedConsent({ userId: OWNER, clientId: CLIENT_A })
+    ).resolves.toBe(0);
+    expect(await statuses()).toEqual(SEEDED_STATUSES);
+    expect(await approvals()).toEqual(SEEDED_APPROVALS);
   });
 
   it('withdraws nothing for a client with no listing', async () => {
@@ -447,10 +557,15 @@ describe('withdrawCatalogSubListingsForRevokedConsent', () => {
       withdrawCatalogSubListingsForRevokedConsent({ userId: CREATOR, clientId: 'client-gamma' })
     ).resolves.toBe(0);
     expect(await statuses()).toEqual(SEEDED_STATUSES);
+    expect(await approvals()).toEqual(SEEDED_APPROVALS);
     expect(mockBust).not.toHaveBeenCalled();
   });
 });
 
+/**
+ * Invariant guards, not regression coverage: a PUT of a withdrawn item was already a republish
+ * that waits for review. They pin that both new withdraw paths leave the row in that state.
+ */
 describe('a platform re-publish after a withdraw', () => {
   function user(id: number) {
     return {

@@ -20,6 +20,12 @@ import {
 export const APP_SUB_LISTING_STATUSES = ['pending', 'approved', 'hidden', 'withdrawn'] as const;
 export type AppSubListingStatus = (typeof APP_SUB_LISTING_STATUSES)[number];
 
+/** In the store or waiting for review: the statuses a withdraw moves to `withdrawn`. */
+export const APP_SUB_LISTING_ACTIVE_STATUSES = ['pending', 'approved'] as const;
+export function isActiveSubListingStatus(status: string): boolean {
+  return (APP_SUB_LISTING_ACTIVE_STATUSES as readonly string[]).includes(status);
+}
+
 /** Same five values, same order, as the listing rating ladder (ascending maturity). */
 export const APP_SUB_LISTING_CONTENT_RATINGS = OFFSITE_CONTENT_RATING_LADDER;
 export type AppSubListingContentRating = OffsiteRatingValue;

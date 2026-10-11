@@ -195,10 +195,14 @@ export async function writeOauthConsent(opts: {
 }
 
 /**
- * Every consent revocation runs this AFTER deleting the consent: it withdraws the store items the
+ * `oauthConsent.revokeApp` runs this AFTER deleting the consent: it withdraws the store items the
  * client's platform listed under the user's name (catalog sync). It never throws, so it cannot
  * hold up the access teardown; a failure is logged and returned as `null` for the caller to
  * report.
+ *
+ * Not run by `revokeOauthConsentForBlock`: that deletes an app block's consent MIRROR when the
+ * viewer narrows the app's permissions, and the mirror is rebuilt from the grant at the next
+ * token mint, so it is not the user disconnecting a platform.
  */
 export async function withdrawCatalogItemsOnConsentRevoke(opts: {
   userId: number;
@@ -237,7 +241,6 @@ export async function revokeOauthConsentForBlock(opts: {
     where: { userId, clientId, type: { in: ['Access', 'Refresh'] } },
   });
   await dbWrite.oauthConsent.deleteMany({ where: { userId, clientId } });
-  await withdrawCatalogItemsOnConsentRevoke({ userId, clientId });
 
   deleteAuthSubject({ userId, subject: { type: 'oauth', id: clientId } }).catch((err) => {
     logToAxiom({

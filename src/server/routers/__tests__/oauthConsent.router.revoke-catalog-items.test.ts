@@ -10,8 +10,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
  * Revoking an app's access withdraws the store items its platform listed under the user's name
  * (catalog sync). The withdraw itself is executed on real rows in
  * `src/server/services/blocks/__tests__/app-sub-listing-catalog-creator.behavior.test.ts`; this
- * pins that every revocation path runs it, for the right user and client, after the consent is
- * gone, and that a failure never blocks the revoke.
+ * pins that revoking an app runs it, for the right user and client, after the consent is gone,
+ * and that a failure never blocks the revoke.
  */
 
 const { withdrawMock, deleteSubjectMock, invalidateMock } = vi.hoisted(() => ({
@@ -104,21 +104,12 @@ describe('oauthConsent.revokeApp', () => {
   });
 });
 
-describe('revokeOauthConsentForBlock (an app permission revoke that removes the consent)', () => {
-  it("withdraws the user's catalog items for the app's client, after deleting the consent", async () => {
+describe('revokeOauthConsentForBlock (an app block permission narrowing)', () => {
+  // Invariant guard: it deletes a consent MIRROR that the next token mint rebuilds from the
+  // grant, so it is not a user disconnecting a platform and must not withdraw catalog items.
+  it('does not withdraw catalog items', async () => {
     await revokeOauthConsentForBlock({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
-    expect(withdrawMock).toHaveBeenCalledTimes(1);
-    expect(withdrawMock).toHaveBeenCalledWith({ userId: USER_ID, clientId: CLIENT_ID });
-    expect(withdrawMock.mock.invocationCallOrder[0]).toBeGreaterThan(
-      dbMock.dbWrite.oauthConsent.deleteMany.mock.invocationCallOrder[0]
-    );
-  });
-
-  it('finishes the teardown when the withdraw fails', async () => {
-    withdrawMock.mockRejectedValueOnce(new Error('store down'));
-    await expect(
-      revokeOauthConsentForBlock({ userId: USER_ID, appBlockId: APP_BLOCK_ID })
-    ).resolves.toBeUndefined();
-    expect(invalidateMock).toHaveBeenCalledWith({ userId: USER_ID });
+    expect(dbMock.dbWrite.oauthConsent.deleteMany).toHaveBeenCalledTimes(1);
+    expect(withdrawMock).not.toHaveBeenCalled();
   });
 });

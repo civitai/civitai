@@ -129,15 +129,18 @@ not rate limited.
 **The creator's controls.** Account settings → Security & Apps → "Store items listed under your
 name" (next to Connected apps, behind the same `oauthApps` flag) lists every item an off-site
 parent's platform attributed to the signed-in user: title, parent listing, status and link,
-withdrawn items included (`appListings.listMyCatalogSubListings`, newest 200). The user can
+withdrawn items included (`appListings.listMyCatalogSubListings`: 200 rows, pending and approved
+first, then newest). The user can
 withdraw any pending or approved one (`appListings.withdrawMyCatalogSubListing`), with the same
 effect as the platform's DELETE but only on their own items: another user's item, or one under an
 on-site parent, is `NOT_FOUND`. It is rate limited like an in-app withdraw (per user per parent).
-Revoking the platform's client under Connected apps (`oauthConsent.revokeApp`), or an app
-permission revoke that removes the consent, withdraws that user's pending and approved items under
-every off-site listing linked to the client and, like a DELETE, leaves a hidden one hidden but
-able to return only to review. It runs after the consent is deleted and never blocks the revoke; a
-failure is reported to the user, who can withdraw the items one by one. Either way, a later PUT of
+Revoking the platform's client under Connected apps (`oauthConsent.revokeApp`) withdraws that
+user's pending and approved items under every off-site listing linked to the client and, like a
+DELETE, leaves a hidden one hidden but able to return only to review. Items under a listing the
+user owns are left alone: the owner's items never needed the consent. It runs after the consent
+is deleted and never blocks the revoke; a failure is reported to the user, who can withdraw the
+items one by one. Narrowing an app block's permissions (which drops and later rebuilds that app's
+consent record) does not withdraw anything. Either way, a later PUT of
 the item (after the user consents again) is a republish and waits for a moderator. Neither
 procedure is behind the `app-store-sub-listings` flag, which gates only the store grid.
 

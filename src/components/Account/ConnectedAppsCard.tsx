@@ -17,6 +17,7 @@ import {
 import {
   canWithdrawCatalogItem,
   markCatalogItemsWithdrawn,
+  type CatalogItem,
 } from '~/components/Account/CatalogItemsCard';
 import { CardOrSection } from '~/components/Account/SettingsLayout';
 import {
@@ -60,13 +61,16 @@ export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
       spendMap.set(entry.id, entry.spend);
     }
   }
-  // The store items each app listed under the user's name; revoking the app withdraws them.
+  // The store items each app listed under the user's name; revoking the app withdraws them
+  // (except under a listing the user owns themselves).
+  const withdrawnOnRevoke = (clientId: string) => (item: CatalogItem) =>
+    item.parent.clientId === clientId && !item.parent.isYours;
   const { data: catalogItems } = trpc.appListings.listMyCatalogSubListings.useQuery(undefined, {
     enabled: apps.length > 0,
   });
   const activeCatalogItemCount = (clientId: string) =>
     (catalogItems?.items ?? []).filter(
-      (item) => item.parent.clientId === clientId && canWithdrawCatalogItem(item.status)
+      (item) => withdrawnOnRevoke(clientId)(item) && canWithdrawCatalogItem(item.status)
     ).length;
   const revokeMutation = trpc.oauthConsent.revokeApp.useMutation({
     onSuccess: (result, { clientId }) => {
@@ -83,7 +87,7 @@ export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
         return;
       }
       if (result.catalogItemsWithdrawn > 0) {
-        markCatalogItemsWithdrawn(utils, (item) => item.parent.clientId === clientId);
+        markCatalogItemsWithdrawn(utils, withdrawnOnRevoke(clientId));
       }
       showSuccessNotification({ message: 'App access revoked' });
     },
